@@ -9344,7 +9344,9 @@ pub unsafe extern "C" fn inet_net_ntop(
     };
 
     let effective_size = effective_output_len(dst.cast(), size);
-    if formatted.len() + 1 > effective_size {
+    let emit_count = (bits as usize).div_ceil(8).max(1);
+    let required_size = formatted.len() + 1 + usize::from(emit_count == 1);
+    if required_size > effective_size {
         unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
         return std::ptr::null_mut();
     }

@@ -18,8 +18,10 @@
 //! - `"0/0"` → no bytes, prefix `0`.
 //!
 //! When no `/N` suffix is given, the implicit prefix is the number
-//! of dotted octets times 8 (i.e. `"192.168" → /16`). When a
-//! suffix is given, only the first `⌈N/8⌉` bytes are written.
+//! of dotted octets times 8 (i.e. `"192.168" → /16`). When a suffix
+//! is given, glibc still requires the destination to hold every
+//! address component supplied by the input, even if the prefix would
+//! otherwise need fewer bytes.
 //!
 //! Octets must be decimal in `[0, 255]`. The `0x...` hex form that
 //! libresolv accepts is also supported here for byte-by-byte parity.
@@ -115,7 +117,8 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
     };
 
     let bytes_needed = prefix_bits.div_ceil(8) as usize;
-    if dst.len() < bytes_needed {
+    let required_capacity = bytes_needed.max(octet_count);
+    if dst.len() < required_capacity {
         return Err(NetPtonError::BufferTooSmall);
     }
     dst[..bytes_needed].copy_from_slice(&octets[..bytes_needed]);
@@ -221,7 +224,8 @@ fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
     };
 
     let bytes_needed = prefix_bits.div_ceil(8) as usize;
-    if dst.len() < bytes_needed {
+    let required_capacity = bytes_needed.max(bytes_in);
+    if dst.len() < required_capacity {
         return Err(NetPtonError::BufferTooSmall);
     }
     dst[..bytes_needed].copy_from_slice(&octets[..bytes_needed]);
@@ -299,6 +303,12 @@ mod tests {
         let p = parse(b"0/0", &mut dst).unwrap();
         assert_eq!(p, 0);
         // No bytes written for prefix 0.
+    }
+
+    #[test]
+    fn parse_explicit_prefix_zero_requires_supplied_octet_capacity() {
+        let mut dst = [];
+        assert_eq!(parse(b"0/0", &mut dst), Err(NetPtonError::BufferTooSmall));
     }
 
     #[test]
@@ -381,6 +391,12 @@ mod tests {
             parse(b"192.168.0/24", &mut dst),
             Err(NetPtonError::BufferTooSmall)
         );
+
+        let mut explicit_four_octets = [0u8; 3];
+        assert_eq!(
+            parse(b"192.168.1.0/24", &mut explicit_four_octets),
+            Err(NetPtonError::BufferTooSmall)
+        );
     }
 
     // ---- hex form ----
@@ -399,6 +415,15 @@ mod tests {
         let p = parse(b"0xC0A80000/24", &mut dst).unwrap();
         assert_eq!(p, 24);
         assert_eq!(&dst[..3], &[0xC0, 0xA8, 0x00]);
+    }
+
+    #[test]
+    fn parse_hex_prefix_requires_supplied_byte_capacity() {
+        let mut dst = [0u8; 3];
+        assert_eq!(
+            parse(b"0xC0A80000/24", &mut dst),
+            Err(NetPtonError::BufferTooSmall)
+        );
     }
 
     #[test]
