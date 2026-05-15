@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::error::Error;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -11,13 +12,13 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 static CHECKER_LOCK: Mutex<()> = Mutex::new(());
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn workspace_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap()
+        .ok_or_else(|| invalid_data("crate directory should have workspace parent"))?
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| invalid_data("workspace parent should have repo parent"))?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -90,18 +91,43 @@ fn run_passing_checker(root: &Path, label: &str) -> TestResult<PathBuf> {
     Ok(out_dir)
 }
 
-fn string_set(value: &serde_json::Value) -> BTreeSet<String> {
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+fn json_array<'a>(value: &'a serde_json::Value, name: &str) -> TestResult<&'a [serde_json::Value]> {
     value
         .as_array()
-        .unwrap()
-        .iter()
-        .map(|value| value.as_str().unwrap().to_string())
-        .collect()
+        .map(Vec::as_slice)
+        .ok_or_else(|| invalid_data(format!("{name} must be array")).into())
+}
+
+fn json_array_mut<'a>(
+    value: &'a mut serde_json::Value,
+    name: &str,
+) -> TestResult<&'a mut Vec<serde_json::Value>> {
+    value
+        .as_array_mut()
+        .ok_or_else(|| invalid_data(format!("{name} must be array")).into())
+}
+
+fn json_str<'a>(value: &'a serde_json::Value, name: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| invalid_data(format!("{name} must be string")).into())
+}
+
+fn string_set(value: &serde_json::Value, name: &str) -> TestResult<BTreeSet<String>> {
+    let mut items = BTreeSet::new();
+    for item in json_array(value, name)? {
+        items.insert(json_str(item, name)?.to_string());
+    }
+    Ok(items)
 }
 
 #[test]
 fn manifest_binds_rtld_phase1_completion_items() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let contract = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -118,17 +144,19 @@ fn manifest_binds_rtld_phase1_completion_items() -> TestResult {
     assert_eq!(evidence["original_bead"].as_str(), Some("bd-1j4.2"));
     assert_eq!(evidence["next_audit_score_threshold"].as_u64(), Some(800));
 
-    let missing_items: BTreeSet<String> = evidence["missing_item_bindings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|binding| {
-            binding["missing_item_id"]
-                .as_str()
-                .expect("missing item id")
-                .to_string()
-        })
-        .collect();
+    let mut missing_items = BTreeSet::new();
+    for binding in json_array(
+        &evidence["missing_item_bindings"],
+        "completion_debt_evidence.missing_item_bindings",
+    )? {
+        missing_items.insert(
+            json_str(
+                &binding["missing_item_id"],
+                "missing_item_bindings.missing_item_id",
+            )?
+            .to_string(),
+        );
+    }
     assert_eq!(
         missing_items,
         BTreeSet::from([
@@ -140,13 +168,10 @@ fn manifest_binds_rtld_phase1_completion_items() -> TestResult {
         ])
     );
 
-    let relocation_cases: BTreeSet<String> =
-        evidence["conformance_primary"]["required_elf_loader_cases"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|case| case.as_str().unwrap().to_string())
-            .collect();
+    let relocation_cases = string_set(
+        &evidence["conformance_primary"]["required_elf_loader_cases"],
+        "conformance_primary.required_elf_loader_cases",
+    )?;
     for required in [
         "reloc_r_x86_64_none",
         "reloc_r_x86_64_64",
@@ -162,7 +187,7 @@ fn manifest_binds_rtld_phase1_completion_items() -> TestResult {
 
 #[test]
 fn checker_passes_and_emits_report_log() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let out_dir = run_passing_checker(&root, "pass")?;
     let report = read_json(&out_dir.join("rtld_phase1_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("pass"));
@@ -214,14 +239,16 @@ fn checker_passes_and_emits_report_log() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_relocation_fixture_case() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut contract = read_json(&contract_path(&root))?;
-    contract["completion_debt_evidence"]["conformance_primary"]["required_elf_loader_cases"]
-        .as_array_mut()
-        .unwrap()
-        .push(serde_json::Value::String(
-            "reloc_r_x86_64_definitely_missing".to_string(),
-        ));
+    json_array_mut(
+        &mut contract["completion_debt_evidence"]["conformance_primary"]
+            ["required_elf_loader_cases"],
+        "conformance_primary.required_elf_loader_cases",
+    )?
+    .push(serde_json::Value::String(
+        "reloc_r_x86_64_definitely_missing".to_string(),
+    ));
 
     let out_dir = unique_out_dir(&root, "missing-reloc-case")?;
     let tampered = out_dir.join("contract.json");
@@ -245,12 +272,13 @@ fn checker_rejects_missing_relocation_fixture_case() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_event() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut contract = read_json(&contract_path(&root))?;
-    contract["completion_debt_evidence"]["telemetry_primary"]["required_events"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|event| event.as_str() != Some("rtld_phase1.loader_audit_bound"));
+    json_array_mut(
+        &mut contract["completion_debt_evidence"]["telemetry_primary"]["required_events"],
+        "telemetry_primary.required_events",
+    )?
+    .retain(|event| event.as_str() != Some("rtld_phase1.loader_audit_bound"));
 
     let out_dir = unique_out_dir(&root, "missing-telemetry-event")?;
     let tampered = out_dir.join("contract.json");
@@ -264,7 +292,7 @@ fn checker_rejects_missing_telemetry_event() -> TestResult {
     );
     let report = read_json(&out_dir.join("rtld_phase1_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    let items = string_set(&report["missing_items"]);
+    let items = string_set(&report["missing_items"], "missing_items")?;
     assert!(items.contains("telemetry.primary"));
     let message = checker_message(&output);
     assert!(
