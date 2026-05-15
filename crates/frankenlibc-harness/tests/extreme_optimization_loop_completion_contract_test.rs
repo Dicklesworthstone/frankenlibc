@@ -1,18 +1,20 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| io::Error::other("crate directory has workspace parent"))?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("workspace parent has repo parent"))?
+        .to_path_buf();
+    Ok(root)
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -80,17 +82,21 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let array = value
         .as_array()
-        .expect("value should be array")
-        .iter()
-        .map(|item| {
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "value should be array"))?;
+    let mut set = BTreeSet::new();
+    for item in array {
+        set.insert(
             item.as_str()
-                .expect("array item should be string")
-                .to_owned()
-        })
-        .collect()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "array item should be string")
+                })?
+                .to_owned(),
+        );
+    }
+    Ok(set)
 }
 
 fn mutated_manifest(root: &Path, label: &str, manifest: &Value) -> TestResult<(PathBuf, PathBuf)> {
@@ -100,9 +106,24 @@ fn mutated_manifest(root: &Path, label: &str, manifest: &Value) -> TestResult<(P
     Ok((path, out_dir))
 }
 
+fn error_strings(report: &Value) -> TestResult<Vec<&str>> {
+    let errors = report["errors"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "errors should be array"))?;
+    let mut strings = Vec::with_capacity(errors.len());
+    for error in errors {
+        strings.push(
+            error.as_str().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "error should be string")
+            })?,
+        );
+    }
+    Ok(strings)
+}
+
 #[test]
 fn manifest_binds_extreme_optimization_sources() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -111,7 +132,16 @@ fn manifest_binds_extreme_optimization_sources() -> TestResult {
     );
     assert_eq!(manifest["original_bead"].as_str(), Some("bd-3fb"));
     assert_eq!(manifest["completion_debt_bead"].as_str(), Some("bd-3fb.1"));
-    assert!(manifest["next_audit_score_threshold"].as_u64().unwrap() >= 800);
+    let next_audit_score_threshold =
+        manifest["next_audit_score_threshold"]
+            .as_u64()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "next_audit_score_threshold must be integer",
+                )
+            })?;
+    assert!(next_audit_score_threshold >= 800);
 
     let artifacts = manifest["source_artifacts"]
         .as_object()
@@ -189,7 +219,7 @@ fn manifest_binds_extreme_optimization_sources() -> TestResult {
 
 #[test]
 fn checker_accepts_contract_and_replays_child_gates() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -244,7 +274,7 @@ fn checker_accepts_contract_and_replays_child_gates() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_lane_artifact() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["proof_lanes"][0]["artifact_ids"] = json!(["perf_baseline_spec", "missing_artifact"]);
     let (path, out_dir) = mutated_manifest(&root, "missing-lane-artifact", &manifest)?;
@@ -253,12 +283,7 @@ fn checker_rejects_missing_lane_artifact() -> TestResult {
     assert!(!output.status.success());
     let report =
         read_json(&out_dir.join("extreme_optimization_loop_completion_contract.report.json"))?;
-    let errors: Vec<&str> = report["errors"]
-        .as_array()
-        .expect("errors should be array")
-        .iter()
-        .filter_map(|error| error.as_str())
-        .collect();
+    let errors = error_strings(&report)?;
     assert!(
         errors
             .iter()
@@ -271,7 +296,7 @@ fn checker_rejects_missing_lane_artifact() -> TestResult {
 
 #[test]
 fn checker_rejects_bare_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["missing_item_bindings"][0]["required_commands"] = json!([
         "cargo test -p frankenlibc-harness --test extreme_optimization_loop_completion_contract_test"
@@ -282,12 +307,7 @@ fn checker_rejects_bare_cargo_command() -> TestResult {
     assert!(!output.status.success());
     let report =
         read_json(&out_dir.join("extreme_optimization_loop_completion_contract.report.json"))?;
-    let errors: Vec<&str> = report["errors"]
-        .as_array()
-        .expect("errors should be array")
-        .iter()
-        .filter_map(|error| error.as_str())
-        .collect();
+    let errors = error_strings(&report)?;
     assert!(
         errors.iter().any(|error| error.contains("must use rch")),
         "bare cargo rejection absent: {errors:?}"
@@ -298,9 +318,9 @@ fn checker_rejects_bare_cargo_command() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = read_json(&contract_path(&root))?;
-    let events = string_set(&manifest["telemetry_contract"]["required_events"]);
+    let events = string_set(&manifest["telemetry_contract"]["required_events"])?;
     manifest["telemetry_contract"]["required_events"] = json!(
         events
             .into_iter()
@@ -313,12 +333,7 @@ fn checker_rejects_missing_required_telemetry_event() -> TestResult {
     assert!(!output.status.success());
     let report =
         read_json(&out_dir.join("extreme_optimization_loop_completion_contract.report.json"))?;
-    let errors: Vec<&str> = report["errors"]
-        .as_array()
-        .expect("errors should be array")
-        .iter()
-        .filter_map(|error| error.as_str())
-        .collect();
+    let errors = error_strings(&report)?;
     assert!(
         errors
             .iter()
