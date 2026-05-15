@@ -1,17 +1,27 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
-        .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "crate directory should have workspace parent",
+            )
+        })?;
+    let root = workspace.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "workspace directory should have repo root parent",
+        )
+    })?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -68,17 +78,17 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    Ok(value
         .as_array()
-        .expect("value should be an array")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "value should be an array"))?
         .iter()
         .map(|item| {
-            item.as_str()
-                .expect("array item should be a string")
-                .to_string()
+            item.as_str().map(str::to_string).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "array item should be a string")
+            })
         })
-        .collect()
+        .collect::<Result<_, _>>()?)
 }
 
 fn assert_checker_failed(output: &Output) {
@@ -91,7 +101,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_real_program_smoke_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -104,20 +114,26 @@ fn manifest_binds_real_program_smoke_completion_items() -> TestResult {
         Some("bd-bp8fl.10.2.1")
     );
     assert_eq!(
-        string_set(&manifest["completion_debt"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.unit.primary".to_string(),
             "tests.e2e.primary".to_string()
         ])
     );
 
-    let source_artifacts = manifest["source_artifacts"]
-        .as_object()
-        .expect("source_artifacts should be an object");
+    let source_artifacts = manifest["source_artifacts"].as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "source_artifacts should be an object",
+        )
+    })?;
     for (name, path) in source_artifacts {
-        let rel = path
-            .as_str()
-            .expect("source artifact path should be a string");
+        let rel = path.as_str().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "source artifact path should be a string",
+            )
+        })?;
         assert!(
             root.join(rel).is_file(),
             "source artifact {name} should exist at {rel}"
@@ -126,10 +142,12 @@ fn manifest_binds_real_program_smoke_completion_items() -> TestResult {
 
     let unit_refs = manifest["completion_debt_evidence"]["unit_primary"]["required_test_refs"]
         .as_array()
-        .expect("unit refs should be an array");
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "unit refs should be an array")
+        })?;
     let e2e_refs = manifest["completion_debt_evidence"]["e2e_primary"]["required_test_refs"]
         .as_array()
-        .expect("e2e refs should be an array");
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "e2e refs should be an array"))?;
     assert_eq!(unit_refs.len(), 4);
     assert_eq!(e2e_refs.len(), 5);
 
@@ -137,9 +155,9 @@ fn manifest_binds_real_program_smoke_completion_items() -> TestResult {
     assert_eq!(contract["expected_case_count"].as_u64(), Some(20));
     assert_eq!(contract["expected_l0_case_count"].as_u64(), Some(8));
     assert_eq!(contract["expected_l1_case_count"].as_u64(), Some(12));
-    assert!(string_set(&contract["required_domains"]).contains("standalone_future"));
-    assert!(string_set(&contract["required_runtime_modes"]).contains("hardened"));
-    assert!(string_set(&contract["required_replacement_levels"]).contains("L1"));
+    assert!(string_set(&contract["required_domains"])?.contains("standalone_future"));
+    assert!(string_set(&contract["required_runtime_modes"])?.contains("hardened"));
+    assert!(string_set(&contract["required_replacement_levels"])?.contains("L1"));
     assert_eq!(
         contract["source_commit_freshness_policy"]["stale_result"].as_str(),
         Some("block_real_program_smoke_evidence")
@@ -150,7 +168,7 @@ fn manifest_binds_real_program_smoke_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_real_program_smoke_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(
@@ -167,13 +185,20 @@ fn checker_validates_real_program_smoke_contract_and_emits_report_log() -> TestR
     assert_eq!(report["case_count"].as_u64(), Some(20));
     assert_eq!(report["unit_bindings"].as_array().map(Vec::len), Some(4));
     assert_eq!(report["e2e_bindings"].as_array().map(Vec::len), Some(5));
-    assert!(string_set(&report["domains"]).contains("failure_unsupported"));
+    assert!(string_set(&report["domains"])?.contains("failure_unsupported"));
 
     let rows = read_jsonl(&out_dir.join("real_program_smoke_suite_completion_contract.log.jsonl"))?;
     let events: BTreeSet<_> = rows
         .iter()
-        .map(|row| row["event"].as_str().unwrap().to_string())
-        .collect();
+        .map(|row| {
+            row["event"].as_str().map(str::to_string).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "log row event should be a string",
+                )
+            })
+        })
+        .collect::<Result<_, _>>()?;
     assert!(events.contains("real_program_smoke_completion.source_artifacts"));
     assert!(events.contains("real_program_smoke_completion.test_refs"));
     assert!(events.contains("real_program_smoke_completion.smoke_contract"));
@@ -187,7 +212,7 @@ fn checker_validates_real_program_smoke_contract_and_emits_report_log() -> TestR
 
 #[test]
 fn checker_rejects_missing_unit_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-unit-ref")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["unit_primary"]["required_test_refs"] = json!([]);
@@ -210,7 +235,7 @@ fn checker_rejects_missing_unit_test_ref() -> TestResult {
 
 #[test]
 fn checker_rejects_case_count_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "case-count-drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_real_program_smoke_contract"]["expected_case_count"] = json!(19);
@@ -232,7 +257,7 @@ fn checker_rejects_case_count_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non-rch")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["unit_primary"]["required_commands"] =
@@ -254,7 +279,7 @@ fn checker_rejects_non_rch_cargo_command() -> TestResult {
 
 #[test]
 fn checker_rejects_source_commit_policy_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "freshness-drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_real_program_smoke_contract"]["source_commit_freshness_policy"]["real_program_smoke_evidence_allowed_when_stale"] =
