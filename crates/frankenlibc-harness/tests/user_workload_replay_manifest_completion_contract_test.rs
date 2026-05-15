@@ -109,10 +109,10 @@ fn mutated_contract(
     root: &Path,
     out_dir: &Path,
     label: &str,
-    mutate: impl FnOnce(&mut Value),
+    mutate: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut manifest = read_json(&contract_path(root))?;
-    mutate(&mut manifest);
+    mutate(&mut manifest)?;
     let path = out_dir.join(format!(
         "user_workload_replay_manifest_completion_contract.{label}.json"
     ));
@@ -187,7 +187,10 @@ fn manifest_binds_user_workload_replay_completion_items() -> TestResult {
             .collect()
     );
 
-    for artifact in manifest["source_artifacts"].as_array().unwrap() {
+    let artifacts = manifest["source_artifacts"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source_artifacts array"))?;
+    for artifact in artifacts {
         let path = artifact["path"]
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact path missing"))?;
@@ -213,7 +216,10 @@ fn checker_validates_user_workload_replay_manifest_completion_contract() -> Test
         report["summary"]["failure_signature_count"].as_u64(),
         Some(5)
     );
-    assert!(report["errors"].as_array().unwrap().is_empty());
+    let errors = report["errors"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "report errors array"))?;
+    assert!(errors.is_empty());
 
     let events: BTreeSet<String> = read_jsonl(&log_path(&out_dir))?
         .iter()
@@ -240,8 +246,11 @@ fn checker_rejects_missing_unit_binding() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-unit", |manifest| {
         let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
             .as_array_mut()
-            .expect("bindings array");
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "missing_item_bindings array")
+            })?;
         bindings.retain(|binding| binding["spec_item"].as_str() != Some("tests.unit.primary"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -260,8 +269,11 @@ fn checker_rejects_missing_required_log_field() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-log-field", |manifest| {
         let fields = manifest["user_workload_replay_manifest_contract"]["required_log_fields"]
             .as_array_mut()
-            .expect("required_log_fields array");
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "required_log_fields array")
+            })?;
         fields.retain(|field| field.as_str() != Some("trace_id"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -280,6 +292,7 @@ fn checker_rejects_missing_negative_fixture_binding() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-negative", |manifest| {
         manifest["user_workload_replay_manifest_contract"]["required_failure_signatures"][0] =
             json!("missing_failure_signature");
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
