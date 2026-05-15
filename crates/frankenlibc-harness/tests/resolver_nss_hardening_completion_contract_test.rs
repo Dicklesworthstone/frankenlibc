@@ -11,13 +11,15 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 static CHECKER_LOCK: Mutex<()> = Mutex::new(());
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn workspace_root() -> TestResult<PathBuf> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = manifest_dir
         .parent()
-        .unwrap()
+        .ok_or("crate directory must have workspace parent")?;
+    let root = workspace_dir
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or("workspace parent must have repo root")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -90,18 +92,24 @@ fn run_passing_checker(root: &Path, label: &str) -> TestResult<PathBuf> {
     Ok(out_dir)
 }
 
-fn string_set(value: &serde_json::Value) -> BTreeSet<String> {
+fn string_set(value: &serde_json::Value, context: &str) -> TestResult<BTreeSet<String>> {
     value
         .as_array()
-        .unwrap()
+        .ok_or_else(|| format!("{context} must be an array"))?
         .iter()
-        .map(|value| value.as_str().unwrap().to_string())
+        .enumerate()
+        .map(|(index, value)| -> TestResult<String> {
+            Ok(value
+                .as_str()
+                .ok_or_else(|| format!("{context}[{index}] must be a string"))?
+                .to_string())
+        })
         .collect()
 }
 
 #[test]
 fn manifest_binds_bd1j43_completion_items() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let contract = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -120,15 +128,18 @@ fn manifest_binds_bd1j43_completion_items() -> TestResult {
 
     let missing_items: BTreeSet<String> = evidence["missing_item_bindings"]
         .as_array()
-        .unwrap()
+        .ok_or("completion_debt_evidence.missing_item_bindings must be array")?
         .iter()
-        .map(|binding| {
-            binding["missing_item_id"]
+        .enumerate()
+        .map(|(index, binding)| -> TestResult<String> {
+            Ok(binding["missing_item_id"]
                 .as_str()
-                .expect("missing item id")
-                .to_string()
+                .ok_or_else(|| {
+                    format!("missing_item_bindings[{index}].missing_item_id must be string")
+                })?
+                .to_string())
         })
-        .collect();
+        .collect::<TestResult<_>>()?;
     assert_eq!(
         missing_items,
         BTreeSet::from([
@@ -143,10 +154,16 @@ fn manifest_binds_bd1j43_completion_items() -> TestResult {
 
     let required_cases: BTreeSet<String> = evidence["golden_primary"]["required_cases"]
         .as_array()
-        .unwrap()
+        .ok_or("golden_primary.required_cases must be array")?
         .iter()
-        .map(|case| case.as_str().unwrap().to_string())
-        .collect();
+        .enumerate()
+        .map(|(index, case)| -> TestResult<String> {
+            Ok(case
+                .as_str()
+                .ok_or_else(|| format!("golden_primary.required_cases[{index}] must be string"))?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     assert!(required_cases.contains("getaddrinfo_hosts_file_subset"));
     assert!(required_cases.contains("getaddrinfo_hosts_file_subset_hardened"));
     assert!(required_cases.contains("gethostbyname_numeric_ipv4"));
@@ -157,7 +174,7 @@ fn manifest_binds_bd1j43_completion_items() -> TestResult {
 
 #[test]
 fn checker_passes_and_emits_report_log() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let out_dir = run_passing_checker(&root, "pass")?;
     let report =
         read_json(&out_dir.join("resolver_nss_hardening_completion_contract.report.json"))?;
@@ -203,11 +220,11 @@ fn checker_passes_and_emits_report_log() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_fuzz_corpus_binding() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut contract = read_json(&contract_path(&root))?;
     contract["completion_debt_evidence"]["fuzz_primary"]["corpus_requirements"]
         .as_array_mut()
-        .unwrap()
+        .ok_or("fuzz_primary.corpus_requirements must be array")?
         .retain(|requirement| requirement["artifact"].as_str() != Some("fuzz_resolver_corpus"));
 
     let out_dir = unique_out_dir(&root, "missing-fuzz-corpus")?;
@@ -233,12 +250,12 @@ fn checker_rejects_missing_fuzz_corpus_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_field() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut contract = read_json(&contract_path(&root))?;
     contract["completion_debt_evidence"]["telemetry_primary"]["required_fields"]
         .as_array_mut()
-        .unwrap()
-        .retain(|field| field.as_str() != Some("failure_signature"));
+        .ok_or("telemetry_primary.required_fields must be array")?
+        .retain(|field| !matches!(field.as_str(), Some("failure_signature")));
 
     let out_dir = unique_out_dir(&root, "missing-telemetry")?;
     let tampered = out_dir.join("contract.json");
@@ -253,7 +270,7 @@ fn checker_rejects_missing_telemetry_field() -> TestResult {
     let report =
         read_json(&out_dir.join("resolver_nss_hardening_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    let fields = string_set(&report["missing_items"]);
+    let fields = string_set(&report["missing_items"], "report.missing_items")?;
     assert!(fields.contains("telemetry.primary"));
     let message = checker_message(&output);
     assert!(

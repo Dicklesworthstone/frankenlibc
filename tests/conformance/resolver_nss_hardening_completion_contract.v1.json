@@ -37,7 +37,7 @@
     "implementation_refs": [
       "crates/frankenlibc-core/src/resolv/mod.rs:538",
       "crates/frankenlibc-core/src/resolv/mod.rs:645",
-      "crates/frankenlibc-abi/src/resolv_abi.rs:1091",
+      "crates/frankenlibc-abi/src/resolv_abi.rs:1092",
       "crates/frankenlibc-abi/src/resolv_abi.rs:1217",
       "crates/frankenlibc-abi/src/resolv_abi.rs:1241",
       "crates/frankenlibc-abi/src/resolv_abi.rs:1629",
@@ -47,7 +47,7 @@
       "tests/conformance/fixtures/resolver.json:232",
       "tests/conformance/fixtures/resolver.json:268",
       "crates/frankenlibc-harness/tests/resolver_conformance_test.rs:200",
-      "crates/frankenlibc-harness/tests/resolver_conformance_test.rs:214",
+      "crates/frankenlibc-harness/tests/resolver_conformance_test.rs:216",
       "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolv.rs:31",
       "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolver.rs:60",
       "scripts/check_resolver_nss_hardening_completion_contract.sh:1",
