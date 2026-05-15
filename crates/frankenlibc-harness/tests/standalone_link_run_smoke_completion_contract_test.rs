@@ -444,9 +444,21 @@ fn checker_replays_standalone_smoke_gate_and_preserves_claim_block() -> TestResu
     );
     assert_eq!(smoke_report["status"].as_str(), Some("pass"));
     assert_eq!(smoke_report["claim_status"].as_str(), Some("claim_blocked"));
+    let smoke_rows = smoke_report["summary"]["rows"].as_u64().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "smoke report summary.rows should be a u64",
+        )
+    })?;
+    let expected_blocked = smoke_rows.checked_mul(2).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "smoke report summary.rows should not overflow candidate_blocked",
+        )
+    })?;
     assert_eq!(
         smoke_report["summary"]["candidate_blocked"].as_u64(),
-        Some(smoke_report["summary"]["rows"].as_u64().unwrap() * 2)
+        Some(expected_blocked)
     );
     assert!(!smoke_log.is_empty(), "smoke replay should emit JSONL rows");
 
