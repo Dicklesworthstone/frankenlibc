@@ -6,13 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo parent")?
+        .to_path_buf())
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -93,7 +93,7 @@ fn source_texts(root: &Path, manifest: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_unit_e2e_conformance_and_telemetry_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -166,7 +166,7 @@ fn manifest_binds_unit_e2e_conformance_and_telemetry_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_source_gate_and_emits_completion_report() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "report")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -221,7 +221,7 @@ fn checker_validates_source_gate_and_emits_completion_report() -> TestResult {
 
 #[test]
 fn checker_emits_valid_structured_log_rows() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "log")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -283,7 +283,7 @@ fn checker_emits_valid_structured_log_rows() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_log_field() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_log_field")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["required_log_fields"]
@@ -320,7 +320,7 @@ fn checker_rejects_missing_required_log_field() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_telemetry")?;
     let mut manifest = load_json(&contract_path(&root))?;
     let bindings = manifest["missing_item_bindings"]
