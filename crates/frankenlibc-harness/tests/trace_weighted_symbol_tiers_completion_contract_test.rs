@@ -29,13 +29,18 @@ const REQUIRED_TELEMETRY_FIELDS: [&str; 10] = [
     "source_commit",
 ];
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+fn workspace_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest_dir.parent().ok_or_else(|| {
+        std::io::Error::other(format!(
+            "{} has no parent directory",
+            manifest_dir.display()
+        ))
+    })?;
+    let root = crates_dir.parent().ok_or_else(|| {
+        std::io::Error::other(format!("{} has no parent directory", crates_dir.display()))
+    })?;
+    Ok(root.to_path_buf())
 }
 
 fn load_json(path: &Path) -> Result<Value, Box<dyn std::error::Error>> {
@@ -96,7 +101,7 @@ fn read_log_rows(path: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> 
 
 #[test]
 fn manifest_binds_unit_e2e_and_telemetry_coverage() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = load_manifest(&root)?;
     assert_eq!(
         manifest["schema_version"],
@@ -162,7 +167,7 @@ fn manifest_binds_unit_e2e_and_telemetry_coverage() -> TestResult {
 
 #[test]
 fn checker_emits_report_and_symbol_telemetry_rows() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let contract = root.join(CONTRACT_REL);
     let (output, generated_path, report_path, log_path) =
         run_checker(&root, &contract, "positive")?;
@@ -218,7 +223,7 @@ fn checker_emits_report_and_symbol_telemetry_rows() -> TestResult {
 
 #[test]
 fn checker_fails_closed_when_telemetry_coverage_is_removed() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = load_manifest(&root)?;
     let coverage = manifest["completion_coverage"]
         .as_array_mut()
