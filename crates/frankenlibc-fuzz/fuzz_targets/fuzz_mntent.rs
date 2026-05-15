@@ -13,6 +13,9 @@
 //!   simple split-based reference.
 //! - parse_mntent_freq_passno is deterministic for arbitrary byte fields.
 //!
+//! Seed files can force paths with `line:`, `opt:`, and `freq:` prefixes.
+//! `opt:` and `freq:` payloads use a `\n---\n` split marker.
+//!
 //! Bead: bd-owyne
 
 use arbitrary::{Arbitrary, Unstructured};
@@ -40,6 +43,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
+    if fuzz_directed_seed(data) {
+        return;
+    }
+
     if let Ok(input) = MntentFuzzInput::arbitrary(&mut Unstructured::new(data)) {
         fuzz_structured_input(&input);
     }
@@ -64,6 +71,46 @@ fn fuzz_structured_input(input: &MntentFuzzInput) {
     }
 }
 
+fn fuzz_directed_seed(data: &[u8]) -> bool {
+    let Some((kind, payload)) = split_directive(data) else {
+        return false;
+    };
+
+    if public_bytes_equal(kind, b"line") {
+        fuzz_parse_line(trim_seed_newline(payload));
+        return true;
+    }
+
+    if public_bytes_equal(kind, b"opt") {
+        if let Some((opts, needle)) = split_marked_pair(payload, MAX_OPTS, MAX_FIELD) {
+            fuzz_option_lookup(opts, needle);
+        }
+        return true;
+    }
+
+    if public_bytes_equal(kind, b"freq") {
+        if let Some((freq, passno)) = split_marked_pair(payload, MAX_FIELD, MAX_FIELD) {
+            fuzz_freq_passno(freq, passno);
+        }
+        return true;
+    }
+
+    false
+}
+
+fn split_directive(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    if let Some(payload) = data.strip_prefix(b"line:") {
+        return Some((b"line", payload));
+    }
+    if let Some(payload) = data.strip_prefix(b"opt:") {
+        return Some((b"opt", payload));
+    }
+    if let Some(payload) = data.strip_prefix(b"freq:") {
+        return Some((b"freq", payload));
+    }
+    None
+}
+
 fn fuzz_raw_seed(data: &[u8]) {
     if data.len() <= MAX_LINE {
         fuzz_parse_line(data);
@@ -74,18 +121,26 @@ fn fuzz_raw_seed(data: &[u8]) {
 }
 
 fn split_option_seed(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    split_marked_pair(data, MAX_OPTS, MAX_FIELD)
+}
+
+fn split_marked_pair(data: &[u8], left_max: usize, right_max: usize) -> Option<(&[u8], &[u8])> {
     let marker = b"\n---\n";
     let split_at = data
         .windows(marker.len())
         .position(|window| public_bytes_equal(window, marker))?;
     let needle_start = split_at.checked_add(marker.len())?;
-    let opts = data.get(..split_at)?;
-    let needle = data.get(needle_start..)?;
-    let needle = needle.strip_suffix(b"\n").unwrap_or(needle);
-    if opts.len() > MAX_OPTS || needle.len() > MAX_FIELD {
+    let left = data.get(..split_at)?;
+    let right = data.get(needle_start..)?;
+    let right = trim_seed_newline(right);
+    if left.len() > left_max || right.len() > right_max {
         return None;
     }
-    Some((opts, needle))
+    Some((left, right))
+}
+
+fn trim_seed_newline(data: &[u8]) -> &[u8] {
+    data.strip_suffix(b"\n").unwrap_or(data)
 }
 
 fn fuzz_parse_line(line: &[u8]) {
@@ -145,24 +200,36 @@ fn fuzz_option_lookup(opts: &[u8], needle: &[u8]) {
 
     if let Some(offset) = actual {
         assert!(!needle.is_empty(), "empty needle must never match");
+        let end = offset.saturating_add(needle.len());
         assert!(
-            offset + needle.len() <= opts.len(),
+            needle.len() <= opts.len().saturating_sub(offset),
             "reported option offset extends beyond opts"
         );
+        let Some(reported) = opts.get(offset..end) else {
+            return;
+        };
         assert_eq!(
-            &opts[offset..offset + needle.len()],
-            needle,
+            reported, needle,
             "reported option offset does not point at needle"
         );
-        assert!(
-            offset == 0 || is_option_separator(opts[offset - 1]),
-            "reported option match is not start/comma bounded"
-        );
-        let end = offset + needle.len();
-        assert!(
-            end == opts.len() || is_option_separator(opts[end]),
-            "reported option match is not end/comma bounded"
-        );
+        if offset > 0 {
+            let Some(previous) = opts.get(offset - 1) else {
+                return;
+            };
+            assert!(
+                is_option_separator(*previous),
+                "reported option match is not start/comma bounded"
+            );
+        }
+        if end < opts.len() {
+            let Some(next) = opts.get(end) else {
+                return;
+            };
+            assert!(
+                is_option_separator(*next),
+                "reported option match is not end/comma bounded"
+            );
+        }
     }
 }
 
