@@ -263,7 +263,11 @@ fn e2e_contract_replays_changepoint_gate() -> TestResult {
         e2e["gate_script"].as_str(),
         Some("scripts/check_changepoint_drift.sh")
     );
-    let gate_script = root.join(e2e["gate_script"].as_str().unwrap());
+    let gate_script = root.join(
+        e2e["gate_script"]
+            .as_str()
+            .ok_or_else(|| test_error("e2e gate_script should be string"))?,
+    );
     assert!(gate_script.is_file());
     let gate_output = Command::new("bash")
         .arg(&gate_script)
