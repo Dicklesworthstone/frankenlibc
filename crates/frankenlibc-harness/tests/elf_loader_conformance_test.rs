@@ -8,19 +8,38 @@ use frankenlibc_core::elf::{Elf64Header, ElfClass, ElfData, ElfLoader, ElfMachin
 use serde::Deserialize;
 use std::{
     collections::BTreeSet,
-    fs,
+    fmt, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Debug)]
+struct TestFailure(String);
+
+impl fmt::Display for TestFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TestFailure {}
+
+fn test_failure(message: impl Into<String>) -> TestFailure {
+    TestFailure(message.into())
+}
+
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crate_dir = manifest_dir
         .parent()
-        .unwrap()
+        .ok_or_else(|| test_failure("manifest dir must have a crate parent"))?;
+    let repo_root = crate_dir
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| test_failure("crate dir must have a repo parent"))?;
+    Ok(repo_root.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,12 +141,13 @@ struct ReadElfHeaderSummary {
     program_headers: usize,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> TestResult<FixtureFile> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
-    serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|e| test_failure(format!("Failed to read {}: {}", path.display(), e)))?;
+    let fixture = serde_json::from_str(&content)
+        .map_err(|e| test_failure(format!("Invalid JSON in {}: {}", path.display(), e)))?;
+    Ok(fixture)
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,63 +234,73 @@ fn resolve_binary_fixture_path(fixture: &BinaryFixture) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
-fn run_readelf(path: &Path, args: &[&str]) -> Option<String> {
+fn run_readelf(path: &Path, args: &[&str]) -> TestResult<Option<String>> {
     match Command::new("readelf").args(args).arg(path).output() {
         Ok(output) => {
-            assert!(
-                output.status.success(),
-                "readelf {:?} failed for {}:\n{}",
-                args,
-                path.display(),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            Some(String::from_utf8_lossy(&output.stdout).into_owned())
+            if !output.status.success() {
+                return Err(test_failure(format!(
+                    "readelf {:?} failed for {}:\n{}",
+                    args,
+                    path.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+                .into());
+            }
+            Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
         }
-        Err(err) if err.kind() == ErrorKind::NotFound => None,
-        Err(err) => panic!(
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(test_failure(format!(
             "failed to execute readelf {:?} for {}: {}",
             args,
             path.display(),
             err
-        ),
+        ))
+        .into()),
     }
 }
 
-fn build_readelf_snapshot(path: &Path) -> Option<ReadElfSnapshot> {
-    let header_output = run_readelf(path, &["-h"])?;
-    let program_output = run_readelf(path, &["-l"])?;
-    let dynsym_output = run_readelf(path, &["--dyn-syms", "-W"])?;
+fn build_readelf_snapshot(path: &Path) -> TestResult<Option<ReadElfSnapshot>> {
+    let Some(header_output) = run_readelf(path, &["-h"])? else {
+        return Ok(None);
+    };
+    let Some(program_output) = run_readelf(path, &["-l"])? else {
+        return Ok(None);
+    };
+    let Some(dynsym_output) = run_readelf(path, &["--dyn-syms", "-W"])? else {
+        return Ok(None);
+    };
     let (load_segments, has_dynamic_segment, has_relro_segment) =
         parse_program_header_summary(&program_output);
-    let (dynsym_count, symbol_names) = parse_dynsym_summary(&dynsym_output);
-    Some(ReadElfSnapshot {
-        header: parse_readelf_header(&header_output),
+    let (dynsym_count, symbol_names) = parse_dynsym_summary(&dynsym_output)?;
+    Ok(Some(ReadElfSnapshot {
+        header: parse_readelf_header(&header_output)?,
         load_segments,
         has_dynamic_segment,
         has_relro_segment,
         dynsym_count,
         symbol_names,
+    }))
+}
+
+fn parse_readelf_header(output: &str) -> TestResult<ReadElfHeaderSummary> {
+    let program_headers = extract_readelf_field(output, "Number of program headers:")?
+        .parse::<usize>()
+        .map_err(|err| {
+            test_failure(format!(
+                "failed to parse program header count from readelf output:\n{output}\nerror: {err}"
+            ))
+        })?;
+    Ok(ReadElfHeaderSummary {
+        class: canonicalize_readelf_class(&extract_readelf_field(output, "Class:")?),
+        data: canonicalize_readelf_data(&extract_readelf_field(output, "Data:")?),
+        machine: canonicalize_readelf_machine(&extract_readelf_field(output, "Machine:")?),
+        object_type: canonicalize_readelf_type(&extract_readelf_field(output, "Type:")?),
+        program_headers,
     })
 }
 
-fn parse_readelf_header(output: &str) -> ReadElfHeaderSummary {
-    ReadElfHeaderSummary {
-        class: canonicalize_readelf_class(&extract_readelf_field(output, "Class:")),
-        data: canonicalize_readelf_data(&extract_readelf_field(output, "Data:")),
-        machine: canonicalize_readelf_machine(&extract_readelf_field(output, "Machine:")),
-        object_type: canonicalize_readelf_type(&extract_readelf_field(output, "Type:")),
-        program_headers: extract_readelf_field(output, "Number of program headers:")
-            .parse::<usize>()
-            .unwrap_or_else(|err| {
-                panic!(
-                    "failed to parse program header count from readelf output:\n{output}\nerror: {err}"
-                )
-            }),
-    }
-}
-
-fn extract_readelf_field(output: &str, field: &str) -> String {
-    output
+fn extract_readelf_field(output: &str, field: &str) -> TestResult<String> {
+    let value = output
         .lines()
         .find_map(|line| {
             let trimmed = line.trim();
@@ -279,7 +309,8 @@ fn extract_readelf_field(output: &str, field: &str) -> String {
                 .map(str::trim)
                 .map(ToOwned::to_owned)
         })
-        .unwrap_or_else(|| panic!("missing {field} in readelf output:\n{output}"))
+        .ok_or_else(|| test_failure(format!("missing {field} in readelf output:\n{output}")))?;
+    Ok(value)
 }
 
 fn parse_program_header_summary(output: &str) -> (usize, bool, bool) {
@@ -299,8 +330,8 @@ fn parse_program_header_summary(output: &str) -> (usize, bool, bool) {
     (load_segments, has_dynamic_segment, has_relro_segment)
 }
 
-fn parse_dynsym_summary(output: &str) -> (usize, BTreeSet<String>) {
-    let count = output
+fn parse_dynsym_summary(output: &str) -> TestResult<(usize, BTreeSet<String>)> {
+    let count_text = output
         .lines()
         .find(|line| line.contains("Symbol table '.dynsym' contains"))
         .and_then(|line| {
@@ -311,11 +342,14 @@ fn parse_dynsym_summary(output: &str) -> (usize, BTreeSet<String>) {
                 .and_then(|index| tokens.get(index + 1))
                 .copied()
         })
-        .unwrap_or_else(|| panic!("missing dynsym count in readelf output:\n{output}"))
-        .parse::<usize>()
-        .unwrap_or_else(|err| {
-            panic!("failed to parse dynsym count from readelf output:\n{output}\nerror: {err}")
-        });
+        .ok_or_else(|| {
+            test_failure(format!("missing dynsym count in readelf output:\n{output}"))
+        })?;
+    let count = count_text.parse::<usize>().map_err(|err| {
+        test_failure(format!(
+            "failed to parse dynsym count from readelf output:\n{output}\nerror: {err}"
+        ))
+    })?;
 
     let mut symbol_names = BTreeSet::new();
     for line in output.lines() {
@@ -335,7 +369,7 @@ fn parse_dynsym_summary(output: &str) -> (usize, BTreeSet<String>) {
         }
     }
 
-    (count, symbol_names)
+    Ok((count, symbol_names))
 }
 
 fn is_symbol_row(tokens: &[&str]) -> bool {
@@ -432,14 +466,15 @@ fn rust_type_name(object_type: ElfType) -> &'static str {
 }
 
 #[test]
-fn elf_loader_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/elf_loader.json");
+fn elf_loader_fixture_exists() -> TestResult {
+    let path = repo_root()?.join("tests/conformance/fixtures/elf_loader.json");
     assert!(path.exists(), "elf_loader.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn elf_loader_fixture_valid_schema() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_fixture_valid_schema() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "elf/loader");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -452,11 +487,12 @@ fn elf_loader_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn elf_loader_covers_header_parsing() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_covers_header_parsing() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -466,11 +502,12 @@ fn elf_loader_covers_header_parsing() {
             >= 2,
         "ELF header parsing needs at least 2 test cases (valid/invalid)"
     );
+    Ok(())
 }
 
 #[test]
-fn elf_loader_covers_relocations() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_covers_relocations() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -480,11 +517,12 @@ fn elf_loader_covers_relocations() {
             >= 4,
         "Relocations need at least 4 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn elf_loader_covers_hash_functions() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_covers_hash_functions() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("elf_hash")),
@@ -494,21 +532,23 @@ fn elf_loader_covers_hash_functions() {
         case_names.iter().any(|n| n.contains("gnu_hash")),
         "Missing test coverage for gnu_hash"
     );
+    Ok(())
 }
 
 #[test]
-fn elf_loader_covers_symbol_table() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_covers_symbol_table() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("symbol_")).count() >= 4,
         "Symbol table needs at least 4 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn elf_loader_covers_program_flags() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_covers_program_flags() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names
@@ -518,11 +558,12 @@ fn elf_loader_covers_program_flags() {
             >= 2,
         "Program flags need at least 2 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn elf_loader_modes_valid() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_modes_valid() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     for case in &fixture.cases {
         assert!(
             case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
@@ -531,22 +572,24 @@ fn elf_loader_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn elf_loader_case_count_stable() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_case_count_stable() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     assert!(
         fixture.cases.len() >= 12,
         "elf_loader fixture has {} cases, expected at least 12",
         fixture.cases.len()
     );
     eprintln!("elf_loader fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 #[test]
-fn elf_loader_has_spec_references() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_has_spec_references() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("ELF")
@@ -557,20 +600,22 @@ fn elf_loader_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn elf_loader_has_binary_fixtures() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_has_binary_fixtures() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     assert!(
         !fixture.binary_fixtures.is_empty(),
         "elf_loader fixture should have binary_fixtures for real ELF testing"
     );
+    Ok(())
 }
 
 #[test]
-fn elf_loader_binary_fixture_schema_valid() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_binary_fixture_schema_valid() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     assert!(
         !fixture.binary_fixtures.is_empty(),
         "elf_loader fixture should include binary fixtures"
@@ -600,18 +645,19 @@ fn elf_loader_binary_fixture_schema_valid() {
             binary_fixture.name
         );
     }
+    Ok(())
 }
 
 #[test]
-fn elf_loader_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_fixture_executes_with_host_parity_via_harness_matrix() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_ref()
             .map(expected_output_text)
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| test_failure(format!("case {} missing expected_output", case.name)))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -619,13 +665,13 @@ fn elf_loader_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    test_failure(format!(
                         "elf_loader case {} ({mode}) failed to execute via harness: {err}",
                         case.name
-                    )
-                });
+                    ))
+                })?;
             assert!(
                 result.host_parity,
                 "elf_loader case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -638,11 +684,12 @@ fn elf_loader_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn elf_loader_binary_fixtures_match_readelf() {
-    let fixture = load_fixture("elf_loader");
+fn elf_loader_binary_fixtures_match_readelf() -> TestResult {
+    let fixture = load_fixture("elf_loader")?;
     let mut executed = 0usize;
 
     for binary_fixture in &fixture.binary_fixtures {
@@ -655,23 +702,31 @@ fn elf_loader_binary_fixtures_match_readelf() {
             continue;
         };
 
-        let Some(reference) = build_readelf_snapshot(&path) else {
+        let Some(reference) = build_readelf_snapshot(&path)? else {
             eprintln!("Skipping {}: readelf not installed", binary_fixture.name);
-            return;
+            return Ok(());
         };
 
         executed += 1;
 
         let data = fs::read(&path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {}", path.display(), err));
-        let header = Elf64Header::parse(&data).unwrap_or_else(|err| {
-            panic!("failed to parse ELF header for {}: {}", path.display(), err)
-        });
+            .map_err(|err| test_failure(format!("failed to read {}: {}", path.display(), err)))?;
+        let header = Elf64Header::parse(&data).map_err(|err| {
+            test_failure(format!(
+                "failed to parse ELF header for {}: {}",
+                path.display(),
+                err
+            ))
+        })?;
         let object = ElfLoader::new(0x7f00_0000_0000)
             .parse(&data)
-            .unwrap_or_else(|err| {
-                panic!("failed to parse {} with ElfLoader: {}", path.display(), err)
-            });
+            .map_err(|err| {
+                test_failure(format!(
+                    "failed to parse {} with ElfLoader: {}",
+                    path.display(),
+                    err
+                ))
+            })?;
 
         let rust_class = rust_class_name(header.class());
         let rust_data = rust_data_name(header.data());
@@ -840,14 +895,14 @@ fn elf_loader_binary_fixtures_match_readelf() {
                 symbol,
                 path.display()
             );
-            let parsed_symbol = object.lookup_symbol(symbol).unwrap_or_else(|| {
-                panic!(
+            let parsed_symbol = object.lookup_symbol(symbol).ok_or_else(|| {
+                test_failure(format!(
                     "{} missing required parsed symbol {} in {}",
                     binary_fixture.name,
                     symbol,
                     path.display()
-                )
-            });
+                ))
+            })?;
             assert_eq!(
                 object.symbol_name(parsed_symbol),
                 Some(symbol.as_str()),
@@ -862,4 +917,5 @@ fn elf_loader_binary_fixtures_match_readelf() {
     if executed == 0 {
         eprintln!("Skipping ELF binary conformance: no fixture binaries available");
     }
+    Ok(())
 }
