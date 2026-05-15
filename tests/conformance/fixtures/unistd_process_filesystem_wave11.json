@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-15T16:55:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-11 stream-entry, xattr, advisory-lock, fmtmsg, forkpty, fpathconf, ifaddrs, and fd-xattr symbols. Outputs classify null stream, invalid descriptor, silent valid-message, null master pointer, and null free-list contracts without recording stream contents, raw file descriptors, filesystem paths, process ids, account names, xattr payloads, interface rows, terminal names, stderr bytes, or ambient file state.",
+  "spec_reference": "POSIX fgetpwent/fgetspent null stream contracts; GNU fgetpwent_r/fgetspent_r null stream failure contracts; Linux fgetxattr/flistxattr/fremovexattr invalid descriptor contracts; BSD flock invalid descriptor contract; XSI fmtmsg silent valid no-output contract; BSD forkpty null amaster failure contract; POSIX fpathconf invalid descriptor contract; and POSIX freeifaddrs null pointer no-op contract.",
+  "campaign": {
+    "bead": "pending-unistd-wave11",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-11-unistd-process-filesystem-stream-xattr-lock-pty",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture",
+    "first_wave_symbols": [
+      "fgetpwent",
+      "fgetpwent_r",
+      "fgetspent",
+      "fgetspent_r",
+      "fgetxattr",
+      "flistxattr",
+      "flock",
+      "fmtmsg",
+      "forkpty",
+      "fpathconf",
+      "freeifaddrs",
+      "fremovexattr"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "fgetpwent_null_stream_strict",
+      "function": "fgetpwent",
+      "spec_section": "POSIX fgetpwent null stream failure",
+      "inputs": {
+        "symbol": "fgetpwent",
+        "scenario": "null_stream_without_passwd_record_capture",
+        "expected": "FGETPWENT_NULL_STREAM_PTR_NULL",
+        "oracle_source": "FrankenLibC fgetpwent null stream class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetpwent;mode=strict;expected=FGETPWENT_NULL_STREAM_PTR_NULL;actual=FGETPWENT_NULL_STREAM_PTR_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetpwent_null_stream_hardened",
+      "function": "fgetpwent",
+      "spec_section": "POSIX fgetpwent null stream failure",
+      "inputs": {
+        "symbol": "fgetpwent",
+        "scenario": "null_stream_without_passwd_record_capture",
+        "expected": "FGETPWENT_NULL_STREAM_PTR_NULL",
+        "oracle_source": "FrankenLibC fgetpwent null stream class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetpwent;mode=hardened;expected=FGETPWENT_NULL_STREAM_PTR_NULL;actual=FGETPWENT_NULL_STREAM_PTR_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgetpwent_r_null_stream_strict",
+      "function": "fgetpwent_r",
+      "spec_section": "GNU fgetpwent_r null stream failure",
+      "inputs": {
+        "symbol": "fgetpwent_r",
+        "scenario": "null_stream_without_passwd_buffer_capture",
+        "expected": "FGETPWENT_R_NULL_STREAM_RC_22_RESULT_NULL",
+        "oracle_source": "FrankenLibC fgetpwent_r null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetpwent_r;mode=strict;expected=FGETPWENT_R_NULL_STREAM_RC_22_RESULT_NULL;actual=FGETPWENT_R_NULL_STREAM_RC_22_RESULT_NULL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetpwent_r_null_stream_hardened",
+      "function": "fgetpwent_r",
+      "spec_section": "GNU fgetpwent_r null stream failure",
+      "inputs": {
+        "symbol": "fgetpwent_r",
+        "scenario": "null_stream_without_passwd_buffer_capture",
+        "expected": "FGETPWENT_R_NULL_STREAM_RC_22_RESULT_NULL",
+        "oracle_source": "FrankenLibC fgetpwent_r null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetpwent_r;mode=hardened;expected=FGETPWENT_R_NULL_STREAM_RC_22_RESULT_NULL;actual=FGETPWENT_R_NULL_STREAM_RC_22_RESULT_NULL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgetspent_null_stream_strict",
+      "function": "fgetspent",
+      "spec_section": "POSIX fgetspent null stream failure",
+      "inputs": {
+        "symbol": "fgetspent",
+        "scenario": "null_stream_without_shadow_record_capture",
+        "expected": "FGETSPENT_NULL_STREAM_PTR_NULL",
+        "oracle_source": "FrankenLibC fgetspent null stream class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetspent;mode=strict;expected=FGETSPENT_NULL_STREAM_PTR_NULL;actual=FGETSPENT_NULL_STREAM_PTR_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetspent_null_stream_hardened",
+      "function": "fgetspent",
+      "spec_section": "POSIX fgetspent null stream failure",
+      "inputs": {
+        "symbol": "fgetspent",
+        "scenario": "null_stream_without_shadow_record_capture",
+        "expected": "FGETSPENT_NULL_STREAM_PTR_NULL",
+        "oracle_source": "FrankenLibC fgetspent null stream class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetspent;mode=hardened;expected=FGETSPENT_NULL_STREAM_PTR_NULL;actual=FGETSPENT_NULL_STREAM_PTR_NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgetspent_r_null_stream_strict",
+      "function": "fgetspent_r",
+      "spec_section": "GNU fgetspent_r null stream failure",
+      "inputs": {
+        "symbol": "fgetspent_r",
+        "scenario": "null_stream_without_shadow_buffer_capture",
+        "expected": "FGETSPENT_R_NULL_STREAM_RC_22_RESULT_NULL",
+        "oracle_source": "FrankenLibC fgetspent_r null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetspent_r;mode=strict;expected=FGETSPENT_R_NULL_STREAM_RC_22_RESULT_NULL;actual=FGETSPENT_R_NULL_STREAM_RC_22_RESULT_NULL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetspent_r_null_stream_hardened",
+      "function": "fgetspent_r",
+      "spec_section": "GNU fgetspent_r null stream failure",
+      "inputs": {
+        "symbol": "fgetspent_r",
+        "scenario": "null_stream_without_shadow_buffer_capture",
+        "expected": "FGETSPENT_R_NULL_STREAM_RC_22_RESULT_NULL",
+        "oracle_source": "FrankenLibC fgetspent_r null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetspent_r;mode=hardened;expected=FGETSPENT_R_NULL_STREAM_RC_22_RESULT_NULL;actual=FGETSPENT_R_NULL_STREAM_RC_22_RESULT_NULL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgetxattr_invalid_fd_strict",
+      "function": "fgetxattr",
+      "spec_section": "Linux fgetxattr invalid descriptor failure",
+      "inputs": {
+        "symbol": "fgetxattr",
+        "scenario": "invalid_fd_without_xattr_payload_capture",
+        "expected": "FGETXATTR_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fgetxattr invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetxattr;mode=strict;expected=FGETXATTR_INVALID_FD_ERROR_EBADF;actual=FGETXATTR_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetxattr_invalid_fd_hardened",
+      "function": "fgetxattr",
+      "spec_section": "Linux fgetxattr invalid descriptor failure",
+      "inputs": {
+        "symbol": "fgetxattr",
+        "scenario": "invalid_fd_without_xattr_payload_capture",
+        "expected": "FGETXATTR_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fgetxattr invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fgetxattr;mode=hardened;expected=FGETXATTR_INVALID_FD_ERROR_EBADF;actual=FGETXATTR_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "flistxattr_invalid_fd_strict",
+      "function": "flistxattr",
+      "spec_section": "Linux flistxattr invalid descriptor failure",
+      "inputs": {
+        "symbol": "flistxattr",
+        "scenario": "invalid_fd_without_xattr_name_list_capture",
+        "expected": "FLISTXATTR_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC flistxattr invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=flistxattr;mode=strict;expected=FLISTXATTR_INVALID_FD_ERROR_EBADF;actual=FLISTXATTR_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "flistxattr_invalid_fd_hardened",
+      "function": "flistxattr",
+      "spec_section": "Linux flistxattr invalid descriptor failure",
+      "inputs": {
+        "symbol": "flistxattr",
+        "scenario": "invalid_fd_without_xattr_name_list_capture",
+        "expected": "FLISTXATTR_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC flistxattr invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=flistxattr;mode=hardened;expected=FLISTXATTR_INVALID_FD_ERROR_EBADF;actual=FLISTXATTR_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "flock_invalid_fd_strict",
+      "function": "flock",
+      "spec_section": "BSD flock invalid descriptor failure",
+      "inputs": {
+        "symbol": "flock",
+        "scenario": "invalid_fd_shared_lock_without_lock_state_capture",
+        "expected": "FLOCK_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC flock invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=flock;mode=strict;expected=FLOCK_INVALID_FD_ERROR_EBADF;actual=FLOCK_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "flock_invalid_fd_hardened",
+      "function": "flock",
+      "spec_section": "BSD flock invalid descriptor failure",
+      "inputs": {
+        "symbol": "flock",
+        "scenario": "invalid_fd_shared_lock_without_lock_state_capture",
+        "expected": "FLOCK_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC flock invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=flock;mode=hardened;expected=FLOCK_INVALID_FD_ERROR_EBADF;actual=FLOCK_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fmtmsg_silent_valid_strict",
+      "function": "fmtmsg",
+      "spec_section": "XSI fmtmsg silent valid no-output contract",
+      "inputs": {
+        "symbol": "fmtmsg",
+        "scenario": "null_fields_without_print_classification",
+        "expected": "FMTMSG_SILENT_VALID_RC_0",
+        "oracle_source": "FrankenLibC fmtmsg valid silent return class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fmtmsg;mode=strict;expected=FMTMSG_SILENT_VALID_RC_0;actual=FMTMSG_SILENT_VALID_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fmtmsg_silent_valid_hardened",
+      "function": "fmtmsg",
+      "spec_section": "XSI fmtmsg silent valid no-output contract",
+      "inputs": {
+        "symbol": "fmtmsg",
+        "scenario": "null_fields_without_print_classification",
+        "expected": "FMTMSG_SILENT_VALID_RC_0",
+        "oracle_source": "FrankenLibC fmtmsg valid silent return class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fmtmsg;mode=hardened;expected=FMTMSG_SILENT_VALID_RC_0;actual=FMTMSG_SILENT_VALID_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "forkpty_null_master_strict",
+      "function": "forkpty",
+      "spec_section": "BSD forkpty null amaster failure",
+      "inputs": {
+        "symbol": "forkpty",
+        "scenario": "null_master_without_pty_or_child_creation",
+        "expected": "FORKPTY_NULL_MASTER_ERROR_EINVAL",
+        "oracle_source": "FrankenLibC forkpty null master errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=forkpty;mode=strict;expected=FORKPTY_NULL_MASTER_ERROR_EINVAL;actual=FORKPTY_NULL_MASTER_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "forkpty_null_master_hardened",
+      "function": "forkpty",
+      "spec_section": "BSD forkpty null amaster failure",
+      "inputs": {
+        "symbol": "forkpty",
+        "scenario": "null_master_without_pty_or_child_creation",
+        "expected": "FORKPTY_NULL_MASTER_ERROR_EINVAL",
+        "oracle_source": "FrankenLibC forkpty null master errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=forkpty;mode=hardened;expected=FORKPTY_NULL_MASTER_ERROR_EINVAL;actual=FORKPTY_NULL_MASTER_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fpathconf_invalid_fd_strict",
+      "function": "fpathconf",
+      "spec_section": "POSIX fpathconf invalid descriptor failure",
+      "inputs": {
+        "symbol": "fpathconf",
+        "scenario": "invalid_fd_link_max_without_path_state_capture",
+        "expected": "FPATHCONF_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fpathconf invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fpathconf;mode=strict;expected=FPATHCONF_INVALID_FD_ERROR_EBADF;actual=FPATHCONF_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fpathconf_invalid_fd_hardened",
+      "function": "fpathconf",
+      "spec_section": "POSIX fpathconf invalid descriptor failure",
+      "inputs": {
+        "symbol": "fpathconf",
+        "scenario": "invalid_fd_link_max_without_path_state_capture",
+        "expected": "FPATHCONF_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fpathconf invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fpathconf;mode=hardened;expected=FPATHCONF_INVALID_FD_ERROR_EBADF;actual=FPATHCONF_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "freeifaddrs_null_list_strict",
+      "function": "freeifaddrs",
+      "spec_section": "POSIX freeifaddrs null pointer no-op",
+      "inputs": {
+        "symbol": "freeifaddrs",
+        "scenario": "null_ifaddrs_list_without_interface_capture",
+        "expected": "FREEIFADDRS_NULL_NOOP",
+        "oracle_source": "FrankenLibC freeifaddrs null no-op class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=freeifaddrs;mode=strict;expected=FREEIFADDRS_NULL_NOOP;actual=FREEIFADDRS_NULL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "freeifaddrs_null_list_hardened",
+      "function": "freeifaddrs",
+      "spec_section": "POSIX freeifaddrs null pointer no-op",
+      "inputs": {
+        "symbol": "freeifaddrs",
+        "scenario": "null_ifaddrs_list_without_interface_capture",
+        "expected": "FREEIFADDRS_NULL_NOOP",
+        "oracle_source": "FrankenLibC freeifaddrs null no-op class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=freeifaddrs;mode=hardened;expected=FREEIFADDRS_NULL_NOOP;actual=FREEIFADDRS_NULL_NOOP;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fremovexattr_invalid_fd_strict",
+      "function": "fremovexattr",
+      "spec_section": "Linux fremovexattr invalid descriptor failure",
+      "inputs": {
+        "symbol": "fremovexattr",
+        "scenario": "invalid_fd_without_xattr_mutation",
+        "expected": "FREMOVEXATTR_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fremovexattr invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fremovexattr;mode=strict;expected=FREMOVEXATTR_INVALID_FD_ERROR_EBADF;actual=FREMOVEXATTR_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fremovexattr_invalid_fd_hardened",
+      "function": "fremovexattr",
+      "spec_section": "Linux fremovexattr invalid descriptor failure",
+      "inputs": {
+        "symbol": "fremovexattr",
+        "scenario": "invalid_fd_without_xattr_mutation",
+        "expected": "FREMOVEXATTR_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fremovexattr invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fremovexattr;mode=hardened;expected=FREMOVEXATTR_INVALID_FD_ERROR_EBADF;actual=FREMOVEXATTR_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    }
+  ]
+}

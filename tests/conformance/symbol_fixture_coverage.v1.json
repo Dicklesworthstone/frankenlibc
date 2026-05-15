@@ -1239,37 +1239,25 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 167,
+      "covered_symbols": 179,
       "milestone_beads": [],
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 57502,
+      "severity_score": 56302,
       "status_breakdown": {
         "Implemented": 478,
         "RawSyscall": 264
       },
-      "target_coverage_pct": 22.51,
-      "target_covered": 167,
+      "target_coverage_pct": 24.12,
+      "target_covered": 179,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 742,
-      "target_uncovered": 575,
+      "target_uncovered": 563,
       "target_uncovered_symbols": [
-        "fgetpwent",
-        "fgetpwent_r",
-        "fgetspent",
-        "fgetspent_r",
-        "fgetxattr",
-        "flistxattr",
-        "flock",
-        "fmtmsg",
-        "forkpty",
-        "fpathconf",
-        "freeifaddrs",
-        "fremovexattr",
         "fsconfig",
         "fsetxattr",
         "fsmount",
@@ -1836,7 +1824,7 @@
       ],
       "total_symbols": 742,
       "track": "unistd/syscall",
-      "uncovered_symbols": 575,
+      "uncovered_symbols": 563,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4040,9 +4028,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 2702,
-    "fixture_json_files": 123,
-    "fixture_json_unique_functions": 1141,
+    "fixture_json_cases": 2726,
+    "fixture_json_files": 124,
+    "fixture_json_unique_functions": 1153,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4063,7 +4051,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 1143
+    "unique_fixture_functions_total": 1155
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -5300,20 +5288,8 @@
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 575,
+      "target_uncovered_count": 563,
       "target_uncovered_symbols": [
-        "fgetpwent",
-        "fgetpwent_r",
-        "fgetspent",
-        "fgetspent_r",
-        "fgetxattr",
-        "flistxattr",
-        "flock",
-        "fmtmsg",
-        "forkpty",
-        "fpathconf",
-        "freeifaddrs",
-        "fremovexattr",
         "fsconfig",
         "fsetxattr",
         "fsmount",
@@ -7349,31 +7325,31 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 26.42,
-      "covered": 979,
+      "coverage_pct": 26.64,
+      "covered": 987,
       "total": 3705,
-      "uncovered": 2726
+      "uncovered": 2718
     },
     "RawSyscall": {
-      "coverage_pct": 35.51,
-      "covered": 147,
+      "coverage_pct": 36.47,
+      "covered": 151,
       "total": 414,
-      "uncovered": 267
+      "uncovered": 263
     }
   },
   "summary": {
-    "coverage_pct": 27.34,
-    "covered_exported_symbols": 1126,
-    "target_coverage_pct": 27.34,
-    "target_covered_symbols": 1126,
+    "coverage_pct": 27.63,
+    "covered_exported_symbols": 1138,
+    "target_coverage_pct": 27.63,
+    "target_covered_symbols": 1138,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 2993,
+    "target_uncovered_symbols": 2981,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 2993,
+    "uncovered_exported_symbols": 2981,
     "uncovered_target_families": 1,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 20
@@ -63983,13 +63959,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "fast",
       "status": "Implemented",
@@ -63997,13 +63982,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -64011,13 +64005,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -64025,13 +64028,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -64039,13 +64051,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "default",
       "status": "RawSyscall",
@@ -64053,13 +64074,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "default",
       "status": "RawSyscall",
@@ -64067,13 +64097,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "status": "RawSyscall",
@@ -64081,13 +64120,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -64095,13 +64143,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "default",
       "status": "Implemented",
@@ -64109,13 +64166,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -64123,13 +64189,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "fast",
       "status": "Implemented",
@@ -64137,13 +64212,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd/process-filesystem"
+      ],
+      "fixture_files": [
+        "unistd_process_filesystem_wave11.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "hardened",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "default",
       "status": "RawSyscall",
@@ -77803,21 +77887,9 @@
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 22.51,
-      "target_uncovered_count": 575,
+      "target_coverage_pct": 24.12,
+      "target_uncovered_count": 563,
       "target_uncovered_symbols": [
-        "fgetpwent",
-        "fgetpwent_r",
-        "fgetspent",
-        "fgetspent_r",
-        "fgetxattr",
-        "flistxattr",
-        "flock",
-        "fmtmsg",
-        "forkpty",
-        "fpathconf",
-        "freeifaddrs",
-        "fremovexattr",
         "fsconfig",
         "fsetxattr",
         "fsmount",
