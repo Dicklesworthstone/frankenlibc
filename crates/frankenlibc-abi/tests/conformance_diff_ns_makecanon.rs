@@ -9,6 +9,7 @@
 
 use std::ffi::{CStr, CString, c_char, c_int};
 
+use frankenlibc_abi::errno_abi::__errno_location as fl_errno_location;
 use frankenlibc_abi::resolv_abi as fl;
 
 #[link(name = "resolv")]
@@ -33,6 +34,21 @@ fn render_divs(divs: &[Divergence]) -> String {
         ));
     }
     out
+}
+
+unsafe fn clear_errno_both() {
+    unsafe {
+        *fl_errno_location() = 0;
+        *libc::__errno_location() = 0;
+    }
+}
+
+unsafe fn read_fl_errno() -> c_int {
+    unsafe { *fl_errno_location() }
+}
+
+unsafe fn read_lc_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
 }
 
 const NAME_INPUTS: &[&[u8]] = &[
@@ -93,25 +109,104 @@ fn diff_ns_makecanon_cases() {
 #[test]
 fn diff_ns_makecanon_buffer_too_small() {
     let mut divs = Vec::new();
-    let input = CString::new("example.com").unwrap();
-    // "example.com." + NUL = 13 bytes.
-    for size in [0usize, 1, 5, 12] {
-        let mut fl_buf = vec![0i8; size + 4];
-        let mut lc_buf = vec![0i8; size + 4];
-        let fl_n = unsafe { fl::ns_makecanon(input.as_ptr(), fl_buf.as_mut_ptr(), size) };
-        let lc_n = unsafe { ns_makecanon(input.as_ptr(), lc_buf.as_mut_ptr(), size) };
-        if (fl_n < 0) != (lc_n < 0) {
-            divs.push(Divergence {
-                case: format!("size={size}"),
-                field: "error_signal",
-                frankenlibc: format!("{fl_n}"),
-                glibc: format!("{lc_n}"),
-            });
+    let cases: &[(&str, &[usize])] = &[
+        ("", &[0, 1]),
+        (".", &[0, 1, 2]),
+        ("a", &[0, 1, 2]),
+        ("a.", &[0, 1, 2, 3]),
+        ("example.com", &[0, 1, 5, 12]),
+        ("example.com.", &[0, 1, 5, 12, 13]),
+    ];
+    for &(input, sizes) in cases {
+        let input = CString::new(input).unwrap();
+        for &size in sizes {
+            let mut fl_buf = vec![0i8; size + 4];
+            let mut lc_buf = vec![0i8; size + 4];
+            unsafe { clear_errno_both() };
+            let fl_n = unsafe { fl::ns_makecanon(input.as_ptr(), fl_buf.as_mut_ptr(), size) };
+            let fl_errno = unsafe { read_fl_errno() };
+            unsafe { clear_errno_both() };
+            let lc_n = unsafe { ns_makecanon(input.as_ptr(), lc_buf.as_mut_ptr(), size) };
+            let lc_errno = unsafe { read_lc_errno() };
+            let case = format!("input={input:?} size={size}");
+            if fl_n != lc_n {
+                divs.push(Divergence {
+                    case: case.clone(),
+                    field: "return",
+                    frankenlibc: format!("{fl_n}"),
+                    glibc: format!("{lc_n}"),
+                });
+            }
+            if fl_n < 0 && lc_n < 0 && fl_errno != lc_errno {
+                divs.push(Divergence {
+                    case,
+                    field: "errno",
+                    frankenlibc: format!("{fl_errno}"),
+                    glibc: format!("{lc_errno}"),
+                });
+            }
         }
     }
     assert!(
         divs.is_empty(),
         "ns_makecanon buffer-too-small divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+/// Exact boundary contract: glibc always reserves enough space for a
+/// possible appended dot plus the terminator, even when `src` is already
+/// canonical. That makes `dstsiz == strlen(src) + 1` fail for dotted names.
+#[test]
+fn diff_ns_makecanon_capacity_boundaries() {
+    let mut divs = Vec::new();
+    let cases: &[&str] = &["", ".", "a", "a.", "example.com", "example.com."];
+    for &input in cases {
+        let input = CString::new(input).unwrap();
+        let src_len = input.as_bytes().len();
+        for size in [src_len + 1, src_len + 2] {
+            let mut fl_buf = vec![0i8; size + 4];
+            let mut lc_buf = vec![0i8; size + 4];
+            unsafe { clear_errno_both() };
+            let fl_n = unsafe { fl::ns_makecanon(input.as_ptr(), fl_buf.as_mut_ptr(), size) };
+            let fl_errno = unsafe { read_fl_errno() };
+            unsafe { clear_errno_both() };
+            let lc_n = unsafe { ns_makecanon(input.as_ptr(), lc_buf.as_mut_ptr(), size) };
+            let lc_errno = unsafe { read_lc_errno() };
+            let case = format!("input={input:?} size={size}");
+            if fl_n != lc_n {
+                divs.push(Divergence {
+                    case: case.clone(),
+                    field: "return",
+                    frankenlibc: format!("{fl_n}"),
+                    glibc: format!("{lc_n}"),
+                });
+            }
+            if fl_n < 0 && lc_n < 0 && fl_errno != lc_errno {
+                divs.push(Divergence {
+                    case: case.clone(),
+                    field: "errno",
+                    frankenlibc: format!("{fl_errno}"),
+                    glibc: format!("{lc_errno}"),
+                });
+            }
+            if fl_n == 0 && lc_n == 0 {
+                let s_fl = unsafe { CStr::from_ptr(fl_buf.as_ptr()).to_bytes() };
+                let s_lc = unsafe { CStr::from_ptr(lc_buf.as_ptr()).to_bytes() };
+                if s_fl != s_lc {
+                    divs.push(Divergence {
+                        case,
+                        field: "string",
+                        frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                        glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
+                    });
+                }
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "ns_makecanon capacity-boundary divergences:\n{}",
         render_divs(&divs)
     );
 }

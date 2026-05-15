@@ -2825,7 +2825,8 @@ pub unsafe extern "C" fn ns_subdomain(a: *const c_char, b: *const c_char) -> c_i
 /// `dst`, ensuring the result is NUL-terminated and ends with a
 /// trailing dot (the canonical form). Returns 0 on success, or -1
 /// with errno set to `EMSGSIZE` if `dst` is too small (or `EINVAL`
-/// if either pointer is NULL).
+/// if either pointer is NULL). glibc conservatively requires
+/// `strlen(src) + 2` bytes even when `src` already has the trailing dot.
 ///
 /// If `src` already ends with a dot it is copied verbatim; otherwise
 /// a `.` is appended.
@@ -2850,8 +2851,7 @@ pub unsafe extern "C" fn ns_makecanon(
     }
     let dst_limit = known_remaining(dst as usize).map_or(dstsiz, |remaining| remaining.min(dstsiz));
     let needs_dot = sbytes.last().copied() != Some(b'.');
-    let extra: usize = if needs_dot { 1 } else { 0 };
-    let needed = sbytes.len().saturating_add(extra).saturating_add(1);
+    let needed = sbytes.len().saturating_add(2);
     if needed > dst_limit {
         unsafe { set_abi_errno(libc::EMSGSIZE) };
         return -1;
