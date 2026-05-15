@@ -144,7 +144,7 @@ fn outcome_classification_carries_pass_codefailure_toolfailure_with_disjoint_sig
 
     // Pass carries no signature; CodeFailure carries signature; ToolFailure carries reason.
     for o in outcomes {
-        let id = o.get("outcome_id").and_then(Value::as_str).unwrap();
+        let id = json_string(o, "outcome_id")?;
         let carries_sig = o
             .get("carries_signature")
             .and_then(Value::as_bool)
@@ -160,7 +160,7 @@ fn outcome_classification_carries_pass_codefailure_toolfailure_with_disjoint_sig
                 "CodeFailure carries signature",
             )?,
             "ToolFailure" => require(!carries_sig && carries_reason, "ToolFailure carries reason")?,
-            _ => unreachable!(),
+            other => return Err(format!("unexpected outcome_id `{other}`")),
         }
     }
     Ok(())
@@ -224,7 +224,7 @@ fn fixture_pass_outcome_when_observed_matches_expected() -> TestResult {
     let r = deterministic_fixture(&commit);
     let outcome = classify_outcome(&r, true, &r.expected_outputs);
     require(
-        outcome == ReplayOutcome::Pass,
+        matches!(outcome, ReplayOutcome::Pass),
         format!("expected Pass; got {outcome:?}"),
     )
 }
