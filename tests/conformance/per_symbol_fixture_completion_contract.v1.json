@@ -63,10 +63,10 @@
         "path": "tests/conformance/symbol_fixture_coverage.v1.json",
         "required_text": [
           "\"total_exported_symbols\": 4119",
-          "\"covered_exported_symbols\": 405",
-          "\"target_uncovered_symbols\": 3714",
-          "\"fixture_json_cases\": 1284",
-          "\"fixture_json_unique_functions\": 420",
+          "\"covered_exported_symbols\": 1126",
+          "\"target_uncovered_symbols\": 2993",
+          "\"fixture_json_cases\": 2702",
+          "\"fixture_json_unique_functions\": 1141",
           "\"symbol\"",
           "\"fixture_case_count\"",
           "\"fixture_files\""
@@ -77,9 +77,9 @@
         "path": "tests/conformance/fixture_schema_validation.v1.json",
         "required_text": [
           "\"schema_version\": \"fixture_schema_validation.v1\"",
-          "\"fixture_file_count\": 58",
-          "\"standard_case_count\": 1284",
-          "\"expected_errno_required_cases\": 1242",
+          "\"fixture_file_count\": 123",
+          "\"standard_case_count\": 2702",
+          "\"expected_errno_required_cases\": 2660",
           "\"primary_expectation_tags\"",
           "\"expected_output\"",
           "\"expected_return+expected_values\""
@@ -166,12 +166,12 @@
     },
     "required_per_symbol_contract": {
       "minimum_total_exported_symbols": 4000,
-      "minimum_covered_exported_symbols": 405,
-      "minimum_fixture_json_files": 58,
-      "minimum_fixture_json_cases": 1284,
-      "minimum_fixture_json_unique_functions": 420,
+      "minimum_covered_exported_symbols": 1126,
+      "minimum_fixture_json_files": 123,
+      "minimum_fixture_json_cases": 2702,
+      "minimum_fixture_json_unique_functions": 1141,
       "minimum_fixture_schema_standard_cases": 1284,
-      "minimum_expected_errno_required_cases": 1242,
+      "minimum_expected_errno_required_cases": 2660,
       "target_statuses": [
         "Implemented",
         "RawSyscall"

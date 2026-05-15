@@ -162,10 +162,10 @@ fn manifest_binds_unit_golden_and_conformance_items() -> TestResult {
         contract["minimum_total_exported_symbols"].as_u64(),
         Some(4000)
     );
-    assert_eq!(contract["minimum_fixture_json_cases"].as_u64(), Some(1284));
+    assert_eq!(contract["minimum_fixture_json_cases"].as_u64(), Some(2702));
     assert_eq!(
         contract["minimum_expected_errno_required_cases"].as_u64(),
-        Some(1242)
+        Some(2660)
     );
     assert_eq!(
         string_set(&contract["required_source_gates"]),
@@ -215,12 +215,12 @@ fn checker_runs_source_gates_and_emits_completion_evidence() -> TestResult {
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-ldj.5.1"));
     assert_eq!(
         report["summary"]["covered_exported_symbols"].as_u64(),
-        Some(405)
+        Some(1126)
     );
-    assert_eq!(report["summary"]["fixture_json_cases"].as_u64(), Some(1284));
+    assert_eq!(report["summary"]["fixture_json_cases"].as_u64(), Some(2702));
     assert_eq!(
         report["summary"]["expected_errno_required_cases"].as_u64(),
-        Some(1242)
+        Some(2660)
     );
     for gate in [
         "symbol_fixture_coverage",
@@ -233,7 +233,8 @@ fn checker_runs_source_gates_and_emits_completion_evidence() -> TestResult {
             "source gate {gate} should pass"
         );
     }
-    assert!(report["errors"].as_array().unwrap().is_empty());
+    let errors = report["errors"].as_array().ok_or("report errors array")?;
+    assert!(errors.is_empty());
 
     Ok(())
 }
