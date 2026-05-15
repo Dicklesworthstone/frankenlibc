@@ -83,17 +83,40 @@ fn repo_relative_string(root: &Path, path: &Path) -> TestResult<String> {
         .join("/"))
 }
 
-fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
-    let array = value
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+fn json_array<'a>(value: &'a Value, name: &str) -> TestResult<&'a [Value]> {
+    value
         .as_array()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "expected string array"))?;
+        .map(Vec::as_slice)
+        .ok_or_else(|| invalid_data(format!("{name} must be array")).into())
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, name: &str) -> TestResult<&'a mut Vec<Value>> {
+    value
+        .as_array_mut()
+        .ok_or_else(|| invalid_data(format!("{name} must be array")).into())
+}
+
+fn json_object<'a>(value: &'a Value, name: &str) -> TestResult<&'a serde_json::Map<String, Value>> {
+    value
+        .as_object()
+        .ok_or_else(|| invalid_data(format!("{name} must be object")).into())
+}
+
+fn json_str<'a>(value: &'a Value, name: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| invalid_data(format!("{name} must be string")).into())
+}
+
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let array = json_array(value, "expected string array")?;
     let mut set = BTreeSet::new();
     for item in array {
-        set.insert(
-            item.as_str()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "expected string"))?
-                .to_string(),
-        );
+        set.insert(json_str(item, "expected string")?.to_string());
     }
     Ok(set)
 }
@@ -195,9 +218,7 @@ fn manifest_binds_replacement_level_unit_and_e2e_items() -> TestResult {
             .collect()
     );
 
-    let source_paths = manifest["source_paths"]
-        .as_object()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source_paths missing"))?;
+    let source_paths = json_object(&manifest["source_paths"], "source_paths")?;
     for path in source_paths.values() {
         let rel = path.as_str().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "source path must be string")
@@ -208,17 +229,13 @@ fn manifest_binds_replacement_level_unit_and_e2e_items() -> TestResult {
         );
     }
 
-    let refs = manifest["implementation_refs"]
-        .as_array()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "implementation_refs"))?;
+    let refs = json_array(&manifest["implementation_refs"], "implementation_refs")?;
     assert!(refs.len() >= 30, "expected concrete implementation refs");
     for ref_obj in refs {
         assert_file_line_ref_exists(&root, ref_obj)?;
     }
 
-    let coverage = manifest["completion_coverage"]
-        .as_array()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "completion_coverage"))?;
+    let coverage = json_array(&manifest["completion_coverage"], "completion_coverage")?;
     let covered_items = coverage
         .iter()
         .map(|section| {
@@ -251,9 +268,7 @@ fn manifest_binds_replacement_level_unit_and_e2e_items() -> TestResult {
                 .is_some_and(|refs| !refs.is_empty()),
             "coverage section should cite tests"
         );
-        for command in section["validation_commands"]
-            .as_array()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "validation commands"))?
+        for command in json_array(&section["validation_commands"], "validation commands")?
             .iter()
             .filter_map(Value::as_str)
         {
@@ -265,13 +280,22 @@ fn manifest_binds_replacement_level_unit_and_e2e_items() -> TestResult {
                 );
             }
         }
-        for test_ref in section["test_refs"].as_array().unwrap() {
-            let source = test_ref["source"].as_str().unwrap_or_default();
-            let name = test_ref["name"].as_str().unwrap_or_default();
-            let rel = source_paths[source].as_str().unwrap_or_default();
+        for test_ref in json_array(&section["test_refs"], "test_refs")? {
+            let source = json_str(&test_ref["source"], "test_ref source")?;
+            let name = json_str(&test_ref["name"], "test_ref name")?;
+            let rel = source_paths
+                .get(source)
+                .ok_or_else(|| invalid_data(format!("missing source path {source}")))
+                .and_then(|path| {
+                    path.as_str()
+                        .ok_or_else(|| invalid_data("source path string"))
+                })?;
+            if !source_texts.contains_key(source) {
+                source_texts.insert(source.to_string(), std::fs::read_to_string(root.join(rel))?);
+            }
             let source_text = source_texts
-                .entry(source.to_string())
-                .or_insert_with(|| std::fs::read_to_string(root.join(rel)).unwrap());
+                .get(source)
+                .ok_or_else(|| invalid_data(format!("missing cached source text {source}")))?;
             assert!(
                 function_exists(source_text, name),
                 "test ref should exist: {rel}::{name}"
@@ -312,10 +336,10 @@ fn manifest_matches_replacement_level_sources() -> TestResult {
         policy["replacement_levels"]["current_release_level"].as_str()
     );
 
-    for (level, expected_status) in policy["replacement_levels"]["expected_status_by_level"]
-        .as_object()
-        .unwrap()
-    {
+    for (level, expected_status) in json_object(
+        &policy["replacement_levels"]["expected_status_by_level"],
+        "expected_status_by_level",
+    )? {
         let actual = level_entries
             .iter()
             .find(|entry| entry["level"].as_str() == Some(level.as_str()))
@@ -346,11 +370,12 @@ fn manifest_matches_replacement_level_sources() -> TestResult {
     );
 
     let levels_text = serde_json::to_string(&levels)?;
-    for stale_text in policy["replacement_levels"]["stale_blocker_forbidden_substrings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(Value::as_str)
+    for stale_text in json_array(
+        &policy["replacement_levels"]["stale_blocker_forbidden_substrings"],
+        "stale_blocker_forbidden_substrings",
+    )?
+    .iter()
+    .filter_map(Value::as_str)
     {
         assert!(
             !levels_text.contains(stale_text),
@@ -362,9 +387,10 @@ fn manifest_matches_replacement_level_sources() -> TestResult {
         .find(|entry| entry["level"].as_str() == Some("L2"))
         .and_then(|entry| entry["blockers"].as_array())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "L2 blockers"))?;
-    let required_l2 = policy["replacement_levels"]["l2_required_blocker_substring"]
-        .as_str()
-        .unwrap();
+    let required_l2 = json_str(
+        &policy["replacement_levels"]["l2_required_blocker_substring"],
+        "l2_required_blocker_substring",
+    )?;
     assert!(
         l2_blockers
             .iter()
@@ -386,12 +412,21 @@ fn manifest_matches_replacement_level_sources() -> TestResult {
         policy["replacement_level_dashboard"]["claim_status"].as_str()
     );
 
-    let source_paths = manifest["source_paths"].as_object().unwrap();
-    let source_anchors = manifest["source_anchors"].as_object().unwrap();
+    let source_paths = json_object(&manifest["source_paths"], "source_paths")?;
+    let source_anchors = json_object(&manifest["source_anchors"], "source_anchors")?;
     for (source, anchors) in source_anchors {
-        let rel = source_paths[source].as_str().unwrap_or_default();
+        let rel = source_paths
+            .get(source)
+            .ok_or_else(|| invalid_data(format!("missing source path {source}")))
+            .and_then(|path| {
+                path.as_str()
+                    .ok_or_else(|| invalid_data("source path string"))
+            })?;
         let text = std::fs::read_to_string(root.join(rel))?;
-        for anchor in anchors.as_array().unwrap().iter().filter_map(Value::as_str) {
+        for anchor in json_array(anchors, "source anchors")?
+            .iter()
+            .filter_map(Value::as_str)
+        {
             assert!(text.contains(anchor), "{rel} missing anchor {anchor}");
         }
     }
@@ -478,13 +513,11 @@ fn checker_rejects_stale_standalone_policy_blocker() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "stale-blocker")?;
     let mut levels = read_json(&root.join(REPLACEMENT_LEVELS_REL))?;
-    let l2 = levels["levels"]
-        .as_array_mut()
-        .unwrap()
+    let l2 = json_array_mut(&mut levels["levels"], "levels")?
         .iter_mut()
         .find(|entry| entry["level"].as_str() == Some("L2"))
-        .expect("L2 level should exist");
-    l2["blockers"].as_array_mut().unwrap().push(Value::String(
+        .ok_or_else(|| invalid_data("L2 level should exist"))?;
+    json_array_mut(&mut l2["blockers"], "L2 blockers")?.push(Value::String(
         "Standalone dependency policy gate (bd-w2c3.2.2) remains incomplete".to_string(),
     ));
     let mutated_levels = out_dir.join("replacement_levels_with_stale_blocker.json");
