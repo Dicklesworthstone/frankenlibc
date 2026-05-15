@@ -6,13 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or("workspace must have root parent")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -71,15 +71,15 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
-        .as_array()
-        .expect("value should be an array")
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let values = value.as_array().ok_or("value must be an array")?;
+    values
         .iter()
         .map(|item| {
-            item.as_str()
-                .expect("array item should be a string")
-                .to_string()
+            Ok(item
+                .as_str()
+                .ok_or("array item must be a string")?
+                .to_string())
         })
         .collect()
 }
@@ -94,7 +94,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_iconv_locale_family_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -107,7 +107,7 @@ fn manifest_binds_iconv_locale_family_completion_items() -> TestResult {
         Some("bd-ldj.4.1")
     );
     assert_eq!(
-        string_set(&manifest["completion_debt"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.unit.primary".to_string(),
             "tests.e2e.primary".to_string(),
@@ -117,17 +117,18 @@ fn manifest_binds_iconv_locale_family_completion_items() -> TestResult {
         manifest["target_symbols"].as_array().map(Vec::len),
         Some(19)
     );
-    assert!(string_set(&manifest["target_symbols"]).contains("iconv_open"));
-    assert!(string_set(&manifest["target_symbols"]).contains("catclose"));
+    let target_symbols = string_set(&manifest["target_symbols"])?;
+    assert!(target_symbols.contains("iconv_open"));
+    assert!(target_symbols.contains("catclose"));
 
     let source_artifacts = manifest["source_artifacts"]
         .as_object()
-        .expect("source_artifacts should be an object");
+        .ok_or("source_artifacts must be an object")?;
     assert_eq!(source_artifacts.len(), 22);
     for (name, path) in source_artifacts {
         let rel = path
             .as_str()
-            .expect("source artifact path should be a string");
+            .ok_or("source artifact path must be a string")?;
         assert!(
             root.join(rel).is_file(),
             "source artifact {name} should exist at {rel}"
@@ -171,7 +172,7 @@ fn manifest_binds_iconv_locale_family_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_iconv_locale_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(
@@ -204,12 +205,12 @@ fn checker_validates_iconv_locale_contract_and_emits_report_log() -> TestResult 
 
 #[test]
 fn checker_rejects_missing_target_symbol() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_symbol")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let symbols = manifest["target_symbols"]
         .as_array_mut()
-        .expect("target_symbols should be mutable array");
+        .ok_or("target_symbols must be a mutable array")?;
     symbols.retain(|symbol| symbol.as_str() != Some("catclose"));
     let mutated = out_dir.join("missing_symbol.json");
     write_json(&mutated, &manifest)?;
@@ -219,7 +220,7 @@ fn checker_rejects_missing_target_symbol() -> TestResult {
     let report = read_json(&out_dir.join("iconv_locale_family_completion_contract.report.json"))?;
     let errors = report["errors"]
         .as_array()
-        .expect("errors should be present on failure");
+        .ok_or("errors must be present on failure")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
@@ -233,7 +234,7 @@ fn checker_rejects_missing_target_symbol() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non_rch_command")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["e2e_primary"]["required_commands"][0] =
@@ -246,7 +247,7 @@ fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
     let report = read_json(&out_dir.join("iconv_locale_family_completion_contract.report.json"))?;
     let errors = report["errors"]
         .as_array()
-        .expect("errors should be present on failure");
+        .ok_or("errors must be present on failure")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
