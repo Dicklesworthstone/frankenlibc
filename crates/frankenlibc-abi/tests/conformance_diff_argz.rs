@@ -87,6 +87,12 @@ const CREATE_SEP_CASES: &[(&str, c_int)] = &[
     ("a::b", b':' as c_int),
     ("solo", b':' as c_int),
     ("a b c d e f g", b' ' as c_int),
+    ("alpha;;beta;gamma", b';' as c_int),
+    ("alpha;;;beta;;", b';' as c_int),
+    ("key=value=tail", b'=' as c_int),
+    ("=leading=and=trailing=", b'=' as c_int),
+    ("multi  space  words", b' ' as c_int),
+    (" spaced  tail ", b' ' as c_int),
 ];
 
 #[test]
@@ -150,7 +156,7 @@ fn diff_argz_create_sep_and_iterate() {
 #[test]
 fn diff_argz_stringify_round_trip() {
     let mut divs = Vec::new();
-    for (s, sep) in &CREATE_SEP_CASES[..4] {
+    for (s, sep) in CREATE_SEP_CASES {
         // Skip empty input — glibc handles it but argz_stringify is undefined on len=0.
         if s.is_empty() {
             continue;
@@ -202,6 +208,6 @@ fn diff_argz_stringify_round_trip() {
 #[test]
 fn argz_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libc argz\",\"reference\":\"glibc\",\"functions\":4,\"divergences\":0}}",
+        "{{\"family\":\"libc argz\",\"reference\":\"glibc\",\"functions\":4,\"corpus_cases\":14,\"divergences\":0}}",
     );
 }

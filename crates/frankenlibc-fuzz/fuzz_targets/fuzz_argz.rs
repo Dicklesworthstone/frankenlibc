@@ -7,7 +7,7 @@
 //!   argz_create_sep, argz_count, argz_next, argz_stringify,
 //!   argz_add, argz_append, argz_delete
 //!
-//! The conformance harness (tests/conformance_diff_argz.rs) covers 8
+//! The conformance harness (tests/conformance_diff_argz.rs) covers 14
 //! hand-crafted shapes; this target widens that to arbitrary printable-
 //! ASCII inputs across multiple delimiter choices.
 //!
