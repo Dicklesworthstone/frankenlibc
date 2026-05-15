@@ -6,13 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or("workspace must have root parent")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -79,7 +79,7 @@ fn output_text(output: &Output) -> String {
 
 #[test]
 fn manifest_binds_strspn_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -94,25 +94,32 @@ fn manifest_binds_strspn_completion_items() -> TestResult {
 
     let missing_items: BTreeSet<_> = manifest["missing_item_bindings"]
         .as_array()
-        .expect("missing_item_bindings should be an array")
+        .ok_or("missing_item_bindings should be an array")?
         .iter()
-        .filter_map(|entry| entry["id"].as_str())
-        .collect();
+        .map(|entry| {
+            Ok(entry["id"]
+                .as_str()
+                .ok_or("missing_item_bindings entry id should be a string")?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     assert_eq!(
         missing_items,
         BTreeSet::from([
-            "telemetry.primary",
-            "tests.conformance.primary",
-            "tests.unit.primary",
+            "telemetry.primary".to_string(),
+            "tests.conformance.primary".to_string(),
+            "tests.unit.primary".to_string(),
         ])
     );
 
     let source_artifacts = manifest["source_artifacts"]
         .as_array()
-        .expect("source_artifacts should be an array");
+        .ok_or("source_artifacts should be an array")?;
     assert_eq!(source_artifacts.len(), 7);
     for artifact in source_artifacts {
-        let path = artifact["path"].as_str().expect("artifact path");
+        let path = artifact["path"]
+            .as_str()
+            .ok_or("source artifact path should be a string")?;
         assert!(root.join(path).is_file(), "missing artifact {path}");
     }
 
@@ -121,7 +128,7 @@ fn manifest_binds_strspn_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_strspn_completion_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -132,10 +139,15 @@ fn checker_validates_strspn_completion_contract() -> TestResult {
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-0e4vu.1"));
     let events: BTreeSet<_> = report["events"]
         .as_array()
-        .expect("events should be an array")
+        .ok_or("events should be an array")?
         .iter()
-        .filter_map(Value::as_str)
-        .collect();
+        .map(|event| {
+            Ok(event
+                .as_str()
+                .ok_or("event should be a string")?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     for event in [
         "strspn_optimization.conformance_primary",
         "strspn_optimization.source_artifact",
@@ -156,16 +168,16 @@ fn checker_validates_strspn_completion_contract() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_core_source_needle() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_source")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let artifacts = manifest["source_artifacts"]
         .as_array_mut()
-        .expect("source_artifacts should be mutable");
+        .ok_or("source_artifacts should be mutable")?;
     let core = artifacts
         .iter_mut()
         .find(|entry| entry["artifact_id"].as_str() == Some("core_string_strspn"))
-        .expect("core_string_strspn artifact should exist");
+        .ok_or("core_string_strspn artifact should exist")?;
     core["required_needles"] = json!(["needle_that_does_not_exist"]);
 
     let mutated = out_dir.join("missing_source.contract.json");
@@ -186,7 +198,7 @@ fn checker_rejects_missing_core_source_needle() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_symbol() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_telemetry")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["telemetry_primary"]["required_json_symbols"][0]["symbol"] =
