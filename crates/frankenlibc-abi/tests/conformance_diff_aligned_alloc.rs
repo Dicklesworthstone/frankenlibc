@@ -22,6 +22,7 @@ use frankenlibc_abi::malloc_abi as fl;
 unsafe extern "C" {
     fn posix_memalign(memptr: *mut *mut c_void, align: usize, size: usize) -> c_int;
     fn aligned_alloc(align: usize, size: usize) -> *mut c_void;
+    fn memalign(align: usize, size: usize) -> *mut c_void;
 }
 
 #[derive(Debug)]
@@ -63,6 +64,19 @@ const INVALID_POSIX_CASES: &[(usize, usize)] = &[
     (1, 64),
     (2, 64),
     (4, 64),
+];
+
+const MEMALIGN_VALID_CASES: &[(usize, usize)] = &[
+    (1, 64),
+    (2, 64),
+    (4, 64),
+    (8, 0),
+    (8, 1),
+    (16, 64),
+    (32, 7),
+    (64, 1024),
+    (256, 1),
+    (4096, 1),
 ];
 
 #[test]
@@ -183,8 +197,53 @@ fn diff_aligned_alloc_success_cases() {
 }
 
 #[test]
+fn diff_memalign_success_cases() {
+    let mut divs = Vec::new();
+    for (align, size) in MEMALIGN_VALID_CASES {
+        let fl_p = unsafe { fl::memalign(*align, *size) };
+        let lc_p = unsafe { memalign(*align, *size) };
+        let case = format!("(align={align}, size={size})");
+        if fl_p.is_null() != lc_p.is_null() {
+            divs.push(Divergence {
+                case: case.clone(),
+                field: "null_return",
+                frankenlibc: format!("{}", fl_p.is_null()),
+                glibc: format!("{}", lc_p.is_null()),
+            });
+        }
+        if !fl_p.is_null() && !(fl_p as usize).is_multiple_of(*align) {
+            divs.push(Divergence {
+                case: case.clone(),
+                field: "fl_alignment",
+                frankenlibc: format!("ptr {:#x} not aligned to {align}", fl_p as usize),
+                glibc: "(host aligned)".to_string(),
+            });
+        }
+        if !lc_p.is_null() && !(lc_p as usize).is_multiple_of(*align) {
+            divs.push(Divergence {
+                case,
+                field: "lc_alignment",
+                frankenlibc: "(fl aligned)".to_string(),
+                glibc: format!("ptr {:#x} not aligned to {align}", lc_p as usize),
+            });
+        }
+        if !fl_p.is_null() {
+            unsafe { fl::free(fl_p) };
+        }
+        if !lc_p.is_null() {
+            unsafe { libc::free(lc_p) };
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "memalign divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
 fn aligned_alloc_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libc memalign family\",\"reference\":\"glibc\",\"functions\":3,\"divergences\":0}}",
+        "{{\"family\":\"libc memalign family\",\"reference\":\"glibc\",\"functions\":3,\"posix_valid_cases\":8,\"posix_invalid_cases\":7,\"aligned_alloc_cases\":8,\"memalign_cases\":10,\"divergences\":0}}",
     );
 }
