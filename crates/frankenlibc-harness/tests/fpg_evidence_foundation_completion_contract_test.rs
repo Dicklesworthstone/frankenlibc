@@ -1,17 +1,19 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| io::Error::other("crate directory has workspace parent"))?
         .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("workspace has root parent"))?
+        .to_path_buf();
+    Ok(root)
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -68,17 +70,21 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let array = value
         .as_array()
-        .expect("value should be an array")
-        .iter()
-        .map(|item| {
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "value should be an array"))?;
+    let mut set = BTreeSet::new();
+    for item in array {
+        set.insert(
             item.as_str()
-                .expect("array item should be a string")
-                .to_string()
-        })
-        .collect()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "array item should be a string")
+                })?
+                .to_string(),
+        );
+    }
+    Ok(set)
 }
 
 fn assert_checker_failed(output: &Output) {
@@ -91,7 +97,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_fpg_evidence_foundation_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -104,7 +110,7 @@ fn manifest_binds_fpg_evidence_foundation_completion_items() -> TestResult {
         Some("bd-bp8fl.3.12.1")
     );
     assert_eq!(
-        string_set(&manifest["completion_debt"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.unit.primary".to_string(),
             "tests.integration.primary".to_string(),
@@ -112,14 +118,20 @@ fn manifest_binds_fpg_evidence_foundation_completion_items() -> TestResult {
         ])
     );
 
-    let source_artifacts = manifest["source_artifacts"]
-        .as_object()
-        .expect("source_artifacts should be an object");
+    let source_artifacts = manifest["source_artifacts"].as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "source_artifacts should be an object",
+        )
+    })?;
     assert_eq!(source_artifacts.len(), 9);
     for (name, path) in source_artifacts {
-        let rel = path
-            .as_str()
-            .expect("source artifact path should be a string");
+        let rel = path.as_str().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "source artifact path should be a string",
+            )
+        })?;
         assert!(
             root.join(rel).is_file(),
             "source artifact {name} should exist at {rel}"
@@ -167,7 +179,7 @@ fn manifest_binds_fpg_evidence_foundation_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_fpg_evidence_foundation_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(
@@ -193,10 +205,15 @@ fn checker_validates_fpg_evidence_foundation_contract_and_emits_report_log() -> 
     );
 
     let rows = read_jsonl(&out_dir.join("fpg_evidence_foundation_completion_contract.log.jsonl"))?;
-    let events: BTreeSet<_> = rows
-        .iter()
-        .map(|row| row["event"].as_str().unwrap().to_string())
-        .collect();
+    let mut events = BTreeSet::new();
+    for row in &rows {
+        events.insert(
+            row["event"]
+                .as_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "event string"))?
+                .to_string(),
+        );
+    }
     assert!(events.contains("fpg_evidence_foundation_completion.source_artifacts"));
     assert!(events.contains("fpg_evidence_foundation_completion.evidence_refs"));
     assert!(events.contains("fpg_evidence_foundation_completion.source_gate_contract"));
@@ -210,7 +227,7 @@ fn checker_validates_fpg_evidence_foundation_contract_and_emits_report_log() -> 
 
 #[test]
 fn checker_rejects_missing_integration_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-integration-ref")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["integration_primary"]["required_test_refs"] = json!([]);
@@ -233,7 +250,7 @@ fn checker_rejects_missing_integration_test_ref() -> TestResult {
 
 #[test]
 fn checker_rejects_gap_count_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "gap-count-drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_source_gate_contract"]["expected_gap_count"] = json!(6);
@@ -256,7 +273,7 @@ fn checker_rejects_gap_count_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non-rch")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["unit_primary"]["required_commands"] =
@@ -278,7 +295,7 @@ fn checker_rejects_non_rch_cargo_command() -> TestResult {
 
 #[test]
 fn checker_rejects_source_commit_policy_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "freshness-drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_source_gate_contract"]["source_commit_freshness_policy"]["foundation_evidence_allowed_when_stale"] =
