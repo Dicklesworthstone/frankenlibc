@@ -19,6 +19,15 @@ unsafe extern "C" {
     #[link_name = "alphasort"]
     fn host_alphasort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
     fn readdir64(dirp: *mut libc::DIR) -> *mut libc::dirent64;
+    #[link_name = "scandir"]
+    fn host_scandir(
+        path: *const c_char,
+        namelist: *mut *mut *mut libc::dirent,
+        filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
+        compar: Option<
+            unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
+        >,
+    ) -> c_int;
     fn scandir64(
         path: *const c_char,
         namelist: *mut *mut *mut libc::dirent64,
@@ -87,6 +96,7 @@ fn dirent_named(name: &[u8]) -> libc::dirent {
 
 type DirentComparator =
     unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int;
+type DirentFilter = unsafe extern "C" fn(*const libc::dirent) -> c_int;
 
 fn compare_dirent_names(left: &[u8], right: &[u8], cmp: DirentComparator) -> c_int {
     let left_entry = dirent_named(left);
@@ -207,6 +217,72 @@ fn walk_lc64(dir: &std::path::Path) -> Result<BTreeSet<(Vec<u8>, u8)>, String> {
         return Err(format!("closedir returned {}", rc));
     }
     Ok(entries)
+}
+
+fn scandir_names_fl(
+    dir: &std::path::Path,
+    filter: Option<DirentFilter>,
+    compar: Option<DirentComparator>,
+) -> Result<Vec<Vec<u8>>, String> {
+    let cp = cstr_path(dir);
+    let mut namelist: *mut *mut libc::dirent = std::ptr::null_mut();
+    let count = unsafe { fl::scandir(cp.as_ptr(), &mut namelist, filter, compar) };
+    if count < 0 {
+        return Err(format!("scandir returned {count}"));
+    }
+    if count > 0 && namelist.is_null() {
+        return Err("scandir returned positive count with NULL namelist".into());
+    }
+
+    let mut names = Vec::new();
+    for i in 0..count as usize {
+        let entry = unsafe { *namelist.add(i) };
+        if entry.is_null() {
+            return Err(format!("scandir entry {i} was NULL"));
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name != b"." && name != b".." {
+            names.push(name);
+        }
+    }
+    Ok(names)
+}
+
+fn scandir_names_lc(
+    dir: &std::path::Path,
+    filter: Option<DirentFilter>,
+    compar: Option<DirentComparator>,
+) -> Result<Vec<Vec<u8>>, String> {
+    let cp = cstr_path(dir);
+    let mut namelist: *mut *mut libc::dirent = std::ptr::null_mut();
+    let count = unsafe { host_scandir(cp.as_ptr(), &mut namelist, filter, compar) };
+    if count < 0 {
+        return Err(format!("scandir returned {count}"));
+    }
+    if count > 0 && namelist.is_null() {
+        return Err("scandir returned positive count with NULL namelist".into());
+    }
+
+    let mut names = Vec::new();
+    for i in 0..count as usize {
+        let entry = unsafe { *namelist.add(i) };
+        if entry.is_null() {
+            return Err(format!("scandir entry {i} was NULL"));
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name != b"." && name != b".." {
+            names.push(name);
+        }
+    }
+    Ok(names)
 }
 
 fn scandir64_names_fl(dir: &std::path::Path) -> Result<Vec<Vec<u8>>, String> {
@@ -368,6 +444,41 @@ fn diff_scandir64_mixed_directory() {
     assert_eq!(
         fl_names, lc_names,
         "scandir64 name-set divergence:\n  fl: {fl_names:?}\n  lc: {lc_names:?}"
+    );
+}
+
+unsafe extern "C" fn keep_a_prefix(entry: *const libc::dirent) -> c_int {
+    if entry.is_null() {
+        return 0;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()).to_bytes() };
+    c_int::from(name.first() == Some(&b'a'))
+}
+
+#[test]
+fn diff_scandir_filter_alphasort_order() {
+    let dir = temp_dir("scan_filter_sort");
+    for name in ["zeta", "alpha", "aardvark", "beta", "a10", "a2"] {
+        write_file(&dir.join(name), name.as_bytes());
+    }
+    std::fs::create_dir(dir.join("adir")).expect("subdir");
+
+    let fl_names =
+        scandir_names_fl(&dir, Some(keep_a_prefix), Some(fl::alphasort)).expect("fl scandir");
+    let lc_names =
+        scandir_names_lc(&dir, Some(keep_a_prefix), Some(host_alphasort)).expect("lc scandir");
+
+    assert!(
+        !fl_names.is_empty(),
+        "filtered scandir should retain a-prefix entries"
+    );
+    assert!(
+        fl_names.iter().all(|name| name.first() == Some(&b'a')),
+        "FrankenLibC filter leaked non-matching entries: {fl_names:?}"
+    );
+    assert_eq!(
+        fl_names, lc_names,
+        "scandir filter + alphasort order divergence:\n  fl: {fl_names:?}\n  lc: {lc_names:?}"
     );
 }
 
@@ -684,6 +795,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":8,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":9,\"divergences\":0}}",
     );
 }
