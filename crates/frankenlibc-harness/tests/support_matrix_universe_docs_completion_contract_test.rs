@@ -5,13 +5,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo parent")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -97,7 +97,7 @@ fn string_values(value: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_symbol_universe_completion_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -162,7 +162,7 @@ fn manifest_binds_symbol_universe_completion_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_symbol_universe_docs_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -188,7 +188,7 @@ fn checker_validates_symbol_universe_docs_contract() -> TestResult {
 
 #[test]
 fn checker_emits_universe_report_and_jsonl_rows() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -238,7 +238,7 @@ fn checker_emits_universe_report_and_jsonl_rows() -> TestResult {
 
 #[test]
 fn checker_rejects_symbol_universe_total_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["expected_symbol_universe"]["total_symbols"] = json!(4120);
 
@@ -260,7 +260,7 @@ fn checker_rejects_symbol_universe_total_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_legacy_snapshot_text() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["universe_join_requirements"]["docs"][0]["required_text"][0] =
         json!("1277/898/358/21/0");
@@ -283,7 +283,7 @@ fn checker_rejects_legacy_snapshot_text() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_completion_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     let refs = manifest["completion_debt_evidence"]["test_sources"]["completion_harness_test"]
         ["required_test_refs"]
