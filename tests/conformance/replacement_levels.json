@@ -174,10 +174,10 @@
               "blocked_row_count": 0
             },
             "actual": {
-              "current_gate_status": "blocked",
-              "blocked_row_count": 6
+              "current_gate_status": "pass",
+              "blocked_row_count": 0
             },
-            "outcome": "blocked"
+            "outcome": "pass"
           }
         ],
         "evidence_bundle": {
@@ -198,8 +198,7 @@
         }
       },
       "blockers": [
-        "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate.",
-        "L1 CRT/startup/TLS proof matrix still blocks constructor/destructor, init/fini array, process TLS initialization, atexit/on_exit, and errno/TLS isolation obligations."
+        "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate."
       ],
       "status": "in_progress"
     },

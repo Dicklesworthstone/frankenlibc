@@ -808,6 +808,71 @@ def validate_l1_crt_matrix(matrix: dict) -> list[str]:
     return failures
 
 
+def find_obligation(objective_gate: dict, obligation_id: str) -> dict:
+    obligations = objective_gate.get("obligations", [])
+    if not isinstance(obligations, list):
+        return {}
+    for obligation in obligations:
+        if isinstance(obligation, dict) and obligation.get("id") == obligation_id:
+            return obligation
+    return {}
+
+
+def validate_l1_objective_gate_consistency(levels: dict, objective_gate: dict, l1_crt_matrix: dict) -> list[str]:
+    failures = []
+    if not isinstance(objective_gate, dict):
+        return ["L1 objective_gate must be an object"]
+
+    summary = l1_crt_matrix.get("summary", {}) if isinstance(l1_crt_matrix, dict) else {}
+    expected_gate_status = summary.get("current_gate_status")
+    expected_blocked_rows = int(summary.get("blocked_row_count", -1) or 0)
+    expected_outcome = "pass" if expected_gate_status == "pass" and expected_blocked_rows == 0 else "blocked"
+
+    crt_obligation = find_obligation(objective_gate, "crt_startup_tls_proof_matrix")
+    if not crt_obligation:
+        failures.append("objective_gate missing crt_startup_tls_proof_matrix obligation")
+    else:
+        actual = crt_obligation.get("actual", {})
+        expected = crt_obligation.get("expected", {})
+        if expected.get("current_gate_status") != "pass":
+            failures.append("crt_startup_tls_proof_matrix.expected.current_gate_status must be pass")
+        if int(expected.get("blocked_row_count", -1) or 0) != 0:
+            failures.append("crt_startup_tls_proof_matrix.expected.blocked_row_count must be 0")
+        if actual.get("current_gate_status") != expected_gate_status:
+            failures.append(
+                "crt_startup_tls_proof_matrix.actual.current_gate_status must match proof matrix summary"
+            )
+        if int(actual.get("blocked_row_count", -1) or 0) != expected_blocked_rows:
+            failures.append(
+                "crt_startup_tls_proof_matrix.actual.blocked_row_count must match proof matrix summary"
+            )
+        if crt_obligation.get("outcome") != expected_outcome:
+            failures.append(
+                "crt_startup_tls_proof_matrix.outcome must pass exactly when the proof matrix has pass/0 blocked rows"
+            )
+
+    promotion = find_obligation(objective_gate, "promotion_claim_control")
+    if not promotion:
+        failures.append("objective_gate missing promotion_claim_control obligation")
+    elif promotion.get("outcome") != "blocked":
+        failures.append("promotion_claim_control must remain blocked until current_level and release tag policy are promoted together")
+
+    blocked_obligations = [
+        obligation.get("id", "<missing>")
+        for obligation in objective_gate.get("obligations", [])
+        if isinstance(obligation, dict) and obligation.get("outcome") == "blocked"
+    ]
+    if blocked_obligations != ["promotion_claim_control"]:
+        failures.append(
+            f"only promotion_claim_control may remain blocked after CRT/startup/TLS proof rows pass, got {blocked_obligations}"
+        )
+    if objective_gate.get("status") != "blocked":
+        failures.append("objective_gate.status must remain blocked while promotion_claim_control is blocked")
+    if levels.get("current_level") != "L0":
+        failures.append("current_level must remain L0 until the explicit promotion bead updates release claims")
+    return failures
+
+
 def rel(path: Path) -> str:
     return os.path.relpath(path, root)
 
@@ -1114,6 +1179,12 @@ try:
         "L1 CRT/startup/TLS proof matrix is complete and fail-closed",
         rel(l1_crt_matrix_path),
         validate_l1_crt_matrix(l1_crt_matrix),
+    )
+    add_check(
+        "l1_objective_gate_consistency",
+        "L1 objective gate consumes the current CRT/startup/TLS proof matrix without promoting the release claim",
+        rel(levels_path),
+        validate_l1_objective_gate_consistency(levels, objective_gate, l1_crt_matrix),
     )
 except Exception as exc:
     if not script_checks:

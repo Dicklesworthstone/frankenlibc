@@ -904,6 +904,70 @@ fn gate_script_exists_and_executable() {
 }
 
 #[test]
+fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
+    let levels = load_levels();
+    let matrix = load_l1_crt_startup_tls_matrix();
+    let l1 = levels["levels"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|entry| entry["level"].as_str() == Some("L1"))
+        })
+        .expect("L1 level entry should exist");
+    let objective_gate = &l1["objective_gate"];
+    let obligations = objective_gate["obligations"]
+        .as_array()
+        .expect("L1 objective gate obligations should be an array");
+    let crt_obligation = obligations
+        .iter()
+        .find(|entry| entry["id"].as_str() == Some("crt_startup_tls_proof_matrix"))
+        .expect("L1 objective gate should bind the CRT/startup/TLS proof matrix");
+    let summary = &matrix["summary"];
+
+    assert_eq!(
+        crt_obligation["expected"]["current_gate_status"].as_str(),
+        Some("pass")
+    );
+    assert_eq!(
+        crt_obligation["expected"]["blocked_row_count"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(
+        crt_obligation["actual"]["current_gate_status"].as_str(),
+        summary["current_gate_status"].as_str(),
+        "replacement_levels.json should consume the proof matrix current_gate_status"
+    );
+    assert_eq!(
+        crt_obligation["actual"]["blocked_row_count"].as_u64(),
+        summary["blocked_row_count"].as_u64(),
+        "replacement_levels.json should consume the proof matrix blocked_row_count"
+    );
+    assert_eq!(
+        crt_obligation["outcome"].as_str(),
+        Some("pass"),
+        "CRT/startup/TLS proof matrix must not remain an L1 blocker after all rows pass"
+    );
+
+    let blocked_obligations: Vec<_> = obligations
+        .iter()
+        .filter(|entry| entry["outcome"].as_str() == Some("blocked"))
+        .filter_map(|entry| entry["id"].as_str())
+        .collect();
+    assert_eq!(
+        blocked_obligations,
+        vec!["promotion_claim_control"],
+        "only explicit claim promotion control should block the L1 objective gate"
+    );
+    assert_eq!(objective_gate["status"].as_str(), Some("blocked"));
+    assert_eq!(levels["current_level"].as_str(), Some("L0"));
+    assert_eq!(
+        levels["release_tag_policy"]["current_release_level"].as_str(),
+        Some("L0")
+    );
+}
+
+#[test]
 fn l1_crt_startup_tls_proof_matrix_validates_required_rows() {
     let matrix = load_l1_crt_startup_tls_matrix();
     let errors = match validate_l1_crt_startup_tls_matrix(&matrix) {
@@ -1145,8 +1209,8 @@ fn gate_script_refreshes_l1_objective_gate_artifacts() {
         .expect("report.script_checks must be an array");
     assert_eq!(
         script_checks.len(),
-        7,
-        "expected seven script checks in report"
+        8,
+        "expected eight script checks in report"
     );
     assert!(
         script_checks
