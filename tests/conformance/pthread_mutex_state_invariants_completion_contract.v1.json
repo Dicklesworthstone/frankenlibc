@@ -36,7 +36,7 @@
       "crates/frankenlibc-abi/src/pthread_abi.rs:2428",
       "crates/frankenlibc-abi/src/pthread_abi.rs:2498",
       "tests/conformance/fixtures/pthread_mutex.json:1",
-      "crates/frankenlibc-harness/tests/pthread_mutex_conformance_test.rs:413",
+      "crates/frankenlibc-harness/tests/pthread_mutex_conformance_test.rs:415",
       "scripts/check_pthread_mutex_state_invariants_completion_contract.sh:1",
       "crates/frankenlibc-harness/tests/pthread_mutex_state_invariants_completion_contract_test.rs:1"
     ],
