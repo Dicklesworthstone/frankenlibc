@@ -164,16 +164,18 @@
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "expected_order": ["preinit_array", "init_array", "main"],
-      "actual_order": [],
+      "actual_order": ["preinit_array", "init_array", "main"],
       "expected_status": "required",
-      "actual_status": "blocked",
-      "promotion_decision": "claim_blocked",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-05-15T15:49:00Z",
       "artifact_refs": [
-        "tests/integration/fixture_startup.c",
-        "tests/conformance/ld_preload_smoke_summary.v1.json"
+        "crates/frankenlibc-abi/src/startup_abi.rs",
+        "crates/frankenlibc-abi/tests/startup_abi_test.rs",
+        "tests/integration/fixture_startup.c"
       ],
       "check_commands": [
-        "scripts/ld_preload_smoke.sh"
+        "cargo test -p frankenlibc-abi --test startup_abi_test phase0_runs_preinit_and_init_constructors_before_main -- --nocapture"
       ],
       "failure_signature": "l1_constructor_order_not_proven"
     },
@@ -337,9 +339,9 @@
   ],
   "summary": {
     "required_row_count": 11,
-    "satisfied_row_count": 7,
-    "blocked_row_count": 4,
+    "satisfied_row_count": 8,
+    "blocked_row_count": 3,
     "current_gate_status": "blocked",
-    "blocker_reason": "Constructor/destructor, init/fini array, and atexit/on_exit evidence remain explicit L1 blockers."
+    "blocker_reason": "Destructor, init/fini array, and atexit/on_exit evidence remain explicit L1 blockers."
   }
 }

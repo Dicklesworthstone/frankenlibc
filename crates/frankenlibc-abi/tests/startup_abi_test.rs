@@ -267,6 +267,7 @@ fn phase0_sets_program_name_globals() {
 
 static mut INIT_CALLED: bool = false;
 static mut FINI_CALLED: bool = false;
+static CONSTRUCTOR_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 unsafe extern "C" fn init_hook() {
     unsafe { INIT_CALLED = true };
@@ -274,6 +275,21 @@ unsafe extern "C" fn init_hook() {
 
 unsafe extern "C" fn fini_hook() {
     unsafe { FINI_CALLED = true };
+}
+
+unsafe extern "C" fn constructor_order_init_hook() {
+    let mut order = CONSTRUCTOR_ORDER.lock().unwrap();
+    order.push("preinit_array");
+    order.push("init_array");
+}
+
+unsafe extern "C" fn constructor_order_main(
+    _argc: c_int,
+    _argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
+) -> c_int {
+    CONSTRUCTOR_ORDER.lock().unwrap().push("main");
+    0
 }
 
 #[test]
@@ -299,6 +315,36 @@ fn phase0_calls_init_and_fini_hooks() {
     assert_eq!(rc, 42);
     assert!(unsafe { INIT_CALLED }, "init hook should have been called");
     assert!(unsafe { FINI_CALLED }, "fini hook should have been called");
+}
+
+#[test]
+fn phase0_runs_preinit_and_init_constructors_before_main() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    CONSTRUCTOR_ORDER.lock().unwrap().clear();
+
+    let mut fix = StartupFixture::new(b"constructors");
+    let rc = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(constructor_order_main),
+            fix.argc(),
+            fix.argv_ptr(),
+            Some(constructor_order_init_hook),
+            None,
+            None,
+            fix.stack_end(),
+        )
+    };
+
+    assert_eq!(rc, 0);
+    let order = CONSTRUCTOR_ORDER.lock().unwrap().clone();
+    assert_eq!(order, ["preinit_array", "init_array", "main"]);
+
+    let snap = startup_policy_snapshot_for_tests();
+    assert_eq!(snap.decision, StartupPolicyDecision::Allow);
+    assert!(
+        snap.dag_valid,
+        "constructor startup path should preserve the phase-0 DAG"
+    );
 }
 
 // ---------------------------------------------------------------------------
