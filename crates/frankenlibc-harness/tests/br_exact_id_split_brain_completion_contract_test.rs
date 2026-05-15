@@ -1,18 +1,19 @@
 use frankenlibc_harness::structured_log::validate_log_line;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -82,7 +83,7 @@ fn log_records(path: &Path) -> TestResult<Vec<Value>> {
 
 #[test]
 fn manifest_binds_exact_id_commands_and_missing_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -116,13 +117,13 @@ fn manifest_binds_exact_id_commands_and_missing_items() -> TestResult {
         assert!(probe_ids.contains(&required), "missing probe id {required}");
     }
 
-    let exact_commands: Vec<&str> =
-        manifest["live_read_only_probe_contract"]["exact_id_probe_commands"]
-            .as_array()
-            .ok_or("exact_id_probe_commands must be array")?
-            .iter()
-            .filter_map(|command| command.as_str())
-            .collect();
+    let exact_commands: Vec<&str> = manifest["live_read_only_probe_contract"]
+        ["exact_id_probe_commands"]
+        .as_array()
+        .ok_or("exact_id_probe_commands must be array")?
+        .iter()
+        .filter_map(|command| command.as_str())
+        .collect();
     assert!(exact_commands.contains(&"br show <id> --json"));
     assert!(exact_commands.contains(&"br --no-db show <id> --json"));
 
@@ -160,7 +161,7 @@ fn manifest_binds_exact_id_commands_and_missing_items() -> TestResult {
 
 #[test]
 fn checker_replays_live_read_only_tracker_commands() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "live")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -194,7 +195,7 @@ fn checker_replays_live_read_only_tracker_commands() -> TestResult {
 
 #[test]
 fn checker_validates_source_artifacts_and_structured_logs() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "logs")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -261,7 +262,7 @@ fn checker_validates_source_artifacts_and_structured_logs() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_exact_id_probe() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_probe")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["live_read_only_probe_contract"]["required_probe_ids"] =
@@ -285,7 +286,7 @@ fn checker_rejects_missing_exact_id_probe() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_source_discrepancy() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_discrepancy")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["source_contracts"][0]["required_discrepancies"] =
