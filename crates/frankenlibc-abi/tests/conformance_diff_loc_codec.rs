@@ -208,6 +208,26 @@ fn diff_loc_aton_garbage_rejected() {
 }
 
 #[test]
+fn diff_loc_aton_outer_whitespace_rejected() {
+    let cases = [
+        " 0 0 0.000 N 0 0 0.000 E 0.00m 1.00m 10000.00m 10.00m\n",
+        "\t42 21 54 N 71 06 18 W 24m",
+    ];
+    for case in cases {
+        let (fl_o, lc_o) = aton_both(case);
+        assert_eq!(
+            fl_o.is_some(),
+            lc_o.is_some(),
+            "outer-whitespace acceptance differs for {case:?}"
+        );
+        assert!(
+            fl_o.is_none(),
+            "outer-whitespace LOC input should be rejected: {case:?}"
+        );
+    }
+}
+
+#[test]
 fn fl_loc_aton_null_rejects_without_crashing() {
     // glibc segfaults on NULL ascii — we don't compare here; we just
     // verify fl is hardened and returns 0.

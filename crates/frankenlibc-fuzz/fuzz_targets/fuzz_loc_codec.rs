@@ -16,6 +16,10 @@
 //!    they accept the input and, if accepted, what bytes they emit.
 //!    Any divergence is a bug.
 //!
+//! Seed files can force a specific mode with `bin:` or `text:`
+//! prefixes. Unprefixed inputs still use the legacy low-bit mode
+//! selector so existing minimized artifacts remain valid.
+//!
 //! Filed under [bd-58e87f] follow-up — fuzz coverage extension.
 //!
 //! Run with:
@@ -24,7 +28,7 @@
 //! cargo +nightly fuzz run fuzz_loc_codec
 //! ```
 
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{CStr, c_char, c_int};
 use std::os::raw::c_uchar;
 
 use frankenlibc_abi::resolv_abi as fl;
@@ -46,29 +50,29 @@ fn try_binary_round_trip(seed: &[u8]) {
     bin.copy_from_slice(&seed[..16]);
     bin[0] = 0; // version
     // Mantissa nibble of size/hp/vp must be 0..=9 to round-trip; clamp.
-    bin[1] = ((bin[1] >> 4) % 10) << 4 | (bin[1] & 0x0f) % 10;
-    bin[2] = ((bin[2] >> 4) % 10) << 4 | (bin[2] & 0x0f) % 10;
-    bin[3] = ((bin[3] >> 4) % 10) << 4 | (bin[3] & 0x0f) % 10;
+    bin[1] = (((bin[1] >> 4) % 10) << 4) | ((bin[1] & 0x0f) % 10);
+    bin[2] = (((bin[2] >> 4) % 10) << 4) | ((bin[2] & 0x0f) % 10);
+    bin[3] = (((bin[3] >> 4) % 10) << 4) | ((bin[3] & 0x0f) % 10);
     // Clamp lat/lon/alt to reasonable physical ranges so the formatter
     // doesn't emit values libresolv's parser would reject.
     let ref_pos: u32 = 1u32 << 31;
     let cap_arc_ms: u32 = 90 * 3_600_000; // <= 90 deg in milli-arcsec
     let cap_arc_ms_lon: u32 = 180 * 3_600_000;
     let lat = u32::from_be_bytes([bin[4], bin[5], bin[6], bin[7]]);
-    let lat = ref_pos
-        .wrapping_add((lat as i64 - ref_pos as i64).clamp(-(cap_arc_ms as i64), cap_arc_ms as i64) as u32);
+    let lat = ref_pos.wrapping_add(
+        (lat as i64 - ref_pos as i64).clamp(-(cap_arc_ms as i64), cap_arc_ms as i64) as u32,
+    );
     bin[4..8].copy_from_slice(&lat.to_be_bytes());
     let lon = u32::from_be_bytes([bin[8], bin[9], bin[10], bin[11]]);
-    let lon = ref_pos
-        .wrapping_add((lon as i64 - ref_pos as i64).clamp(-(cap_arc_ms_lon as i64), cap_arc_ms_lon as i64) as u32);
+    let lon = ref_pos.wrapping_add(
+        (lon as i64 - ref_pos as i64).clamp(-(cap_arc_ms_lon as i64), cap_arc_ms_lon as i64) as u32,
+    );
     bin[8..12].copy_from_slice(&lon.to_be_bytes());
     // Altitude: keep within +/-50000m of reference.
     let alt = u32::from_be_bytes([bin[12], bin[13], bin[14], bin[15]]);
     let alt_ref: u32 = 100_000 * 100;
     let cap_cm: i64 = 50_000 * 100;
-    let alt = alt_ref.wrapping_add(
-        (alt as i64 - alt_ref as i64).clamp(-cap_cm, cap_cm) as u32
-    );
+    let alt = alt_ref.wrapping_add((alt as i64 - alt_ref as i64).clamp(-cap_cm, cap_cm) as u32);
     bin[12..16].copy_from_slice(&alt.to_be_bytes());
 
     // Format binary -> text via fl.
@@ -90,7 +94,7 @@ fn try_binary_round_trip(seed: &[u8]) {
 
 fn try_text_diff(text: &[u8]) {
     // Skip inputs containing NUL — CStr can't hold those.
-    if text.iter().any(|&b| b == 0) {
+    if text.contains(&0) {
         return;
     }
     let cs = match std::ffi::CString::new(text) {
@@ -124,6 +128,15 @@ fn try_text_diff(text: &[u8]) {
 }
 
 fuzz_target!(|data: &[u8]| {
+    if let Some(payload) = data.strip_prefix(b"bin:") {
+        try_binary_round_trip(trim_seed_newline(payload));
+        return;
+    }
+    if let Some(payload) = data.strip_prefix(b"text:") {
+        try_text_diff(trim_seed_newline(payload));
+        return;
+    }
+
     if data.is_empty() {
         return;
     }
@@ -135,3 +148,10 @@ fuzz_target!(|data: &[u8]| {
         try_text_diff(rest);
     }
 });
+
+fn trim_seed_newline(payload: &[u8]) -> &[u8] {
+    payload
+        .strip_suffix(b"\r\n")
+        .or_else(|| payload.strip_suffix(b"\n"))
+        .unwrap_or(payload)
+}

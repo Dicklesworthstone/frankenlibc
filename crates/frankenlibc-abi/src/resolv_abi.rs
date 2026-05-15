@@ -4845,6 +4845,10 @@ pub unsafe extern "C" fn __loc_aton(ascii: *const c_char, binary: *mut u8) -> c_
 }
 
 fn loc_aton_inner(s: &[u8]) -> Option<[u8; 16]> {
+    if s.is_empty() || s.first().is_some_and(u8::is_ascii_whitespace) {
+        return None;
+    }
+
     let mut tokens = LocTokens::new(s);
 
     // Latitude: deg [min [sec[.frac]]] (N|S)
