@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -6,13 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn workspace_root() -> TestResult<PathBuf> {
+    let crates_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crates_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -153,6 +154,24 @@ fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
         .collect::<Result<BTreeSet<_>, Box<dyn std::error::Error>>>()
 }
 
+fn json_array<'a>(value: &'a Value, description: &str) -> TestResult<&'a Vec<Value>> {
+    value
+        .as_array()
+        .ok_or_else(|| format!("{description} must be array").into())
+}
+
+fn json_str<'a>(value: &'a Value, description: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| format!("{description} must be string").into())
+}
+
+fn json_u64(value: &Value, description: &str) -> TestResult<u64> {
+    value
+        .as_u64()
+        .ok_or_else(|| format!("{description} must be unsigned integer").into())
+}
+
 fn source_artifacts(manifest: &Value) -> TestResult<&serde_json::Map<String, Value>> {
     manifest["source_artifacts"]
         .as_object()
@@ -183,7 +202,7 @@ fn assert_file_line_ref_exists(root: &Path, file_line_ref: &str) -> TestResult {
 
 #[test]
 fn manifest_binds_critique_response_completion_debt() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -192,7 +211,12 @@ fn manifest_binds_critique_response_completion_debt() -> TestResult {
     );
     assert_eq!(manifest["original_bead"].as_str(), Some("bd-3qq"));
     assert_eq!(manifest["completion_debt_bead"].as_str(), Some("bd-3qq.1"));
-    assert!(manifest["next_audit_score_threshold"].as_u64().unwrap() >= 800);
+    assert!(
+        json_u64(
+            &manifest["next_audit_score_threshold"],
+            "next audit score threshold"
+        )? >= 800
+    );
 
     let artifacts = source_artifacts(&manifest)?;
     for (artifact_id, path) in artifacts {
@@ -203,23 +227,27 @@ fn manifest_binds_critique_response_completion_debt() -> TestResult {
         );
     }
 
-    let missing_ids: BTreeSet<_> = manifest["missing_item_bindings"]
-        .as_array()
-        .ok_or("missing_item_bindings must be array")?
+    let missing_ids = json_array(&manifest["missing_item_bindings"], "missing_item_bindings")?
         .iter()
-        .filter_map(|binding| binding["id"].as_str())
-        .collect();
+        .map(|binding| Ok(json_str(&binding["id"], "missing item binding id")?.to_string()))
+        .collect::<TestResult<BTreeSet<_>>>()?;
     assert_eq!(
         missing_ids,
-        BTreeSet::from([
+        [
             "telemetry.primary",
             "tests.e2e.primary",
             "tests.unit.primary"
-        ])
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
     );
 
-    for implementation_ref in manifest["implementation_refs"].as_array().unwrap() {
-        assert_file_line_ref_exists(root.as_path(), implementation_ref.as_str().unwrap())?;
+    for implementation_ref in json_array(&manifest["implementation_refs"], "implementation_refs")? {
+        assert_file_line_ref_exists(
+            root.as_path(),
+            json_str(implementation_ref, "implementation ref")?,
+        )?;
     }
 
     let dependency_ids = string_set(&manifest["required_dependency_closure"])?;
@@ -244,14 +272,22 @@ fn manifest_binds_critique_response_completion_debt() -> TestResult {
         Some(0)
     );
 
-    for binding in manifest["missing_item_bindings"].as_array().unwrap() {
-        for file_line_ref in binding["implementation_refs"].as_array().unwrap() {
-            assert_file_line_ref_exists(root.as_path(), file_line_ref.as_str().unwrap())?;
+    for binding in json_array(&manifest["missing_item_bindings"], "missing_item_bindings")? {
+        for file_line_ref in json_array(
+            &binding["implementation_refs"],
+            "binding implementation_refs",
+        )? {
+            assert_file_line_ref_exists(root.as_path(), json_str(file_line_ref, "file-line ref")?)?;
         }
-        for test_ref in binding["required_test_refs"].as_array().unwrap() {
-            let source = test_ref["source"].as_str().unwrap();
-            let name = test_ref["name"].as_str().unwrap();
-            let source_path = artifacts[source].as_str().unwrap();
+        for test_ref in json_array(&binding["required_test_refs"], "binding required_test_refs")? {
+            let source = json_str(&test_ref["source"], "test ref source")?;
+            let name = json_str(&test_ref["name"], "test ref name")?;
+            let source_path = json_str(
+                artifacts
+                    .get(source)
+                    .ok_or_else(|| format!("missing source artifact {source}"))?,
+                "source artifact path",
+            )?;
             assert!(
                 function_exists(root.as_path(), source_path, name)?,
                 "missing test function {source}::{name}"
@@ -264,7 +300,7 @@ fn manifest_binds_critique_response_completion_debt() -> TestResult {
 
 #[test]
 fn checker_emits_report_and_structured_log() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = read_json(&contract_path(&root))?;
     let (contract, out_dir) = fixture_contract(&root, "pass", &manifest)?;
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -275,7 +311,7 @@ fn checker_emits_report_and_structured_log() -> TestResult {
     assert_eq!(report["error_count"].as_u64(), Some(0));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-3qq.1"));
     assert!(
-        report["support_summary"]["total"].as_u64().unwrap() >= 3980,
+        json_u64(&report["support_summary"]["total"], "support summary total")? >= 3980,
         "support matrix total should satisfy the original classified-symbol claim"
     );
     assert_eq!(report["stub_summary"]["reachable_stubs"].as_u64(), Some(0));
@@ -298,12 +334,12 @@ fn checker_emits_report_and_structured_log() -> TestResult {
     for row in rows {
         assert_eq!(row["completion_debt_bead"].as_str(), Some("bd-3qq.1"));
         assert_eq!(row["original_bead"].as_str(), Some("bd-3qq"));
-        assert!(row["trace_id"].as_str().unwrap().starts_with("bd-3qq.1:"));
+        assert!(json_str(&row["trace_id"], "trace id")?.starts_with("bd-3qq.1:"));
         assert_eq!(
             row["gate"].as_str(),
             Some("critique_response_completion_contract")
         );
-        assert!(!row["artifact_refs"].as_array().unwrap().is_empty());
+        assert!(!json_array(&row["artifact_refs"], "artifact_refs")?.is_empty());
     }
 
     Ok(())
@@ -311,7 +347,7 @@ fn checker_emits_report_and_structured_log() -> TestResult {
 
 #[test]
 fn checker_rejects_stub_count_drift() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["claim_bindings"]["stub_census"]["expected_reachable_stubs"] = json!(1);
     let (mutated, out_dir) = fixture_contract(&root, "drift", &manifest)?;
@@ -322,10 +358,12 @@ fn checker_rejects_stub_count_drift() -> TestResult {
     let report = read_json(&out_dir.join("critique_response_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
     let errors = report["errors"].as_array().ok_or("errors must be array")?;
+    let mut has_reachable_stubs_error = false;
+    for error in errors {
+        has_reachable_stubs_error |= json_str(error, "error message")?.contains("reachable_stubs");
+    }
     assert!(
-        errors
-            .iter()
-            .any(|error| error.as_str().unwrap().contains("reachable_stubs")),
+        has_reachable_stubs_error,
         "expected reachable_stubs drift error, got {errors:?}"
     );
 
