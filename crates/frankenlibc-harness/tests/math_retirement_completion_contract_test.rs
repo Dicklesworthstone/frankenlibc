@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -28,13 +28,14 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "failure_signature",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = workspace
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -119,7 +120,7 @@ fn binding_ids(manifest: &Value) -> TestResult<BTreeSet<String>> {
 
 #[test]
 fn manifest_binds_existing_math_retirement_surfaces() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -164,7 +165,7 @@ fn manifest_binds_existing_math_retirement_surfaces() -> TestResult {
 
 #[test]
 fn policy_summary_matches_live_policy() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     let policy = load_json(&root.join("tests/conformance/math_retirement_policy.json"))?;
     assert_eq!(manifest["expected_policy_summary"], policy["summary"]);
@@ -181,7 +182,7 @@ fn policy_summary_matches_live_policy() -> TestResult {
 
 #[test]
 fn checker_accepts_contract_and_emits_report() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -211,7 +212,7 @@ fn checker_accepts_contract_and_emits_report() -> TestResult {
 
 #[test]
 fn checker_emits_jsonl_rows_with_required_fields() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -238,7 +239,7 @@ fn checker_emits_jsonl_rows_with_required_fields() -> TestResult {
 
 #[test]
 fn checker_rejects_migration_summary_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bad_migration")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["migration_contract"]["expected_total_modules_to_migrate"] = json!(1);
@@ -269,7 +270,7 @@ fn checker_rejects_migration_summary_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_rule() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bad_rule")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["retirement_gate_contract"]["required_rule_ids"] = json!(["RC-1", "RC-3"]);
@@ -300,7 +301,7 @@ fn checker_rejects_missing_required_rule() -> TestResult {
 
 #[test]
 fn checker_rejects_bare_cargo_required_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bare_cargo")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["missing_item_bindings"][0]["required_commands"][0] =
