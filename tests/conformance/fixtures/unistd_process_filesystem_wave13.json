@@ -1,0 +1,398 @@
+{
+  "version": "v1",
+  "family": "unistd/process-filesystem",
+  "captured_at": "2026-05-15T17:40:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-13 fd sync, truncate, fstatvfs64, ftok, and FTS traversal boundary symbols. Outputs classify invalid file descriptors and null pointer argument contracts without recording raw file descriptors, filesystem paths, FTS traversal state, stat buffers, IPC key inputs, process IDs, or ambient file state.",
+  "spec_reference": "POSIX fstatvfs64 invalid descriptor contract; POSIX fsync invalid descriptor contract; System V ftok null path failure contract; POSIX ftruncate/ftruncate64 invalid descriptor contracts; and BSD FTS fts_open/fts_read/fts_children/fts_set/fts_close plus LFS fts64_* null stream and null argv contracts.",
+  "campaign": {
+    "bead": "tracker-blocked-unistd-wave13",
+    "campaign_id": "fcq-unistd-process-filesystem",
+    "wave_id": "wave-13-unistd-process-filesystem-fd-sync-truncate-fts",
+    "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+    "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture",
+    "first_wave_symbols": [
+      "fstatvfs64",
+      "fsync",
+      "ftok",
+      "ftruncate",
+      "ftruncate64",
+      "fts64_children",
+      "fts64_close",
+      "fts64_open",
+      "fts64_read",
+      "fts64_set",
+      "fts_children",
+      "fts_close"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "fstatvfs64_invalid_fd_strict",
+      "function": "fstatvfs64",
+      "spec_section": "POSIX fstatvfs64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstatvfs64",
+        "scenario": "invalid_fd_without_statvfs64_buffer_capture",
+        "expected": "FSTATVFS64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatvfs64 invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatvfs64;mode=strict;expected=FSTATVFS64_INVALID_FD_ERROR_EBADF;actual=FSTATVFS64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fstatvfs64_invalid_fd_hardened",
+      "function": "fstatvfs64",
+      "spec_section": "POSIX fstatvfs64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "fstatvfs64",
+        "scenario": "invalid_fd_without_statvfs64_buffer_capture",
+        "expected": "FSTATVFS64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fstatvfs64 invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fstatvfs64;mode=hardened;expected=FSTATVFS64_INVALID_FD_ERROR_EBADF;actual=FSTATVFS64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fsync_invalid_fd_strict",
+      "function": "fsync",
+      "spec_section": "POSIX fsync invalid descriptor failure",
+      "inputs": {
+        "symbol": "fsync",
+        "scenario": "invalid_fd_without_descriptor_capture",
+        "expected": "FSYNC_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fsync invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsync;mode=strict;expected=FSYNC_INVALID_FD_ERROR_EBADF;actual=FSYNC_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "fsync_invalid_fd_hardened",
+      "function": "fsync",
+      "spec_section": "POSIX fsync invalid descriptor failure",
+      "inputs": {
+        "symbol": "fsync",
+        "scenario": "invalid_fd_without_descriptor_capture",
+        "expected": "FSYNC_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC fsync invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fsync;mode=hardened;expected=FSYNC_INVALID_FD_ERROR_EBADF;actual=FSYNC_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "ftok_null_path_strict",
+      "function": "ftok",
+      "spec_section": "System V ftok null path failure",
+      "inputs": {
+        "symbol": "ftok",
+        "scenario": "null_path_without_ipc_key_or_path_capture",
+        "expected": "FTOK_NULL_PATH_ERROR_EINVAL",
+        "oracle_source": "FrankenLibC ftok null path errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=ftok;mode=strict;expected=FTOK_NULL_PATH_ERROR_EINVAL;actual=FTOK_NULL_PATH_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "ftok_null_path_hardened",
+      "function": "ftok",
+      "spec_section": "System V ftok null path failure",
+      "inputs": {
+        "symbol": "ftok",
+        "scenario": "null_path_without_ipc_key_or_path_capture",
+        "expected": "FTOK_NULL_PATH_ERROR_EINVAL",
+        "oracle_source": "FrankenLibC ftok null path errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=ftok;mode=hardened;expected=FTOK_NULL_PATH_ERROR_EINVAL;actual=FTOK_NULL_PATH_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "ftruncate_invalid_fd_strict",
+      "function": "ftruncate",
+      "spec_section": "POSIX ftruncate invalid descriptor failure",
+      "inputs": {
+        "symbol": "ftruncate",
+        "scenario": "invalid_fd_without_descriptor_or_file_size_capture",
+        "expected": "FTRUNCATE_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC ftruncate invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=ftruncate;mode=strict;expected=FTRUNCATE_INVALID_FD_ERROR_EBADF;actual=FTRUNCATE_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "ftruncate_invalid_fd_hardened",
+      "function": "ftruncate",
+      "spec_section": "POSIX ftruncate invalid descriptor failure",
+      "inputs": {
+        "symbol": "ftruncate",
+        "scenario": "invalid_fd_without_descriptor_or_file_size_capture",
+        "expected": "FTRUNCATE_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC ftruncate invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=ftruncate;mode=hardened;expected=FTRUNCATE_INVALID_FD_ERROR_EBADF;actual=FTRUNCATE_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "ftruncate64_invalid_fd_strict",
+      "function": "ftruncate64",
+      "spec_section": "POSIX ftruncate64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "ftruncate64",
+        "scenario": "invalid_fd_without_descriptor_or_file_size_capture",
+        "expected": "FTRUNCATE64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC ftruncate64 invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=ftruncate64;mode=strict;expected=FTRUNCATE64_INVALID_FD_ERROR_EBADF;actual=FTRUNCATE64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "strict"
+    },
+    {
+      "name": "ftruncate64_invalid_fd_hardened",
+      "function": "ftruncate64",
+      "spec_section": "POSIX ftruncate64 invalid descriptor failure",
+      "inputs": {
+        "symbol": "ftruncate64",
+        "scenario": "invalid_fd_without_descriptor_or_file_size_capture",
+        "expected": "FTRUNCATE64_INVALID_FD_ERROR_EBADF",
+        "oracle_source": "FrankenLibC ftruncate64 invalid fd errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=ftruncate64;mode=hardened;expected=FTRUNCATE64_INVALID_FD_ERROR_EBADF;actual=FTRUNCATE64_INVALID_FD_ERROR_EBADF;failure_signature=none",
+      "expected_errno": 9,
+      "mode": "hardened"
+    },
+    {
+      "name": "fts64_children_null_stream_strict",
+      "function": "fts64_children",
+      "spec_section": "BSD FTS64 children null stream failure",
+      "inputs": {
+        "symbol": "fts64_children",
+        "scenario": "null_stream_without_traversal_state_capture",
+        "expected": "FTS64_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL",
+        "oracle_source": "FrankenLibC fts64_children null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_children;mode=strict;expected=FTS64_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL;actual=FTS64_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "fts64_children_null_stream_hardened",
+      "function": "fts64_children",
+      "spec_section": "BSD FTS64 children null stream failure",
+      "inputs": {
+        "symbol": "fts64_children",
+        "scenario": "null_stream_without_traversal_state_capture",
+        "expected": "FTS64_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL",
+        "oracle_source": "FrankenLibC fts64_children null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_children;mode=hardened;expected=FTS64_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL;actual=FTS64_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fts64_close_null_stream_strict",
+      "function": "fts64_close",
+      "spec_section": "BSD FTS64 close null stream no-op",
+      "inputs": {
+        "symbol": "fts64_close",
+        "scenario": "null_stream_noop_without_traversal_state_capture",
+        "expected": "FTS64_CLOSE_NULL_STREAM_RC_0",
+        "oracle_source": "FrankenLibC fts64_close null stream return contract",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_close;mode=strict;expected=FTS64_CLOSE_NULL_STREAM_RC_0;actual=FTS64_CLOSE_NULL_STREAM_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fts64_close_null_stream_hardened",
+      "function": "fts64_close",
+      "spec_section": "BSD FTS64 close null stream no-op",
+      "inputs": {
+        "symbol": "fts64_close",
+        "scenario": "null_stream_noop_without_traversal_state_capture",
+        "expected": "FTS64_CLOSE_NULL_STREAM_RC_0",
+        "oracle_source": "FrankenLibC fts64_close null stream return contract",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_close;mode=hardened;expected=FTS64_CLOSE_NULL_STREAM_RC_0;actual=FTS64_CLOSE_NULL_STREAM_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fts64_open_null_argv_strict",
+      "function": "fts64_open",
+      "spec_section": "BSD FTS64 open null argv failure",
+      "inputs": {
+        "symbol": "fts64_open",
+        "scenario": "null_argv_without_root_path_capture",
+        "expected": "FTS64_OPEN_NULL_ARGV_PTR_NULL_EINVAL",
+        "oracle_source": "FrankenLibC fts64_open null argv errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_open;mode=strict;expected=FTS64_OPEN_NULL_ARGV_PTR_NULL_EINVAL;actual=FTS64_OPEN_NULL_ARGV_PTR_NULL_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "fts64_open_null_argv_hardened",
+      "function": "fts64_open",
+      "spec_section": "BSD FTS64 open null argv failure",
+      "inputs": {
+        "symbol": "fts64_open",
+        "scenario": "null_argv_without_root_path_capture",
+        "expected": "FTS64_OPEN_NULL_ARGV_PTR_NULL_EINVAL",
+        "oracle_source": "FrankenLibC fts64_open null argv errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_open;mode=hardened;expected=FTS64_OPEN_NULL_ARGV_PTR_NULL_EINVAL;actual=FTS64_OPEN_NULL_ARGV_PTR_NULL_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fts64_read_null_stream_strict",
+      "function": "fts64_read",
+      "spec_section": "BSD FTS64 read null stream failure",
+      "inputs": {
+        "symbol": "fts64_read",
+        "scenario": "null_stream_without_traversal_state_capture",
+        "expected": "FTS64_READ_NULL_STREAM_PTR_NULL_EINVAL",
+        "oracle_source": "FrankenLibC fts64_read null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_read;mode=strict;expected=FTS64_READ_NULL_STREAM_PTR_NULL_EINVAL;actual=FTS64_READ_NULL_STREAM_PTR_NULL_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "fts64_read_null_stream_hardened",
+      "function": "fts64_read",
+      "spec_section": "BSD FTS64 read null stream failure",
+      "inputs": {
+        "symbol": "fts64_read",
+        "scenario": "null_stream_without_traversal_state_capture",
+        "expected": "FTS64_READ_NULL_STREAM_PTR_NULL_EINVAL",
+        "oracle_source": "FrankenLibC fts64_read null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_read;mode=hardened;expected=FTS64_READ_NULL_STREAM_PTR_NULL_EINVAL;actual=FTS64_READ_NULL_STREAM_PTR_NULL_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fts64_set_null_stream_strict",
+      "function": "fts64_set",
+      "spec_section": "BSD FTS64 set null stream failure",
+      "inputs": {
+        "symbol": "fts64_set",
+        "scenario": "null_stream_and_entry_without_traversal_state_capture",
+        "expected": "FTS64_SET_NULL_STREAM_ERROR_EINVAL",
+        "oracle_source": "FrankenLibC fts64_set null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_set;mode=strict;expected=FTS64_SET_NULL_STREAM_ERROR_EINVAL;actual=FTS64_SET_NULL_STREAM_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "fts64_set_null_stream_hardened",
+      "function": "fts64_set",
+      "spec_section": "BSD FTS64 set null stream failure",
+      "inputs": {
+        "symbol": "fts64_set",
+        "scenario": "null_stream_and_entry_without_traversal_state_capture",
+        "expected": "FTS64_SET_NULL_STREAM_ERROR_EINVAL",
+        "oracle_source": "FrankenLibC fts64_set null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts64_set;mode=hardened;expected=FTS64_SET_NULL_STREAM_ERROR_EINVAL;actual=FTS64_SET_NULL_STREAM_ERROR_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fts_children_null_stream_strict",
+      "function": "fts_children",
+      "spec_section": "BSD FTS children null stream failure",
+      "inputs": {
+        "symbol": "fts_children",
+        "scenario": "null_stream_without_traversal_state_capture",
+        "expected": "FTS_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL",
+        "oracle_source": "FrankenLibC fts_children null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts_children;mode=strict;expected=FTS_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL;actual=FTS_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "fts_children_null_stream_hardened",
+      "function": "fts_children",
+      "spec_section": "BSD FTS children null stream failure",
+      "inputs": {
+        "symbol": "fts_children",
+        "scenario": "null_stream_without_traversal_state_capture",
+        "expected": "FTS_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL",
+        "oracle_source": "FrankenLibC fts_children null stream errno class",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts_children;mode=hardened;expected=FTS_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL;actual=FTS_CHILDREN_NULL_STREAM_PTR_NULL_EINVAL;failure_signature=none",
+      "expected_errno": 22,
+      "mode": "hardened"
+    },
+    {
+      "name": "fts_close_null_stream_strict",
+      "function": "fts_close",
+      "spec_section": "BSD FTS close null stream no-op",
+      "inputs": {
+        "symbol": "fts_close",
+        "scenario": "null_stream_noop_without_traversal_state_capture",
+        "expected": "FTS_CLOSE_NULL_STREAM_RC_0",
+        "oracle_source": "FrankenLibC fts_close null stream return contract",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts_close;mode=strict;expected=FTS_CLOSE_NULL_STREAM_RC_0;actual=FTS_CLOSE_NULL_STREAM_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fts_close_null_stream_hardened",
+      "function": "fts_close",
+      "spec_section": "BSD FTS close null stream no-op",
+      "inputs": {
+        "symbol": "fts_close",
+        "scenario": "null_stream_noop_without_traversal_state_capture",
+        "expected": "FTS_CLOSE_NULL_STREAM_RC_0",
+        "oracle_source": "FrankenLibC fts_close null stream return contract",
+        "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
+      },
+      "expected_output": "symbol=fts_close;mode=hardened;expected=FTS_CLOSE_NULL_STREAM_RC_0;actual=FTS_CLOSE_NULL_STREAM_RC_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
