@@ -8,13 +8,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+type TestResult = Result<(), String>;
+
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .and_then(Path::parent)
+        .ok_or_else(|| {
+            format!(
+                "failed to derive workspace root from {}",
+                manifest_dir.display()
+            )
+        })?;
+    Ok(root.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,35 +80,44 @@ struct UnsupportedScenario {
     documented_semantics: String,
 }
 
-fn unique_program_bin_dir() -> PathBuf {
+fn unique_program_bin_dir() -> Result<PathBuf, String> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("clock should be after unix epoch")
+        .map_err(|err| format!("system clock is before unix epoch: {err}"))?
         .as_nanos();
-    repo_root().join("target").join(format!(
+    Ok(repo_root()?.join("target").join(format!(
         "setjmp_nested_edges_bins_{}_{}",
         std::process::id(),
         nanos
-    ))
+    )))
 }
 
-fn program_expectation<'a>(scenario: &'a ProgramScenario, mode: &str) -> &'a ModeExpectation {
+fn program_expectation<'a>(
+    scenario: &'a ProgramScenario,
+    mode: &str,
+) -> Result<&'a ModeExpectation, String> {
     match mode {
-        "strict" => &scenario.expected.strict,
-        "hardened" => &scenario.expected.hardened,
-        other => panic!("unexpected mode {other}"),
+        "strict" => Ok(&scenario.expected.strict),
+        "hardened" => Ok(&scenario.expected.hardened),
+        other => Err(format!("unexpected mode {other}")),
     }
 }
 
-fn compile_program_scenario(bin_dir: &Path, scenario: &ProgramScenario) -> PathBuf {
-    let source_path = repo_root().join(&scenario.source);
-    assert!(
-        source_path.exists(),
-        "scenario {} source must exist at {}",
-        scenario.scenario_id,
-        source_path.display()
-    );
-    std::fs::create_dir_all(bin_dir).expect("program bin dir should be creatable");
+fn compile_program_scenario(bin_dir: &Path, scenario: &ProgramScenario) -> Result<PathBuf, String> {
+    let source_path = repo_root()?.join(&scenario.source);
+    if !source_path.exists() {
+        return Err(format!(
+            "scenario {} source must exist at {}",
+            scenario.scenario_id,
+            source_path.display()
+        ));
+    }
+    std::fs::create_dir_all(bin_dir).map_err(|err| {
+        format!(
+            "failed to create program bin dir {}: {err}",
+            bin_dir.display()
+        )
+    })?;
     let binary_path = bin_dir.join(&scenario.scenario_id);
     let output = Command::new("cc")
         .arg("-std=c11")
@@ -110,43 +126,44 @@ fn compile_program_scenario(bin_dir: &Path, scenario: &ProgramScenario) -> PathB
         .arg("-o")
         .arg(&binary_path)
         .output()
-        .unwrap_or_else(|err| {
-            panic!(
+        .map_err(|err| {
+            format!(
                 "failed to spawn cc for {} at {}: {err}",
                 scenario.scenario_id,
                 source_path.display()
             )
-        });
-    assert!(
-        output.status.success(),
-        "cc failed for scenario {}:\nstdout={}\nstderr={}",
-        scenario.scenario_id,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    binary_path
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "cc failed for scenario {}:\nstdout={}\nstderr={}",
+            scenario.scenario_id,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(binary_path)
 }
 
-fn run_program_scenario(binary_path: &Path, scenario: &ProgramScenario, mode: &str) {
-    let expected = program_expectation(scenario, mode);
+fn run_program_scenario(binary_path: &Path, scenario: &ProgramScenario, mode: &str) -> TestResult {
+    let expected = program_expectation(scenario, mode)?;
     let output = Command::new(binary_path)
         .env("FRANKENLIBC_MODE", mode)
         .output()
-        .unwrap_or_else(|err| {
-            panic!(
+        .map_err(|err| {
+            format!(
                 "failed to execute scenario {} ({mode}) at {}: {err}",
                 scenario.scenario_id,
                 binary_path.display()
             )
-        });
+        })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let exit_code = output.status.code().unwrap_or_else(|| {
-        panic!(
+    let exit_code = output.status.code().ok_or_else(|| {
+        format!(
             "scenario {} ({mode}) terminated by signal",
             scenario.scenario_id
         )
-    });
+    })?;
     assert_eq!(
         exit_code, expected.exit_code,
         "scenario {} ({mode}) exit-code mismatch\nstdout={stdout}\nstderr={stderr}",
@@ -158,25 +175,27 @@ fn run_program_scenario(binary_path: &Path, scenario: &ProgramScenario, mode: &s
         scenario.scenario_id,
         expected.stdout_contains
     );
+    Ok(())
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[test]
-fn setjmp_nested_edges_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/setjmp_nested_edges.json");
+fn setjmp_nested_edges_fixture_exists() -> TestResult {
+    let path = repo_root()?.join("tests/conformance/fixtures/setjmp_nested_edges.json");
     assert!(path.exists(), "setjmp_nested_edges.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_fixture_valid_schema() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_fixture_valid_schema() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "setjmp_nested_edges");
     assert!(
@@ -190,11 +209,12 @@ fn setjmp_nested_edges_fixture_valid_schema() {
         );
         assert!(!scenario.source.is_empty(), "Source must not be empty");
     }
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_covers_nested_longjmp() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_covers_nested_longjmp() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     let scenario_ids: Vec<&str> = fixture
         .program_scenarios
         .iter()
@@ -204,11 +224,12 @@ fn setjmp_nested_edges_covers_nested_longjmp() {
         scenario_ids.iter().any(|id| id.contains("nested")),
         "Missing test coverage for nested longjmp"
     );
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_covers_sigmask() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_covers_sigmask() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     let scenario_ids: Vec<&str> = fixture
         .program_scenarios
         .iter()
@@ -220,11 +241,12 @@ fn setjmp_nested_edges_covers_sigmask() {
             .any(|id| id.contains("sigmask") || id.contains("mask")),
         "Missing test coverage for sigmask handling"
     );
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_has_depth_variants() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_has_depth_variants() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     let depths: Vec<i32> = fixture
         .program_scenarios
         .iter()
@@ -236,11 +258,12 @@ fn setjmp_nested_edges_has_depth_variants() {
         has_depth_one && has_depth_two,
         "Need scenarios with jump depth 1 and 2"
     );
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_documents_unsupported() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_documents_unsupported() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     assert!(
         !fixture.unsupported_scenarios.is_empty(),
         "Should document unsupported scenarios"
@@ -252,11 +275,12 @@ fn setjmp_nested_edges_documents_unsupported() {
             scenario.scenario_id
         );
     }
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_unsupported_covers_cross_thread() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_unsupported_covers_cross_thread() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     let scenario_ids: Vec<&str> = fixture
         .unsupported_scenarios
         .iter()
@@ -266,11 +290,12 @@ fn setjmp_nested_edges_unsupported_covers_cross_thread() {
         scenario_ids.iter().any(|id| id.contains("cross_thread")),
         "Should document cross-thread longjmp as unsupported"
     );
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_both_modes_expected() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_both_modes_expected() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     for scenario in &fixture.program_scenarios {
         assert!(
             scenario.expected.strict.exit_code == 0,
@@ -283,24 +308,26 @@ fn setjmp_nested_edges_both_modes_expected() {
             scenario.scenario_id
         );
     }
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_program_scenarios_execute_with_expected_profiles() {
-    let fixture = load_fixture("setjmp_nested_edges");
-    let bin_dir = unique_program_bin_dir();
+fn setjmp_nested_edges_program_scenarios_execute_with_expected_profiles() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
+    let bin_dir = unique_program_bin_dir()?;
 
     for scenario in &fixture.program_scenarios {
-        let binary_path = compile_program_scenario(&bin_dir, scenario);
+        let binary_path = compile_program_scenario(&bin_dir, scenario)?;
         for mode in ["strict", "hardened"] {
-            run_program_scenario(&binary_path, scenario, mode);
+            run_program_scenario(&binary_path, scenario, mode)?;
         }
     }
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_unsupported_modes_are_explicitly_documented() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_unsupported_modes_are_explicitly_documented() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
 
     for scenario in &fixture.unsupported_scenarios {
         assert!(
@@ -327,11 +354,12 @@ fn setjmp_nested_edges_unsupported_modes_are_explicitly_documented() {
             scenario.scenario_id
         );
     }
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_scenario_count_stable() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_scenario_count_stable() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     let total_scenarios = fixture.program_scenarios.len() + fixture.unsupported_scenarios.len();
     assert!(
         total_scenarios >= 3,
@@ -343,13 +371,15 @@ fn setjmp_nested_edges_scenario_count_stable() {
         fixture.program_scenarios.len(),
         fixture.unsupported_scenarios.len()
     );
+    Ok(())
 }
 
 #[test]
-fn setjmp_nested_edges_has_bead_reference() {
-    let fixture = load_fixture("setjmp_nested_edges");
+fn setjmp_nested_edges_has_bead_reference() -> TestResult {
+    let fixture = load_fixture("setjmp_nested_edges")?;
     assert!(
         !fixture.bead.is_empty(),
         "setjmp_nested_edges should reference a bead"
     );
+    Ok(())
 }
