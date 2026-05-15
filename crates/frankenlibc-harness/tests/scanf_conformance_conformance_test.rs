@@ -9,13 +9,20 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+type TestResult = Result<(), String>;
+
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .and_then(Path::parent)
+        .ok_or_else(|| {
+            format!(
+                "failed to derive workspace root from {}",
+                manifest_dir.display()
+            )
+        })?;
+    Ok(root.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,23 +57,24 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 #[test]
-fn scanf_conformance_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/scanf_conformance.json");
+fn scanf_conformance_fixture_exists() -> TestResult {
+    let path = repo_root()?.join("tests/conformance/fixtures/scanf_conformance.json");
     assert!(path.exists(), "scanf_conformance.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_fixture_valid_schema() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_fixture_valid_schema() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "scanf_conformance");
     assert!(!fixture.cases.is_empty(), "Must have test cases");
@@ -74,11 +82,12 @@ fn scanf_conformance_fixture_valid_schema() {
         assert!(!case.name.is_empty(), "Case name must not be empty");
         assert!(!case.function.is_empty(), "Function must not be empty");
     }
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_integer_specifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_integer_specifiers() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("_d_")),
@@ -100,11 +109,12 @@ fn scanf_conformance_covers_integer_specifiers() {
         case_names.iter().any(|n| n.contains("_x_")),
         "Missing %x tests"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_float_specifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_float_specifiers() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("_f_")),
@@ -114,11 +124,12 @@ fn scanf_conformance_covers_float_specifiers() {
         case_names.iter().any(|n| n.contains("_lf_")),
         "Missing %lf tests"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_string_specifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_string_specifiers() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("_s_")),
@@ -128,31 +139,34 @@ fn scanf_conformance_covers_string_specifiers() {
         case_names.iter().any(|n| n.contains("_c_")),
         "Missing %c tests"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_scansets() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_scansets() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("scanset")).count() >= 3,
         "Scanset needs at least 3 test cases"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_suppression() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_suppression() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("suppress")),
         "Missing assignment suppression (*) tests"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_length_modifiers() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_length_modifiers() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("hh_")),
@@ -170,11 +184,12 @@ fn scanf_conformance_covers_length_modifiers() {
         case_names.iter().any(|n| n.contains("ll_")),
         "Missing ll length tests"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_eof_and_errors() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_eof_and_errors() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("eof")),
@@ -184,11 +199,12 @@ fn scanf_conformance_covers_eof_and_errors() {
         case_names.iter().any(|n| n.contains("no_match")),
         "Missing no-match tests"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_modes_valid() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_modes_valid() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     for case in &fixture.cases {
         assert!(
             case.mode == "both" || case.mode == "strict" || case.mode == "hardened",
@@ -197,11 +213,12 @@ fn scanf_conformance_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_case_count_stable() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_case_count_stable() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     assert!(
         fixture.cases.len() >= 50,
         "scanf_conformance fixture has {} cases, expected at least 50",
@@ -211,11 +228,12 @@ fn scanf_conformance_case_count_stable() {
         "scanf_conformance fixture has {} test cases",
         fixture.cases.len()
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_has_spec_references() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_has_spec_references() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     for case in &fixture.cases {
         assert!(
             case.spec_section.contains("C11") || case.spec_section.contains("POSIX"),
@@ -224,11 +242,12 @@ fn scanf_conformance_has_spec_references() {
             case.spec_section
         );
     }
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_special_values() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_special_values() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().any(|n| n.contains("inf")),
@@ -238,16 +257,18 @@ fn scanf_conformance_covers_special_values() {
         case_names.iter().any(|n| n.contains("nan")),
         "Missing NaN tests"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_covers_width() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_covers_width() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
     assert!(
         case_names.iter().filter(|n| n.contains("width")).count() >= 3,
         "Width specifier needs at least 3 test cases"
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -412,15 +433,15 @@ fn format_expected_scanf_result(
 }
 
 #[test]
-fn scanf_conformance_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_fixture_cases_match_execute_fixture_case() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let mut executed = 0usize;
     let skipped = 0usize;
 
     for case in &fixture.cases {
         let expected_return = case
             .expected_return
-            .unwrap_or_else(|| panic!("case {} missing expected_return", case.name));
+            .ok_or_else(|| format!("case {} missing expected_return", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -429,12 +450,12 @@ fn scanf_conformance_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "scanf_conformance case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 scanf_result_matches_fixture(
                     &result.impl_output,
@@ -460,18 +481,19 @@ fn scanf_conformance_fixture_cases_match_execute_fixture_case() {
         executed >= 10,
         "scanf_conformance in-process expected at least 10 executed cases, got {executed}"
     );
+    Ok(())
 }
 
 #[test]
-fn scanf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("scanf_conformance");
+fn scanf_conformance_fixture_executes_with_host_parity_via_harness_matrix() -> TestResult {
+    let fixture = load_fixture("scanf_conformance")?;
     let mut executed = 0usize;
     let skipped = 0usize;
 
     for case in &fixture.cases {
         let expected_return = case
             .expected_return
-            .unwrap_or_else(|| panic!("case {} missing expected_return", case.name));
+            .ok_or_else(|| format!("case {} missing expected_return", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -479,13 +501,13 @@ fn scanf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "scanf_conformance case {} ({mode}) failed via harness matrix: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 scanf_result_matches_fixture(
                     &result.impl_output,
@@ -511,4 +533,5 @@ fn scanf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
         executed >= 10,
         "scanf_conformance harness-matrix expected at least 10 executed cases, got {executed}"
     );
+    Ok(())
 }
