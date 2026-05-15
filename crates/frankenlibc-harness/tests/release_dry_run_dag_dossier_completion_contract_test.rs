@@ -259,19 +259,22 @@ fn contract_requires_release_gate_dag_and_dossier_conformance() -> TestResult {
         })
         .collect::<Result<_, _>>()?;
     assert_eq!(actual_sequence, expected_sequence);
-    assert_eq!(
+    let required_dossier_fields =
         contract["required_dossier_fields"]
             .as_array()
-            .unwrap()
-            .len(),
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "required_dossier_fields array")
+            })?;
+    assert_eq!(
+        required_dossier_fields.len(),
         12,
         "dossier schema should be fully pinned"
     );
+    let required_log_fields = contract["required_log_fields"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "required_log_fields array"))?;
     assert!(
-        contract["required_log_fields"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("resume_token")),
+        required_log_fields.contains(&serde_json::json!("resume_token")),
         "log schema should require resume token"
     );
     assert_eq!(contract["fail_fast_gate"].as_str(), Some("e2e"));
