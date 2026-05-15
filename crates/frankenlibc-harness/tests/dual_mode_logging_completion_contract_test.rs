@@ -17,13 +17,14 @@ fn checker_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -135,7 +136,7 @@ fn source_texts(root: &Path, manifest: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_dual_mode_logging_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -201,7 +202,7 @@ fn manifest_binds_dual_mode_logging_completion_items() -> TestResult {
 
 #[test]
 fn source_anchors_and_required_test_refs_exist() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     let source_artifacts = manifest["source_artifacts"]
         .as_object()
@@ -246,7 +247,7 @@ fn source_anchors_and_required_test_refs_exist() -> TestResult {
 #[test]
 fn checker_validates_dual_mode_logging_completion_contract() -> TestResult {
     let _lock = checker_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -260,16 +261,12 @@ fn checker_validates_dual_mode_logging_completion_contract() -> TestResult {
     assert_eq!(report["original_bead"].as_str(), Some("bd-oai.6"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-oai.6.1"));
     assert_eq!(report["summary"]["missing_item_count"].as_u64(), Some(3));
-    assert!(
-        report["summary"]["logging_event_count"]
-            .as_u64()
-            .is_some_and(|count| count >= 8)
-    );
-    assert!(
-        report["summary"]["resolved_test_ref_count"]
-            .as_u64()
-            .is_some_and(|count| count >= 9)
-    );
+    assert!(report["summary"]["logging_event_count"]
+        .as_u64()
+        .is_some_and(|count| count >= 8));
+    assert!(report["summary"]["resolved_test_ref_count"]
+        .as_u64()
+        .is_some_and(|count| count >= 9));
 
     let records = log_records(&out_dir.join("dual_mode_logging_completion_contract.log.jsonl"))?;
     let events: BTreeSet<_> = records
@@ -307,7 +304,7 @@ fn checker_validates_dual_mode_logging_completion_contract() -> TestResult {
 #[test]
 fn checker_rejects_missing_required_logging_event() -> TestResult {
     let _lock = checker_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     let events = manifest["logging_contract"]["required_events"]
         .as_array_mut()
@@ -336,7 +333,7 @@ fn checker_rejects_missing_required_logging_event() -> TestResult {
 #[test]
 fn checker_rejects_non_rch_cargo_command() -> TestResult {
     let _lock = checker_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     let command = manifest["missing_item_bindings"][0]["required_commands"][0]
         .as_str()
