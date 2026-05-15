@@ -146,16 +146,16 @@
   "required_matrix_contract": {
     "matrix_version": 1,
     "row_schema_version": "v1",
-    "entry_count": 118,
-    "total_critique_beads": 118,
+    "entry_count": 119,
+    "total_critique_beads": 119,
     "coverage_counts": {
-      "complete": 41,
+      "complete": 42,
       "partial": 1,
       "missing": 76
     },
     "priority_counts": {
       "P0": 34,
-      "P1": 43,
+      "P1": 44,
       "P2": 41
     },
     "required_dashboard_keys": [

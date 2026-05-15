@@ -1,18 +1,20 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let workspace_parent = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| io::Error::other("crate directory must have workspace parent"))?;
+    Ok(workspace_parent
         .parent()
-        .expect("workspace parent has repo root")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("workspace parent must have repo root"))?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -91,13 +93,51 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
-        .as_array()
-        .expect("expected array")
-        .iter()
-        .map(|item| item.as_str().expect("expected string").to_string())
-        .collect()
+fn string_set(value: &Value, label: &str) -> TestResult<BTreeSet<String>> {
+    let items = value.as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{label} must be an array"),
+        )
+    })?;
+    let mut strings = BTreeSet::new();
+    for item in items {
+        strings.insert(
+            item.as_str()
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{label} item must be a string"),
+                    )
+                })?
+                .to_string(),
+        );
+    }
+    Ok(strings)
+}
+
+fn named_entry_set(value: &Value, label: &str) -> TestResult<BTreeSet<String>> {
+    let items = value.as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{label} must be an array"),
+        )
+    })?;
+    let mut names = BTreeSet::new();
+    for entry in items {
+        names.insert(
+            entry["name"]
+                .as_str()
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{label} entry name must be a string"),
+                    )
+                })?
+                .to_string(),
+        );
+    }
+    Ok(names)
 }
 
 fn assert_checker_failed(output: &Output) {
@@ -110,7 +150,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_verification_matrix_maintenance_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -120,7 +160,10 @@ fn manifest_binds_verification_matrix_maintenance_evidence() -> TestResult {
     assert_eq!(manifest["original_bead"].as_str(), Some("bd-1o4k"));
     assert_eq!(manifest["completion_debt_bead"].as_str(), Some("bd-1o4k.1"));
     assert_eq!(
-        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"]),
+        string_set(
+            &manifest["completion_debt_evidence"]["missing_items_closed"],
+            "missing_items_closed"
+        )?,
         BTreeSet::from([
             "tests.integration.primary".to_string(),
             "tests.conformance.primary".to_string(),
@@ -141,30 +184,24 @@ fn manifest_binds_verification_matrix_maintenance_evidence() -> TestResult {
     let contract = &manifest["required_matrix_contract"];
     assert_eq!(contract["matrix_version"].as_u64(), Some(1));
     assert_eq!(contract["row_schema_version"].as_str(), Some("v1"));
-    assert_eq!(contract["entry_count"].as_u64(), Some(118));
-    assert_eq!(contract["total_critique_beads"].as_u64(), Some(118));
-    assert_eq!(contract["coverage_counts"]["complete"].as_u64(), Some(41));
+    assert_eq!(contract["entry_count"].as_u64(), Some(119));
+    assert_eq!(contract["total_critique_beads"].as_u64(), Some(119));
+    assert_eq!(contract["coverage_counts"]["complete"].as_u64(), Some(42));
     assert_eq!(contract["coverage_counts"]["partial"].as_u64(), Some(1));
     assert_eq!(contract["coverage_counts"]["missing"].as_u64(), Some(76));
 
-    let integration_names: BTreeSet<_> =
-        manifest["completion_debt_evidence"]["integration_primary"]["required_test_refs"]
-            .as_array()
-            .ok_or("integration required test refs must be array")?
-            .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+    let integration_names = named_entry_set(
+        &manifest["completion_debt_evidence"]["integration_primary"]["required_test_refs"],
+        "integration required test refs",
+    )?;
     assert!(integration_names.contains("all_critique_beads_have_rows"));
     assert!(integration_names.contains("dashboard_coverage_stats_consistent"));
     assert!(integration_names.contains("checker_replays_sync_and_matrix_gates"));
 
-    let conformance_names: BTreeSet<_> =
-        manifest["completion_debt_evidence"]["conformance_primary"]["required_test_refs"]
-            .as_array()
-            .ok_or("conformance required test refs must be array")?
-            .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+    let conformance_names = named_entry_set(
+        &manifest["completion_debt_evidence"]["conformance_primary"]["required_test_refs"],
+        "conformance required test refs",
+    )?;
     assert!(conformance_names.contains("matrix_exists_and_valid_json"));
     assert!(conformance_names.contains("verification_matrix_artifact_is_present_and_well_formed"));
 
@@ -173,7 +210,7 @@ fn manifest_binds_verification_matrix_maintenance_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_matrix_maintenance_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -188,7 +225,7 @@ fn checker_validates_matrix_maintenance_contract_and_emits_report_log() -> TestR
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["source_bead"].as_str(), Some("bd-1o4k"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-1o4k.1"));
-    assert_eq!(report["matrix_summary"]["entry_count"].as_u64(), Some(118));
+    assert_eq!(report["matrix_summary"]["entry_count"].as_u64(), Some(119));
     assert_eq!(
         report["matrix_summary"]["missing_open_critique_rows"]
             .as_array()
@@ -222,10 +259,17 @@ fn checker_validates_matrix_maintenance_contract_and_emits_report_log() -> TestR
 
     let rows =
         read_jsonl(&out_dir.join("verification_matrix_maintenance_completion_contract.log.jsonl"))?;
-    let events: BTreeSet<_> = rows
-        .iter()
-        .map(|row| row["event"].as_str().unwrap().to_string())
-        .collect();
+    let mut events = BTreeSet::new();
+    for row in &rows {
+        events.insert(
+            row["event"]
+                .as_str()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "log row event must be a string")
+                })?
+                .to_string(),
+        );
+    }
     for event in [
         "verification_matrix_maintenance_integration_bindings_verified",
         "verification_matrix_maintenance_conformance_bindings_verified",
@@ -259,7 +303,7 @@ fn checker_validates_matrix_maintenance_contract_and_emits_report_log() -> TestR
 
 #[test]
 fn checker_replays_sync_and_matrix_gates() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "gates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -286,7 +330,7 @@ fn checker_replays_sync_and_matrix_gates() -> TestResult {
 
 #[test]
 fn checker_rejects_matrix_count_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "count-drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_matrix_contract"]["entry_count"] = json!(9999);
@@ -309,12 +353,17 @@ fn checker_rejects_matrix_count_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_sync_helper_token() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-token")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_matrix_contract"]["required_source_text"]["sync_helper"]
         .as_array_mut()
-        .expect("sync helper needles array")
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "sync helper needles must be an array",
+            )
+        })?
         .push(json!(
             "sync helper must emit this intentionally missing completion-token"
         ));
@@ -337,7 +386,7 @@ fn checker_rejects_missing_sync_helper_token() -> TestResult {
 
 #[test]
 fn checker_rejects_local_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "local-cargo")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["integration_primary"]["required_commands"] =
