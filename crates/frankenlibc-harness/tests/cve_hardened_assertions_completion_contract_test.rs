@@ -103,6 +103,49 @@ fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
     Ok(set)
 }
 
+fn json_object<'a>(
+    value: &'a Value,
+    description: &str,
+) -> TestResult<&'a serde_json::Map<String, Value>> {
+    value.as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be an object"),
+        )
+        .into()
+    })
+}
+
+fn json_array<'a>(value: &'a Value, description: &str) -> TestResult<&'a Vec<Value>> {
+    value.as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be an array"),
+        )
+        .into()
+    })
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, description: &str) -> TestResult<&'a mut Vec<Value>> {
+    value.as_array_mut().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be a mutable array"),
+        )
+        .into()
+    })
+}
+
+fn json_str<'a>(value: &'a Value, description: &str) -> TestResult<&'a str> {
+    value.as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be a string"),
+        )
+        .into()
+    })
+}
+
 fn unique_output_dir(root: &Path, label: &str) -> TestResult<PathBuf> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let path = root.join("target/conformance").join(format!(
@@ -203,20 +246,23 @@ fn manifest_binds_missing_items_and_hardened_contract() -> TestResult {
     assert_eq!(manifest["bead"].as_str(), Some("bd-1m5.6.1"));
     assert_eq!(manifest["original_bead"].as_str(), Some("bd-1m5.6"));
 
-    for path in manifest["source_artifacts"].as_object().unwrap().values() {
-        let rel = path.as_str().unwrap();
+    for path in json_object(&manifest["source_artifacts"], "source_artifacts")?.values() {
+        let rel = json_str(path, "source artifact path")?;
         assert!(
             root.join(rel).exists(),
             "source artifact should exist: {rel}"
         );
     }
 
-    let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|binding| binding["missing_item_id"].as_str().unwrap().to_string())
-        .collect::<BTreeSet<_>>();
+    let bindings = json_array(
+        &manifest["completion_debt_evidence"]["missing_item_bindings"],
+        "missing_item_bindings",
+    )?
+    .iter()
+    .map(|binding| {
+        Ok(json_str(&binding["missing_item_id"], "missing item binding id")?.to_string())
+    })
+    .collect::<TestResult<BTreeSet<_>>>()?;
     assert_eq!(
         bindings,
         EXPECTED_MISSING_ITEMS
@@ -225,11 +271,11 @@ fn manifest_binds_missing_items_and_hardened_contract() -> TestResult {
             .collect()
     );
 
-    for item in manifest["completion_debt_evidence"]["implementation_refs"]
-        .as_array()
-        .unwrap()
-    {
-        assert_file_line_ref_exists(&root, item.as_str().unwrap())?;
+    for item in json_array(
+        &manifest["completion_debt_evidence"]["implementation_refs"],
+        "implementation_refs",
+    )? {
+        assert_file_line_ref_exists(&root, json_str(item, "implementation ref")?)?;
     }
 
     let contract = &manifest["completion_debt_evidence"]["required_hardened_assertion_contract"];
@@ -252,27 +298,29 @@ fn source_gate_and_tests_are_anchored() -> TestResult {
     let root = workspace_root()?;
     let manifest = read_json(&contract_path(&root))?;
     let evidence = &manifest["completion_debt_evidence"];
-    let test_sources = evidence["test_sources"].as_object().unwrap();
+    let test_sources = json_object(&evidence["test_sources"], "test_sources")?;
 
     let mut source_texts = std::collections::BTreeMap::new();
     for (key, path) in test_sources {
-        source_texts.insert(key.as_str(), source_text(&root, path.as_str().unwrap())?);
+        source_texts.insert(
+            key.as_str(),
+            source_text(&root, json_str(path, "test source path")?)?,
+        );
     }
 
-    for section in ["unit_primary", "e2e_primary", "conformance_primary"] {
+    for (section, expected_missing_item_id) in [
+        ("unit_primary", "tests.unit.primary"),
+        ("e2e_primary", "tests.e2e.primary"),
+        ("conformance_primary", "tests.conformance.primary"),
+    ] {
         let item = &evidence[section];
         assert_eq!(
             item["missing_item_id"].as_str(),
-            Some(match section {
-                "unit_primary" => "tests.unit.primary",
-                "e2e_primary" => "tests.e2e.primary",
-                "conformance_primary" => "tests.conformance.primary",
-                _ => unreachable!(),
-            })
+            Some(expected_missing_item_id)
         );
-        for test_ref in item["required_test_refs"].as_array().unwrap() {
-            let source = test_ref["source"].as_str().unwrap();
-            let name = test_ref["name"].as_str().unwrap();
+        for test_ref in json_array(&item["required_test_refs"], "required_test_refs")? {
+            let source = json_str(&test_ref["source"], "test ref source")?;
+            let name = json_str(&test_ref["name"], "test ref name")?;
             let source_text = source_texts.get(source).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -284,11 +332,12 @@ fn source_gate_and_tests_are_anchored() -> TestResult {
                 "{source} should define {name}"
             );
         }
-        let commands = item["required_commands"].as_array().unwrap();
+        let mut has_rch_command = false;
+        for command in json_array(&item["required_commands"], "required_commands")? {
+            has_rch_command |= json_str(command, "required command")?.contains("rch exec");
+        }
         assert!(
-            commands
-                .iter()
-                .any(|command| command.as_str().unwrap().contains("rch exec")),
+            has_rch_command,
             "{section} should require rch-routed cargo validation"
         );
     }
@@ -397,10 +446,11 @@ fn checker_rejects_missing_binding() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-binding")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["completion_debt_evidence"]["missing_item_bindings"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|binding| binding["missing_item_id"] != "tests.conformance.primary");
+    json_array_mut(
+        &mut manifest["completion_debt_evidence"]["missing_item_bindings"],
+        "missing_item_bindings",
+    )?
+    .retain(|binding| binding["missing_item_id"] != "tests.conformance.primary");
     let bad_contract = out_dir.join("bad_contract.json");
     write_json(&bad_contract, &manifest)?;
 
@@ -446,9 +496,7 @@ fn checker_rejects_missing_corpus_mapping() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-corpus")?;
     let mut corpus = read_json(&corpus_report_path(&root))?;
-    corpus["corpus_index"]
-        .as_array_mut()
-        .unwrap()
+    json_array_mut(&mut corpus["corpus_index"], "corpus_index")?
         .retain(|entry| entry["cve_id"] != "CVE-2024-2961");
     let bad_corpus = out_dir.join("bad_corpus.json");
     write_json(&bad_corpus, &corpus)?;
