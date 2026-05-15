@@ -264,6 +264,72 @@ fn walk_readdir_r_lc(dir: &std::path::Path) -> Result<DirEntrySet, String> {
     Ok(entries)
 }
 
+fn walk_alias_readdir_fl(dir: &std::path::Path) -> Result<DirEntrySet, String> {
+    let cp = cstr_path(dir);
+    let mut entries = BTreeSet::new();
+    let dirp = unsafe { fl::__opendir(cp.as_ptr()) };
+    if dirp.is_null() {
+        return Err("__opendir returned NULL".into());
+    }
+    loop {
+        let entry = unsafe { fl::__readdir(dirp) };
+        if entry.is_null() {
+            break;
+        }
+        let name_ptr = unsafe { (*entry).d_name.as_ptr() };
+        let name = unsafe { std::ffi::CStr::from_ptr(name_ptr).to_bytes().to_vec() };
+        if name == b"." || name == b".." {
+            continue;
+        }
+        let d_type = unsafe { (*entry).d_type };
+        entries.insert((name, d_type));
+    }
+    let rc = unsafe { fl::__closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("__closedir returned {}", rc));
+    }
+    Ok(entries)
+}
+
+fn walk_alias_readdir_r_fl(dir: &std::path::Path) -> Result<DirEntrySet, String> {
+    let cp = cstr_path(dir);
+    let mut entries = BTreeSet::new();
+    let dirp = unsafe { fl::__opendir(cp.as_ptr()) };
+    if dirp.is_null() {
+        return Err("__opendir returned NULL".into());
+    }
+
+    loop {
+        let mut entry: libc::dirent = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::dirent = std::ptr::null_mut();
+        let rc = unsafe { fl::__readdir_r(dirp, &mut entry, &mut result) };
+        if rc != 0 {
+            unsafe {
+                fl::__closedir(dirp);
+            }
+            return Err(format!("__readdir_r returned {rc}"));
+        }
+        if result.is_null() {
+            break;
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr(entry.d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name == b"." || name == b".." {
+            continue;
+        }
+        entries.insert((name, entry.d_type));
+    }
+
+    let rc = unsafe { fl::__closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("__closedir returned {}", rc));
+    }
+    Ok(entries)
+}
+
 fn next_visible_name_fl(dirp: *mut fl::DIR) -> Option<Vec<u8>> {
     loop {
         let entry = unsafe { fl::readdir(dirp) };
@@ -770,6 +836,28 @@ fn diff_readdir_r_mixed_directory() {
     assert_eq!(
         fl_set, lc_set,
         "readdir_r mixed dir divergence:\n  fl: {fl_set:?}\n  lc: {lc_set:?}"
+    );
+}
+
+#[test]
+fn diff_reserved_readdir_aliases_match_public_semantics() {
+    let dir = temp_dir("reserved_aliases");
+    write_file(&dir.join("alpha.alias"), b"alpha");
+    write_file(&dir.join("beta.alias"), b"beta");
+    std::fs::create_dir(dir.join("subdir_alias")).expect("subdir");
+    std::os::unix::fs::symlink("alpha.alias", dir.join("link_to_alpha_alias")).expect("symlink");
+
+    let fl_alias_set = walk_alias_readdir_fl(&dir).expect("fl __readdir walk");
+    let fl_alias_r_set = walk_alias_readdir_r_fl(&dir).expect("fl __readdir_r walk");
+    let lc_set = walk_lc(&dir).expect("lc public readdir walk");
+
+    assert_eq!(
+        fl_alias_set, lc_set,
+        "reserved __opendir/__readdir/__closedir alias divergence:\n  fl: {fl_alias_set:?}\n  lc: {lc_set:?}"
+    );
+    assert_eq!(
+        fl_alias_r_set, lc_set,
+        "reserved __opendir/__readdir_r/__closedir alias divergence:\n  fl: {fl_alias_r_set:?}\n  lc: {lc_set:?}"
     );
 }
 
@@ -1308,6 +1396,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":15,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":19,\"divergences\":0}}",
     );
 }
