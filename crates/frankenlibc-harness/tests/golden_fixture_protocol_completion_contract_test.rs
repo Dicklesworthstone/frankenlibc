@@ -1,17 +1,18 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -91,7 +92,7 @@ fn string_values(value: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_all_completion_debt_evidence_classes() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -160,7 +161,7 @@ fn manifest_binds_all_completion_debt_evidence_classes() -> TestResult {
 
 #[test]
 fn checker_validates_golden_fixture_protocol_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -177,7 +178,7 @@ fn checker_validates_golden_fixture_protocol_contract() -> TestResult {
     );
     assert_eq!(
         report["summary"]["coverage_snapshot_cases"].as_u64(),
-        Some(1283)
+        Some(2703)
     );
 
     Ok(())
@@ -185,7 +186,7 @@ fn checker_validates_golden_fixture_protocol_contract() -> TestResult {
 
 #[test]
 fn checker_emits_completion_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -234,7 +235,7 @@ fn checker_emits_completion_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_golden_artifact_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_golden")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["source_artifacts"]
@@ -267,7 +268,7 @@ fn checker_rejects_missing_golden_artifact_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_source_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_test_ref")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["test_sources"]["source_harness_test"]
@@ -304,7 +305,7 @@ fn checker_rejects_missing_source_test_ref() -> TestResult {
 
 #[test]
 fn checker_rejects_unimplemented_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["telemetry_contract"]["required_events"]
