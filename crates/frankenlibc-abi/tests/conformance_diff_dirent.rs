@@ -18,6 +18,10 @@ use frankenlibc_abi::dirent_abi as fl;
 unsafe extern "C" {
     #[link_name = "alphasort"]
     fn host_alphasort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
+    #[link_name = "dirfd"]
+    fn host_dirfd(dirp: *mut libc::DIR) -> c_int;
+    #[link_name = "fdopendir"]
+    fn host_fdopendir(fd: c_int) -> *mut libc::DIR;
     fn readdir64(dirp: *mut libc::DIR) -> *mut libc::dirent64;
     #[link_name = "scandir"]
     fn host_scandir(
@@ -97,6 +101,9 @@ fn dirent_named(name: &[u8]) -> libc::dirent {
 type DirentComparator =
     unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int;
 type DirentFilter = unsafe extern "C" fn(*const libc::dirent) -> c_int;
+type DirEntrySet = BTreeSet<(Vec<u8>, u8)>;
+type FdIdentity = (libc::dev_t, libc::ino_t, libc::mode_t);
+type FdopendirWalk = (DirEntrySet, FdIdentity);
 
 fn compare_dirent_names(left: &[u8], right: &[u8], cmp: DirentComparator) -> c_int {
     let left_entry = dirent_named(left);
@@ -217,6 +224,111 @@ fn walk_lc64(dir: &std::path::Path) -> Result<BTreeSet<(Vec<u8>, u8)>, String> {
         return Err(format!("closedir returned {}", rc));
     }
     Ok(entries)
+}
+
+fn open_dir_fd(dir: &std::path::Path) -> Result<c_int, String> {
+    let cp = cstr_path(dir);
+    let fd = unsafe {
+        libc::open(
+            cp.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        let errno = unsafe { *libc::__errno_location() };
+        return Err(format!("open directory fd failed with errno {errno}"));
+    }
+    Ok(fd)
+}
+
+fn stat_fd_identity(fd: c_int) -> Result<FdIdentity, String> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        let errno = unsafe { *libc::__errno_location() };
+        return Err(format!("fstat({fd}) failed with errno {errno}"));
+    }
+    let stat = unsafe { stat.assume_init() };
+    Ok((stat.st_dev, stat.st_ino, stat.st_mode & libc::S_IFMT))
+}
+
+fn walk_fdopendir_fl(dir: &std::path::Path) -> Result<FdopendirWalk, String> {
+    let fd = open_dir_fd(dir)?;
+    let dirp = unsafe { fl::fdopendir(fd) };
+    if dirp.is_null() {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        unsafe {
+            libc::close(fd);
+        }
+        return Err(format!("fdopendir returned NULL with errno {errno}"));
+    }
+    let stream_fd = unsafe { fl::dirfd(dirp) };
+    if stream_fd < 0 {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        unsafe {
+            fl::closedir(dirp.cast());
+        }
+        return Err(format!("dirfd returned {stream_fd} with errno {errno}"));
+    }
+    let identity = stat_fd_identity(stream_fd)?;
+    let mut entries = BTreeSet::new();
+    loop {
+        let entry = unsafe { fl::readdir(dirp.cast()) };
+        if entry.is_null() {
+            break;
+        }
+        let name_ptr = unsafe { (*entry).d_name.as_ptr() };
+        let name = unsafe { std::ffi::CStr::from_ptr(name_ptr).to_bytes().to_vec() };
+        if name == b"." || name == b".." {
+            continue;
+        }
+        let d_type = unsafe { (*entry).d_type };
+        entries.insert((name, d_type));
+    }
+    let rc = unsafe { fl::closedir(dirp.cast()) };
+    if rc != 0 {
+        return Err(format!("closedir returned {rc}"));
+    }
+    Ok((entries, identity))
+}
+
+fn walk_fdopendir_lc(dir: &std::path::Path) -> Result<FdopendirWalk, String> {
+    let fd = open_dir_fd(dir)?;
+    let dirp = unsafe { host_fdopendir(fd) };
+    if dirp.is_null() {
+        let errno = unsafe { *libc::__errno_location() };
+        unsafe {
+            libc::close(fd);
+        }
+        return Err(format!("fdopendir returned NULL with errno {errno}"));
+    }
+    let stream_fd = unsafe { host_dirfd(dirp) };
+    if stream_fd < 0 {
+        let errno = unsafe { *libc::__errno_location() };
+        unsafe {
+            libc::closedir(dirp);
+        }
+        return Err(format!("dirfd returned {stream_fd} with errno {errno}"));
+    }
+    let identity = stat_fd_identity(stream_fd)?;
+    let mut entries = BTreeSet::new();
+    loop {
+        let entry = unsafe { libc::readdir(dirp) };
+        if entry.is_null() {
+            break;
+        }
+        let name_ptr = unsafe { (*entry).d_name.as_ptr() };
+        let name = unsafe { std::ffi::CStr::from_ptr(name_ptr).to_bytes().to_vec() };
+        if name == b"." || name == b".." {
+            continue;
+        }
+        let d_type = unsafe { (*entry).d_type };
+        entries.insert((name, d_type));
+    }
+    let rc = unsafe { libc::closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("closedir returned {rc}"));
+    }
+    Ok((entries, identity))
 }
 
 fn scandir_names_fl(
@@ -444,6 +556,99 @@ fn diff_scandir64_mixed_directory() {
     assert_eq!(
         fl_names, lc_names,
         "scandir64 name-set divergence:\n  fl: {fl_names:?}\n  lc: {lc_names:?}"
+    );
+}
+
+#[test]
+fn diff_fdopendir_dirfd_mixed_directory() {
+    let dir = temp_dir("fdopendir");
+    write_file(&dir.join("alpha.txt"), b"a");
+    write_file(&dir.join("omega.bin"), &[0x55; 32]);
+    std::fs::create_dir(dir.join("child")).expect("subdir");
+    std::os::unix::fs::symlink("alpha.txt", dir.join("link_to_alpha")).expect("symlink");
+
+    let (fl_set, fl_identity) = walk_fdopendir_fl(&dir).expect("fl fdopendir walk");
+    let (lc_set, lc_identity) = walk_fdopendir_lc(&dir).expect("lc fdopendir walk");
+
+    let mut divs = Vec::new();
+    if fl_set != lc_set {
+        let only_fl: Vec<_> = fl_set.difference(&lc_set).cloned().collect();
+        let only_lc: Vec<_> = lc_set.difference(&fl_set).cloned().collect();
+        divs.push(Divergence {
+            function: "fdopendir/readdir",
+            case: "mixed".into(),
+            field: "entry_set",
+            frankenlibc: format!("only_in_fl={only_fl:?}"),
+            glibc: format!("only_in_glibc={only_lc:?}"),
+        });
+    }
+    if fl_identity != lc_identity {
+        divs.push(Divergence {
+            function: "dirfd",
+            case: "mixed".into(),
+            field: "fd_identity",
+            frankenlibc: format!("{fl_identity:?}"),
+            glibc: format!("{lc_identity:?}"),
+        });
+    }
+
+    assert!(
+        divs.is_empty(),
+        "fdopendir/dirfd divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_fdopendir_bad_fd_errno() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    unsafe {
+        *__errno_location() = 0;
+        *libc::__errno_location() = 0;
+    }
+    let fl_dirp = unsafe { fl::fdopendir(-1) };
+    let er_fl = unsafe { *__errno_location() };
+    unsafe {
+        *__errno_location() = 0;
+        *libc::__errno_location() = 0;
+    }
+    let lc_dirp = unsafe { host_fdopendir(-1) };
+    let er_lc = unsafe { *libc::__errno_location() };
+
+    let mut divs = Vec::new();
+    if fl_dirp.is_null() != lc_dirp.is_null() {
+        divs.push(Divergence {
+            function: "fdopendir",
+            case: "bad_fd".into(),
+            field: "null",
+            frankenlibc: format!("{}", fl_dirp.is_null()),
+            glibc: format!("{}", lc_dirp.is_null()),
+        });
+    }
+    if fl_dirp.is_null() && er_fl != er_lc {
+        divs.push(Divergence {
+            function: "fdopendir",
+            case: "bad_fd".into(),
+            field: "errno",
+            frankenlibc: format!("{er_fl}"),
+            glibc: format!("{er_lc}"),
+        });
+    }
+    if !fl_dirp.is_null() {
+        unsafe {
+            fl::closedir(fl_dirp.cast());
+        }
+    }
+    if !lc_dirp.is_null() {
+        unsafe {
+            libc::closedir(lc_dirp);
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "fdopendir bad-fd divergences:\n{}",
+        render_divs(&divs)
     );
 }
 
@@ -795,6 +1000,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":9,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":11,\"divergences\":0}}",
     );
 }
