@@ -1,5 +1,6 @@
 //! Completion contract tests for bd-epeg.1.
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -60,9 +61,13 @@ const REQUIRED_REPORT_FIELDS: [&str; 20] = [
     "failure_signature",
 ];
 
-fn workspace_root() -> PathBuf {
+fn workspace_root() -> TestResult<PathBuf> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest.parent().unwrap().parent().unwrap().to_path_buf()
+    manifest
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "workspace root").into())
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -137,7 +142,7 @@ fn source_text(root: &Path, source_paths: &Value, source: &str) -> TestResult<St
 
 #[test]
 fn manifest_binds_unit_and_e2e_audit_items() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = load_manifest(&root)?;
     assert_eq!(
         manifest["schema_version"],
@@ -205,7 +210,7 @@ fn manifest_binds_unit_and_e2e_audit_items() -> TestResult {
 
 #[test]
 fn kernel_contract_names_canonical_fallback_types_and_fields() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = load_manifest(&root)?;
     let contract = &manifest["kernel_adoption_contract"];
     assert_eq!(contract["external_schema_forking_allowed"], false);
@@ -241,7 +246,7 @@ fn kernel_contract_names_canonical_fallback_types_and_fields() -> TestResult {
 
 #[test]
 fn source_refs_and_named_tests_exist() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = load_manifest(&root)?;
     let source_paths = &manifest["source_paths"];
 
@@ -299,7 +304,7 @@ fn source_refs_and_named_tests_exist() -> TestResult {
 
 #[test]
 fn checker_emits_structured_report_and_jsonl() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let contract = root.join(CONTRACT_REL);
     let (output, report_path, log_path) = run_checker(&root, &contract, "positive")?;
     assert!(
@@ -346,7 +351,7 @@ fn checker_emits_structured_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_canonical_id_source_anchor() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = load_manifest(&root)?;
     let anchors = manifest["source_anchors"]["ids"]
         .as_array_mut()
