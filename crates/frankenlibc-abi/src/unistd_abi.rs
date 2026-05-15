@@ -24415,6 +24415,7 @@ pub unsafe extern "C" fn MD5End(ctx: *mut MD5_CTX, buf: *mut c_char) -> *mut c_c
     dest
 }
 
+fn sha2::Sha256_hash_path_range(path: &std::path::Path, off: u64, len: Option<u64>) -> Option<[u8; 16]> {
 fn md5_hash_path_range(path: &std::path::Path, off: u64, len: Option<u64>) -> Option<[u8; 16]> {
     use md5::Digest;
     use std::io::{Read, Seek, SeekFrom};
