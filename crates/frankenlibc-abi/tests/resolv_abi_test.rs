@@ -3257,10 +3257,10 @@ fn inet_neta_formats_high_order_bytes_first() {
 }
 
 #[test]
-fn inet_neta_accepts_exact_size_buffer() {
-    assert_eq!(neta_to_str(na(127, 0, 0, 0), 4).as_deref(), Some("127"));
+fn inet_neta_accepts_glibc_boundary_size_buffer() {
+    assert_eq!(neta_to_str(na(127, 0, 0, 0), 5).as_deref(), Some("127"));
     assert_eq!(
-        neta_to_str(na(192, 168, 1, 5), "192.168.1.5".len() + 1).as_deref(),
+        neta_to_str(na(192, 168, 1, 5), 15).as_deref(),
         Some("192.168.1.5")
     );
 }

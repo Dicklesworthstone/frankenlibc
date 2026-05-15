@@ -58,6 +58,15 @@ const NETA_INPUTS: &[u32] = &[
     0x80808080, // all 128 → "128.128.128.128"
 ];
 
+const NETA_BOUNDARY_SIZE_CASES: &[(u32, usize)] = &[
+    (0x12345678, 14), // glibc's conservative writer threshold for "18.52.86.120"
+    (0x00000000, 8),  // "0.0.0.0" + NUL
+    (0x00000000, 9),
+    (0x0A000000, 5), // glibc requires spare per-octet formatting room
+    (0xC0A80101, 15),
+    (0xC0A80101, 16),
+];
+
 #[test]
 fn diff_inet_neta_cases() {
     let mut divs = Vec::new();
@@ -96,14 +105,54 @@ fn diff_inet_neta_cases() {
     );
 }
 
+#[test]
+fn diff_inet_neta_boundary_success_sizes() {
+    let mut divs = Vec::new();
+    for &(src, size) in NETA_BOUNDARY_SIZE_CASES {
+        let mut fl_buf = vec![0i8; size + 4];
+        let mut lc_buf = vec![0i8; size + 4];
+        let p_fl = unsafe { fl::inet_neta(src, fl_buf.as_mut_ptr(), size) };
+        let p_lc = unsafe { inet_neta(src, lc_buf.as_mut_ptr(), size) };
+        let case = format!("{src:#010x}, size={size}");
+        if p_fl.is_null() != p_lc.is_null() {
+            divs.push(Divergence {
+                case: case.clone(),
+                field: "null_return",
+                frankenlibc: format!("{}", p_fl.is_null()),
+                glibc: format!("{}", p_lc.is_null()),
+            });
+            continue;
+        }
+        if p_fl.is_null() {
+            continue;
+        }
+        let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
+        let s_lc = unsafe { CStr::from_ptr(p_lc).to_bytes() };
+        if s_fl != s_lc {
+            divs.push(Divergence {
+                case,
+                field: "string",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "inet_neta boundary-size divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 /// Buffer-too-small contract — both impls should return NULL when the
 /// destination is too short to hold the formatted output plus NUL.
 #[test]
 fn diff_inet_neta_buffer_too_small() {
     let mut divs = Vec::new();
-    // 0x12345678 formats as "18.52.86.120" = 12 chars + NUL = 13 bytes.
+    // 0x12345678 formats as "18.52.86.120"; glibc still rejects
+    // strlen+NUL capacity because inet_neta checks per-octet writer slack.
     let src: u32 = 0x12345678;
-    for size in [0usize, 1, 5, 12] {
+    for size in [0usize, 1, 5, 12, 13] {
         let mut fl_buf = vec![0i8; size + 4];
         let mut lc_buf = vec![0i8; size + 4];
         let p_fl = unsafe { fl::inet_neta(src, fl_buf.as_mut_ptr(), size) };
@@ -127,6 +176,6 @@ fn diff_inet_neta_buffer_too_small() {
 #[test]
 fn inet_neta_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libresolv inet_neta\",\"reference\":\"glibc\",\"functions\":1,\"divergences\":0}}",
+        "{{\"family\":\"libresolv inet_neta\",\"reference\":\"glibc\",\"functions\":1,\"value_cases\":17,\"boundary_success_cases\":6,\"too_small_cases\":5,\"divergences\":0}}",
     );
 }

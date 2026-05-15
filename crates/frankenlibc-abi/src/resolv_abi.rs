@@ -3837,9 +3837,11 @@ pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) 
 
     let mut tmp = [0u8; 16];
     let mut cursor = 0usize;
+    let mut required_size = 0usize;
     if src == 0 {
         tmp[..7].copy_from_slice(b"0.0.0.0");
         cursor = 7;
+        required_size = cursor + 1;
     }
 
     while src != 0 {
@@ -3850,6 +3852,7 @@ pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) 
                 tmp[cursor] = b'.';
                 cursor += 1;
             }
+            required_size = required_size.max(cursor + 5);
             let mut digits = [0u8; 3];
             let mut n = b;
             let mut len = 0usize;
@@ -3871,7 +3874,7 @@ pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) 
     }
 
     let needed = cursor + 1;
-    if dst_limit < needed {
+    if dst_limit < needed || dst_limit < required_size {
         unsafe { set_abi_errno(libc::EMSGSIZE) };
         return core::ptr::null_mut();
     }
