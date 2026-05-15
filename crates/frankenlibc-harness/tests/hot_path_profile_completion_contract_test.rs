@@ -1,17 +1,17 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo parent")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -89,7 +89,7 @@ fn source_texts(root: &Path, manifest: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_unit_e2e_and_profile_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -153,7 +153,7 @@ fn manifest_binds_unit_e2e_and_profile_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_profile_pipeline_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -172,23 +172,19 @@ fn checker_validates_profile_pipeline_contract() -> TestResult {
         report["profile_artifacts"]["per_target_pattern_count"].as_u64(),
         Some(3)
     );
-    assert!(
-        report["profile_report_summary"]["profile_record_count"]
-            .as_u64()
-            .is_some_and(|count| count > 0)
-    );
-    assert!(
-        report["opportunity_matrix"]["entry_count"]
-            .as_u64()
-            .is_some_and(|count| count > 0)
-    );
+    assert!(report["profile_report_summary"]["profile_record_count"]
+        .as_u64()
+        .is_some_and(|count| count > 0));
+    assert!(report["opportunity_matrix"]["entry_count"]
+        .as_u64()
+        .is_some_and(|count| count > 0));
 
     Ok(())
 }
 
 #[test]
 fn checker_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -231,7 +227,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_profile_field() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_profile_field")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["required_profile_report_fields"]
@@ -266,7 +262,7 @@ fn checker_rejects_missing_required_profile_field() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["telemetry_contract"]["required_events"]

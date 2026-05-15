@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.3",
-  "generated_at_utc": "2026-05-12T10:42:29Z",
-  "source_commit": "975122f5",
+  "generated_at_utc": "2026-05-15T08:44:47Z",
+  "source_commit": "022fd88e",
   "purpose": "Rank the next optimization targets from measured hot-path profiles, host raw baselines, and missing profile slots.",
   "inputs": {
     "benchmark_coverage_inventory": "tests/conformance/benchmark_coverage_inventory.v1.json",
@@ -14,7 +14,7 @@
     "optimization_proof_ledger": "tests/conformance/optimization_proof_ledger.v1.json"
   },
   "input_digests": {
-    "benchmark_coverage_inventory": "5842f0119775de44ffff1f39d09d69941c305b9676bd80f5ef165f7f34048918",
+    "benchmark_coverage_inventory": "97e72b25cce6d7de5ae17798edc0f71360de582f3dfba1f6be7d99c625873dd0",
     "membrane_overhead_baseline": "4e329a3426be0161ef2c58d327ebf617bbe52d72a644f1ebc90f0a896bb7efaa",
     "optimization_proof_ledger": "c172cb77dbe09508f65afd1597e3aa7763ccf79af69cf53b4e8d822fec9a807b",
     "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
@@ -6757,5 +6757,5 @@
     "target_report": "target/conformance/hot_path_profile_report.report.json",
     "target_log": "target/conformance/hot_path_profile_report.log.jsonl"
   },
-  "artifact_hash": "c7b61fe4c8b065421a1ff6f5d5335683fb8f19eb4b4e53bc585317c442197a61"
+  "artifact_hash": "3939787d628a01b157afe6693d83a353b07f3ae43911525a2f834ebf7a4c6b47"
 }
