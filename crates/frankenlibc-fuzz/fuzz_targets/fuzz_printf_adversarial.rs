@@ -31,7 +31,7 @@
 use std::ffi::{CString, c_char, c_int};
 use std::sync::Once;
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use frankenlibc_abi::stdio_abi::snprintf;
 use frankenlibc_core::stdio::printf::{parse_format_spec, parse_format_string};
 use libfuzzer_sys::fuzz_target;
@@ -68,6 +68,73 @@ struct PrintfAdversarialFuzzInput {
     overflow_case: u8,
     /// String argument for `%s` archetypes.
     str_arg: Vec<u8>,
+}
+
+fn directive_input(op: u8, payload: &[u8]) -> PrintfAdversarialFuzzInput {
+    let payload = trim_seed_newline(payload);
+    let mut format = payload.to_vec();
+    format.truncate(MAX_FORMAT_BYTES);
+    let mut str_arg = payload.to_vec();
+    str_arg.truncate(MAX_FORMAT_BYTES);
+    let dst_size = u16::try_from(payload.len().clamp(1, MAX_DST_SIZE))
+        .unwrap_or(512)
+        .max(16);
+
+    PrintfAdversarialFuzzInput {
+        format,
+        int_args: [0, 1, -1, i32::MAX, i32::MIN, 42, -42, 0x5a5a],
+        width_a: i32::MAX,
+        width_b: -1024,
+        precision_a: i32::MAX,
+        precision_b: 64,
+        dst_size,
+        op,
+        overflow_case: 0,
+        str_arg,
+    }
+}
+
+fn input_from_directive_seed(data: &[u8]) -> Option<PrintfAdversarialFuzzInput> {
+    if let Some(payload) = data.strip_prefix(b"parser:") {
+        Some(directive_input(0, payload))
+    } else if let Some(payload) = data.strip_prefix(b"width:") {
+        Some(directive_input(1, payload))
+    } else if let Some(payload) = data.strip_prefix(b"bracket-int:") {
+        Some(directive_input(2, payload))
+    } else if let Some(payload) = data.strip_prefix(b"bracket-str:") {
+        Some(directive_input(3, payload))
+    } else if let Some(payload) = data.strip_prefix(b"percent-n:") {
+        Some(directive_input(4, payload))
+    } else if let Some(payload) = data.strip_prefix(b"positional:") {
+        Some(directive_input(6, payload))
+    } else if let Some(payload) = data.strip_prefix(b"storm:") {
+        Some(directive_input(7, payload))
+    } else if let Some(payload) = data.strip_prefix(b"overflow0:") {
+        let mut input = directive_input(5, payload);
+        input.overflow_case = 0;
+        Some(input)
+    } else if let Some(payload) = data.strip_prefix(b"overflow1:") {
+        let mut input = directive_input(5, payload);
+        input.overflow_case = 1;
+        Some(input)
+    } else if let Some(payload) = data.strip_prefix(b"overflow2:") {
+        let mut input = directive_input(5, payload);
+        input.overflow_case = 2;
+        Some(input)
+    } else if let Some(payload) = data.strip_prefix(b"overflow3:") {
+        let mut input = directive_input(5, payload);
+        input.overflow_case = 3;
+        Some(input)
+    } else {
+        None
+    }
+}
+
+fn trim_seed_newline(payload: &[u8]) -> &[u8] {
+    payload
+        .strip_suffix(b"\r\n")
+        .or_else(|| payload.strip_suffix(b"\n"))
+        .unwrap_or(payload)
 }
 
 fn init_hardened_printf_mode() {
@@ -321,7 +388,7 @@ fn adv_percent_storm(input: &PrintfAdversarialFuzzInput) {
     assert!(segments.len() <= bomb.len() + 1);
 }
 
-fuzz_target!(|input: PrintfAdversarialFuzzInput| {
+fn run_input(input: PrintfAdversarialFuzzInput) {
     if input.format.len() > MAX_FORMAT_BYTES || input.str_arg.len() > MAX_FORMAT_BYTES {
         return;
     }
@@ -339,4 +406,18 @@ fuzz_target!(|input: PrintfAdversarialFuzzInput| {
         7 => adv_percent_storm(&input),
         _ => unreachable!(),
     }
+}
+
+fuzz_target!(|data: &[u8]| {
+    if let Some(input) = input_from_directive_seed(data) {
+        run_input(input);
+        return;
+    }
+
+    let mut unstructured = Unstructured::new(data);
+    let Ok(input) = PrintfAdversarialFuzzInput::arbitrary(&mut unstructured) else {
+        return;
+    };
+
+    run_input(input);
 });
