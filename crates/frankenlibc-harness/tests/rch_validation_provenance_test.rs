@@ -41,6 +41,13 @@ fn string_array<'a>(value: &'a Value, key: &str) -> TestResult<Vec<&'a str>> {
         .collect()
 }
 
+fn string_field<'a>(value: &'a Value, key: &str, label: &str) -> TestResult<&'a str> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| test_error(format!("{label}.{key} must be a string")))
+}
+
 fn required_fields_present(value: &Value, fields: &[&str], label: &str) -> TestResult {
     for field in fields {
         if value.get(field).is_none() {
@@ -279,8 +286,8 @@ fn policy_manifest_declares_rch_validation_provenance_contract() -> TestResult {
         string_array(&policy, "required_command_classes")?,
         vec!["cargo_test", "cargo_check", "cargo_clippy"]
     );
-    assert!(Regex::new(policy["remote_host_id_regex"].as_str().unwrap()).is_ok());
-    assert!(Regex::new(policy["source_commit_regex"].as_str().unwrap()).is_ok());
+    assert!(Regex::new(string_field(&policy, "remote_host_id_regex", "policy")?).is_ok());
+    assert!(Regex::new(string_field(&policy, "source_commit_regex", "policy")?).is_ok());
     assert!(string_array(&policy, "forbidden_output_markers")?.contains(&"[RCH] local"));
     Ok(())
 }
@@ -330,7 +337,12 @@ fn proof_bundle_rejects_missing_required_command_class() -> TestResult {
     let root = repo_root();
     let policy = load_json(&policy_path(&root))?;
     let mut bundle = valid_proof_bundle();
-    bundle["commands"].as_array_mut().unwrap().pop();
+    bundle
+        .get_mut("commands")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| test_error("proof bundle.commands must be an array"))?
+        .pop()
+        .ok_or_else(|| test_error("proof bundle.commands must not be empty"))?;
     let err = validate_proof_bundle(&bundle, &policy).unwrap_err();
     assert!(err.to_string().contains("cargo_clippy"));
     Ok(())
