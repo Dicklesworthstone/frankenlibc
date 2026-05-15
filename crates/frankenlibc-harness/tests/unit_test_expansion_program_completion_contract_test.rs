@@ -244,7 +244,13 @@ fn contract_binds_closed_blockers_unit_refs_and_rch_commands() -> TestResult {
     }
 
     let policy = &evidence["unit_pack_policy"];
-    assert_eq!(policy["threading_pack_tests"].as_array().unwrap().len(), 7);
+    let threading_pack_tests = policy["threading_pack_tests"].as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unit_pack_policy.threading_pack_tests should be an array",
+        )
+    })?;
+    assert_eq!(threading_pack_tests.len(), 7);
     assert!(policy["minimum_fixture_files"].as_u64().unwrap_or(0) >= 58);
     assert!(policy["minimum_total_cases"].as_u64().unwrap_or(0) >= 1284);
     assert!(policy["minimum_strict_cases"].as_u64().unwrap_or(0) >= 632);
