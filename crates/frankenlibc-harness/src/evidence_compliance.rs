@@ -68,10 +68,12 @@ impl EvidenceComplianceReport {
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
-    use std::fmt::Write;
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        write!(&mut out, "{b:02x}").expect("writing to String should not fail");
+        out.push(char::from(HEX[(b >> 4) as usize]));
+        out.push(char::from(HEX[(b & 0x0f) as usize]));
     }
     out
 }
