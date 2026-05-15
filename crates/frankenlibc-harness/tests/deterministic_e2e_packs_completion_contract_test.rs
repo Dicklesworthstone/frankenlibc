@@ -7,6 +7,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+type LockResult = Result<std::sync::MutexGuard<'static, ()>, Box<dyn std::error::Error>>;
 
 const CONTRACT_REL: &str = "tests/conformance/deterministic_e2e_packs_completion_contract.v1.json";
 const CHECKER_REL: &str = "scripts/check_deterministic_e2e_packs_completion_contract.sh";
@@ -24,11 +25,11 @@ const EXPECTED_EVENTS: [&str; 6] = [
     "deterministic_e2e_completion_contract_validated",
 ];
 
-fn checker_lock() -> std::sync::MutexGuard<'static, ()> {
+fn checker_lock() -> LockResult {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("checker lock poisoned")
+        .map_err(|_| io::Error::other("checker lock poisoned").into())
 }
 
 fn workspace_root() -> io::Result<PathBuf> {
@@ -336,7 +337,7 @@ fn manifest_binds_deterministic_e2e_unit_e2e_and_conformance_evidence() -> TestR
 
 #[test]
 fn checker_emits_deterministic_e2e_report_and_jsonl() -> TestResult {
-    let _lock = checker_lock();
+    let _lock = checker_lock()?;
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "valid")?;
     let output = run_checker(&root, &root.join(CONTRACT_REL), &out_dir)?;
@@ -409,7 +410,7 @@ fn checker_emits_deterministic_e2e_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_strict_hardened_mode_binding() -> TestResult {
-    let _lock = checker_lock();
+    let _lock = checker_lock()?;
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-hardened")?;
     let mut manifest = read_json(&root.join(CONTRACT_REL))?;
@@ -432,7 +433,7 @@ fn checker_rejects_missing_strict_hardened_mode_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_underbound_conformance_binding() -> TestResult {
-    let _lock = checker_lock();
+    let _lock = checker_lock()?;
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "underbound-conformance")?;
     let mut manifest = read_json(&root.join(CONTRACT_REL))?;
@@ -466,7 +467,7 @@ fn checker_rejects_underbound_conformance_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_local_cargo_validation_command() -> TestResult {
-    let _lock = checker_lock();
+    let _lock = checker_lock()?;
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "local-cargo")?;
     let mut manifest = read_json(&root.join(CONTRACT_REL))?;
