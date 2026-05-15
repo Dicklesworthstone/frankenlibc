@@ -155,12 +155,14 @@ mod tests {
     }
 
     #[test]
-    fn property_no_double_separator_on_empty_message_with_errno() {
+    fn property_no_double_separator_on_empty_message_with_errno()
+    -> Result<(), std::string::FromUtf8Error> {
         // Specifically: "prog: : err\n" (double ': ') is forbidden.
         let out = format_err_message(b"prog", b"", Some(b"e"));
-        let txt = String::from_utf8(out).unwrap();
+        let txt = String::from_utf8(out)?;
         assert!(!txt.contains(": : "), "got: {txt:?}");
         assert_eq!(txt, "prog: e\n");
+        Ok(())
     }
 
     #[test]
