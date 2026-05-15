@@ -16,13 +16,15 @@ const PASS_EVENTS: &[&str] = &[
     "aarch64_conformance_perf_matrix_completion.validated",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let repo_dir = workspace_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(repo_dir.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -91,7 +93,7 @@ fn output_text(output: &Output) -> String {
 
 #[test]
 fn manifest_binds_all_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -149,7 +151,7 @@ fn manifest_binds_all_completion_items() -> TestResult {
 
 #[test]
 fn source_anchors_resolve() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
     let source_artifacts = manifest["source_artifacts"]
         .as_object()
@@ -177,7 +179,7 @@ fn source_anchors_resolve() -> TestResult {
 
 #[test]
 fn checker_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -193,7 +195,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
     assert_eq!(report["failure_signature"].as_str(), Some("none"));
     assert_eq!(report["summary"]["missing_item_count"].as_u64(), Some(5));
     assert_eq!(report["summary"]["aarch64_row_count"].as_u64(), Some(1));
-    assert_eq!(report["summary"]["fuzz_target_count"].as_u64(), Some(55));
+    assert_eq!(report["summary"]["fuzz_target_count"].as_u64(), Some(66));
     assert_eq!(
         report["summary"]["conformance_pass_rate_percent"].as_f64(),
         Some(100.0)
@@ -212,7 +214,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_aarch64_environment_coverage() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = read_json(&contract_path(&root))?;
     let out_dir = unique_out_dir(&root, "mutated_arch")?;
     let mutated = out_dir.join("mutated_contract.json");

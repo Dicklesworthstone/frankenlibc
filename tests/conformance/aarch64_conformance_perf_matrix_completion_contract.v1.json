@@ -119,11 +119,11 @@
       "\"required_log_fields\""
     ],
     "fuzz_harness_architecture": [
-      "\"total_targets\": 55",
-      "\"functional_targets\": 55",
+      "\"total_targets\": 66",
+      "\"functional_targets\": 66",
       "\"stub_targets\": 0",
       "\"quality_score_pct\": 100.0",
-      "\"total_seed_corpus\": 22779"
+      "\"total_seed_corpus\": 22987"
     ],
     "fuzz_harness_gate": [
       "fuzz_harness_architecture",
@@ -184,8 +184,8 @@
       "injection_support"
     ],
     "required_fuzz_summary": {
-      "total_targets": 55,
-      "functional_targets": 55,
+      "total_targets": 66,
+      "functional_targets": 66,
       "stub_targets": 0,
       "quality_score_pct": 100.0
     },
