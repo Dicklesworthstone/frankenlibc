@@ -122,10 +122,10 @@ fn mutated_contract(
     root: &Path,
     out_dir: &Path,
     label: &str,
-    mutator: impl FnOnce(&mut Value),
+    mutator: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut manifest = read_json(&contract_path(root))?;
-    mutator(&mut manifest);
+    mutator(&mut manifest)?;
     let path = out_dir.join(format!("{label}.contract.json"));
     write_json(&path, &manifest)?;
     Ok(path)
@@ -197,7 +197,10 @@ fn manifest_binds_ssignal_gsignal_delivery_golden_items() -> TestResult {
         Some("ssignal")
     );
 
-    for artifact in manifest["source_artifacts"].as_array().unwrap() {
+    let artifacts = manifest["source_artifacts"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source artifacts missing"))?;
+    for artifact in artifacts {
         let path = artifact["path"]
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact path missing"))?;
@@ -243,6 +246,7 @@ fn checker_rejects_missing_golden_binding() -> TestResult {
     let out_dir = unique_output_dir(&root, "missing-binding")?;
     let contract = mutated_contract(&root, &out_dir, "missing-binding", |manifest| {
         manifest["completion_debt_evidence"]["missing_item_bindings"] = Value::Array(Vec::new());
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -261,7 +265,9 @@ fn checker_rejects_missing_required_golden_case() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-case", |manifest| {
         let cases = manifest["golden_delivery_contract"]["required_fixture_cases"]
             .as_array_mut()
-            .expect("required fixture cases array");
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "required fixture cases missing")
+            })?;
         cases.push(serde_json::json!({
             "name": "gsignal_missing_delivery_case",
             "function": "gsignal",
@@ -270,6 +276,7 @@ fn checker_rejects_missing_required_golden_case() -> TestResult {
             "expected_errno": 0,
             "inputs": { "sig": 31, "preinstall": "ssignal" }
         }));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -288,12 +295,15 @@ fn checker_rejects_fixture_expected_output_drift() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "output-drift", |manifest| {
         let cases = manifest["golden_delivery_contract"]["required_fixture_cases"]
             .as_array_mut()
-            .expect("required fixture cases array");
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "required fixture cases missing")
+            })?;
         for case in cases {
             if case["name"].as_str() == Some("gsignal_sigusr1_delivery_both") {
                 case["expected_output"] = Value::String("0:0:0".to_string());
             }
         }
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
