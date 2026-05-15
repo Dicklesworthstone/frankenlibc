@@ -171,19 +171,21 @@ fn run_negative_case(root: &Path, case_name: &str, manifest: &Value) -> TestResu
     load_json(&report_path)
 }
 
-fn expect_failure_signature(report: &Value, signature: &str) -> TestResult {
+fn expect_failure_signature(report: &Value, expected: &str) -> TestResult {
     let errors = array_field(report, "errors", "report")?;
     if errors.iter().any(|row| {
-        row.get("failure_signature").and_then(Value::as_str) == Some(signature)
+        row.get("failure_signature")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.eq(expected))
             || row
                 .get("message")
                 .and_then(Value::as_str)
-                .is_some_and(|message| message.contains(signature))
+                .is_some_and(|message| message.contains(expected))
     }) {
         Ok(())
     } else {
         Err(test_error(format!(
-            "report should contain failure signature {signature}: {report:#?}"
+            "report should contain failure signature {expected}: {report:#?}"
         )))
     }
 }
@@ -336,13 +338,11 @@ fn gate_passes_and_emits_resolver_nss_logs() -> TestResult {
         .filter(|line| !line.trim().is_empty())
         .map(serde_json::from_str::<Value>)
         .collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(
-        rows.len() as u64,
-        field(&report, "summary", "report")?
-            .get("fixture_count")
-            .and_then(Value::as_u64)
-            .unwrap()
-    );
+    let fixture_count = field(&report, "summary", "report")?
+        .get("fixture_count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| test_error("report.summary.fixture_count must be a u64"))?;
+    assert_eq!(rows.len() as u64, fixture_count);
     for row in rows {
         for field in REQUIRED_LOG_FIELDS {
             assert!(row.get(*field).is_some(), "log row missing {field}");
