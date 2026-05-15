@@ -6,13 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace parent has repo root")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo root")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -76,12 +76,16 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
-        .as_array()
-        .expect("expected array")
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let values = value.as_array().ok_or("value must be an array")?;
+    values
         .iter()
-        .map(|item| item.as_str().expect("expected string").to_string())
+        .map(|item| {
+            Ok(item
+                .as_str()
+                .ok_or("array item must be a string")?
+                .to_string())
+        })
         .collect()
 }
 
@@ -95,7 +99,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_runtime_math_determinism_unit_and_integration_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -105,7 +109,7 @@ fn manifest_binds_runtime_math_determinism_unit_and_integration_items() -> TestR
     assert_eq!(manifest["original_bead"].as_str(), Some("bd-1fk1"));
     assert_eq!(manifest["completion_debt_bead"].as_str(), Some("bd-1fk1.1"));
     assert_eq!(
-        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.unit.primary".to_string(),
             "tests.integration.primary".to_string(),
@@ -134,8 +138,13 @@ fn manifest_binds_runtime_math_determinism_unit_and_integration_items() -> TestR
             .as_array()
             .ok_or("unit required test refs must be array")?
             .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+            .map(|entry| {
+                Ok(entry["name"]
+                    .as_str()
+                    .ok_or("unit test ref name must be string")?
+                    .to_string())
+            })
+            .collect::<TestResult<_>>()?;
     for name in [
         "runtime_kernel_snapshot_schema_doc_matches_constant",
         "snapshot_decision_and_evidence_counters_are_monotone",
@@ -149,8 +158,13 @@ fn manifest_binds_runtime_math_determinism_unit_and_integration_items() -> TestR
             .as_array()
             .ok_or("integration required test refs must be array")?
             .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+            .map(|entry| {
+                Ok(entry["name"]
+                    .as_str()
+                    .ok_or("integration test ref name must be string")?
+                    .to_string())
+            })
+            .collect::<TestResult<_>>()?;
     assert!(integration_names.contains("gate_script_emits_logs_and_report"));
     assert!(
         integration_names
@@ -162,7 +176,7 @@ fn manifest_binds_runtime_math_determinism_unit_and_integration_items() -> TestR
 
 #[test]
 fn checker_validates_runtime_math_determinism_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -195,8 +209,13 @@ fn checker_validates_runtime_math_determinism_contract_and_emits_report_log() ->
     let rows = read_jsonl(&out_dir.join("runtime_math_determinism_completion_contract.log.jsonl"))?;
     let events: BTreeSet<_> = rows
         .iter()
-        .map(|row| row["event"].as_str().unwrap().to_string())
-        .collect();
+        .map(|row| {
+            Ok(row["event"]
+                .as_str()
+                .ok_or("log row event must be string")?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     for event in [
         "runtime_math_determinism_unit_bindings_verified",
         "runtime_math_determinism_integration_bindings_verified",
@@ -229,13 +248,13 @@ fn checker_validates_runtime_math_determinism_contract_and_emits_report_log() ->
 
 #[test]
 fn checker_rejects_missing_observe_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-observe")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_determinism_contract"]["required_source_text"]
         ["determinism_proof_source"]
         .as_array_mut()
-        .expect("proof source needles array")
+        .ok_or("proof source needles must be a mutable array")?
         .push(json!(
             "k1.observe_validation_result(mode, ctx.family, d1.profile, estimated_cost_ns, adverse, missing_observe_guard)"
         ));
@@ -259,12 +278,12 @@ fn checker_rejects_missing_observe_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_unit_test_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-unit")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["unit_primary"]["required_test_refs"]
         .as_array_mut()
-        .expect("unit refs array")
+        .ok_or("unit refs must be a mutable array")?
         .retain(|entry| {
             entry["name"].as_str()
                 != Some("deterministic_replay_produces_identical_decisions_and_evidence")
@@ -287,7 +306,7 @@ fn checker_rejects_missing_unit_test_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_local_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "local-cargo")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["integration_primary"]["required_commands"] =
