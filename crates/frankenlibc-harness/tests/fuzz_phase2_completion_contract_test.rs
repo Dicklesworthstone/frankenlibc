@@ -227,7 +227,10 @@ fn contract_binds_phase2_targets_ci_and_existing_tests() -> TestResult {
     }
 
     let policy = &evidence["phase2_policy"];
-    assert_eq!(policy["required_targets"].as_array().unwrap().len(), 4);
+    let required_targets = policy["required_targets"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "required_targets array"))?;
+    assert_eq!(required_targets.len(), 4);
     assert_eq!(
         string_set(&policy["required_transition_families"])?,
         BTreeSet::from([

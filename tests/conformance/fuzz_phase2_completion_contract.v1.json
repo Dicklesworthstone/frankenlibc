@@ -60,7 +60,7 @@
       ".github/workflows/ci.yml:241",
       "scripts/fuzz_nightly.sh:59",
       "scripts/fuzz_nightly.sh:104",
-      "scripts/fuzz_nightly.sh:137",
+      "scripts/fuzz_nightly.sh:138",
       "scripts/fuzz_nightly.sh:142",
       "scripts/fuzz_nightly.sh:150",
       "scripts/fuzz_nightly.sh:170",
