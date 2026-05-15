@@ -187,13 +187,16 @@ fn manifest_binds_unit_golden_and_conformance_items() -> TestResult {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "completion_coverage missing"))?;
     let covered_items = coverage
         .iter()
-        .map(|section| {
-            section["missing_item_id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string()
+        .map(|section| -> TestResult<String> {
+            let missing_item_id = section["missing_item_id"].as_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "coverage missing_item_id missing",
+                )
+            })?;
+            Ok(missing_item_id.to_string())
         })
-        .collect::<BTreeSet<_>>();
+        .collect::<TestResult<BTreeSet<_>>>()?;
     assert_eq!(
         covered_items,
         EXPECTED_MISSING_ITEMS
@@ -217,14 +220,15 @@ fn manifest_binds_unit_golden_and_conformance_items() -> TestResult {
                 .is_some_and(|refs| !refs.is_empty()),
             "coverage section should cite test refs"
         );
-        for command in section["validation_commands"]
-            .as_array()
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "validation commands missing")
-            })?
-            .iter()
-            .filter_map(Value::as_str)
-        {
+        for command_value in section["validation_commands"].as_array().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "validation commands missing")
+        })? {
+            let command = command_value.as_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "validation command must be string",
+                )
+            })?;
             if command.contains("cargo ") {
                 assert!(command.contains("rch "), "cargo command must use rch");
                 assert!(
@@ -233,13 +237,28 @@ fn manifest_binds_unit_golden_and_conformance_items() -> TestResult {
                 );
             }
         }
-        for test_ref in section["test_refs"].as_array().unwrap() {
-            let source = test_ref["source"].as_str().unwrap_or_default();
-            let name = test_ref["name"].as_str().unwrap_or_default();
-            let rel = source_paths[source].as_str().unwrap_or_default();
+        let test_refs = section["test_refs"]
+            .as_array()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "test_refs missing"))?;
+        for test_ref in test_refs {
+            let source = test_ref["source"].as_str().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "test_ref source missing")
+            })?;
+            let name = test_ref["name"].as_str().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "test_ref name missing")
+            })?;
+            let rel = source_paths
+                .get(source)
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("source path missing for {source}"),
+                    )
+                })?;
             let source_text = source_texts
                 .entry(source.to_string())
-                .or_insert_with(|| std::fs::read_to_string(root.join(rel)).unwrap());
+                .or_insert(std::fs::read_to_string(root.join(rel))?);
             assert!(
                 function_exists(source_text, name),
                 "test ref should exist: {rel}::{name}"
@@ -296,7 +315,9 @@ fn fixture_report_contract_binds_canonical_golden() -> TestResult {
         "golden fixture coverage regressed below baseline"
     );
 
-    let per_symbol = report["per_symbol_report"].as_array().unwrap();
+    let per_symbol = report["per_symbol_report"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "per_symbol_report missing"))?;
     assert_eq!(
         per_symbol.len() as u64,
         summary["total_symbols"].as_u64().unwrap_or_default()
@@ -337,7 +358,10 @@ fn checker_emits_structured_completion_evidence() -> TestResult {
             let value: Value = serde_json::from_str(line)?;
             validate_log_line(line, index + 1)
                 .map_err(|errs| io::Error::new(io::ErrorKind::InvalidData, format!("{errs:?}")))?;
-            Ok(value["event"].as_str().unwrap_or_default().to_string())
+            let event = value["event"]
+                .as_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "log event missing"))?;
+            Ok(event.to_string())
         })
         .collect::<TestResult<BTreeSet<_>>>()?;
     assert_eq!(
@@ -367,7 +391,9 @@ fn checker_rejects_missing_golden_report_anchor() -> TestResult {
     );
     let report = read_json(&out_dir.join("report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    let errors = report["errors"].as_array().unwrap();
+    let errors = report["errors"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "errors missing"))?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
