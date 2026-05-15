@@ -8,13 +8,21 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest_dir.display()
+        )
+    })?;
+    let repo_root = workspace_root.parent().ok_or_else(|| {
+        format!(
+            "workspace root has no repository parent: {}",
+            workspace_root.display()
+        )
+    })?;
+    Ok(repo_root.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,12 +55,12 @@ struct FixtureCase {
     note: String,
 }
 
-fn load_fixture(name: &str) -> FixtureFile {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
+fn load_fixture(name: &str) -> Result<FixtureFile, String> {
+    let path = repo_root()?.join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .map_err(|err| format!("invalid JSON in {}: {err}", path.display()))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,14 +68,15 @@ fn load_fixture(name: &str) -> FixtureFile {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn time_ops_fixture_exists() {
-    let path = repo_root().join("tests/conformance/fixtures/time_ops.json");
+fn time_ops_fixture_exists() -> Result<(), String> {
+    let path = repo_root()?.join("tests/conformance/fixtures/time_ops.json");
     assert!(path.exists(), "time_ops.json fixture must exist");
+    Ok(())
 }
 
 #[test]
-fn time_ops_fixture_valid_schema() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_fixture_valid_schema() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "time_ops");
@@ -86,6 +95,7 @@ fn time_ops_fixture_valid_schema() {
             case.name
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,19 +103,20 @@ fn time_ops_fixture_valid_schema() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn time_ops_covers_time() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_covers_time() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("time_returns")),
         "Missing test coverage for time()"
     );
+    Ok(())
 }
 
 #[test]
-fn time_ops_covers_clock_gettime() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_covers_clock_gettime() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     let patterns = [
@@ -121,28 +132,31 @@ fn time_ops_covers_clock_gettime() {
             pattern
         );
     }
+    Ok(())
 }
 
 #[test]
-fn time_ops_covers_clock() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_covers_clock() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("clock_returns")),
         "Missing test coverage for clock()"
     );
+    Ok(())
 }
 
 #[test]
-fn time_ops_covers_localtime() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_covers_localtime() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
         case_names.iter().any(|name| name.contains("localtime")),
         "Missing test coverage for localtime_r"
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,8 +164,8 @@ fn time_ops_covers_localtime() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn time_ops_error_codes_valid() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_error_codes_valid() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
 
     // Valid POSIX/Linux error codes for time functions
     let valid_errno_values = [
@@ -169,6 +183,7 @@ fn time_ops_error_codes_valid() {
             valid_errno_values
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,8 +191,8 @@ fn time_ops_error_codes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn time_ops_function_distribution() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_function_distribution() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
 
     let mut time_count = 0;
     let mut clock_count = 0;
@@ -190,7 +205,7 @@ fn time_ops_function_distribution() {
             "clock" => clock_count += 1,
             "clock_gettime" => clock_gettime_count += 1,
             "localtime_r" => localtime_count += 1,
-            f => panic!("Unexpected function in fixture: {}", f),
+            other => return Err(format!("unexpected function in fixture: {other}")),
         }
     }
 
@@ -220,6 +235,7 @@ fn time_ops_function_distribution() {
         "time_ops coverage: time={}, clock={}, clock_gettime={}, localtime_r={}",
         time_count, clock_count, clock_gettime_count, localtime_count
     );
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,8 +243,8 @@ fn time_ops_function_distribution() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn time_ops_modes_valid() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_modes_valid() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
 
     for case in &fixture.cases {
         assert!(
@@ -238,6 +254,7 @@ fn time_ops_modes_valid() {
             case.mode
         );
     }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,8 +262,8 @@ fn time_ops_modes_valid() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn time_ops_case_count_stable() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_case_count_stable() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
 
     const EXPECTED_MIN_CASES: usize = 6;
 
@@ -258,6 +275,7 @@ fn time_ops_case_count_stable() {
     );
 
     eprintln!("time_ops fixture has {} test cases", fixture.cases.len());
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,8 +283,8 @@ fn time_ops_case_count_stable() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn time_ops_covers_clock_ids() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_covers_clock_ids() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
 
     // Check that we test both CLOCK_REALTIME and CLOCK_MONOTONIC
     let has_realtime = fixture.cases.iter().any(|c| {
@@ -278,6 +296,7 @@ fn time_ops_covers_clock_ids() {
 
     assert!(has_realtime, "Must test CLOCK_REALTIME (clk_id 0)");
     assert!(has_monotonic, "Must test CLOCK_MONOTONIC (clk_id 1)");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -297,14 +316,14 @@ fn time_ops_covers_clock_ids() {
 // placeholders when the real call succeeds.
 
 #[test]
-fn time_ops_fixture_cases_match_execute_fixture_case() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_fixture_cases_match_execute_fixture_case() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -313,12 +332,12 @@ fn time_ops_fixture_cases_match_execute_fixture_case() {
 
         for mode in modes {
             let result =
-                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
-                    panic!(
+                execute_fixture_case(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "fixture case {} ({mode}) failed to execute: {err}",
                         case.name
                     )
-                });
+                })?;
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",
@@ -333,6 +352,7 @@ fn time_ops_fixture_cases_match_execute_fixture_case() {
             );
         }
     }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -403,14 +423,14 @@ fn execute_case_via_harness(
 }
 
 #[test]
-fn time_ops_fixture_executes_with_host_parity_via_harness_matrix() {
-    let fixture = load_fixture("time_ops");
+fn time_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Result<(), String> {
+    let fixture = load_fixture("time_ops")?;
 
     for case in &fixture.cases {
         let expected_output = case
             .expected_output
             .as_deref()
-            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+            .ok_or_else(|| format!("case {} missing expected_output", case.name))?;
         let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
             &["strict", "hardened"]
         } else {
@@ -418,13 +438,13 @@ fn time_ops_fixture_executes_with_host_parity_via_harness_matrix() {
         };
 
         for mode in modes {
-            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
-                .unwrap_or_else(|err| {
-                    panic!(
+            let result =
+                execute_case_via_harness(&case.function, &case.inputs, mode).map_err(|err| {
+                    format!(
                         "time_ops case {} ({mode}) failed to execute via harness: {err}",
                         case.name
                     )
-                });
+                })?;
             assert!(
                 result.host_parity || result.host_output == "UB",
                 "time_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
@@ -439,4 +459,5 @@ fn time_ops_fixture_executes_with_host_parity_via_harness_matrix() {
             );
         }
     }
+    Ok(())
 }
