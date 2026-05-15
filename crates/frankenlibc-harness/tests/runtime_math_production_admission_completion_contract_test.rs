@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::io;
@@ -8,13 +8,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -156,7 +157,7 @@ fn log_records(path: &Path) -> TestResult<Vec<Value>> {
 
 #[test]
 fn manifest_binds_all_bd3ot4_missing_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -245,19 +246,17 @@ fn manifest_binds_all_bd3ot4_missing_items() -> TestResult {
         string_set(&evidence["fuzz_primary"]["required_targets"])?,
         BTreeSet::from(["fuzz_runtime_math".to_string()])
     );
-    assert!(
-        evidence["fuzz_primary"]["required_cargo_fuzz_command"]
-            .as_str()
-            .is_some_and(|command| command.starts_with("rch exec -- ")
-                && command.contains("cargo fuzz run")
-                && command.contains("fuzz_runtime_math"))
-    );
+    assert!(evidence["fuzz_primary"]["required_cargo_fuzz_command"]
+        .as_str()
+        .is_some_and(|command| command.starts_with("rch exec -- ")
+            && command.contains("cargo fuzz run")
+            && command.contains("fuzz_runtime_math")));
     Ok(())
 }
 
 #[test]
 fn checker_validates_runtime_math_production_admission_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -295,7 +294,7 @@ fn checker_validates_runtime_math_production_admission_contract() -> TestResult 
 
 #[test]
 fn checker_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -343,7 +342,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_child_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_child")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["child_contracts"][0]["path"] =
@@ -366,7 +365,7 @@ fn checker_rejects_missing_child_contract() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non_rch")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["unit_primary"]["required_commands"][0] = json!(
@@ -390,7 +389,7 @@ fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["telemetry_primary"]["required_events"]
@@ -415,7 +414,7 @@ fn checker_rejects_missing_telemetry_event() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_fuzz_runtime_math_target() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_fuzz_target")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["fuzz_primary"]["required_targets"]
