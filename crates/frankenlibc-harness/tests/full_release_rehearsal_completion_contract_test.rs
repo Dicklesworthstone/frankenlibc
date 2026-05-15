@@ -1,17 +1,18 @@
 use serde_json::{Value, json};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| invalid_data("crate directory has workspace parent"))?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or_else(|| invalid_data("workspace parent has repo parent"))?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -84,6 +85,29 @@ fn output_text(output: &Output) -> String {
     )
 }
 
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+fn json_array<'a>(value: &'a Value, name: &str) -> TestResult<&'a [Value]> {
+    value
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| invalid_data(format!("{name} must be array")).into())
+}
+
+fn json_str<'a>(value: &'a Value, name: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| invalid_data(format!("{name} must be string")).into())
+}
+
+fn json_u64(value: &Value, name: &str) -> TestResult<u64> {
+    value
+        .as_u64()
+        .ok_or_else(|| invalid_data(format!("{name} must be u64")).into())
+}
+
 fn read_jsonl(path: &Path) -> TestResult<Vec<Value>> {
     Ok(std::fs::read_to_string(path)?
         .lines()
@@ -99,7 +123,7 @@ fn function_name_exists(root: &Path, source_path: &str, name: &str) -> TestResul
 
 #[test]
 fn manifest_binds_full_release_rehearsal_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -108,7 +132,12 @@ fn manifest_binds_full_release_rehearsal_completion_items() -> TestResult {
     );
     assert_eq!(manifest["original_bead"].as_str(), Some("bd-226"));
     assert_eq!(manifest["completion_debt_bead"].as_str(), Some("bd-226.1"));
-    assert!(manifest["next_audit_score_threshold"].as_u64().unwrap() >= 800);
+    assert!(
+        json_u64(
+            &manifest["next_audit_score_threshold"],
+            "next_audit_score_threshold"
+        )? >= 800
+    );
 
     let artifacts = manifest["source_artifacts"]
         .as_object()
@@ -121,9 +150,8 @@ fn manifest_binds_full_release_rehearsal_completion_items() -> TestResult {
         );
     }
 
-    let mut item_ids: Vec<&str> = manifest["missing_item_bindings"]
-        .as_array()
-        .ok_or("missing_item_bindings must be array")?
+    let bindings = json_array(&manifest["missing_item_bindings"], "missing_item_bindings")?;
+    let mut item_ids: Vec<&str> = bindings
         .iter()
         .filter_map(|binding| binding["id"].as_str())
         .collect();
@@ -148,11 +176,18 @@ fn manifest_binds_full_release_rehearsal_completion_items() -> TestResult {
     assert_eq!(smoke["expected_fails"].as_u64(), Some(0));
     assert_eq!(smoke["expected_skips"].as_u64(), Some(6));
 
-    for binding in manifest["missing_item_bindings"].as_array().unwrap() {
-        for test_ref in binding["required_test_refs"].as_array().unwrap() {
-            let source_id = test_ref["source"].as_str().unwrap();
-            let name = test_ref["name"].as_str().unwrap();
-            let source_path = artifacts[source_id].as_str().unwrap();
+    for binding in bindings {
+        for test_ref in json_array(&binding["required_test_refs"], "required_test_refs")? {
+            let source_id = json_str(&test_ref["source"], "required_test_refs.source")?;
+            let name = json_str(&test_ref["name"], "required_test_refs.name")?;
+            let source_path = artifacts
+                .get(source_id)
+                .ok_or_else(|| invalid_data(format!("missing source artifact {source_id}")))
+                .and_then(|artifact| {
+                    artifact.as_str().ok_or_else(|| {
+                        invalid_data(format!("source artifact {source_id} must be string"))
+                    })
+                })?;
             assert!(
                 function_name_exists(&root, source_path, name)?,
                 "missing test ref {source_id}::{name}"
@@ -165,7 +200,7 @@ fn manifest_binds_full_release_rehearsal_completion_items() -> TestResult {
 
 #[test]
 fn checker_emits_release_rehearsal_report_and_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -225,7 +260,7 @@ fn checker_emits_release_rehearsal_report_and_log() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_smoke_pass_count() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "smoke_drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let mut smoke = read_json(&root.join("tests/conformance/ld_preload_smoke_summary.v1.json"))?;
@@ -246,7 +281,7 @@ fn checker_rejects_missing_smoke_pass_count() -> TestResult {
     let report =
         read_json(&out_dir.join("full_release_rehearsal_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    let errors = report["errors"].as_array().unwrap();
+    let errors = json_array(&report["errors"], "errors")?;
     assert!(
         errors
             .iter()
@@ -259,7 +294,7 @@ fn checker_rejects_missing_smoke_pass_count() -> TestResult {
 
 #[test]
 fn checker_rejects_dossier_artifact_floor_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "dossier_floor")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_rehearsal_contract"]["dossier"]["min_total_artifacts"] = json!(9999);
@@ -275,7 +310,7 @@ fn checker_rejects_dossier_artifact_floor_drift() -> TestResult {
     let report =
         read_json(&out_dir.join("full_release_rehearsal_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    let errors = report["errors"].as_array().unwrap();
+    let errors = json_array(&report["errors"], "errors")?;
     assert!(
         errors.iter().any(|error| {
             error
@@ -291,7 +326,7 @@ fn checker_rejects_dossier_artifact_floor_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_completion_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_binding")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let bindings = manifest["missing_item_bindings"]
@@ -310,7 +345,7 @@ fn checker_rejects_missing_completion_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("full_release_rehearsal_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    let errors = report["errors"].as_array().unwrap();
+    let errors = json_array(&report["errors"], "errors")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
