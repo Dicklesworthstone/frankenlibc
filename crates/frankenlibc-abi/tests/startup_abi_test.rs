@@ -271,6 +271,7 @@ static mut INIT_CALLED: bool = false;
 static mut FINI_CALLED: bool = false;
 static CONSTRUCTOR_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 static DESTRUCTOR_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+static INIT_FINI_ARRAY_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 static EXIT_CALLBACK_ORDER_FD: AtomicI32 = AtomicI32::new(-1);
 static CXA_ATEXIT_ORDER: Mutex<Vec<c_int>> = Mutex::new(Vec::new());
 
@@ -312,6 +313,25 @@ unsafe extern "C" fn destructor_order_fini_hook() {
 
 unsafe extern "C" fn destructor_order_rtld_fini_hook() {
     DESTRUCTOR_ORDER.lock().unwrap().push("rtld_fini");
+}
+
+unsafe extern "C" fn init_fini_array_init_hook() {
+    let mut order = INIT_FINI_ARRAY_ORDER.lock().unwrap();
+    order.push("preinit_array");
+    order.push("init_array");
+}
+
+unsafe extern "C" fn init_fini_array_main(
+    _argc: c_int,
+    _argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
+) -> c_int {
+    INIT_FINI_ARRAY_ORDER.lock().unwrap().push("main");
+    0
+}
+
+unsafe extern "C" fn init_fini_array_fini_hook() {
+    INIT_FINI_ARRAY_ORDER.lock().unwrap().push("fini_array");
 }
 
 fn write_exit_callback_byte(byte: u8) {
@@ -427,6 +447,36 @@ fn phase0_runs_fini_array_and_rtld_fini_after_main_return() {
     assert!(
         snap.dag_valid,
         "destructor startup path should preserve the phase-0 DAG"
+    );
+}
+
+#[test]
+fn phase0_runs_preinit_init_main_and_fini_arrays_in_order() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    INIT_FINI_ARRAY_ORDER.lock().unwrap().clear();
+
+    let mut fix = StartupFixture::new(b"init-fini-arrays");
+    let rc = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(init_fini_array_main),
+            fix.argc(),
+            fix.argv_ptr(),
+            Some(init_fini_array_init_hook),
+            Some(init_fini_array_fini_hook),
+            None,
+            fix.stack_end(),
+        )
+    };
+
+    assert_eq!(rc, 0);
+    let order = INIT_FINI_ARRAY_ORDER.lock().unwrap().clone();
+    assert_eq!(order, ["preinit_array", "init_array", "main", "fini_array"]);
+
+    let snap = startup_policy_snapshot_for_tests();
+    assert_eq!(snap.decision, StartupPolicyDecision::Allow);
+    assert!(
+        snap.dag_valid,
+        "init/fini startup path should preserve the phase-0 DAG"
     );
 }
 

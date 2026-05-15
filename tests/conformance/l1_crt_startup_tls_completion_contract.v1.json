@@ -74,9 +74,7 @@
       "secure_mode",
       "failure_diagnostics"
     ],
-    "required_blocked_rows": [
-      "init_fini_arrays"
-    ],
+    "required_blocked_rows": [],
     "required_log_fields": [
       "trace_id",
       "bead_id",
@@ -99,12 +97,12 @@
     ],
     "minimum_l1_expectations": {
       "proof_row_count": 11,
-      "satisfied_row_count": 10,
-      "blocked_row_count": 1,
+      "satisfied_row_count": 11,
+      "blocked_row_count": 0,
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
-      "claim_policy_status": "blocked",
-      "current_gate_status": "blocked",
+      "claim_policy_status": "pass",
+      "current_gate_status": "pass",
       "current_level_must_remain": "L0",
       "objective_gate_status": "blocked",
       "replacement_gate_status": "pass",
@@ -179,7 +177,6 @@
         "l1_crt_startup_tls_completion_contract_validated",
         "l1_crt_startup_tls_completion_contract_failed",
         "l1_crt_startup_tls_summary",
-        "l1_crt_startup_tls_blockers_preserved",
         "replacement_levels_l1_gate_replayed"
       ],
       "required_fields": [

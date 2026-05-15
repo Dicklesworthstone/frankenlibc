@@ -51,7 +51,6 @@ EXPECTED_TELEMETRY_EVENTS = {
     "l1_crt_startup_tls_completion_contract_validated",
     "l1_crt_startup_tls_completion_contract_failed",
     "l1_crt_startup_tls_summary",
-    "l1_crt_startup_tls_blockers_preserved",
     "replacement_levels_l1_gate_replayed",
 }
 EXPECTED_TELEMETRY_FIELDS = {
@@ -310,7 +309,11 @@ matrix_rows_raw = matrix.get("proof_rows", [])
 matrix_rows = [row for row in matrix_rows_raw if isinstance(row, dict)]
 required_log_fields = as_string_list(evidence.get("required_log_fields"), "completion_debt_evidence.required_log_fields")
 required_row_ids = as_string_list(evidence.get("required_proof_row_ids"), "completion_debt_evidence.required_proof_row_ids")
-required_blocked_rows = as_string_list(evidence.get("required_blocked_rows"), "completion_debt_evidence.required_blocked_rows")
+required_blocked_rows = as_string_list(
+    evidence.get("required_blocked_rows"),
+    "completion_debt_evidence.required_blocked_rows",
+    allow_empty=True,
+)
 required_negative_tests = as_string_list(
     evidence.get("required_negative_claim_tests"),
     "completion_debt_evidence.required_negative_claim_tests",

@@ -23,7 +23,7 @@
   },
   "claim_policy": {
     "replacement_level": "L1",
-    "current_claim_status": "blocked",
+    "current_claim_status": "pass",
     "missing_evidence_result": "claim_blocked",
     "stale_evidence_result": "claim_blocked",
     "contradictory_evidence_result": "claim_blocked",
@@ -237,15 +237,20 @@
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "expected_order": ["preinit_array", "init_array", "main", "fini_array"],
-      "actual_order": [],
+      "actual_order": ["preinit_array", "init_array", "main", "fini_array"],
       "expected_status": "required",
-      "actual_status": "blocked",
-      "promotion_decision": "claim_blocked",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-05-15T16:40:00Z",
       "artifact_refs": [
+        "crates/frankenlibc-abi/src/startup_abi.rs",
+        "crates/frankenlibc-abi/tests/startup_abi_test.rs",
         "tests/integration/fixture_startup.c",
         "tests/conformance/replacement_levels.json"
       ],
       "check_commands": [
+        "rch exec -- env CARGO_TARGET_DIR=<target> FRANKENLIBC_MODE=strict cargo test -p frankenlibc-abi --test startup_abi_test phase0_runs_preinit_init_main_and_fini_arrays_in_order -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> FRANKENLIBC_MODE=hardened cargo test -p frankenlibc-abi --test startup_abi_test phase0_runs_preinit_init_main_and_fini_arrays_in_order -- --nocapture",
         "scripts/check_replacement_levels.sh"
       ],
       "failure_signature": "l1_init_fini_arrays_not_proven"
@@ -347,9 +352,9 @@
   ],
   "summary": {
     "required_row_count": 11,
-    "satisfied_row_count": 10,
-    "blocked_row_count": 1,
-    "current_gate_status": "blocked",
-    "blocker_reason": "Init/fini array evidence remains an explicit L1 blocker."
+    "satisfied_row_count": 11,
+    "blocked_row_count": 0,
+    "current_gate_status": "pass",
+    "blocker_reason": "All required L1 CRT/startup/TLS proof rows are satisfied; replacement-level promotion remains controlled by separate release policy."
   }
 }

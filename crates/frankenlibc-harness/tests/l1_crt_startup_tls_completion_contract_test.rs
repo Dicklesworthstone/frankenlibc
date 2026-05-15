@@ -20,7 +20,6 @@ const EXPECTED_MISSING_ITEMS: &[(&str, &str)] = &[
 const EXPECTED_TELEMETRY_EVENTS: &[&str] = &[
     "l1_crt_startup_tls_completion_contract_validated",
     "l1_crt_startup_tls_summary",
-    "l1_crt_startup_tls_blockers_preserved",
     "replacement_levels_l1_gate_replayed",
 ];
 
@@ -395,8 +394,8 @@ fn checker_emits_report_and_jsonl() -> TestResult {
     );
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["summary"]["proof_row_count"].as_u64(), Some(11));
-    assert_eq!(report["summary"]["satisfied_row_count"].as_u64(), Some(10));
-    assert_eq!(report["summary"]["blocked_row_count"].as_u64(), Some(1));
+    assert_eq!(report["summary"]["satisfied_row_count"].as_u64(), Some(11));
+    assert_eq!(report["summary"]["blocked_row_count"].as_u64(), Some(0));
 
     let emitted: BTreeSet<_> = events
         .iter()
@@ -440,11 +439,14 @@ fn checker_replays_replacement_level_gate_and_preserves_l1_blockers() -> TestRes
     );
     assert_eq!(
         replacement_report["l1_crt_startup_tls_proof_matrix"]["current_gate_status"].as_str(),
-        Some("blocked")
+        Some("pass")
     );
     assert_eq!(
-        replacement_report["summary"]["l1_crt_promotion_decisions"]["claim_blocked"].as_u64(),
-        Some(1)
+        replacement_report["summary"]["l1_crt_promotion_decisions"]
+            .get("claim_blocked")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        0
     );
     assert_eq!(
         report["summary"]["replacement_current_level"].as_str(),
@@ -475,8 +477,8 @@ fn checker_replays_replacement_level_gate_and_preserves_l1_blockers() -> TestRes
         })
         .count();
     assert_eq!(
-        blocked_log_rows, 2,
-        "each blocked proof row should stay blocked in strict and hardened logs"
+        blocked_log_rows, 0,
+        "fully satisfied proof matrix should not emit blocked strict/hardened rows"
     );
 
     Ok(())
