@@ -17,13 +17,13 @@ fn checker_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo parent")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -95,7 +95,7 @@ fn log_records(path: &Path) -> TestResult<Vec<Value>> {
 
 #[test]
 fn manifest_binds_unit_and_e2e_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -145,7 +145,7 @@ fn manifest_binds_unit_and_e2e_items() -> TestResult {
 
 #[test]
 fn startup_contract_names_runtime_policy_sources() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     let policy_path = manifest["source_artifacts"]["runtime_policy"]
         .as_str()
@@ -180,7 +180,7 @@ fn startup_contract_names_runtime_policy_sources() -> TestResult {
 #[test]
 fn checker_emits_structured_completion_evidence() -> TestResult {
     let _lock = checker_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -227,7 +227,7 @@ fn checker_emits_structured_completion_evidence() -> TestResult {
 #[test]
 fn checker_rejects_missing_runtime_policy_anchor() -> TestResult {
     let _lock = checker_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     let anchors = manifest["source_anchors"]["runtime_policy"]
         .as_array_mut()
