@@ -196,20 +196,41 @@ fn manifest_binds_unit_e2e_and_migration_evidence() -> TestResult {
     let decisions = report["partition_decisions"]
         .as_array()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "decisions array"))?;
+    let decision_count = u64::try_from(decisions.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "partition decision count should fit in u64",
+        )
+    })?;
+    let expected_total_modules = expected["total_modules"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "total_modules number"))?;
     assert_eq!(
-        decisions.len() as u64,
-        expected["total_modules"].as_u64().unwrap()
+        decision_count, expected_total_modules,
+        "partition decisions should match expected total modules"
     );
-    let retired = decisions
-        .iter()
-        .filter(|decision| decision["decision"].as_str() == Some("RETIRE"))
-        .count() as u64;
-    assert_eq!(
-        retired,
+    let retired = u64::try_from(
+        decisions
+            .iter()
+            .filter(|decision| decision["decision"].as_str() == Some("RETIRE"))
+            .count(),
+    )
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "retired count should fit in u64",
+        )
+    })?;
+    let required_research_retire_count =
         evidence["migrations_primary"]["required_research_retire_count"]
             .as_u64()
-            .unwrap()
-    );
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "required_research_retire_count number",
+                )
+            })?;
+    assert_eq!(retired, required_research_retire_count);
 
     let migration_plan = &report["migration_plan"];
     assert_eq!(
