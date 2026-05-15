@@ -1,17 +1,18 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -80,7 +81,7 @@ fn log_records(path: &Path) -> TestResult<Vec<Value>> {
 
 #[test]
 fn manifest_binds_unit_and_e2e_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -138,7 +139,7 @@ fn manifest_binds_unit_and_e2e_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_runtime_math_admission_retirement_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -174,7 +175,7 @@ fn checker_validates_runtime_math_admission_retirement_contract() -> TestResult 
 
 #[test]
 fn checker_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -222,7 +223,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_policy() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_policy")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["admission_report"]["policies_enforced"]
@@ -259,7 +260,7 @@ fn checker_rejects_missing_policy() -> TestResult {
 
 #[test]
 fn checker_rejects_bad_retirement_status() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bad_retirement")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["math_retirement_policy"]["policy_status"] =
@@ -294,7 +295,7 @@ fn checker_rejects_bad_retirement_status() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non_rch")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["missing_item_bindings"][0]["required_commands"][0] = json!(
