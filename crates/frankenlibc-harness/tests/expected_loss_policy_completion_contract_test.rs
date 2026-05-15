@@ -225,8 +225,14 @@ fn contract_binds_loss_matrix_unit_refs_and_rch_commands() -> TestResult {
     }
 
     let policy = &evidence["expected_loss_policy"];
-    assert_eq!(policy["required_actions"].as_array().unwrap().len(), 4);
-    assert_eq!(policy["required_families"].as_array().unwrap().len(), 20);
+    let required_actions = policy["required_actions"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "required_actions array"))?;
+    let required_families = policy["required_families"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "required_families array"))?;
+    assert_eq!(required_actions.len(), 4);
+    assert_eq!(required_families.len(), 20);
     assert!(policy["minimum_trace_rows"].as_u64().unwrap_or(0) >= 21);
     assert!(
         policy["minimum_artifact_index_entries"]
