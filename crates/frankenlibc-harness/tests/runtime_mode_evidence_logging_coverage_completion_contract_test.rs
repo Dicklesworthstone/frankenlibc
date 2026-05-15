@@ -127,10 +127,10 @@ fn mutated_contract(
     root: &Path,
     out_dir: &Path,
     label: &str,
-    mutator: impl FnOnce(&mut Value),
+    mutator: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut manifest = read_json(&contract_path(root))?;
-    mutator(&mut manifest);
+    mutator(&mut manifest)?;
     let path = out_dir.join(format!("{label}.contract.json"));
     write_json(&path, &manifest)?;
     Ok(path)
@@ -211,7 +211,10 @@ fn manifest_binds_runtime_mode_evidence_completion_items() -> TestResult {
             .collect()
     );
 
-    for artifact in manifest["source_artifacts"].as_array().unwrap() {
+    let source_artifacts = manifest["source_artifacts"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source_artifacts"))?;
+    for artifact in source_artifacts {
         let path = artifact["path"]
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact path missing"))?;
@@ -268,8 +271,14 @@ fn checker_rejects_missing_telemetry_binding() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-telemetry", |manifest| {
         let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
             .as_array_mut()
-            .expect("bindings array");
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "completion_debt_evidence.missing_item_bindings",
+                )
+            })?;
         bindings.retain(|binding| binding["spec_item"].as_str() != Some("telemetry.primary"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -288,6 +297,7 @@ fn checker_rejects_source_summary_drift() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "summary-drift", |manifest| {
         manifest["runtime_mode_evidence_contract"]["expected_summary"]["coverage_row_count"] =
             Value::from(99);
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -306,11 +316,17 @@ fn checker_rejects_missing_source_test_binding() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-source-test", |manifest| {
         let tests = manifest["runtime_mode_evidence_contract"]["required_source_tests"]
             .as_array_mut()
-            .expect("required source tests array");
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "runtime_mode_evidence_contract.required_source_tests",
+                )
+            })?;
         tests.retain(|test| {
             test.as_str()
                 != Some("isolated_conformance_child_overrides_ambient_mode_and_logs_startup")
         });
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
