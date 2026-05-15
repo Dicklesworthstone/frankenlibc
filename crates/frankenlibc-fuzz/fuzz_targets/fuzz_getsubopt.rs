@@ -5,7 +5,7 @@
 //! `getsubopt` is a stateful parser that consumes one suboption per call from
 //! a comma-separated input buffer. It mutates the input buffer (writes NUL at
 //! comma boundaries) and advances the cursor pointer. The diff harness in
-//! `tests/conformance_diff_getsubopt.rs` covers 35 hand-crafted inputs; this
+//! `tests/conformance_diff_getsubopt.rs` covers 40 hand-crafted inputs; this
 //! target widens that to arbitrary printable-ASCII suboption strings.
 //!
 //! ## Input layout

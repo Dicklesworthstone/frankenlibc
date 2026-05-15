@@ -141,11 +141,15 @@ const INPUTS: &[&[u8]] = &[
     b"foo=bar=baz",
     b"foo=,bar=,baz=",
     b"size=,",
+    b"size=512,,rw",
     b",size=512",
     b"unknown1,unknown2,unknown3",
     b"name=hello world",
     b"foo=,",
     b"foo,",
+    b"foo=bar,,size=1024,",
+    b"rw=fast,ro",
+    b"Ro,rw",
     b"a,b,c,d,e",
 ];
 
@@ -230,6 +234,7 @@ const PATHOLOGICAL_INPUTS: &[&[u8]] = &[
     b",ro",
     b"=",
     b"=,=,=",
+    b",=value",
     b"foo=bar=baz=qux",
     b"size=large,name=ostrich",
     b"name=hello\\,world", // backslash-escape (NOT supported by getsubopt — backslash is literal)
@@ -277,6 +282,6 @@ fn diff_getsubopt_pathological() {
 #[test]
 fn getsubopt_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"stdlib.h getsubopt\",\"reference\":\"glibc\",\"functions\":1,\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h getsubopt\",\"reference\":\"glibc\",\"functions\":1,\"corpus_cases\":40,\"divergences\":0}}",
     );
 }
