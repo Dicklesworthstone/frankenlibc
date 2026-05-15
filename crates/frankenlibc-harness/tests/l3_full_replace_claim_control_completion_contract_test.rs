@@ -407,9 +407,26 @@ fn manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence() -> TestResu
     );
 
     let expectations = &evidence["minimum_l3_expectations"];
+    let matrix_proof_row_count = matrix["summary"]["proof_row_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "matrix proof row count"))?;
+    let current_level_must_remain = expectations["current_level_must_remain"]
+        .as_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "current level expectation"))?;
+    let current_release_level_must_remain = expectations["current_release_level_must_remain"]
+        .as_str()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "current release level expectation",
+            )
+        })?;
+    let l3_replacement_level_status = expectations["l3_replacement_level_status"]
+        .as_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "L3 replacement status"))?;
     assert_eq!(
         expectations["proof_row_count"].as_u64(),
-        Some(matrix["summary"]["proof_row_count"].as_u64().unwrap())
+        Some(matrix_proof_row_count)
     );
     assert_eq!(
         expectations["l3_proof_row_count"].as_u64(),
@@ -421,15 +438,11 @@ fn manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence() -> TestResu
     );
     assert_eq!(
         levels["current_level"].as_str(),
-        Some(expectations["current_level_must_remain"].as_str().unwrap())
+        Some(current_level_must_remain)
     );
     assert_eq!(
         levels["release_tag_policy"]["current_release_level"].as_str(),
-        Some(
-            expectations["current_release_level_must_remain"]
-                .as_str()
-                .unwrap()
-        )
+        Some(current_release_level_must_remain)
     );
     let l3_level = levels["levels"]
         .as_array()
@@ -441,11 +454,7 @@ fn manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence() -> TestResu
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "L3 level"))?;
     assert_eq!(
         l3_level["status"].as_str(),
-        Some(
-            expectations["l3_replacement_level_status"]
-                .as_str()
-                .unwrap()
-        )
+        Some(l3_replacement_level_status)
     );
     assert_eq!(l3_level["host_glibc_required"].as_bool(), Some(false));
     assert_eq!(dossier["status"].as_str(), Some("pass"));

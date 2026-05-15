@@ -45,7 +45,7 @@
       "scripts/check_release_dossier.sh:29",
       "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:27",
       "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:258",
-      "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:349",
+      "crates/frankenlibc-harness/tests/release_dossier_validator_test.rs:350",
       "tests/release/dossier_validation_report.v1.json:1",
       "tests/release/dossier_validation_report.v1.json:85",
       "tests/release/dossier_validation_report.v1.json:198",
