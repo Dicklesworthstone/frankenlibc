@@ -193,7 +193,8 @@ fn checker_validates_schema_contract_and_emits_report_log() -> TestResult {
     );
     assert_eq!(report["e2e_bindings"].as_array().unwrap().len(), 7);
     assert_eq!(report["conformance_bindings"].as_array().unwrap().len(), 8);
-    assert!(report["errors"].as_array().unwrap().is_empty());
+    let errors = report["errors"].as_array().ok_or("report errors array")?;
+    assert!(errors.is_empty());
 
     let events = read_jsonl(&log_path)?;
     let event_names: BTreeSet<String> = events
