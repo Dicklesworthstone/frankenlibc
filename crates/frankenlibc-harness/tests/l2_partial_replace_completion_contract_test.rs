@@ -373,21 +373,30 @@ fn manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence() -> TestResu
     );
 
     let expectations = &evidence["minimum_l2_expectations"];
+    let summary = &matrix["summary"];
+    let proof_row_count = summary["proof_row_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "proof_row_count"))?;
+    let obligation_count = summary["obligation_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "obligation_count"))?;
+    let negative_claim_test_count = summary["negative_claim_test_count"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "negative_claim_test_count"))?;
+    let current_level_must_remain = expectations["current_level_must_remain"]
+        .as_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "current_level_must_remain"))?;
     assert_eq!(
         expectations["proof_row_count"].as_u64(),
-        Some(matrix["summary"]["proof_row_count"].as_u64().unwrap())
+        Some(proof_row_count)
     );
     assert_eq!(
         expectations["obligation_count"].as_u64(),
-        Some(matrix["summary"]["obligation_count"].as_u64().unwrap())
+        Some(obligation_count)
     );
     assert_eq!(
         expectations["negative_claim_test_count"].as_u64(),
-        Some(
-            matrix["summary"]["negative_claim_test_count"]
-                .as_u64()
-                .unwrap()
-        )
+        Some(negative_claim_test_count)
     );
     assert_eq!(
         expectations["l2_current_claim_status"].as_str(),
@@ -395,7 +404,7 @@ fn manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence() -> TestResu
     );
     assert_eq!(
         levels["current_level"].as_str(),
-        Some(expectations["current_level_must_remain"].as_str().unwrap())
+        Some(current_level_must_remain)
     );
     assert_eq!(
         artifact["artifact_policy"]["ld_preload_substitutes_allowed"].as_bool(),
