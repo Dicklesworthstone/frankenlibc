@@ -227,13 +227,19 @@ fn manifest_binds_unit_e2e_conformance_and_telemetry_items() -> TestResult {
                 );
             }
         }
-        for test_ref in section["test_refs"].as_array().unwrap() {
+        let test_refs = section["test_refs"]
+            .as_array()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "test_refs missing"))?;
+        for test_ref in test_refs {
             let source = test_ref["source"].as_str().unwrap_or_default();
             let name = test_ref["name"].as_str().unwrap_or_default();
             let rel = source_paths[source].as_str().unwrap_or_default();
+            if !source_texts.contains_key(source) {
+                source_texts.insert(source.to_string(), std::fs::read_to_string(root.join(rel))?);
+            }
             let source_text = source_texts
-                .entry(source.to_string())
-                .or_insert_with(|| std::fs::read_to_string(root.join(rel)).unwrap());
+                .get(source)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source text missing"))?;
             assert!(
                 function_exists(source_text, name),
                 "test ref should exist: {rel}::{name}"
@@ -259,7 +265,7 @@ fn checker_passes_and_emits_structured_report() -> TestResult {
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["bead"].as_str(), Some("bd-bp8fl.4.3.1"));
     assert_eq!(report["summary"]["family_count"].as_u64(), Some(40));
-    assert_eq!(report["summary"]["fail_count"].as_u64(), Some(40));
+    assert_eq!(report["summary"]["fail_count"].as_u64(), Some(37));
     assert_eq!(
         report["summary"]["claim_gate_decision"].as_str(),
         Some("blocked")
