@@ -32,8 +32,8 @@
 //! `tls_cache_miss_rate`). Read-mostly: writers are rare
 //! (cache invalidations); readers are every membrane validation.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneId {
@@ -70,6 +70,12 @@ impl ProfileGatedReadMostly {
         self.profile_lane
     }
 
+    fn conservative_value(&self) -> MutexGuard<'_, u32> {
+        self.conservative
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Writer publishes a new value. Updates BOTH lanes so a
     /// profile-flip never observes stale data.
     pub fn write(&self, value: u32) {
@@ -82,7 +88,7 @@ impl ProfileGatedReadMostly {
         self.seq_val.store(value, Ordering::Release);
         self.seq_ver.fetch_add(1, Ordering::AcqRel);
         // Conservative half: take mutex, store value.
-        *self.conservative.lock().unwrap() = value;
+        *self.conservative_value() = value;
     }
 
     /// Read using the active profile lane. Returns the value.
@@ -90,7 +96,7 @@ impl ProfileGatedReadMostly {
     /// retry as long as the writer eventually quiesces.
     pub fn read(&self) -> u32 {
         match self.profile_lane {
-            LaneId::Conservative => *self.conservative.lock().unwrap(),
+            LaneId::Conservative => *self.conservative_value(),
             LaneId::Seqlock => self.read_seqlock_with_retry(),
         }
     }
@@ -98,7 +104,7 @@ impl ProfileGatedReadMostly {
     /// Direct conservative-lane read, ignoring the profile flag.
     /// Used by tests to compute the isomorphism witness.
     pub fn read_via_conservative(&self) -> u32 {
-        *self.conservative.lock().unwrap()
+        *self.conservative_value()
     }
 
     /// Direct seqlock-lane read.
@@ -531,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_live_measurement_accepts_well_formed_row() {
+    fn validate_live_measurement_accepts_well_formed_row() -> Result<(), LiveMeasurementError> {
         let row = LiveMeasurementRow {
             lane_id: "seqlock".into(),
             profile_id: "high-core-tail".into(),
@@ -543,7 +549,8 @@ mod tests {
             n: 1_000_000,
             seed: 0xc0ffee,
         };
-        validate_live_measurement(&row).unwrap();
+        validate_live_measurement(&row)?;
+        Ok(())
     }
 
     #[test]
