@@ -27,6 +27,10 @@ struct AllowlistedUse {
 
 const CLEANED_HARNESS_FILES: &[CleanedHarnessFile] = &[
     CleanedHarnessFile {
+        bead: "ci-perf-gate-wiring-cleanup",
+        path: "crates/frankenlibc-harness/tests/ci_perf_gate_wiring_test.rs",
+    },
+    CleanedHarnessFile {
         bead: "bd-crm9x",
         path: "crates/frankenlibc-harness/tests/beads_sqlite_integrity_completion_contract_test.rs",
     },
@@ -35,8 +39,64 @@ const CLEANED_HARNESS_FILES: &[CleanedHarnessFile] = &[
         path: "crates/frankenlibc-harness/tests/allocator_subsystem_completion_contract_test.rs",
     },
     CleanedHarnessFile {
+        bead: "l1-parser-positive-cases-cleanup",
+        path: "crates/frankenlibc-harness/tests/l1_dashboard_must_remain_unset_parser_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "separation-logic-gate-cleanup",
+        path: "crates/frankenlibc-harness/tests/separation_logic_annotations_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "evidence-ring-snapshot-cleanup",
+        path: "crates/frankenlibc-harness/tests/evidence_ring_backpressure_stress_contract_test.rs",
+    },
+    CleanedHarnessFile {
         bead: "conformance-fixture-pipeline-cleanup",
         path: "crates/frankenlibc-harness/tests/conformance_fixture_pipeline_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "perf-waiver-audit-cleanup",
+        path: "crates/frankenlibc-harness/tests/perf_waiver_audit_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "gentoo-telemetry-cleanup",
+        path: "crates/frankenlibc-harness/tests/gentoo_test_execution_telemetry_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "resolver-nss-gate-cleanup",
+        path: "crates/frankenlibc-harness/tests/resolver_nss_hard_parts_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "bd-l5dfe",
+        path: "crates/frankenlibc-harness/tests/l3_full_replace_claim_control_completion_contract_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "verification-matrix-maintenance-cleanup",
+        path: "crates/frankenlibc-harness/tests/verification_matrix_maintenance_completion_contract_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "extreme-optimization-loop-cleanup",
+        path: "crates/frankenlibc-harness/tests/extreme_optimization_loop_completion_contract_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "bd-z92n8",
+        path: "crates/frankenlibc-harness/tests/pthread_bootstrap_completion_contract_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "br-db-repair-cleanup",
+        path: "crates/frankenlibc-harness/tests/br_db_repair_completion_contract_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "bd-kmhto",
+        path: "crates/frankenlibc-harness/tests/claim_reconciliation_completion_contract_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "bd-rxed0",
+        path: "crates/frankenlibc-harness/tests/real_program_smoke_suite_completion_contract_test.rs",
+    },
+    CleanedHarnessFile {
+        bead: "stdio-family-cleanup",
+        path: "crates/frankenlibc-harness/tests/stdio_family_completion_contract_test.rs",
     },
     CleanedHarnessFile {
         bead: "bd-y7x9e",
