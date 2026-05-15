@@ -71,7 +71,7 @@
       "crates/frankenlibc-abi/src/pthread_abi.rs:2192",
       "crates/frankenlibc-abi/src/pthread_abi.rs:2204",
       "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs:162",
-      "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:161",
+      "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:167",
       "tests/conformance/pthread_thread_stress_scenarios.v1.json:1"
     ],
     "unit_primary": {
