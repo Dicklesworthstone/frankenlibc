@@ -106,6 +106,63 @@ fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
     Ok(set)
 }
 
+fn json_object<'a>(
+    value: &'a Value,
+    description: &str,
+) -> TestResult<&'a serde_json::Map<String, Value>> {
+    value.as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be an object"),
+        )
+        .into()
+    })
+}
+
+fn json_array<'a>(value: &'a Value, description: &str) -> TestResult<&'a Vec<Value>> {
+    value.as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be an array"),
+        )
+        .into()
+    })
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, description: &str) -> TestResult<&'a mut Vec<Value>> {
+    value.as_array_mut().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be a mutable array"),
+        )
+        .into()
+    })
+}
+
+fn json_str<'a>(value: &'a Value, description: &str) -> TestResult<&'a str> {
+    value.as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be a string"),
+        )
+        .into()
+    })
+}
+
+fn report_errors_contain(report: &Value, needle: &str) -> TestResult<bool> {
+    Ok(json_array(&report["errors"], "report errors")?
+        .iter()
+        .filter_map(Value::as_str)
+        .any(|error| error.contains(needle)))
+}
+
+fn report_errors_contain_any(report: &Value, needles: &[&str]) -> TestResult<bool> {
+    Ok(json_array(&report["errors"], "report errors")?
+        .iter()
+        .filter_map(Value::as_str)
+        .any(|error| needles.iter().any(|needle| error.contains(needle))))
+}
+
 fn unique_output_dir(root: &Path, label: &str) -> TestResult<PathBuf> {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let path = root.join("target/conformance").join(format!(
@@ -207,8 +264,8 @@ fn manifest_binds_missing_items_and_vertical_slice_contract() -> TestResult {
     assert_eq!(manifest["bead"].as_str(), Some("bd-bp8fl.10.6.1"));
     assert_eq!(manifest["original_bead"].as_str(), Some("bd-bp8fl.10.6"));
 
-    for path in manifest["source_artifacts"].as_object().unwrap().values() {
-        let rel = path.as_str().unwrap();
+    for path in json_object(&manifest["source_artifacts"], "source_artifacts")?.values() {
+        let rel = json_str(path, "source artifact path")?;
         assert!(
             root.join(rel).exists(),
             "source artifact should exist: {rel}"
@@ -217,10 +274,10 @@ fn manifest_binds_missing_items_and_vertical_slice_contract() -> TestResult {
 
     let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
         .as_array()
-        .unwrap()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing_item_bindings array"))?
         .iter()
-        .map(|binding| binding["missing_item_id"].as_str().unwrap().to_string())
-        .collect::<BTreeSet<_>>();
+        .map(|binding| Ok(json_str(&binding["missing_item_id"], "missing_item_id")?.to_string()))
+        .collect::<TestResult<BTreeSet<_>>>()?;
     assert_eq!(
         bindings,
         EXPECTED_MISSING_ITEMS
@@ -231,9 +288,9 @@ fn manifest_binds_missing_items_and_vertical_slice_contract() -> TestResult {
 
     for item in manifest["completion_debt_evidence"]["implementation_refs"]
         .as_array()
-        .unwrap()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "implementation_refs array"))?
     {
-        assert_file_line_ref_exists(&root, item.as_str().unwrap())?;
+        assert_file_line_ref_exists(&root, json_str(item, "implementation ref")?)?;
     }
 
     let contract = &manifest["completion_debt_evidence"]["required_vertical_slice_contract"];
@@ -260,19 +317,24 @@ fn source_gate_and_tests_are_anchored() -> TestResult {
     let evidence = &manifest["completion_debt_evidence"];
     let source_harness = source_text(
         &root,
-        evidence["test_sources"]["source_harness"].as_str().unwrap(),
+        json_str(
+            &evidence["test_sources"]["source_harness"],
+            "source_harness path",
+        )?,
     )?;
     let completion_harness = source_text(
         &root,
-        evidence["test_sources"]["completion_harness"]
-            .as_str()
-            .unwrap(),
+        json_str(
+            &evidence["test_sources"]["completion_harness"],
+            "completion_harness path",
+        )?,
     )?;
     let checker = source_text(
         &root,
-        manifest["source_artifacts"]["completion_gate"]
-            .as_str()
-            .unwrap(),
+        json_str(
+            &manifest["source_artifacts"]["completion_gate"],
+            "completion_gate path",
+        )?,
     )?;
 
     for section in [
@@ -281,9 +343,12 @@ fn source_gate_and_tests_are_anchored() -> TestResult {
         "conformance_primary",
         "telemetry_primary",
     ] {
-        for test_ref in evidence[section]["required_test_refs"].as_array().unwrap() {
-            let source_name = test_ref["source"].as_str().unwrap();
-            let test_name = test_ref["name"].as_str().unwrap();
+        for test_ref in json_array(
+            &evidence[section]["required_test_refs"],
+            "required_test_refs",
+        )? {
+            let source_name = json_str(&test_ref["source"], "test source")?;
+            let test_name = json_str(&test_ref["name"], "test name")?;
             let source = if source_name == "source_harness" {
                 &source_harness
             } else {
@@ -328,7 +393,7 @@ fn checker_runs_source_gate_and_emits_completion_evidence() -> TestResult {
         read_json(&out_dir.join("user_workload_vertical_slice_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(
-        report["missing_items_bound"].as_array().unwrap().len(),
+        json_array(&report["missing_items_bound"], "missing_items_bound")?.len(),
         EXPECTED_MISSING_ITEMS.len()
     );
     assert_eq!(
@@ -348,8 +413,8 @@ fn checker_runs_source_gate_and_emits_completion_evidence() -> TestResult {
         read_jsonl(&out_dir.join("user_workload_vertical_slice_completion_contract.log.jsonl"))?;
     let completion_events = completion_rows
         .iter()
-        .map(|row| row["event"].as_str().unwrap().to_string())
-        .collect::<BTreeSet<_>>();
+        .map(|row| Ok(json_str(&row["event"], "completion log event")?.to_string()))
+        .collect::<TestResult<BTreeSet<_>>>()?;
     for event in EXPECTED_EVENTS
         .iter()
         .filter(|event| **event != "user_workload_vertical_slice_completion_contract_failed")
@@ -383,10 +448,12 @@ fn checker_rejects_missing_required_log_field_binding() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-log-field")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["completion_debt_evidence"]["required_vertical_slice_contract"]["required_log_fields"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|field| field.as_str() != Some("source_commit"));
+    json_array_mut(
+        &mut manifest["completion_debt_evidence"]["required_vertical_slice_contract"]
+            ["required_log_fields"],
+        "required_log_fields",
+    )?
+    .retain(|field| field.as_str() != Some("source_commit"));
     let bad_contract = out_dir.join("bad-contract.json");
     write_json(&bad_contract, &manifest)?;
 
@@ -395,13 +462,7 @@ fn checker_rejects_missing_required_log_field_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("user_workload_vertical_slice_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|error| error.as_str().unwrap().contains("required_log_fields"))
-    );
+    assert!(report_errors_contain(&report, "required_log_fields")?);
     Ok(())
 }
 
@@ -419,13 +480,10 @@ fn checker_rejects_unblocked_support_claim() -> TestResult {
     let report =
         read_json(&out_dir.join("user_workload_vertical_slice_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(report["errors"].as_array().unwrap().iter().any(|error| {
-        error.as_str().unwrap().contains("support")
-            || error
-                .as_str()
-                .unwrap()
-                .contains("expected_current_decision")
-    }));
+    assert!(report_errors_contain_any(
+        &report,
+        &["support", "expected_current_decision"]
+    )?);
     Ok(())
 }
 
@@ -434,11 +492,12 @@ fn checker_rejects_missing_smoke_case_binding() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-smoke")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["completion_debt_evidence"]["required_vertical_slice_contract"]
-        ["required_negative_test_ids"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|id| id.as_str() != Some("missing_smoke_case"));
+    json_array_mut(
+        &mut manifest["completion_debt_evidence"]["required_vertical_slice_contract"]
+            ["required_negative_test_ids"],
+        "required_negative_test_ids",
+    )?
+    .retain(|id| id.as_str() != Some("missing_smoke_case"));
     let bad_contract = out_dir.join("bad-contract.json");
     write_json(&bad_contract, &manifest)?;
 
@@ -447,12 +506,10 @@ fn checker_rejects_missing_smoke_case_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("user_workload_vertical_slice_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(report["errors"].as_array().unwrap().iter().any(|error| {
-        error
-            .as_str()
-            .unwrap()
-            .contains("required_negative_test_ids")
-    }));
+    assert!(report_errors_contain(
+        &report,
+        "required_negative_test_ids"
+    )?);
     Ok(())
 }
 
@@ -461,10 +518,11 @@ fn checker_rejects_missing_telemetry_event_binding() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-telemetry")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["completion_debt_evidence"]["telemetry_primary"]["required_events"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|event| event.as_str() != Some("user_workload_vertical_slice_replayed"));
+    json_array_mut(
+        &mut manifest["completion_debt_evidence"]["telemetry_primary"]["required_events"],
+        "required_events",
+    )?
+    .retain(|event| event.as_str() != Some("user_workload_vertical_slice_replayed"));
     let bad_contract = out_dir.join("bad-contract.json");
     write_json(&bad_contract, &manifest)?;
 
@@ -473,12 +531,6 @@ fn checker_rejects_missing_telemetry_event_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("user_workload_vertical_slice_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
-    assert!(
-        report["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|error| error.as_str().unwrap().contains("required_events"))
-    );
+    assert!(report_errors_contain(&report, "required_events")?);
     Ok(())
 }
