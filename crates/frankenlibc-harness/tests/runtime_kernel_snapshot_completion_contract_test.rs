@@ -6,13 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?
         .parent()
-        .expect("workspace parent has repo root")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo root")?
+        .to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -76,12 +76,16 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
-        .as_array()
-        .expect("expected array")
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    let values = value.as_array().ok_or("value must be an array")?;
+    values
         .iter()
-        .map(|item| item.as_str().expect("expected string").to_string())
+        .map(|item| {
+            Ok(item
+                .as_str()
+                .ok_or("array item must be a string")?
+                .to_string())
+        })
         .collect()
 }
 
@@ -95,7 +99,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_runtime_kernel_snapshot_unit_and_e2e_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -108,7 +112,7 @@ fn manifest_binds_runtime_kernel_snapshot_unit_and_e2e_items() -> TestResult {
         Some("bd-oai.2.1")
     );
     assert_eq!(
-        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.unit.primary".to_string(),
             "tests.e2e.primary".to_string(),
@@ -142,8 +146,13 @@ fn manifest_binds_runtime_kernel_snapshot_unit_and_e2e_items() -> TestResult {
             .as_array()
             .ok_or("unit required test refs must be array")?
             .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+            .map(|entry| {
+                Ok(entry["name"]
+                    .as_str()
+                    .ok_or("unit test ref name must be string")?
+                    .to_string())
+            })
+            .collect::<TestResult<_>>()?;
     for name in [
         "runtime_kernel_snapshot_schema_and_literal_cover_all_fields",
         "snapshot_literal_never_relocks_summary_mutexes",
@@ -158,8 +167,13 @@ fn manifest_binds_runtime_kernel_snapshot_unit_and_e2e_items() -> TestResult {
             .as_array()
             .ok_or("e2e required test refs must be array")?
             .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+            .map(|entry| {
+                Ok(entry["name"]
+                    .as_str()
+                    .ok_or("e2e test ref name must be string")?
+                    .to_string())
+            })
+            .collect::<TestResult<_>>()?;
     assert!(e2e_names.contains("runtime_math_kernel_snapshot_golden_checksum_matches_manifest"));
     assert!(e2e_names.contains("checker_rejects_golden_hash_drift"));
 
@@ -168,7 +182,7 @@ fn manifest_binds_runtime_kernel_snapshot_unit_and_e2e_items() -> TestResult {
 
 #[test]
 fn checker_validates_snapshot_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -203,8 +217,13 @@ fn checker_validates_snapshot_contract_and_emits_report_log() -> TestResult {
     let rows = read_jsonl(&out_dir.join("runtime_kernel_snapshot_completion_contract.log.jsonl"))?;
     let events: BTreeSet<_> = rows
         .iter()
-        .map(|row| row["event"].as_str().unwrap().to_string())
-        .collect();
+        .map(|row| {
+            Ok(row["event"]
+                .as_str()
+                .ok_or("log row event must be string")?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     for event in [
         "runtime_kernel_snapshot_unit_bindings_verified",
         "runtime_kernel_snapshot_golden_verified",
@@ -237,7 +256,7 @@ fn checker_validates_snapshot_contract_and_emits_report_log() -> TestResult {
 
 #[test]
 fn checker_rejects_snapshot_field_floor_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "field-floor")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_snapshot_contract"]["minimum_snapshot_fields"] = json!(9999);
@@ -261,12 +280,12 @@ fn checker_rejects_snapshot_field_floor_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_unit_test_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-unit")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["unit_primary"]["required_test_refs"]
         .as_array_mut()
-        .expect("unit refs array")
+        .ok_or("unit refs must be a mutable array")?
         .retain(|entry| {
             entry["name"].as_str()
                 != Some("runtime_kernel_snapshot_schema_and_literal_cover_all_fields")
@@ -289,7 +308,7 @@ fn checker_rejects_missing_unit_test_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_golden_hash_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "hash-drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_snapshot_contract"]["expected_sha256"] =
