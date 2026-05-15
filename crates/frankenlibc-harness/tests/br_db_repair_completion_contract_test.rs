@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,13 +22,14 @@ const CRITICAL_DISCREPANCIES: &[&str] = &[
     "timeout",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or_else(|| io::Error::other("crate directory has workspace parent"))?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("workspace parent has repo parent"))?
+        .to_path_buf();
+    Ok(root)
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -102,10 +104,10 @@ fn passing_checker(root: &Path, label: &str) -> TestResult<PathBuf> {
 fn mutated_contract(
     root: &Path,
     label: &str,
-    mutate: impl FnOnce(&mut Value),
+    mutate: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut contract = load_json(&contract_path(root))?;
-    mutate(&mut contract);
+    mutate(&mut contract)?;
     let out = unique_out_dir(root, label)?;
     let path = out.join("mutated_contract.json");
     write_json(&path, &contract)?;
@@ -126,7 +128,7 @@ fn assert_checker_fails(root: &Path, contract: &Path, label: &str, expected: &st
 
 #[test]
 fn manifest_binds_tracker_repair_sources_and_missing_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -148,16 +150,17 @@ fn manifest_binds_tracker_repair_sources_and_missing_items() -> TestResult {
         assert!(root.join(path).is_file(), "missing source artifact {path}");
     }
 
-    let source_ids: BTreeSet<_> = manifest["source_contracts"]
+    let source_contracts = manifest["source_contracts"]
         .as_array()
-        .ok_or("source_contracts must be array")?
+        .ok_or("source_contracts must be array")?;
+    let source_ids: BTreeSet<_> = source_contracts
         .iter()
         .filter_map(|source| source["id"].as_str())
         .collect();
     assert!(source_ids.contains("tracker_health_report"));
     assert!(source_ids.contains("br_bv_disagreement_dashboard"));
 
-    for source in manifest["source_contracts"].as_array().unwrap() {
+    for source in source_contracts {
         let required: BTreeSet<_> = source["required_discrepancies"]
             .as_array()
             .ok_or("required_discrepancies array")?
@@ -201,7 +204,7 @@ fn manifest_binds_tracker_repair_sources_and_missing_items() -> TestResult {
 
 #[test]
 fn checker_replays_source_contracts_and_emits_telemetry() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out = passing_checker(&root, "pass")?;
     let report = load_json(&out.join("br_db_repair_completion_contract.report.json"))?;
     let log = read_jsonl(&out.join("br_db_repair_completion_contract.log.jsonl"))?;
@@ -229,7 +232,7 @@ fn checker_replays_source_contracts_and_emits_telemetry() -> TestResult {
 
 #[test]
 fn checker_preserves_tracker_failure_as_tooling_not_code_failure() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out = passing_checker(&root, "tooling")?;
     let report = load_json(&out.join("br_db_repair_completion_contract.report.json"))?;
     assert_eq!(
@@ -244,7 +247,10 @@ fn checker_preserves_tracker_failure_as_tooling_not_code_failure() -> TestResult
         .iter()
         .find(|row| row["id"].as_str() == Some("tracker_health_report"))
         .ok_or("tracker source result missing")?;
-    let tracker_report = load_json(&root.join(tracker["checker_report"].as_str().unwrap()))?;
+    let tracker_report_path = tracker["checker_report"]
+        .as_str()
+        .ok_or("tracker checker_report must be string")?;
+    let tracker_report = load_json(&root.join(tracker_report_path))?;
     assert_eq!(
         tracker_report["summary"]["tool_failures_are_not_code_failures"].as_bool(),
         Some(true)
@@ -254,7 +260,10 @@ fn checker_preserves_tracker_failure_as_tooling_not_code_failure() -> TestResult
         .iter()
         .find(|row| row["id"].as_str() == Some("br_bv_disagreement_dashboard"))
         .ok_or("dashboard source result missing")?;
-    let dashboard_report = load_json(&root.join(dashboard["checker_report"].as_str().unwrap()))?;
+    let dashboard_report_path = dashboard["checker_report"]
+        .as_str()
+        .ok_or("dashboard checker_report must be string")?;
+    let dashboard_report = load_json(&root.join(dashboard_report_path))?;
     assert_eq!(
         dashboard_report["summary"]["tool_failures_are_not_code_failures"].as_bool(),
         Some(true)
@@ -271,25 +280,27 @@ fn checker_preserves_tracker_failure_as_tooling_not_code_failure() -> TestResult
 
 #[test]
 fn checker_rejects_destructive_probe_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mutated = mutated_contract(&root, "destructive", |contract| {
         contract["read_only_probe_contract"]["allowed_commands"]
             .as_array_mut()
-            .unwrap()
+            .ok_or("allowed commands must be array")?
             .push(Value::String("br sync --flush-only --json".to_string()));
+        Ok(())
     })?;
     assert_checker_fails(&root, &mutated, "destructive-fail", "destructive command")
 }
 
 #[test]
 fn checker_rejects_missing_critical_discrepancy() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mutated = mutated_contract(&root, "missing-discrepancy", |contract| {
         let source = &mut contract["source_contracts"][0]["required_discrepancies"];
         source
             .as_array_mut()
-            .unwrap()
+            .ok_or("required discrepancies must be array")?
             .retain(|item| item.as_str() != Some("stale_blocked_cache"));
+        Ok(())
     })?;
     assert_checker_fails(
         &root,
@@ -301,10 +312,13 @@ fn checker_rejects_missing_critical_discrepancy() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mutated = mutated_contract(&root, "missing-telemetry", |contract| {
-        let items = contract["missing_item_bindings"].as_array_mut().unwrap();
+        let items = contract["missing_item_bindings"]
+            .as_array_mut()
+            .ok_or("missing item bindings must be array")?;
         items.retain(|item| item["id"].as_str() != Some("telemetry.primary"));
+        Ok(())
     })?;
     assert_checker_fails(
         &root,
