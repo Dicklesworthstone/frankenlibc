@@ -10,13 +10,21 @@
 //! Bead: CONFORMANCE: libc dirent.h diff matrix.
 
 use std::collections::BTreeSet;
-use std::ffi::{CString, c_int};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::io::Write;
 
 use frankenlibc_abi::dirent_abi as fl;
 
 unsafe extern "C" {
     fn readdir64(dirp: *mut libc::DIR) -> *mut libc::dirent64;
+    fn scandir64(
+        path: *const c_char,
+        namelist: *mut *mut *mut libc::dirent64,
+        filter: Option<unsafe extern "C" fn(*const libc::dirent64) -> c_int>,
+        compar: Option<
+            unsafe extern "C" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
+        >,
+    ) -> c_int;
 }
 
 #[derive(Debug)]
@@ -172,6 +180,66 @@ fn walk_lc64(dir: &std::path::Path) -> Result<BTreeSet<(Vec<u8>, u8)>, String> {
     Ok(entries)
 }
 
+fn scandir64_names_fl(dir: &std::path::Path) -> Result<Vec<Vec<u8>>, String> {
+    let cp = cstr_path(dir);
+    let mut namelist: *mut *mut c_void = std::ptr::null_mut();
+    let count = unsafe { fl::scandir64(cp.as_ptr(), &mut namelist, None, None) };
+    if count < 0 {
+        return Err(format!("scandir64 returned {count}"));
+    }
+    if count > 0 && namelist.is_null() {
+        return Err("scandir64 returned positive count with NULL namelist".into());
+    }
+
+    let mut names = Vec::new();
+    for i in 0..count as usize {
+        let entry = unsafe { *namelist.add(i) as *mut libc::dirent64 };
+        if entry.is_null() {
+            return Err(format!("scandir64 entry {i} was NULL"));
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name != b"." && name != b".." {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn scandir64_names_lc(dir: &std::path::Path) -> Result<Vec<Vec<u8>>, String> {
+    let cp = cstr_path(dir);
+    let mut namelist: *mut *mut libc::dirent64 = std::ptr::null_mut();
+    let count = unsafe { scandir64(cp.as_ptr(), &mut namelist, None, None) };
+    if count < 0 {
+        return Err(format!("scandir64 returned {count}"));
+    }
+    if count > 0 && namelist.is_null() {
+        return Err("scandir64 returned positive count with NULL namelist".into());
+    }
+
+    let mut names = Vec::new();
+    for i in 0..count as usize {
+        let entry = unsafe { *namelist.add(i) };
+        if entry.is_null() {
+            return Err(format!("scandir64 entry {i} was NULL"));
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name != b"." && name != b".." {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 // ===========================================================================
 // Empty directory
 // ===========================================================================
@@ -253,6 +321,24 @@ fn diff_readdir64_mixed_directory() {
         divs.is_empty(),
         "readdir64 mixed dir divergences:\n{}",
         render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_scandir64_mixed_directory() {
+    let dir = temp_dir("scan64");
+    write_file(&dir.join("zeta.txt"), b"z");
+    write_file(&dir.join("alpha.txt"), b"a");
+    write_file(&dir.join("file_0000000100.bin"), &[0x33; 64]);
+    std::fs::create_dir(dir.join("subdir_scan64")).expect("subdir");
+    std::os::unix::fs::symlink("zeta.txt", dir.join("link64_to_zeta")).expect("symlink");
+
+    let fl_names = scandir64_names_fl(&dir).expect("fl scandir64 names");
+    let lc_names = scandir64_names_lc(&dir).expect("lc scandir64 names");
+
+    assert_eq!(
+        fl_names, lc_names,
+        "scandir64 name-set divergence:\n  fl: {fl_names:?}\n  lc: {lc_names:?}"
     );
 }
 
@@ -493,6 +579,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":6,\"divergences\":0}}",
     );
 }
