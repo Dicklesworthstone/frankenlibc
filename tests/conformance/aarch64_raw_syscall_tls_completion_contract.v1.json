@@ -250,7 +250,7 @@
         "crates/frankenlibc-abi/src/startup_abi.rs:1006"
       ],
       "test_refs": [
-        "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:161",
+        "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:167",
         "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:177",
         "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs:197",
         "tests/conformance/l1_crt_startup_tls_completion_contract.v1.json:136"
