@@ -91,6 +91,58 @@ fn diff_dlopen_libm_then_dlsym_cos() {
 }
 
 #[test]
+fn diff_libc_dlopen_mode_alias_libm_then_libc_dlsym_cos() {
+    let lib = CString::new("libm.so.6").unwrap();
+    let sym = CString::new("cos").unwrap();
+
+    let h_fl = unsafe { fl::__libc_dlopen_mode(lib.as_ptr(), RTLD_NOW) };
+    let p_fl = if !h_fl.is_null() {
+        unsafe { fl::__libc_dlsym(h_fl, sym.as_ptr()) }
+    } else {
+        std::ptr::null_mut()
+    };
+    let r_close_fl = if !h_fl.is_null() {
+        unsafe { fl::__libc_dlclose(h_fl) }
+    } else {
+        -1
+    };
+
+    let h_lc = unsafe { dlopen(lib.as_ptr(), RTLD_NOW) };
+    let p_lc = if !h_lc.is_null() {
+        unsafe { dlsym(h_lc, sym.as_ptr()) }
+    } else {
+        std::ptr::null_mut()
+    };
+    let r_close_lc = if !h_lc.is_null() {
+        unsafe { dlclose(h_lc) }
+    } else {
+        -1
+    };
+
+    assert_eq!(
+        h_fl.is_null(),
+        h_lc.is_null(),
+        "__libc_dlopen_mode libm.so.6 null-match: fl={h_fl:?}, lc={h_lc:?}"
+    );
+    assert_eq!(
+        p_fl.is_null(),
+        p_lc.is_null(),
+        "__libc_dlsym(cos) null-match: fl={p_fl:?}, lc={p_lc:?}"
+    );
+    assert_eq!(
+        r_close_fl, r_close_lc,
+        "__libc_dlclose return: fl={r_close_fl}, lc={r_close_lc}"
+    );
+    assert!(
+        !p_fl.is_null(),
+        "cos should resolve to a real address via __libc_dlsym"
+    );
+    if !p_fl.is_null() && !p_lc.is_null() {
+        assert_eq!(p_fl, p_lc, "cos address divergence via dlfcn aliases");
+    }
+}
+
+#[test]
 fn diff_dlopen_nonexistent_returns_null() {
     let lib = CString::new("/this/library/does/not/exist.so").unwrap();
     let h_fl = unsafe { fl::dlopen(lib.as_ptr(), RTLD_LAZY) };
@@ -192,6 +244,6 @@ fn diff_dladdr_resolves_known_function() {
 #[test]
 fn dlfcn_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"dlfcn.h\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",
+        "{{\"family\":\"dlfcn.h\",\"reference\":\"glibc\",\"functions\":8,\"divergences\":0}}",
     );
 }
