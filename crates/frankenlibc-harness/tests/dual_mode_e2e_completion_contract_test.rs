@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -6,13 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .expect("workspace parent has repo root")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo root")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -76,12 +77,18 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
+fn string_set(value: &Value, context: &str) -> TestResult<BTreeSet<String>> {
     value
         .as_array()
-        .expect("expected array")
+        .ok_or_else(|| format!("{context} must be an array"))?
         .iter()
-        .map(|item| item.as_str().expect("expected string").to_string())
+        .enumerate()
+        .map(|(index, item)| -> TestResult<String> {
+            Ok(item
+                .as_str()
+                .ok_or_else(|| format!("{context}[{index}] must be a string"))?
+                .to_string())
+        })
         .collect()
 }
 
@@ -95,7 +102,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_dual_mode_e2e_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -108,7 +115,10 @@ fn manifest_binds_dual_mode_e2e_completion_items() -> TestResult {
         Some("bd-oai.5.1")
     );
     assert_eq!(
-        string_set(&manifest["completion_debt_evidence"]["missing_items_closed"]),
+        string_set(
+            &manifest["completion_debt_evidence"]["missing_items_closed"],
+            "completion_debt_evidence.missing_items_closed"
+        )?,
         BTreeSet::from([
             "tests.unit.primary".to_string(),
             "tests.e2e.primary".to_string(),
@@ -147,7 +157,10 @@ fn manifest_binds_dual_mode_e2e_completion_items() -> TestResult {
         Some("ReturnSafeDefault")
     );
 
-    let fields = string_set(&contract["required_structured_fields"]);
+    let fields = string_set(
+        &contract["required_structured_fields"],
+        "required_dual_mode_e2e_contract.required_structured_fields",
+    )?;
     for field in [
         "trace_id",
         "mode",
@@ -164,13 +177,19 @@ fn manifest_binds_dual_mode_e2e_completion_items() -> TestResult {
         assert!(fields.contains(field), "missing structured field {field}");
     }
 
-    let e2e_names: BTreeSet<_> =
-        manifest["completion_debt_evidence"]["e2e_primary"]["required_test_refs"]
-            .as_array()
-            .ok_or("e2e required test refs must be array")?
-            .iter()
-            .map(|entry| entry["name"].as_str().expect("test name").to_string())
-            .collect();
+    let e2e_names: BTreeSet<_> = manifest["completion_debt_evidence"]["e2e_primary"]
+        ["required_test_refs"]
+        .as_array()
+        .ok_or("e2e required test refs must be array")?
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| -> TestResult<String> {
+            Ok(entry["name"]
+                .as_str()
+                .ok_or_else(|| format!("e2e required test refs[{index}].name must be string"))?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     for name in [
         "e2e_deterministic_replay_emits_identical_decisions_and_logs",
         "e2e_mode_behavioral_divergence_is_stable_and_structured",
@@ -185,7 +204,7 @@ fn manifest_binds_dual_mode_e2e_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_dual_mode_e2e_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -212,8 +231,14 @@ fn checker_validates_dual_mode_e2e_contract_and_emits_report_log() -> TestResult
     let rows = read_jsonl(&out_dir.join("dual_mode_e2e_completion_contract.log.jsonl"))?;
     let events: BTreeSet<_> = rows
         .iter()
-        .map(|row| row["event"].as_str().unwrap().to_string())
-        .collect();
+        .enumerate()
+        .map(|(index, row)| -> TestResult<String> {
+            Ok(row["event"]
+                .as_str()
+                .ok_or_else(|| format!("log row {index} missing string event"))?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     for event in [
         "dual_mode_e2e_unit_bindings_verified",
         "dual_mode_e2e_source_contract_verified",
@@ -246,7 +271,7 @@ fn checker_validates_dual_mode_e2e_contract_and_emits_report_log() -> TestResult
 
 #[test]
 fn checker_rejects_missing_structured_field_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-field")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_dual_mode_e2e_contract"]["required_structured_fields"] =
@@ -270,12 +295,12 @@ fn checker_rejects_missing_structured_field_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_e2e_test_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-e2e")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let refs = manifest["completion_debt_evidence"]["e2e_primary"]["required_test_refs"]
         .as_array_mut()
-        .expect("e2e refs array");
+        .ok_or("e2e required test refs must be array")?;
     refs.retain(|entry| {
         entry["name"].as_str() != Some("e2e_hash_linked_repair_chain_verifies_record_integrity")
     });
@@ -298,7 +323,7 @@ fn checker_rejects_missing_required_e2e_test_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non-rch")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["e2e_primary"]["required_commands"][0] =
