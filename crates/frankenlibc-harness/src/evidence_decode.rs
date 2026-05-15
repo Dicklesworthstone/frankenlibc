@@ -474,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn corruption_bitflip_is_detected_and_corrupt_record_is_ignored() {
+    fn corruption_bitflip_is_detected_and_corrupt_record_is_ignored() -> Result<(), String> {
         let k_source: u16 = 16;
         let r_repair = derive_repair_symbol_count_v1(k_source, 200);
         let (epoch_id, mut records) = build_epoch_records(
@@ -489,7 +489,7 @@ mod tests {
         let idx = records
             .iter()
             .position(|rec| (rec.flags() & FLAG_SYSTEMATIC) != 0 && rec.esi() == target_esi)
-            .expect("find systematic record");
+            .ok_or_else(|| format!("missing systematic record for esi {target_esi}"))?;
         let mut bytes = *records[idx].as_bytes();
         bytes[PAYLOAD_OFFSET + 7] ^= 0xA5;
         records[idx] = EvidenceSymbolRecord::from_bytes(bytes);
@@ -498,10 +498,11 @@ mod tests {
         assert!(proof.payload_hash_mismatches >= 1, "{proof:?}");
         assert_eq!(proof.missing_systematic, 0, "{proof:?}");
         assert_eq!(proof.repair_payload_mismatches, 0);
+        Ok(())
     }
 
     #[test]
-    fn structural_error_prevents_success_even_when_all_sources_decode() {
+    fn structural_error_prevents_success_even_when_all_sources_decode() -> Result<(), String> {
         let k_source: u16 = 8;
         let r_repair: u16 = 1;
         let (epoch_id, mut records) = build_epoch_records(
@@ -513,7 +514,7 @@ mod tests {
         let bad_repair_idx = records
             .iter()
             .position(|rec| (rec.flags() & FLAG_REPAIR) != 0)
-            .expect("find repair record");
+            .ok_or_else(|| "missing repair record".to_string())?;
 
         let payload = *records[bad_repair_idx].payload();
         let prior_chain_hash = records
@@ -549,6 +550,7 @@ mod tests {
             matches!(proof.status, DecodeStatus::Partial),
             "structural errors must prevent DecodeStatus::Success: {proof:?}"
         );
+        Ok(())
     }
 
     fn build_epoch_records(
