@@ -18,13 +18,15 @@ const ISOC_WIDE_SCANF_SYMBOLS: [&str; 5] = [
     "__isoc99_vwscanf",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest_dir
         .parent()
-        .unwrap()
+        .ok_or_else(|| format!("{} has no parent directory", manifest_dir.display()))?;
+    let repo_root = crates_dir
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or_else(|| format!("{} has no parent directory", crates_dir.display()))?;
+    Ok(repo_root.to_path_buf())
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +65,7 @@ struct ExpectedOutput {
 }
 
 fn load_fixture() -> Result<FixtureFile, String> {
-    let path = repo_root().join("tests/conformance/fixtures/isoc_wide_scanf_ops.json");
+    let path = repo_root()?.join("tests/conformance/fixtures/isoc_wide_scanf_ops.json");
     let content = std::fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
@@ -71,7 +73,7 @@ fn load_fixture() -> Result<FixtureFile, String> {
 }
 
 fn load_json(path: &str) -> Result<serde_json::Value, String> {
-    let path = repo_root().join(path);
+    let path = repo_root()?.join(path);
     let content = std::fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&content)
@@ -80,7 +82,7 @@ fn load_json(path: &str) -> Result<serde_json::Value, String> {
 
 #[test]
 fn isoc_wide_scanf_fixture_exists_and_names_scope() -> Result<(), String> {
-    let fixture_path = repo_root().join("tests/conformance/fixtures/isoc_wide_scanf_ops.json");
+    let fixture_path = repo_root()?.join("tests/conformance/fixtures/isoc_wide_scanf_ops.json");
     assert!(
         fixture_path.exists(),
         "isoc_wide_scanf_ops fixture must exist"
@@ -175,7 +177,7 @@ fn isoc_wide_scanf_cases_are_deterministic_and_mode_paired() -> Result<(), Strin
 
 #[test]
 fn isoc_wide_scanf_fixture_is_backed_by_existing_tests() -> Result<(), String> {
-    let root = repo_root();
+    let root = repo_root()?;
     let isoc_test =
         std::fs::read_to_string(root.join("crates/frankenlibc-abi/tests/isoc_abi_test.rs"))
             .map_err(|err| format!("failed to read isoc_abi unit test: {err}"))?;
