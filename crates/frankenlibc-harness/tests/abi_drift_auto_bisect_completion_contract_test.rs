@@ -14,13 +14,15 @@ const PASS_EVENTS: &[&str] = &[
     "abi_drift_auto_bisect_completion.validated",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let repo_dir = workspace_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(repo_dir.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -89,7 +91,7 @@ fn output_text(output: &Output) -> String {
 
 #[test]
 fn manifest_binds_auto_bisect_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -149,7 +151,7 @@ fn manifest_binds_auto_bisect_completion_items() -> TestResult {
 
 #[test]
 fn source_anchors_and_line_refs_resolve() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
     let source_artifacts = manifest["source_artifacts"]
         .as_object()
@@ -202,7 +204,7 @@ fn source_anchors_and_line_refs_resolve() -> TestResult {
 
 #[test]
 fn checker_emits_reproducible_transcripts_and_telemetry() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -239,7 +241,7 @@ fn checker_emits_reproducible_transcripts_and_telemetry() -> TestResult {
 
 #[test]
 fn checker_rejects_first_bad_candidate_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = read_json(&contract_path(&root))?;
     let out_dir = unique_out_dir(&root, "mutated_first_bad")?;
     let mutated = out_dir.join("mutated_contract.json");
@@ -262,7 +264,7 @@ fn checker_rejects_first_bad_candidate_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_non_monotonic_histories() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = read_json(&contract_path(&root))?;
     let out_dir = unique_out_dir(&root, "mutated_monotonic")?;
     let mutated = out_dir.join("mutated_contract.json");
