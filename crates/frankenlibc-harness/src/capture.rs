@@ -162,7 +162,11 @@ fn recapture_fixture_set(source: &FixtureSet) -> (FixtureSet, CaptureStats) {
 mod tests {
     use super::*;
 
-    fn fixture_set_from_case(mode: &str, function: &str, expected_output: &str) -> FixtureSet {
+    fn fixture_set_from_case(
+        mode: &str,
+        function: &str,
+        expected_output: &str,
+    ) -> Result<FixtureSet, serde_json::Error> {
         FixtureSet::from_json(&format!(
             r#"{{
                 "version":"v1",
@@ -181,33 +185,35 @@ mod tests {
                 ]
             }}"#
         ))
-        .expect("fixture JSON should be valid")
     }
 
     #[test]
-    fn strict_case_is_refreshed_from_host_output() {
-        let fixture = fixture_set_from_case("strict", "memcpy", "stale");
+    fn strict_case_is_refreshed_from_host_output() -> Result<(), serde_json::Error> {
+        let fixture = fixture_set_from_case("strict", "memcpy", "stale")?;
         let (recaptured, stats) = recapture_fixture_set(&fixture);
 
         assert_eq!(stats.total_cases, 1);
         assert_eq!(stats.refreshed_cases, 1);
         assert_eq!(stats.skipped_cases, 0);
         assert_eq!(recaptured.cases[0].expected_output, "[65, 66, 67, 68]");
+        Ok(())
     }
 
     #[test]
-    fn hardened_case_is_left_untouched() {
-        let fixture = fixture_set_from_case("hardened", "memcpy", "keep_me");
+    fn hardened_case_is_left_untouched() -> Result<(), serde_json::Error> {
+        let fixture = fixture_set_from_case("hardened", "memcpy", "keep_me")?;
         let (recaptured, stats) = recapture_fixture_set(&fixture);
 
         assert_eq!(stats.total_cases, 1);
         assert_eq!(stats.refreshed_cases, 0);
         assert_eq!(stats.skipped_cases, 0);
         assert_eq!(recaptured.cases[0].expected_output, "keep_me");
+        Ok(())
     }
 
     #[test]
-    fn strict_unsupported_case_adds_warning_and_keeps_expected_output() {
+    fn strict_unsupported_case_adds_warning_and_keeps_expected_output()
+    -> Result<(), serde_json::Error> {
         let fixture = FixtureSet::from_json(
             r#"{
                 "version":"v1",
@@ -225,8 +231,7 @@ mod tests {
                     }
                 ]
             }"#,
-        )
-        .expect("fixture JSON should be valid");
+        )?;
 
         let (recaptured, stats) = recapture_fixture_set(&fixture);
 
@@ -234,6 +239,7 @@ mod tests {
         assert_eq!(stats.skipped_cases, 1);
         assert_eq!(recaptured.cases[0].expected_output, "unchanged");
         assert_eq!(stats.warnings.len(), 1);
+        Ok(())
     }
 
     #[test]
