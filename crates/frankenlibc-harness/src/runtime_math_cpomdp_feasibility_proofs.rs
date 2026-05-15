@@ -532,11 +532,7 @@ fn compute_feasibility(
         .filter(|policy| policy.unsafe_allow_probability <= epsilon + 1e-12)
         .collect::<Vec<_>>();
 
-    let best_deterministic = feasible_policies
-        .iter()
-        .copied()
-        .max_by(policy_ordering)
-        .expect("there must always be at least one feasible policy");
+    let best_deterministic = best_feasible_or_fail_closed_policy(&policies, &feasible_policies);
 
     let primal = solve_primal_lp(&policies, epsilon);
     let dual = solve_dual_lp(&policies, epsilon);
@@ -663,6 +659,36 @@ fn enumerate_policies() -> Vec<PolicyMetrics> {
             }
         })
         .collect()
+}
+
+fn best_feasible_or_fail_closed_policy(
+    policies: &[PolicyMetrics],
+    feasible_policies: &[PolicyMetrics],
+) -> PolicyMetrics {
+    match feasible_policies.iter().copied().max_by(policy_ordering) {
+        Some(policy) => policy,
+        None => policies
+            .iter()
+            .copied()
+            .min_by(fail_closed_policy_ordering)
+            .unwrap_or_else(fail_closed_policy),
+    }
+}
+
+fn fail_closed_policy() -> PolicyMetrics {
+    PolicyMetrics {
+        encoded_id: usize::MAX,
+        actions: [ACTIONS.len().saturating_sub(1); 4],
+        throughput: 0.0,
+        unsafe_allow_probability: 1.0,
+        intervention_cost: 1.0,
+    }
+}
+
+fn fail_closed_policy_ordering(lhs: &PolicyMetrics, rhs: &PolicyMetrics) -> std::cmp::Ordering {
+    cmp_f64(lhs.unsafe_allow_probability, rhs.unsafe_allow_probability)
+        .then_with(|| cmp_f64(rhs.throughput, lhs.throughput))
+        .then_with(|| cmp_f64(lhs.intervention_cost, rhs.intervention_cost))
 }
 
 fn solve_primal_lp(policies: &[PolicyMetrics], epsilon: f64) -> CpomdpPrimalSolution {
@@ -848,20 +874,17 @@ fn policy_actions(actions: [usize; 4]) -> BTreeMap<String, String> {
         .collect()
 }
 
+fn cmp_f64(lhs: f64, rhs: f64) -> std::cmp::Ordering {
+    match lhs.partial_cmp(&rhs) {
+        Some(ordering) => ordering,
+        None => std::cmp::Ordering::Equal,
+    }
+}
+
 fn policy_ordering(lhs: &PolicyMetrics, rhs: &PolicyMetrics) -> std::cmp::Ordering {
-    lhs.throughput
-        .partial_cmp(&rhs.throughput)
-        .unwrap_or(std::cmp::Ordering::Equal)
-        .then_with(|| {
-            rhs.intervention_cost
-                .partial_cmp(&lhs.intervention_cost)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .then_with(|| {
-            rhs.unsafe_allow_probability
-                .partial_cmp(&lhs.unsafe_allow_probability)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
+    cmp_f64(lhs.throughput, rhs.throughput)
+        .then_with(|| cmp_f64(rhs.intervention_cost, lhs.intervention_cost))
+        .then_with(|| cmp_f64(rhs.unsafe_allow_probability, lhs.unsafe_allow_probability))
 }
 
 fn decode_policy(mut encoded_id: usize) -> [usize; 4] {
