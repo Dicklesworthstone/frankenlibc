@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,13 +17,15 @@ const REQUIRED_EVENTS: &[&str] = &[
     "evidence_symbol_records_completion_contract_validated",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest
         .parent()
-        .expect("crate directory has workspace parent")
-        .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("frankenlibc-harness manifest should have a parent"))?;
+    let root = crates_dir.parent().ok_or_else(|| {
+        io::Error::other("frankenlibc-harness manifest should live below workspace root")
+    })?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -94,7 +97,7 @@ fn output_text(output: &Output) -> String {
 
 #[test]
 fn manifest_binds_unit_e2e_and_telemetry_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -137,7 +140,7 @@ fn manifest_binds_unit_e2e_and_telemetry_items() -> TestResult {
 
 #[test]
 fn source_anchors_cover_record_decoder_and_e2e_surfaces() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
     let source_artifacts = manifest["source_artifacts"]
         .as_object()
@@ -164,7 +167,7 @@ fn source_anchors_cover_record_decoder_and_e2e_surfaces() -> TestResult {
 
 #[test]
 fn sample_decode_proofs_model_redundancy_and_corruption_paths() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
     let samples = manifest["sample_decode_proofs"]
         .as_array()
@@ -212,7 +215,7 @@ fn sample_decode_proofs_model_redundancy_and_corruption_paths() -> TestResult {
 
 #[test]
 fn checker_accepts_contract_and_emits_telemetry() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -249,7 +252,7 @@ fn checker_accepts_contract_and_emits_telemetry() -> TestResult {
 
 #[test]
 fn checker_rejects_record_size_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bad-record-size")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["evidence_symbol_record_contract"]["record_size_bytes"] = serde_json::json!(128);
@@ -268,7 +271,7 @@ fn checker_rejects_record_size_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_source_anchor() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-source-anchor")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["source_anchors"]["evidence_impl"] =
