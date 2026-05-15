@@ -187,16 +187,19 @@
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "expected_order": ["main_return", "fini_array", "rtld_fini"],
-      "actual_order": [],
+      "actual_order": ["main_return", "fini_array", "rtld_fini"],
       "expected_status": "required",
-      "actual_status": "blocked",
-      "promotion_decision": "claim_blocked",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-05-15T16:06:00Z",
       "artifact_refs": [
-        "tests/integration/fixture_startup.c",
-        "tests/conformance/ld_preload_smoke_summary.v1.json"
+        "crates/frankenlibc-abi/src/startup_abi.rs",
+        "crates/frankenlibc-abi/tests/startup_abi_test.rs",
+        "tests/integration/fixture_startup.c"
       ],
       "check_commands": [
-        "scripts/ld_preload_smoke.sh"
+        "rch exec -- env CARGO_TARGET_DIR=<target> FRANKENLIBC_MODE=strict cargo test -p frankenlibc-abi --test startup_abi_test phase0_runs_fini_array_and_rtld_fini_after_main_return -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> FRANKENLIBC_MODE=hardened cargo test -p frankenlibc-abi --test startup_abi_test phase0_runs_fini_array_and_rtld_fini_after_main_return -- --nocapture"
       ],
       "failure_signature": "l1_destructor_order_not_proven"
     },
@@ -339,9 +342,9 @@
   ],
   "summary": {
     "required_row_count": 11,
-    "satisfied_row_count": 8,
-    "blocked_row_count": 3,
+    "satisfied_row_count": 9,
+    "blocked_row_count": 2,
     "current_gate_status": "blocked",
-    "blocker_reason": "Destructor, init/fini array, and atexit/on_exit evidence remain explicit L1 blockers."
+    "blocker_reason": "Atexit/on_exit and init/fini array evidence remain explicit L1 blockers."
   }
 }

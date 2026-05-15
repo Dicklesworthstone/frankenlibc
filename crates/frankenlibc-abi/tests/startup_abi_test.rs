@@ -268,6 +268,7 @@ fn phase0_sets_program_name_globals() {
 static mut INIT_CALLED: bool = false;
 static mut FINI_CALLED: bool = false;
 static CONSTRUCTOR_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+static DESTRUCTOR_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 unsafe extern "C" fn init_hook() {
     unsafe { INIT_CALLED = true };
@@ -290,6 +291,23 @@ unsafe extern "C" fn constructor_order_main(
 ) -> c_int {
     CONSTRUCTOR_ORDER.lock().unwrap().push("main");
     0
+}
+
+unsafe extern "C" fn destructor_order_main(
+    _argc: c_int,
+    _argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
+) -> c_int {
+    DESTRUCTOR_ORDER.lock().unwrap().push("main_return");
+    7
+}
+
+unsafe extern "C" fn destructor_order_fini_hook() {
+    DESTRUCTOR_ORDER.lock().unwrap().push("fini_array");
+}
+
+unsafe extern "C" fn destructor_order_rtld_fini_hook() {
+    DESTRUCTOR_ORDER.lock().unwrap().push("rtld_fini");
 }
 
 #[test]
@@ -344,6 +362,36 @@ fn phase0_runs_preinit_and_init_constructors_before_main() {
     assert!(
         snap.dag_valid,
         "constructor startup path should preserve the phase-0 DAG"
+    );
+}
+
+#[test]
+fn phase0_runs_fini_array_and_rtld_fini_after_main_return() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    DESTRUCTOR_ORDER.lock().unwrap().clear();
+
+    let mut fix = StartupFixture::new(b"destructors");
+    let rc = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(destructor_order_main),
+            fix.argc(),
+            fix.argv_ptr(),
+            None,
+            Some(destructor_order_fini_hook),
+            Some(destructor_order_rtld_fini_hook),
+            fix.stack_end(),
+        )
+    };
+
+    assert_eq!(rc, 7);
+    let order = DESTRUCTOR_ORDER.lock().unwrap().clone();
+    assert_eq!(order, ["main_return", "fini_array", "rtld_fini"]);
+
+    let snap = startup_policy_snapshot_for_tests();
+    assert_eq!(snap.decision, StartupPolicyDecision::Allow);
+    assert!(
+        snap.dag_valid,
+        "destructor startup path should preserve the phase-0 DAG"
     );
 }
 
