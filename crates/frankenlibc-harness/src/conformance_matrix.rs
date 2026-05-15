@@ -466,6 +466,8 @@ mod tests {
     use super::*;
     use crate::fixtures::FixtureSet;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     #[test]
     fn diff_offset_detects_first_change() {
         assert_eq!(first_diff_offset("abc", "abc"), None);
@@ -474,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn matrix_builds_for_basic_fixture() {
+    fn matrix_builds_for_basic_fixture() -> TestResult {
         let fixture = FixtureSet::from_json(
             r#"{
                 "version":"v1",
@@ -484,8 +486,7 @@ mod tests {
                     {"name":"len_a","function":"strlen","spec_section":"POSIX strlen","inputs":{"s":[97,0]},"expected_output":"1","expected_errno":0,"mode":"strict"}
                 ]
             }"#,
-        )
-        .expect("fixture should parse");
+        )?;
 
         let report = build_conformance_matrix(&[fixture], MatrixMode::Strict, "unit");
         assert_eq!(report.schema_version, "v1");
@@ -494,6 +495,7 @@ mod tests {
         assert_eq!(report.cases.len(), 1);
         assert_eq!(report.cases[0].symbol, "strlen");
         assert!(report.cases[0].duration_ms.is_some());
+        Ok(())
     }
 
     #[test]
@@ -543,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn matrix_supports_timeout_and_crash_outcomes() {
+    fn matrix_supports_timeout_and_crash_outcomes() -> TestResult {
         let fixture = FixtureSet::from_json(
             r#"{
                 "version":"v1",
@@ -554,8 +556,7 @@ mod tests {
                     {"name":"crash_case","function":"__crash_case","spec_section":"N/A","inputs":{"s":[97,0]},"expected_output":"1","expected_errno":0,"mode":"strict"}
                 ]
             }"#,
-        )
-        .expect("fixture should parse");
+        )?;
 
         let report = build_conformance_matrix_with_executor(
             &[fixture],
@@ -574,5 +575,6 @@ mod tests {
         assert_eq!(report.summary.errors, 0);
         assert!(report.cases.iter().any(|row| row.status == "timeout"));
         assert!(report.cases.iter().any(|row| row.status == "crash"));
+        Ok(())
     }
 }
