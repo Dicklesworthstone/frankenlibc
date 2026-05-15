@@ -3,6 +3,7 @@
 use frankenlibc_harness::structured_log::validate_log_line;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,13 +16,15 @@ const REQUIRED_MISSING_ITEMS: &[&str] = &[
     "telemetry.primary",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates_dir = manifest
         .parent()
-        .expect("crate directory has workspace parent")
-        .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or_else(|| io::Error::other("frankenlibc-harness manifest should have a parent"))?;
+    let root = crates_dir.parent().ok_or_else(|| {
+        io::Error::other("frankenlibc-harness manifest should live below workspace root")
+    })?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -102,7 +105,7 @@ fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
 
 #[test]
 fn manifest_binds_source_inventory_and_missing_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -163,7 +166,7 @@ fn manifest_binds_source_inventory_and_missing_items() -> TestResult {
 
 #[test]
 fn source_checker_and_tests_are_anchored() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     let checker_path_text = manifest["source_contract"]["checker"]["path"]
         .as_str()
@@ -212,7 +215,7 @@ fn source_checker_and_tests_are_anchored() -> TestResult {
 
 #[test]
 fn checker_runs_source_gate_and_emits_completion_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -284,7 +287,7 @@ fn checker_runs_source_gate_and_emits_completion_evidence() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_seed_overlay_coverage() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_seed_coverage")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["source_contract"]["manifest"]["min_seed_overlay_covered"] = json!(999);
@@ -322,7 +325,7 @@ fn checker_rejects_missing_seed_overlay_coverage() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_trace_id() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_trace_id")?;
     let mut manifest = load_json(&contract_path(&root))?;
     let fields = manifest["completion_debt_evidence"]["required_log_fields"]
