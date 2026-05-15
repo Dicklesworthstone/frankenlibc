@@ -18,13 +18,15 @@ const REQUIRED_SCENARIOS: &[&str] = &[
     "progress_reporting",
 ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let root = workspace
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -111,7 +113,7 @@ fn strings(value: &Value) -> TestResult<BTreeSet<String>> {
 
 #[test]
 fn manifest_binds_all_e2e_scenarios_and_missing_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -178,7 +180,7 @@ fn manifest_binds_all_e2e_scenarios_and_missing_items() -> TestResult {
 
 #[test]
 fn shared_logging_library_pins_timestamp_steps_and_summary_fields() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     let common = &manifest["common_logging_contract"];
     let common_path = root.join(common["script"].as_str().ok_or("common script")?);
@@ -228,7 +230,7 @@ fn shared_logging_library_pins_timestamp_steps_and_summary_fields() -> TestResul
 
 #[test]
 fn checker_validates_scripts_run_all_registry_and_emits_artifacts() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -315,7 +317,7 @@ fn checker_validates_scripts_run_all_registry_and_emits_artifacts() -> TestResul
 
 #[test]
 fn checker_rejects_missing_required_scenario() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_scenario")?;
     let mut manifest = load_json(&contract_path(&root))?;
     let scenarios = manifest["scenario_contracts"]
@@ -357,7 +359,7 @@ fn checker_rejects_missing_required_scenario() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_telemetry_trace_id() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_trace_id")?;
     let mut manifest = load_json(&contract_path(&root))?;
     let fields = manifest["completion_debt_evidence"]["required_log_fields"]
