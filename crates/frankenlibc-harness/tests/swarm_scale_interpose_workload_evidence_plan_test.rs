@@ -6,13 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?;
+    let repo = workspace
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo parent")?;
+    Ok(repo.to_path_buf())
 }
 
 fn plan_path(root: &Path) -> PathBuf {
@@ -74,19 +75,19 @@ fn write_plan_variant(
     root: &Path,
     base: &Value,
     label: &str,
-    mutate: impl FnOnce(&mut Value),
+    mutate: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let out_dir = unique_out_dir(root, label)?;
     let path = out_dir.join(format!("{label}.json"));
     let mut value = base.clone();
-    mutate(&mut value);
+    mutate(&mut value)?;
     write_json(&path, &value)?;
     Ok(path)
 }
 
 #[test]
 fn plan_binds_remote_only_swarm_interpose_policy() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let plan = load_json(&plan_path(&root))?;
 
     assert_eq!(
@@ -135,7 +136,7 @@ fn plan_binds_remote_only_swarm_interpose_policy() -> TestResult {
 
 #[test]
 fn workload_classes_cover_required_modes_budgets_and_failures() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let plan = load_json(&plan_path(&root))?;
     let classes = plan["workload_classes"]
         .as_array()
@@ -203,7 +204,7 @@ fn workload_classes_cover_required_modes_budgets_and_failures() -> TestResult {
 
 #[test]
 fn checker_accepts_plan_and_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &plan_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -246,11 +247,12 @@ fn checker_accepts_plan_and_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_remote_execution_policy() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let plan = load_json(&plan_path(&root))?;
     let variant = write_plan_variant(&root, &plan, "missing-remote-policy", |value| {
         value["execution_policy"]["required_command_prefix"] =
             serde_json::json!(["rch", "exec", "--"]);
+        Ok(())
     })?;
     let out_dir = unique_out_dir(&root, "missing_remote_policy_out")?;
     let output = run_checker(&root, &variant, &out_dir)?;
@@ -271,10 +273,11 @@ fn checker_rejects_missing_remote_execution_policy() -> TestResult {
 
 #[test]
 fn checker_rejects_workload_without_hardened_mode() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let plan = load_json(&plan_path(&root))?;
     let variant = write_plan_variant(&root, &plan, "missing-hardened-mode", |value| {
         value["workload_classes"][0]["modes"] = serde_json::json!(["strict"]);
+        Ok(())
     })?;
     let out_dir = unique_out_dir(&root, "missing_hardened_mode_out")?;
     let output = run_checker(&root, &variant, &out_dir)?;
@@ -295,13 +298,14 @@ fn checker_rejects_workload_without_hardened_mode() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_failure_signature() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let plan = load_json(&plan_path(&root))?;
     let variant = write_plan_variant(&root, &plan, "missing-failure-signature", |value| {
         value["failure_signatures"]
             .as_object_mut()
-            .expect("failure_signatures object")
+            .ok_or("failure_signatures must be an object")?
             .remove("swarm_interpose_segv");
+        Ok(())
     })?;
     let out_dir = unique_out_dir(&root, "missing_failure_signature_out")?;
     let output = run_checker(&root, &variant, &out_dir)?;
