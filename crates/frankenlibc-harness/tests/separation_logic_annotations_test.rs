@@ -1,25 +1,26 @@
+use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+type TestResult = Result<(), Box<dyn Error>>;
+
+fn repo_root() -> Result<PathBuf, Box<dyn Error>> {
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .canonicalize()
-        .expect("repo root canonical path")
+        .canonicalize()?)
 }
 
 #[test]
-fn separation_logic_annotations_gate_passes_in_strict_mode() {
-    let root = repo_root();
+fn separation_logic_annotations_gate_passes_in_strict_mode() -> TestResult {
+    let root = repo_root()?;
     let script = root.join("scripts/check_separation_logic_annotations.sh");
     assert!(script.exists(), "missing script: {}", script.display());
 
     let output = Command::new("bash")
-        .arg(script)
+        .arg(&script)
         .arg("--strict")
         .current_dir(&root)
-        .output()
-        .expect("run separation-logic annotation gate");
+        .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -48,4 +49,5 @@ fn separation_logic_annotations_gate_passes_in_strict_mode() {
             alias
         );
     }
+    Ok(())
 }
