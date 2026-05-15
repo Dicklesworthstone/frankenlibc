@@ -354,7 +354,12 @@ fn checker_validates_policy_audit_and_admission_bindings() -> TestResult {
         .into_iter()
         .flatten()
         .find(|row| row["module"].as_str() == Some("policy_table"))
-        .expect("policy_table admission row should exist");
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "policy_table admission row should exist",
+            )
+        })?;
     assert_eq!(policy_row["tier"].as_str(), Some("production_core"));
     assert_eq!(policy_row["admission_status"].as_str(), Some("ADMITTED"));
     assert_eq!(policy_row["in_production_manifest"].as_bool(), Some(true));
