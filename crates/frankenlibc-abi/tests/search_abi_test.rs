@@ -102,8 +102,10 @@ fn hash_global_api() {
         data: std::ptr::null_mut(),
     };
 
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
     let found = unsafe { hsearch(item, Action::FIND) };
     assert!(found.is_null(), "FIND on missing key should return null");
+    assert_eq!(errno_value(), libc::ESRCH);
 
     unsafe { hdestroy() };
 
@@ -847,8 +849,11 @@ fn hash_reentrant_multiple_tables() {
 
     // Key from table1 should not be found in table2
     let mut found: *mut Entry = std::ptr::null_mut();
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
     let rc = unsafe { hsearch_r(item1, Action::FIND, &mut found, &mut htab2) };
     assert_eq!(rc, 0, "table1's key should not be in table2");
+    assert!(found.is_null());
+    assert_eq!(errno_value(), libc::ESRCH);
 
     unsafe {
         hdestroy_r(&mut htab1);
@@ -866,9 +871,12 @@ fn hash_reentrant_find_nonexistent() {
         key: key.as_ptr() as *mut _,
         data: std::ptr::null_mut(),
     };
-    let mut found: *mut Entry = std::ptr::null_mut();
+    let mut found: *mut Entry = std::ptr::dangling_mut();
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
     let rc = unsafe { hsearch_r(item, Action::FIND, &mut found, &mut htab) };
     assert_eq!(rc, 0, "FIND on empty table should fail");
+    assert!(found.is_null());
+    assert_eq!(errno_value(), libc::ESRCH);
 
     unsafe { hdestroy_r(&mut htab) };
 }

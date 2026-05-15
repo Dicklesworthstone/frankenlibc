@@ -12,7 +12,7 @@
 //!
 //! Bead: CONFORMANCE: libc search.h diff matrix.
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_uint, c_void};
 use std::sync::Mutex;
 
 use frankenlibc_abi::search_abi as fl;
@@ -35,6 +35,14 @@ unsafe extern "C" {
     fn hcreate(nel: usize) -> c_int;
     fn hsearch(item: HsearchEntry, action: c_int) -> *mut HsearchEntry;
     fn hdestroy();
+    fn hcreate_r(nel: usize, htab: *mut HostHsearchData) -> c_int;
+    fn hsearch_r(
+        item: HsearchEntry,
+        action: c_int,
+        retval: *mut *mut HsearchEntry,
+        htab: *mut HostHsearchData,
+    ) -> c_int;
+    fn hdestroy_r(htab: *mut HostHsearchData);
 }
 
 #[repr(C)]
@@ -42,6 +50,13 @@ unsafe extern "C" {
 struct HsearchEntry {
     key: *mut c_char,
     data: *mut c_void,
+}
+
+#[repr(C)]
+struct HostHsearchData {
+    table: *mut c_void,
+    size: c_uint,
+    filled: c_uint,
 }
 
 const ENTER: c_int = 1;
@@ -74,6 +89,22 @@ fn render_divs(divs: &[Divergence]) -> String {
         ));
     }
     out
+}
+
+fn fl_errno() -> c_int {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn set_fl_errno(value: c_int) {
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(value) };
+}
+
+fn host_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
+}
+
+fn set_host_errno(value: c_int) {
+    unsafe { *libc::__errno_location() = value };
 }
 
 // ===========================================================================
@@ -326,7 +357,9 @@ fn diff_hsearch_find_missing() {
         key: ck.as_ptr() as *mut c_char,
         data: std::ptr::null_mut(),
     };
+    set_fl_errno(0);
     let r_fl = unsafe { fl::hsearch(item_fl, fl::Action::FIND) };
+    let errno_fl = fl_errno();
     unsafe { fl::hdestroy() };
 
     let _ = unsafe { hcreate(64) };
@@ -334,7 +367,9 @@ fn diff_hsearch_find_missing() {
         key: ck.as_ptr() as *mut c_char,
         data: std::ptr::null_mut(),
     };
+    set_host_errno(0);
     let r_lc = unsafe { hsearch(item_lc, FIND) };
+    let errno_lc = host_errno();
     unsafe { hdestroy() };
 
     assert!(
@@ -343,7 +378,55 @@ fn diff_hsearch_find_missing() {
         r_fl,
         r_lc
     );
+    assert_eq!(
+        errno_fl, errno_lc,
+        "hsearch FIND missing errno diverged: fl={errno_fl}, glibc={errno_lc}"
+    );
+    assert_eq!(errno_fl, libc::ESRCH);
     let _ = c"x";
+}
+
+#[test]
+fn diff_hsearch_r_find_missing_sets_esrch() {
+    let ck = CString::new("not_inserted_r").unwrap();
+
+    let mut htab_fl: fl::HsearchData = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { fl::hcreate_r(64, &mut htab_fl) }, 1);
+    let item_fl = fl::Entry {
+        key: ck.as_ptr() as *mut c_char,
+        data: std::ptr::null_mut(),
+    };
+    let mut result_fl: *mut fl::Entry = std::ptr::dangling_mut();
+    set_fl_errno(0);
+    let rc_fl = unsafe { fl::hsearch_r(item_fl, fl::Action::FIND, &mut result_fl, &mut htab_fl) };
+    let errno_fl = fl_errno();
+    unsafe { fl::hdestroy_r(&mut htab_fl) };
+
+    let mut htab_lc: HostHsearchData = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { hcreate_r(64, &mut htab_lc) }, 1);
+    let item_lc = HsearchEntry {
+        key: ck.as_ptr() as *mut c_char,
+        data: std::ptr::null_mut(),
+    };
+    let mut result_lc: *mut HsearchEntry = std::ptr::dangling_mut();
+    set_host_errno(0);
+    let rc_lc = unsafe { hsearch_r(item_lc, FIND, &mut result_lc, &mut htab_lc) };
+    let errno_lc = host_errno();
+    unsafe { hdestroy_r(&mut htab_lc) };
+
+    assert_eq!(rc_fl, rc_lc, "hsearch_r FIND missing return code diverged");
+    assert_eq!(
+        result_fl.is_null(),
+        result_lc.is_null(),
+        "hsearch_r FIND missing retval diverged: fl={result_fl:?}, glibc={result_lc:?}"
+    );
+    assert_eq!(
+        errno_fl, errno_lc,
+        "hsearch_r FIND missing errno diverged: fl={errno_fl}, glibc={errno_lc}"
+    );
+    assert_eq!(rc_fl, 0);
+    assert!(result_fl.is_null());
+    assert_eq!(errno_fl, libc::ESRCH);
 }
 
 // ===========================================================================

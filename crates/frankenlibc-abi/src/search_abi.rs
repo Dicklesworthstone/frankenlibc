@@ -153,8 +153,9 @@ pub unsafe extern "C" fn hsearch(item: Entry, action: Action) -> *mut Entry {
             None => std::ptr::null_mut(),
         },
         None => {
-            if action == Action::ENTER {
-                unsafe { set_abi_errno(libc::ENOMEM) };
+            match action {
+                Action::ENTER => unsafe { set_abi_errno(libc::ENOMEM) },
+                Action::FIND => unsafe { set_abi_errno(libc::ESRCH) },
             }
             std::ptr::null_mut()
         }
@@ -238,8 +239,11 @@ pub unsafe extern "C" fn hsearch_r(
     if action == Action::ENTER && was_new {
         htab_ref.filled = htab_ref.filled.saturating_add(1);
     }
-    if result.is_null() && action == Action::ENTER {
-        unsafe { set_abi_errno(libc::ENOMEM) };
+    if result.is_null() {
+        match action {
+            Action::ENTER => unsafe { set_abi_errno(libc::ENOMEM) },
+            Action::FIND => unsafe { set_abi_errno(libc::ESRCH) },
+        }
     }
     if result.is_null() { 0 } else { 1 }
 }
