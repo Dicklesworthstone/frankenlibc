@@ -177,4 +177,34 @@ mod tests {
         set_errno(0);
         assert_eq!(get_errno(), 0);
     }
+
+    #[test]
+    fn errno_is_thread_local_across_child_threads_and_join() -> Result<(), String> {
+        set_errno(EACCES);
+
+        let thread_a = std::thread::spawn(|| {
+            set_errno(EINVAL);
+            std::thread::yield_now();
+            get_errno()
+        });
+        let thread_b = std::thread::spawn(|| {
+            set_errno(ERANGE);
+            std::thread::yield_now();
+            get_errno()
+        });
+
+        let a_errno = thread_a
+            .join()
+            .map_err(|_| String::from("thread A panicked while checking errno isolation"))?;
+        let b_errno = thread_b
+            .join()
+            .map_err(|_| String::from("thread B panicked while checking errno isolation"))?;
+
+        assert_eq!(a_errno, EINVAL);
+        assert_eq!(b_errno, ERANGE);
+        assert_eq!(get_errno(), EACCES);
+
+        set_errno(0);
+        Ok(())
+    }
 }

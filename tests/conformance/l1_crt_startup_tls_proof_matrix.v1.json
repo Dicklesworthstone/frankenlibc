@@ -248,13 +248,16 @@
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "expected_order": ["thread_a_set_errno", "thread_b_set_errno", "join_threads", "main_errno_unchanged"],
-      "actual_order": [],
+      "actual_order": ["thread_a_set_errno", "thread_b_set_errno", "join_threads", "main_errno_unchanged"],
       "expected_status": "required",
-      "actual_status": "blocked",
-      "promotion_decision": "claim_blocked",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-05-15T15:34:00Z",
       "artifact_refs": [
         "crates/frankenlibc-core/src/errno/mod.rs",
-        "tests/conformance/fixtures/pthread_tls_keys.json"
+        "crates/frankenlibc-core/src/pthread/tls.rs",
+        "tests/conformance/fixtures/pthread_tls_keys.json",
+        "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
       ],
       "check_commands": [
         "cargo test -p frankenlibc-core errno",
@@ -334,9 +337,9 @@
   ],
   "summary": {
     "required_row_count": 11,
-    "satisfied_row_count": 6,
-    "blocked_row_count": 5,
+    "satisfied_row_count": 7,
+    "blocked_row_count": 4,
     "current_gate_status": "blocked",
-    "blocker_reason": "Constructor/destructor, init/fini array, atexit/on_exit, and errno/TLS isolation evidence remain explicit L1 blockers."
+    "blocker_reason": "Constructor/destructor, init/fini array, and atexit/on_exit evidence remain explicit L1 blockers."
   }
 }

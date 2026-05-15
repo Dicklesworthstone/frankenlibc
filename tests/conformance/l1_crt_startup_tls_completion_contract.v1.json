@@ -78,8 +78,7 @@
       "constructors",
       "destructors",
       "atexit_on_exit",
-      "init_fini_arrays",
-      "errno_tls_isolation"
+      "init_fini_arrays"
     ],
     "required_log_fields": [
       "trace_id",
@@ -103,8 +102,8 @@
     ],
     "minimum_l1_expectations": {
       "proof_row_count": 11,
-      "satisfied_row_count": 6,
-      "blocked_row_count": 5,
+      "satisfied_row_count": 7,
+      "blocked_row_count": 4,
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "claim_policy_status": "blocked",

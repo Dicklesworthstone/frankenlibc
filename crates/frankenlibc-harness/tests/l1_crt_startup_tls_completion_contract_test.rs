@@ -395,8 +395,8 @@ fn checker_emits_report_and_jsonl() -> TestResult {
     );
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["summary"]["proof_row_count"].as_u64(), Some(11));
-    assert_eq!(report["summary"]["satisfied_row_count"].as_u64(), Some(6));
-    assert_eq!(report["summary"]["blocked_row_count"].as_u64(), Some(5));
+    assert_eq!(report["summary"]["satisfied_row_count"].as_u64(), Some(7));
+    assert_eq!(report["summary"]["blocked_row_count"].as_u64(), Some(4));
 
     let emitted: BTreeSet<_> = events
         .iter()
@@ -444,7 +444,7 @@ fn checker_replays_replacement_level_gate_and_preserves_l1_blockers() -> TestRes
     );
     assert_eq!(
         replacement_report["summary"]["l1_crt_promotion_decisions"]["claim_blocked"].as_u64(),
-        Some(5)
+        Some(4)
     );
     assert_eq!(
         report["summary"]["replacement_current_level"].as_str(),
@@ -475,7 +475,7 @@ fn checker_replays_replacement_level_gate_and_preserves_l1_blockers() -> TestRes
         })
         .count();
     assert_eq!(
-        blocked_log_rows, 10,
+        blocked_log_rows, 8,
         "each blocked proof row should stay blocked in strict and hardened logs"
     );
 
