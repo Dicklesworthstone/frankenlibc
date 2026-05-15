@@ -8,41 +8,41 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn workspace_root() -> PathBuf {
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
-    Path::new(manifest)
+    let root = Path::new(manifest)
         .parent()
-        .expect("harness crate parent")
+        .ok_or("harness crate parent")?
         .parent()
-        .expect("workspace root")
-        .to_path_buf()
+        .ok_or("workspace root")?
+        .to_path_buf();
+    Ok(root)
 }
 
-fn load_json(path: &Path) -> serde_json::Value {
-    let content = std::fs::read_to_string(path).expect("json should be readable");
-    serde_json::from_str(&content).expect("json should parse")
+fn load_json(path: &Path) -> TestResult<serde_json::Value> {
+    let content = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&content)?)
 }
 
 #[test]
-fn gate_script_passes_and_emits_artifacts() {
-    let root = workspace_root();
+fn gate_script_passes_and_emits_artifacts() -> TestResult {
+    let root = workspace_root()?;
     let script = root.join("scripts/check_setjmp_phase1_core.sh");
     assert!(script.exists(), "missing {}", script.display());
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::metadata(&script).unwrap().permissions();
+        let perms = std::fs::metadata(&script)?.permissions();
         assert!(
             perms.mode() & 0o111 != 0,
             "check_setjmp_phase1_core.sh must be executable"
         );
     }
 
-    let output = Command::new(&script)
-        .current_dir(&root)
-        .output()
-        .expect("failed to run setjmp phase-1 core gate");
+    let output = Command::new(&script).current_dir(&root).output()?;
     assert!(
         output.status.success(),
         "setjmp phase-1 core gate failed:\nstdout={}\nstderr={}",
@@ -66,7 +66,7 @@ fn gate_script_passes_and_emits_artifacts() {
         assert!(path.exists(), "missing {}", path.display());
     }
 
-    let report = load_json(&report_path);
+    let report = load_json(&report_path)?;
     assert_eq!(report["schema_version"].as_str(), Some("v1"));
     assert_eq!(report["bead"].as_str(), Some("bd-146t"));
 
@@ -88,12 +88,12 @@ fn gate_script_passes_and_emits_artifacts() {
 
     let mut saw_pass = false;
     let mut saw_deny = false;
-    let rows: Vec<serde_json::Value> = std::fs::read_to_string(&log_path)
-        .expect("log should be readable")
+    let log_text = std::fs::read_to_string(&log_path)?;
+    let rows: Vec<serde_json::Value> = log_text
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("log row should parse"))
-        .collect();
+        .map(|line| Ok(serde_json::from_str::<serde_json::Value>(line)?))
+        .collect::<TestResult<Vec<_>>>()?;
 
     assert_eq!(rows.len(), 6, "expected 6 deterministic log rows");
     for row in rows {
@@ -126,16 +126,16 @@ fn gate_script_passes_and_emits_artifacts() {
                 .unwrap_or(false),
             "trace_id should start with bd-146t::"
         );
-        match row["outcome"].as_str() {
+        match row.get("outcome").and_then(serde_json::Value::as_str) {
             Some("pass") => saw_pass = true,
             Some("deny") => saw_deny = true,
-            other => panic!("unexpected outcome: {:?}", other),
+            _ => return Err("unexpected outcome in setjmp phase-1 log row".into()),
         }
     }
     assert!(saw_pass, "expected at least one pass row");
     assert!(saw_deny, "expected at least one deny row");
 
-    let unit_log = std::fs::read_to_string(&unit_log_path).expect("unit log should be readable");
+    let unit_log = std::fs::read_to_string(&unit_log_path)?;
     for test_name in [
         "phase1_capture_and_restore_roundtrip_in_strict_mode",
         "phase1_longjmp_zero_normalizes_to_one",
@@ -150,13 +150,14 @@ fn gate_script_passes_and_emits_artifacts() {
         );
     }
 
-    let index = load_json(&cve_index_path);
+    let index = load_json(&cve_index_path)?;
     assert_eq!(index["index_version"].as_i64(), Some(1));
     assert_eq!(index["bead_id"].as_str(), Some("bd-146t"));
 
-    let artifacts = index["artifacts"]
-        .as_array()
-        .expect("artifacts should be array");
+    let artifacts = index
+        .get("artifacts")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("artifacts should be array")?;
     assert!(
         artifacts.len() >= 5,
         "artifact index should contain >=5 entries"
@@ -175,4 +176,6 @@ fn gate_script_passes_and_emits_artifacts() {
             "artifact.sha256 should be string"
         );
     }
+
+    Ok(())
 }
