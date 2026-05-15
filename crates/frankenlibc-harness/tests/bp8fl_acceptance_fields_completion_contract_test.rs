@@ -6,13 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?
         .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or("workspace has root parent")?
+        .to_path_buf();
+    Ok(root)
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -71,15 +72,16 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
     value
         .as_array()
-        .expect("value should be an array")
+        .ok_or("value should be an array")?
         .iter()
         .map(|item| {
-            item.as_str()
-                .expect("array item should be a string")
-                .to_string()
+            Ok(item
+                .as_str()
+                .ok_or("array item should be a string")?
+                .to_string())
         })
         .collect()
 }
@@ -127,7 +129,7 @@ fn write_historical_issues_fixture(path: &Path, missing_first_acceptance: bool) 
         });
         if index == 0 && missing_first_acceptance {
             row.as_object_mut()
-                .expect("issue row should be object")
+                .ok_or("issue row should be object")?
                 .remove("acceptance_criteria");
         }
         rows.push(row);
@@ -167,7 +169,7 @@ fn write_contract_with_issues_fixture(
 
 #[test]
 fn manifest_binds_bp8fl_acceptance_fields_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -180,7 +182,7 @@ fn manifest_binds_bp8fl_acceptance_fields_completion_items() -> TestResult {
         Some("bd-bp8fl.2.5.1")
     );
     assert_eq!(
-        string_set(&manifest["completion_debt"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.e2e.primary".to_string(),
             "tests.unit.primary".to_string()
@@ -189,12 +191,12 @@ fn manifest_binds_bp8fl_acceptance_fields_completion_items() -> TestResult {
 
     let source_artifacts = manifest["source_artifacts"]
         .as_object()
-        .expect("source_artifacts should be an object");
+        .ok_or("source_artifacts should be an object")?;
     assert_eq!(source_artifacts.len(), 13);
     for (name, path) in source_artifacts {
         let rel = path
             .as_str()
-            .expect("source artifact path should be a string");
+            .ok_or("source artifact path should be a string")?;
         assert!(
             root.join(rel).is_file(),
             "source artifact {name} should exist at {rel}"
@@ -234,7 +236,7 @@ fn manifest_binds_bp8fl_acceptance_fields_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_historical_acceptance_fields_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let contract = write_contract_with_issues_fixture(&root, &out_dir, "positive", false)?;
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -290,7 +292,7 @@ fn checker_validates_historical_acceptance_fields_and_emits_report_log() -> Test
 
 #[test]
 fn checker_rejects_missing_historical_acceptance_field() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_acceptance")?;
     let mutated = write_contract_with_issues_fixture(&root, &out_dir, "missing_acceptance", true)?;
 
@@ -300,7 +302,7 @@ fn checker_rejects_missing_historical_acceptance_field() -> TestResult {
         read_json(&out_dir.join("bp8fl_acceptance_fields_completion_contract.report.json"))?;
     let errors = report["errors"]
         .as_array()
-        .expect("errors should be present on failure");
+        .ok_or("errors should be present on failure")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
@@ -314,7 +316,7 @@ fn checker_rejects_missing_historical_acceptance_field() -> TestResult {
 
 #[test]
 fn checker_rejects_wrong_historical_row_count() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "wrong_row_count")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["historical_scope"]["expected_rows"] = json!(90);
@@ -327,7 +329,7 @@ fn checker_rejects_wrong_historical_row_count() -> TestResult {
         read_json(&out_dir.join("bp8fl_acceptance_fields_completion_contract.report.json"))?;
     let errors = report["errors"]
         .as_array()
-        .expect("errors should be present on failure");
+        .ok_or("errors should be present on failure")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
@@ -341,7 +343,7 @@ fn checker_rejects_wrong_historical_row_count() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non_rch_command")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["e2e_primary"]["required_commands"][6] = json!(
@@ -356,7 +358,7 @@ fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
         read_json(&out_dir.join("bp8fl_acceptance_fields_completion_contract.report.json"))?;
     let errors = report["errors"]
         .as_array()
-        .expect("errors should be present on failure");
+        .ok_or("errors should be present on failure")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
