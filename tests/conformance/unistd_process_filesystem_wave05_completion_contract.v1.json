@@ -94,13 +94,13 @@
     "expected_fixture_case_count": 24,
     "ambient_state_policy": "forbid_ambient_argv_textdomain_heap_signal_path_cwd_capability_or_mode_metadata",
     "expected_coverage": {
-      "unistd_target_covered": 95,
-      "unistd_target_uncovered": 647,
-      "unistd_current_coverage_pct": 12.8,
-      "total_target_covered": 583,
-      "total_target_uncovered": 3536,
-      "per_symbol_symbols_with_fixtures": 581,
-      "per_symbol_total_cases": 1640
+      "unistd_target_covered": 167,
+      "unistd_target_uncovered": 575,
+      "unistd_current_coverage_pct": 22.51,
+      "total_target_covered": 1126,
+      "total_target_uncovered": 2993,
+      "per_symbol_symbols_with_fixtures": 1124,
+      "per_symbol_total_cases": 2702
     },
     "required_positive_tests": [
       "contract_binds_unistd_wave05_sources",

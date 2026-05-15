@@ -203,7 +203,7 @@ fn contract_binds_unistd_wave05_sources() -> TestResult {
     assert!(symbols.contains("chmod"));
     assert_eq!(
         completion["expected_coverage"]["unistd_target_covered"].as_u64(),
-        Some(95)
+        Some(167)
     );
     Ok(())
 }
@@ -226,7 +226,10 @@ fn checker_accepts_unistd_wave05_completion_contract() -> TestResult {
         Some(12)
     );
     assert_eq!(report["summary"]["fixture_case_count"].as_u64(), Some(24));
-    assert!(report["errors"].as_array().unwrap().is_empty());
+    let errors = report["errors"]
+        .as_array()
+        .ok_or_else(|| test_error("report errors array"))?;
+    assert!(errors.is_empty());
     Ok(())
 }
 
