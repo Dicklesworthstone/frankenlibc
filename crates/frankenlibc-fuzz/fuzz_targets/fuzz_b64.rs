@@ -14,9 +14,13 @@
 //!   * Round-trip: `pton(ntop(x))` recovers `x` for any input.
 //!   * Idempotence: `ntop(pton(ntop(x))) == ntop(x)`.
 //!
+//! Seed files can force a specific mode with `ntop:`, `pton:`,
+//! `len:`, or `rt:` prefixes. Unprefixed inputs still flow through
+//! the arbitrary-derived structured path.
+//!
 //! Bead: bd-zmtxf.
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::resolv::b64;
@@ -27,7 +31,16 @@ struct B64FuzzInput {
     op: u8,
 }
 
-fuzz_target!(|input: B64FuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    if try_directive_seed(data) {
+        return;
+    }
+
+    let mut unstructured = Unstructured::new(data);
+    let Ok(input) = B64FuzzInput::arbitrary(&mut unstructured) else {
+        return;
+    };
+
     // Bound payload length to keep individual fuzz runs cheap; the AFL/
     // libfuzzer corpus minimization will preserve interesting cases.
     let payload = &input.payload[..input.payload.len().min(1024)];
@@ -38,6 +51,31 @@ fuzz_target!(|input: B64FuzzInput| {
         _ => fuzz_round_trip_and_idempotence(payload),
     }
 });
+
+fn try_directive_seed(data: &[u8]) -> bool {
+    if let Some(payload) = data.strip_prefix(b"ntop:") {
+        fuzz_ntop(trim_seed_newline(payload));
+        true
+    } else if let Some(payload) = data.strip_prefix(b"pton:") {
+        fuzz_pton(trim_seed_newline(payload));
+        true
+    } else if let Some(payload) = data.strip_prefix(b"len:") {
+        fuzz_decoded_len_matches_pton(trim_seed_newline(payload));
+        true
+    } else if let Some(payload) = data.strip_prefix(b"rt:") {
+        fuzz_round_trip_and_idempotence(trim_seed_newline(payload));
+        true
+    } else {
+        false
+    }
+}
+
+fn trim_seed_newline(payload: &[u8]) -> &[u8] {
+    payload
+        .strip_suffix(b"\r\n")
+        .or_else(|| payload.strip_suffix(b"\n"))
+        .unwrap_or(payload)
+}
 
 fn fuzz_ntop(payload: &[u8]) {
     // Encoder must never panic for any byte slice; output buffer is
