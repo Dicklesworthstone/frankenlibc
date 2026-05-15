@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn validate_accepts_well_formed_record() {
-        validate_replay(&record()).unwrap();
+        assert_eq!(validate_replay(&record()), Ok(()));
     }
 
     #[test]
@@ -407,30 +407,29 @@ mod tests {
     }
 
     #[test]
-    fn outcome_code_failure_when_observed_diverges_from_expected() {
+    fn outcome_code_failure_when_observed_diverges_from_expected() -> Result<(), String> {
         let r = record();
         let observed = vec!["target/conformance/stdio_fread_small.divergent.jsonl".to_string()];
-        match classify_outcome(&r, true, &observed) {
-            ReplayOutcome::CodeFailure { signature } => {
-                assert!(signature.starts_with("stdio.fread_small::"));
-                assert!(signature.contains("missing="));
-                assert!(signature.contains("extra="));
-            }
-            other => panic!("expected CodeFailure; got {other:?}"),
-        }
+        let ReplayOutcome::CodeFailure { signature } = classify_outcome(&r, true, &observed) else {
+            return Err("expected CodeFailure outcome".to_string());
+        };
+        assert!(signature.starts_with("stdio.fread_small::"));
+        assert!(signature.contains("missing="));
+        assert!(signature.contains("extra="));
+        Ok(())
     }
 
     #[test]
-    fn outcome_tool_failure_when_asupersync_unavailable_even_if_outputs_match() {
+    fn outcome_tool_failure_when_asupersync_unavailable_even_if_outputs_match() -> Result<(), String>
+    {
         let r = record();
         let outcome = classify_outcome(&r, false, &r.expected_outputs);
-        match outcome {
-            ReplayOutcome::ToolFailure { reason } => {
-                assert!(reason.contains("asupersync tool unavailable"));
-                assert!(reason.contains("stdio.fread_small"));
-            }
-            other => panic!("expected ToolFailure; got {other:?}"),
-        }
+        let ReplayOutcome::ToolFailure { reason } = outcome else {
+            return Err("expected ToolFailure outcome".to_string());
+        };
+        assert!(reason.contains("asupersync tool unavailable"));
+        assert!(reason.contains("stdio.fread_small"));
+        Ok(())
     }
 
     #[test]
