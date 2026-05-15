@@ -242,12 +242,10 @@ fn manifest_binds_unit_and_e2e_completion_items() -> TestResult {
                 .is_some_and(|refs| !refs.is_empty()),
             "coverage section should cite implementation refs"
         );
-        assert!(
-            section["test_refs"]
-                .as_array()
-                .is_some_and(|refs| !refs.is_empty()),
-            "coverage section should cite tests"
-        );
+        let test_refs = section["test_refs"]
+            .as_array()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "coverage test_refs"))?;
+        assert!(!test_refs.is_empty(), "coverage section should cite tests");
         for command in section["validation_commands"]
             .as_array()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "validation commands"))?
@@ -262,13 +260,16 @@ fn manifest_binds_unit_and_e2e_completion_items() -> TestResult {
                 );
             }
         }
-        for test_ref in section["test_refs"].as_array().unwrap() {
+        for test_ref in test_refs {
             let source = test_ref["source"].as_str().unwrap_or_default();
             let name = test_ref["name"].as_str().unwrap_or_default();
             let rel = source_paths[source].as_str().unwrap_or_default();
-            let source_text = source_texts
-                .entry(source.to_string())
-                .or_insert_with(|| std::fs::read_to_string(root.join(rel)).unwrap());
+            let source_text = match source_texts.entry(source.to_string()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(std::fs::read_to_string(root.join(rel))?)
+                }
+            };
             assert!(
                 function_exists(source_text, name),
                 "test ref should exist: {rel}::{name}"
@@ -445,7 +446,9 @@ fn docs_truth_contract_covers_fresh_governance_trace() -> TestResult {
 
     assert_eq!(
         trace_rows.len() as u64,
-        contract["expected_trace_rows"].as_u64().unwrap()
+        contract["expected_trace_rows"]
+            .as_u64()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "expected_trace_rows"))?
     );
     assert_eq!(trace_rows.len(), section_count);
     let required_trace_fields = string_set(&contract["required_trace_fields"])?;
