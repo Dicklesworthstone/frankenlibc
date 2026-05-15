@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -6,13 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or("workspace should have root parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -71,17 +72,38 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    json_array(value, "string set")?
+        .iter()
+        .map(|item| Ok(json_str(item, "string set item")?.to_string()))
+        .collect()
+}
+
+fn json_object<'a>(
+    value: &'a Value,
+    description: &str,
+) -> TestResult<&'a serde_json::Map<String, Value>> {
+    value
+        .as_object()
+        .ok_or_else(|| format!("{description} must be object").into())
+}
+
+fn json_array<'a>(value: &'a Value, description: &str) -> TestResult<&'a Vec<Value>> {
     value
         .as_array()
-        .expect("value should be an array")
-        .iter()
-        .map(|item| {
-            item.as_str()
-                .expect("array item should be a string")
-                .to_string()
-        })
-        .collect()
+        .ok_or_else(|| format!("{description} must be array").into())
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, description: &str) -> TestResult<&'a mut Vec<Value>> {
+    value
+        .as_array_mut()
+        .ok_or_else(|| format!("{description} must be mutable array").into())
+}
+
+fn json_str<'a>(value: &'a Value, description: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| format!("{description} must be string").into())
 }
 
 fn assert_checker_failed(output: &Output) {
@@ -94,7 +116,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_pthread_lifecycle_unit_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -104,18 +126,14 @@ fn manifest_binds_pthread_lifecycle_unit_completion_items() -> TestResult {
     assert_eq!(manifest["bead"].as_str(), Some("bd-xxd9"));
     assert_eq!(manifest["completion_debt_bead"].as_str(), Some("bd-xxd9.2"));
     assert_eq!(
-        string_set(&manifest["completion_debt"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt"]["missing_items_closed"])?,
         BTreeSet::from(["tests.unit.primary".to_string()])
     );
 
-    let source_artifacts = manifest["source_artifacts"]
-        .as_object()
-        .expect("source_artifacts should be an object");
+    let source_artifacts = json_object(&manifest["source_artifacts"], "source_artifacts")?;
     assert_eq!(source_artifacts.len(), 16);
     for (name, path) in source_artifacts {
-        let rel = path
-            .as_str()
-            .expect("source artifact path should be a string");
+        let rel = json_str(path, "source artifact path")?;
         assert!(
             root.join(rel).is_file(),
             "source artifact {name} should exist at {rel}"
@@ -155,7 +173,7 @@ fn manifest_binds_pthread_lifecycle_unit_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_pthread_lifecycle_unit_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(
@@ -182,7 +200,7 @@ fn checker_validates_pthread_lifecycle_unit_contract_and_emits_report_log() -> T
         Some(4)
     );
     assert_eq!(
-        string_set(&report["stress_support"]["modes"]),
+        string_set(&report["stress_support"]["modes"])?,
         BTreeSet::from(["hardened".to_string(), "strict".to_string()])
     );
 
@@ -197,7 +215,7 @@ fn checker_validates_pthread_lifecycle_unit_contract_and_emits_report_log() -> T
 
 #[test]
 fn checker_rejects_missing_required_family() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_family")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["pthread_lifecycle_surface"]["required_families"] = json!([
@@ -217,9 +235,7 @@ fn checker_rejects_missing_required_family() -> TestResult {
     assert_checker_failed(&output);
     let report =
         read_json(&out_dir.join("pthread_lifecycle_unit_completion_contract.report.json"))?;
-    let errors = report["errors"]
-        .as_array()
-        .expect("errors should be present on failure");
+    let errors = json_array(&report["errors"], "report errors")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
@@ -233,12 +249,13 @@ fn checker_rejects_missing_required_family() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_unit_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_ref")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    let refs = manifest["completion_debt_evidence"]["unit_primary"]["required_test_refs"]
-        .as_array_mut()
-        .expect("required_test_refs should be an array");
+    let refs = json_array_mut(
+        &mut manifest["completion_debt_evidence"]["unit_primary"]["required_test_refs"],
+        "required test refs",
+    )?;
     refs.retain(|reference| {
         reference["name"].as_str() != Some("pthread_self_join_is_rejected_with_edeadlk")
     });
@@ -249,9 +266,7 @@ fn checker_rejects_missing_unit_test_ref() -> TestResult {
     assert_checker_failed(&output);
     let report =
         read_json(&out_dir.join("pthread_lifecycle_unit_completion_contract.report.json"))?;
-    let errors = report["errors"]
-        .as_array()
-        .expect("errors should be present on failure");
+    let errors = json_array(&report["errors"], "report errors")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
@@ -265,7 +280,7 @@ fn checker_rejects_missing_unit_test_ref() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non_rch_command")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["unit_primary"]["required_commands"][0] =
@@ -277,9 +292,7 @@ fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
     assert_checker_failed(&output);
     let report =
         read_json(&out_dir.join("pthread_lifecycle_unit_completion_contract.report.json"))?;
-    let errors = report["errors"]
-        .as_array()
-        .expect("errors should be present on failure");
+    let errors = json_array(&report["errors"], "report errors")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
