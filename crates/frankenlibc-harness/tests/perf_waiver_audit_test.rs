@@ -203,12 +203,12 @@ fn date_to_days_since_epoch(s: &str) -> Result<i64, Box<dyn Error>> {
     Ok(era * 146097 + doe as i64 - 719468)
 }
 
-fn today_days_since_epoch() -> i64 {
+fn today_days_since_epoch() -> Result<i64, Box<dyn Error>> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("system time before unix epoch")
+        .map_err(|err| test_error(format!("system time before unix epoch: {err}")))?
         .as_secs();
-    (now / 86_400) as i64
+    Ok((now / 86_400) as i64)
 }
 
 #[test]
@@ -350,7 +350,7 @@ fn live_active_waivers_pass_audit_contract() -> TestResult {
     .map(|v| v.as_str().unwrap_or_default())
     .collect();
     let max_horizon_days = audit["max_expires_at_horizon_days"].as_i64().unwrap_or(0);
-    let today_days = today_days_since_epoch();
+    let today_days = today_days_since_epoch()?;
     let mut bead_ids: BTreeSet<String> = BTreeSet::new();
 
     for waiver in waivers {
