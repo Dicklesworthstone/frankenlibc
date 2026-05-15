@@ -1,6 +1,6 @@
 //! Completion contract tests for bd-1gg.4.1 aarch64 arch regression evidence.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -12,13 +12,14 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 static CHECKER_LOCK: Mutex<()> = Mutex::new(());
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn workspace_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap()
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .unwrap()
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -92,18 +93,38 @@ fn run_passing_checker(root: &Path, label: &str) -> TestResult<PathBuf> {
     Ok(out_dir)
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
+fn value_array<'a>(value: &'a Value, context: &str) -> TestResult<&'a Vec<Value>> {
     value
         .as_array()
-        .unwrap()
+        .ok_or_else(|| format!("{context} must be an array").into())
+}
+
+fn value_object<'a>(
+    value: &'a Value,
+    context: &str,
+) -> TestResult<&'a serde_json::Map<String, Value>> {
+    value
+        .as_object()
+        .ok_or_else(|| format!("{context} must be an object").into())
+}
+
+fn value_str<'a>(value: &'a Value, context: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| format!("{context} must be a string").into())
+}
+
+fn string_set(value: &Value, context: &str) -> TestResult<BTreeSet<String>> {
+    value_array(value, context)?
         .iter()
-        .map(|value| value.as_str().unwrap().to_string())
+        .enumerate()
+        .map(|(index, value)| Ok(value_str(value, &format!("{context}[{index}]"))?.to_string()))
         .collect()
 }
 
 #[test]
 fn manifest_binds_all_completion_items() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -116,12 +137,17 @@ fn manifest_binds_all_completion_items() -> TestResult {
         Some("bd-1gg.4.1")
     );
 
-    let item_ids: BTreeSet<String> = manifest["missing_item_bindings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["id"].as_str().unwrap().to_string())
-        .collect();
+    let item_ids: BTreeSet<String> =
+        value_array(&manifest["missing_item_bindings"], "missing_item_bindings")?
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                Ok(
+                    value_str(&item["id"], &format!("missing_item_bindings[{index}].id"))?
+                        .to_string(),
+                )
+            })
+            .collect::<TestResult<_>>()?;
     assert_eq!(
         item_ids,
         BTreeSet::from([
@@ -133,18 +159,13 @@ fn manifest_binds_all_completion_items() -> TestResult {
         ])
     );
 
-    assert!(
-        manifest["source_artifacts"]
-            .as_object()
-            .expect("source_artifacts")
-            .len()
-            >= 15
-    );
+    assert!(value_object(&manifest["source_artifacts"], "source_artifacts")?.len() >= 15);
     assert_eq!(
-        manifest["deterministic_fuzz_seeds"]
-            .as_array()
-            .unwrap()
-            .len(),
+        value_array(
+            &manifest["deterministic_fuzz_seeds"],
+            "deterministic_fuzz_seeds",
+        )?
+        .len(),
         5
     );
     assert_eq!(
@@ -152,8 +173,10 @@ fn manifest_binds_all_completion_items() -> TestResult {
         Some(1700)
     );
 
-    let telemetry_events =
-        string_set(&manifest["required_source_contract"]["telemetry"]["required_events"]);
+    let telemetry_events = string_set(
+        &manifest["required_source_contract"]["telemetry"]["required_events"],
+        "required_source_contract.telemetry.required_events",
+    )?;
     for required in [
         "aarch64_arch_regression_completion.source_artifact_bound",
         "aarch64_arch_regression_completion.matrix_bound",
@@ -170,7 +193,7 @@ fn manifest_binds_all_completion_items() -> TestResult {
 
 #[test]
 fn checker_passes_and_emits_report_log() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let out_dir = run_passing_checker(&root, "pass")?;
 
     let report =
@@ -249,7 +272,7 @@ fn checker_passes_and_emits_report_log() -> TestResult {
 
 #[test]
 fn source_refs_resolve_to_nonblank_lines() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = read_json(&contract_path(&root))?;
     let refs = manifest["completion_debt_evidence"]["implementation_refs"]
         .as_array()
@@ -283,7 +306,7 @@ fn source_refs_resolve_to_nonblank_lines() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_architecture_requirement() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let out_dir = unique_out_dir(&root, "missing-arch")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_source_contract"]["environment_matrix"]["required_architectures"]
@@ -304,9 +327,7 @@ fn checker_rejects_missing_architecture_requirement() -> TestResult {
         read_json(&out_dir.join("aarch64_arch_regression_gate_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
     assert!(
-        report["errors"]
-            .as_array()
-            .unwrap()
+        value_array(&report["errors"], "errors")?
             .iter()
             .any(|error| error.as_str().unwrap_or("").contains("riscv64")),
         "expected missing architecture error: {report}"
@@ -317,7 +338,7 @@ fn checker_rejects_missing_architecture_requirement() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_fuzz_seed_binding() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let out_dir = unique_out_dir(&root, "missing-fuzz-seeds")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["deterministic_fuzz_seeds"] = json!([]);
@@ -334,9 +355,7 @@ fn checker_rejects_missing_fuzz_seed_binding() -> TestResult {
     let report =
         read_json(&out_dir.join("aarch64_arch_regression_gate_completion_contract.report.json"))?;
     assert!(
-        report["errors"]
-            .as_array()
-            .unwrap()
+        value_array(&report["errors"], "errors")?
             .iter()
             .any(|error| error.as_str().unwrap_or("").contains("fuzz seed count")),
         "expected fuzz seed count error: {report}"
@@ -347,7 +366,7 @@ fn checker_rejects_missing_fuzz_seed_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_unknown_telemetry_field() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let out_dir = unique_out_dir(&root, "unknown-telemetry")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_source_contract"]["telemetry"]["required_log_fields"]
@@ -367,9 +386,7 @@ fn checker_rejects_unknown_telemetry_field() -> TestResult {
     let report =
         read_json(&out_dir.join("aarch64_arch_regression_gate_completion_contract.report.json"))?;
     assert!(
-        report["errors"]
-            .as_array()
-            .unwrap()
+        value_array(&report["errors"], "errors")?
             .iter()
             .any(|error| error
                 .as_str()
