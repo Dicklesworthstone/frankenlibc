@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -6,13 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory should have workspace parent")?;
+    let root = crate_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent should have repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -100,17 +101,44 @@ fn function_exists(root: &Path, source_path: &str, name: &str) -> TestResult<boo
     Ok(text.contains(&format!("fn {name}(")) || text.contains(&format!("fn {name}<")))
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    json_array(value, "string set")?
+        .iter()
+        .map(|item| Ok(json_str(item, "string set item")?.to_owned()))
+        .collect()
+}
+
+fn json_object<'a>(
+    value: &'a Value,
+    description: &str,
+) -> TestResult<&'a serde_json::Map<String, Value>> {
+    value
+        .as_object()
+        .ok_or_else(|| format!("{description} must be object").into())
+}
+
+fn json_array<'a>(value: &'a Value, description: &str) -> TestResult<&'a Vec<Value>> {
     value
         .as_array()
-        .expect("value should be array")
-        .iter()
-        .map(|item| {
-            item.as_str()
-                .expect("array item should be string")
-                .to_owned()
-        })
-        .collect()
+        .ok_or_else(|| format!("{description} must be array").into())
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, description: &str) -> TestResult<&'a mut Vec<Value>> {
+    value
+        .as_array_mut()
+        .ok_or_else(|| format!("{description} must be mutable array").into())
+}
+
+fn json_str<'a>(value: &'a Value, description: &str) -> TestResult<&'a str> {
+    value
+        .as_str()
+        .ok_or_else(|| format!("{description} must be string").into())
+}
+
+fn json_u64(value: &Value, description: &str) -> TestResult<u64> {
+    value
+        .as_u64()
+        .ok_or_else(|| format!("{description} must be unsigned integer").into())
 }
 
 fn child_ids() -> [&'static str; 16] {
@@ -177,7 +205,7 @@ fn point_manifest_at_fixture(root: &Path, manifest: &mut Value, out_dir: &Path) 
 
 #[test]
 fn manifest_binds_reality_check_ambition_sources() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -189,11 +217,14 @@ fn manifest_binds_reality_check_ambition_sources() -> TestResult {
         manifest["completion_debt_bead"].as_str(),
         Some("bd-bp8fl.17")
     );
-    assert!(manifest["next_audit_score_threshold"].as_u64().unwrap() >= 800);
+    assert!(
+        json_u64(
+            &manifest["next_audit_score_threshold"],
+            "next audit score threshold"
+        )? >= 800
+    );
 
-    let artifacts = manifest["source_artifacts"]
-        .as_object()
-        .ok_or("source_artifacts must be object")?;
+    let artifacts = json_object(&manifest["source_artifacts"], "source_artifacts")?;
     for (artifact_id, path) in artifacts {
         let path = path.as_str().ok_or("artifact path must be string")?;
         assert!(
@@ -247,11 +278,16 @@ fn manifest_binds_reality_check_ambition_sources() -> TestResult {
         ])
     );
 
-    for binding in manifest["missing_item_bindings"].as_array().unwrap() {
-        for test_ref in binding["required_test_refs"].as_array().unwrap() {
-            let source_id = test_ref["source"].as_str().unwrap();
-            let name = test_ref["name"].as_str().unwrap();
-            let source_path = artifacts[source_id].as_str().unwrap();
+    for binding in json_array(&manifest["missing_item_bindings"], "missing item bindings")? {
+        for test_ref in json_array(&binding["required_test_refs"], "required test refs")? {
+            let source_id = json_str(&test_ref["source"], "test ref source")?;
+            let name = json_str(&test_ref["name"], "test ref name")?;
+            let source_path = json_str(
+                artifacts
+                    .get(source_id)
+                    .ok_or_else(|| format!("missing source artifact {source_id}"))?,
+                "source artifact path",
+            )?;
             assert!(
                 function_exists(&root, source_path, name)?,
                 "missing test ref {source_id}::{name}"
@@ -264,7 +300,7 @@ fn manifest_binds_reality_check_ambition_sources() -> TestResult {
 
 #[test]
 fn checker_accepts_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
     let mut manifest = read_json(&contract_path(&root))?;
     point_manifest_at_fixture(&root, &mut manifest, &out_dir)?;
@@ -331,7 +367,7 @@ fn checker_accepts_contract_and_emits_report_log() -> TestResult {
 
 #[test]
 fn checker_rejects_child_status_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "child_status")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let issues_path = out_dir.join("issues_child_status.jsonl");
@@ -349,7 +385,7 @@ fn checker_rejects_child_status_drift() -> TestResult {
     );
     let report =
         read_json(&out_dir.join("reality_check_ambition_completion_contract.report.json"))?;
-    let errors = report["errors"].as_array().unwrap();
+    let errors = json_array(&report["errors"], "report errors")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
@@ -363,7 +399,7 @@ fn checker_rejects_child_status_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_bare_cargo_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bare_cargo")?;
     let mut manifest = read_json(&contract_path(&root))?;
     point_manifest_at_fixture(&root, &mut manifest, &out_dir)?;
@@ -381,7 +417,7 @@ fn checker_rejects_bare_cargo_command() -> TestResult {
     );
     let report =
         read_json(&out_dir.join("reality_check_ambition_completion_contract.report.json"))?;
-    let errors = report["errors"].as_array().unwrap();
+    let errors = json_array(&report["errors"], "report errors")?;
     assert!(
         errors
             .iter()
@@ -394,13 +430,14 @@ fn checker_rejects_bare_cargo_command() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "event_drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
     point_manifest_at_fixture(&root, &mut manifest, &out_dir)?;
-    let events = manifest["telemetry_contract"]["required_events"]
-        .as_array_mut()
-        .ok_or("required_events must be array")?;
+    let events = json_array_mut(
+        &mut manifest["telemetry_contract"]["required_events"],
+        "required events",
+    )?;
     events.retain(|event| event.as_str() != Some("reality_check_claims_validated"));
     let mutated = out_dir.join("contract_event_drift.json");
     write_json(&mutated, &manifest)?;
@@ -413,7 +450,7 @@ fn checker_rejects_missing_required_event() -> TestResult {
     );
     let report =
         read_json(&out_dir.join("reality_check_ambition_completion_contract.report.json"))?;
-    let errors = report["errors"].as_array().unwrap();
+    let errors = json_array(&report["errors"], "report errors")?;
     assert!(
         errors.iter().any(|error| error
             .as_str()
@@ -421,7 +458,7 @@ fn checker_rejects_missing_required_event() -> TestResult {
             .contains("telemetry_contract.required_events mismatch")),
         "expected telemetry event drift error, got {errors:?}"
     );
-    assert!(string_set(&manifest["telemetry_contract"]["required_events"]).len() >= 6);
+    assert!(string_set(&manifest["telemetry_contract"]["required_events"])?.len() >= 6);
 
     Ok(())
 }
