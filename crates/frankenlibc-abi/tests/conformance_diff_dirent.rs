@@ -107,6 +107,14 @@ type DirEntrySet = BTreeSet<(Vec<u8>, u8)>;
 type FdIdentity = (libc::dev_t, libc::ino_t, libc::mode_t);
 type FdopendirWalk = (DirEntrySet, FdIdentity);
 
+#[derive(Debug, PartialEq, Eq)]
+struct SeekTrace {
+    first_name: Vec<u8>,
+    saved_position: libc::c_long,
+    expected_next_name: Vec<u8>,
+    after_seek_name: Vec<u8>,
+}
+
 fn compare_dirent_names(left: &[u8], right: &[u8], cmp: DirentComparator) -> c_int {
     let left_entry = dirent_named(left);
     let right_entry = dirent_named(right);
@@ -170,6 +178,109 @@ fn walk_lc(dir: &std::path::Path) -> Result<BTreeSet<(Vec<u8>, u8)>, String> {
         return Err(format!("closedir returned {}", rc));
     }
     Ok(entries)
+}
+
+fn next_visible_name_fl(dirp: *mut fl::DIR) -> Option<Vec<u8>> {
+    loop {
+        let entry = unsafe { fl::readdir(dirp) };
+        if entry.is_null() {
+            return None;
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name != b"." && name != b".." {
+            return Some(name);
+        }
+    }
+}
+
+fn next_visible_name_lc(dirp: *mut libc::DIR) -> Option<Vec<u8>> {
+    loop {
+        let entry = unsafe { libc::readdir(dirp) };
+        if entry.is_null() {
+            return None;
+        }
+        let name = unsafe {
+            std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                .to_bytes()
+                .to_vec()
+        };
+        if name != b"." && name != b".." {
+            return Some(name);
+        }
+    }
+}
+
+fn telldir_seek_trace_fl(dir: &std::path::Path) -> Result<SeekTrace, String> {
+    let cp = cstr_path(dir);
+    let dirp = unsafe { fl::opendir(cp.as_ptr()) };
+    if dirp.is_null() {
+        return Err("opendir returned NULL".into());
+    }
+
+    let first_name = next_visible_name_fl(dirp).ok_or("FrankenLibC missing first entry")?;
+    let saved_position = unsafe { fl::telldir(dirp) };
+    if saved_position < 0 {
+        unsafe {
+            fl::closedir(dirp);
+        }
+        return Err(format!("telldir returned {saved_position}"));
+    }
+    let expected_next_name =
+        next_visible_name_fl(dirp).ok_or("FrankenLibC missing post-telldir entry")?;
+    unsafe {
+        fl::seekdir(dirp, saved_position);
+    }
+    let after_seek_name =
+        next_visible_name_fl(dirp).ok_or("FrankenLibC missing post-seekdir entry")?;
+    let rc = unsafe { fl::closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("closedir returned {rc}"));
+    }
+
+    Ok(SeekTrace {
+        first_name,
+        saved_position,
+        expected_next_name,
+        after_seek_name,
+    })
+}
+
+fn telldir_seek_trace_lc(dir: &std::path::Path) -> Result<SeekTrace, String> {
+    let cp = cstr_path(dir);
+    let dirp = unsafe { libc::opendir(cp.as_ptr()) };
+    if dirp.is_null() {
+        return Err("opendir returned NULL".into());
+    }
+
+    let first_name = next_visible_name_lc(dirp).ok_or("glibc missing first entry")?;
+    let saved_position = unsafe { libc::telldir(dirp) };
+    if saved_position < 0 {
+        unsafe {
+            libc::closedir(dirp);
+        }
+        return Err(format!("telldir returned {saved_position}"));
+    }
+    let expected_next_name =
+        next_visible_name_lc(dirp).ok_or("glibc missing post-telldir entry")?;
+    unsafe {
+        libc::seekdir(dirp, saved_position);
+    }
+    let after_seek_name = next_visible_name_lc(dirp).ok_or("glibc missing post-seekdir entry")?;
+    let rc = unsafe { libc::closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("closedir returned {rc}"));
+    }
+
+    Ok(SeekTrace {
+        first_name,
+        saved_position,
+        expected_next_name,
+        after_seek_name,
+    })
 }
 
 /// Walk using the FrankenLibC `readdir64` alias.
@@ -1005,6 +1116,34 @@ fn diff_rewinddir_replays_walk() {
 }
 
 // ===========================================================================
+// telldir/seekdir — saved stream locations resume at the same next entry
+// ===========================================================================
+
+#[test]
+fn diff_telldir_seekdir_repositions_stream() {
+    let dir = temp_dir("tell_seek");
+    for i in 0..16 {
+        write_file(&dir.join(format!("entry_{:02}", i)), b"x");
+    }
+
+    let fl_trace = telldir_seek_trace_fl(&dir).expect("FrankenLibC telldir/seekdir trace");
+    let lc_trace = telldir_seek_trace_lc(&dir).expect("glibc telldir/seekdir trace");
+
+    assert_eq!(
+        fl_trace.expected_next_name, fl_trace.after_seek_name,
+        "FrankenLibC seekdir did not resume at saved telldir position: {fl_trace:?}"
+    );
+    assert_eq!(
+        lc_trace.expected_next_name, lc_trace.after_seek_name,
+        "glibc seekdir did not resume at saved telldir position: {lc_trace:?}"
+    );
+    assert_eq!(
+        fl_trace, lc_trace,
+        "telldir/seekdir stream-position divergence:\n  fl: {fl_trace:?}\n  lc: {lc_trace:?}"
+    );
+}
+
+// ===========================================================================
 // opendir on missing path — both must return NULL with same errno
 // ===========================================================================
 
@@ -1064,6 +1203,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":12,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":14,\"divergences\":0}}",
     );
 }
