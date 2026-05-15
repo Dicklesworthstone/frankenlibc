@@ -94,8 +94,8 @@ impl ModelRing {
     /// Record a redaction tag. Returns true if the tag was kept,
     /// false if the cardinality cap dropped it.
     pub fn redact(&mut self, tag: &str) -> bool {
-        if self.redaction_set.contains_key(tag) {
-            *self.redaction_set.get_mut(tag).unwrap() += 1;
+        if let Some(count) = self.redaction_set.get_mut(tag) {
+            *count += 1;
             return true;
         }
         if self.redaction_set.len() >= self.redaction_cardinality_limit {
