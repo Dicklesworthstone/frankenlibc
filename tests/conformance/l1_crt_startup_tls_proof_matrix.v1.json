@@ -211,16 +211,21 @@
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "expected_order": ["register_callbacks", "main_return", "callbacks_lifo", "status_propagated"],
-      "actual_order": [],
+      "actual_order": ["register_callbacks", "main_return", "callbacks_lifo", "status_propagated"],
       "expected_status": "required",
-      "actual_status": "blocked",
-      "promotion_decision": "claim_blocked",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-05-15T16:22:00Z",
       "artifact_refs": [
-        "crates/frankenlibc-abi/src/startup_abi.rs",
-        "tests/conformance/ld_preload_smoke_summary.v1.json"
+        "crates/frankenlibc-abi/src/stdlib_abi.rs",
+        "crates/frankenlibc-abi/src/unistd_abi.rs",
+        "crates/frankenlibc-abi/tests/startup_abi_test.rs"
       ],
       "check_commands": [
-        "cargo test -p frankenlibc-abi --test startup_abi_test"
+        "rch exec -- env CARGO_TARGET_DIR=<target> FRANKENLIBC_MODE=strict cargo test -p frankenlibc-abi --test startup_abi_test phase0_exit_callbacks_run_lifo_and_propagate_status -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> FRANKENLIBC_MODE=hardened cargo test -p frankenlibc-abi --test startup_abi_test phase0_exit_callbacks_run_lifo_and_propagate_status -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test startup_abi_test cxa_atexit_finalize_filters_dso_and_runs_lifo_once -- --nocapture",
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test startup_abi_test phase0_exit_registration_rejects_missing_callbacks -- --nocapture"
       ],
       "failure_signature": "l1_atexit_on_exit_not_proven"
     },
@@ -342,9 +347,9 @@
   ],
   "summary": {
     "required_row_count": 11,
-    "satisfied_row_count": 9,
-    "blocked_row_count": 2,
+    "satisfied_row_count": 10,
+    "blocked_row_count": 1,
     "current_gate_status": "blocked",
-    "blocker_reason": "Atexit/on_exit and init/fini array evidence remain explicit L1 blockers."
+    "blocker_reason": "Init/fini array evidence remains an explicit L1 blocker."
   }
 }

@@ -75,7 +75,6 @@
       "failure_diagnostics"
     ],
     "required_blocked_rows": [
-      "atexit_on_exit",
       "init_fini_arrays"
     ],
     "required_log_fields": [
@@ -100,8 +99,8 @@
     ],
     "minimum_l1_expectations": {
       "proof_row_count": 11,
-      "satisfied_row_count": 9,
-      "blocked_row_count": 2,
+      "satisfied_row_count": 10,
+      "blocked_row_count": 1,
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "claim_policy_status": "blocked",

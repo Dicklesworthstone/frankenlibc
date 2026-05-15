@@ -1030,26 +1030,11 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     // and we can't easily hook back into stdio here without splitting exit.
     // Let's implement the full POSIX exit here, calling `_exit`.
 
-    // 1. Run atexit handlers.
-    frankenlibc_core::stdlib::run_atexit_handlers();
-
-    // 2. Run on_exit handlers (in reverse registration order, per glibc convention).
-    //    POSIX/glibc: a handler may register another via on_exit; the new
-    //    registration must also run. Swap-extract under the lock, release,
-    //    then iterate — invoking user callbacks while holding the Mutex would
-    //    self-deadlock on re-entrant on_exit (bd-3jpoz).
-    loop {
-        let batch: Vec<OnExitEntry> = {
-            let mut guard = ON_EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-            if guard.is_empty() {
-                break;
-            }
-            std::mem::take(&mut *guard)
-        };
-        for entry in batch.into_iter().rev() {
-            unsafe { (entry.func)(status, entry.arg) };
-        }
-    }
+    // 1. Run atexit/on_exit handlers in one reverse-registration stack.
+    //    Swap-extract under the lock, release, then iterate: invoking user
+    //    callbacks while holding the mutex would self-deadlock on re-entrant
+    //    registrations (bd-3jpoz).
+    run_exit_handlers(status);
 
     // 3. Flush all open stdio streams.
     unsafe {
@@ -1074,7 +1059,7 @@ pub unsafe extern "C" fn atexit(func: Option<extern "C" fn()>) -> c_int {
     }
 
     let res = match func {
-        Some(f) => frankenlibc_core::stdlib::atexit(f),
+        Some(f) => register_exit_handler(ExitHandler::Atexit(f)),
         None => -1,
     };
 
@@ -3340,7 +3325,36 @@ struct OnExitEntry {
 unsafe impl Send for OnExitEntry {}
 unsafe impl Sync for OnExitEntry {}
 
-static ON_EXIT_HANDLERS: std::sync::Mutex<Vec<OnExitEntry>> = std::sync::Mutex::new(Vec::new());
+enum ExitHandler {
+    Atexit(extern "C" fn()),
+    OnExit(OnExitEntry),
+}
+
+static EXIT_HANDLERS: std::sync::Mutex<Vec<ExitHandler>> = std::sync::Mutex::new(Vec::new());
+
+fn register_exit_handler(handler: ExitHandler) -> c_int {
+    let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+    handlers.push(handler);
+    0
+}
+
+fn run_exit_handlers(status: c_int) {
+    loop {
+        let batch: Vec<ExitHandler> = {
+            let mut guard = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_empty() {
+                break;
+            }
+            std::mem::take(&mut *guard)
+        };
+        for handler in batch.into_iter().rev() {
+            match handler {
+                ExitHandler::Atexit(func) => func(),
+                ExitHandler::OnExit(entry) => unsafe { (entry.func)(status, entry.arg) },
+            }
+        }
+    }
+}
 
 /// `on_exit` — register a function to be called at exit (with status and arg).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3353,8 +3367,7 @@ pub unsafe extern "C" fn on_exit(
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return -1;
     };
-    let mut handlers = ON_EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-    handlers.push(OnExitEntry { func: f, arg });
+    register_exit_handler(ExitHandler::OnExit(OnExitEntry { func: f, arg }));
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
     0
 }

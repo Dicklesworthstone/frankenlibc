@@ -10,7 +10,7 @@ use std::sync::Mutex;
 static STARTUP_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 use std::ptr;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use frankenlibc_abi::startup_abi::{
     __cxa_thread_atexit_impl, __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot,
@@ -18,6 +18,8 @@ use frankenlibc_abi::startup_abi::{
     program_invocation_name, program_invocation_short_name, setprogname,
     startup_policy_snapshot_for_tests,
 };
+use frankenlibc_abi::stdlib_abi::{atexit, on_exit};
+use frankenlibc_abi::unistd_abi::{__cxa_atexit, __cxa_finalize};
 
 // ---------------------------------------------------------------------------
 // Helpers for building synthetic argv/envp/auxv
@@ -269,6 +271,8 @@ static mut INIT_CALLED: bool = false;
 static mut FINI_CALLED: bool = false;
 static CONSTRUCTOR_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 static DESTRUCTOR_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+static EXIT_CALLBACK_ORDER_FD: AtomicI32 = AtomicI32::new(-1);
+static CXA_ATEXIT_ORDER: Mutex<Vec<c_int>> = Mutex::new(Vec::new());
 
 unsafe extern "C" fn init_hook() {
     unsafe { INIT_CALLED = true };
@@ -308,6 +312,37 @@ unsafe extern "C" fn destructor_order_fini_hook() {
 
 unsafe extern "C" fn destructor_order_rtld_fini_hook() {
     DESTRUCTOR_ORDER.lock().unwrap().push("rtld_fini");
+}
+
+fn write_exit_callback_byte(byte: u8) {
+    let fd = EXIT_CALLBACK_ORDER_FD.load(Ordering::SeqCst);
+    if fd >= 0 {
+        unsafe {
+            libc::write(fd, (&byte as *const u8).cast::<c_void>(), 1);
+        }
+    }
+}
+
+extern "C" fn atexit_order_first() {
+    write_exit_callback_byte(b'A');
+}
+
+extern "C" fn atexit_order_last() {
+    write_exit_callback_byte(b'B');
+}
+
+unsafe extern "C" fn on_exit_order_status(status: c_int, _arg: *mut c_void) {
+    write_exit_callback_byte(b'O');
+    write_exit_callback_byte(status as u8);
+}
+
+unsafe extern "C" fn cxa_atexit_record_arg(arg: *mut c_void) {
+    let value = if arg.is_null() {
+        -1
+    } else {
+        unsafe { *(arg.cast::<c_int>()) }
+    };
+    CXA_ATEXIT_ORDER.lock().unwrap().push(value);
 }
 
 #[test]
@@ -392,6 +427,132 @@ fn phase0_runs_fini_array_and_rtld_fini_after_main_return() {
     assert!(
         snap.dag_valid,
         "destructor startup path should preserve the phase-0 DAG"
+    );
+}
+
+#[test]
+fn phase0_exit_callbacks_run_lifo_and_propagate_status() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let mut fds = [0i32; 2];
+    let pipe_rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    assert_eq!(pipe_rc, 0, "pipe() should succeed");
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork() should succeed");
+
+    if pid == 0 {
+        unsafe { libc::close(fds[0]) };
+        EXIT_CALLBACK_ORDER_FD.store(fds[1], Ordering::SeqCst);
+
+        if unsafe { atexit(Some(atexit_order_first)) } != 0 {
+            unsafe { libc::_exit(101) };
+        }
+        if unsafe { on_exit(Some(on_exit_order_status), ptr::null_mut()) } != 0 {
+            unsafe { libc::_exit(102) };
+        }
+        if unsafe { atexit(Some(atexit_order_last)) } != 0 {
+            unsafe { libc::_exit(103) };
+        }
+
+        unsafe { frankenlibc_abi::stdlib_abi::exit(42) };
+    }
+
+    unsafe { libc::close(fds[1]) };
+    let mut observed = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        let n = unsafe { libc::read(fds[0], byte.as_mut_ptr().cast::<c_void>(), 1) };
+        assert!(n >= 0, "read() should succeed");
+        if n == 0 {
+            break;
+        }
+        observed.push(byte[0]);
+    }
+    unsafe { libc::close(fds[0]) };
+
+    let mut status = 0i32;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid, "waitpid should reap the child");
+    assert_eq!(
+        observed,
+        vec![b'B', b'O', 42, b'A'],
+        "atexit and on_exit callbacks should share one reverse-registration stack"
+    );
+    assert_eq!((status >> 8) & 0xff, 42, "exit status should propagate");
+}
+
+#[test]
+fn phase0_exit_registration_rejects_missing_callbacks() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+
+    assert_eq!(unsafe { atexit(None) }, -1);
+    assert_eq!(unsafe { on_exit(None, ptr::null_mut()) }, -1);
+}
+
+#[test]
+fn cxa_atexit_finalize_filters_dso_and_runs_lifo_once() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    unsafe { __cxa_finalize(ptr::null_mut()) };
+    CXA_ATEXIT_ORDER.lock().unwrap().clear();
+
+    let mut one = 1;
+    let mut two = 2;
+    let mut three = 3;
+    let mut dso_one = 0u8;
+    let mut dso_two = 0u8;
+    let dso_one_ptr = (&mut dso_one as *mut u8).cast::<c_void>();
+    let dso_two_ptr = (&mut dso_two as *mut u8).cast::<c_void>();
+
+    assert_eq!(
+        unsafe {
+            __cxa_atexit(
+                cxa_atexit_record_arg,
+                (&mut one as *mut c_int).cast::<c_void>(),
+                dso_one_ptr,
+            )
+        },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            __cxa_atexit(
+                cxa_atexit_record_arg,
+                (&mut two as *mut c_int).cast::<c_void>(),
+                dso_two_ptr,
+            )
+        },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            __cxa_atexit(
+                cxa_atexit_record_arg,
+                (&mut three as *mut c_int).cast::<c_void>(),
+                dso_one_ptr,
+            )
+        },
+        0
+    );
+
+    unsafe { __cxa_finalize(dso_one_ptr) };
+    assert_eq!(
+        CXA_ATEXIT_ORDER.lock().unwrap().as_slice(),
+        &[3, 1],
+        "__cxa_finalize(dso) should run matching handlers in LIFO order"
+    );
+
+    unsafe { __cxa_finalize(ptr::null_mut()) };
+    assert_eq!(
+        CXA_ATEXIT_ORDER.lock().unwrap().as_slice(),
+        &[3, 1, 2],
+        "__cxa_finalize(NULL) should drain the remaining handlers"
+    );
+
+    unsafe { __cxa_finalize(ptr::null_mut()) };
+    assert_eq!(
+        CXA_ATEXIT_ORDER.lock().unwrap().as_slice(),
+        &[3, 1, 2],
+        "__cxa_finalize should not rerun drained handlers"
     );
 }
 
