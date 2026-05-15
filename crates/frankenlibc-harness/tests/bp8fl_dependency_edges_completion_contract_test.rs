@@ -1,7 +1,7 @@
 //! Contract tests for bd-bp8fl.2.9.1 dependency-edge completion evidence.
 
-use serde_json::Value;
 use serde_json::json;
+use serde_json::Value;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::io;
@@ -202,6 +202,36 @@ fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
     Ok(set)
 }
 
+fn json_array<'a>(value: &'a Value, description: &str) -> TestResult<&'a Vec<Value>> {
+    value.as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be an array"),
+        )
+        .into()
+    })
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, description: &str) -> TestResult<&'a mut Vec<Value>> {
+    value.as_array_mut().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be a mutable array"),
+        )
+        .into()
+    })
+}
+
+fn json_str<'a>(value: &'a Value, description: &str) -> TestResult<&'a str> {
+    value.as_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{description} should be a string"),
+        )
+        .into()
+    })
+}
+
 fn assert_checker_failed(output: &Output) {
     assert!(
         !output.status.success(),
@@ -214,10 +244,10 @@ fn mutated_contract(
     root: &Path,
     out_dir: &Path,
     label: &str,
-    mutator: impl FnOnce(&mut Value),
+    mutator: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut manifest = read_json(&contract_path(root))?;
-    mutator(&mut manifest);
+    mutator(&mut manifest)?;
     let path = out_dir.join(format!("{label}.contract.json"));
     write_json(&path, &manifest)?;
     Ok(path)
@@ -258,33 +288,27 @@ fn manifest_binds_dependency_edges_and_completion_items() -> TestResult {
         Some("blocks")
     );
 
-    let source_artifacts = manifest["source_artifacts"]
-        .as_array()
-        .expect("source_artifacts should be an array");
+    let source_artifacts = json_array(&manifest["source_artifacts"], "source_artifacts")?;
     assert_eq!(source_artifacts.len(), 20);
     for artifact in source_artifacts {
-        let rel = artifact["path"]
-            .as_str()
-            .expect("source artifact path should be a string");
+        let rel = json_str(&artifact["path"], "source artifact path")?;
         assert!(
             root.join(rel).exists(),
             "source artifact should exist: {rel}"
         );
     }
 
-    let edges = manifest["dependency_edges"]["edges"]
-        .as_array()
-        .expect("dependency edges should be an array");
+    let edges = json_array(&manifest["dependency_edges"]["edges"], "dependency edges")?;
     let actual_edges = edges
         .iter()
         .map(|edge| {
-            (
-                edge["edge_id"].as_str().unwrap().to_string(),
-                edge["source"].as_str().unwrap().to_string(),
-                edge["target"].as_str().unwrap().to_string(),
-            )
+            Ok((
+                json_str(&edge["edge_id"], "edge id")?.to_string(),
+                json_str(&edge["source"], "edge source")?.to_string(),
+                json_str(&edge["target"], "edge target")?.to_string(),
+            ))
         })
-        .collect::<BTreeSet<_>>();
+        .collect::<TestResult<BTreeSet<_>>>()?;
     let expected_edges = EXPECTED_EDGES
         .iter()
         .map(|(edge_id, source, target)| {
@@ -297,12 +321,14 @@ fn manifest_binds_dependency_edges_and_completion_items() -> TestResult {
         .collect::<BTreeSet<_>>();
     assert_eq!(actual_edges, expected_edges);
 
-    let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
-        .as_array()
-        .unwrap()
+    let missing_item_bindings = json_array(
+        &manifest["completion_debt_evidence"]["missing_item_bindings"],
+        "missing item bindings",
+    )?;
+    let bindings = missing_item_bindings
         .iter()
-        .map(|binding| binding["spec_item"].as_str().unwrap().to_string())
-        .collect::<BTreeSet<_>>();
+        .map(|binding| Ok(json_str(&binding["spec_item"], "binding spec item")?.to_string()))
+        .collect::<TestResult<BTreeSet<_>>>()?;
     assert_eq!(
         bindings,
         BTreeSet::from([
@@ -311,20 +337,16 @@ fn manifest_binds_dependency_edges_and_completion_items() -> TestResult {
         ])
     );
 
-    let e2e_binding = manifest["completion_debt_evidence"]["missing_item_bindings"]
-        .as_array()
-        .unwrap()
+    let e2e_binding = missing_item_bindings
         .iter()
         .find(|binding| binding["spec_item"].as_str() == Some("tests.e2e.primary"))
-        .expect("e2e binding should exist");
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "e2e binding should exist"))?;
     let commands = string_set(&e2e_binding["required_commands"])?;
     assert!(commands.contains("br dep cycles --no-db --json"));
     assert!(commands.contains("bv --robot-insights"));
-    assert!(
-        commands
-            .iter()
-            .any(|command| command.starts_with("rch exec --") && command.contains("cargo test"))
-    );
+    assert!(commands
+        .iter()
+        .any(|command| command.starts_with("rch exec --") && command.contains("cargo test")));
 
     Ok(())
 }
@@ -350,9 +372,7 @@ fn checker_verifies_tracker_edges_fixture_and_emits_report_log() -> TestResult {
     assert_eq!(report["summary"]["cycle_count"].as_u64(), Some(0));
     assert_eq!(report["summary"]["bv_cycle_count"].as_u64(), Some(0));
 
-    let report_edges = report["dependency_edges"]
-        .as_array()
-        .expect("report dependency_edges should be an array");
+    let report_edges = json_array(&report["dependency_edges"], "report dependency_edges")?;
     assert_eq!(report_edges.len(), 3);
     for edge in report_edges {
         assert_eq!(edge["dependency_type"].as_str(), Some("blocks"));
@@ -387,14 +407,13 @@ fn checker_verifies_tracker_edges_fixture_and_emits_report_log() -> TestResult {
 
 fn manifest_required_log_fields(root: &Path) -> TestResult<Vec<String>> {
     let manifest = read_json(&contract_path(root))?;
-    Ok(
-        manifest["completion_output_contract"]["required_log_fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|field| field.as_str().unwrap().to_string())
-            .collect(),
-    )
+    json_array(
+        &manifest["completion_output_contract"]["required_log_fields"],
+        "required log fields",
+    )?
+    .iter()
+    .map(|field| Ok(json_str(field, "required log field")?.to_string()))
+    .collect()
 }
 
 #[test]
@@ -403,12 +422,14 @@ fn checker_rejects_destructive_tracker_command() -> TestResult {
     let out_dir = unique_output_dir(&root, "destructive")?;
     let fixture = write_tracker_fixture(&root, &out_dir)?;
     let contract = mutated_contract(&root, &out_dir, "destructive", |manifest| {
-        manifest["dependency_edges"]["read_only_commands"]
-            .as_array_mut()
-            .unwrap()
-            .push(Value::String(
-                "br dep add bd-bp8fl.10.4 bd-bp8fl.10.8 --no-db --json".to_string(),
-            ));
+        let commands = json_array_mut(
+            &mut manifest["dependency_edges"]["read_only_commands"],
+            "read only commands",
+        )?;
+        commands.push(Value::String(
+            "br dep add bd-bp8fl.10.4 bd-bp8fl.10.8 --no-db --json".to_string(),
+        ));
+        Ok(())
     })?;
     let output = run_checker_with_fixture(&root, &contract, &out_dir, Some(&fixture))?;
     assert_checker_failed(&output);
@@ -425,6 +446,7 @@ fn checker_rejects_missing_dependency_edge() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-edge", |manifest| {
         manifest["dependency_edges"]["edges"][0]["target"] =
             Value::String("bd-bp8fl.no-such-edge".to_string());
+        Ok(())
     })?;
     let output = run_checker_with_fixture(&root, &contract, &out_dir, Some(&fixture))?;
     assert_checker_failed(&output);
@@ -442,10 +464,12 @@ fn checker_rejects_missing_unit_binding() -> TestResult {
     let out_dir = unique_output_dir(&root, "missing-unit-binding")?;
     let fixture = write_tracker_fixture(&root, &out_dir)?;
     let contract = mutated_contract(&root, &out_dir, "missing-unit-binding", |manifest| {
-        let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
-            .as_array_mut()
-            .unwrap();
+        let bindings = json_array_mut(
+            &mut manifest["completion_debt_evidence"]["missing_item_bindings"],
+            "missing item bindings",
+        )?;
         bindings.retain(|binding| binding["spec_item"].as_str() != Some("tests.unit.primary"));
+        Ok(())
     })?;
     let output = run_checker_with_fixture(&root, &contract, &out_dir, Some(&fixture))?;
     assert_checker_failed(&output);
