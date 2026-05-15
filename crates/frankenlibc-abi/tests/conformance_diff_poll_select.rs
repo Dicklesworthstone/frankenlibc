@@ -526,9 +526,125 @@ fn diff_pselect_empty_immediate() {
 }
 
 #[test]
+fn diff_reserved_ppoll_alias_writable() {
+    let mut divs = Vec::new();
+    let (a, b) = make_socketpair();
+    let mut pfd = libc::pollfd {
+        fd: a,
+        events: libc::POLLOUT,
+        revents: 0,
+    };
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let r_fl = unsafe { fl::__ppoll(&mut pfd, 1, &ts, std::ptr::null()) };
+    let revents_fl = pfd.revents;
+    pfd.revents = 0;
+    let r_lc = unsafe { libc::ppoll(&mut pfd, 1, &ts, std::ptr::null()) };
+    let revents_lc = pfd.revents;
+    if r_fl != r_lc {
+        divs.push(Divergence {
+            function: "__ppoll",
+            case: "writable".into(),
+            field: "return",
+            frankenlibc: format!("{r_fl}"),
+            glibc: format!("{r_lc}"),
+        });
+    }
+    if revents_fl & libc::POLLOUT != revents_lc & libc::POLLOUT {
+        divs.push(Divergence {
+            function: "__ppoll",
+            case: "writable".into(),
+            field: "POLLOUT_bit",
+            frankenlibc: format!("{:#x}", revents_fl & libc::POLLOUT),
+            glibc: format!("{:#x}", revents_lc & libc::POLLOUT),
+        });
+    }
+    close_pair((a, b));
+    assert!(
+        divs.is_empty(),
+        "__ppoll alias divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_reserved_pselect_alias_readable_after_write() {
+    let mut divs = Vec::new();
+    let (a, b) = make_socketpair();
+    let buf = [0xEFu8; 1];
+    let n = unsafe { libc::write(b, buf.as_ptr() as *const c_void, 1) };
+    assert_eq!(n, 1);
+    let nfds = (a.max(b) + 1) as c_int;
+
+    let mut rfds: libc::fd_set = unsafe { core::mem::zeroed() };
+    unsafe {
+        fd_set_zero(&mut rfds);
+        fd_set_set(a, &mut rfds);
+    }
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 100_000_000,
+    };
+    let r_fl = unsafe {
+        fl::__pselect(
+            nfds,
+            &mut rfds,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &ts,
+            std::ptr::null(),
+        )
+    };
+    let was_set_fl = unsafe { fd_set_isset(a, &rfds) };
+
+    unsafe {
+        fd_set_zero(&mut rfds);
+        fd_set_set(a, &mut rfds);
+    }
+    let r_lc = unsafe {
+        libc::pselect(
+            nfds,
+            &mut rfds,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &ts,
+            std::ptr::null(),
+        )
+    };
+    let was_set_lc = unsafe { fd_set_isset(a, &rfds) };
+
+    if r_fl != r_lc {
+        divs.push(Divergence {
+            function: "__pselect",
+            case: "readable_after_write".into(),
+            field: "return",
+            frankenlibc: format!("{r_fl}"),
+            glibc: format!("{r_lc}"),
+        });
+    }
+    if was_set_fl != was_set_lc {
+        divs.push(Divergence {
+            function: "__pselect",
+            case: "readable_after_write".into(),
+            field: "FD_ISSET",
+            frankenlibc: format!("{was_set_fl}"),
+            glibc: format!("{was_set_lc}"),
+        });
+    }
+    close_pair((a, b));
+    assert!(
+        divs.is_empty(),
+        "__pselect alias divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
 fn poll_select_diff_coverage_report() {
     let _ = size_of::<libc::pollfd>();
     eprintln!(
-        "{{\"family\":\"poll.h+sys/select.h\",\"reference\":\"glibc\",\"functions\":4,\"divergences\":0}}",
+        "{{\"family\":\"poll.h+sys/select.h\",\"reference\":\"glibc\",\"functions\":6,\"divergences\":0}}",
     );
 }
