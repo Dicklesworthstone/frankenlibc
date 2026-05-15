@@ -116,10 +116,10 @@ fn mutated_contract(
     root: &Path,
     out_dir: &Path,
     label: &str,
-    mutate: impl FnOnce(&mut Value),
+    mutate: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut manifest = read_json(&contract_path(root))?;
-    mutate(&mut manifest);
+    mutate(&mut manifest)?;
     let path = out_dir.join(format!(
         "ns_libresolv_exports_completion_contract.{label}.json"
     ));
@@ -192,11 +192,14 @@ fn manifest_binds_ns_libresolv_completion_items() -> TestResult {
             .collect()
     );
     assert_eq!(
-        runtime["version_script_anchor"].as_str().unwrap(),
-        "libresolv ns_* helpers implemented in resolv_abi.rs (bd-0j2ha)"
+        runtime["version_script_anchor"].as_str(),
+        Some("libresolv ns_* helpers implemented in resolv_abi.rs (bd-0j2ha)")
     );
 
-    for artifact in manifest["source_artifacts"].as_array().unwrap() {
+    let artifacts = manifest["source_artifacts"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source artifacts missing"))?;
+    for artifact in artifacts {
         let path = artifact["path"]
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact path missing"))?;
@@ -251,8 +254,9 @@ fn checker_rejects_missing_unit_binding() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-unit", |manifest| {
         let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
             .as_array_mut()
-            .expect("bindings array");
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bindings missing"))?;
         bindings.retain(|binding| binding["spec_item"].as_str() != Some("tests.unit.primary"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -271,8 +275,11 @@ fn checker_rejects_missing_required_symbol() -> TestResult {
     let contract = mutated_contract(&root, &out_dir, "missing-symbol", |manifest| {
         let symbols = manifest["ns_libresolv_export_contract"]["required_symbols"]
             .as_array_mut()
-            .expect("required symbols array");
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "required symbols missing")
+            })?;
         symbols.retain(|symbol| symbol.as_str() != Some("ns_parserr"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
@@ -289,8 +296,28 @@ fn checker_rejects_conformance_binding_drift() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "conformance-drift")?;
     let contract = mutated_contract(&root, &out_dir, "conformance-drift", |manifest| {
-        manifest["ns_libresolv_export_contract"]["required_conformance_tests"][0]["tests"][1] =
-            json!("missing_export_gap_test");
+        let groups = manifest["ns_libresolv_export_contract"]["required_conformance_tests"]
+            .as_array_mut()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "required conformance tests missing",
+                )
+            })?;
+        let first_group = groups.get_mut(0).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "conformance group missing")
+        })?;
+        let tests = first_group["tests"].as_array_mut().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "conformance tests missing")
+        })?;
+        let test = tests.get_mut(1).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "conformance test binding missing",
+            )
+        })?;
+        *test = json!("missing_export_gap_test");
+        Ok(())
     })?;
 
     let output = run_checker(&root, &contract, &out_dir)?;
