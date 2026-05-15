@@ -1,18 +1,28 @@
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
-        .parent()
-        .expect("workspace has root parent")
-        .to_path_buf()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "crate directory should have workspace parent",
+            )
+        })?;
+    let root = workspace.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "workspace directory should have repo root parent",
+        )
+    })?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -78,17 +88,17 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
-    value
+fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
+    Ok(value
         .as_array()
-        .expect("value should be an array")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "value should be an array"))?
         .iter()
         .map(|item| {
-            item.as_str()
-                .expect("array item should be a string")
-                .to_string()
+            item.as_str().map(str::to_string).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "array item should be a string")
+            })
         })
-        .collect()
+        .collect::<Result<_, _>>()?)
 }
 
 fn assert_checker_failed(output: &Output) {
@@ -99,9 +109,27 @@ fn assert_checker_failed(output: &Output) {
     );
 }
 
+fn error_strings(report: &Value) -> TestResult<Vec<&str>> {
+    let errors = report["errors"].as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "errors should be present on failure",
+        )
+    })?;
+    errors
+        .iter()
+        .map(|error| {
+            error.as_str().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "error entry should be a string")
+            })
+        })
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
 #[test]
 fn manifest_binds_claim_reconciliation_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -114,21 +142,27 @@ fn manifest_binds_claim_reconciliation_completion_items() -> TestResult {
         Some("bd-w2c3.10.1.1")
     );
     assert_eq!(
-        string_set(&manifest["completion_debt"]["missing_items_closed"]),
+        string_set(&manifest["completion_debt"]["missing_items_closed"])?,
         BTreeSet::from([
             "tests.unit.primary".to_string(),
             "tests.e2e.primary".to_string(),
         ])
     );
 
-    let source_artifacts = manifest["source_artifacts"]
-        .as_object()
-        .expect("source_artifacts should be an object");
+    let source_artifacts = manifest["source_artifacts"].as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "source_artifacts should be an object",
+        )
+    })?;
     assert_eq!(source_artifacts.len(), 15);
     for (name, path) in source_artifacts {
-        let rel = path
-            .as_str()
-            .expect("source artifact path should be a string");
+        let rel = path.as_str().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "source artifact path should be a string",
+            )
+        })?;
         assert!(
             root.join(rel).is_file(),
             "source artifact {name} should exist at {rel}"
@@ -168,7 +202,7 @@ fn manifest_binds_claim_reconciliation_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_claim_reconciliation_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "positive")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(
@@ -213,7 +247,7 @@ fn checker_validates_claim_reconciliation_contract_and_emits_report_log() -> Tes
 
 #[test]
 fn checker_rejects_stale_claim_reconciliation_report() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "stale_report")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let mut report =
@@ -232,14 +266,11 @@ fn checker_rejects_stale_claim_reconciliation_report() -> TestResult {
     let output = run_checker(&root, &mutated, &out_dir)?;
     assert_checker_failed(&output);
     let report = read_json(&out_dir.join("claim_reconciliation_completion_contract.report.json"))?;
-    let errors = report["errors"]
-        .as_array()
-        .expect("errors should be present on failure");
+    let errors = error_strings(&report)?;
     assert!(
-        errors.iter().any(|error| error
-            .as_str()
-            .unwrap_or_default()
-            .contains("report status mismatch")),
+        errors
+            .iter()
+            .any(|error| error.contains("report status mismatch")),
         "expected report status mismatch in {errors:?}"
     );
 
@@ -248,7 +279,7 @@ fn checker_rejects_stale_claim_reconciliation_report() -> TestResult {
 
 #[test]
 fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "non_rch_command")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["unit_primary"]["required_commands"][0] =
@@ -259,14 +290,11 @@ fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
     let output = run_checker(&root, &mutated, &out_dir)?;
     assert_checker_failed(&output);
     let report = read_json(&out_dir.join("claim_reconciliation_completion_contract.report.json"))?;
-    let errors = report["errors"]
-        .as_array()
-        .expect("errors should be present on failure");
+    let errors = error_strings(&report)?;
     assert!(
-        errors.iter().any(|error| error
-            .as_str()
-            .unwrap_or_default()
-            .contains("non-rch cargo validation command")),
+        errors
+            .iter()
+            .any(|error| error.contains("non-rch cargo validation command")),
         "expected non-rch command rejection in {errors:?}"
     );
 
