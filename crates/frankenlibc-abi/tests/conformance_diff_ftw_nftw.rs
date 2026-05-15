@@ -3,6 +3,7 @@
 //! Differential conformance harness for `<ftw.h>` file tree walks:
 //!   - ftw  (legacy file tree walk)
 //!   - nftw (new file tree walk with flags)
+//!   - ftw64 / nftw64 (LFS aliases on x86_64)
 //!
 //! Tests build a controlled tempdir tree, then walk it with each impl
 //! and compare the visited path set + reported file types.
@@ -22,6 +23,19 @@ unsafe extern "C" {
         nopenfd: c_int,
     ) -> c_int;
     fn nftw(
+        dirpath: *const c_char,
+        cb: Option<
+            unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+        >,
+        nopenfd: c_int,
+        flags: c_int,
+    ) -> c_int;
+    fn ftw64(
+        dirpath: *const c_char,
+        cb: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+        nopenfd: c_int,
+    ) -> c_int;
+    fn nftw64(
         dirpath: *const c_char,
         cb: Option<
             unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
@@ -129,6 +143,29 @@ fn run_ftw(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
     v
 }
 
+fn run_ftw64(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
+    {
+        COLLECTOR.lock().unwrap().clear();
+    }
+    COUNT.store(0, Ordering::Relaxed);
+    let cbase = CString::new(base.to_string_lossy().as_bytes()).unwrap();
+    let r = if use_fl {
+        unsafe { fl::ftw64(cbase.as_ptr(), Some(collect_ftw), 16) }
+    } else {
+        unsafe { ftw64(cbase.as_ptr(), Some(collect_ftw), 16) }
+    };
+    assert_eq!(r, 0, "ftw64 return: use_fl={use_fl}");
+    let mut v = COLLECTOR.lock().unwrap().clone();
+    let base_str = base.to_string_lossy().into_owned();
+    for entry in v.iter_mut() {
+        if let Some(rest) = entry.0.strip_prefix(&base_str) {
+            entry.0 = rest.to_string();
+        }
+    }
+    v.sort();
+    v
+}
+
 fn run_nftw(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String, c_int)> {
     {
         COLLECTOR.lock().unwrap().clear();
@@ -141,6 +178,35 @@ fn run_nftw(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String, 
         unsafe { nftw(cbase.as_ptr(), Some(collect_nftw), 16, flags) }
     };
     assert_eq!(r, 0, "nftw return: use_fl={use_fl}");
+    let mut v = COLLECTOR.lock().unwrap().clone();
+    let base_str = base.to_string_lossy().into_owned();
+    for entry in v.iter_mut() {
+        if let Some(rest) = entry.0.strip_prefix(&base_str) {
+            entry.0 = rest.to_string();
+        }
+    }
+    v.sort();
+    v
+}
+
+fn run_nftw64(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String, c_int)> {
+    {
+        COLLECTOR.lock().unwrap().clear();
+    }
+    COUNT.store(0, Ordering::Relaxed);
+    let cbase = CString::new(base.to_string_lossy().as_bytes()).unwrap();
+    let r = if use_fl {
+        let callback: unsafe extern "C" fn(
+            *const c_char,
+            *const libc::stat,
+            c_int,
+            *mut c_void,
+        ) -> c_int = collect_nftw;
+        unsafe { fl::nftw64(cbase.as_ptr(), callback as *const c_void, 16, flags) }
+    } else {
+        unsafe { nftw64(cbase.as_ptr(), Some(collect_nftw), 16, flags) }
+    };
+    assert_eq!(r, 0, "nftw64 return: use_fl={use_fl}");
     let mut v = COLLECTOR.lock().unwrap().clone();
     let base_str = base.to_string_lossy().into_owned();
     for entry in v.iter_mut() {
@@ -196,6 +262,45 @@ fn diff_nftw_depth_visits_same_set() {
     );
 }
 
+#[test]
+fn diff_ftw64_visits_same_set() {
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_tree();
+    let v_fl = run_ftw64(true, &dir);
+    let v_lc = run_ftw64(false, &dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        v_fl, v_lc,
+        "ftw64 visited set divergence:\n  fl: {v_fl:?}\n  lc: {v_lc:?}"
+    );
+}
+
+#[test]
+fn diff_nftw64_phys_visits_same_set() {
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_tree();
+    let v_fl = run_nftw64(true, &dir, FTW_PHYS);
+    let v_lc = run_nftw64(false, &dir, FTW_PHYS);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        v_fl, v_lc,
+        "nftw64 FTW_PHYS visited set divergence:\n  fl: {v_fl:?}\n  lc: {v_lc:?}"
+    );
+}
+
+#[test]
+fn diff_nftw64_depth_visits_same_set() {
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_tree();
+    let v_fl = run_nftw64(true, &dir, FTW_DEPTH);
+    let v_lc = run_nftw64(false, &dir, FTW_DEPTH);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        v_fl, v_lc,
+        "nftw64 FTW_DEPTH visited set divergence:\n  fl: {v_fl:?}\n  lc: {v_lc:?}"
+    );
+}
+
 // DISC-FTW-001 closed by bd-ftw2: POSIX says ftw "shall return -1 if
 // it cannot start the walk." Both fl and glibc now return -1 on
 // nonexistent dirpath. Asserted strictly.
@@ -224,6 +329,27 @@ fn diff_nftw_nonexistent_dir() {
         "nftw nonexistent fail-match: fl={r_fl}, lc={r_lc}"
     );
     assert_eq!(r_fl, -1, "nftw should return -1 on ENOENT root");
+}
+
+#[test]
+fn diff_lfs64_nonexistent_dir_errors_match() {
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let cpath = CString::new("/this/dir/does/not/exist/lfs64").unwrap();
+    let r_ftw_fl = unsafe { fl::ftw64(cpath.as_ptr(), Some(collect_ftw), 16) };
+    let r_ftw_lc = unsafe { ftw64(cpath.as_ptr(), Some(collect_ftw), 16) };
+    assert_eq!(r_ftw_fl, -1, "fl::ftw64 nonexistent must return -1");
+    assert_eq!(r_ftw_lc, -1, "host ftw64 nonexistent must return -1");
+
+    let callback: unsafe extern "C" fn(
+        *const c_char,
+        *const libc::stat,
+        c_int,
+        *mut c_void,
+    ) -> c_int = collect_nftw;
+    let r_nftw_fl = unsafe { fl::nftw64(cpath.as_ptr(), callback as *const c_void, 16, 0) };
+    let r_nftw_lc = unsafe { nftw64(cpath.as_ptr(), Some(collect_nftw), 16, 0) };
+    assert_eq!(r_nftw_fl, -1, "fl::nftw64 nonexistent must return -1");
+    assert_eq!(r_nftw_lc, -1, "host nftw64 nonexistent must return -1");
 }
 
 // ===========================================================================
@@ -361,5 +487,5 @@ fn diff_ftw_disc001_lock_in() {
 
 #[test]
 fn ftw_diff_coverage_report() {
-    eprintln!("{{\"family\":\"ftw.h\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",);
+    eprintln!("{{\"family\":\"ftw.h\",\"reference\":\"glibc\",\"functions\":4,\"divergences\":0}}",);
 }
