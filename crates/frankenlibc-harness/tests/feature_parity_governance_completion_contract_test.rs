@@ -6,13 +6,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = manifest_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory must have workspace parent")?;
+    let repo_root = workspace_dir
         .parent()
-        .expect("workspace parent has repo root")
-        .to_path_buf()
+        .ok_or("workspace parent must have repo root")?;
+    Ok(repo_root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -82,12 +84,18 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn string_set(value: &Value) -> BTreeSet<String> {
+fn string_set(value: &Value, context: &str) -> TestResult<BTreeSet<String>> {
     value
         .as_array()
-        .expect("expected array")
+        .ok_or_else(|| format!("{context} must be an array"))?
         .iter()
-        .map(|item| item.as_str().expect("expected string").to_string())
+        .enumerate()
+        .map(|(index, item)| -> TestResult<String> {
+            Ok(item
+                .as_str()
+                .ok_or_else(|| format!("{context}[{index}] must be a string"))?
+                .to_string())
+        })
         .collect()
 }
 
@@ -101,7 +109,7 @@ fn assert_checker_failed(output: &Output) {
 
 #[test]
 fn manifest_binds_track0_governance_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = read_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -142,7 +150,10 @@ fn manifest_binds_track0_governance_completion_items() -> TestResult {
 
     let track0 = &manifest["required_track0_contract"];
     assert_eq!(
-        string_set(&track0["child_beads"]),
+        string_set(
+            &track0["child_beads"],
+            "required_track0_contract.child_beads"
+        )?,
         BTreeSet::from([
             "bd-w2c3.1.1".to_string(),
             "bd-w2c3.1.2".to_string(),
@@ -164,7 +175,7 @@ fn manifest_binds_track0_governance_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_track0_governance_contract_and_emits_report_log() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -204,8 +215,14 @@ fn checker_validates_track0_governance_contract_and_emits_report_log() -> TestRe
         read_jsonl(&out_dir.join("feature_parity_governance_completion_contract.log.jsonl"))?;
     let events: BTreeSet<_> = rows
         .iter()
-        .map(|row| row["event"].as_str().expect("event").to_string())
-        .collect();
+        .enumerate()
+        .map(|(index, row)| -> TestResult<String> {
+            Ok(row["event"]
+                .as_str()
+                .ok_or_else(|| format!("log row {index} event must be a string: {row}"))?
+                .to_string())
+        })
+        .collect::<TestResult<_>>()?;
     for event in [
         "track0_governance_gap_ledger_verified",
         "track0_governance_drift_gate_verified",
@@ -237,7 +254,7 @@ fn checker_validates_track0_governance_contract_and_emits_report_log() -> TestRe
 
 #[test]
 fn checker_rejects_missing_required_conformance_command() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-command")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let commands = manifest["missing_item_bindings"][2]["required_commands"]
@@ -266,7 +283,7 @@ fn checker_rejects_missing_required_conformance_command() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-test")?;
     let mut manifest = read_json(&contract_path(&root))?;
     let refs = manifest["missing_item_bindings"][1]["required_test_refs"]
@@ -295,7 +312,7 @@ fn checker_rejects_missing_required_test_ref() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_dashboard_section() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing-section")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_track0_contract"]["required_dashboard_sections"]
