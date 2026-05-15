@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-05-12T21:41:29Z",
+  "generated_at": "2026-05-15T02:14:19Z",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 441,
-    "coverage_pct": 11,
-    "total_fixture_files": 61,
-    "total_fixture_cases": 1361,
-    "total_families": 49
+    "symbols_with_fixtures": 1124,
+    "coverage_pct": 27,
+    "total_fixture_files": 123,
+    "total_fixture_cases": 2703,
+    "total_families": 56
   },
   "module_coverage": {
     "c11threads_abi": {
@@ -33,8 +33,8 @@
     },
     "err_abi": {
       "total": 12,
-      "covered": 0,
-      "pct": 0
+      "covered": 12,
+      "pct": 100
     },
     "errno_abi": {
       "total": 1,
@@ -43,18 +43,18 @@
     },
     "fenv_abi": {
       "total": 11,
-      "covered": 0,
-      "pct": 0
+      "covered": 11,
+      "pct": 100
     },
     "fortify_abi": {
       "total": 78,
-      "covered": 0,
-      "pct": 0
+      "covered": 36,
+      "pct": 46
     },
     "glibc_internal_abi": {
       "total": 570,
-      "covered": 1,
-      "pct": 0
+      "covered": 40,
+      "pct": 7
     },
     "grp_abi": {
       "total": 8,
@@ -83,23 +83,23 @@
     },
     "isoc_abi": {
       "total": 5,
-      "covered": 0,
-      "pct": 0
+      "covered": 5,
+      "pct": 100
     },
     "locale_abi": {
       "total": 16,
-      "covered": 8,
-      "pct": 50
+      "covered": 16,
+      "pct": 100
     },
     "malloc_abi": {
       "total": 21,
-      "covered": 4,
-      "pct": 19
+      "covered": 21,
+      "pct": 100
     },
     "math_abi": {
       "total": 1265,
-      "covered": 19,
-      "pct": 2
+      "covered": 55,
+      "pct": 4
     },
     "mmap_abi": {
       "total": 10,
@@ -108,18 +108,18 @@
     },
     "poll_abi": {
       "total": 15,
-      "covered": 2,
-      "pct": 13
+      "covered": 15,
+      "pct": 100
     },
     "process_abi": {
       "total": 30,
-      "covered": 4,
-      "pct": 13
+      "covered": 30,
+      "pct": 100
     },
     "pthread_abi": {
       "total": 141,
-      "covered": 27,
-      "pct": 19
+      "covered": 87,
+      "pct": 62
     },
     "pwd_abi": {
       "total": 27,
@@ -128,8 +128,8 @@
     },
     "resolv_abi": {
       "total": 11,
-      "covered": 3,
-      "pct": 27
+      "covered": 11,
+      "pct": 100
     },
     "resource_abi": {
       "total": 2,
@@ -138,8 +138,8 @@
     },
     "rpc_abi": {
       "total": 159,
-      "covered": 12,
-      "pct": 8
+      "covered": 36,
+      "pct": 23
     },
     "runtime_policy": {
       "total": 1,
@@ -158,13 +158,13 @@
     },
     "signal_abi": {
       "total": 28,
-      "covered": 9,
-      "pct": 32
+      "covered": 28,
+      "pct": 100
     },
     "socket_abi": {
       "total": 18,
-      "covered": 8,
-      "pct": 44
+      "covered": 18,
+      "pct": 100
     },
     "startup_abi": {
       "total": 4,
@@ -178,8 +178,8 @@
     },
     "stdio_abi": {
       "total": 126,
-      "covered": 41,
-      "pct": 33
+      "covered": 113,
+      "pct": 90
     },
     "stdlib_abi": {
       "total": 154,
@@ -188,8 +188,8 @@
     },
     "string_abi": {
       "total": 146,
-      "covered": 37,
-      "pct": 25
+      "covered": 146,
+      "pct": 100
     },
     "termios_abi": {
       "total": 10,
@@ -198,18 +198,18 @@
     },
     "time_abi": {
       "total": 26,
-      "covered": 4,
-      "pct": 15
+      "covered": 26,
+      "pct": 100
     },
     "unistd_abi": {
       "total": 742,
-      "covered": 45,
-      "pct": 6
+      "covered": 165,
+      "pct": 22
     },
     "wchar_abi": {
       "total": 146,
-      "covered": 18,
-      "pct": 12
+      "covered": 54,
+      "pct": 37
     }
   },
   "family_coverage": {
@@ -309,6 +309,23 @@
         "gnu_hash"
       ]
     },
+    "err": {
+      "function_count": 12,
+      "functions": [
+        "err",
+        "errc",
+        "errx",
+        "verr",
+        "verrc",
+        "verrx",
+        "vwarn",
+        "vwarnc",
+        "vwarnx",
+        "warn",
+        "warnc",
+        "warnx"
+      ]
+    },
     "errno": {
       "function_count": 7,
       "functions": [
@@ -319,6 +336,103 @@
         "strerror",
         "strerror_l",
         "strerror_r"
+      ]
+    },
+    "fenv": {
+      "function_count": 11,
+      "functions": [
+        "feclearexcept",
+        "fegetenv",
+        "fegetexceptflag",
+        "fegetround",
+        "feholdexcept",
+        "feraiseexcept",
+        "fesetenv",
+        "fesetexceptflag",
+        "fesetround",
+        "fetestexcept",
+        "feupdateenv"
+      ]
+    },
+    "fortify": {
+      "function_count": 36,
+      "functions": [
+        "__asprintf_chk",
+        "__chk_fail",
+        "__confstr_chk",
+        "__dprintf_chk",
+        "__explicit_bzero_chk",
+        "__fdelt_chk",
+        "__fgets_chk",
+        "__fgets_unlocked_chk",
+        "__fgetws_chk",
+        "__fgetws_unlocked_chk",
+        "__fortify_fail",
+        "__fprintf_chk",
+        "__fread_chk",
+        "__fread_unlocked_chk",
+        "__fwprintf_chk",
+        "__getcwd_chk",
+        "__getdomainname_chk",
+        "__getgroups_chk",
+        "__gethostname_chk",
+        "__getlogin_r_chk",
+        "__gets_chk",
+        "__getwd_chk",
+        "__longjmp_chk",
+        "__mbsnrtowcs_chk",
+        "__mbsrtowcs_chk",
+        "__mbstowcs_chk",
+        "__memcpy_chk",
+        "__memmove_chk",
+        "__memset_chk",
+        "__open64_2",
+        "__open_2",
+        "__openat64_2",
+        "__openat_2",
+        "__poll_chk",
+        "__ppoll_chk",
+        "__pread64_chk"
+      ]
+    },
+    "glibc": {
+      "function_count": 35,
+      "functions": [
+        "_IO_enable_locks",
+        "__abort_msg",
+        "__adjtimex",
+        "__after_morecore_hook",
+        "__arch_prctl",
+        "__asprintf",
+        "__b64_ntop",
+        "__b64_pton",
+        "__backtrace",
+        "__backtrace_symbols",
+        "__backtrace_symbols_fd",
+        "__bsd_getpgrp",
+        "__call_tls_dtors",
+        "__check_rhosts_file",
+        "__clock_gettime",
+        "__clone",
+        "__close",
+        "__close_nocancel",
+        "__close_nocancel_nostatus",
+        "__cmsg_nxthdr",
+        "__connect",
+        "__copy_grp",
+        "__ctype32_b",
+        "__ctype32_tolower",
+        "__cyg_profile_func_enter",
+        "__cyg_profile_func_exit",
+        "__fentry__",
+        "__monstartup",
+        "__profile_frequency",
+        "mcount",
+        "moncontrol",
+        "monstartup",
+        "profil",
+        "pthread_kill_other_threads_np",
+        "tr_break"
       ]
     },
     "grp": {
@@ -383,6 +497,16 @@
         "dlinfo"
       ]
     },
+    "isoc": {
+      "function_count": 5,
+      "functions": [
+        "__isoc99_fwscanf",
+        "__isoc99_swscanf",
+        "__isoc99_vfwscanf",
+        "__isoc99_vswscanf",
+        "__isoc99_vwscanf"
+      ]
+    },
     "loader": {
       "function_count": 5,
       "functions": [
@@ -394,21 +518,85 @@
       ]
     },
     "locale": {
-      "function_count": 8,
+      "function_count": 16,
       "functions": [
+        "bindtextdomain",
+        "catclose",
+        "catgets",
+        "catopen",
+        "dgettext",
         "duplocale",
         "freelocale",
+        "gettext",
         "localeconv",
         "newlocale",
+        "ngettext",
         "nl_langinfo",
         "nl_langinfo_l",
         "setlocale",
+        "textdomain",
         "uselocale"
       ]
     },
-    "math": {
-      "function_count": 19,
+    "malloc": {
+      "function_count": 17,
       "functions": [
+        "__libc_allocate_rtsig",
+        "__libc_freeres",
+        "__libc_init_first",
+        "__libc_sa_len",
+        "aligned_alloc",
+        "cfree",
+        "mallinfo",
+        "mallinfo2",
+        "malloc_info",
+        "malloc_stats",
+        "malloc_trim",
+        "malloc_usable_size",
+        "mallopt",
+        "memalign",
+        "posix_memalign",
+        "pvalloc",
+        "valloc"
+      ]
+    },
+    "math": {
+      "function_count": 55,
+      "functions": [
+        "_LIB_VERSION",
+        "__acos_finite",
+        "__acosf128_finite",
+        "__acosf_finite",
+        "__acosh_finite",
+        "__acoshf128_finite",
+        "__acoshf_finite",
+        "__acoshl_finite",
+        "__acosl_finite",
+        "__asin_finite",
+        "__asinf128_finite",
+        "__asinf_finite",
+        "__asinl_finite",
+        "__atan2_finite",
+        "__atan2f128_finite",
+        "__atan2f_finite",
+        "__atan2l_finite",
+        "__atanh_finite",
+        "__atanhf128_finite",
+        "__atanhf_finite",
+        "__atanhl_finite",
+        "__clog10",
+        "__clog10f",
+        "__clog10l",
+        "__finite",
+        "__finitef",
+        "__fpclassify",
+        "__fpclassifyf",
+        "__isinf",
+        "__isinff",
+        "__isnan",
+        "__isnanf",
+        "__signbit",
+        "__signbitf",
         "acos",
         "asin",
         "atan",
@@ -418,6 +606,8 @@
         "erf",
         "exp",
         "fabs",
+        "finite",
+        "finitef",
         "floor",
         "fmod",
         "lgamma",
@@ -461,10 +651,23 @@
       ]
     },
     "poll": {
-      "function_count": 2,
+      "function_count": 15,
       "functions": [
+        "epoll_create",
+        "epoll_create1",
+        "epoll_ctl",
+        "epoll_pwait",
+        "epoll_wait",
+        "eventfd",
         "poll",
-        "select"
+        "ppoll",
+        "prctl",
+        "pselect",
+        "sched_yield",
+        "select",
+        "timerfd_create",
+        "timerfd_gettime",
+        "timerfd_settime"
       ]
     },
     "pressure": {
@@ -482,19 +685,102 @@
       ]
     },
     "process": {
-      "function_count": 4,
+      "function_count": 30,
       "functions": [
+        "_exit",
+        "acct",
+        "chroot",
+        "clone",
+        "closefrom",
+        "execvp",
+        "execvpe",
         "fork",
         "getpid",
         "getppid",
+        "getresgid",
+        "getresuid",
+        "posix_spawn_file_actions_addchdir_np",
+        "posix_spawn_file_actions_addclose",
+        "posix_spawn_file_actions_adddup2",
+        "posix_spawn_file_actions_addfchdir_np",
+        "posix_spawn_file_actions_addopen",
+        "posix_spawn_file_actions_destroy",
+        "posix_spawn_file_actions_init",
+        "posix_spawnattr_destroy",
+        "posix_spawnattr_init",
+        "posix_spawnp",
+        "setresgid",
+        "setresuid",
+        "vfork",
+        "wait",
+        "wait3",
+        "wait4",
+        "waitid",
         "waitpid"
       ]
     },
     "pthread": {
-      "function_count": 28,
+      "function_count": 88,
       "functions": [
+        "__pthread_cleanup_routine",
+        "__pthread_get_minstack",
+        "__pthread_getspecific",
+        "__pthread_key_create",
+        "__pthread_mutex_destroy",
+        "__pthread_mutex_init",
+        "__pthread_mutex_lock",
         "__pthread_mutex_trylock",
         "__pthread_mutex_unlock",
+        "__pthread_mutexattr_destroy",
+        "__pthread_mutexattr_init",
+        "__pthread_mutexattr_settype",
+        "__pthread_once",
+        "__pthread_register_cancel",
+        "__pthread_register_cancel_defer",
+        "__pthread_rwlock_destroy",
+        "__pthread_rwlock_init",
+        "__pthread_rwlock_rdlock",
+        "__pthread_rwlock_tryrdlock",
+        "__pthread_rwlock_trywrlock",
+        "__pthread_rwlock_unlock",
+        "__pthread_rwlock_wrlock",
+        "__pthread_setspecific",
+        "__pthread_unregister_cancel",
+        "__pthread_unregister_cancel_restore",
+        "__pthread_unwind_next",
+        "pthread_atfork",
+        "pthread_attr_destroy",
+        "pthread_attr_getaffinity_np",
+        "pthread_attr_getdetachstate",
+        "pthread_attr_getguardsize",
+        "pthread_attr_getinheritsched",
+        "pthread_attr_getschedparam",
+        "pthread_attr_getschedpolicy",
+        "pthread_attr_getscope",
+        "pthread_attr_getsigmask_np",
+        "pthread_attr_getstack",
+        "pthread_attr_getstackaddr",
+        "pthread_attr_getstacksize",
+        "pthread_attr_init",
+        "pthread_attr_setaffinity_np",
+        "pthread_attr_setdetachstate",
+        "pthread_attr_setguardsize",
+        "pthread_attr_setinheritsched",
+        "pthread_attr_setschedparam",
+        "pthread_attr_setschedpolicy",
+        "pthread_attr_setscope",
+        "pthread_attr_setsigmask_np",
+        "pthread_attr_setstack",
+        "pthread_attr_setstackaddr",
+        "pthread_attr_setstacksize",
+        "pthread_barrier_destroy",
+        "pthread_barrier_init",
+        "pthread_barrier_wait",
+        "pthread_barrierattr_destroy",
+        "pthread_barrierattr_getpshared",
+        "pthread_barrierattr_init",
+        "pthread_barrierattr_setpshared",
+        "pthread_cancel",
         "pthread_clockjoin_np",
         "pthread_cond_broadcast",
         "pthread_cond_clockwait",
@@ -503,6 +789,9 @@
         "pthread_cond_signal",
         "pthread_cond_timedwait",
         "pthread_cond_wait",
+        "pthread_condattr_destroy",
+        "pthread_condattr_getclock",
+        "pthread_condattr_getpshared",
         "pthread_create",
         "pthread_detach",
         "pthread_equal",
@@ -543,15 +832,23 @@
       ]
     },
     "resolver": {
-      "function_count": 8,
+      "function_count": 16,
       "functions": [
         "DnsHeader::new_query",
         "ResolverConfig::default",
         "ResolverConfig::parse",
+        "__h_errno_location",
         "encode_domain_name",
         "freeaddrinfo",
+        "gai_strerror",
         "getaddrinfo",
+        "gethostbyaddr",
         "gethostbyname",
+        "getnameinfo",
+        "getprotobyname",
+        "getprotobynumber",
+        "getservbyname",
+        "getservbyport",
         "lookup_hosts"
       ]
     },
@@ -562,7 +859,7 @@
       ]
     },
     "rpc": {
-      "function_count": 12,
+      "function_count": 36,
       "functions": [
         "__rpc_thread_createerr",
         "__rpc_thread_svc_fdset",
@@ -575,7 +872,31 @@
         "authdes_create",
         "authdes_getucred",
         "authdes_pk_create",
-        "authnone_create"
+        "authnone_create",
+        "authunix_create",
+        "authunix_create_default",
+        "bindresvport",
+        "callrpc",
+        "cbc_crypt",
+        "clnt_broadcast",
+        "clnt_create",
+        "clnt_pcreateerror",
+        "clnt_perrno",
+        "clnt_perror",
+        "clnt_spcreateerror",
+        "clnt_sperrno",
+        "clnt_sperror",
+        "clntraw_create",
+        "clnttcp_create",
+        "clntudp_bufcreate",
+        "clntudp_create",
+        "clntunix_create",
+        "des_setparity",
+        "ecb_crypt",
+        "get_myaddress",
+        "getnetname",
+        "getpublickey",
+        "getrpcport"
       ]
     },
     "scanf": {
@@ -623,32 +944,61 @@
       ]
     },
     "signal": {
-      "function_count": 11,
+      "function_count": 30,
       "functions": [
+        "__libc_current_sigrtmax",
+        "__libc_current_sigrtmin",
         "gsignal",
         "kill",
+        "killpg",
+        "pause",
+        "psiginfo",
+        "pthread_sigmask",
         "raise",
+        "sigabbrev_np",
         "sigaction",
         "sigaddset",
+        "sigaltstack",
+        "sigandset",
         "sigdelset",
         "sigemptyset",
         "sigfillset",
+        "sighold",
+        "sigignore",
+        "siginterrupt",
+        "sigisemptyset",
         "sigismember",
         "signal",
+        "sigorset",
+        "sigpending",
+        "sigprocmask",
+        "sigrelse",
+        "sigsuspend",
+        "sigwait",
         "ssignal"
       ]
     },
     "socket": {
-      "function_count": 8,
+      "function_count": 18,
       "functions": [
+        "accept",
+        "accept4",
         "bind",
+        "connect",
+        "getpeername",
         "getsockname",
         "getsockopt",
         "listen",
         "recv",
+        "recvfrom",
+        "recvmsg",
         "send",
+        "sendmsg",
+        "sendto",
+        "setsockopt",
         "shutdown",
-        "socket"
+        "socket",
+        "socketpair"
       ]
     },
     "spawn": {
@@ -743,7 +1093,7 @@
       ]
     },
     "stdio": {
-      "function_count": 38,
+      "function_count": 110,
       "functions": [
         "_IO_2_1_stderr_",
         "_IO_2_1_stdin_",
@@ -757,24 +1107,96 @@
         "_IO_padn",
         "_IO_peekc_locked",
         "_IO_putc",
+        "_IO_puts",
+        "_IO_seekoff",
+        "_IO_seekpos",
+        "_IO_sgetn",
+        "__isoc23_fscanf",
+        "__isoc23_scanf",
+        "__isoc23_sscanf",
+        "__isoc23_vfscanf",
+        "__isoc23_vscanf",
+        "__isoc23_vsscanf",
+        "__isoc99_fscanf",
+        "__isoc99_scanf",
+        "__isoc99_sscanf",
+        "__isoc99_vfscanf",
+        "__isoc99_vscanf",
+        "__isoc99_vsscanf",
+        "__isoc99_wscanf",
         "asprintf",
+        "clearerr",
+        "clearerr_unlocked",
         "dprintf",
         "fclose",
+        "fcloseall",
+        "fdopen",
         "feof",
+        "feof_unlocked",
         "ferror",
+        "ferror_unlocked",
         "fflush",
+        "fflush_unlocked",
         "fgetc",
+        "fgetc_unlocked",
+        "fgetpos",
+        "fgetpos64",
         "fgets",
+        "fgets_unlocked",
+        "fgetwc_unlocked",
+        "fgetws_unlocked",
         "fileno",
+        "fileno_unlocked",
+        "flockfile",
+        "fmemopen",
         "fopen",
+        "fopen64",
+        "fopencookie",
         "fprintf",
         "fputc",
+        "fputc_unlocked",
         "fputs",
+        "fputs_unlocked",
+        "fputwc_unlocked",
+        "fputws_unlocked",
         "fread",
+        "fread_unlocked",
+        "freopen",
+        "freopen64",
+        "fscanf",
         "fseek",
+        "fseeko",
+        "fseeko64",
+        "fsetpos",
+        "fsetpos64",
         "ftell",
+        "ftello",
+        "ftello64",
+        "ftrylockfile",
+        "funlockfile",
         "fwrite",
+        "fwrite_unlocked",
+        "getc",
+        "getc_unlocked",
+        "getchar",
+        "getchar_unlocked",
+        "getdelim",
+        "getline",
+        "getw",
+        "mktemp",
+        "open_memstream",
+        "pclose",
+        "popen",
         "printf",
+        "putc",
+        "putc_unlocked",
+        "putchar",
+        "putchar_unlocked",
+        "puts",
+        "putw",
+        "remove",
+        "rewind",
+        "scanf",
         "setbuf",
         "setvbuf",
         "snprintf",
@@ -798,8 +1220,12 @@
       ]
     },
     "string": {
-      "function_count": 29,
+      "function_count": 142,
       "functions": [
+        "__argz_count",
+        "__argz_next",
+        "__argz_stringify",
+        "__bzero",
         "__memcmpeq",
         "__mempcpy",
         "__rawmemchr",
@@ -812,23 +1238,132 @@
         "__strcoll_l",
         "__strcpy_small",
         "__strcspn_c1",
+        "__strcspn_c2",
+        "__strcspn_c3",
+        "__strdup",
+        "__strerror_r",
+        "__strfmon_l",
+        "__strftime_l",
+        "__strncasecmp_l",
+        "__strndup",
+        "__strpbrk_c2",
+        "__strpbrk_c3",
+        "__strsep_1c",
+        "__strsep_2c",
+        "__strsep_3c",
+        "__strsep_g",
+        "__strspn_c1",
+        "__strspn_c2",
+        "__strspn_c3",
+        "__strtod_internal",
+        "__strtod_l",
+        "__strtof_internal",
+        "__strtof_l",
+        "__strtok_r",
+        "__strtok_r_1c",
+        "__strtol_internal",
+        "__strtol_l",
+        "__strtold_internal",
+        "__strtold_l",
+        "__strtoll_internal",
+        "__strtoll_l",
+        "__strtoul_internal",
+        "__strtoul_l",
+        "__strtoull_internal",
+        "__strtoull_l",
+        "__strverscmp",
+        "__strxfrm_l",
+        "argz_add",
+        "argz_add_sep",
+        "argz_append",
+        "argz_count",
+        "argz_create",
+        "argz_create_sep",
+        "argz_delete",
+        "argz_extract",
+        "argz_insert",
+        "argz_next",
+        "argz_replace",
+        "argz_stringify",
+        "bcmp",
+        "bcopy",
+        "bzero",
+        "consttime_bcmp",
+        "consttime_memequal",
+        "envz_add",
+        "envz_entry",
+        "envz_get",
+        "envz_merge",
+        "envz_remove",
+        "envz_strip",
+        "explicit_bzero",
+        "explicit_memset",
+        "globfree",
+        "index",
+        "memccpy",
         "memchr",
         "memcmp",
+        "memmem",
         "memmove",
+        "mempcpy",
         "memrchr",
         "memset",
+        "memset_explicit",
+        "psignal",
+        "rawmemchr",
+        "re_compile_fastmap",
+        "re_compile_pattern",
+        "re_match",
+        "re_match_2",
+        "re_search",
+        "re_search_2",
+        "re_set_registers",
+        "re_set_syntax",
+        "regerror",
+        "regfree",
+        "rindex",
+        "stpcpy",
+        "stpncpy",
+        "strcasecmp",
+        "strcasecmp_l",
+        "strcasestr",
         "strcat",
         "strchr",
+        "strchrnul",
         "strcmp",
+        "strcoll",
         "strcpy",
+        "strcspn",
+        "strdup",
+        "strerrordesc_np",
+        "strerrorname_np",
+        "strfromd",
+        "strfromf",
+        "strfroml",
         "strlcat",
         "strlcpy",
+        "strmode",
+        "strncasecmp",
+        "strncasecmp_l",
         "strncat",
+        "strncmp",
         "strncpy",
+        "strndup",
+        "strnlen",
+        "strnstr",
+        "strpbrk",
         "strrchr",
+        "strsep",
+        "strsignal",
+        "strspn",
         "strstr",
         "strtok",
-        "strtok_r"
+        "strtok_r",
+        "strverscmp",
+        "strxfrm",
+        "swab",
+        "timingsafe_bcmp",
+        "timingsafe_memcmp"
       ]
     },
     "strlen": {
@@ -860,16 +1395,38 @@
       ]
     },
     "time": {
-      "function_count": 4,
+      "function_count": 26,
       "functions": [
+        "asctime",
+        "asctime_r",
         "clock",
+        "clock_adjtime",
+        "clock_getres",
         "clock_gettime",
+        "clock_nanosleep",
+        "clock_settime",
+        "ctime",
+        "ctime_r",
+        "difftime",
+        "environ",
+        "gettimeofday",
+        "gmtime",
+        "gmtime_r",
+        "localtime",
         "localtime_r",
-        "time"
+        "mktime",
+        "nanosleep",
+        "strptime",
+        "time",
+        "timegm",
+        "timespec_get",
+        "timespec_getres",
+        "timezone",
+        "tzset"
       ]
     },
     "unistd": {
-      "function_count": 26,
+      "function_count": 146,
       "functions": [
         "_Exit",
         "_Fork",
@@ -883,8 +1440,128 @@
         "__lxstat",
         "__lxstat64",
         "__progname",
+        "__sched_cpualloc",
+        "__sched_cpucount",
+        "__sched_cpufree",
+        "__sched_rr_get_interval",
+        "__sched_setparam",
+        "__stack_chk_fail",
+        "__stack_chk_guard",
+        "__xpg_basename",
+        "__xstat",
+        "__xstat64",
         "access",
+        "add_key",
+        "addmntent",
+        "addseverity",
+        "adjtimex",
+        "aio_cancel",
+        "aio_cancel64",
+        "aio_error",
+        "aio_error64",
+        "aio_fsync",
+        "aio_fsync64",
+        "aio_init",
+        "aio_read",
+        "aio_read64",
+        "aio_return",
+        "aio_return64",
+        "aio_suspend",
+        "aio_suspend64",
+        "aio_write",
+        "aio_write64",
+        "alarm",
+        "arc4random",
+        "arc4random_buf",
+        "arc4random_uniform",
+        "argp_error",
+        "argp_failure",
+        "argp_help",
+        "argp_parse",
+        "argp_state_help",
+        "argp_usage",
+        "bind_textdomain_codeset",
+        "brk",
+        "bsd_signal",
+        "c8rtomb",
+        "canonicalize_file_name",
+        "capget",
+        "capset",
+        "chdir",
+        "chmod",
+        "chown",
+        "clock_getcpuclockid",
         "close",
+        "close_range",
+        "closelog",
+        "creat",
+        "creat64",
+        "crypt",
+        "crypt_checksalt",
+        "crypt_gensalt",
+        "crypt_gensalt_r",
+        "crypt_gensalt_ra",
+        "crypt_gensalt_rn",
+        "crypt_preferred_method",
+        "crypt_r",
+        "crypt_ra",
+        "crypt_rn",
+        "ctermid",
+        "cuserid",
+        "daemon",
+        "dcgettext",
+        "dcngettext",
+        "dn_comp",
+        "dn_expand",
+        "dn_skipname",
+        "dngettext",
+        "eaccess",
+        "encrypt",
+        "encrypt_r",
+        "endaliasent",
+        "endfsent",
+        "endhostent",
+        "endmntent",
+        "endnetent",
+        "endnetgrent",
+        "endprotoent",
+        "endrpcent",
+        "endservent",
+        "endttyent",
+        "endutent",
+        "endutxent",
+        "epoll_pwait2",
+        "ether_aton",
+        "ether_aton_r",
+        "ether_hostton",
+        "ether_line",
+        "ether_ntoa",
+        "ether_ntoa_r",
+        "ether_ntohost",
+        "euidaccess",
+        "eventfd2",
+        "eventfd_read",
+        "eventfd_write",
+        "execl",
+        "execle",
+        "execlp",
+        "execv",
+        "execveat",
+        "faccessat",
+        "fallocate",
+        "fallocate64",
+        "fchdir",
+        "fchmod",
+        "fchmodat",
+        "fchmodat2",
+        "fchown",
+        "fchownat",
+        "fcntl64",
+        "fcrypt",
+        "fdatasync",
+        "fexecve",
+        "fgetgrent",
+        "fgetgrent_r",
         "getcwd",
         "getegid",
         "geteuid",
@@ -906,6 +1583,47 @@
         "mmap",
         "mprotect",
         "munmap"
+      ]
+    },
+    "wchar": {
+      "function_count": 36,
+      "functions": [
+        "__islower_l",
+        "__isoc23_fwscanf",
+        "__isoc23_swscanf",
+        "__isoc23_vfwscanf",
+        "__isoc23_vswscanf",
+        "__isoc23_vwscanf",
+        "__isoc23_wcstoimax",
+        "__isoc23_wcstol",
+        "__isoc23_wcstol_l",
+        "__isoc23_wcstoll",
+        "__isoc23_wcstoll_l",
+        "__isoc23_wcstoul",
+        "__isoc23_wcstoul_l",
+        "__isoc23_wcstoull",
+        "__isoc23_wcstoull_l",
+        "__isoc23_wcstoumax",
+        "__isoc23_wscanf",
+        "__iswalnum_l",
+        "__iswalpha_l",
+        "__iswblank_l",
+        "__iswcntrl_l",
+        "__iswctype_l",
+        "__iswdigit_l",
+        "__iswgraph_l",
+        "__iswlower_l",
+        "__iswprint_l",
+        "__iswpunct_l",
+        "__iswspace_l",
+        "__iswupper_l",
+        "__iswxdigit_l",
+        "__toascii_l",
+        "__tolower_l",
+        "__toupper_l",
+        "__towctrans_l",
+        "__towlower_l",
+        "__towupper_l"
       ]
     },
     "wide": {
@@ -1064,6 +1782,28 @@
         "elf"
       ]
     },
+    "err_ops": {
+      "file": "err_ops.json",
+      "sha256": "649e7b5ae5d5c8343000ee3b0efd0e4386140c941c40b55223ed58abdb564ad5",
+      "case_count": 12,
+      "functions": [
+        "err",
+        "errc",
+        "errx",
+        "verr",
+        "verrc",
+        "verrx",
+        "vwarn",
+        "vwarnc",
+        "vwarnx",
+        "warn",
+        "warnc",
+        "warnx"
+      ],
+      "families": [
+        "err"
+      ]
+    },
     "errno_ops": {
       "file": "errno_ops.json",
       "sha256": "8c218ea9b26764db9dcd6d6ea1df1ba56b796df532dab2bab5a1b9247f3e07ad",
@@ -1079,6 +1819,158 @@
       ],
       "families": [
         "errno"
+      ]
+    },
+    "fenv_ops": {
+      "file": "fenv_ops.json",
+      "sha256": "ee7e1a90a0255c9a2ec2b7e1bd8d06e5557cb129f1459dfbc42c8d56a51ab063",
+      "case_count": 11,
+      "functions": [
+        "feclearexcept",
+        "fegetenv",
+        "fegetexceptflag",
+        "fegetround",
+        "feholdexcept",
+        "feraiseexcept",
+        "fesetenv",
+        "fesetexceptflag",
+        "fesetround",
+        "fetestexcept",
+        "feupdateenv"
+      ],
+      "families": [
+        "fenv"
+      ]
+    },
+    "fortify_checked_wrapper_wave01": {
+      "file": "fortify_checked_wrapper_wave01.json",
+      "sha256": "08b7482f36a1c23778149748d1a48b7db4840c1e2df115a93eed615e9548b8c7",
+      "case_count": 24,
+      "functions": [
+        "__asprintf_chk",
+        "__chk_fail",
+        "__confstr_chk",
+        "__dprintf_chk",
+        "__explicit_bzero_chk",
+        "__fdelt_chk",
+        "__fgets_chk",
+        "__fgets_unlocked_chk",
+        "__fgetws_chk",
+        "__fgetws_unlocked_chk",
+        "__fortify_fail",
+        "__fprintf_chk"
+      ],
+      "families": [
+        "fortify"
+      ]
+    },
+    "fortify_checked_wrapper_wave02": {
+      "file": "fortify_checked_wrapper_wave02.json",
+      "sha256": "b389ce69facdfb3fe4f07b8bfc09dbf562b5412c52a04b041654e277df57d00c",
+      "case_count": 24,
+      "functions": [
+        "__fread_chk",
+        "__fread_unlocked_chk",
+        "__fwprintf_chk",
+        "__getcwd_chk",
+        "__getdomainname_chk",
+        "__getgroups_chk",
+        "__gethostname_chk",
+        "__getlogin_r_chk",
+        "__gets_chk",
+        "__getwd_chk",
+        "__longjmp_chk",
+        "__mbsnrtowcs_chk"
+      ],
+      "families": [
+        "fortify"
+      ]
+    },
+    "fortify_checked_wrapper_wave03": {
+      "file": "fortify_checked_wrapper_wave03.json",
+      "sha256": "b791049d64557fbf44f912c92d3345923861f2f899e02ed78158ade01c756731",
+      "case_count": 24,
+      "functions": [
+        "__mbsrtowcs_chk",
+        "__mbstowcs_chk",
+        "__memcpy_chk",
+        "__memmove_chk",
+        "__memset_chk",
+        "__open64_2",
+        "__open_2",
+        "__openat64_2",
+        "__openat_2",
+        "__poll_chk",
+        "__ppoll_chk",
+        "__pread64_chk"
+      ],
+      "families": [
+        "fortify"
+      ]
+    },
+    "glibc_internal_bootstrap_wave01": {
+      "file": "glibc_internal_bootstrap_wave01.json",
+      "sha256": "58d2fad879a4a35903a832f114be3a325bcbf19a3eeffe479c35501f2e08f0d4",
+      "case_count": 22,
+      "functions": [
+        "__cyg_profile_func_enter",
+        "__cyg_profile_func_exit",
+        "__fentry__",
+        "__monstartup",
+        "__profile_frequency",
+        "mcount",
+        "moncontrol",
+        "monstartup",
+        "profil",
+        "pthread_kill_other_threads_np",
+        "tr_break"
+      ],
+      "families": [
+        "glibc"
+      ]
+    },
+    "glibc_internal_compat_wave02": {
+      "file": "glibc_internal_compat_wave02.json",
+      "sha256": "7b2ede62813881854a62b10712a56368119e6d39580c39f4223b9394da0a52ff",
+      "case_count": 24,
+      "functions": [
+        "_IO_enable_locks",
+        "__abort_msg",
+        "__adjtimex",
+        "__after_morecore_hook",
+        "__arch_prctl",
+        "__asprintf",
+        "__b64_ntop",
+        "__b64_pton",
+        "__backtrace",
+        "__backtrace_symbols",
+        "__backtrace_symbols_fd",
+        "__bsd_getpgrp"
+      ],
+      "families": [
+        "glibc"
+      ]
+    },
+    "glibc_internal_compat_wave03": {
+      "file": "glibc_internal_compat_wave03.json",
+      "sha256": "c16502c206d03d9dae374edb14bc9e9ce39ca9b3580c8c30efbb860dc2493e39",
+      "case_count": 24,
+      "functions": [
+        "__call_tls_dtors",
+        "__check_rhosts_file",
+        "__clock_gettime",
+        "__clone",
+        "__close",
+        "__close_nocancel",
+        "__close_nocancel_nostatus",
+        "__cmsg_nxthdr",
+        "__connect",
+        "__copy_grp",
+        "__ctype32_b",
+        "__ctype32_tolower"
+      ],
+      "families": [
+        "glibc"
       ]
     },
     "grp_ops": {
@@ -1163,6 +2055,21 @@
         "io"
       ]
     },
+    "isoc_wide_scanf_ops": {
+      "file": "isoc_wide_scanf_ops.json",
+      "sha256": "3de18bb25440bff9dd0ec31e5d70f5d0eb69699d746074738098b33bce0d6dff",
+      "case_count": 5,
+      "functions": [
+        "__isoc99_fwscanf",
+        "__isoc99_swscanf",
+        "__isoc99_vfwscanf",
+        "__isoc99_vswscanf",
+        "__isoc99_vwscanf"
+      ],
+      "families": [
+        "isoc"
+      ]
+    },
     "loader_edges": {
       "file": "loader_edges.json",
       "sha256": "9edc36e71269c8d543f896d861f505e55ca7794665627c58bcfd66463253c566",
@@ -1176,6 +2083,24 @@
       ],
       "families": [
         "loader"
+      ]
+    },
+    "locale_catalog_wave01": {
+      "file": "locale_catalog_wave01.json",
+      "sha256": "daa01824da6195b8ae39624ea5994201c7fd42f7593b3f0827dc400efb84335e",
+      "case_count": 16,
+      "functions": [
+        "bindtextdomain",
+        "catclose",
+        "catgets",
+        "catopen",
+        "dgettext",
+        "gettext",
+        "ngettext",
+        "textdomain"
+      ],
+      "families": [
+        "locale"
       ]
     },
     "locale_ops": {
@@ -1196,11 +2121,102 @@
         "locale"
       ]
     },
+    "malloc_membrane_wave01": {
+      "file": "malloc_membrane_wave01.json",
+      "sha256": "d5f1ca8e66d321167107b4843906b987d45ef983036f5a8404d0767b5ec517d3",
+      "case_count": 24,
+      "functions": [
+        "__libc_allocate_rtsig",
+        "__libc_freeres",
+        "__libc_init_first",
+        "__libc_sa_len",
+        "aligned_alloc",
+        "cfree",
+        "mallinfo",
+        "mallinfo2",
+        "malloc_info",
+        "malloc_stats",
+        "malloc_trim",
+        "malloc_usable_size"
+      ],
+      "families": [
+        "malloc"
+      ]
+    },
+    "malloc_membrane_wave02": {
+      "file": "malloc_membrane_wave02.json",
+      "sha256": "d2a056c682980273861eed34ef2d3c4c69d840b023425d99bc8370153f0de5ab",
+      "case_count": 10,
+      "functions": [
+        "mallopt",
+        "memalign",
+        "posix_memalign",
+        "pvalloc",
+        "valloc"
+      ],
+      "families": [
+        "malloc"
+      ]
+    },
+    "math_finite_special_wave02": {
+      "file": "math_finite_special_wave02.json",
+      "sha256": "269202b7c609d7906f7c0012cecca2c341d3ab1390a5750b483dcc3a9ae8435f",
+      "case_count": 24,
+      "functions": [
+        "_LIB_VERSION",
+        "__acos_finite",
+        "__acosf128_finite",
+        "__acosf_finite",
+        "__acosh_finite",
+        "__acoshf128_finite",
+        "__acoshf_finite",
+        "__acoshl_finite",
+        "__acosl_finite",
+        "__asin_finite",
+        "__asinf128_finite",
+        "__asinf_finite"
+      ],
+      "families": [
+        "math"
+      ]
+    },
+    "math_finite_special_wave03": {
+      "file": "math_finite_special_wave03.json",
+      "sha256": "acdf0c472bbbdaad2534ac3380b3c3fcb901a5095bb7e160aab1b55b25439491",
+      "case_count": 24,
+      "functions": [
+        "__asinl_finite",
+        "__atan2_finite",
+        "__atan2f128_finite",
+        "__atan2f_finite",
+        "__atan2l_finite",
+        "__atanh_finite",
+        "__atanhf128_finite",
+        "__atanhf_finite",
+        "__atanhl_finite",
+        "__clog10",
+        "__clog10f",
+        "__clog10l"
+      ],
+      "families": [
+        "math"
+      ]
+    },
     "math_ops": {
       "file": "math_ops.json",
-      "sha256": "d433d91aad964d2e8a27e8aaa8e9815ad803dad76aa9b10e67a7a92c78bbb24d",
-      "case_count": 33,
+      "sha256": "4a874f4d7301bc9de1b5a602c5d8c28ca6b92d39dddf6d347ca9a5e432fc2a35",
+      "case_count": 51,
       "functions": [
+        "__finite",
+        "__finitef",
+        "__fpclassify",
+        "__fpclassifyf",
+        "__isinf",
+        "__isinff",
+        "__isnan",
+        "__isnanf",
+        "__signbit",
+        "__signbitf",
         "acos",
         "asin",
         "atan",
@@ -1210,6 +2226,8 @@
         "erf",
         "exp",
         "fabs",
+        "finite",
+        "finitef",
         "floor",
         "fmod",
         "lgamma",
@@ -1275,6 +2293,39 @@
         "mntent"
       ]
     },
+    "poll_event_loop_wave01": {
+      "file": "poll_event_loop_wave01.json",
+      "sha256": "8675ded18ada63996e3d83b86c4d20a017990b3d1fffe778bd33801f18ac226d",
+      "case_count": 24,
+      "functions": [
+        "epoll_create",
+        "epoll_create1",
+        "epoll_ctl",
+        "epoll_pwait",
+        "epoll_wait",
+        "eventfd",
+        "ppoll",
+        "prctl",
+        "pselect",
+        "sched_yield",
+        "timerfd_create",
+        "timerfd_gettime"
+      ],
+      "families": [
+        "poll"
+      ]
+    },
+    "poll_event_loop_wave02": {
+      "file": "poll_event_loop_wave02.json",
+      "sha256": "502403d6c3eea5bc0e7bd7a56a4254d3cb3a0d714d4ce46d1efa4565468eaf17",
+      "case_count": 4,
+      "functions": [
+        "timerfd_settime"
+      ],
+      "families": [
+        "poll"
+      ]
+    },
     "poll_ops": {
       "file": "poll_ops.json",
       "sha256": "38ee1d80774e814a0be3d2dfd012c11e2e193a7684c0e03fe65156e0aa8fec74",
@@ -1325,6 +2376,106 @@
         "process"
       ]
     },
+    "process_spawn_wait_tail": {
+      "file": "process_spawn_wait_tail.json",
+      "sha256": "c790f387c96df810df81cd4e62bee448647d00124a35344753ffc2573e57f924",
+      "case_count": 12,
+      "functions": [
+        "wait4",
+        "waitid"
+      ],
+      "families": [
+        "process"
+      ]
+    },
+    "process_spawn_wave01": {
+      "file": "process_spawn_wave01.json",
+      "sha256": "604e179ba05cad2f79e3dd93527db93a62fda7a49415d0c020f1e6afa80a7325",
+      "case_count": 24,
+      "functions": [
+        "_exit",
+        "acct",
+        "chroot",
+        "clone",
+        "closefrom",
+        "execvp",
+        "execvpe",
+        "getresgid",
+        "getresuid",
+        "posix_spawn_file_actions_addchdir_np",
+        "posix_spawn_file_actions_addclose",
+        "posix_spawn_file_actions_adddup2"
+      ],
+      "families": [
+        "process"
+      ]
+    },
+    "process_spawn_wave02": {
+      "file": "process_spawn_wave02.json",
+      "sha256": "80455f40f763f90f94f43cae5f90d527ab6196403d4e3bb630c407767142d8e8",
+      "case_count": 24,
+      "functions": [
+        "posix_spawn_file_actions_addfchdir_np",
+        "posix_spawn_file_actions_addopen",
+        "posix_spawn_file_actions_destroy",
+        "posix_spawn_file_actions_init",
+        "posix_spawnattr_destroy",
+        "posix_spawnattr_init",
+        "posix_spawnp",
+        "setresgid",
+        "setresuid",
+        "vfork",
+        "wait",
+        "wait3"
+      ],
+      "families": [
+        "process"
+      ]
+    },
+    "pthread_attribute_wave03": {
+      "file": "pthread_attribute_wave03.json",
+      "sha256": "c40ea5bb673eec04eee4a4bd74bb4961534f289bbd433c4816d360a6c0a4500b",
+      "case_count": 24,
+      "functions": [
+        "pthread_atfork",
+        "pthread_attr_destroy",
+        "pthread_attr_getaffinity_np",
+        "pthread_attr_getdetachstate",
+        "pthread_attr_getguardsize",
+        "pthread_attr_getinheritsched",
+        "pthread_attr_getschedparam",
+        "pthread_attr_getschedpolicy",
+        "pthread_attr_getscope",
+        "pthread_attr_getsigmask_np",
+        "pthread_attr_getstack",
+        "pthread_attr_getstackaddr"
+      ],
+      "families": [
+        "pthread"
+      ]
+    },
+    "pthread_attribute_wave04": {
+      "file": "pthread_attribute_wave04.json",
+      "sha256": "f6ee7632576928e4d1b9f97e912995fb18e96af88ba077c2dd845019611d72e1",
+      "case_count": 24,
+      "functions": [
+        "pthread_attr_getstacksize",
+        "pthread_attr_init",
+        "pthread_attr_setaffinity_np",
+        "pthread_attr_setdetachstate",
+        "pthread_attr_setguardsize",
+        "pthread_attr_setinheritsched",
+        "pthread_attr_setschedparam",
+        "pthread_attr_setschedpolicy",
+        "pthread_attr_setscope",
+        "pthread_attr_setsigmask_np",
+        "pthread_attr_setstack",
+        "pthread_attr_setstackaddr"
+      ],
+      "families": [
+        "pthread"
+      ]
+    },
     "pthread_cond": {
       "file": "pthread_cond.json",
       "sha256": "d19207c141a005caee72f9fbb7d310ec61c8c034d83a37699045a7d2bc7d35c6",
@@ -1368,6 +2519,72 @@
         "pthread_mutex_lock",
         "pthread_mutex_trylock",
         "pthread_mutex_unlock"
+      ],
+      "families": [
+        "pthread"
+      ]
+    },
+    "pthread_sync_wave01": {
+      "file": "pthread_sync_wave01.json",
+      "sha256": "4b28236a7cd486904b17bf5f458fc0a655f929de588b1957c9d659ee48902b5e",
+      "case_count": 24,
+      "functions": [
+        "__pthread_cleanup_routine",
+        "__pthread_get_minstack",
+        "__pthread_getspecific",
+        "__pthread_key_create",
+        "__pthread_mutex_destroy",
+        "__pthread_mutex_init",
+        "__pthread_mutex_lock",
+        "__pthread_mutexattr_destroy",
+        "__pthread_mutexattr_init",
+        "__pthread_mutexattr_settype",
+        "__pthread_once",
+        "__pthread_register_cancel"
+      ],
+      "families": [
+        "pthread"
+      ]
+    },
+    "pthread_sync_wave02": {
+      "file": "pthread_sync_wave02.json",
+      "sha256": "57a0573789b3a0f1d962808b1f31d4159ef299f55cb822dbc75d6106111508c4",
+      "case_count": 24,
+      "functions": [
+        "__pthread_register_cancel_defer",
+        "__pthread_rwlock_destroy",
+        "__pthread_rwlock_init",
+        "__pthread_rwlock_rdlock",
+        "__pthread_rwlock_tryrdlock",
+        "__pthread_rwlock_trywrlock",
+        "__pthread_rwlock_unlock",
+        "__pthread_rwlock_wrlock",
+        "__pthread_setspecific",
+        "__pthread_unregister_cancel",
+        "__pthread_unregister_cancel_restore",
+        "__pthread_unwind_next"
+      ],
+      "families": [
+        "pthread"
+      ]
+    },
+    "pthread_sync_wave05": {
+      "file": "pthread_sync_wave05.json",
+      "sha256": "3de81a1a5bfa1ca5bd0a356580838002d3bfc40614b9550eaec9274a53876231",
+      "case_count": 24,
+      "functions": [
+        "pthread_attr_setstacksize",
+        "pthread_barrier_destroy",
+        "pthread_barrier_init",
+        "pthread_barrier_wait",
+        "pthread_barrierattr_destroy",
+        "pthread_barrierattr_getpshared",
+        "pthread_barrierattr_init",
+        "pthread_barrierattr_setpshared",
+        "pthread_cancel",
+        "pthread_condattr_destroy",
+        "pthread_condattr_getclock",
+        "pthread_condattr_getpshared"
       ],
       "families": [
         "pthread"
@@ -1450,6 +2667,24 @@
         "resolver"
       ]
     },
+    "resolver_nss_core_wave01": {
+      "file": "resolver_nss_core_wave01.json",
+      "sha256": "02ad93d7482413a682e7818e51a551cc5aa9d4f6bda4f623b19cfc738d3f1ebf",
+      "case_count": 16,
+      "functions": [
+        "__h_errno_location",
+        "gai_strerror",
+        "gethostbyaddr",
+        "getnameinfo",
+        "getprotobyname",
+        "getprotobynumber",
+        "getservbyname",
+        "getservbyport"
+      ],
+      "families": [
+        "resolver"
+      ]
+    },
     "resource_ops": {
       "file": "resource_ops.json",
       "sha256": "6a355933fbac0abf6b7b3f0cc3233df5fad0440925ed892c7a9dfceeb1d11ac9",
@@ -1478,6 +2713,50 @@
         "authdes_getucred",
         "authdes_pk_create",
         "authnone_create"
+      ],
+      "families": [
+        "rpc"
+      ]
+    },
+    "rpc_legacy_network_wave02": {
+      "file": "rpc_legacy_network_wave02.json",
+      "sha256": "21c205f10e8743005b062030a3ca096fc578fec8d12bbc50a0685128e7b5eebc",
+      "case_count": 24,
+      "functions": [
+        "authunix_create",
+        "authunix_create_default",
+        "bindresvport",
+        "callrpc",
+        "cbc_crypt",
+        "clnt_broadcast",
+        "clnt_create",
+        "clnt_pcreateerror",
+        "clnt_perrno",
+        "clnt_perror",
+        "clnt_spcreateerror",
+        "clnt_sperrno"
+      ],
+      "families": [
+        "rpc"
+      ]
+    },
+    "rpc_legacy_network_wave03": {
+      "file": "rpc_legacy_network_wave03.json",
+      "sha256": "da249be78faab993bcacff1d513da29e83fcf5dfcef1c7e247ecd3378c46c74a",
+      "case_count": 24,
+      "functions": [
+        "clnt_sperror",
+        "clntraw_create",
+        "clnttcp_create",
+        "clntudp_bufcreate",
+        "clntudp_create",
+        "clntunix_create",
+        "des_setparity",
+        "ecb_crypt",
+        "get_myaddress",
+        "getnetname",
+        "getpublickey",
+        "getrpcport"
       ],
       "families": [
         "rpc"
@@ -1550,6 +2829,45 @@
         "setjmp"
       ]
     },
+    "signal_async_wave01": {
+      "file": "signal_async_wave01.json",
+      "sha256": "7c592fab518b5788c56b68859f3e944704eea4b152f48d45b94ebd3d7bbe52fa",
+      "case_count": 24,
+      "functions": [
+        "__libc_current_sigrtmax",
+        "__libc_current_sigrtmin",
+        "killpg",
+        "pause",
+        "psiginfo",
+        "pthread_sigmask",
+        "sigabbrev_np",
+        "sigaltstack",
+        "sigandset",
+        "sighold",
+        "sigignore",
+        "siginterrupt"
+      ],
+      "families": [
+        "signal"
+      ]
+    },
+    "signal_async_wave02": {
+      "file": "signal_async_wave02.json",
+      "sha256": "b84b2bd299c5cc4604e0831bf5bb6e4c33175b1f0ed824ce4e417b1b3bdc5a96",
+      "case_count": 14,
+      "functions": [
+        "sigisemptyset",
+        "sigorset",
+        "sigpending",
+        "sigprocmask",
+        "sigrelse",
+        "sigsuspend",
+        "sigwait"
+      ],
+      "families": [
+        "signal"
+      ]
+    },
     "signal_ops": {
       "file": "signal_ops.json",
       "sha256": "a770e49a3002bc1eb277d24915bd2b6ec1438e1dd13601a63e1906ae0c06f5a7",
@@ -1569,6 +2887,26 @@
       ],
       "families": [
         "signal"
+      ]
+    },
+    "socket_network_wave01": {
+      "file": "socket_network_wave01.json",
+      "sha256": "e782c9b97e2763dda41998cc34b344f454aa30d3840318f4d9cdeb5f3275579f",
+      "case_count": 20,
+      "functions": [
+        "accept",
+        "accept4",
+        "connect",
+        "getpeername",
+        "recvfrom",
+        "recvmsg",
+        "sendmsg",
+        "sendto",
+        "setsockopt",
+        "socketpair"
+      ],
+      "families": [
+        "socket"
       ]
     },
     "socket_ops": {
@@ -1753,6 +3091,138 @@
         "stdio"
       ]
     },
+    "stdio_libio_wave01": {
+      "file": "stdio_libio_wave01.json",
+      "sha256": "b12e5da09112d09d066f13461096e1b5c836cdea94bf490526c0d570674329b1",
+      "case_count": 24,
+      "functions": [
+        "_IO_puts",
+        "_IO_seekoff",
+        "_IO_seekpos",
+        "_IO_sgetn",
+        "__isoc23_fscanf",
+        "__isoc23_scanf",
+        "__isoc23_sscanf",
+        "__isoc23_vfscanf",
+        "__isoc23_vscanf",
+        "__isoc23_vsscanf",
+        "__isoc99_fscanf",
+        "__isoc99_scanf"
+      ],
+      "families": [
+        "stdio"
+      ]
+    },
+    "stdio_libio_wave02": {
+      "file": "stdio_libio_wave02.json",
+      "sha256": "178aca588b4eb0bc6cf6ef60c6535290e65a14d9ae11070cb8e01bd17803dbda",
+      "case_count": 24,
+      "functions": [
+        "__isoc99_sscanf",
+        "__isoc99_vfscanf",
+        "__isoc99_vscanf",
+        "__isoc99_vsscanf",
+        "__isoc99_wscanf",
+        "clearerr",
+        "clearerr_unlocked",
+        "fcloseall",
+        "fdopen",
+        "feof_unlocked",
+        "ferror_unlocked",
+        "fflush_unlocked"
+      ],
+      "families": [
+        "stdio"
+      ]
+    },
+    "stdio_libio_wave03": {
+      "file": "stdio_libio_wave03.json",
+      "sha256": "0cbec17a4ba4a29c0bbf8b24bae2251469e5c829809f90d2da93bacd76f32e0d",
+      "case_count": 24,
+      "functions": [
+        "fgetc_unlocked",
+        "fgetpos",
+        "fgetpos64",
+        "fgets_unlocked",
+        "fgetwc_unlocked",
+        "fgetws_unlocked",
+        "fileno_unlocked",
+        "flockfile",
+        "fmemopen",
+        "fopen64",
+        "fopencookie",
+        "fputc_unlocked"
+      ],
+      "families": [
+        "stdio"
+      ]
+    },
+    "stdio_libio_wave04": {
+      "file": "stdio_libio_wave04.json",
+      "sha256": "e94056338c991af9b256fb129aaa8bb3d5eb137b5896679f34047b8483b39254",
+      "case_count": 24,
+      "functions": [
+        "fputs_unlocked",
+        "fputwc_unlocked",
+        "fputws_unlocked",
+        "fread_unlocked",
+        "freopen",
+        "freopen64",
+        "fscanf",
+        "fseeko",
+        "fseeko64",
+        "fsetpos",
+        "fsetpos64",
+        "ftello"
+      ],
+      "families": [
+        "stdio"
+      ]
+    },
+    "stdio_libio_wave05": {
+      "file": "stdio_libio_wave05.json",
+      "sha256": "59649813a2cb58a6f5d232120a61b783a29ce885a6aabe8414d064f5e5f15b29",
+      "case_count": 24,
+      "functions": [
+        "ftello64",
+        "ftrylockfile",
+        "funlockfile",
+        "fwrite_unlocked",
+        "getc",
+        "getc_unlocked",
+        "getchar",
+        "getchar_unlocked",
+        "getdelim",
+        "getline",
+        "getw",
+        "mktemp"
+      ],
+      "families": [
+        "stdio"
+      ]
+    },
+    "stdio_libio_wave06": {
+      "file": "stdio_libio_wave06.json",
+      "sha256": "99b9d3f60fc617003f320121b351e22002a48b6991c3b496e8050278c74cde40",
+      "case_count": 24,
+      "functions": [
+        "open_memstream",
+        "pclose",
+        "popen",
+        "putc",
+        "putc_unlocked",
+        "putchar",
+        "putchar_unlocked",
+        "puts",
+        "putw",
+        "remove",
+        "rewind",
+        "scanf"
+      ],
+      "families": [
+        "stdio"
+      ]
+    },
     "stdlib_conversion": {
       "file": "stdlib_conversion.json",
       "sha256": "0b1b179b05e6feb21042d9e1ac1a62631b1bce46b6fb4f8a1e849a26ad85a4fb",
@@ -1809,6 +3279,229 @@
         "strncpy",
         "strrchr",
         "strstr"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths": {
+      "file": "string_memory_hotpaths.json",
+      "sha256": "3dfa8b35df1dcc43244a1c1a9105d6ca44ea418c7b8c4c8db40919867cade170",
+      "case_count": 24,
+      "functions": [
+        "__strcspn_c2",
+        "__strcspn_c3",
+        "__strdup",
+        "__strerror_r",
+        "__strfmon_l",
+        "__strftime_l",
+        "__strncasecmp_l",
+        "__strndup",
+        "__strpbrk_c2",
+        "__strpbrk_c3",
+        "__strsep_1c",
+        "__strsep_2c"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave05": {
+      "file": "string_memory_hotpaths_wave05.json",
+      "sha256": "ac15f07bd1053b7fe4123817ce5b7118abbd145ce15444c1de0071c2bad5358e",
+      "case_count": 24,
+      "functions": [
+        "__strsep_3c",
+        "__strsep_g",
+        "__strspn_c1",
+        "__strspn_c2",
+        "__strspn_c3",
+        "__strtod_internal",
+        "__strtod_l",
+        "__strtof_internal",
+        "__strtof_l",
+        "__strtok_r",
+        "__strtok_r_1c",
+        "__strtol_internal"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave06": {
+      "file": "string_memory_hotpaths_wave06.json",
+      "sha256": "17753a83ffe899d442728eed4988847bb7e49c4d821f48e2612bbf908f52d1bf",
+      "case_count": 24,
+      "functions": [
+        "__strtol_l",
+        "__strtold_internal",
+        "__strtold_l",
+        "__strtoll_internal",
+        "__strtoll_l",
+        "__strtoul_internal",
+        "__strtoul_l",
+        "__strtoull_internal",
+        "__strtoull_l",
+        "__strverscmp",
+        "__strxfrm_l",
+        "argz_add"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave07": {
+      "file": "string_memory_hotpaths_wave07.json",
+      "sha256": "d5dda0b0eadd318f74fe4562f0609c0d3edf345f522012f6064aa183c98957d1",
+      "case_count": 20,
+      "functions": [
+        "argz_add_sep",
+        "argz_append",
+        "argz_count",
+        "argz_create_sep",
+        "argz_delete",
+        "argz_extract",
+        "argz_insert",
+        "argz_next",
+        "argz_replace",
+        "argz_stringify"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave08": {
+      "file": "string_memory_hotpaths_wave08.json",
+      "sha256": "65a243f1ae26d590b1e39a9d01c6a6ecfe7ab0f49d3d82c082e317eb5ff63ab7",
+      "case_count": 12,
+      "functions": [
+        "envz_add",
+        "envz_entry",
+        "envz_get",
+        "envz_merge",
+        "envz_remove",
+        "envz_strip"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave09": {
+      "file": "string_memory_hotpaths_wave09.json",
+      "sha256": "db8fde4b43d5007e73d29e7367be2c18ef6bdd66dddd90dd8ed06b7ae72a7300",
+      "case_count": 8,
+      "functions": [
+        "__argz_count",
+        "__argz_next",
+        "__argz_stringify",
+        "__bzero"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave10": {
+      "file": "string_memory_hotpaths_wave10.json",
+      "sha256": "65311119dd6d169d9584ed825329f856739cf66b76a1c431eb7417dd56ece845",
+      "case_count": 24,
+      "functions": [
+        "argz_create",
+        "bcmp",
+        "bcopy",
+        "bzero",
+        "consttime_bcmp",
+        "consttime_memequal",
+        "explicit_bzero",
+        "explicit_memset",
+        "globfree",
+        "index",
+        "memccpy",
+        "memmem"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave11": {
+      "file": "string_memory_hotpaths_wave11.json",
+      "sha256": "7dba671458c9f5b2583f8aa4c2123f0cd7334a0752a91ab3cc0802edea3a86a1",
+      "case_count": 24,
+      "functions": [
+        "memset_explicit",
+        "rindex",
+        "strchrnul",
+        "strerrordesc_np",
+        "strerrorname_np",
+        "strfromd",
+        "strfromf",
+        "strfroml",
+        "strmode",
+        "swab",
+        "timingsafe_bcmp",
+        "timingsafe_memcmp"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave12": {
+      "file": "string_memory_hotpaths_wave12.json",
+      "sha256": "9901aa2ee56ecee7286951eed18fb06eb7f8375a603f5e6ea007c19a4cda1881",
+      "case_count": 24,
+      "functions": [
+        "mempcpy",
+        "psignal",
+        "rawmemchr",
+        "re_compile_fastmap",
+        "re_compile_pattern",
+        "re_match",
+        "re_match_2",
+        "re_search",
+        "re_search_2",
+        "re_set_registers",
+        "re_set_syntax",
+        "regerror"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave13": {
+      "file": "string_memory_hotpaths_wave13.json",
+      "sha256": "08f49284253f3ddb3aa8a3050722c004968cadd1ac25f54fa32ce620b30c89d9",
+      "case_count": 24,
+      "functions": [
+        "regfree",
+        "stpcpy",
+        "stpncpy",
+        "strcasecmp",
+        "strcasecmp_l",
+        "strcasestr",
+        "strcoll",
+        "strcspn",
+        "strdup",
+        "strncasecmp",
+        "strncasecmp_l",
+        "strncmp"
+      ],
+      "families": [
+        "string"
+      ]
+    },
+    "string_memory_hotpaths_wave14": {
+      "file": "string_memory_hotpaths_wave14.json",
+      "sha256": "bbb021484bba527d0beb3ac81f967696c391eb6a490b36035a64a00c219ca2a2",
+      "case_count": 18,
+      "functions": [
+        "strndup",
+        "strnlen",
+        "strnstr",
+        "strpbrk",
+        "strsep",
+        "strsignal",
+        "strspn",
+        "strverscmp",
+        "strxfrm"
       ],
       "families": [
         "string"
@@ -1905,6 +3598,48 @@
         "termios"
       ]
     },
+    "time_clock_calendar_wave02": {
+      "file": "time_clock_calendar_wave02.json",
+      "sha256": "2902208731c037c853f0294c818603af4797227b6bfd7cba6a089fae4c57bf8f",
+      "case_count": 20,
+      "functions": [
+        "gmtime_r",
+        "localtime",
+        "mktime",
+        "nanosleep",
+        "strptime",
+        "timegm",
+        "timespec_get",
+        "timespec_getres",
+        "timezone",
+        "tzset"
+      ],
+      "families": [
+        "time"
+      ]
+    },
+    "time_clock_wave01": {
+      "file": "time_clock_wave01.json",
+      "sha256": "2793e4ad594a51e6dfb8bdd071ae3bd635a58e83fc049b96b3eb03ff1481eedc",
+      "case_count": 24,
+      "functions": [
+        "asctime",
+        "asctime_r",
+        "clock_adjtime",
+        "clock_getres",
+        "clock_nanosleep",
+        "clock_settime",
+        "ctime",
+        "ctime_r",
+        "difftime",
+        "environ",
+        "gettimeofday",
+        "gmtime"
+      ],
+      "families": [
+        "time"
+      ]
+    },
     "time_ops": {
       "file": "time_ops.json",
       "sha256": "8d74cf08ab984e541dad57609e7db0b589d025998eb11a1f10699fd414986b1a",
@@ -1965,6 +3700,226 @@
         "unistd"
       ]
     },
+    "unistd_process_filesystem_wave01": {
+      "file": "unistd_process_filesystem_wave01.json",
+      "sha256": "573140a16d8985564986dc31a904ea111faf000c758e39dbde65fa7ca0cb6f2d",
+      "case_count": 24,
+      "functions": [
+        "chown",
+        "clock_getcpuclockid",
+        "close_range",
+        "closelog",
+        "creat",
+        "creat64",
+        "crypt",
+        "crypt_checksalt",
+        "crypt_gensalt",
+        "crypt_gensalt_r",
+        "crypt_gensalt_ra",
+        "crypt_gensalt_rn"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave02": {
+      "file": "unistd_process_filesystem_wave02.json",
+      "sha256": "adaacd34d3dd1a49a2639a0ec5dda2403e41fb3c0d165d6c9abfe13754f80745",
+      "case_count": 24,
+      "functions": [
+        "__sched_cpualloc",
+        "__sched_cpucount",
+        "__sched_cpufree",
+        "__sched_rr_get_interval",
+        "__sched_setparam",
+        "__stack_chk_fail",
+        "__stack_chk_guard",
+        "__xpg_basename",
+        "__xstat",
+        "__xstat64",
+        "add_key",
+        "addmntent"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave03": {
+      "file": "unistd_process_filesystem_wave03.json",
+      "sha256": "3ef5f3ca16260813fa224c01649d8cd3b3bec9b3df1cfa2998aa584908a0ea5c",
+      "case_count": 24,
+      "functions": [
+        "addseverity",
+        "adjtimex",
+        "aio_cancel",
+        "aio_cancel64",
+        "aio_error",
+        "aio_error64",
+        "aio_fsync",
+        "aio_fsync64",
+        "aio_init",
+        "aio_read",
+        "aio_read64",
+        "aio_return"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave04": {
+      "file": "unistd_process_filesystem_wave04.json",
+      "sha256": "835e4f6226760b60864f397b4a872aad58ae5ce4a0b78ea5be9228a0affaefae",
+      "case_count": 24,
+      "functions": [
+        "aio_return64",
+        "aio_suspend",
+        "aio_suspend64",
+        "aio_write",
+        "aio_write64",
+        "alarm",
+        "arc4random",
+        "arc4random_buf",
+        "arc4random_uniform",
+        "argp_error",
+        "argp_failure",
+        "argp_help"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave05": {
+      "file": "unistd_process_filesystem_wave05.json",
+      "sha256": "ed3de93eb34138a995b384ae53e7110d04e6723542445e52fe194d728d35b7e9",
+      "case_count": 24,
+      "functions": [
+        "argp_parse",
+        "argp_state_help",
+        "argp_usage",
+        "bind_textdomain_codeset",
+        "brk",
+        "bsd_signal",
+        "c8rtomb",
+        "canonicalize_file_name",
+        "capget",
+        "capset",
+        "chdir",
+        "chmod"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave06": {
+      "file": "unistd_process_filesystem_wave06.json",
+      "sha256": "a153bc2e1851347ace05a0ba920a413ac58c6b86b68b398315955200447ab5e6",
+      "case_count": 24,
+      "functions": [
+        "crypt_preferred_method",
+        "crypt_r",
+        "crypt_ra",
+        "crypt_rn",
+        "ctermid",
+        "cuserid",
+        "daemon",
+        "dcgettext",
+        "dcngettext",
+        "dn_comp",
+        "dn_expand",
+        "dn_skipname"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave07": {
+      "file": "unistd_process_filesystem_wave07.json",
+      "sha256": "87c4fed6fa049d35dfbf126709871b653455b276498b5fa7c8e92a74b4b5058d",
+      "case_count": 24,
+      "functions": [
+        "dngettext",
+        "eaccess",
+        "encrypt",
+        "encrypt_r",
+        "endaliasent",
+        "endfsent",
+        "endhostent",
+        "endmntent",
+        "endnetent",
+        "endnetgrent",
+        "endprotoent",
+        "endrpcent"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave08": {
+      "file": "unistd_process_filesystem_wave08.json",
+      "sha256": "5668ec023c34c45623b1b72c076d56c099511078124999e26ecc65108fb14326",
+      "case_count": 24,
+      "functions": [
+        "endservent",
+        "endttyent",
+        "endutent",
+        "endutxent",
+        "epoll_pwait2",
+        "ether_aton",
+        "ether_aton_r",
+        "ether_hostton",
+        "ether_line",
+        "ether_ntoa",
+        "ether_ntoa_r",
+        "ether_ntohost"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave09": {
+      "file": "unistd_process_filesystem_wave09.json",
+      "sha256": "cc1c3c1e09b544f1ed23823817bc0be9c2b833551a2560bf5bf0c2ba26439c43",
+      "case_count": 24,
+      "functions": [
+        "euidaccess",
+        "eventfd2",
+        "eventfd_read",
+        "eventfd_write",
+        "execl",
+        "execle",
+        "execlp",
+        "execv",
+        "execveat",
+        "faccessat",
+        "fallocate",
+        "fallocate64"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave10": {
+      "file": "unistd_process_filesystem_wave10.json",
+      "sha256": "86678f2bc9af14670a4425cb9b0e6c0bb43c46b85e4c21bf9eb175b08652daeb",
+      "case_count": 24,
+      "functions": [
+        "fchdir",
+        "fchmod",
+        "fchmodat",
+        "fchmodat2",
+        "fchown",
+        "fchownat",
+        "fcntl64",
+        "fcrypt",
+        "fdatasync",
+        "fexecve",
+        "fgetgrent",
+        "fgetgrent_r"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
     "virtual_memory_ops": {
       "file": "virtual_memory_ops.json",
       "sha256": "3857f2a26dc451c81dcfe253662a82d2c8cea175924194ccf02add0e9deb97b0",
@@ -1977,6 +3932,72 @@
       ],
       "families": [
         "virtual"
+      ]
+    },
+    "wchar_locale_encoding_wave01": {
+      "file": "wchar_locale_encoding_wave01.json",
+      "sha256": "4e843b33c8218f579c299a5574b070c71cc967b3a97a64845199d66c1bcf67ea",
+      "case_count": 24,
+      "functions": [
+        "__islower_l",
+        "__isoc23_fwscanf",
+        "__isoc23_swscanf",
+        "__isoc23_vfwscanf",
+        "__isoc23_vswscanf",
+        "__isoc23_vwscanf",
+        "__isoc23_wcstoimax",
+        "__isoc23_wcstol",
+        "__isoc23_wcstol_l",
+        "__isoc23_wcstoll",
+        "__isoc23_wcstoll_l",
+        "__isoc23_wcstoul"
+      ],
+      "families": [
+        "wchar"
+      ]
+    },
+    "wchar_locale_encoding_wave02": {
+      "file": "wchar_locale_encoding_wave02.json",
+      "sha256": "ce5c3511c649af5ea4e785fc4e4c302f5c962007bf3cd7e12ac2a6d945d72858",
+      "case_count": 24,
+      "functions": [
+        "__isoc23_wcstoul_l",
+        "__isoc23_wcstoull",
+        "__isoc23_wcstoull_l",
+        "__isoc23_wcstoumax",
+        "__isoc23_wscanf",
+        "__iswalnum_l",
+        "__iswalpha_l",
+        "__iswblank_l",
+        "__iswcntrl_l",
+        "__iswctype_l",
+        "__iswdigit_l",
+        "__iswgraph_l"
+      ],
+      "families": [
+        "wchar"
+      ]
+    },
+    "wchar_locale_encoding_wave03": {
+      "file": "wchar_locale_encoding_wave03.json",
+      "sha256": "d18df55a6551a493842ca9416ae128921dc8ea6e487a7f82a66bd93441745e90",
+      "case_count": 24,
+      "functions": [
+        "__iswlower_l",
+        "__iswprint_l",
+        "__iswpunct_l",
+        "__iswspace_l",
+        "__iswupper_l",
+        "__iswxdigit_l",
+        "__toascii_l",
+        "__tolower_l",
+        "__toupper_l",
+        "__towctrans_l",
+        "__towlower_l",
+        "__towupper_l"
+      ],
+      "families": [
+        "wchar"
       ]
     },
     "wide_memory": {
