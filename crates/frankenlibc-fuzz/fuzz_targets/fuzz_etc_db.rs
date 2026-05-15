@@ -28,6 +28,12 @@
 //! adversarial group/content overlap that could produce out-of-bounds
 //! slicing fails closed in CI rather than at runtime.
 //!
+//! Seed files can force a specific parser with these prefixes:
+//! `protocols:`, `networks:`, `aliases:`, and `netgroup:`. Netgroup
+//! directive seeds use `group\n---\ncontent` after the prefix so the
+//! raw corpus can deterministically exercise the group/content lookup
+//! path instead of relying on `Arbitrary` layout luck.
+//!
 //! Bead: bd-yfyv8
 
 use arbitrary::{Arbitrary, Unstructured};
@@ -53,11 +59,65 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
+    if fuzz_directed_seed(data) {
+        return;
+    }
+
     if let Ok(input) = EtcDbFuzzInput::arbitrary(&mut Unstructured::new(data)) {
         fuzz_structured_input(&input);
     }
     fuzz_raw_seed(data);
 });
+
+fn fuzz_directed_seed(data: &[u8]) -> bool {
+    let Some((kind, payload)) = split_directive(data) else {
+        return false;
+    };
+    match kind {
+        b"protocols" => fuzz_parse_protocols_line(trim_seed_newline(payload)),
+        b"networks" => fuzz_parse_networks_line(trim_seed_newline(payload)),
+        b"aliases" => fuzz_parse_aliases_line(trim_seed_newline(payload)),
+        b"netgroup" => fuzz_directed_netgroup(payload),
+        _ => return false,
+    }
+    true
+}
+
+fn split_directive(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    let colon = data.iter().position(|&byte| byte == b':')?;
+    let (kind, rest) = data.split_at(colon);
+    let payload = rest.get(1..)?;
+    match kind {
+        b"protocols" | b"networks" | b"aliases" | b"netgroup" => Some((kind, payload)),
+        _ => None,
+    }
+}
+
+fn fuzz_directed_netgroup(payload: &[u8]) {
+    let marker = b"\n---\n";
+    let Some(split_at) = payload
+        .windows(marker.len())
+        .position(|window| public_bytes_equal(window, marker))
+    else {
+        fuzz_parse_netgroup_triples(trim_seed_newline(payload), b"");
+        return;
+    };
+    let content_start = split_at + marker.len();
+    let (Some(group), Some(content)) = (payload.get(..split_at), payload.get(content_start..))
+    else {
+        return;
+    };
+    let group = trim_seed_newline(group);
+    let content = trim_seed_newline(content);
+    fuzz_parse_netgroup_triples(content, group);
+}
+
+fn trim_seed_newline(payload: &[u8]) -> &[u8] {
+    payload
+        .strip_suffix(b"\r\n")
+        .or_else(|| payload.strip_suffix(b"\n"))
+        .unwrap_or(payload)
+}
 
 fn fuzz_structured_input(input: &EtcDbFuzzInput) {
     if input.line.len() > MAX_LINE
@@ -178,8 +238,15 @@ fn fuzz_parse_netgroup_triples(content: &[u8], group: &[u8]) {
 }
 
 fn starts_or_ends_with_ws(bytes: &[u8]) -> bool {
-    if bytes.is_empty() {
+    let Some(first) = bytes.first() else {
         return false;
-    }
-    matches!(bytes[0], b' ' | b'\t') || matches!(bytes[bytes.len() - 1], b' ' | b'\t')
+    };
+    let Some(last) = bytes.last() else {
+        return false;
+    };
+    matches!(*first, b' ' | b'\t') || matches!(*last, b' ' | b'\t')
+}
+
+fn public_bytes_equal(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(l, r)| l.cmp(r).is_eq())
 }

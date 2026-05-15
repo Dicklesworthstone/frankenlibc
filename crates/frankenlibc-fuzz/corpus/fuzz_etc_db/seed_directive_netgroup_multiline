@@ -1,0 +1,5 @@
+netgroup:team
+---
+team (h1,u1,d1)
+other (x,y,z)
+team other_group (h2,u2,d2)
