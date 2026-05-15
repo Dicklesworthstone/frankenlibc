@@ -13,6 +13,7 @@
 //!   - error cases — fl and host must agree on -1 returns for malformed input
 
 use std::ffi::{c_char, c_int};
+use std::ptr;
 
 use frankenlibc_abi::glibc_internal_abi as fl;
 
@@ -69,6 +70,14 @@ const NTOP_INPUTS: &[&[u8]] = &[
     b"foobar",
 ];
 
+const NTOP_CAPACITY_CASES: &[(&[u8], usize)] = &[
+    (b"", 0),
+    (b"a", 0),
+    (b"a", 4),
+    (b"abc", 4),
+    (&[0xFF, 0xFE, 0xFD], 4),
+];
+
 #[test]
 fn diff_b64_ntop_cases() {
     let mut divs = Vec::new();
@@ -123,6 +132,46 @@ fn diff_b64_ntop_cases() {
     );
 }
 
+#[test]
+fn diff_b64_ntop_capacity_cases() {
+    let mut divs = Vec::new();
+    for (input, targsize) in NTOP_CAPACITY_CASES {
+        let mut fl_buf = vec![0xA5u8; (*targsize).max(1)];
+        let mut lc_buf = vec![0xA5u8; (*targsize).max(1)];
+        let fl_n = unsafe {
+            fl::__b64_ntop(
+                input.as_ptr(),
+                input.len(),
+                fl_buf.as_mut_ptr() as *mut c_char,
+                *targsize,
+            )
+        };
+        let lc_n = unsafe {
+            __b64_ntop(
+                input.as_ptr(),
+                input.len(),
+                lc_buf.as_mut_ptr() as *mut c_char,
+                *targsize,
+            )
+        };
+        let case = format!("len={}, targsize={}", input.len(), targsize);
+        if fl_n != lc_n {
+            divs.push(Divergence {
+                function: "__b64_ntop",
+                case,
+                field: "return",
+                frankenlibc: format!("{fl_n}"),
+                glibc: format!("{lc_n}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__b64_ntop capacity divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 /// Decode test inputs covering valid encodings, padding variants, embedded
 /// whitespace (libresolv tolerance), and various malformed shapes.
 const PTON_INPUTS: &[&[u8]] = &[
@@ -142,6 +191,26 @@ const PTON_INPUTS: &[&[u8]] = &[
     b"!!!!",     // non-base64 chars
     b"YQ=Q",     // pad in middle
     b"========", // all-pad
+    b"Zh==",     // non-canonical padding bits
+];
+
+const PTON_CAPACITY_CASES: &[(&[u8], usize)] = &[
+    (b"", 0),
+    (b"YQ==", 0),
+    (b"YWI=", 1),
+    (b"YWJj", 2),
+    (b"Y W J j", 2),
+];
+
+const PTON_QUERY_INPUTS: &[&[u8]] = &[
+    b"",
+    b"YQ==",
+    b"YWI=",
+    b"YWJj",
+    b"Y W J j",
+    b"!!!!",
+    b"YQ=Q",
+    b"========",
 ];
 
 #[test]
@@ -186,8 +255,79 @@ fn diff_b64_pton_cases() {
 }
 
 #[test]
+fn diff_b64_pton_capacity_cases() {
+    let mut divs = Vec::new();
+    for (input, targsize) in PTON_CAPACITY_CASES {
+        let mut fl_buf = vec![0xA5u8; (*targsize).max(1)];
+        let mut lc_buf = vec![0xA5u8; (*targsize).max(1)];
+        let mut nul_input = input.to_vec();
+        nul_input.push(0);
+        let p = nul_input.as_ptr() as *const c_char;
+        let fl_n = unsafe { fl::__b64_pton(p, fl_buf.as_mut_ptr(), *targsize) };
+        let lc_n = unsafe { __b64_pton(p, lc_buf.as_mut_ptr(), *targsize) };
+        let case = format!(
+            "{:?}, targsize={}",
+            String::from_utf8_lossy(input),
+            targsize
+        );
+        if fl_n != lc_n {
+            divs.push(Divergence {
+                function: "__b64_pton",
+                case: case.clone(),
+                field: "return",
+                frankenlibc: format!("{fl_n}"),
+                glibc: format!("{lc_n}"),
+            });
+        }
+        if fl_n >= 0 && lc_n >= 0 {
+            let n = fl_n as usize;
+            if fl_buf[..n] != lc_buf[..n] {
+                divs.push(Divergence {
+                    function: "__b64_pton",
+                    case,
+                    field: "decoded",
+                    frankenlibc: format!("{:?}", &fl_buf[..n]),
+                    glibc: format!("{:?}", &lc_buf[..n]),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__b64_pton capacity divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_b64_pton_query_mode_cases() {
+    let mut divs = Vec::new();
+    for input in PTON_QUERY_INPUTS {
+        let mut nul_input = input.to_vec();
+        nul_input.push(0);
+        let p = nul_input.as_ptr() as *const c_char;
+        let fl_n = unsafe { fl::__b64_pton(p, ptr::null_mut(), 0) };
+        let lc_n = unsafe { __b64_pton(p, ptr::null_mut(), 0) };
+        if fl_n != lc_n {
+            divs.push(Divergence {
+                function: "__b64_pton",
+                case: format!("{:?}, target=NULL", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_n}"),
+                glibc: format!("{lc_n}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__b64_pton query-mode divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
 fn b64_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libresolv b64\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",
+        "{{\"family\":\"libresolv b64\",\"reference\":\"glibc\",\"functions\":2,\"ntop_cases\":19,\"ntop_capacity_cases\":5,\"pton_cases\":15,\"pton_capacity_cases\":5,\"pton_query_cases\":8,\"divergences\":0}}",
     );
 }
