@@ -20,6 +20,13 @@ unsafe extern "C" {
     fn epoll_create1(flags: c_int) -> c_int;
     fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: *mut EpollEvent) -> c_int;
     fn epoll_wait(epfd: c_int, events: *mut EpollEvent, maxevents: c_int, timeout: c_int) -> c_int;
+    fn epoll_pwait(
+        epfd: c_int,
+        events: *mut EpollEvent,
+        maxevents: c_int,
+        timeout: c_int,
+        sigmask: *const libc::sigset_t,
+    ) -> c_int;
 }
 
 const EPOLL_CTL_ADD: c_int = 1;
@@ -355,8 +362,186 @@ fn diff_epoll_ctl_del() {
 }
 
 #[test]
+fn diff_reserved_epoll_wait_alias_readable() {
+    let mut divs = Vec::new();
+    let run = |use_fl: bool| -> (c_int, Vec<EpollEvent>) {
+        let (a, b) = make_socketpair();
+        let _ = unsafe { libc::write(b, b"x".as_ptr() as *const c_void, 1) };
+        let efd = if use_fl {
+            unsafe { fl::epoll_create1(0) }
+        } else {
+            unsafe { epoll_create1(0) }
+        };
+        let mut ev = EpollEvent {
+            events: EPOLLIN,
+            data: 0x55aa,
+        };
+        let r_ctl = if use_fl {
+            unsafe { fl::epoll_ctl(efd, EPOLL_CTL_ADD, a, &mut ev as *mut _ as *mut _) }
+        } else {
+            unsafe { epoll_ctl(efd, EPOLL_CTL_ADD, a, &mut ev as *mut _) }
+        };
+        assert_eq!(
+            r_ctl,
+            0,
+            "epoll_ctl ADD via {}",
+            if use_fl { "fl" } else { "lc" }
+        );
+        let mut out = vec![EpollEvent::default(); 4];
+        let n = if use_fl {
+            unsafe { fl::__epoll_wait(efd, out.as_mut_ptr() as *mut _, out.len() as c_int, 100) }
+        } else {
+            unsafe { epoll_wait(efd, out.as_mut_ptr(), out.len() as c_int, 100) }
+        };
+        unsafe {
+            libc::close(efd);
+            libc::close(a);
+            libc::close(b);
+        }
+        (n, out)
+    };
+    let (n_fl, ev_fl) = run(true);
+    let (n_lc, ev_lc) = run(false);
+    if n_fl != n_lc {
+        divs.push(Divergence {
+            function: "__epoll_wait",
+            case: "ADD readable, wait 100ms".into(),
+            field: "n_events",
+            frankenlibc: format!("{n_fl}"),
+            glibc: format!("{n_lc}"),
+        });
+    }
+    if n_fl == 1 && n_lc == 1 {
+        let e_fl = ev_fl[0].events;
+        let e_lc = ev_lc[0].events;
+        let d_fl = ev_fl[0].data;
+        let d_lc = ev_lc[0].data;
+        if (e_fl & EPOLLIN == 0) != (e_lc & EPOLLIN == 0) {
+            divs.push(Divergence {
+                function: "__epoll_wait",
+                case: "ADD readable".into(),
+                field: "EPOLLIN_set",
+                frankenlibc: format!("{e_fl:#x}"),
+                glibc: format!("{e_lc:#x}"),
+            });
+        }
+        if d_fl != d_lc || d_fl != 0x55aa {
+            divs.push(Divergence {
+                function: "__epoll_wait",
+                case: "ADD readable".into(),
+                field: "data",
+                frankenlibc: format!("{d_fl:#x}"),
+                glibc: format!("{d_lc:#x}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__epoll_wait alias divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_reserved_epoll_pwait_alias_readable() {
+    let mut divs = Vec::new();
+    let run = |use_fl: bool| -> (c_int, Vec<EpollEvent>) {
+        let (a, b) = make_socketpair();
+        let _ = unsafe { libc::write(b, b"x".as_ptr() as *const c_void, 1) };
+        let efd = if use_fl {
+            unsafe { fl::epoll_create1(0) }
+        } else {
+            unsafe { epoll_create1(0) }
+        };
+        let mut ev = EpollEvent {
+            events: EPOLLIN,
+            data: 0xaa55,
+        };
+        let r_ctl = if use_fl {
+            unsafe { fl::epoll_ctl(efd, EPOLL_CTL_ADD, a, &mut ev as *mut _ as *mut _) }
+        } else {
+            unsafe { epoll_ctl(efd, EPOLL_CTL_ADD, a, &mut ev as *mut _) }
+        };
+        assert_eq!(
+            r_ctl,
+            0,
+            "epoll_ctl ADD via {}",
+            if use_fl { "fl" } else { "lc" }
+        );
+        let mut out = vec![EpollEvent::default(); 4];
+        let n = if use_fl {
+            unsafe {
+                fl::__epoll_pwait(
+                    efd,
+                    out.as_mut_ptr() as *mut _,
+                    out.len() as c_int,
+                    100,
+                    std::ptr::null(),
+                )
+            }
+        } else {
+            unsafe {
+                epoll_pwait(
+                    efd,
+                    out.as_mut_ptr(),
+                    out.len() as c_int,
+                    100,
+                    std::ptr::null(),
+                )
+            }
+        };
+        unsafe {
+            libc::close(efd);
+            libc::close(a);
+            libc::close(b);
+        }
+        (n, out)
+    };
+    let (n_fl, ev_fl) = run(true);
+    let (n_lc, ev_lc) = run(false);
+    if n_fl != n_lc {
+        divs.push(Divergence {
+            function: "__epoll_pwait",
+            case: "ADD readable, wait 100ms".into(),
+            field: "n_events",
+            frankenlibc: format!("{n_fl}"),
+            glibc: format!("{n_lc}"),
+        });
+    }
+    if n_fl == 1 && n_lc == 1 {
+        let e_fl = ev_fl[0].events;
+        let e_lc = ev_lc[0].events;
+        let d_fl = ev_fl[0].data;
+        let d_lc = ev_lc[0].data;
+        if (e_fl & EPOLLIN == 0) != (e_lc & EPOLLIN == 0) {
+            divs.push(Divergence {
+                function: "__epoll_pwait",
+                case: "ADD readable".into(),
+                field: "EPOLLIN_set",
+                frankenlibc: format!("{e_fl:#x}"),
+                glibc: format!("{e_lc:#x}"),
+            });
+        }
+        if d_fl != d_lc || d_fl != 0xaa55 {
+            divs.push(Divergence {
+                function: "__epoll_pwait",
+                case: "ADD readable".into(),
+                field: "data",
+                frankenlibc: format!("{d_fl:#x}"),
+                glibc: format!("{d_lc:#x}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__epoll_pwait alias divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
 fn epoll_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"sys/epoll.h\",\"reference\":\"glibc\",\"functions\":4,\"divergences\":0}}",
+        "{{\"family\":\"sys/epoll.h\",\"reference\":\"glibc\",\"functions\":6,\"divergences\":0}}",
     );
 }
