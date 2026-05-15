@@ -207,32 +207,42 @@ fn validate_allowlist() -> Result<(), String> {
     }
 }
 
+fn collect_violations_for_source(cleaned: &CleanedHarnessFile, source: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (line_index, line) in source.lines().enumerate() {
+        let line_number = line_index + 1;
+        for forbidden in FORBIDDEN_TOKENS {
+            if line.contains(forbidden.needle)
+                && !is_allowlisted(cleaned.path, line_number, forbidden.kind)
+            {
+                violations.push(format!(
+                    "{}:{}: {} [{}] {}",
+                    cleaned.path,
+                    line_number,
+                    forbidden.display,
+                    cleaned.bead,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    violations
+}
+
+fn collect_violations(root: &Path) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    for cleaned in CLEANED_HARNESS_FILES {
+        let source = read_source(root, cleaned.path)?;
+        violations.extend(collect_violations_for_source(cleaned, &source));
+    }
+    Ok(violations)
+}
+
 #[test]
 fn cleaned_harness_tests_do_not_regress_to_direct_panic_surfaces() -> Result<(), String> {
     validate_allowlist()?;
     let root = repo_root()?;
-    let mut violations = Vec::new();
-
-    for cleaned in CLEANED_HARNESS_FILES {
-        let source = read_source(&root, cleaned.path)?;
-        for (line_index, line) in source.lines().enumerate() {
-            let line_number = line_index + 1;
-            for forbidden in FORBIDDEN_TOKENS {
-                if line.contains(forbidden.needle)
-                    && !is_allowlisted(cleaned.path, line_number, forbidden.kind)
-                {
-                    violations.push(format!(
-                        "{}:{}: {} [{}] {}",
-                        cleaned.path,
-                        line_number,
-                        forbidden.display,
-                        cleaned.bead,
-                        line.trim()
-                    ));
-                }
-            }
-        }
-    }
+    let violations = collect_violations(&root)?;
 
     if violations.is_empty() {
         Ok(())
@@ -242,4 +252,46 @@ fn cleaned_harness_tests_do_not_regress_to_direct_panic_surfaces() -> Result<(),
             violations.join("\n")
         ))
     }
+}
+
+#[test]
+fn synthetic_regressions_report_actionable_file_line_token_and_bead() {
+    let cleaned = CleanedHarnessFile {
+        bead: "bd-synthetic",
+        path: "synthetic_cleaned_gate_fixture.rs",
+    };
+    let source = [
+        "fn fixture() {",
+        concat!("    let _ = maybe.", "unwrap", "();"),
+        concat!("    ", "panic", "!(\"synthetic\");"),
+        "}",
+    ]
+    .join("\n");
+
+    let violations = collect_violations_for_source(&cleaned, &source);
+    assert_eq!(violations.len(), 2, "{violations:#?}");
+
+    assert!(
+        violations.iter().any(|violation| {
+            violation.contains(concat!(
+                "synthetic_cleaned_gate_fixture.rs:2: ",
+                ".",
+                "unwrap",
+                "("
+            )) && violation.contains("[bd-synthetic]")
+                && violation.contains(concat!("maybe.", "unwrap", "()"))
+        }),
+        "{violations:#?}"
+    );
+    assert!(
+        violations.iter().any(|violation| {
+            violation.contains(concat!(
+                "synthetic_cleaned_gate_fixture.rs:3: ",
+                "panic",
+                "!("
+            )) && violation.contains("[bd-synthetic]")
+                && violation.contains(concat!("panic", "!(\"synthetic\")"))
+        }),
+        "{violations:#?}"
+    );
 }
