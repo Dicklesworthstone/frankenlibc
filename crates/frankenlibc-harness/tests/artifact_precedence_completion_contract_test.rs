@@ -187,13 +187,20 @@ fn manifest_binds_artifact_precedence_completion_items() -> TestResult {
         expected_summary["conflicting_claim_count"].as_u64(),
         Some(0)
     );
+    assert_eq!(
+        expected_summary["readme_rpc_stub_claim_count"].as_u64(),
+        Some(0)
+    );
     assert_eq!(expected_summary["prose_only_claim_count"].as_u64(), Some(0));
     assert_eq!(
         expected_summary["out_of_order_artifact_count"].as_u64(),
         Some(0)
     );
 
-    for artifact in manifest["source_artifacts"].as_array().unwrap() {
+    for artifact in manifest["source_artifacts"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source_artifacts array"))?
+    {
         let path = artifact["path"]
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact path missing"))?;
@@ -243,10 +250,11 @@ fn checker_rejects_missing_e2e_binding() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-e2e")?;
     let bad_contract = mutated_contract(&root, &out_dir, "missing-e2e", |manifest| {
-        let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
-            .as_array_mut()
-            .expect("missing_item_bindings should be an array");
-        bindings.retain(|binding| binding["spec_item"].as_str() != Some("tests.e2e.primary"));
+        if let Some(bindings) =
+            manifest["completion_debt_evidence"]["missing_item_bindings"].as_array_mut()
+        {
+            bindings.retain(|binding| binding["spec_item"].as_str() != Some("tests.e2e.primary"));
+        }
     })?;
 
     let output = run_checker(&root, &bad_contract, &out_dir)?;
