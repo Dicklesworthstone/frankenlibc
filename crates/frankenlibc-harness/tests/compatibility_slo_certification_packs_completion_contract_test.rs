@@ -8,13 +8,15 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 static CHECKER_LOCK: Mutex<()> = Mutex::new(());
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let repo = workspace
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(repo.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -99,7 +101,7 @@ fn string_values(value: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_unit_and_e2e_completion_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -218,7 +220,7 @@ fn manifest_binds_unit_and_e2e_completion_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_compatibility_slo_certification_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker_serial(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -250,7 +252,7 @@ fn checker_validates_compatibility_slo_certification_contract() -> TestResult {
 
 #[test]
 fn checker_emits_completion_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker_serial(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -305,7 +307,7 @@ fn checker_emits_completion_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_release_artifact_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_artifact")?;
     let mut manifest = load_json(&contract_path(&root))?;
     let ids = manifest["completion_debt_evidence"]["required_release_dossier_contract"]
@@ -334,7 +336,7 @@ fn checker_rejects_missing_release_artifact_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_source_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_test_ref")?;
     let mut manifest = load_json(&contract_path(&root))?;
     let refs = manifest["completion_debt_evidence"]["test_sources"]["release_dossier_harness"]
@@ -363,7 +365,7 @@ fn checker_rejects_missing_source_test_ref() -> TestResult {
 
 #[test]
 fn checker_rejects_unimplemented_telemetry_event() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "bad_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["telemetry_events"][0] = json!("todo_unimplemented_event");
