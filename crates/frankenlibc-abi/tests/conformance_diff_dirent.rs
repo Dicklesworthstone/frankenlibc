@@ -15,6 +15,10 @@ use std::io::Write;
 
 use frankenlibc_abi::dirent_abi as fl;
 
+unsafe extern "C" {
+    fn readdir64(dirp: *mut libc::DIR) -> *mut libc::dirent64;
+}
+
 #[derive(Debug)]
 struct Divergence {
     function: &'static str,
@@ -112,6 +116,62 @@ fn walk_lc(dir: &std::path::Path) -> Result<BTreeSet<(Vec<u8>, u8)>, String> {
     Ok(entries)
 }
 
+/// Walk using the FrankenLibC `readdir64` alias.
+fn walk_fl64(dir: &std::path::Path) -> Result<BTreeSet<(Vec<u8>, u8)>, String> {
+    let cp = cstr_path(dir);
+    let mut entries = BTreeSet::new();
+    let dirp = unsafe { fl::opendir(cp.as_ptr()) };
+    if dirp.is_null() {
+        return Err("opendir returned NULL".into());
+    }
+    loop {
+        let entry = unsafe { fl::readdir64(dirp) as *mut libc::dirent64 };
+        if entry.is_null() {
+            break;
+        }
+        let name_ptr = unsafe { (*entry).d_name.as_ptr() };
+        let name = unsafe { std::ffi::CStr::from_ptr(name_ptr).to_bytes().to_vec() };
+        if name == b"." || name == b".." {
+            continue;
+        }
+        let d_type = unsafe { (*entry).d_type };
+        entries.insert((name, d_type));
+    }
+    let rc = unsafe { fl::closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("closedir returned {}", rc));
+    }
+    Ok(entries)
+}
+
+/// Same walk through host glibc `readdir64`.
+fn walk_lc64(dir: &std::path::Path) -> Result<BTreeSet<(Vec<u8>, u8)>, String> {
+    let cp = cstr_path(dir);
+    let mut entries = BTreeSet::new();
+    let dirp = unsafe { libc::opendir(cp.as_ptr()) };
+    if dirp.is_null() {
+        return Err("opendir returned NULL".into());
+    }
+    loop {
+        let entry = unsafe { readdir64(dirp) };
+        if entry.is_null() {
+            break;
+        }
+        let name_ptr = unsafe { (*entry).d_name.as_ptr() };
+        let name = unsafe { std::ffi::CStr::from_ptr(name_ptr).to_bytes().to_vec() };
+        if name == b"." || name == b".." {
+            continue;
+        }
+        let d_type = unsafe { (*entry).d_type };
+        entries.insert((name, d_type));
+    }
+    let rc = unsafe { libc::closedir(dirp) };
+    if rc != 0 {
+        return Err(format!("closedir returned {}", rc));
+    }
+    Ok(entries)
+}
+
 // ===========================================================================
 // Empty directory
 // ===========================================================================
@@ -161,6 +221,37 @@ fn diff_mixed_directory() {
     assert!(
         divs.is_empty(),
         "mixed dir divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_readdir64_mixed_directory() {
+    let dir = temp_dir("mixed64");
+    write_file(&dir.join("alpha.txt"), b"a");
+    write_file(&dir.join("file_0000000001.bin"), &[0x11; 32]);
+    write_file(&dir.join("file_0000000010.bin"), &[0x22; 32]);
+    std::fs::create_dir(dir.join("subdir64")).expect("subdir");
+    std::os::unix::fs::symlink("alpha.txt", dir.join("link64_to_alpha")).expect("symlink");
+
+    let fl_set = walk_fl64(&dir).expect("fl readdir64 walk");
+    let lc_set = walk_lc64(&dir).expect("lc readdir64 walk");
+
+    let mut divs = Vec::new();
+    if fl_set != lc_set {
+        let only_fl: Vec<_> = fl_set.difference(&lc_set).cloned().collect();
+        let only_lc: Vec<_> = lc_set.difference(&fl_set).cloned().collect();
+        divs.push(Divergence {
+            function: "readdir64(loop)",
+            case: "mixed64".into(),
+            field: "entry_set",
+            frankenlibc: format!("only_in_fl={:?}", only_fl),
+            glibc: format!("only_in_glibc={:?}", only_lc),
+        });
+    }
+    assert!(
+        divs.is_empty(),
+        "readdir64 mixed dir divergences:\n{}",
         render_divs(&divs)
     );
 }
@@ -402,6 +493,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":4,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",
     );
 }
