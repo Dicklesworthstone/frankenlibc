@@ -6,13 +6,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let repo_dir = workspace_dir
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(repo_dir.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -111,7 +113,7 @@ fn report_errors(out_dir: &Path) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_architecture_ledger_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -174,7 +176,7 @@ fn manifest_binds_architecture_ledger_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_architecture_ledger_live_evidence_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -198,7 +200,7 @@ fn checker_validates_architecture_ledger_live_evidence_contract() -> TestResult 
 
 #[test]
 fn checker_emits_report_and_jsonl_for_all_missing_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -265,7 +267,7 @@ fn checker_emits_report_and_jsonl_for_all_missing_items() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_child_closeout_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_parent_closeout"]["required_child_beads"]
         .as_array_mut()
@@ -288,7 +290,7 @@ fn checker_rejects_missing_child_closeout_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_golden_binding() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["golden_primary"]["required_artifacts"]
         .as_array_mut()
@@ -309,7 +311,7 @@ fn checker_rejects_missing_golden_binding() -> TestResult {
 
 #[test]
 fn checker_rejects_theater_resolution_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["completion_debt_evidence"]["theater_resolution"]["resolution_policy"] =
         json!("TODO wording is itself proof of implementation");
