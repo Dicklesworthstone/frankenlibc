@@ -6,7 +6,8 @@ use std::process::{Command, Output};
 use frankenlibc_harness::structured_log::validate_log_line;
 use serde_json::Value;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+type TestError = Box<dyn std::error::Error>;
+type TestResult = Result<(), TestError>;
 
 const CONTRACT_REL: &str =
     "tests/conformance/structured_log_artifact_index_completion_contract.v1.json";
@@ -31,28 +32,40 @@ const REQUIRED_TELEMETRY_FIELDS: [&str; 10] = [
     "source_commit",
 ];
 
-fn workspace_root() -> PathBuf {
+fn workspace_root() -> Result<PathBuf, TestError> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest.parent().unwrap().parent().unwrap().to_path_buf()
+    let workspace_root = manifest.parent().ok_or_else(|| {
+        format!(
+            "harness manifest directory has no parent: {}",
+            manifest.display()
+        )
+    })?;
+    let repo_root = workspace_root.parent().ok_or_else(|| {
+        format!(
+            "workspace root has no repository parent: {}",
+            workspace_root.display()
+        )
+    })?;
+    Ok(repo_root.to_path_buf())
 }
 
-fn load_json(path: &Path) -> Result<Value, Box<dyn std::error::Error>> {
+fn load_json(path: &Path) -> Result<Value, TestError> {
     let content = std::fs::read_to_string(path)?;
     Ok(serde_json::from_str(&content)?)
 }
 
-fn load_manifest(root: &Path) -> Result<Value, Box<dyn std::error::Error>> {
+fn load_manifest(root: &Path) -> Result<Value, TestError> {
     load_json(&root.join(CONTRACT_REL))
 }
 
-fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>, Box<dyn std::error::Error>> {
+fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>, TestError> {
     value
         .get(key)
         .and_then(Value::as_array)
         .ok_or_else(|| format!("missing array `{key}`").into())
 }
 
-fn string_array(value: &Value, key: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn string_array(value: &Value, key: &str) -> Result<Vec<String>, TestError> {
     Ok(array(value, key)?
         .iter()
         .filter_map(Value::as_str)
@@ -60,7 +73,7 @@ fn string_array(value: &Value, key: &str) -> Result<Vec<String>, Box<dyn std::er
         .collect())
 }
 
-fn output_dir(root: &Path, suffix: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn output_dir(root: &Path, suffix: &str) -> Result<PathBuf, TestError> {
     let base = std::env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| root.join("target"));
@@ -76,7 +89,7 @@ fn run_checker(
     root: &Path,
     contract: &Path,
     suffix: &str,
-) -> Result<(Output, PathBuf, PathBuf), Box<dyn std::error::Error>> {
+) -> Result<(Output, PathBuf, PathBuf), TestError> {
     let dir = output_dir(root, suffix)?;
     let report = dir.join("report.json");
     let log = dir.join("events.jsonl");
@@ -89,7 +102,7 @@ fn run_checker(
     Ok((output, report, log))
 }
 
-fn read_log_rows(path: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+fn read_log_rows(path: &Path) -> Result<Vec<Value>, TestError> {
     let content = std::fs::read_to_string(path)?;
     let rows = content
         .lines()
@@ -101,7 +114,7 @@ fn read_log_rows(path: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> 
 
 #[test]
 fn manifest_binds_all_audit_gaps_to_refs_and_tests() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let manifest = load_manifest(&root)?;
 
     assert_eq!(
@@ -168,7 +181,7 @@ fn manifest_binds_all_audit_gaps_to_refs_and_tests() -> TestResult {
 
 #[test]
 fn checker_emits_joinable_report_and_valid_structured_log_row() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let contract = root.join(CONTRACT_REL);
     let (output, report_path, log_path) = run_checker(&root, &contract, "positive")?;
     assert!(
@@ -216,7 +229,7 @@ fn checker_emits_joinable_report_and_valid_structured_log_row() -> TestResult {
 
 #[test]
 fn checker_fails_closed_when_migration_or_telemetry_coverage_is_removed() -> TestResult {
-    let root = workspace_root();
+    let root = workspace_root()?;
     let mut manifest = load_manifest(&root)?;
     let coverage = manifest["completion_coverage"]
         .as_array_mut()
