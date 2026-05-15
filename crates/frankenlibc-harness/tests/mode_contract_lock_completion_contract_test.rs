@@ -15,13 +15,14 @@ fn gate_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?
+        .to_path_buf();
+    Ok(root)
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -114,7 +115,7 @@ fn source_texts(root: &Path, manifest: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_unit_e2e_and_telemetry_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -201,7 +202,7 @@ fn manifest_binds_unit_e2e_and_telemetry_evidence() -> TestResult {
 #[test]
 fn checker_validates_existing_mode_contract_lock_gate() -> TestResult {
     let _lock = gate_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -242,7 +243,7 @@ fn checker_validates_existing_mode_contract_lock_gate() -> TestResult {
 #[test]
 fn checker_emits_report_and_jsonl_with_source_gate_rows() -> TestResult {
     let _lock = gate_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -302,7 +303,7 @@ fn checker_emits_report_and_jsonl_with_source_gate_rows() -> TestResult {
 #[test]
 fn checker_rejects_missing_startup_anchor() -> TestResult {
     let _lock = gate_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_anchor")?;
     let mut manifest = load_json(&contract_path(&root))?;
     let missing_anchor = format!(
@@ -339,7 +340,7 @@ fn checker_rejects_missing_startup_anchor() -> TestResult {
 #[test]
 fn checker_rejects_wrong_allowed_mode_expectation() -> TestResult {
     let _lock = gate_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "wrong_allowed_mode")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["allowed_values"] = json!(["strict", "hardened", "off"]);
@@ -369,7 +370,7 @@ fn checker_rejects_wrong_allowed_mode_expectation() -> TestResult {
 #[test]
 fn checker_rejects_missing_telemetry_event() -> TestResult {
     let _lock = gate_lock();
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_event")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["telemetry_contract"]["required_events"]
