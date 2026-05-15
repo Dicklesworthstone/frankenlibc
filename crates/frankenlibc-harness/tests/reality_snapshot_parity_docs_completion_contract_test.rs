@@ -5,13 +5,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let root = workspace
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -97,7 +99,7 @@ fn string_values(value: &Value) -> TestResult<Vec<String>> {
 
 #[test]
 fn manifest_binds_docs_reality_conformance_evidence() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
     assert_eq!(
         manifest["schema_version"].as_str(),
@@ -170,7 +172,7 @@ fn manifest_binds_docs_reality_conformance_evidence() -> TestResult {
 
 #[test]
 fn checker_validates_docs_reality_snapshot_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -190,7 +192,7 @@ fn checker_validates_docs_reality_snapshot_contract() -> TestResult {
 
 #[test]
 fn checker_emits_conformance_report_and_jsonl_rows() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -240,7 +242,7 @@ fn checker_emits_conformance_report_and_jsonl_rows() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_readme_reality_source() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["doc_snapshot_requirements"]["docs"][0]["required_text"][0] =
         json!("missing README reality source marker");
@@ -263,7 +265,7 @@ fn checker_rejects_missing_readme_reality_source() -> TestResult {
 
 #[test]
 fn checker_rejects_reality_count_drift() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["expected_reality_snapshot"]["total_exported"] = json!(4120);
 
@@ -285,7 +287,7 @@ fn checker_rejects_reality_count_drift() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_completion_test_ref() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let mut manifest = load_json(&contract_path(&root))?;
     let refs = manifest["completion_debt_evidence"]["test_sources"]["completion_harness_test"]
         ["required_test_refs"]
