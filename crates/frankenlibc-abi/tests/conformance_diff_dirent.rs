@@ -16,6 +16,8 @@ use std::io::Write;
 use frankenlibc_abi::dirent_abi as fl;
 
 unsafe extern "C" {
+    #[link_name = "alphasort"]
+    fn host_alphasort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
     fn readdir64(dirp: *mut libc::DIR) -> *mut libc::dirent64;
     fn scandir64(
         path: *const c_char,
@@ -25,6 +27,8 @@ unsafe extern "C" {
             unsafe extern "C" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
         >,
     ) -> c_int;
+    #[link_name = "versionsort"]
+    fn host_versionsort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
 }
 
 #[derive(Debug)]
@@ -65,6 +69,31 @@ fn write_file(p: &std::path::Path, contents: &[u8]) {
 
 fn cstr_path(p: &std::path::Path) -> CString {
     CString::new(p.to_str().unwrap()).expect("path NUL-free")
+}
+
+fn dirent_named(name: &[u8]) -> libc::dirent {
+    let mut entry: libc::dirent = unsafe { std::mem::zeroed() };
+    let name = name.strip_suffix(b"\0").unwrap_or(name);
+    assert!(
+        name.len() < entry.d_name.len(),
+        "test name must leave room for trailing NUL"
+    );
+    for (dst, src) in entry.d_name.iter_mut().zip(name.iter()) {
+        *dst = *src as c_char;
+    }
+    entry.d_name[name.len()] = 0;
+    entry
+}
+
+type DirentComparator =
+    unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int;
+
+fn compare_dirent_names(left: &[u8], right: &[u8], cmp: DirentComparator) -> c_int {
+    let left_entry = dirent_named(left);
+    let right_entry = dirent_named(right);
+    let mut left_ptr: *const libc::dirent = &left_entry;
+    let mut right_ptr: *const libc::dirent = &right_entry;
+    unsafe { cmp(&mut left_ptr, &mut right_ptr) }
 }
 
 /// Walk a directory using the FrankenLibC implementation; return the
@@ -342,6 +371,82 @@ fn diff_scandir64_mixed_directory() {
     );
 }
 
+#[test]
+fn diff_alphasort_matches_glibc_signs() {
+    let cases: &[(&[u8], &[u8])] = &[
+        (b"alpha", b"beta"),
+        (b"beta", b"alpha"),
+        (b"same", b"same"),
+        (b"file02", b"file10"),
+        (b"Zed", b"alpha"),
+        (b".hidden", b"visible"),
+        (b"", b"nonempty"),
+    ];
+
+    let mut divs = Vec::new();
+    for (left, right) in cases {
+        let fl_sign = compare_dirent_names(left, right, fl::alphasort).signum();
+        let lc_sign = compare_dirent_names(left, right, host_alphasort).signum();
+        if fl_sign != lc_sign {
+            divs.push(Divergence {
+                function: "alphasort",
+                case: format!(
+                    "{} vs {}",
+                    String::from_utf8_lossy(left),
+                    String::from_utf8_lossy(right)
+                ),
+                field: "ordering_sign",
+                frankenlibc: format!("{fl_sign}"),
+                glibc: format!("{lc_sign}"),
+            });
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "alphasort divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_versionsort_matches_glibc_signs() {
+    let cases: &[(&[u8], &[u8])] = &[
+        (b"file2", b"file10"),
+        (b"file10", b"file2"),
+        (b"file001", b"file01"),
+        (b"v1.9.0", b"v1.10.0"),
+        (b"same", b"same"),
+        (b"pkg-0002", b"pkg-2"),
+        (b"", b"0"),
+    ];
+
+    let mut divs = Vec::new();
+    for (left, right) in cases {
+        let fl_sign = compare_dirent_names(left, right, fl::versionsort).signum();
+        let lc_sign = compare_dirent_names(left, right, host_versionsort).signum();
+        if fl_sign != lc_sign {
+            divs.push(Divergence {
+                function: "versionsort",
+                case: format!(
+                    "{} vs {}",
+                    String::from_utf8_lossy(left),
+                    String::from_utf8_lossy(right)
+                ),
+                field: "ordering_sign",
+                frankenlibc: format!("{fl_sign}"),
+                glibc: format!("{lc_sign}"),
+            });
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "versionsort divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 // ===========================================================================
 // Many entries — exercises pagination of getdents under the hood
 // ===========================================================================
@@ -579,6 +684,6 @@ fn diff_opendir_missing_path() {
 fn dirent_diff_coverage_report() {
     let _ = c_int::from(1);
     eprintln!(
-        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":6,\"divergences\":0}}",
+        "{{\"family\":\"dirent.h\",\"reference\":\"glibc\",\"functions\":8,\"divergences\":0}}",
     );
 }
