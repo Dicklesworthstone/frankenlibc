@@ -357,12 +357,12 @@ fn real_runtime_evidence_ring_overwrites_and_seqno_is_monotone() -> TestResult {
             snap.len()
         ),
     )?;
+    let last = snap
+        .last()
+        .ok_or_else(|| "real ring snapshot must contain at least one record".to_string())?;
     require(
-        snap.last().unwrap().seqno() == total,
-        format!(
-            "real ring last seqno must be {total}, saw {}",
-            snap.last().unwrap().seqno()
-        ),
+        last.seqno() == total,
+        format!("real ring last seqno must be {total}, saw {}", last.seqno()),
     )?;
     let mut last_seqno = 0;
     for r in &snap {
