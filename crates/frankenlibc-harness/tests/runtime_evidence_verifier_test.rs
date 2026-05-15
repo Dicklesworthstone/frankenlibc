@@ -59,27 +59,30 @@ fn runtime_row(mode: &str, action: &str, timestamp_mono_ns: u64) -> Value {
     })
 }
 
-fn jsonl(rows: &[Value]) -> String {
+fn jsonl(rows: &[Value]) -> Result<String, String> {
     let mut out = String::new();
     for row in rows {
-        out.push_str(&serde_json::to_string(row).expect("fixture row serializes"));
+        out.push_str(
+            &serde_json::to_string(row).map_err(|err| format!("fixture row serializes: {err}"))?,
+        );
         out.push('\n');
     }
-    out
+    Ok(out)
 }
 
-fn assert_signature(row: Value, signature: &str) {
-    let report = verify_runtime_evidence_jsonl(&jsonl(&[row]), &verifier_config());
+fn assert_signature(row: Value, signature: &str) -> Result<(), String> {
+    let report = verify_runtime_evidence_jsonl(&jsonl(&[row])?, &verifier_config());
     assert!(!report.passed(), "negative fixture should fail");
     assert!(
         report.has_failure_signature(signature),
         "expected {signature}, got {:#?}",
         report.failures
     );
+    Ok(())
 }
 
 #[test]
-fn verifier_accepts_valid_runtime_evidence_jsonl_and_report_json() {
+fn verifier_accepts_valid_runtime_evidence_jsonl_and_report_json() -> Result<(), String> {
     let rows = [
         runtime_row("strict", "Allow", 10),
         runtime_row("hardened", "Repair", 20),
@@ -98,18 +101,22 @@ fn verifier_accepts_valid_runtime_evidence_jsonl_and_report_json() {
             false,
         ));
 
-    let report = verify_runtime_evidence_jsonl(&jsonl(&rows), &config);
+    let report = verify_runtime_evidence_jsonl(&jsonl(&rows)?, &config);
     assert!(report.passed(), "{report:#?}");
     assert_eq!(report.total_rows, 2);
     assert_eq!(report.observed_expectations.len(), 2);
 
-    let json = report.to_json().expect("report serializes");
-    let parsed: Value = serde_json::from_str(&json).expect("report JSON parses");
+    let json = report
+        .to_json()
+        .map_err(|err| format!("report serializes: {err}"))?;
+    let parsed: Value =
+        serde_json::from_str(&json).map_err(|err| format!("report JSON parses: {err}"))?;
     assert_eq!(
         parsed["schema"].as_str(),
         Some("runtime_evidence_verifier.v1")
     );
     assert_eq!(parsed["status"].as_str(), Some("pass"));
+    Ok(())
 }
 
 #[test]
@@ -120,53 +127,55 @@ fn verifier_fails_closed_for_corrupt_jsonl_fixture() {
 }
 
 #[test]
-fn verifier_fails_closed_for_stale_source_commit_fixture() {
+fn verifier_fails_closed_for_stale_source_commit_fixture() -> Result<(), String> {
     let mut row = runtime_row("strict", "Allow", 10);
     row["source_commit"] = json!("ffffffffffffffffffffffffffffffffffffffff");
-    assert_signature(row, "runtime_evidence_stale_source_commit");
+    assert_signature(row, "runtime_evidence_stale_source_commit")
 }
 
 #[test]
-fn verifier_fails_closed_for_invalid_mode_and_latency_fixtures() {
+fn verifier_fails_closed_for_invalid_mode_and_latency_fixtures() -> Result<(), String> {
     let mut invalid_mode = runtime_row("strict", "Allow", 10);
     invalid_mode["runtime_mode"] = json!("repair");
-    assert_signature(invalid_mode, "runtime_evidence_invalid_mode");
+    assert_signature(invalid_mode, "runtime_evidence_invalid_mode")?;
 
     let mut invalid_latency = runtime_row("strict", "Allow", 10);
     invalid_latency["latency_ns"] = json!("17ms");
-    assert_signature(invalid_latency, "runtime_evidence_invalid_latency");
+    assert_signature(invalid_latency, "runtime_evidence_invalid_latency")
 }
 
 #[test]
-fn verifier_fails_closed_for_impossible_transition_fixture() {
+fn verifier_fails_closed_for_impossible_transition_fixture() -> Result<(), String> {
     let mut row = runtime_row("strict", "Allow", 10);
     row["decision_path"] = json!("mode->runtime_math_kernel->deny");
-    assert_signature(row, "runtime_evidence_impossible_transition");
+    assert_signature(row, "runtime_evidence_impossible_transition")
 }
 
 #[test]
-fn verifier_fails_closed_for_missing_repair_healing_action_fixture() {
+fn verifier_fails_closed_for_missing_repair_healing_action_fixture() -> Result<(), String> {
     let mut row = runtime_row("hardened", "Repair", 10);
     row["healing_action"] = Value::Null;
-    assert_signature(row, "runtime_evidence_missing_healing_action");
+    assert_signature(row, "runtime_evidence_missing_healing_action")
 }
 
 #[test]
-fn verifier_fails_closed_for_unexpected_denial_fixture() {
+fn verifier_fails_closed_for_unexpected_denial_fixture() -> Result<(), String> {
     let row = runtime_row("hardened", "Deny", 10);
     let config = verifier_config().deny_unexpected_denials();
-    let report = verify_runtime_evidence_jsonl(&jsonl(&[row]), &config);
+    let report = verify_runtime_evidence_jsonl(&jsonl(&[row])?, &config);
     assert!(!report.passed());
     assert!(report.has_failure_signature("runtime_evidence_unexpected_denial"));
+    Ok(())
 }
 
 #[test]
-fn verifier_fails_closed_for_out_of_order_timestamp_fixture() {
+fn verifier_fails_closed_for_out_of_order_timestamp_fixture() -> Result<(), String> {
     let rows = [
         runtime_row("strict", "Allow", 20),
         runtime_row("hardened", "Repair", 10),
     ];
-    let report = verify_runtime_evidence_jsonl(&jsonl(&rows), &verifier_config());
+    let report = verify_runtime_evidence_jsonl(&jsonl(&rows)?, &verifier_config());
     assert!(!report.passed());
     assert!(report.has_failure_signature("runtime_evidence_out_of_order_timestamp"));
+    Ok(())
 }
