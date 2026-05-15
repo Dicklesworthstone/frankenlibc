@@ -145,10 +145,10 @@ fn mutated_contract(
     root: &Path,
     out_dir: &Path,
     label: &str,
-    mutator: impl FnOnce(&mut Value),
+    mutator: impl FnOnce(&mut Value) -> TestResult,
 ) -> TestResult<PathBuf> {
     let mut manifest = read_json(&contract_path(root))?;
-    mutator(&mut manifest);
+    mutator(&mut manifest)?;
     let path = out_dir.join(format!("{label}.contract.json"));
     write_json(&path, &manifest)?;
     Ok(path)
@@ -193,7 +193,10 @@ fn manifest_binds_gate_orchestration_completion_items() -> TestResult {
         .collect();
     assert_eq!(expected_sequence, required_sequence);
 
-    for artifact in manifest["source_artifacts"].as_array().unwrap() {
+    let source_artifacts = manifest["source_artifacts"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source_artifacts"))?;
+    for artifact in source_artifacts {
         let path = artifact["path"]
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact path missing"))?;
@@ -226,10 +229,10 @@ fn checker_replays_gate_order_fail_fast_resume_and_emits_report_log() -> TestRes
         report["summary"]["gate_count"].as_u64(),
         Some(EXPECTED_SEQUENCE.len() as u64)
     );
-    assert_eq!(
-        report["missing_item_bindings"].as_array().unwrap().len(),
-        REQUIRED_ITEMS.len()
-    );
+    let missing_item_bindings = report["missing_item_bindings"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing_item_bindings"))?;
+    assert_eq!(missing_item_bindings.len(), REQUIRED_ITEMS.len());
 
     let rows = read_jsonl(&log_path(&out_dir))?;
     let events: BTreeSet<String> = rows
@@ -241,7 +244,10 @@ fn checker_replays_gate_order_fail_fast_resume_and_emits_report_log() -> TestRes
         assert!(events.contains(*event), "missing event {event}");
     }
 
-    for (_, value) in report["generated_artifacts"].as_object().unwrap() {
+    let generated_artifacts = report["generated_artifacts"]
+        .as_object()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "generated_artifacts"))?;
+    for (_, value) in generated_artifacts {
         let path = value
             .as_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "artifact ref not string"))?;
@@ -260,8 +266,14 @@ fn checker_rejects_missing_integration_binding() -> TestResult {
     let bad_contract = mutated_contract(&root, &out_dir, "missing-integration", |manifest| {
         let bindings = manifest["completion_debt_evidence"]["missing_item_bindings"]
             .as_array_mut()
-            .expect("bindings should be an array");
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "completion_debt_evidence.missing_item_bindings",
+                )
+            })?;
         bindings.retain(|row| row["spec_item"].as_str() != Some("tests.integration.primary"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &bad_contract, &out_dir)?;
@@ -278,8 +290,14 @@ fn checker_rejects_gate_sequence_drift() -> TestResult {
     let bad_contract = mutated_contract(&root, &out_dir, "gate-sequence-drift", |manifest| {
         let sequence = manifest["gate_contract"]["expected_full_gate_sequence"]
             .as_array_mut()
-            .expect("expected sequence should be an array");
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "gate_contract.expected_full_gate_sequence",
+                )
+            })?;
         sequence.retain(|gate| gate.as_str() != Some("claim_reconciliation"));
+        Ok(())
     })?;
 
     let output = run_checker(&root, &bad_contract, &out_dir)?;
