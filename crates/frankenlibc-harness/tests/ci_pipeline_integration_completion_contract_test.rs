@@ -5,13 +5,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> TestResult<PathBuf> {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = crate_dir
         .parent()
-        .expect("crate directory has workspace parent")
+        .ok_or("crate directory has workspace parent")?;
+    let root = workspace
         .parent()
-        .expect("workspace parent has repo parent")
-        .to_path_buf()
+        .ok_or("workspace parent has repo parent")?;
+    Ok(root.to_path_buf())
 }
 
 fn contract_path(root: &Path) -> PathBuf {
@@ -77,7 +79,7 @@ fn log_records(path: &Path) -> TestResult<Vec<Value>> {
 
 #[test]
 fn manifest_binds_all_completion_items() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let manifest = load_json(&contract_path(&root))?;
 
     assert_eq!(
@@ -132,7 +134,7 @@ fn manifest_binds_all_completion_items() -> TestResult {
 
 #[test]
 fn checker_validates_ci_pipeline_contract() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "validates")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -158,7 +160,7 @@ fn checker_validates_ci_pipeline_contract() -> TestResult {
 
 #[test]
 fn checker_emits_report_and_jsonl() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "jsonl")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -204,7 +206,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_workflow_job() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_job")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["workflow_jobs"]
@@ -240,7 +242,7 @@ fn checker_rejects_missing_required_workflow_job() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_artifact_upload() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_upload")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["artifact_upload_names"]
@@ -276,7 +278,7 @@ fn checker_rejects_missing_artifact_upload() -> TestResult {
 
 #[test]
 fn checker_rejects_missing_required_source_marker() -> TestResult {
-    let root = repo_root();
+    let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_marker")?;
     let mut manifest = load_json(&contract_path(&root))?;
     manifest["required_source_contract"]["ci_script_markers"]
