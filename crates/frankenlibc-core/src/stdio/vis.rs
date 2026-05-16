@@ -29,9 +29,12 @@
 //!
 //! `VIS_SP`, `VIS_TAB`, and `VIS_NL` force the normally safe
 //! whitespace bytes to be escaped. `VIS_CSTYLE` uses C-style escape
-//! spellings for the standard control characters. Other libutil flags
-//! (`VIS_HTTPSTYLE`, `VIS_SAFE`, etc.) are accepted but currently
-//! ignored — the v1 port focuses on the byte-stream-safe defaults.
+//! spellings for the standard control characters. `VIS_SAFE`,
+//! `VIS_DQ`, `VIS_GLOB`, `VIS_SHELL`, and `VIS_META` alter the
+//! encoded character set. Other libutil representation flags
+//! (`VIS_HTTPSTYLE`, `VIS_MIMESTYLE`, `VIS_NOSLASH`, etc.) are
+//! accepted but currently ignored — the v1 port focuses on the
+//! byte-stream-safe default representation.
 
 /// Render all non-printable bytes as `\NNN` octal triples instead
 /// of the default `\^X` / `\M-X` notation.
@@ -51,17 +54,25 @@ pub const VIS_CSTYLE: u32 = 0x02;
 /// Convenience mask for whitespace-forcing flags.
 pub const VIS_WHITE: u32 = VIS_SP | VIS_TAB | VIS_NL;
 /// NetBSD `VIS_SAFE` bit. Accepted for ABI flag parity; the v1
-/// byte encoder still uses the default safety set.
+/// byte encoder allows the documented safe control bytes through.
 pub const VIS_SAFE: u32 = 0x20;
+/// Encode double quotes.
+pub const VIS_DQ: u32 = 0x8000;
+/// Encode glob(3) magic characters.
+pub const VIS_GLOB: u32 = 0x1000;
+/// Encode shell metacharacters.
+pub const VIS_SHELL: u32 = 0x2000;
+/// Synonym for [`VIS_WHITE`] | [`VIS_GLOB`] | [`VIS_SHELL`].
+pub const VIS_META: u32 = VIS_WHITE | VIS_GLOB | VIS_SHELL;
 
 /// Parse a NetBSD `VIS_OPTIONS`-style flag string and return the
 /// OR of the recognized `VIS_*` flag bits.
 ///
 /// Tokens are comma-separated and case-sensitive. Recognized
 /// tokens map to the corresponding `VIS_*` constants in this
-/// module; tokens that name other NetBSD vis(3) flags this port
-/// does not (yet) implement (e.g. `VIS_HTTPSTYLE`, `VIS_SAFE`)
-/// are silently ignored, matching NetBSD's "best-effort" parse.
+/// module; tokens that name other NetBSD vis(3) representation flags
+/// this port does not (yet) implement (e.g. `VIS_HTTPSTYLE`) are
+/// silently ignored, matching NetBSD's "best-effort" parse.
 /// Unknown tokens are also ignored.
 ///
 /// Whitespace inside tokens is trimmed; empty tokens (e.g. from
@@ -80,11 +91,16 @@ pub fn parse_vis_options(s: &[u8]) -> u32 {
             b"VIS_NL" => flags |= VIS_NL,
             b"VIS_CSTYLE" => flags |= VIS_CSTYLE,
             b"VIS_WHITE" => flags |= VIS_WHITE,
+            b"VIS_SAFE" => flags |= VIS_SAFE,
+            b"VIS_DQ" => flags |= VIS_DQ,
+            b"VIS_GLOB" => flags |= VIS_GLOB,
+            b"VIS_SHELL" => flags |= VIS_SHELL,
+            b"VIS_META" => flags |= VIS_META,
             // NetBSD-specific tokens that we accept (and silently
             // discard, since the bits aren't part of our v1 byte
             // encoder's behavior).
-            b"VIS_HTTPSTYLE" | b"VIS_SAFE" | b"VIS_NOSLASH" | b"VIS_GLOB" | b"VIS_HTTP1808"
-            | b"VIS_MIMESTYLE" | b"VIS_NOLOCALE" | b"VIS_DQ" | b"VIS_SHELL" | b"VIS_META" => {}
+            b"VIS_HTTPSTYLE" | b"VIS_NOSLASH" | b"VIS_HTTP1808" | b"VIS_MIMESTYLE"
+            | b"VIS_NOLOCALE" => {}
             _ => {} // Unknown token — silently ignore.
         }
     }
@@ -119,6 +135,35 @@ fn whitespace_passthrough(c: u8, flags: u32) -> bool {
     matches!(c, b' ' if flags & VIS_SP == 0)
         || matches!(c, b'\t' if flags & VIS_TAB == 0)
         || matches!(c, b'\n' if flags & VIS_NL == 0)
+}
+
+fn safe_control_passthrough(c: u8, flags: u32) -> bool {
+    flags & VIS_SAFE != 0 && matches!(c, b'\x08' | b'\x07' | b'\r')
+}
+
+fn flag_forces_escape(c: u8, flags: u32) -> bool {
+    matches!(c, b'"' if flags & VIS_DQ != 0)
+        || (flags & VIS_GLOB != 0 && matches!(c, b'*' | b'?' | b'[' | b'#'))
+        || (flags & VIS_SHELL != 0
+            && matches!(
+                c,
+                b'\''
+                    | b'`'
+                    | b'"'
+                    | b';'
+                    | b'&'
+                    | b'<'
+                    | b'>'
+                    | b'('
+                    | b')'
+                    | b'|'
+                    | b']'
+                    | b'\\'
+                    | b'$'
+                    | b'!'
+                    | b'^'
+                    | b'~'
+            ))
 }
 
 fn push_cstyle_escape(c: u8, nextc: Option<u8>, out: &mut Vec<u8>) -> bool {
@@ -162,7 +207,14 @@ pub fn encode_byte_with_next(c: u8, flags: u32, nextc: Option<u8>, out: &mut Vec
         out.push(b'\\');
         return;
     }
-    if (0x21..=0x7e).contains(&c) || whitespace_passthrough(c, flags) {
+    if flag_forces_escape(c, flags) && (0x20..=0x7e).contains(&c) {
+        push_octal(c, out);
+        return;
+    }
+    if (0x21..=0x7e).contains(&c)
+        || whitespace_passthrough(c, flags)
+        || safe_control_passthrough(c, flags)
+    {
         out.push(c);
         return;
     }
@@ -491,6 +543,24 @@ mod tests {
     }
 
     #[test]
+    fn range_flags_force_documented_printable_sets() {
+        assert_eq!(strvis_to_vec(b"\"", VIS_DQ), b"\\042".to_vec());
+        assert_eq!(
+            strvis_to_vec(b"*?[#", VIS_GLOB),
+            b"\\052\\077\\133\\043".to_vec()
+        );
+        assert_eq!(
+            strvis_to_vec(b"'`\";&<>()|]$!^~", VIS_SHELL),
+            b"\\047\\140\\042\\073\\046\\074\\076\\050\\051\\174\\135\\044\\041\\136\\176".to_vec()
+        );
+        assert_eq!(strvis_to_vec(b"\\", VIS_SHELL), b"\\\\".to_vec());
+        assert_eq!(
+            strvis_to_vec(b" \t\n*?['`", VIS_META),
+            b"\\040\\^I\\^J\\052\\077\\133\\047\\140".to_vec()
+        );
+    }
+
+    #[test]
     fn cstyle_mode_uses_named_escapes_for_encoded_bytes() {
         let flags = VIS_CSTYLE | VIS_WHITE;
         assert_eq!(
@@ -518,6 +588,10 @@ mod tests {
         assert_eq!(VIS_CSTYLE, 0x02);
         assert_eq!(VIS_SAFE, 0x20);
         assert_eq!(strvis_to_vec(b"\0", VIS_SAFE), b"\\^@".to_vec());
+        assert_eq!(
+            strvis_to_vec(b"\x07\x08\r", VIS_SAFE),
+            b"\x07\x08\r".to_vec()
+        );
         assert_eq!(strvis_to_vec(b"\0", VIS_CSTYLE), b"\\0".to_vec());
     }
 
@@ -1144,10 +1218,22 @@ mod unvis_tests {
 
     #[test]
     fn parse_vis_options_recognizes_implemented_flags() {
-        let s = b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP,VIS_WHITE";
+        let s = b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP,VIS_WHITE,VIS_SAFE,VIS_DQ,VIS_GLOB,VIS_SHELL,VIS_META";
         let flags = parse_vis_options(s);
-        assert_eq!(flags, VIS_OCTAL | VIS_TAB | VIS_NL | VIS_CSTYLE | VIS_SP);
+        assert_eq!(
+            flags,
+            VIS_OCTAL
+                | VIS_TAB
+                | VIS_NL
+                | VIS_CSTYLE
+                | VIS_SP
+                | VIS_SAFE
+                | VIS_DQ
+                | VIS_GLOB
+                | VIS_SHELL
+        );
         assert_eq!(flags & VIS_CSTYLE, 0x02);
+        assert_eq!(flags & VIS_META, VIS_META);
     }
 
     #[test]
@@ -1171,7 +1257,7 @@ mod unvis_tests {
         // NetBSD-specific tokens we accept but don't yet honor —
         // they must NOT contribute random bits that would break
         // the encoder.
-        let s = b"VIS_HTTPSTYLE,VIS_SAFE,VIS_NOSLASH,VIS_GLOB,VIS_OCTAL";
+        let s = b"VIS_HTTPSTYLE,VIS_NOSLASH,VIS_MIMESTYLE,VIS_NOLOCALE,VIS_OCTAL";
         let flags = parse_vis_options(s);
         assert_eq!(flags, VIS_OCTAL);
     }

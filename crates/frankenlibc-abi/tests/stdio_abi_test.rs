@@ -4187,6 +4187,10 @@ const ABI_VIS_TAB: c_int = 0x08;
 const ABI_VIS_NL: c_int = 0x10;
 const ABI_VIS_SAFE: c_int = 0x20;
 const ABI_VIS_WHITE: c_int = ABI_VIS_SP | ABI_VIS_TAB | ABI_VIS_NL;
+const ABI_VIS_GLOB: c_int = 0x1000;
+const ABI_VIS_SHELL: c_int = 0x2000;
+const ABI_VIS_META: c_int = ABI_VIS_WHITE | ABI_VIS_GLOB | ABI_VIS_SHELL;
+const ABI_VIS_DQ: c_int = 0x8000;
 
 unsafe fn tracked_bytes_without_nul(bytes: &[u8]) -> *mut c_char {
     let ptr = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<c_char>() };
@@ -4228,6 +4232,38 @@ fn strvis_whitespace_flags_force_default_escapes() {
     let mut buf = vis_buf::<32>();
     let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), ABI_VIS_WHITE) };
     assert_eq!(vis_string(&buf, n), b"\\040\\^I\\^J");
+}
+
+#[test]
+fn strvis_range_flags_force_documented_printable_sets() {
+    let src = c"\"*?[#'`$";
+    let mut buf = vis_buf::<96>();
+    let n = unsafe {
+        strvis(
+            buf.as_mut_ptr(),
+            src.as_ptr(),
+            ABI_VIS_DQ | ABI_VIS_GLOB | ABI_VIS_SHELL,
+        )
+    };
+    assert_eq!(
+        vis_string(&buf, n),
+        b"\\042\\052\\077\\133\\043\\047\\140\\044"
+    );
+}
+
+#[test]
+fn strvis_safe_leaves_documented_control_bytes_unescaped() {
+    let payload: &[u8] = b"\x07\x08\r\x01";
+    let mut buf = [0 as c_char; 32];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_SAFE,
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b"\x07\x08\r\\^A");
 }
 
 #[test]
@@ -5440,6 +5476,28 @@ fn strenvisx_honors_cstyle_and_newline_from_env() {
     assert_eq!(cerr, 0);
     let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
     assert_eq!(bytes, b"\\n".to_vec());
+}
+
+#[test]
+fn strenvisx_honors_meta_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(Some(c"VIS_META"));
+    let payload: &[u8] = b" \t\n*?[`";
+    let mut buf = [0 as c_char; 64];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"\\040\\^I\\^J\\052\\077\\133\\140".to_vec());
+    assert_eq!(ABI_VIS_META, ABI_VIS_WHITE | ABI_VIS_GLOB | ABI_VIS_SHELL);
 }
 
 #[test]
