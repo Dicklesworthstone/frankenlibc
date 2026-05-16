@@ -15,7 +15,7 @@
 //!
 //! Bead: bd-1oz.7
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::string::regex::{
@@ -32,6 +32,14 @@ const MAX_INPUT: usize = 1024;
 /// Maximum number of submatch slots.
 const MAX_MATCHES: usize = 16;
 
+const CFLAG_EXTENDED: u8 = 1;
+const CFLAG_ICASE: u8 = 2;
+const CFLAG_NEWLINE: u8 = 4;
+const CFLAG_NOSUB: u8 = 8;
+
+const EFLAG_NOTBOL: u8 = 1;
+const EFLAG_NOTEOL: u8 = 2;
+
 /// A structured fuzz input for the regex engine.
 #[derive(Debug, Arbitrary)]
 struct RegexFuzzInput {
@@ -45,6 +53,81 @@ struct RegexFuzzInput {
     eflags: u8,
     /// Operation selector.
     op: u8,
+}
+
+fn input_from_bytes(data: &[u8]) -> Option<RegexFuzzInput> {
+    if let Some(input) = directed_input(data) {
+        return Some(input);
+    }
+
+    let mut unstructured = Unstructured::new(data);
+    RegexFuzzInput::arbitrary(&mut unstructured).ok()
+}
+
+fn directed_input(data: &[u8]) -> Option<RegexFuzzInput> {
+    let scenario = data.strip_prefix(b"regex:")?;
+    let scenario = std::str::from_utf8(scenario).ok()?;
+    let scenario = scenario.trim_matches(|c: char| c.is_ascii_whitespace());
+
+    let input = match scenario {
+        "empty-pattern" => directed_case(b"", b"empty input still matches", CFLAG_EXTENDED, 0, 0),
+        "anchors" => directed_case(b"^start.*end$", b"start middle end", CFLAG_EXTENDED, 0, 0),
+        "bracket-classes" => directed_case(
+            b"^[[:alpha:]_][[:alnum:]_]*$",
+            b"name_123",
+            CFLAG_EXTENDED,
+            0,
+            0,
+        ),
+        "invalid-bracket" => directed_case(b"[unterminated", b"unterminated", CFLAG_EXTENDED, 0, 1),
+        "invalid-range" => directed_case(b"[z-a]", b"m", CFLAG_EXTENDED, 0, 1),
+        "escaped-literals" => directed_case(
+            b"^\\.\\*\\[literal\\]$",
+            b".*[literal]",
+            CFLAG_EXTENDED,
+            0,
+            0,
+        ),
+        "ere-alt-groups" => directed_case(b"^(foo|bar|baz)+$", b"foobarbaz", CFLAG_EXTENDED, 0, 0),
+        "bounded-repeats" => directed_case(
+            b"^[0-9]{2,4}([:-][0-9]{2})?$",
+            b"1234-56",
+            CFLAG_EXTENDED,
+            0,
+            0,
+        ),
+        "nosub" => directed_case(
+            b"([a-z]+)-([0-9]+)",
+            b"abc-123",
+            CFLAG_EXTENDED | CFLAG_NOSUB,
+            0,
+            0,
+        ),
+        "notbol-noteol" => directed_case(
+            b"^abc$",
+            b"abc\n",
+            CFLAG_EXTENDED | CFLAG_NEWLINE,
+            EFLAG_NOTBOL | EFLAG_NOTEOL,
+            0,
+        ),
+        "icase-literal" => directed_case(b"hello", b"HELLO", CFLAG_ICASE, 0, 0),
+        "catastrophic-bounded" => {
+            directed_case(b"^(a|aa){1,12}b$", b"aaaaaaaaaaaab", CFLAG_EXTENDED, 0, 0)
+        }
+        _ => return None,
+    };
+
+    Some(input)
+}
+
+fn directed_case(pattern: &[u8], input: &[u8], cflags: u8, eflags: u8, op: u8) -> RegexFuzzInput {
+    RegexFuzzInput {
+        pattern: pattern.to_vec(),
+        input: input.to_vec(),
+        cflags,
+        eflags,
+        op,
+    }
 }
 
 /// Build cflags from fuzz input.
@@ -77,7 +160,11 @@ fn make_eflags(raw: u8) -> i32 {
     flags
 }
 
-fuzz_target!(|input: RegexFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    let Some(input) = input_from_bytes(data) else {
+        return;
+    };
+
     if input.pattern.len() > MAX_PATTERN || input.input.len() > MAX_INPUT {
         return;
     }
