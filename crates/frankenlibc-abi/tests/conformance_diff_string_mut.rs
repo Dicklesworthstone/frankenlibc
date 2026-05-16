@@ -25,6 +25,12 @@ unsafe extern "C" {
     fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char;
     /// Host glibc `mempcpy` (GNU) — like memcpy but returns dst+n.
     fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
+    /// Host glibc internal `__stpcpy` alias.
+    fn __stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char;
+    /// Host glibc internal `__stpncpy` alias.
+    fn __stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char;
+    /// Host glibc internal `__mempcpy` alias.
+    fn __mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
     /// Host glibc/POSIX `memccpy` — copy until byte match or n bytes.
     fn memccpy(dst: *mut c_void, src: *const c_void, c: c_int, n: usize) -> *mut c_void;
     /// Host glibc C23 `strfromd` — double → string with format.
@@ -873,6 +879,53 @@ fn diff_stpcpy_cases() {
 }
 
 #[test]
+fn diff_internal_stpcpy_alias_cases() {
+    let mut divs = Vec::new();
+    for src in &[b"" as &[u8], b"a", b"hello", b"\xff\xfe\xfd", b"abc\0xyz"] {
+        let sb = cstr(src);
+        let mut dst_fl = vec![0xCDu8; 64];
+        let mut dst_lc = vec![0xCDu8; 64];
+        let fl_end = unsafe {
+            fl::__stpcpy(
+                dst_fl.as_mut_ptr() as *mut c_char,
+                sb.as_ptr() as *const c_char,
+            )
+        };
+        let lc_end = unsafe {
+            __stpcpy(
+                dst_lc.as_mut_ptr() as *mut c_char,
+                sb.as_ptr() as *const c_char,
+            )
+        };
+        let fl_off = (fl_end as usize).wrapping_sub(dst_fl.as_ptr() as usize);
+        let lc_off = (lc_end as usize).wrapping_sub(dst_lc.as_ptr() as usize);
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "__stpcpy",
+                case: format!("{:?}", src),
+                field: "return_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+        if dst_fl != dst_lc {
+            divs.push(Divergence {
+                function: "__stpcpy",
+                case: format!("{:?}", src),
+                field: "dst_buffer",
+                frankenlibc: format!("{:?}", &dst_fl[..16]),
+                glibc: format!("{:?}", &dst_lc[..16]),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__stpcpy divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
 fn diff_stpncpy_cases() {
     let mut divs = Vec::new();
     // stpncpy with n shorter than src: no NUL written, end pointer
@@ -922,6 +975,57 @@ fn diff_stpncpy_cases() {
     assert!(
         divs.is_empty(),
         "stpncpy divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_internal_stpncpy_alias_cases() {
+    let mut divs = Vec::new();
+    for src in &[b"" as &[u8], b"a", b"hello", b"hello world"] {
+        for &n in &[0usize, 1, 3, 5, 8, 16] {
+            let sb = cstr(src);
+            let mut dst_fl = vec![0xCDu8; 32];
+            let mut dst_lc = vec![0xCDu8; 32];
+            let fl_end = unsafe {
+                fl::__stpncpy(
+                    dst_fl.as_mut_ptr() as *mut c_char,
+                    sb.as_ptr() as *const c_char,
+                    n,
+                )
+            };
+            let lc_end = unsafe {
+                __stpncpy(
+                    dst_lc.as_mut_ptr() as *mut c_char,
+                    sb.as_ptr() as *const c_char,
+                    n,
+                )
+            };
+            let fl_off = (fl_end as usize).wrapping_sub(dst_fl.as_ptr() as usize);
+            let lc_off = (lc_end as usize).wrapping_sub(dst_lc.as_ptr() as usize);
+            if fl_off != lc_off {
+                divs.push(Divergence {
+                    function: "__stpncpy",
+                    case: format!("(src={:?}, n={})", src, n),
+                    field: "return_offset",
+                    frankenlibc: format!("{fl_off}"),
+                    glibc: format!("{lc_off}"),
+                });
+            }
+            if dst_fl != dst_lc {
+                divs.push(Divergence {
+                    function: "__stpncpy",
+                    case: format!("(src={:?}, n={})", src, n),
+                    field: "dst_buffer",
+                    frankenlibc: format!("{:?}", &dst_fl[..n.min(16)]),
+                    glibc: format!("{:?}", &dst_lc[..n.min(16)]),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__stpncpy divergences:\n{}",
         render_divs(&divs)
     );
 }
@@ -984,6 +1088,67 @@ fn diff_mempcpy_cases() {
     assert!(
         divs.is_empty(),
         "mempcpy divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_internal_mempcpy_alias_cases() {
+    let mut divs = Vec::new();
+    let bufs: &[&[u8]] = &[
+        b"",
+        b"a",
+        b"abc",
+        b"hello world",
+        b"\x00\x01\x02\x03\xff\xfe\xfd\xfc",
+        b"\x00\x00\x00\x00\x00\x00\x00\x00",
+    ];
+    for src in bufs {
+        for &n in &[0usize, 1, 4, 8, 32, 64] {
+            if n > src.len() && n != 0 {
+                continue;
+            }
+            let mut dst_fl = vec![0xCDu8; 64];
+            let mut dst_lc = vec![0xCDu8; 64];
+            let fl_end = unsafe {
+                fl::__mempcpy(
+                    dst_fl.as_mut_ptr() as *mut c_void,
+                    src.as_ptr() as *const c_void,
+                    n,
+                )
+            };
+            let lc_end = unsafe {
+                __mempcpy(
+                    dst_lc.as_mut_ptr() as *mut c_void,
+                    src.as_ptr() as *const c_void,
+                    n,
+                )
+            };
+            let fl_off = (fl_end as usize).wrapping_sub(dst_fl.as_ptr() as usize);
+            let lc_off = (lc_end as usize).wrapping_sub(dst_lc.as_ptr() as usize);
+            if fl_off != lc_off {
+                divs.push(Divergence {
+                    function: "__mempcpy",
+                    case: format!("(src.len={}, n={})", src.len(), n),
+                    field: "return_offset",
+                    frankenlibc: format!("{fl_off}"),
+                    glibc: format!("{lc_off}"),
+                });
+            }
+            if dst_fl != dst_lc {
+                divs.push(Divergence {
+                    function: "__mempcpy",
+                    case: format!("(src.len={}, n={})", src.len(), n),
+                    field: "dst_buffer",
+                    frankenlibc: format!("{:?}", &dst_fl[..n.min(16)]),
+                    glibc: format!("{:?}", &dst_lc[..n.min(16)]),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__mempcpy divergences:\n{}",
         render_divs(&divs)
     );
 }
@@ -1704,6 +1869,6 @@ fn diff_memfrob_cases() {
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":32,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":35,\"divergences\":0}}",
     );
 }
