@@ -9,8 +9,8 @@
 //!
 //! Bead: bd-bb2vb
 
-use arbitrary::Arbitrary;
-use libc::c_void;
+use arbitrary::{Arbitrary, Unstructured};
+use libc::{c_char, c_void};
 use libfuzzer_sys::fuzz_target;
 use std::ffi::CString;
 use std::mem::MaybeUninit;
@@ -28,18 +28,55 @@ const WRDE_REUSE: i32 = 1 << 3;
 const WRDE_SHOWERR: i32 = 1 << 4;
 const WRDE_UNDEF: i32 = 1 << 5;
 
+const WORDS_PREFIX: &[u8] = b"words:";
+const NOCMD_PREFIX: &[u8] = b"nocmd:";
+
 const WRDE_NOSPACE: i32 = 1;
 const WRDE_BADCHAR: i32 = 2;
 const WRDE_BADVAL: i32 = 3;
 const WRDE_CMDSUB: i32 = 4;
 const WRDE_SYNTAX: i32 = 5;
 
-// Mirror glibc layout: wordexp_t starts with we_wordc (size_t), we_wordv
-// (char**), we_offs (size_t). 24 bytes is enough to hold the prefix on
-// every supported platform; we never read beyond what wordexp wrote.
-const WORDEXP_T_SIZE: usize = 64;
+// Mirror the ABI-side wordexp_t layout so the opaque pointer has the
+// alignment required by usize and char** fields.
+#[repr(C)]
+struct FuzzWordexpT {
+    we_wordc: usize,
+    we_wordv: *mut *mut c_char,
+    we_offs: usize,
+}
 
-fuzz_target!(|input: WordexpFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    if let Some(input) = directed_input(data) {
+        fuzz_wordexp(input);
+        return;
+    }
+
+    let mut raw = Unstructured::new(data);
+    let Ok(input) = WordexpFuzzInput::arbitrary(&mut raw) else {
+        return;
+    };
+    fuzz_wordexp(input);
+});
+
+fn directed_input(data: &[u8]) -> Option<WordexpFuzzInput> {
+    let (payload, flags) = if let Some(payload) = data.strip_prefix(WORDS_PREFIX) {
+        (payload, 0)
+    } else {
+        let payload = data.strip_prefix(NOCMD_PREFIX)?;
+        (payload, WRDE_NOCMD as u8)
+    };
+    Some(WordexpFuzzInput {
+        words: strip_trailing_newline(payload).to_vec(),
+        flags,
+    })
+}
+
+fn strip_trailing_newline(payload: &[u8]) -> &[u8] {
+    payload.strip_suffix(b"\n").unwrap_or(payload)
+}
+
+fn fuzz_wordexp(input: WordexpFuzzInput) {
     // Cap input — wordexp is O(n) on the input but pathological quote
     // sequences can stress the parser. 4 KiB exercises every state.
     if input.words.len() > 4096 {
@@ -61,7 +98,7 @@ fuzz_target!(|input: WordexpFuzzInput| {
     // garbage on the host side. Mask them off.
     let flags = flags & !(WRDE_REUSE | WRDE_APPEND);
 
-    let mut pwordexp = MaybeUninit::<[u8; WORDEXP_T_SIZE]>::zeroed();
+    let mut pwordexp = MaybeUninit::<FuzzWordexpT>::zeroed();
     let pwordexp_ptr = pwordexp.as_mut_ptr() as *mut c_void;
 
     let rc = unsafe { frankenlibc_abi::unistd_abi::wordexp(words_c.as_ptr(), pwordexp_ptr, flags) };
@@ -89,7 +126,7 @@ fuzz_target!(|input: WordexpFuzzInput| {
     }
 
     // Determinism on a fresh pwordexp_t.
-    let mut pwordexp2 = MaybeUninit::<[u8; WORDEXP_T_SIZE]>::zeroed();
+    let mut pwordexp2 = MaybeUninit::<FuzzWordexpT>::zeroed();
     let pwordexp2_ptr = pwordexp2.as_mut_ptr() as *mut c_void;
     let rc2 =
         unsafe { frankenlibc_abi::unistd_abi::wordexp(words_c.as_ptr(), pwordexp2_ptr, flags) };
@@ -108,7 +145,7 @@ fuzz_target!(|input: WordexpFuzzInput| {
             frankenlibc_abi::unistd_abi::wordfree(pwordexp2_ptr);
         }
     }
-});
+}
 
 fn contains_command_substitution(bytes: &[u8]) -> bool {
     let mut i = 0;
