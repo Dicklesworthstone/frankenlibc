@@ -82,6 +82,55 @@ fn every_cli_contract_required_flags_array_has_no_duplicates() -> TestResult {
 }
 
 #[test]
+fn every_cli_contract_optional_flags_array_has_no_duplicates() -> TestResult {
+    let root = workspace_root()?;
+    let conformance_dir = root.join("tests").join("conformance");
+    let entries = std::fs::read_dir(&conformance_dir)
+        .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
+
+    let mut violations: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("_cli_contract.v1.json") {
+            continue;
+        }
+        let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
+        let manifest: Value =
+            serde_json::from_str(&body).map_err(|e| format!("parse {name}: {e}"))?;
+        let Some(Value::Array(arr)) = manifest.get("optional_flags") else {
+            continue;
+        };
+        let dupes = duplicates_in_string_array(arr);
+        if !dupes.is_empty() {
+            violations.push(format!(
+                "{name}: optional_flags has {} duplicate entrie(s): {dupes:?}",
+                dupes.len()
+            ));
+        }
+        checked += 1;
+    }
+
+    assert!(
+        checked >= 30,
+        "expected at least 30 cli_contract manifests; found {checked}"
+    );
+
+    if !violations.is_empty() {
+        return Err(format!(
+            "{} optional_flags duplicate violation(s):\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn duplicate_detector_handles_canonical_forms() {
     use serde_json::json;
     assert!(duplicates_in_string_array(&[json!("--a"), json!("--b")]).is_empty());
