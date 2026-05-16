@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use frankenlibc_harness::decision_trace_minimizer::{
-    MINIMIZED_TRACE_REQUIRED_FIELDS, parse_minimized_trace_jsonl,
+    MINIMIZED_TRACE_KIND, MINIMIZED_TRACE_REQUIRED_FIELDS, parse_minimized_trace_jsonl,
 };
 use serde_json::Value;
 
@@ -141,6 +141,19 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
 }
 
 #[test]
+fn manifest_jsonl_output_contract_pins_record_kind_marker() -> TestResult {
+    let root = workspace_root()?;
+    let m = load_json(&manifest_path(&root))?;
+    let contract = m
+        .get("jsonl_output_contract")
+        .ok_or_else(|| "missing jsonl_output_contract".to_string())?;
+    require(
+        json_string(contract, "record_kind_marker")? == MINIMIZED_TRACE_KIND,
+        "jsonl_output_contract.record_kind_marker must match MINIMIZED_TRACE_KIND",
+    )
+}
+
+#[test]
 fn harness_source_registers_decision_trace_minimize_subcommand() -> TestResult {
     let root = workspace_root()?;
     let src = std::fs::read_to_string(root.join("crates/frankenlibc-harness/src/bin/harness.rs"))
@@ -219,6 +232,7 @@ fn cli_emits_round_trippable_minimized_trace_for_divergent_input() -> TestResult
     let parsed: Value =
         serde_json::from_str(output_line).map_err(|e| format!("parse output: {e}"))?;
     for (index, (field, message)) in [
+        ("kind", "output record missing kind"),
         (
             "expected_failure_signature",
             "output record missing expected_failure_signature",
@@ -255,6 +269,10 @@ fn cli_emits_round_trippable_minimized_trace_for_divergent_input() -> TestResult
     // Round-trip back through the lib parser.
     let summary = parse_minimized_trace_jsonl(output_line)
         .map_err(|e| format!("parse_minimized_trace_jsonl: {e}"))?;
+    require(
+        summary.kind == MINIMIZED_TRACE_KIND,
+        "kind must be minimized_trace_summary",
+    )?;
     require(
         summary.has_divergence,
         "divergent input must produce has_divergence=true",

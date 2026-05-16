@@ -271,6 +271,7 @@ pub fn minimize(rows: &[TraceRow]) -> Result<MinimizedTrace, MinimizerError> {
 /// [`MinimizedTrace`] (bd-yhvim). Pinned by the manifest
 /// `serialization_contract` block.
 pub const MINIMIZED_TRACE_REQUIRED_FIELDS: &[&str] = &[
+    "kind",
     "expected_failure_signature",
     "replay_command",
     "source_commit",
@@ -281,12 +282,15 @@ pub const MINIMIZED_TRACE_REQUIRED_FIELDS: &[&str] = &[
     "minimized_rows_len",
 ];
 
+pub const MINIMIZED_TRACE_KIND: &str = "minimized_trace_summary";
+
 /// Compact summary of a [`MinimizedTrace`] suitable for round-trip
 /// through JSONL. Carries every field except the full
 /// `minimized_rows` (which is captured as `minimized_rows_len` for
 /// compactness; full rows are persisted separately when needed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinimizedTraceSummary {
+    pub kind: String,
     pub expected_failure_signature: String,
     pub replay_command: String,
     pub source_commit: String,
@@ -301,6 +305,7 @@ impl MinimizedTraceSummary {
     /// Construct a summary from a [`MinimizedTrace`].
     pub fn from_trace(t: &MinimizedTrace) -> Self {
         Self {
+            kind: MINIMIZED_TRACE_KIND.to_string(),
             expected_failure_signature: t.expected_failure_signature.clone(),
             replay_command: t.replay_command.clone(),
             source_commit: t.source_commit.clone(),
@@ -318,6 +323,7 @@ pub enum MinimizerSerError {
     InvalidJson(String),
     MissingField(&'static str),
     WrongFieldType(&'static str),
+    UnexpectedKind(String),
 }
 
 impl core::fmt::Display for MinimizerSerError {
@@ -326,6 +332,9 @@ impl core::fmt::Display for MinimizerSerError {
             MinimizerSerError::InvalidJson(e) => write!(f, "invalid JSON: {e}"),
             MinimizerSerError::MissingField(name) => write!(f, "missing field {name}"),
             MinimizerSerError::WrongFieldType(name) => write!(f, "wrong field type for {name}"),
+            MinimizerSerError::UnexpectedKind(kind) => {
+                write!(f, "unexpected minimized trace kind {kind:?}")
+            }
         }
     }
 }
@@ -341,6 +350,7 @@ pub fn serialize_minimized_trace_jsonl(trace: &MinimizedTrace) -> String {
 
 pub fn serialize_summary_jsonl(s: &MinimizedTraceSummary) -> String {
     let v = serde_json::json!({
+        "kind": s.kind,
         "expected_failure_signature": s.expected_failure_signature,
         "replay_command": s.replay_command,
         "source_commit": s.source_commit,
@@ -392,7 +402,12 @@ pub fn parse_minimized_trace_jsonl(line: &str) -> Result<MinimizedTraceSummary, 
             })
             .collect()
     }
+    let kind = s(&v, "kind")?;
+    if kind != MINIMIZED_TRACE_KIND {
+        return Err(MinimizerSerError::UnexpectedKind(kind));
+    }
     Ok(MinimizedTraceSummary {
+        kind,
         expected_failure_signature: s(&v, "expected_failure_signature")?,
         replay_command: s(&v, "replay_command")?,
         source_commit: s(&v, "source_commit")?,
@@ -735,6 +750,7 @@ mod tests {
         let m = minimize(&rows).unwrap();
         let line = serialize_minimized_trace_jsonl(&m);
         let summary = parse_minimized_trace_jsonl(&line).unwrap();
+        assert_eq!(summary.kind, MINIMIZED_TRACE_KIND);
         assert_eq!(
             summary.expected_failure_signature,
             m.expected_failure_signature
@@ -750,7 +766,7 @@ mod tests {
 
     #[test]
     fn jsonl_parser_rejects_missing_required_field() {
-        let bad = r#"{"replay_command":"x","source_commit":"y"}"#;
+        let bad = r#"{"kind":"minimized_trace_summary","replay_command":"x","source_commit":"y"}"#;
         match parse_minimized_trace_jsonl(bad) {
             Err(MinimizerSerError::MissingField("expected_failure_signature")) => {}
             other => panic!("expected MissingField; got {other:?}"),
@@ -759,10 +775,19 @@ mod tests {
 
     #[test]
     fn jsonl_parser_rejects_wrong_field_type() {
-        let bad = r#"{"expected_failure_signature":"sig","replay_command":"x","source_commit":"y","dropped_row_count":"NOT_A_NUMBER","dropped_row_rationale":[],"original_artifact_refs":[],"has_divergence":false,"minimized_rows_len":0}"#;
+        let bad = r#"{"kind":"minimized_trace_summary","expected_failure_signature":"sig","replay_command":"x","source_commit":"y","dropped_row_count":"NOT_A_NUMBER","dropped_row_rationale":[],"original_artifact_refs":[],"has_divergence":false,"minimized_rows_len":0}"#;
         match parse_minimized_trace_jsonl(bad) {
             Err(MinimizerSerError::WrongFieldType("dropped_row_count")) => {}
             other => panic!("expected WrongFieldType; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jsonl_parser_rejects_wrong_kind() {
+        let bad = r#"{"kind":"wrong","expected_failure_signature":"sig","replay_command":"x","source_commit":"y","dropped_row_count":0,"dropped_row_rationale":[],"original_artifact_refs":[],"has_divergence":false,"minimized_rows_len":0}"#;
+        match parse_minimized_trace_jsonl(bad) {
+            Err(MinimizerSerError::UnexpectedKind(kind)) if kind == "wrong" => {}
+            other => panic!("expected UnexpectedKind; got {other:?}"),
         }
     }
 
@@ -783,6 +808,7 @@ mod tests {
         let m = minimize(&rows).unwrap();
         let line = serialize_minimized_trace_jsonl(&m);
         let summary = parse_minimized_trace_jsonl(&line).unwrap();
+        assert_eq!(summary.kind, MINIMIZED_TRACE_KIND);
         assert_eq!(summary.expected_failure_signature, "");
         assert!(!summary.has_divergence);
     }

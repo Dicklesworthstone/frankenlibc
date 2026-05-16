@@ -31,6 +31,7 @@
   ],
   "jsonl_output_contract": {
     "record_count": 1,
+    "record_kind_marker": "minimized_trace_summary",
     "format": "single MinimizedTrace JSONL record",
     "required_fields_const": "frankenlibc_harness::decision_trace_minimizer::MINIMIZED_TRACE_REQUIRED_FIELDS",
     "round_trip_parser": "frankenlibc_harness::decision_trace_minimizer::parse_minimized_trace_jsonl"
