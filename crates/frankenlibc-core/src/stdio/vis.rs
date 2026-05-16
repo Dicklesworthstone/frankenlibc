@@ -101,7 +101,7 @@ fn trim_ascii(s: &[u8]) -> &[u8] {
         .rposition(|&b| !b.is_ascii_whitespace())
         .map(|i| i + 1)
         .unwrap_or(start);
-    &s[start..end]
+    s.get(start..end).unwrap_or_default()
 }
 
 fn is_octal_digit(c: u8) -> bool {
@@ -295,6 +295,10 @@ pub fn decode_one(input: &[u8]) -> DecodeStep {
             byte: 0x08,
             consumed: 2,
         },
+        b's' => DecodeStep::Byte {
+            byte: b' ',
+            consumed: 2,
+        },
         b'v' => DecodeStep::Byte {
             byte: 0x0b,
             consumed: 2,
@@ -307,7 +311,25 @@ pub fn decode_one(input: &[u8]) -> DecodeStep {
             byte: 0x0c,
             consumed: 2,
         },
-        b'0'..=b'7' => {
+        b'0' => {
+            let (Some(&d2), Some(&d3)) = (input.get(2), input.get(3)) else {
+                return DecodeStep::Byte {
+                    byte: 0,
+                    consumed: 2,
+                };
+            };
+            if !d2.is_ascii_digit() || d2 > b'7' || !d3.is_ascii_digit() || d3 > b'7' {
+                return DecodeStep::Byte {
+                    byte: 0,
+                    consumed: 2,
+                };
+            }
+            DecodeStep::Byte {
+                byte: ((d2 - b'0') << 3) | (d3 - b'0'),
+                consumed: 4,
+            }
+        }
+        b'1'..=b'7' => {
             // Octal triple `\NNN`. Need two more octal digits.
             let d1 = second - b'0';
             let Some(&d2) = input.get(2) else {
@@ -346,7 +368,7 @@ pub fn decode_one(input: &[u8]) -> DecodeStep {
             if input.get(2) != Some(&b'-') {
                 return DecodeStep::Invalid;
             }
-            let rest = &input[3..];
+            let rest = input.get(3..).unwrap_or_default();
             match decode_one(rest) {
                 DecodeStep::Byte { byte, consumed } => DecodeStep::Byte {
                     byte: byte | 0x80,
@@ -370,7 +392,7 @@ pub fn strunvis_to_vec(input: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(input.len());
     let mut i = 0usize;
     while i < input.len() {
-        match decode_one(&input[i..]) {
+        match decode_one(input.get(i..).unwrap_or_default()) {
             DecodeStep::Byte { byte, consumed } => {
                 out.push(byte);
                 i += consumed;
@@ -549,13 +571,21 @@ mod tests {
 
     #[test]
     fn decode_short_c_escapes() {
+        assert_eq!(dec(b"\\0"), Some(b"\0".to_vec()));
         assert_eq!(dec(b"\\n"), Some(b"\n".to_vec()));
         assert_eq!(dec(b"\\t"), Some(b"\t".to_vec()));
         assert_eq!(dec(b"\\r"), Some(b"\r".to_vec()));
         assert_eq!(dec(b"\\b"), Some(b"\x08".to_vec()));
+        assert_eq!(dec(b"\\s"), Some(b" ".to_vec()));
         assert_eq!(dec(b"\\v"), Some(b"\x0b".to_vec()));
         assert_eq!(dec(b"\\a"), Some(b"\x07".to_vec()));
         assert_eq!(dec(b"\\f"), Some(b"\x0c".to_vec()));
+    }
+
+    #[test]
+    fn decode_short_nul_before_non_octal_repushes_tail() {
+        assert_eq!(dec(b"\\0\\a"), Some(b"\0\x07".to_vec()));
+        assert_eq!(dec(b"\\0z"), Some(b"\0z".to_vec()));
     }
 
     #[test]
@@ -646,10 +676,11 @@ enum UnvisState {
     Initial,
     AfterBackslash,
     AfterCaret,
-    AfterMeta1, // saw "\M"; expecting "-"
-    AfterMeta2, // saw "\M-"; next byte is the encoded inner char
-    Octal2,     // saw "\D"; expecting two more digits
-    Octal3,     // saw "\DD"; expecting one more digit
+    AfterMeta1,       // saw "\M"; expecting "-"
+    AfterMeta2,       // saw "\M-"; next byte is the encoded inner char
+    ShortNulOrOctal2, // saw "\0"; may be short NUL or an octal triple
+    Octal2,           // saw "\D"; expecting two more digits
+    Octal3,           // saw "\DD"; expecting one more digit
 }
 
 impl UnvisDecoder {
@@ -712,6 +743,13 @@ impl UnvisDecoder {
                     self.pending_meta = false;
                     UnvisOutcome::Valid(out)
                 }
+                b's' => {
+                    self.state = UnvisState::Initial;
+                    let v = b' ';
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
                 b'v' => {
                     self.state = UnvisState::Initial;
                     let v = 0x0bu8;
@@ -741,7 +779,12 @@ impl UnvisDecoder {
                     self.state = UnvisState::AfterMeta1;
                     UnvisOutcome::NoChar
                 }
-                b'0'..=b'7' => {
+                b'0' => {
+                    self.octal_value = 0;
+                    self.state = UnvisState::ShortNulOrOctal2;
+                    UnvisOutcome::NoChar
+                }
+                b'1'..=b'7' => {
                     self.octal_value = c - b'0';
                     self.state = UnvisState::Octal2;
                     UnvisOutcome::NoChar
@@ -778,6 +821,19 @@ impl UnvisDecoder {
                 self.pending_meta = true;
                 self.feed(c)
             }
+            UnvisState::ShortNulOrOctal2 => {
+                if (b'0'..=b'7').contains(&c) {
+                    self.octal_value = c - b'0';
+                    self.state = UnvisState::Octal3;
+                    UnvisOutcome::NoChar
+                } else {
+                    self.octal_value = 0;
+                    self.state = UnvisState::Initial;
+                    let out = if self.pending_meta { 0x80 } else { 0 };
+                    self.pending_meta = false;
+                    UnvisOutcome::ValidPush(out)
+                }
+            }
             UnvisState::Octal2 => {
                 if (b'0'..=b'7').contains(&c) {
                     self.octal_value = (self.octal_value << 3) | (c - b'0');
@@ -805,8 +861,14 @@ impl UnvisDecoder {
     }
 
     /// Signal end-of-input. Returns `End` if there's no pending
-    /// state, or `Bad` if a partial sequence was open.
+    /// state, `Valid(0)` if a short C-style NUL is pending, or `Bad`
+    /// if a partial sequence was open.
     pub fn feed_end(&mut self) -> UnvisOutcome {
+        if self.state == UnvisState::ShortNulOrOctal2 {
+            let out = if self.pending_meta { 0x80 } else { 0 };
+            self.reset();
+            return UnvisOutcome::Valid(out);
+        }
         let was_initial = self.state == UnvisState::Initial && !self.pending_meta;
         self.reset();
         if was_initial {
@@ -832,8 +894,9 @@ impl UnvisDecoder {
             UnvisState::AfterCaret => 2,
             UnvisState::AfterMeta1 => 3,
             UnvisState::AfterMeta2 => 4,
-            UnvisState::Octal2 => 5,
-            UnvisState::Octal3 => 6,
+            UnvisState::ShortNulOrOctal2 => 5,
+            UnvisState::Octal2 => 6,
+            UnvisState::Octal3 => 7,
         };
         let mut packed = tag as u32;
         if self.pending_meta {
@@ -853,8 +916,9 @@ impl UnvisDecoder {
             2 => UnvisState::AfterCaret,
             3 => UnvisState::AfterMeta1,
             4 => UnvisState::AfterMeta2,
-            5 => UnvisState::Octal2,
-            6 => UnvisState::Octal3,
+            5 => UnvisState::ShortNulOrOctal2,
+            6 => UnvisState::Octal2,
+            7 => UnvisState::Octal3,
             _ => UnvisState::Initial,
         };
         let pending_meta = (packed >> 8) & 1 != 0;
@@ -876,7 +940,7 @@ mod unvis_tests {
         let mut out = Vec::new();
         let mut i = 0usize;
         while i < input.len() {
-            match dec.feed(input[i]) {
+            match dec.feed(input.get(i).copied().unwrap_or_default()) {
                 UnvisOutcome::Valid(b) => {
                     out.push(b);
                     i += 1;
@@ -893,6 +957,10 @@ mod unvis_tests {
             }
         }
         match dec.feed_end() {
+            UnvisOutcome::Valid(b) => {
+                out.push(b);
+                Ok(out)
+            }
             UnvisOutcome::End => Ok(out),
             _ => Err(()),
         }
@@ -930,9 +998,15 @@ mod unvis_tests {
     #[test]
     fn short_c_escapes() {
         assert_eq!(
-            drain(b"\\n\\t\\r\\b\\v\\a\\f"),
-            Ok(vec![b'\n', b'\t', b'\r', 0x08, 0x0b, 0x07, 0x0c])
+            drain(b"\\0\\n\\t\\r\\b\\s\\v\\a\\f"),
+            Ok(vec![0, b'\n', b'\t', b'\r', 0x08, b' ', 0x0b, 0x07, 0x0c])
         );
+    }
+
+    #[test]
+    fn short_nul_repushes_non_octal_tail() {
+        assert_eq!(drain(b"\\0\\a"), Ok(b"\0\x07".to_vec()));
+        assert_eq!(drain(b"\\0z"), Ok(b"\0z".to_vec()));
     }
 
     #[test]
@@ -987,9 +1061,11 @@ mod unvis_tests {
             b"\\^",      // AfterCaret
             b"\\M",      // AfterMeta1
             b"\\M-",     // AfterMeta2
+            b"\\0",      // ShortNulOrOctal2
             b"\\1",      // Octal2
             b"\\12",     // Octal3
             b"\\M-\\",   // pending_meta + AfterBackslash
+            b"\\M-\\0",  // pending_meta + ShortNulOrOctal2
             b"\\M-\\1",  // pending_meta + Octal2
             b"\\M-\\12", // pending_meta + Octal3
         ];
@@ -1012,9 +1088,11 @@ mod unvis_tests {
                 b"\\^" => b'A',      // → Valid(0x01)
                 b"\\M" => b'-',      // → NoChar (AfterMeta2)
                 b"\\M-" => b'a',     // → Valid(0xe1)
+                b"\\0" => b'9',      // → ValidPush(0)
                 b"\\1" => b'2',      // → NoChar (Octal3)
                 b"\\12" => b'3',     // → Valid(0o123)
                 b"\\M-\\" => b'n',   // → Valid(0x8a)
+                b"\\M-\\0" => b'9',  // → ValidPush(0x80)
                 b"\\M-\\1" => b'2',  // → NoChar
                 b"\\M-\\12" => b'3', // → Valid(0o123 | 0x80)
                 _ => b'X',
@@ -1037,7 +1115,7 @@ mod unvis_tests {
             let mut i = 0usize;
             while i < enc.len() {
                 let mut dec = UnvisDecoder::from_saved_state(packed);
-                let outcome = dec.feed(enc[i]);
+                let outcome = dec.feed(enc.get(i).copied().unwrap_or_default());
                 packed = dec.save_state();
                 match outcome {
                     UnvisOutcome::Valid(v) => {
@@ -1049,13 +1127,17 @@ mod unvis_tests {
                         // Don't advance i — same byte re-fed.
                     }
                     UnvisOutcome::NoChar => i += 1,
-                    UnvisOutcome::Bad => panic!("bad on byte {b:#x}"),
+                    UnvisOutcome::Bad => {
+                        assert_ne!(outcome, UnvisOutcome::Bad, "bad on byte {b:#x}");
+                    }
                     UnvisOutcome::End => i += 1,
                 }
             }
             // Flush.
             let mut dec = UnvisDecoder::from_saved_state(packed);
-            let _ = dec.feed_end();
+            if let UnvisOutcome::Valid(v) = dec.feed_end() {
+                out.push(v);
+            }
             assert_eq!(out, vec![b], "streamed round-trip failed for byte {b:#x}");
         }
     }

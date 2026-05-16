@@ -6,10 +6,14 @@
 //! machine through the ABI. This target exercises the pure core
 //! encoder, whole-buffer decoder, option parser, and streaming
 //! decoder with state save/restore after every byte.
+//!
+//! Directed corpus seeds can use `vis:<scenario>` for readable
+//! high-value coverage while unprefixed inputs retain the original
+//! byte-split structure-aware mode.
 
 use frankenlibc_core::stdio::vis::{
-    decode_one, parse_vis_options, strunvis_to_vec, strvis_to_vec, strvis_to_vec_with_extra,
     DecodeStep, UnvisDecoder, UnvisOutcome, VIS_CSTYLE, VIS_NL, VIS_OCTAL, VIS_SP, VIS_TAB,
+    decode_one, parse_vis_options, strunvis_to_vec, strvis_to_vec, strvis_to_vec_with_extra,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -18,6 +22,7 @@ const MAX_PAYLOAD: usize = 160;
 const MAX_EXTRA: usize = 48;
 const MAX_ENCODED: usize = 240;
 const KNOWN_FLAGS: u32 = VIS_OCTAL | VIS_SP | VIS_TAB | VIS_NL | VIS_CSTYLE;
+const DIRECTED_PREFIX: &[u8] = b"vis:";
 
 struct VisCase<'a> {
     op: u8,
@@ -29,11 +34,14 @@ struct VisCase<'a> {
 }
 
 fuzz_target!(|data: &[u8]| {
-    if data.is_empty() || data.len() > MAX_INPUT {
-        return;
-    }
-
-    let case = VisCase::from_bytes(data);
+    let case = if let Some(case) = directed_case(data) {
+        case
+    } else {
+        if data.is_empty() || data.len() > MAX_INPUT {
+            return;
+        }
+        VisCase::from_bytes(data)
+    };
     assert_eq!(case.flags & !KNOWN_FLAGS, 0);
     assert_eq!(parse_vis_options(case.options) & !KNOWN_FLAGS, 0);
 
@@ -46,23 +54,86 @@ fuzz_target!(|data: &[u8]| {
     }
 });
 
+fn directed_case(data: &[u8]) -> Option<VisCase<'static>> {
+    let scenario = data.strip_prefix(DIRECTED_PREFIX)?;
+    let scenario = std::str::from_utf8(scenario).ok()?;
+    let scenario = scenario.trim_matches(|c: char| c.is_ascii_whitespace());
+    match scenario {
+        "decode-one-lone-backslash" => Some(vis_case(3, 0, b"", b"", b"\\", b"")),
+        "decoder-caret" => Some(vis_case(2, 0, b"", b"", b"\\^A\\^I\\^J", b"")),
+        "decoder-octal" => Some(vis_case(
+            2,
+            VIS_OCTAL,
+            b"",
+            b"",
+            b"\\040\\011\\012\\0007",
+            b"",
+        )),
+        "encoder-cstyle-control" => Some(vis_case(
+            0,
+            VIS_CSTYLE | VIS_SP | VIS_TAB | VIS_NL,
+            b"\0\x07\x08\x0c\n\r \t\x0b",
+            b"",
+            b"",
+            b"",
+        )),
+        "encoder-octal-ambiguous-nul" => Some(vis_case(0, VIS_CSTYLE, b"\0\x37", b"", b"", b"")),
+        "extra-shell" => Some(vis_case(1, VIS_CSTYLE, b"a/b c?*", b"/?*", b"", b"")),
+        "options-all" => Some(vis_case(
+            4,
+            0,
+            b"",
+            b"",
+            b"",
+            b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP,VIS_WHITE,VIS_SAFE,VIS_HTTPSTYLE",
+        )),
+        _ => None,
+    }
+}
+
+fn vis_case(
+    op: u8,
+    flags: u32,
+    payload: &'static [u8],
+    extra: &'static [u8],
+    encoded: &'static [u8],
+    options: &'static [u8],
+) -> VisCase<'static> {
+    VisCase {
+        op,
+        flags,
+        payload,
+        extra,
+        encoded,
+        options,
+    }
+}
+
 impl<'a> VisCase<'a> {
     fn from_bytes(data: &'a [u8]) -> Self {
-        let op = data[0];
-        let flags = flags_from_byte(data.get(1).copied().unwrap_or_default());
-        let body = data.get(5..).unwrap_or_default();
-        let (payload, rem) = split_at_selector(body, data.get(2).copied().unwrap_or_default());
-        let (extra, rem) = split_at_selector(rem, data.get(3).copied().unwrap_or_default());
-        let (encoded, options) = split_at_selector(rem, data.get(4).copied().unwrap_or_default());
+        let (op, tail) = match data.split_first() {
+            Some((&op, tail)) => (op, tail),
+            None => (0, &[] as &[u8]),
+        };
+        let flags = flags_from_byte(tail.first().copied().unwrap_or_default());
+        let body = tail.get(4..).unwrap_or_default();
+        let (payload, rem) = split_at_selector(body, tail.get(1).copied().unwrap_or_default());
+        let (extra, rem) = split_at_selector(rem, tail.get(2).copied().unwrap_or_default());
+        let (encoded, options) = split_at_selector(rem, tail.get(3).copied().unwrap_or_default());
         Self {
             op,
             flags,
-            payload: &payload[..payload.len().min(MAX_PAYLOAD)],
-            extra: &extra[..extra.len().min(MAX_EXTRA)],
-            encoded: &encoded[..encoded.len().min(MAX_ENCODED)],
+            payload: cap_prefix(payload, MAX_PAYLOAD),
+            extra: cap_prefix(extra, MAX_EXTRA),
+            encoded: cap_prefix(encoded, MAX_ENCODED),
             options,
         }
     }
+}
+
+fn cap_prefix(input: &[u8], max_len: usize) -> &[u8] {
+    let len = input.len().min(max_len);
+    input.get(..len).unwrap_or(input)
 }
 
 fn split_at_selector(input: &[u8], selector: u8) -> (&[u8], &[u8]) {
@@ -135,7 +206,8 @@ fn fuzz_decoder_cycles(encoded: &[u8], flags: u32) {
 fn fuzz_decode_one_progress(encoded: &[u8]) {
     let mut i = 0usize;
     while i < encoded.len() {
-        match decode_one(&encoded[i..]) {
+        let rem = encoded.get(i..).unwrap_or_default();
+        match decode_one(rem) {
             DecodeStep::Byte { consumed, .. } => {
                 assert!(consumed > 0);
                 assert!(consumed <= encoded.len() - i);
@@ -170,7 +242,10 @@ fn streaming_unvis(input: &[u8]) -> Option<Vec<u8>> {
     let mut refeed_budget = input.len().saturating_mul(2).saturating_add(1);
 
     while i < input.len() {
-        match dec.feed(input[i]) {
+        let Some(&byte) = input.get(i) else {
+            break;
+        };
+        match dec.feed(byte) {
             UnvisOutcome::Valid(byte) => {
                 out.push(byte);
                 i += 1;
@@ -193,6 +268,10 @@ fn streaming_unvis(input: &[u8]) -> Option<Vec<u8>> {
     }
 
     match dec.feed_end() {
+        UnvisOutcome::Valid(byte) => {
+            out.push(byte);
+            Some(out)
+        }
         UnvisOutcome::End => Some(out),
         _ => None,
     }
