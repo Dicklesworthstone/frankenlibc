@@ -13,13 +13,22 @@
 //!
 //! ## Input layout
 //!
-//! Raw fuzzer bytes are split into:
+//! Legacy raw fuzzer bytes are split into:
 //!
 //! ```text
 //! byte[0]              flag_bits (low 5 bits used as the FNM_* mask)
 //! byte[1]              pattern_len (mod (body.len()+1))
 //! byte[2 .. 2+plen]    pattern
 //! byte[2+plen ..]      text
+//! ```
+//!
+//! Directed seed files can also use a readable line format:
+//!
+//! ```text
+//! fnm:
+//! flags:PATHNAME|PERIOD
+//! pattern:*
+//! text:.hidden
 //! ```
 //!
 //! Splitting manually (rather than via `arbitrary::Arbitrary` derive)
@@ -55,11 +64,22 @@ const MAX_TEXT: usize = 96;
 // Mask of flag bits we exercise — exactly the five flags the core
 // engine implements, bit-compatible with libc::FNM_*.
 const FLAG_MASK: u8 = 0x1F;
+const FLAG_PATHNAME: u32 = 0x01;
+const FLAG_NOESCAPE: u32 = 0x02;
+const FLAG_PERIOD: u32 = 0x04;
+const FLAG_LEADING_DIR: u32 = 0x08;
+const FLAG_CASEFOLD: u32 = 0x10;
+const DIRECTED_PREFIX: &[u8] = b"fnm:\n";
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 2 || data.len() > MAX_INPUT {
         return;
     }
+    if let Some((pat, txt, raw_flags)) = directed_seed(data) {
+        fuzz_case(pat, txt, raw_flags);
+        return;
+    }
+
     let flag_byte = data[0];
     let plen_byte = data[1];
     let body = &data[2..];
@@ -76,6 +96,14 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let raw_flags = u32::from(flag_byte & FLAG_MASK);
+    fuzz_case(pat, txt, raw_flags);
+});
+
+fn fuzz_case(pat: Vec<u8>, txt: Vec<u8>, raw_flags: u32) {
+    if has_posix_extension(&pat) {
+        return;
+    }
+    let raw_flags = raw_flags & u32::from(FLAG_MASK);
     let core_flags = FnmatchFlags::from_bits(raw_flags);
     let libc_flags = raw_flags as libc::c_int;
 
@@ -133,7 +161,61 @@ fuzz_target!(|data: &[u8]| {
         core_match,
         libc_match,
     );
-});
+}
+
+fn directed_seed(data: &[u8]) -> Option<(Vec<u8>, Vec<u8>, u32)> {
+    let payload = data.strip_prefix(DIRECTED_PREFIX)?;
+    let payload = payload.strip_suffix(b"\n").unwrap_or(payload);
+    let mut pattern = None;
+    let mut text = None;
+    let mut flags = 0u32;
+
+    for raw_line in payload.split(|&byte| byte == b'\n') {
+        let line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix(b"flags:") {
+            flags = parse_directed_flags(value)?;
+        } else if let Some(value) = line.strip_prefix(b"pattern:") {
+            if value.len() > MAX_PATTERN || !is_printable_ascii(value) {
+                return None;
+            }
+            pattern = Some(value.to_vec());
+        } else {
+            let value = line.strip_prefix(b"text:")?;
+            if value.len() > MAX_TEXT || !is_printable_ascii(value) {
+                return None;
+            }
+            text = Some(value.to_vec());
+        }
+    }
+
+    Some((pattern?, text?, flags))
+}
+
+fn parse_directed_flags(input: &[u8]) -> Option<u32> {
+    if input.is_empty() || input == b"NONE" {
+        return Some(0);
+    }
+
+    let mut flags = 0u32;
+    for part in input.split(|&byte| byte == b'|') {
+        flags |= match part {
+            b"PATHNAME" => FLAG_PATHNAME,
+            b"NOESCAPE" => FLAG_NOESCAPE,
+            b"PERIOD" => FLAG_PERIOD,
+            b"LEADING_DIR" => FLAG_LEADING_DIR,
+            b"CASEFOLD" => FLAG_CASEFOLD,
+            _ => return None,
+        };
+    }
+    Some(flags)
+}
+
+fn is_printable_ascii(input: &[u8]) -> bool {
+    input.iter().all(|&byte| (0x20..=0x7E).contains(&byte))
+}
 
 /// Restrict to printable ASCII and bound the slice — see module doc.
 fn sanitize(input: &[u8], max_len: usize) -> Vec<u8> {

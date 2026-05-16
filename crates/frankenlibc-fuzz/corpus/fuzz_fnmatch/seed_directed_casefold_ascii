@@ -1,0 +1,4 @@
+fnm:
+flags:CASEFOLD
+pattern:abc
+text:ABC

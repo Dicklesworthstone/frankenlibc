@@ -1,0 +1,4 @@
+fnm:
+flags:PATHNAME
+pattern:*
+text:a/b

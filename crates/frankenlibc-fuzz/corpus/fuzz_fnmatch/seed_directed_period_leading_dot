@@ -1,0 +1,4 @@
+fnm:
+flags:PERIOD
+pattern:*
+text:.hidden
