@@ -15,6 +15,7 @@
     "--ebr-diag",
     "--fc-diag"
   ],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_functions": [
     "frankenlibc_membrane::alien_cs_metrics::compute_contention_score",
     "frankenlibc_membrane::alien_cs_metrics::compute_contention_breakdown"

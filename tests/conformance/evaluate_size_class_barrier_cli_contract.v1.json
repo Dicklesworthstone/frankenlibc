@@ -15,6 +15,7 @@
   "optional_flags": [
     "--class-membership-valid"
   ],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier"
