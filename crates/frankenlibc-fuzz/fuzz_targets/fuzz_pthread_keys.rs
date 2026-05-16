@@ -48,9 +48,12 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 
-use arbitrary::Arbitrary;
-use frankenlibc_abi::pthread_abi::{pthread_key_create, pthread_key_delete, pthread_setspecific};
-use libc::{pthread_getspecific, pthread_join, pthread_key_t, pthread_t};
+use arbitrary::{Arbitrary, Unstructured};
+use frankenlibc_abi::pthread_abi::{
+    pthread_create, pthread_getspecific, pthread_join, pthread_key_create, pthread_key_delete,
+    pthread_setspecific, pthread_threading_force_native_for_tests,
+};
+use libc::{pthread_key_t, pthread_t};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_KEYS: usize = 6;
@@ -97,6 +100,145 @@ struct PthreadKeysFuzzInput {
     ops: Vec<Op>,
 }
 
+fn directed_input(data: &[u8]) -> Option<PthreadKeysFuzzInput> {
+    let scenario = data.strip_prefix(b"pthread-keys:")?;
+    let scenario = std::str::from_utf8(scenario).ok()?;
+    let scenario = scenario.trim_matches(|c: char| c.is_ascii_whitespace());
+
+    let ops = match scenario {
+        "create-delete-reuse" => vec![
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::SetSpecific {
+                slot: 0,
+                value_sel: 1,
+            },
+            Op::GetSpecificRoundTrip {
+                slot: 0,
+                value_sel: 1,
+            },
+            Op::DeleteKey { slot: 0 },
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::GetSpecificRoundTrip {
+                slot: 0,
+                value_sel: 2,
+            },
+        ],
+        "set-get-delete-cycle" => vec![
+            Op::CreateKey {
+                with_destructor: true,
+            },
+            Op::SetSpecific {
+                slot: 0,
+                value_sel: 3,
+            },
+            Op::GetSpecificRoundTrip {
+                slot: 0,
+                value_sel: 3,
+            },
+            Op::DeleteKey { slot: 0 },
+            Op::CreateKey {
+                with_destructor: true,
+            },
+            Op::SetSpecific {
+                slot: 0,
+                value_sel: 4,
+            },
+            Op::GetSpecificRoundTrip {
+                slot: 0,
+                value_sel: 4,
+            },
+        ],
+        "child-destructor" => vec![
+            Op::CreateKey {
+                with_destructor: true,
+            },
+            Op::ChildDestructorRun { slot: 0 },
+        ],
+        "six-creates-no-dtor" => vec![
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::GetSpecificRoundTrip {
+                slot: 0,
+                value_sel: 0,
+            },
+            Op::GetSpecificRoundTrip {
+                slot: 5,
+                value_sel: 5,
+            },
+        ],
+        "mixed-destructors" => vec![
+            Op::CreateKey {
+                with_destructor: true,
+            },
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::CreateKey {
+                with_destructor: true,
+            },
+            Op::SetSpecific {
+                slot: 1,
+                value_sel: 7,
+            },
+            Op::GetSpecificRoundTrip {
+                slot: 1,
+                value_sel: 7,
+            },
+            Op::ChildDestructorRun { slot: 0 },
+            Op::ChildDestructorRun { slot: 2 },
+        ],
+        "overflow-slot" => vec![
+            Op::CreateKey {
+                with_destructor: true,
+            },
+            Op::CreateKey {
+                with_destructor: false,
+            },
+            Op::SetSpecific {
+                slot: u8::MAX,
+                value_sel: u8::MAX,
+            },
+            Op::GetSpecificRoundTrip {
+                slot: u8::MAX,
+                value_sel: u8::MAX - 1,
+            },
+            Op::DeleteKey { slot: u8::MAX },
+        ],
+        _ => return None,
+    };
+
+    Some(PthreadKeysFuzzInput { ops })
+}
+
+fn input_from_bytes(data: &[u8]) -> Option<PthreadKeysFuzzInput> {
+    if let Some(input) = directed_input(data) {
+        return Some(input);
+    }
+
+    let mut unstructured = Unstructured::new(data);
+    PthreadKeysFuzzInput::arbitrary(&mut unstructured).ok()
+}
+
 fn init_hardened_mode() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
@@ -104,6 +246,7 @@ fn init_hardened_mode() {
         unsafe {
             std::env::set_var("FRANKENLIBC_MODE", "hardened");
         }
+        pthread_threading_force_native_for_tests();
     });
 }
 
@@ -129,10 +272,10 @@ fn pick_slot(table: &mut [KeyEntry], slot: u8) -> Option<&mut KeyEntry> {
         return None;
     }
     let idx = (slot as usize) % table.len();
-    Some(&mut table[idx])
+    table.get_mut(idx)
 }
 
-extern "C" fn child_thread_setspecific(arg: *mut c_void) -> *mut c_void {
+unsafe extern "C" fn child_thread_setspecific(arg: *mut c_void) -> *mut c_void {
     // SAFETY: arg is a *mut (pthread_key_t, *mut c_void) packed into a
     // Box, owned by this thread until we drop the Box at the end.
     let boxed = unsafe { Box::from_raw(arg as *mut (pthread_key_t, *mut c_void)) };
@@ -161,10 +304,10 @@ fn apply_child_destructor_run(table: &mut [KeyEntry], slot: u8) {
 
     let mut tid: pthread_t = 0;
     let rc = unsafe {
-        libc::pthread_create(
+        pthread_create(
             &mut tid,
             std::ptr::null(),
-            child_thread_setspecific,
+            Some(child_thread_setspecific),
             payload as *mut c_void,
         )
     };
@@ -279,7 +422,10 @@ fn cleanup(table: &mut Vec<KeyEntry>) {
     }
 }
 
-fuzz_target!(|input: PthreadKeysFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    let Some(input) = input_from_bytes(data) else {
+        return;
+    };
     if input.ops.len() > MAX_OPS {
         return;
     }
