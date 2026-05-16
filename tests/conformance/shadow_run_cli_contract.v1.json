@@ -1,6 +1,7 @@
 {
   "schema_version": "v1",
   "manifest_id": "shadow-run-cli-contract",
+  "bead": "bd-yjz2d",
   "generated_utc": "2026-05-14T00:00:00Z",
   "source_commit": "079468c8940c9ef8ce2bff23f70f9446365ae539",
   "purpose": "Pin the harness binary `shadow-run` subcommand that executes manifest-driven real-workload differential runs against host glibc and FrankenLibC candidate environments.",

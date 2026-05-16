@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "manifest_id": "capture-cli-contract",
-  "bead": "pending-tracker-capture-cli-contract",
+  "bead": "bd-yjz2d",
   "generated_utc": "2026-05-14T00:00:00Z",
   "source_commit": "6d01eaf299a017ff35c8fbb8e2e2238cd5b00d12",
   "purpose": "Pin the harness binary `capture` subcommand that refreshes fixture templates from host-glibc observations before later verification. The command must read fixture JSON templates, filter by family or filename stem, create the output directory, refresh strict and mode=both cases from host capture, preserve hardened-only cases, write refreshed fixture JSON with the original filename, emit deterministic summary diagnostics, surface unsupported-case warnings, and fail closed when no valid templates match.",

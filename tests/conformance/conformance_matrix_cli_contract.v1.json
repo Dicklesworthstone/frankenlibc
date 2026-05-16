@@ -1,6 +1,7 @@
 {
   "schema_version": "v1",
   "manifest_id": "conformance-matrix-cli-contract",
+  "bead": "bd-yjz2d",
   "generated_utc": "2026-05-14T00:00:00Z",
   "source_commit": "874ea99b98463c60fd35499b0907c44d6cbe10ec",
   "purpose": "Pin the harness binary `conformance-matrix` subcommand that turns fixture JSON directories into differential host-vs-FrankenLibC report artifacts and structured conformance JSONL logs.",

@@ -1,6 +1,7 @@
 {
   "schema_version": "v1",
   "manifest_id": "evidence-compliance-cli-contract",
+  "bead": "bd-yjz2d",
   "generated_utc": "2026-05-14T00:00:00Z",
   "source_commit": "168a110cde6b353bc314c08299ae8616271b4daa",
   "purpose": "Pin the harness binary `evidence-compliance` subcommand that validates a structured-log plus artifact-index evidence bundle and emits deterministic triage JSON before returning success or failure.",

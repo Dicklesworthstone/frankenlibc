@@ -1,6 +1,6 @@
 //! Meta-gate: every `tests/conformance/*_cli_contract.v1.json` manifest must
-//! declare a non-empty `bead` field matching the canonical `bd-<slug>` pattern
-//! (bd-fwryt). Catches manifests committed without an anchoring bead.
+//! declare a non-empty `bead` field matching the canonical `bd-<slug>` pattern.
+//! Catches manifests committed without an anchoring bead.
 
 use std::path::{Path, PathBuf};
 
@@ -29,13 +29,6 @@ fn is_valid_bead_id(value: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
 
-/// Manifests that predate the bd-fwryt invariant. Each entry should either be
-/// retrofitted with a real bead id or removed from this allow-list once the
-/// manifest is rebased on a tracked bead. The ratchet ceiling below freezes the
-/// inventory at the current measured count so new offenders fail-closed.
-const LEGACY_BEAD_PATTERNS: &[&str] = &["pending-tracker-"];
-const KNOWN_BEAD_MISSING_CEILING: usize = 8;
-
 #[test]
 fn every_cli_contract_manifest_declares_canonical_bead_id() -> TestResult {
     let root = workspace_root()?;
@@ -44,7 +37,6 @@ fn every_cli_contract_manifest_declares_canonical_bead_id() -> TestResult {
         .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
 
     let mut violations: Vec<String> = Vec::new();
-    let mut legacy_count = 0usize;
     let mut checked = 0usize;
     for entry in entries {
         let entry = entry.map_err(|e| format!("read entry: {e}"))?;
@@ -63,13 +55,9 @@ fn every_cli_contract_manifest_declares_canonical_bead_id() -> TestResult {
             .and_then(Value::as_str)
             .unwrap_or("<missing>");
         if !is_valid_bead_id(bead) {
-            if bead == "<missing>" || LEGACY_BEAD_PATTERNS.iter().any(|p| bead.starts_with(p)) {
-                legacy_count += 1;
-            } else {
-                violations.push(format!(
-                    "{stem}: bead=`{bead}` does not match canonical `bd-<slug>` pattern"
-                ));
-            }
+            violations.push(format!(
+                "{stem}: bead=`{bead}` does not match canonical `bd-<slug>` pattern"
+            ));
         }
         checked += 1;
     }
@@ -78,13 +66,6 @@ fn every_cli_contract_manifest_declares_canonical_bead_id() -> TestResult {
         checked >= 20,
         "expected at least 20 CLI contract manifests; found {checked}"
     );
-
-    if legacy_count > KNOWN_BEAD_MISSING_CEILING {
-        return Err(format!(
-            "legacy bead-id manifest count rose to {legacy_count} (ceiling: {KNOWN_BEAD_MISSING_CEILING}); \
-             retrofit a manifest to a real bd-<slug> id or remove its legacy escape-hatch entry"
-        ));
-    }
 
     if !violations.is_empty() {
         return Err(format!(

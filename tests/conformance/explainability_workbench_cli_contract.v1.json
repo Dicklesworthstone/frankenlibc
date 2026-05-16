@@ -1,6 +1,7 @@
 {
   "schema_version": "v1",
   "manifest_id": "explainability-workbench-cli-contract",
+  "bead": "bd-yjz2d",
   "generated_utc": "2026-05-14T00:00:00Z",
   "source_commit": "05525803215ab18fe4b836c67998413cf26c6980",
   "purpose": "Pin the harness binary `explainability-workbench` subcommand that joins structured log rows with optional artifact-index metadata and renders an operator-facing explainability report.",

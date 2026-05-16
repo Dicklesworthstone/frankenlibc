@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "manifest_id": "proof-chain-e2e-cli-contract",
-  "bead": "pending-tracker-lease",
+  "bead": "bd-yjz2d",
   "generated_utc": "2026-05-14T00:00:00Z",
   "source_commit": "c5a4f698b4f6da769865488ec87e662c10a78479",
   "purpose": "Pin the harness binary `proof-chain-e2e` subcommand that exposes frankenlibc_harness::proof_chain_e2e::run_and_write as a CLI. The command chains proof-binder verification, proof-obligation dashboard aggregation, and cross-report consistency checks; writes a top-level structured JSONL log, JSON report, nested proof-binder artifacts, validator snapshot, and cross-report artifact; and fails closed when any chain step fails.",

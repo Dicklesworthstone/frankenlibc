@@ -1,6 +1,7 @@
 {
   "schema_version": "v1",
   "manifest_id": "conformance-matrix-case-cli-contract",
+  "bead": "bd-yjz2d",
   "generated_utc": "2026-05-14T00:00:00Z",
   "source_commit": "c1b73a927fa7836a00e1549b1ddab7d4a53f08fb",
   "purpose": "Pin the hidden `conformance-matrix-case` subprocess entrypoint used by isolated conformance-matrix runs. This command is not operator-facing, but it is the crash/timeout containment boundary for fixture execution.",
