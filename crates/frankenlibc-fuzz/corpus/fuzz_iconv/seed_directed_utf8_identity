@@ -1,0 +1,4 @@
+iconv:convert
+to=UTF-8
+from=UTF-8
+payload=plain ASCII identity

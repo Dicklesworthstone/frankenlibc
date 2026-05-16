@@ -1,0 +1,4 @@
+iconv:open
+to=UTF-8
+from=UTF-7
+payload=closed

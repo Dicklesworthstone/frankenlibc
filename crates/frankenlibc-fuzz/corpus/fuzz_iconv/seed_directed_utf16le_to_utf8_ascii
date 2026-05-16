@@ -1,0 +1,4 @@
+iconv:convert
+to=UTF-8
+from=UTF-16LE
+payload-hex=48 00 69 00 21 00
