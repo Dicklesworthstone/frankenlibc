@@ -1,6 +1,6 @@
 //! Meta-gate: every `tests/conformance/*_cli_contract.v1.json` manifest must
 //! have a paired `crates/frankenlibc-harness/tests/<basename>_test.rs` gate
-//! file (bd-brzts). Prevents manifests committed without executable validation.
+//! file. Prevents manifests committed without executable validation.
 
 use std::path::{Path, PathBuf};
 
@@ -14,8 +14,6 @@ fn workspace_root() -> TestResult<PathBuf> {
         .map(Path::to_path_buf)
         .ok_or_else(|| format!("could not derive workspace root from {manifest}"))
 }
-
-const LEGACY_GATE_MISSING_CEILING: usize = 0;
 
 #[test]
 fn every_cli_contract_manifest_has_paired_gate_test_file() -> TestResult {
@@ -56,9 +54,9 @@ fn every_cli_contract_manifest_has_paired_gate_test_file() -> TestResult {
         "expected at least 20 CLI contract manifests; found {checked}"
     );
 
-    if missing.len() > LEGACY_GATE_MISSING_CEILING {
+    if !missing.is_empty() {
         return Err(format!(
-            "{} CLI contract manifest(s) missing paired gate test (ceiling {LEGACY_GATE_MISSING_CEILING}):\n  {}",
+            "{} CLI contract manifest(s) missing paired gate test:\n  {}",
             missing.len(),
             missing.join("\n  ")
         ));

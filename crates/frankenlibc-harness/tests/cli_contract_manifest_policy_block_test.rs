@@ -1,15 +1,13 @@
 //! Meta-gate: every `tests/conformance/*_cli_contract.v1.json` manifest must
 //! declare a non-empty `policy` JSON object containing at least one bool
-//! invariant (bd-g7o1e). Catches manifests committed without an enforceable
-//! policy contract.
+//! invariant. Catches manifests committed without an enforceable policy
+//! contract.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 type TestResult<T = ()> = Result<T, String>;
-
-const LEGACY_POLICY_MISSING_CEILING: usize = 0;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -82,9 +80,9 @@ fn every_cli_contract_manifest_declares_nonempty_policy_block() -> TestResult {
         ));
     }
 
-    if missing.len() > LEGACY_POLICY_MISSING_CEILING {
+    if !missing.is_empty() {
         return Err(format!(
-            "{} CLI contract manifest(s) with missing or empty policy block (ceiling {LEGACY_POLICY_MISSING_CEILING}):\n  {}",
+            "{} CLI contract manifest(s) with missing or empty policy block:\n  {}",
             missing.len(),
             missing.join("\n  ")
         ));
