@@ -1,11 +1,14 @@
 //! Meta-gate: every `tests/conformance/*_cli_contract.v1.json` manifest must
 //! declare `required_flags` and `optional_flags` as JSON arrays of strings
-//! starting with `--` (bd-1igth, bd-e3oco). It also requires
+//! starting with `--`, unique within each list, and disjoint across the
+//! required/optional split (bd-1igth, bd-e3oco, bd-h65ta). It also requires
 //! `source_commit` to be either an 8-hex short SHA or a 40-hex full SHA.
 //! Catches schema drift where a manifest emits a wrong type, a flag name
-//! without the long-form `--` prefix, omits the split between required and
-//! optional flags, or uses a placeholder-style source commit.
+//! without the long-form `--` prefix, duplicates a flag declaration, omits the
+//! split between required and optional flags, or uses a placeholder-style source
+//! commit.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -21,10 +24,15 @@ fn workspace_root() -> TestResult<PathBuf> {
         .ok_or_else(|| format!("could not derive workspace root from {manifest}"))
 }
 
-fn validate_flag_array(manifest: &Value, field: &str, stem: &str, violations: &mut Vec<String>) {
+fn validate_flag_array(
+    manifest: &Value,
+    field: &str,
+    stem: &str,
+    violations: &mut Vec<String>,
+) -> Vec<String> {
     let Some(value) = manifest.get(field) else {
         violations.push(format!("{stem}: `{field}` missing"));
-        return;
+        return Vec::new();
     };
     let Some(arr) = value.as_array() else {
         violations.push(format!(
@@ -38,8 +46,9 @@ fn validate_flag_array(manifest: &Value, field: &str, stem: &str, violations: &m
                 Value::Object(_) => "object",
             }
         ));
-        return;
+        return Vec::new();
     };
+    let mut flags = Vec::new();
     for (i, entry) in arr.iter().enumerate() {
         let Some(s) = entry.as_str() else {
             violations.push(format!(
@@ -50,6 +59,35 @@ fn validate_flag_array(manifest: &Value, field: &str, stem: &str, violations: &m
         if !s.starts_with("--") {
             violations.push(format!("{stem}: `{field}[{i}]`=`{s}` must start with `--`"));
         }
+        flags.push(s.to_string());
+    }
+    flags
+}
+
+fn validate_flag_uniqueness(
+    required_flags: &[String],
+    optional_flags: &[String],
+    stem: &str,
+    violations: &mut Vec<String>,
+) {
+    let mut required_seen = BTreeSet::new();
+    for flag in required_flags {
+        if !required_seen.insert(flag.as_str()) {
+            violations.push(format!("{stem}: `required_flags` duplicates `{flag}`"));
+        }
+    }
+
+    let mut optional_seen = BTreeSet::new();
+    for flag in optional_flags {
+        if !optional_seen.insert(flag.as_str()) {
+            violations.push(format!("{stem}: `optional_flags` duplicates `{flag}`"));
+        }
+    }
+
+    for flag in required_seen.intersection(&optional_seen) {
+        violations.push(format!(
+            "{stem}: flag `{flag}` appears in both `required_flags` and `optional_flags`"
+        ));
     }
 }
 
@@ -61,7 +99,7 @@ fn is_short_or_full_lower_hex_sha(value: &str) -> bool {
 }
 
 #[test]
-fn flag_arrays_are_declared_and_have_well_typed_entries_starting_with_double_dash() -> TestResult {
+fn flag_arrays_are_declared_well_typed_unique_and_disjoint() -> TestResult {
     let root = workspace_root()?;
     let conformance_dir = root.join("tests").join("conformance");
     let entries = std::fs::read_dir(&conformance_dir)
@@ -81,8 +119,11 @@ fn flag_arrays_are_declared_and_have_well_typed_entries_starting_with_double_das
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
         let manifest: Value =
             serde_json::from_str(&body).map_err(|e| format!("parse {path:?}: {e}"))?;
-        validate_flag_array(&manifest, "required_flags", stem, &mut violations);
-        validate_flag_array(&manifest, "optional_flags", stem, &mut violations);
+        let required_flags =
+            validate_flag_array(&manifest, "required_flags", stem, &mut violations);
+        let optional_flags =
+            validate_flag_array(&manifest, "optional_flags", stem, &mut violations);
+        validate_flag_uniqueness(&required_flags, &optional_flags, stem, &mut violations);
         checked += 1;
     }
 
