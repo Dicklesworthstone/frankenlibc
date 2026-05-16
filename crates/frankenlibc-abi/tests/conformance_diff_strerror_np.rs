@@ -18,6 +18,22 @@ unsafe extern "C" {
     fn strerrorname_np(errnum: c_int) -> *const c_char;
 }
 
+/// Linux/glibc errno values for which glibc 2.32+ returns non-NULL
+/// `strerrordesc_np` and `strerrorname_np` strings on x86_64.
+///
+/// The gaps at 41 and 58 are intentionally absent: glibc returns NULL
+/// for both of those numeric slots.
+const GLIBC_LINUX_ERRNO_CASES: &[c_int] = &[
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+    51, 52, 53, 54, 55, 56, 57, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
+    76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
+    100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118,
+    119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133,
+];
+
+const GLIBC_NULL_ERRNO_CASES: &[c_int] = &[41, 58, 134, 200, 1000, -1];
+
 #[derive(Debug)]
 struct Divergence {
     case: String,
@@ -40,13 +56,7 @@ fn render_divs(divs: &[Divergence]) -> String {
 #[test]
 fn diff_strerrordesc_np_known_errnos() {
     let mut divs = Vec::new();
-    let errnos: &[c_int] = &[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
-        // Unknown errnos — both should return NULL.
-        200, 1000, -1,
-    ];
-    for &e in errnos {
+    for &e in GLIBC_LINUX_ERRNO_CASES.iter().chain(GLIBC_NULL_ERRNO_CASES) {
         let p_fl = fl::strerrordesc_np(e);
         let p_lc = unsafe { strerrordesc_np(e) };
         if p_fl.is_null() != p_lc.is_null() {
@@ -82,11 +92,7 @@ fn diff_strerrordesc_np_known_errnos() {
 #[test]
 fn diff_strerrorname_np_known_errnos() {
     let mut divs = Vec::new();
-    let errnos: &[c_int] = &[
-        1, 2, 3, 9, 13, 17, 22, 32, 38, 39, 40, // Unknown errnos
-        200, 1000, -1,
-    ];
-    for &e in errnos {
+    for &e in GLIBC_LINUX_ERRNO_CASES.iter().chain(GLIBC_NULL_ERRNO_CASES) {
         let p_fl = fl::strerrorname_np(e);
         let p_lc = unsafe { strerrorname_np(e) };
         if p_fl.is_null() != p_lc.is_null() {
@@ -122,6 +128,8 @@ fn diff_strerrorname_np_known_errnos() {
 #[test]
 fn strerror_np_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libc strerror_np family\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",
+        "{{\"family\":\"libc strerror_np family\",\"reference\":\"glibc\",\"functions\":2,\"errno_cases\":{},\"null_cases\":{},\"divergences\":0}}",
+        GLIBC_LINUX_ERRNO_CASES.len(),
+        GLIBC_NULL_ERRNO_CASES.len(),
     );
 }
