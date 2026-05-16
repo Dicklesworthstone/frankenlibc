@@ -1,0 +1,7 @@
+resolver:conf-invalid
+# invalid nameservers should be ignored and defaults restored when none parse
+nameserver not-an-address
+nameserver 999.999.999.999
+domain invalid.example
+options ndots:999 timeout:0 attempts:0 rotate use-vc
+unknown directive payload

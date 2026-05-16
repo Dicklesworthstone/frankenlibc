@@ -16,7 +16,7 @@
 //!
 //! Bead: bd-1oz.7
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::resolv::config::ResolverConfig;
@@ -47,7 +47,19 @@ struct ResolverFuzzInput {
     op: u8,
 }
 
-fuzz_target!(|input: ResolverFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    if let Some(input) = directed_resolver_input(data) {
+        run_fuzz_input(input);
+        return;
+    }
+
+    let mut unstructured = Unstructured::new(data);
+    if let Ok(input) = ResolverFuzzInput::arbitrary(&mut unstructured) {
+        run_fuzz_input(input);
+    }
+});
+
+fn run_fuzz_input(input: ResolverFuzzInput) {
     if input.dns_bytes.len() > MAX_INPUT || input.config_bytes.len() > MAX_INPUT {
         return;
     }
@@ -61,7 +73,133 @@ fuzz_target!(|input: ResolverFuzzInput| {
         5 => fuzz_domain_name_roundtrip(&input),
         _ => unreachable!(),
     }
-});
+}
+
+const DIRECTED_PREFIX: &[u8] = b"resolver:";
+
+fn directed_resolver_input(data: &[u8]) -> Option<ResolverFuzzInput> {
+    let directed = data.strip_prefix(DIRECTED_PREFIX)?;
+    let (scenario, payload) = split_directed_payload(directed);
+
+    match scenario {
+        b"conf-options" => Some(input_for_config(payload)),
+        b"conf-invalid" => Some(input_for_config(payload)),
+        b"domain-long-label" => Some(input_for_hostname(trim_ascii(payload))),
+        b"domain-root" => Some(input_for_hostname(trim_ascii(payload))),
+        b"dns-a-answer" => Some(input_for_dns_message(dns_a_answer_message(), 1)),
+        b"dns-aaaa-answer" => Some(input_for_dns_message(dns_aaaa_answer_message(), 1)),
+        b"dns-pointer-loop" => Some(input_for_dns_message(dns_pointer_loop_message(), 1)),
+        b"record-a" => Some(input_for_dns_message(dns_a_record(), 3)),
+        b"header-truncated" => Some(input_for_dns_message(truncated_response_header(), 0)),
+        b"malformed-short" => Some(input_for_dns_message(payload.to_vec(), 1)),
+        _ => None,
+    }
+}
+
+fn split_directed_payload(data: &[u8]) -> (&[u8], &[u8]) {
+    match data.iter().position(|&byte| byte == b'\n') {
+        Some(index) => (
+            data.get(..index).unwrap_or(data),
+            data.get(index + 1..).unwrap_or(&[]),
+        ),
+        None => (data, &[]),
+    }
+}
+
+fn trim_ascii(data: &[u8]) -> &[u8] {
+    let start = data
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(data.len());
+    let end = data
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map(|index| index + 1)
+        .unwrap_or(start);
+    data.get(start..end).unwrap_or(&[])
+}
+
+fn input_for_config(config_bytes: &[u8]) -> ResolverFuzzInput {
+    ResolverFuzzInput {
+        dns_bytes: Vec::new(),
+        config_bytes: config_bytes.to_vec(),
+        hostname: b"svc.example.test".to_vec(),
+        query_id: 0x5151,
+        qtype_sel: 0,
+        op: 4,
+    }
+}
+
+fn input_for_hostname(hostname: &[u8]) -> ResolverFuzzInput {
+    ResolverFuzzInput {
+        dns_bytes: Vec::new(),
+        config_bytes: Vec::new(),
+        hostname: hostname.to_vec(),
+        query_id: 0x6262,
+        qtype_sel: 1,
+        op: 5,
+    }
+}
+
+fn input_for_dns_message(dns_bytes: Vec<u8>, op: u8) -> ResolverFuzzInput {
+    ResolverFuzzInput {
+        dns_bytes,
+        config_bytes: Vec::new(),
+        hostname: b"example.com".to_vec(),
+        query_id: 0x1234,
+        qtype_sel: 0,
+        op,
+    }
+}
+
+fn dns_a_answer_message() -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.extend_from_slice(&[
+        0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    msg.extend_from_slice(b"\x07example\x03com\x00");
+    msg.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+    msg.extend_from_slice(&[
+        0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04, 93, 184, 216, 34,
+    ]);
+    msg
+}
+
+fn dns_aaaa_answer_message() -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.extend_from_slice(&[
+        0xab, 0xcd, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    msg.extend_from_slice(b"\x03www\x07example\x03com\x00");
+    msg.extend_from_slice(&[0x00, 0x1c, 0x00, 0x01]);
+    msg.extend_from_slice(&[
+        0xc0, 0x0c, 0x00, 0x1c, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2c, 0x00, 0x10, 0x26, 0x06, 0x28,
+        0x00, 0x02, 0x20, 0x00, 0x01, 0x02, 0x48, 0x18, 0x93, 0x25, 0xc8, 0x19, 0x46,
+    ]);
+    msg
+}
+
+fn dns_pointer_loop_message() -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.extend_from_slice(&[
+        0xbe, 0xef, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    msg.extend_from_slice(&[0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01]);
+    msg
+}
+
+fn dns_a_record() -> Vec<u8> {
+    let mut record = Vec::new();
+    record.extend_from_slice(b"\x07example\x03com\x00");
+    record.extend_from_slice(&[
+        0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x0e, 0x10, 0x00, 0x04, 192, 0, 2, 123,
+    ]);
+    record
+}
+
+fn truncated_response_header() -> Vec<u8> {
+    vec![0x12, 0x34, 0x82, 0x80, 0x00, 0x01, 0x00, 0x00]
+}
 
 /// Fuzz DNS header decoding with arbitrary bytes.
 fn fuzz_dns_header_decode(input: &ResolverFuzzInput) {

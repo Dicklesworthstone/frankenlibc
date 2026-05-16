@@ -1,0 +1,7 @@
+resolver:conf-options
+nameserver 2001:4860:4860::8888
+nameserver 1.1.1.1
+nameserver 9.9.9.9
+nameserver 10.0.0.1
+search svc.cluster.local example.test local ignored.test
+options ndots:15 timeout:30 attempts:5 rotate use-vc edns0
