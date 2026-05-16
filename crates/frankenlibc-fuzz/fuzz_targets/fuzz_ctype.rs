@@ -10,7 +10,7 @@
 //!
 //! Bead: bd-2hh.4
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::ctype;
@@ -25,7 +25,11 @@ struct CtypeFuzzInput {
 
 const MAX_BYTES: usize = 4096;
 
-fuzz_target!(|input: CtypeFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    let Some(input) = input_from_bytes(data) else {
+        return;
+    };
+
     if input.bytes.len() > MAX_BYTES {
         return;
     }
@@ -39,6 +43,95 @@ fuzz_target!(|input: CtypeFuzzInput| {
         _ => unreachable!(),
     }
 });
+
+fn input_from_bytes(data: &[u8]) -> Option<CtypeFuzzInput> {
+    if let Some(input) = directed_input(data) {
+        return Some(input);
+    }
+
+    let mut unstructured = Unstructured::new(data);
+    CtypeFuzzInput::arbitrary(&mut unstructured).ok()
+}
+
+fn directed_input(data: &[u8]) -> Option<CtypeFuzzInput> {
+    let data = trim_seed_newline(data);
+    let rest = data.strip_prefix(b"ctype:")?;
+    let (op_name, payload_name) = split_once_byte(rest, b':')?;
+    let op = match op_name {
+        b"classify" => 0,
+        b"case" => 1,
+        b"partition" => 2,
+        b"digit-xdigit" => 3,
+        b"consistency" => 4,
+        _ => return None,
+    };
+    let bytes = directed_bytes(payload_name)?;
+    Some(CtypeFuzzInput { bytes, op })
+}
+
+fn split_once_byte(bytes: &[u8], needle: u8) -> Option<(&[u8], &[u8])> {
+    let idx = bytes.iter().position(|&b| b == needle)?;
+    Some((&bytes[..idx], &bytes[idx + 1..]))
+}
+
+fn trim_seed_newline(payload: &[u8]) -> &[u8] {
+    payload
+        .strip_suffix(b"\r\n")
+        .or_else(|| payload.strip_suffix(b"\n"))
+        .unwrap_or(payload)
+}
+
+fn directed_bytes(payload_name: &[u8]) -> Option<Vec<u8>> {
+    match payload_name {
+        b"empty" => Some(Vec::new()),
+        b"ascii-classes" => Some(vec![
+            0x00, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1b, 0x1f, b' ', b'!', b'/', b'0', b'9',
+            b':', b'@', b'A', b'Z', b'[', b'`', b'a', b'z', b'{', b'~', 0x7f,
+        ]),
+        b"case-boundary" => Some(b"@AZ[`az{".to_vec()),
+        b"digit-xdigit-boundary" => Some(b"/09:AFG`afg".to_vec()),
+        b"mixed-print-control" => Some(vec![
+            0x00, b'\t', b'\n', b'\r', b' ', b'!', b'0', b'9', b'A', b'Z', b'a', b'z', b'~', 0x7f,
+            0x80, 0xa0, 0xff,
+        ]),
+        b"high-bytes" => Some(vec![0x80, 0x81, 0x9f, 0xa0, 0xfe, 0xff]),
+        payload => {
+            if let Some(hex) = payload.strip_prefix(b"hex:") {
+                parse_hex_bytes(hex)
+            } else {
+                Some(payload.to_vec())
+            }
+        }
+    }
+}
+
+fn parse_hex_bytes(hex: &[u8]) -> Option<Vec<u8>> {
+    let mut nibbles = Vec::new();
+    for &b in hex {
+        if b.is_ascii_whitespace() || b == b',' || b == b'_' {
+            continue;
+        }
+        nibbles.push(hex_nibble(b)?);
+    }
+    if nibbles.len() % 2 != 0 {
+        return None;
+    }
+
+    let mut bytes = Vec::with_capacity(nibbles.len() / 2);
+    for pair in nibbles.chunks_exact(2) {
+        bytes.push((pair[0] << 4) | pair[1]);
+    }
+    Some(bytes)
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
 
 /// Exercise every classifier on every byte in the input.
 fn fuzz_classification_exhaustive(input: &CtypeFuzzInput) {
