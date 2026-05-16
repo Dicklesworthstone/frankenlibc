@@ -2666,13 +2666,13 @@ fn ns_format_ttl_returns_minus_one_when_buffer_too_small() {
 }
 
 #[test]
-fn ns_format_ttl_rejects_tracked_short_dst() {
+fn ns_format_ttl_tracked_short_dst_keeps_glibc_partial_unit() {
     use frankenlibc_abi::resolv_abi::ns_format_ttl;
     let mut buf = malloc_filled_bytes(4, 0xAA);
     let rc = unsafe { ns_format_ttl(3_661, buf.as_mut_ptr() as *mut c_char, 32) };
 
     assert_eq!(rc, -1);
-    assert_eq!(buf.as_slice(), &[0xAA; 4]);
+    assert_eq!(buf.as_slice(), &[b'1', b'H', 0, 0xAA]);
 }
 
 #[test]

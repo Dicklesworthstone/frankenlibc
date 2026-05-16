@@ -2959,7 +2959,8 @@ pub unsafe extern "C" fn ns_parse_ttl(src: *const c_char, dst: *mut u32) -> c_in
 
 #[inline]
 fn ttl_emit_unit(value: u64, unit: u8, dst: &mut [u8], pos: &mut usize) -> bool {
-    // Format value in decimal then append unit. Returns false on overflow.
+    // Format value in decimal then append unit. Return false unless the complete
+    // unit and its boundary terminator fit.
     // u64 is wide enough for any TTL value glibc accepts (u_long).
     let mut digits = [0u8; 20];
     let mut n = value;
@@ -2974,7 +2975,7 @@ fn ttl_emit_unit(value: u64, unit: u8, dst: &mut [u8], pos: &mut usize) -> bool 
             len += 1;
         }
     }
-    if *pos + len + 1 > dst.len() {
+    if *pos + len + 2 > dst.len() {
         return false;
     }
     for i in 0..len {
@@ -2983,6 +2984,19 @@ fn ttl_emit_unit(value: u64, unit: u8, dst: &mut [u8], pos: &mut usize) -> bool 
     dst[*pos + len] = unit;
     *pos += len + 1;
     true
+}
+
+#[inline]
+unsafe fn ttl_copy_partial(dst: *mut c_char, buf: &[u8], pos: usize) {
+    if pos == 0 {
+        return;
+    }
+    // SAFETY: callers only pass `pos` values produced by `ttl_emit_unit`, which
+    // reserves a terminator slot after every emitted unit.
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, dst, pos);
+        *dst.add(pos) = 0;
+    }
 }
 
 /// libresolv `ns_format_ttl(src, dst, dstlen) -> int` — format
@@ -3041,27 +3055,32 @@ pub unsafe extern "C" fn ns_format_ttl(
     if days != 0 && ttl_emit_unit(days, b'D', &mut buf, &mut pos) {
         units += 1;
     } else if days != 0 {
+        unsafe { ttl_copy_partial(dst, &buf, pos) };
         return -1;
     }
     if hours != 0 && ttl_emit_unit(hours, b'H', &mut buf, &mut pos) {
         units += 1;
     } else if hours != 0 {
+        unsafe { ttl_copy_partial(dst, &buf, pos) };
         return -1;
     }
     if mins != 0 && ttl_emit_unit(mins, b'M', &mut buf, &mut pos) {
         units += 1;
     } else if mins != 0 {
+        unsafe { ttl_copy_partial(dst, &buf, pos) };
         return -1;
     }
     let any_higher = weeks != 0 || days != 0 || hours != 0 || mins != 0;
     if secs != 0 || !any_higher {
         if !ttl_emit_unit(secs, b'S', &mut buf, &mut pos) {
+            unsafe { ttl_copy_partial(dst, &buf, pos) };
             return -1;
         }
         units += 1;
     }
 
     if pos + 1 > dst_limit {
+        unsafe { ttl_copy_partial(dst, &buf, pos) };
         return -1;
     }
 

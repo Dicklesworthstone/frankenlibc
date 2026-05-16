@@ -43,6 +43,10 @@ fn render_divs(divs: &[Divergence]) -> String {
     out
 }
 
+fn raw_bytes(buf: &[c_char]) -> Vec<u8> {
+    buf.iter().map(|b| *b as u8).collect()
+}
+
 const TTL_INPUTS: &[u64] = &[
     0,             // → "0S"
     1,             // → "1S"
@@ -106,24 +110,42 @@ fn diff_ns_format_ttl_cases() {
     );
 }
 
-/// Buffer-too-small contract: both impls should return -1 / EMSGSIZE
-/// when the destination is too short.
+/// Buffer-too-small contract: both impls should return -1 when the
+/// destination is too short, and glibc exposes every complete uppercase
+/// unit already emitted before the overflow.
 #[test]
 fn diff_ns_format_ttl_buffer_too_small() {
     let mut divs = Vec::new();
-    let src: libc::c_ulong = 90090; // formats as "1d1h1m30s" = 9 chars + NUL = 10 bytes.
-    for size in [0usize, 1, 5, 9] {
-        let mut fl_buf = vec![0i8; size + 4];
-        let mut lc_buf = vec![0i8; size + 4];
-        let fl_n = unsafe { fl::ns_format_ttl(src, fl_buf.as_mut_ptr(), size) };
-        let lc_n = unsafe { ns_format_ttl(src, lc_buf.as_mut_ptr(), size) };
-        if (fl_n < 0) != (lc_n < 0) {
-            divs.push(Divergence {
-                case: format!("size={size}"),
-                field: "error_signal",
-                frankenlibc: format!("{fl_n}"),
-                glibc: format!("{lc_n}"),
-            });
+    let cases: &[(libc::c_ulong, &[usize])] = &[
+        (0, &[0, 1, 2]),
+        (61, &[0, 1, 2, 3, 4]),
+        (90090, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        (0x100000000, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15]),
+        (1_000_000_000_000, &[0, 1, 2, 3, 4, 5, 8, 9, 18]),
+    ];
+    for &(src, sizes) in cases {
+        for &size in sizes {
+            let mut fl_buf = vec![0x55 as c_char; size + 4];
+            let mut lc_buf = vec![0x55 as c_char; size + 4];
+            let fl_n = unsafe { fl::ns_format_ttl(src, fl_buf.as_mut_ptr(), size) };
+            let lc_n = unsafe { ns_format_ttl(src, lc_buf.as_mut_ptr(), size) };
+            let case = format!("src={src} size={size}");
+            if fl_n != lc_n {
+                divs.push(Divergence {
+                    case: case.clone(),
+                    field: "return",
+                    frankenlibc: format!("{fl_n}"),
+                    glibc: format!("{lc_n}"),
+                });
+            }
+            if fl_n < 0 && lc_n < 0 && fl_buf != lc_buf {
+                divs.push(Divergence {
+                    case,
+                    field: "partial_buffer",
+                    frankenlibc: format!("{:?}", raw_bytes(&fl_buf)),
+                    glibc: format!("{:?}", raw_bytes(&lc_buf)),
+                });
+            }
         }
     }
     assert!(
