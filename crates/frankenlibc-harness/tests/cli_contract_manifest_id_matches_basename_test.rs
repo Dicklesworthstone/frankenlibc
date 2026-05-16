@@ -1,8 +1,10 @@
 //! Meta-gate: every `*_cli_contract.v1.json` manifest under
 //! `tests/conformance/` has a `manifest_id` field whose kebab-case
 //! value, when re-spelled in snake_case (`-` -> `_`), equals the file
-//! basename (without `.v1.json`) (bd-wj0rn). Catches manifests whose
-//! `manifest_id` drifted from the filename during rename/refactor.
+//! basename (without `.v1.json`) (bd-wj0rn), and whose id contains no
+//! double-dash segment (bd-9pnim). Catches manifests whose `manifest_id`
+//! drifted from the filename during rename/refactor, plus accidental
+//! double-dash insertion during rename.
 
 use std::path::{Path, PathBuf};
 
@@ -23,6 +25,10 @@ fn kebab_to_snake(s: &str) -> String {
     s.replace('-', "_")
 }
 
+fn has_double_dash(s: &str) -> bool {
+    s.contains("--")
+}
+
 #[test]
 fn every_cli_contract_manifest_id_matches_basename() -> TestResult {
     let root = workspace_root()?;
@@ -41,7 +47,9 @@ fn every_cli_contract_manifest_id_matches_basename() -> TestResult {
         if !name.ends_with("_cli_contract.v1.json") {
             continue;
         }
-        let basename = name.strip_suffix(".v1.json").expect("checked above");
+        let Some(basename) = name.strip_suffix(".v1.json") else {
+            continue;
+        };
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
         let manifest: Value =
             serde_json::from_str(&body).map_err(|e| format!("parse {name}: {e}"))?;
@@ -50,6 +58,11 @@ fn every_cli_contract_manifest_id_matches_basename() -> TestResult {
             checked += 1;
             continue;
         };
+        if has_double_dash(manifest_id) {
+            violations.push(format!(
+                "{name}: manifest_id `{manifest_id}` contains double-dash"
+            ));
+        }
         let expected_snake = basename;
         let actual_snake = kebab_to_snake(manifest_id);
         if actual_snake != expected_snake {
@@ -81,4 +94,10 @@ fn kebab_to_snake_handles_canonical_forms() {
     assert_eq!(kebab_to_snake("already_snake"), "already_snake");
     assert_eq!(kebab_to_snake(""), "");
     assert_eq!(kebab_to_snake("single"), "single");
+}
+
+#[test]
+fn manifest_id_double_dash_guard_is_explicit() {
+    assert!(has_double_dash("foo--bar-cli-contract"));
+    assert!(!has_double_dash("foo-bar-cli-contract"));
 }
