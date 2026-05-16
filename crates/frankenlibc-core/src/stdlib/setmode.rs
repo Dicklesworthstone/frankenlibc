@@ -12,27 +12,22 @@
 //! clause  = [ who ] op perm ( op perm )*
 //! who     = ( "u" | "g" | "o" | "a" )*
 //! op      = "+" | "-" | "="
-//! perm    = ( "r" | "w" | "x" | "s" | "t" )*
+//! perm    = ( "r" | "w" | "x" | "X" | "s" | "t" | "u" | "g" | "o" )*
 //! ```
 //!
 //! `who` empty is treated as `a` (all). `s` adds setuid when `who`
 //! covers `u`, setgid when it covers `g`, and both when it's `a`/empty.
 //! `t` adds the sticky bit (S_ISVTX) regardless of `who` (BSD parity).
-//!
-//! ## Not implemented (yet)
-//!
-//! * `X` (conditional execute — only when target is a directory or
-//!   any execute bit is already set).
-//! * `u`/`g`/`o` as a `perm` value (copy current bits from another
-//!   triple).
-//!
-//! Both are documented BSD extensions but rarely appear in real
-//! config files. The unsupported syntax causes [`parse`] to return
-//! `None`.
+//! `X` applies execute bits only when the current mode is a directory
+//! or already has at least one execute bit. `u`/`g`/`o` used as `perm`
+//! operands copy the current mode's rwx bits from that class into the
+//! target `who` classes.
 
 const S_ISUID: u32 = 0o4000;
 const S_ISGID: u32 = 0o2000;
 const S_ISVTX: u32 = 0o1000;
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
 
 const S_IRUSR: u32 = 0o400;
 const S_IWUSR: u32 = 0o200;
@@ -43,6 +38,10 @@ const S_IXGRP: u32 = 0o010;
 const S_IROTH: u32 = 0o004;
 const S_IWOTH: u32 = 0o002;
 const S_IXOTH: u32 = 0o001;
+
+const COPY_U: u8 = 0b001;
+const COPY_G: u8 = 0b010;
+const COPY_O: u8 = 0b100;
 
 /// One parsed `op perm` step within a clause.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,6 +54,10 @@ pub struct ChmodOp {
     pub who_mask: u32,
     /// Bits to set / clear / replace within `who_mask`.
     pub bits: u32,
+    /// Execute bits gated by BSD `X` conditional-execute semantics.
+    pub conditional_exec_bits: u32,
+    /// Source classes to copy dynamically from the current mode.
+    pub copy_sources: u8,
 }
 
 /// Operation kind in a `ChmodOp`.
@@ -69,8 +72,8 @@ pub enum OpKind {
 }
 
 /// Parse `mode_str` into a sequence of operations. Returns `None`
-/// for any malformed input (empty string, unknown character, op
-/// without a perm, perm character outside the supported subset).
+/// for any malformed input (empty string, unknown character,
+/// dangling separator, perm character outside the supported subset).
 pub fn parse(mode_str: &[u8]) -> Option<Vec<ChmodOp>> {
     if mode_str.is_empty() {
         return None;
@@ -120,23 +123,36 @@ pub fn parse(mode_str: &[u8]) -> Option<Vec<ChmodOp>> {
             // nothing, but is still a valid op syntactically; we
             // emit a no-op step rather than failing).
             let mut perm_letters = 0u8;
+            let mut conditional_exec = false;
+            let mut copy_sources = 0u8;
             while i < mode_str.len() {
                 match mode_str[i] {
                     b'r' => perm_letters |= 0b00001,
                     b'w' => perm_letters |= 0b00010,
                     b'x' => perm_letters |= 0b00100,
+                    b'X' => conditional_exec = true,
                     b's' => perm_letters |= 0b01000,
                     b't' => perm_letters |= 0b10000,
+                    b'u' => copy_sources |= COPY_U,
+                    b'g' => copy_sources |= COPY_G,
+                    b'o' => copy_sources |= COPY_O,
                     _ => break,
                 }
                 i += 1;
             }
 
             let bits = perm_letters_to_bits(perm_letters, who_letters);
+            let conditional_exec_bits = if conditional_exec {
+                who_mask & execute_bits()
+            } else {
+                0
+            };
             out.push(ChmodOp {
                 kind,
                 who_mask,
                 bits,
+                conditional_exec_bits,
+                copy_sources,
             });
         }
         if i == clause_start {
@@ -163,17 +179,28 @@ pub fn parse(mode_str: &[u8]) -> Option<Vec<ChmodOp>> {
 pub fn apply(ops: &[ChmodOp], current_mode: u32) -> u32 {
     let mut mode = current_mode;
     for op in ops {
+        let bits = op.resolved_bits(mode);
         match op.kind {
-            OpKind::Add => mode |= op.bits,
-            OpKind::Clear => mode &= !op.bits,
+            OpKind::Add => mode |= bits,
+            OpKind::Clear => mode &= !bits,
             OpKind::Set => {
                 // Clear all bits in who_mask, then set `bits` (which
                 // is already filtered to be a subset of who_mask).
-                mode = (mode & !op.who_mask) | op.bits;
+                mode = (mode & !op.who_mask) | bits;
             }
         }
     }
     mode
+}
+
+impl ChmodOp {
+    fn resolved_bits(&self, mode: u32) -> u32 {
+        let mut bits = self.bits | copy_bits(self.copy_sources, self.who_mask, mode);
+        if self.conditional_exec_bits != 0 && conditional_execute_applies(mode) {
+            bits |= self.conditional_exec_bits;
+        }
+        bits & self.who_mask
+    }
 }
 
 fn who_letters_to_mask(who: u8) -> u32 {
@@ -210,6 +237,70 @@ const fn s_irwxo() -> u32 {
 const S_IRWXU: u32 = s_irwxu();
 const S_IRWXG: u32 = s_irwxg();
 const S_IRWXO: u32 = s_irwxo();
+
+const fn execute_bits() -> u32 {
+    S_IXUSR | S_IXGRP | S_IXOTH
+}
+
+fn conditional_execute_applies(mode: u32) -> bool {
+    mode & S_IFMT == S_IFDIR || mode & execute_bits() != 0
+}
+
+fn copy_bits(copy_sources: u8, who_mask: u32, mode: u32) -> u32 {
+    let mut bits = 0u32;
+    if copy_sources & COPY_U != 0 {
+        bits |= map_source_bits(mode, S_IRUSR, S_IWUSR, S_IXUSR, who_mask);
+    }
+    if copy_sources & COPY_G != 0 {
+        bits |= map_source_bits(mode, S_IRGRP, S_IWGRP, S_IXGRP, who_mask);
+    }
+    if copy_sources & COPY_O != 0 {
+        bits |= map_source_bits(mode, S_IROTH, S_IWOTH, S_IXOTH, who_mask);
+    }
+    bits
+}
+
+fn map_source_bits(mode: u32, src_r: u32, src_w: u32, src_x: u32, who_mask: u32) -> u32 {
+    let r = mode & src_r != 0;
+    let w = mode & src_w != 0;
+    let x = mode & src_x != 0;
+    let mut bits = 0u32;
+
+    if who_mask & S_IRWXU != 0 {
+        if r {
+            bits |= S_IRUSR;
+        }
+        if w {
+            bits |= S_IWUSR;
+        }
+        if x {
+            bits |= S_IXUSR;
+        }
+    }
+    if who_mask & S_IRWXG != 0 {
+        if r {
+            bits |= S_IRGRP;
+        }
+        if w {
+            bits |= S_IWGRP;
+        }
+        if x {
+            bits |= S_IXGRP;
+        }
+    }
+    if who_mask & S_IRWXO != 0 {
+        if r {
+            bits |= S_IROTH;
+        }
+        if w {
+            bits |= S_IWOTH;
+        }
+        if x {
+            bits |= S_IXOTH;
+        }
+    }
+    bits
+}
 
 fn perm_letters_to_bits(perm: u8, who: u8) -> u32 {
     let mut bits = 0u32;
@@ -311,6 +402,30 @@ mod tests {
         assert_eq!(am(&ops, 0o644), 0o755);
     }
 
+    #[test]
+    fn conditional_execute_skips_plain_non_executable_files() {
+        let ops = parse(b"+X").unwrap();
+        assert_eq!(am(&ops, 0o100644), 0o100644);
+    }
+
+    #[test]
+    fn conditional_execute_applies_to_directories() {
+        let ops = parse(b"+X").unwrap();
+        assert_eq!(am(&ops, 0o040644), 0o040755);
+    }
+
+    #[test]
+    fn conditional_execute_uses_file_type_mask_for_directories() {
+        let ops = parse(b"+X").unwrap();
+        assert_eq!(am(&ops, 0o140644), 0o140644);
+    }
+
+    #[test]
+    fn conditional_execute_applies_when_any_execute_bit_is_set() {
+        let ops = parse(b"+X").unwrap();
+        assert_eq!(am(&ops, 0o100744), 0o100755);
+    }
+
     // ---- comma-chained clauses ----
 
     #[test]
@@ -370,6 +485,30 @@ mod tests {
                 am(&parse(b"g=r").unwrap(), mode)
             );
         }
+    }
+
+    #[test]
+    fn copy_user_permissions_to_group_with_set() {
+        let ops = parse(b"g=u").unwrap();
+        assert_eq!(am(&ops, 0o754), 0o774);
+    }
+
+    #[test]
+    fn copy_group_permissions_to_other_with_add() {
+        let ops = parse(b"o+g").unwrap();
+        assert_eq!(am(&ops, 0o750), 0o755);
+    }
+
+    #[test]
+    fn copy_group_permissions_to_user_with_clear() {
+        let ops = parse(b"u-g").unwrap();
+        assert_eq!(am(&ops, 0o750), 0o250);
+    }
+
+    #[test]
+    fn copy_permissions_are_resolved_sequentially() {
+        let ops = parse(b"g=u,o+g").unwrap();
+        assert_eq!(am(&ops, 0o740), 0o777);
     }
 
     // ---- setuid / setgid / sticky ----
@@ -461,6 +600,8 @@ mod tests {
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0].kind, OpKind::Clear);
         assert_eq!(ops[0].bits, 0);
+        assert_eq!(ops[0].conditional_exec_bits, 0);
+        assert_eq!(ops[0].copy_sources, 0);
     }
 
     #[test]

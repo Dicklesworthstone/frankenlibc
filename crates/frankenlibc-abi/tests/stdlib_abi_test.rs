@@ -7864,6 +7864,26 @@ fn setmode_round_trip_with_multiple_clauses_and_apply() {
     unsafe { libc::free(bbox) };
 }
 
+#[test]
+fn setmode_conditional_execute_skips_plain_file_but_applies_to_directory() {
+    let s = c"+X";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(!bbox.is_null());
+    assert_eq!(unsafe { getmode(bbox, 0o100644) }, 0o100644);
+    assert_eq!(unsafe { getmode(bbox, 0o040644) }, 0o040755);
+    unsafe { libc::free(bbox) };
+}
+
+#[test]
+fn setmode_copy_permissions_resolve_sequentially() {
+    let s = c"g=u,o+g";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(!bbox.is_null());
+    let new_mode = unsafe { getmode(bbox, 0o740) };
+    assert_eq!(new_mode, 0o777);
+    unsafe { libc::free(bbox) };
+}
+
 // ---------------------------------------------------------------------------
 // pidfile_* (FreeBSD libutil PID-file management)
 // ---------------------------------------------------------------------------
