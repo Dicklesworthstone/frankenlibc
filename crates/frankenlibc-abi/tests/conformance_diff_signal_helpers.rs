@@ -9,7 +9,7 @@
 //!   - sigemptyset / sigfillset                   — initialize a sigset
 //!   - sigaddset / sigdelset                       — toggle a signal in a set
 //!   - sigismember                                 — query membership
-//!   - strsignal / psignal-style messaging         — non-empty string match
+//!   - strsignal / psignal-style messaging         — exact text match
 //!
 //! For sigset operations we compare the byte content of the sigset_t
 //! structure (libc::sigset_t is repr(C)) after each operation. Membership
@@ -65,6 +65,10 @@ fn sigset_bytes(s: &libc::sigset_t) -> Vec<u8> {
 /// for sigaddset since glibc rejects them in some sets but not others;
 /// stick to the regular 1..=31 range plus a few real-time ones.
 const SIGNALS: &[c_int] = &[1, 2, 3, 6, 8, 10, 13, 14, 15, 17, 22, 30, 31];
+const STRSIGNAL_STANDARD_CASES: &[c_int] = &[
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+    27, 28, 29, 30, 31,
+];
 const SIGNAL_NP_CASES: &[c_int] = &[
     -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
     25, 26, 27, 28, 29, 30, 31, 32, 33, 64, 65, 100,
@@ -348,7 +352,7 @@ fn diff_sigdescr_np_cases() {
 #[test]
 fn diff_strsignal_cases() {
     let mut divs = Vec::new();
-    for &sig in SIGNALS {
+    for &sig in STRSIGNAL_STANDARD_CASES {
         let p_fl = unsafe { fl_str::strsignal(sig) };
         let p_lc = unsafe { libc::strsignal(sig) };
         if p_fl.is_null() != p_lc.is_null() {
@@ -364,13 +368,11 @@ fn diff_strsignal_cases() {
         if !p_fl.is_null() {
             let s_fl = unsafe { std::ffi::CStr::from_ptr(p_fl).to_bytes() };
             let s_lc = unsafe { std::ffi::CStr::from_ptr(p_lc).to_bytes() };
-            // strsignal text varies by glibc version; only require both
-            // produce the same emptiness verdict.
-            if s_fl.is_empty() != s_lc.is_empty() {
+            if s_fl != s_lc {
                 divs.push(Divergence {
                     function: "strsignal",
                     case: format!("sig={sig}"),
-                    field: "empty_match",
+                    field: "text",
                     frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
                     glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
                 });
