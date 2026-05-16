@@ -161,6 +161,10 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
             "deterministic_seed_steps_microbench_iters_roundtrip_to_each_mode_block",
             "deterministic_seed_steps_microbench_iters_roundtrip_to_each_mode_block must be true",
         ),
+        (
+            "negative_steps_or_zero_steps_handled_via_kernel_regression_mode_validation",
+            "negative_steps_or_zero_steps_handled_via_kernel_regression_mode_validation must be true",
+        ),
     ] {
         require(json_bool(policy, key)?, message)?;
     }
