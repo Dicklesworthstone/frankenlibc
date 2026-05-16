@@ -7,27 +7,72 @@
 
 use frankenlibc_harness::setjmp_contract::parse_contract_str;
 use std::collections::BTreeSet;
+use std::error::Error;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn workspace_root() -> PathBuf {
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    Path::new(manifest)
-        .parent()
-        .expect("harness crate parent")
-        .parent()
-        .expect("workspace root")
-        .to_path_buf()
+type TestResult<T = ()> = Result<T, Box<dyn Error>>;
+
+fn test_error(message: impl Into<String>) -> io::Error {
+    io::Error::other(message.into())
 }
 
-fn load_json(path: &Path) -> serde_json::Value {
-    let content = std::fs::read_to_string(path).expect("json should be readable");
-    serde_json::from_str(&content).expect("json should parse")
+fn workspace_root() -> TestResult<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let harness_root = manifest.parent().ok_or_else(|| {
+        test_error(format!(
+            "{} has no harness-crate parent",
+            manifest.display()
+        ))
+    })?;
+    let workspace_root = harness_root.parent().ok_or_else(|| {
+        test_error(format!(
+            "{} has no workspace-root parent",
+            harness_root.display()
+        ))
+    })?;
+    Ok(workspace_root.to_path_buf())
+}
+
+fn load_json(path: &Path) -> TestResult<serde_json::Value> {
+    let content = fs::read_to_string(path)
+        .map_err(|source| test_error(format!("failed to read {}: {source}", path.display())))?;
+    serde_json::from_str(&content).map_err(|source| {
+        test_error(format!("failed to parse JSON {}: {source}", path.display())).into()
+    })
+}
+
+fn json_array<'a>(
+    value: &'a serde_json::Value,
+    field: &str,
+) -> TestResult<&'a [serde_json::Value]> {
+    value
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| test_error(format!("{field} must be an array")).into())
+}
+
+fn first_non_empty_jsonl_row(path: &Path) -> TestResult<String> {
+    let content = fs::read_to_string(path)
+        .map_err(|source| test_error(format!("failed to read {}: {source}", path.display())))?;
+    content
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            test_error(format!(
+                "{} must contain at least one JSONL row",
+                path.display()
+            ))
+            .into()
+        })
 }
 
 #[test]
-fn artifact_exists_and_validates_intrinsic_contract() {
-    let root = workspace_root();
+fn artifact_exists_and_validates_intrinsic_contract() -> TestResult {
+    let root = workspace_root()?;
     let artifact_path = root.join("tests/conformance/setjmp_semantics_contract.v1.json");
     assert!(
         artifact_path.exists(),
@@ -35,38 +80,61 @@ fn artifact_exists_and_validates_intrinsic_contract() {
         artifact_path.display()
     );
 
-    let artifact_raw =
-        std::fs::read_to_string(&artifact_path).expect("artifact should be readable");
-    let contract = parse_contract_str(&artifact_raw).expect("artifact should parse as contract");
-    contract
-        .validate_intrinsic()
-        .expect("intrinsic contract validation should pass");
+    let artifact_raw = fs::read_to_string(&artifact_path).map_err(|source| {
+        test_error(format!(
+            "failed to read setjmp contract artifact {}: {source}",
+            artifact_path.display()
+        ))
+    })?;
+    let contract = parse_contract_str(&artifact_raw).map_err(|source| {
+        test_error(format!(
+            "failed to parse setjmp contract artifact {}: {source}",
+            artifact_path.display()
+        ))
+    })?;
+    contract.validate_intrinsic().map_err(|source| {
+        test_error(format!(
+            "setjmp intrinsic contract validation failed for {}: {source:?}",
+            artifact_path.display()
+        ))
+    })?;
 
     let support_path = root.join("support_matrix.json");
-    let support = load_json(&support_path);
-    let support_symbols: BTreeSet<String> = support["symbols"]
-        .as_array()
-        .expect("support_matrix symbols should be array")
-        .iter()
-        .filter_map(|row| row.get("symbol").and_then(serde_json::Value::as_str))
-        .map(str::to_string)
-        .collect();
+    let support = load_json(&support_path)?;
+    let support_symbols: BTreeSet<String> = json_array(
+        support
+            .get("symbols")
+            .ok_or_else(|| test_error("support_matrix.symbols is missing"))?,
+        "support_matrix.symbols",
+    )?
+    .iter()
+    .filter_map(|row| row.get("symbol").and_then(serde_json::Value::as_str))
+    .map(str::to_string)
+    .collect();
 
     contract
         .validate_support_alignment(&support_symbols)
-        .expect("support-matrix alignment validation should pass");
+        .map_err(|source| {
+            test_error(format!(
+                "setjmp support-matrix alignment validation failed for {}: {source:?}",
+                support_path.display()
+            ))
+        })?;
+    Ok(())
 }
 
 #[test]
-fn gate_script_passes_and_emits_artifacts() {
-    let root = workspace_root();
+fn gate_script_passes_and_emits_artifacts() -> TestResult {
+    let root = workspace_root()?;
     let script = root.join("scripts/check_setjmp_semantics_contract.sh");
     assert!(script.exists(), "missing {}", script.display());
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::metadata(&script).unwrap().permissions();
+        let perms = fs::metadata(&script)
+            .map_err(|source| test_error(format!("failed to stat {}: {source}", script.display())))?
+            .permissions();
         assert!(
             perms.mode() & 0o111 != 0,
             "check_setjmp_semantics_contract.sh must be executable"
@@ -76,7 +144,12 @@ fn gate_script_passes_and_emits_artifacts() {
     let output = Command::new(&script)
         .current_dir(&root)
         .output()
-        .expect("failed to run setjmp semantics contract gate");
+        .map_err(|source| {
+            test_error(format!(
+                "failed to run setjmp semantics contract gate {}: {source}",
+                script.display()
+            ))
+        })?;
     assert!(
         output.status.success(),
         "setjmp semantics contract gate failed:\nstdout={}\nstderr={}",
@@ -102,7 +175,7 @@ fn gate_script_passes_and_emits_artifacts() {
         cve_index_path.display()
     );
 
-    let report = load_json(&report_path);
+    let report = load_json(&report_path)?;
     assert_eq!(report["schema_version"].as_str(), Some("v1"));
     assert_eq!(report["bead"].as_str(), Some("bd-2xp3"));
     for check in [
@@ -122,13 +195,13 @@ fn gate_script_passes_and_emits_artifacts() {
     }
 
     for path in [&log_path, &cve_trace_path] {
-        let line = std::fs::read_to_string(path)
-            .expect("log should be readable")
-            .lines()
-            .find(|l| !l.trim().is_empty())
-            .expect("log should contain at least one row")
-            .to_string();
-        let event: serde_json::Value = serde_json::from_str(&line).expect("log row should parse");
+        let line = first_non_empty_jsonl_row(path)?;
+        let event: serde_json::Value = serde_json::from_str(&line).map_err(|source| {
+            test_error(format!(
+                "failed to parse first JSONL row from {}: {source}; row={line}",
+                path.display()
+            ))
+        })?;
         for key in [
             "timestamp",
             "trace_id",
@@ -153,18 +226,20 @@ fn gate_script_passes_and_emits_artifacts() {
         assert!(
             event["trace_id"]
                 .as_str()
-                .map(|v| v.starts_with("bd-2xp3::"))
-                .unwrap_or(false),
+                .is_some_and(|v| v.starts_with("bd-2xp3::")),
             "trace_id should start with bd-2xp3::"
         );
     }
 
-    let index = load_json(&cve_index_path);
+    let index = load_json(&cve_index_path)?;
     assert_eq!(index["index_version"].as_i64(), Some(1));
     assert_eq!(index["bead_id"].as_str(), Some("bd-2xp3"));
-    let artifacts = index["artifacts"]
-        .as_array()
-        .expect("artifacts should be array");
+    let artifacts = json_array(
+        index
+            .get("artifacts")
+            .ok_or_else(|| test_error("artifact index missing artifacts"))?,
+        "artifact index artifacts",
+    )?;
     assert!(
         artifacts.len() >= 4,
         "artifact index should contain >=4 entries"
@@ -183,4 +258,5 @@ fn gate_script_passes_and_emits_artifacts() {
             "artifact.sha256 should be string"
         );
     }
+    Ok(())
 }
