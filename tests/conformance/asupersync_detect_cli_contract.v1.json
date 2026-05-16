@@ -15,6 +15,7 @@
     "--asupersync-dir",
     "--path-search-paths"
   ],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available",
   "underlying_lib_functions": [
     "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available"

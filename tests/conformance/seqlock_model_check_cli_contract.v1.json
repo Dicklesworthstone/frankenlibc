@@ -13,6 +13,7 @@
   "optional_flags": [
     "--write-count"
   ],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "write_count_cap": 4,
   "underlying_lib_function": "frankenlibc_harness::concurrency_model_check::check_seqlock",
   "underlying_lib_functions": [

@@ -12,6 +12,7 @@
     "--output"
   ],
   "optional_flags": [],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_harness::stdio_evidence::parse_stdio_evidence_file",
   "underlying_lib_functions": [
     "frankenlibc_harness::stdio_evidence::parse_stdio_evidence_file"

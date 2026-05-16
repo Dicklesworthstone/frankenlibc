@@ -18,6 +18,7 @@
     "--len",
     "--overlap"
   ],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation"

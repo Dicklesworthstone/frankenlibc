@@ -11,6 +11,7 @@
     "--output"
   ],
   "optional_flags": [],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_harness::explainability_workbench::tooling_contract",
   "underlying_lib_functions": [
     "frankenlibc_harness::explainability_workbench::tooling_contract"
