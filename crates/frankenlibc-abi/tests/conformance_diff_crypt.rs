@@ -53,6 +53,44 @@ fn render_divs(divs: &[Divergence]) -> String {
     out
 }
 
+fn collect_crypt_divergences() -> Vec<Divergence> {
+    let mut divs = Vec::new();
+    for (key, salt) in CRYPT_CASES {
+        let key_c = CString::new(*key).unwrap();
+        let salt_c = CString::new(*salt).unwrap();
+        let p_fl = unsafe { fl::crypt(key_c.as_ptr(), salt_c.as_ptr()) };
+        let p_lc = unsafe { crypt(key_c.as_ptr(), salt_c.as_ptr()) };
+        let case = format!(
+            "(key={:?}, salt={:?})",
+            String::from_utf8_lossy(key),
+            String::from_utf8_lossy(salt)
+        );
+        if p_fl.is_null() != p_lc.is_null() {
+            divs.push(Divergence {
+                case: case.clone(),
+                field: "null_return",
+                frankenlibc: format!("{}", p_fl.is_null()),
+                glibc: format!("{}", p_lc.is_null()),
+            });
+            continue;
+        }
+        if p_fl.is_null() {
+            continue;
+        }
+        let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
+        let s_lc = unsafe { CStr::from_ptr(p_lc).to_bytes() };
+        if s_fl != s_lc {
+            divs.push(Divergence {
+                case,
+                field: "hash",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
+            });
+        }
+    }
+    divs
+}
+
 const CRYPT_CASES: &[(&[u8], &[u8])] = &[
     // ($key, $salt) — three modern methods × multiple salts/keys.
     (b"password", b"$1$abcdefgh$"),
@@ -111,40 +149,7 @@ fn fl_crypt_accepts_modern_method_salts() {
 #[test]
 #[ignore = "fl crypt hashes diverge from glibc — known parity gap"]
 fn report_crypt_divergences_against_host() {
-    let mut divs = Vec::new();
-    for (key, salt) in CRYPT_CASES {
-        let key_c = CString::new(*key).unwrap();
-        let salt_c = CString::new(*salt).unwrap();
-        let p_fl = unsafe { fl::crypt(key_c.as_ptr(), salt_c.as_ptr()) };
-        let p_lc = unsafe { crypt(key_c.as_ptr(), salt_c.as_ptr()) };
-        let case = format!(
-            "(key={:?}, salt={:?})",
-            String::from_utf8_lossy(key),
-            String::from_utf8_lossy(salt)
-        );
-        if p_fl.is_null() != p_lc.is_null() {
-            divs.push(Divergence {
-                case: case.clone(),
-                field: "null_return",
-                frankenlibc: format!("{}", p_fl.is_null()),
-                glibc: format!("{}", p_lc.is_null()),
-            });
-            continue;
-        }
-        if p_fl.is_null() {
-            continue;
-        }
-        let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
-        let s_lc = unsafe { CStr::from_ptr(p_lc).to_bytes() };
-        if s_fl != s_lc {
-            divs.push(Divergence {
-                case,
-                field: "hash",
-                frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
-                glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
-            });
-        }
-    }
+    let divs = collect_crypt_divergences();
     eprintln!(
         "crypt divergences ({}):\n{}",
         divs.len(),
@@ -154,7 +159,14 @@ fn report_crypt_divergences_against_host() {
 
 #[test]
 fn crypt_diff_coverage_report() {
+    let divs = collect_crypt_divergences();
+    assert!(
+        !divs.is_empty(),
+        "crypt differential unexpectedly reached parity; update the crypt dashboard reconciliation artifact and close the live parity bead before reporting zero divergences"
+    );
     eprintln!(
-        "{{\"family\":\"libcrypt crypt\",\"reference\":\"glibc\",\"functions\":1,\"divergences\":0}}",
+        "{{\"family\":\"libcrypt crypt\",\"reference\":\"glibc\",\"functions\":1,\"cases\":{},\"divergences\":{},\"status\":\"known_divergence\",\"tracker_hint\":\"create_or_reopen_crypt_divergence_bead\"}}",
+        CRYPT_CASES.len(),
+        divs.len(),
     );
 }
