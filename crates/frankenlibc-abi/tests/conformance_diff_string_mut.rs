@@ -2,7 +2,7 @@
 
 //! Differential conformance harness for `<string.h>` mutating + comparison
 //! functions: strlen, strcmp, strncmp, strcpy, strncpy, strcat, strncat,
-//! strdup, strndup, strerror, strerror_r, memcpy, memmove, memset,
+//! strdup, strndup, strerror, strerror_r, memcpy, memmove, memset, memccpy,
 //! explicit_bzero, strtok_r.
 //!
 //! Compares FrankenLibC vs glibc on identical inputs; for mutating ops the
@@ -25,6 +25,8 @@ unsafe extern "C" {
     fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char;
     /// Host glibc `mempcpy` (GNU) — like memcpy but returns dst+n.
     fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
+    /// Host glibc/POSIX `memccpy` — copy until byte match or n bytes.
+    fn memccpy(dst: *mut c_void, src: *const c_void, c: c_int, n: usize) -> *mut c_void;
     /// Host glibc C23 `strfromd` — double → string with format.
     fn strfromd(s: *mut c_char, n: usize, format: *const c_char, value: f64) -> c_int;
     /// Host glibc C23 `strfromf` — float → string with format.
@@ -907,6 +909,69 @@ fn diff_mempcpy_cases() {
     );
 }
 
+#[test]
+fn diff_memccpy_cases() {
+    let mut divs = Vec::new();
+    let cases: &[(&[u8], c_int, usize)] = &[
+        (b"", b'x' as c_int, 0),
+        (b"abcdef", b'c' as c_int, 6),
+        (b"abcdef", b'z' as c_int, 6),
+        (b"\x00abc", 0, 4),
+        (b"ab\x00cd", 0, 5),
+        (b"xyzxyz", b'z' as c_int, 2),
+        (b"xyzxyz", b'z' as c_int, 3),
+        (b"\xff\xfe\xfd", 0xff, 3),
+    ];
+    for &(src, c, n) in cases {
+        let mut dst_fl = vec![0xCDu8; src.len() + 4];
+        let mut dst_lc = vec![0xCDu8; src.len() + 4];
+        let fl_end = unsafe {
+            fl::memccpy(
+                dst_fl.as_mut_ptr() as *mut c_void,
+                src.as_ptr() as *const c_void,
+                c,
+                n,
+            )
+        };
+        let lc_end = unsafe {
+            memccpy(
+                dst_lc.as_mut_ptr() as *mut c_void,
+                src.as_ptr() as *const c_void,
+                c,
+                n,
+            )
+        };
+        let fl_off =
+            (!fl_end.is_null()).then(|| (fl_end as usize).wrapping_sub(dst_fl.as_ptr() as usize));
+        let lc_off =
+            (!lc_end.is_null()).then(|| (lc_end as usize).wrapping_sub(dst_lc.as_ptr() as usize));
+        let case = format!("(src={:?}, c={}, n={})", src, c, n);
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "memccpy",
+                case: case.clone(),
+                field: "return_offset",
+                frankenlibc: format!("{fl_off:?}"),
+                glibc: format!("{lc_off:?}"),
+            });
+        }
+        if dst_fl != dst_lc {
+            divs.push(Divergence {
+                function: "memccpy",
+                case,
+                field: "dst_buffer",
+                frankenlibc: format!("{:?}", &dst_fl[..dst_fl.len().min(16)]),
+                glibc: format!("{:?}", &dst_lc[..dst_lc.len().min(16)]),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "memccpy divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 // ===========================================================================
 // strfromd / strfromf — C23 float-to-string with format
 // ===========================================================================
@@ -1427,6 +1492,6 @@ fn diff_memfrob_cases() {
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":28,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":29,\"divergences\":0}}",
     );
 }
