@@ -2,7 +2,8 @@
 
 //! Differential conformance harness for `<string.h>` mutating + comparison
 //! functions: strlen, strcmp, strncmp, strcpy, strncpy, strcat, strncat,
-//! strdup, strndup, strerror, strerror_r, memcpy, memmove, memset, strtok_r.
+//! strdup, strndup, strerror, strerror_r, memcpy, memmove, memset,
+//! explicit_bzero, strtok_r.
 //!
 //! Compares FrankenLibC vs glibc on identical inputs; for mutating ops the
 //! comparison is on the post-call buffer state of paired output buffers.
@@ -30,6 +31,8 @@ unsafe extern "C" {
     fn strfromf(s: *mut c_char, n: usize, format: *const c_char, value: f32) -> c_int;
     /// Host glibc BSD `bzero` — memset-with-zero.
     fn bzero(s: *mut c_void, n: usize);
+    /// Host glibc `explicit_bzero` — non-elidable zeroing.
+    fn explicit_bzero(s: *mut c_void, n: usize);
     /// Host glibc BSD `bcmp` — memcmp returning 0 or non-zero.
     fn bcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int;
     /// Host glibc BSD `bcopy` — memmove with src/dst args swapped.
@@ -1120,6 +1123,44 @@ fn diff_bzero_cases() {
 }
 
 #[test]
+fn diff_explicit_bzero_cases() {
+    let mut divs = Vec::new();
+    let cases: &[(&[u8], usize)] = &[
+        (b"", 0),
+        (b"secret", 0),
+        (b"secret", 1),
+        (b"secret", 3),
+        (b"secret", 6),
+        (b"\xff\xfe\xfd\xfc", 2),
+        (b"\x00\x01\x02\x03\x04\x05", 4),
+    ];
+    for &(src, n) in cases {
+        let mut fl_buf = src.to_vec();
+        fl_buf.resize(src.len() + 4, 0xCDu8);
+        let mut lc_buf = src.to_vec();
+        lc_buf.resize(src.len() + 4, 0xCDu8);
+        unsafe {
+            fl::explicit_bzero(fl_buf.as_mut_ptr() as *mut c_void, n);
+            explicit_bzero(lc_buf.as_mut_ptr() as *mut c_void, n);
+        }
+        if fl_buf != lc_buf {
+            divs.push(Divergence {
+                function: "explicit_bzero",
+                case: format!("(src={:?}, n={})", src, n),
+                field: "buffer",
+                frankenlibc: format!("{:?}", &fl_buf[..fl_buf.len().min(16)]),
+                glibc: format!("{:?}", &lc_buf[..lc_buf.len().min(16)]),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "explicit_bzero divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
 fn diff_bcmp_cases() {
     let mut divs = Vec::new();
     let cases: &[(&[u8], &[u8], usize)] = &[
@@ -1386,6 +1427,6 @@ fn diff_memfrob_cases() {
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":27,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":28,\"divergences\":0}}",
     );
 }
