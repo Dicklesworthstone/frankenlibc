@@ -16,6 +16,10 @@
 //! ```text
 //! byte[0]              sep_choice (mod 4): selects from {':', ',', ' ', ';'}
 //! byte[1..]            input string fed to argz_create_sep
+//!
+//! or a directed UTF-8 seed:
+//!
+//! argz:<scenario>
 //! ```
 //!
 //! ## What we assert
@@ -28,7 +32,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up — fuzz coverage extension.
 
-use std::ffi::{c_char, c_int, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int};
 
 use frankenlibc_abi::malloc_abi::free as fl_free;
 use frankenlibc_abi::string_abi as fl;
@@ -47,6 +51,7 @@ unsafe extern "C" {
 }
 
 const MAX_INPUT: usize = 256;
+const DIRECTED_PREFIX: &[u8] = b"argz:";
 
 fn sep_for(byte: u8) -> c_int {
     match byte % 4 {
@@ -61,9 +66,35 @@ fn sanitize(input: &[u8]) -> Vec<u8> {
     input
         .iter()
         .copied()
-        .filter(|&b| b.is_ascii_alphanumeric() || matches!(b, b':' | b',' | b' ' | b';' | b'_' | b'-' | b'='))
+        .filter(|&b| {
+            b.is_ascii_alphanumeric() || matches!(b, b':' | b',' | b' ' | b';' | b'_' | b'-' | b'=')
+        })
         .take(MAX_INPUT)
         .collect()
+}
+
+fn directed_case(data: &[u8]) -> Option<(c_int, Vec<u8>)> {
+    let scenario = data.strip_prefix(DIRECTED_PREFIX)?;
+    let scenario = std::str::from_utf8(scenario).ok()?;
+    let scenario = scenario.trim_matches(|c: char| c.is_ascii_whitespace());
+    match scenario {
+        "colon-empty-runs" => Some((b':' as c_int, b"alpha::beta:::gamma".to_vec())),
+        "colon-leading-trailing" => Some((b':' as c_int, b":alpha:beta:".to_vec())),
+        "equals-envz" => Some((b'=' as c_int, b"key=value=tail".to_vec())),
+        "equals-leading-trailing" => Some((b'=' as c_int, b"=leading=and=trailing=".to_vec())),
+        "semi-empty-tail" => Some((b';' as c_int, b"alpha;;beta;".to_vec())),
+        "space-multi" => Some((b' ' as c_int, b"multi  space  words".to_vec())),
+        "space-padded" => Some((b' ' as c_int, b" spaced  tail ".to_vec())),
+        _ => None,
+    }
+}
+
+fn input_case(data: &[u8]) -> Option<(c_int, Vec<u8>)> {
+    if data.is_empty() || data.len() > MAX_INPUT {
+        return None;
+    }
+    let (&selector, rest) = data.split_first()?;
+    Some((sep_for(selector), sanitize(rest)))
 }
 
 unsafe fn collect_lc(argz: *const c_char, argz_len: usize) -> Vec<Vec<u8>> {
@@ -93,12 +124,10 @@ unsafe fn collect_fl(argz: *const c_char, argz_len: usize) -> Vec<Vec<u8>> {
 }
 
 fuzz_target!(|data: &[u8]| {
-    if data.is_empty() || data.len() > MAX_INPUT {
+    let Some((sep, body)) = directed_case(data).or_else(|| input_case(data)) else {
         return;
-    }
-    let sep = sep_for(data[0]);
-    let body = sanitize(&data[1..]);
-    let cs = match CString::new(body.clone()) {
+    };
+    let cs = match CString::new(body) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -110,7 +139,10 @@ fuzz_target!(|data: &[u8]| {
     let mut fl_b: *mut c_char = std::ptr::null_mut();
     let mut fl_b_len: usize = 0;
     let r2 = unsafe { fl::argz_create_sep(cs.as_ptr(), sep, &mut fl_b, &mut fl_b_len) };
-    assert_eq!(r1, r2, "fl argz_create_sep non-deterministic return: {r1} vs {r2}");
+    assert_eq!(
+        r1, r2,
+        "fl argz_create_sep non-deterministic return: {r1} vs {r2}"
+    );
     assert_eq!(fl_a_len, fl_b_len, "fl argz_len non-deterministic");
     if r1 == 0 {
         let entries_a = unsafe { collect_fl(fl_a, fl_a_len) };
@@ -122,7 +154,10 @@ fuzz_target!(|data: &[u8]| {
     let mut lc_a: *mut c_char = std::ptr::null_mut();
     let mut lc_a_len: usize = 0;
     let r_lc = unsafe { argz_create_sep(cs.as_ptr(), sep, &mut lc_a, &mut lc_a_len) };
-    assert_eq!(r1, r_lc, "argz_create_sep return differs: fl={r1} glibc={r_lc}");
+    assert_eq!(
+        r1, r_lc,
+        "argz_create_sep return differs: fl={r1} glibc={r_lc}"
+    );
     if r1 == 0 && r_lc == 0 {
         assert_eq!(fl_a_len, lc_a_len, "argz_len differs");
         let fl_count = unsafe { fl::argz_count(fl_a, fl_a_len) };
@@ -136,10 +171,12 @@ fuzz_target!(|data: &[u8]| {
         unsafe { fl::argz_stringify(fl_a, fl_a_len, sep) };
         unsafe { argz_stringify(lc_a, lc_a_len, sep) };
         if fl_a_len > 0 {
-            let fl_str =
-                unsafe { std::slice::from_raw_parts(fl_a as *const u8, fl_a_len.saturating_sub(1)) };
-            let lc_str =
-                unsafe { std::slice::from_raw_parts(lc_a as *const u8, lc_a_len.saturating_sub(1)) };
+            let fl_str = unsafe {
+                std::slice::from_raw_parts(fl_a as *const u8, fl_a_len.saturating_sub(1))
+            };
+            let lc_str = unsafe {
+                std::slice::from_raw_parts(lc_a as *const u8, lc_a_len.saturating_sub(1))
+            };
             assert_eq!(fl_str, lc_str, "argz_stringify differs");
         }
     }
