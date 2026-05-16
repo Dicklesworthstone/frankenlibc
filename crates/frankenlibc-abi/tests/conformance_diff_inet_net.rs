@@ -80,6 +80,14 @@ const PTON_CASES: &[&[u8]] = &[
     b"10.0",
     b"10.0.0",
     b"172.16.5",
+    b"0177/8",
+    b"128.1",
+    b"192",
+    b"192.168",
+    b"224.1.2.3",
+    b"240",
+    b"1.2.3.4.5",
+    b"1.2.3.4.5/24",
     // Edge cases that fl and glibc both reject (or both accept identically).
     b"",
     b"foo",
@@ -102,18 +110,13 @@ const PTON_SIZE_CASES: &[(&[u8], usize)] = &[
     (b"192.168.1.0/24", 4),
     (b"0xC0A80000/24", 3),
     (b"0xC0A80000/24", 4),
+    (b"192.168", 2),
+    (b"192.168", 3),
+    (b"224.1.2.3", 3),
+    (b"224.1.2.3", 4),
+    (b"1.2.3.4.5/24", 4),
+    (b"1.2.3.4.5/24", 5),
 ];
-
-// Cases where fl and glibc legitimately diverge — we DON'T diff these in
-// the standard sweep; they're documented here as a known-issue inventory:
-//
-//   "192.168"        : glibc → prefix=24 (treats partial as full); fl → 16 (classful).
-//   "0177/8"         : glibc → accepts (decimal 177); fl → -1 (treats 0177 as octal, then rejects).
-//   "1.2.3.4.5/24"   : glibc → accepts (truncates extras); fl → -1 (rejects).
-//
-// glibc's behavior here is non-obvious and arguably bug-shaped on its own
-// side (e.g. octal-looking input getting decimal treatment). Locking down
-// fl's stricter behavior is acceptable until these are explicitly aligned.
 
 #[test]
 fn diff_inet_net_pton_cases() {
@@ -417,6 +420,6 @@ fn diff_inet_net_ntop_output_size_boundaries() {
 #[test]
 fn inet_net_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libresolv inet_net_*\",\"reference\":\"glibc\",\"functions\":2,\"pton_cases\":17,\"pton_size_cases\":10,\"ntop_cases\":7,\"ntop_size_cases\":8,\"divergences\":0}}",
+        "{{\"family\":\"libresolv inet_net_*\",\"reference\":\"glibc\",\"functions\":2,\"pton_cases\":25,\"pton_size_cases\":16,\"ntop_cases\":7,\"ntop_size_cases\":8,\"divergences\":0}}",
     );
 }

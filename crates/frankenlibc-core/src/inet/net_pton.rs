@@ -15,13 +15,16 @@
 //! - `"192.168.0/24"` → bytes `[192, 168, 0]`, prefix `24`.
 //! - `"10.0/16"` → bytes `[10, 0]`, prefix `16`.
 //! - `"10/8"` → bytes `[10]`, prefix `8`.
-//! - `"0/0"` → no bytes, prefix `0`.
+//! - `"0/0"` → supplied zero octet plus prefix `0`.
 //!
-//! When no `/N` suffix is given, the implicit prefix is the number
-//! of dotted octets times 8 (i.e. `"192.168" → /16`). When a suffix
-//! is given, glibc still requires the destination to hold every
-//! address component supplied by the input, even if the prefix would
-//! otherwise need fewer bytes.
+//! When no `/N` suffix is given, libresolv uses classful network
+//! defaults, widened by supplied octets for class A/B/C and class E
+//! forms. For example, `"192"` and `"192.168"` both imply `/24`,
+//! while `"10.0"` implies `/16`. Class D keeps the historical `/4`
+//! network prefix even when more octets are supplied. When a suffix is
+//! given, glibc still requires the destination to hold every address
+//! component supplied by the input, even if the prefix would otherwise
+//! need fewer bytes.
 //!
 //! Octets must be decimal in `[0, 255]`. The `0x...` hex form that
 //! libresolv accepts is also supported here for byte-by-byte parity.
@@ -41,8 +44,9 @@ pub enum NetPtonError {
 /// of `dst`. Returns the prefix length in bits on success, or the
 /// matching [`NetPtonError`].
 ///
-/// `dst` is filled left-to-right with `⌈prefix_bits / 8⌉` octets;
-/// any unused tail of `dst` is left untouched.
+/// `dst` is filled left-to-right with the larger of
+/// `⌈prefix_bits / 8⌉` and the supplied dotted-octet count; any
+/// unused tail of `dst` is left untouched.
 pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
     if input.is_empty() {
         return Err(NetPtonError::Invalid);
@@ -56,31 +60,27 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         return parse_hex(input, dst);
     }
 
-    let mut octets = [0u8; 4];
-    let mut octet_count = 0usize;
+    let mut octets = Vec::with_capacity(4);
     let mut i = 0usize;
 
     loop {
-        // Parse one decimal octet (1..=3 digits, value <= 255).
+        // Parse one decimal octet. Libresolv treats leading-zero runs
+        // as decimal, not octal, and accepts any digit count whose
+        // final value is <= 255.
         let mut value: u32 = 0;
         let digit_start = i;
-        while i < input.len() && input[i].is_ascii_digit() && i - digit_start < 3 {
+        while i < input.len() && input[i].is_ascii_digit() {
             value = value * 10 + (input[i] - b'0') as u32;
+            if value > 255 {
+                return Err(NetPtonError::Invalid);
+            }
             i += 1;
         }
         if i == digit_start {
             // No digits where an octet was expected.
             return Err(NetPtonError::Invalid);
         }
-        if value > 255 {
-            return Err(NetPtonError::Invalid);
-        }
-        if octet_count >= 4 {
-            // More than 4 octets in the dotted form is malformed.
-            return Err(NetPtonError::Invalid);
-        }
-        octets[octet_count] = value as u8;
-        octet_count += 1;
+        octets.push(value as u8);
 
         if i >= input.len() {
             break;
@@ -101,28 +101,44 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         i += 1;
         let prefix_start = i;
         let mut p: u32 = 0;
-        while i < input.len() && input[i].is_ascii_digit() && i - prefix_start < 3 {
+        while i < input.len() && input[i].is_ascii_digit() {
             p = p * 10 + (input[i] - b'0') as u32;
+            if p > 32 {
+                return Err(NetPtonError::Invalid);
+            }
             i += 1;
         }
-        if i == prefix_start || i != input.len() || p > 32 {
+        if i == prefix_start || i != input.len() {
             return Err(NetPtonError::Invalid);
         }
         p
     } else if i != input.len() {
         return Err(NetPtonError::Invalid);
     } else {
-        // No /N: implicit prefix is octet_count * 8.
-        (octet_count as u32) * 8
+        // No /N: use libresolv's historical classful default.
+        implicit_prefix_bits(octets[0], octets.len())
     };
 
     let bytes_needed = prefix_bits.div_ceil(8) as usize;
-    let required_capacity = bytes_needed.max(octet_count);
+    let required_capacity = bytes_needed.max(octets.len());
     if dst.len() < required_capacity {
         return Err(NetPtonError::BufferTooSmall);
     }
-    dst[..bytes_needed].copy_from_slice(&octets[..bytes_needed]);
+    for (idx, byte) in dst.iter_mut().enumerate().take(required_capacity) {
+        *byte = octets.get(idx).copied().unwrap_or(0);
+    }
     Ok(prefix_bits)
+}
+
+fn implicit_prefix_bits(first_octet: u8, supplied_octets: usize) -> u32 {
+    let supplied_bits = (supplied_octets as u32) * 8;
+    match first_octet {
+        0..=127 => supplied_bits.max(8),
+        128..=191 => supplied_bits.max(16),
+        192..=223 => supplied_bits.max(24),
+        224..=239 => 4,
+        240..=255 => supplied_bits.max(32),
+    }
 }
 
 /// Render `bytes[..⌈prefix_bits/8⌉]` plus the prefix suffix into a
@@ -209,11 +225,14 @@ fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         i += 1;
         let prefix_start = i;
         let mut p: u32 = 0;
-        while i < input.len() && input[i].is_ascii_digit() && i - prefix_start < 3 {
+        while i < input.len() && input[i].is_ascii_digit() {
             p = p * 10 + (input[i] - b'0') as u32;
+            if p > 32 {
+                return Err(NetPtonError::Invalid);
+            }
             i += 1;
         }
-        if i == prefix_start || i != input.len() || p > 32 {
+        if i == prefix_start || i != input.len() {
             return Err(NetPtonError::Invalid);
         }
         p
@@ -290,6 +309,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_classful_implicit_prefixes() {
+        let mut class_b = [0u8; 4];
+        let p = parse(b"128.1", &mut class_b).unwrap();
+        assert_eq!(p, 16);
+        assert_eq!(&class_b[..2], &[128, 1]);
+
+        let mut class_c = [0u8; 4];
+        let p = parse(b"192.168", &mut class_c).unwrap();
+        assert_eq!(p, 24);
+        assert_eq!(&class_c[..3], &[192, 168, 0]);
+
+        let mut class_d = [0u8; 4];
+        let p = parse(b"224.1.2.3", &mut class_d).unwrap();
+        assert_eq!(p, 4);
+        assert_eq!(&class_d[..4], &[224, 1, 2, 3]);
+
+        let mut class_e = [0u8; 4];
+        let p = parse(b"240", &mut class_e).unwrap();
+        assert_eq!(p, 32);
+        assert_eq!(&class_e[..4], &[240, 0, 0, 0]);
+    }
+
+    #[test]
     fn parse_explicit_prefix() {
         let mut dst = [0u8; 4];
         let p = parse(b"192.168.0/24", &mut dst).unwrap();
@@ -299,10 +341,11 @@ mod tests {
 
     #[test]
     fn parse_explicit_prefix_zero() {
-        let mut dst = [0u8; 4];
+        let mut dst = [9u8; 4];
         let p = parse(b"0/0", &mut dst).unwrap();
         assert_eq!(p, 0);
-        // No bytes written for prefix 0.
+        assert_eq!(dst[0], 0);
+        assert_eq!(&dst[1..], &[9, 9, 9]);
     }
 
     #[test]
@@ -317,6 +360,14 @@ mod tests {
         let p = parse(b"10/8", &mut dst).unwrap();
         assert_eq!(p, 8);
         assert_eq!(dst[0], 10);
+    }
+
+    #[test]
+    fn parse_leading_zero_octets_are_decimal() {
+        let mut dst = [0u8; 4];
+        let p = parse(b"0177/8", &mut dst).unwrap();
+        assert_eq!(p, 8);
+        assert_eq!(dst[0], 177);
     }
 
     #[test]
@@ -344,9 +395,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_too_many_octets_is_invalid() {
+    fn parse_extra_octets_match_libresolv_component_copy() {
         let mut dst = [0u8; 8];
-        assert_eq!(parse(b"1.2.3.4.5", &mut dst), Err(NetPtonError::Invalid));
+        let p = parse(b"1.2.3.4.5", &mut dst).unwrap();
+        assert_eq!(p, 40);
+        assert_eq!(&dst[..5], &[1, 2, 3, 4, 5]);
+
+        let mut explicit = [0u8; 8];
+        let p = parse(b"1.2.3.4.5/24", &mut explicit).unwrap();
+        assert_eq!(p, 24);
+        assert_eq!(&explicit[..5], &[1, 2, 3, 4, 5]);
+
+        let mut too_small = [0u8; 4];
+        assert_eq!(
+            parse(b"1.2.3.4.5/24", &mut too_small),
+            Err(NetPtonError::BufferTooSmall)
+        );
+
+        assert_eq!(parse(b"1.2.3.4.5/40", &mut dst), Err(NetPtonError::Invalid));
     }
 
     #[test]
