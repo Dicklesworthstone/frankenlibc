@@ -3,7 +3,7 @@
 //! Differential conformance harness for `<string.h>` mutating + comparison
 //! functions: strlen, strcmp, strncmp, strcpy, strncpy, strcat, strncat,
 //! strdup, strndup, strerror, strerror_r, memcpy, memmove, memset, memccpy,
-//! explicit_bzero, strtok_r, strsep.
+//! explicit_bzero, strtok_r, strsep, strlcpy, strlcat.
 //!
 //! Compares FrankenLibC vs glibc on identical inputs; for mutating ops the
 //! comparison is on the post-call buffer state of paired output buffers.
@@ -48,6 +48,10 @@ unsafe extern "C" {
     fn swab(src: *const c_void, dst: *mut c_void, n: isize);
     /// Host glibc/BSD `strsep` — token extraction with delimiter overwrite.
     fn strsep(stringp: *mut *mut c_char, delim: *const c_char) -> *mut c_char;
+    /// Host glibc/BSD `strlcpy` — size-bounded string copy.
+    fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: usize) -> usize;
+    /// Host glibc/BSD `strlcat` — size-bounded string append.
+    fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: usize) -> usize;
     /// Host glibc GNU `memfrob` — XOR each of n bytes with 42.
     fn memfrob(s: *mut c_void, n: usize) -> *mut c_void;
 }
@@ -1231,6 +1235,139 @@ fn nul_terminated_slice(buf: &[u8]) -> &[u8] {
 }
 
 // ===========================================================================
+// strlcpy / strlcat — BSD size-bounded copy and append
+// ===========================================================================
+
+const STRLCPY_CASES: &[(&[u8], usize)] = &[
+    (b"", 0),
+    (b"", 1),
+    (b"a", 1),
+    (b"a", 2),
+    (b"hello", 5),
+    (b"hello", 6),
+    (b"hello world", 6),
+    (b"\xff\xfe\xfd", 5),
+];
+
+#[test]
+fn diff_strlcpy_cases() {
+    let mut divs = Vec::new();
+    for (src, dstsize) in STRLCPY_CASES {
+        let src_z = cstr(src);
+        let mut dst_fl = vec![0xCDu8; 32];
+        let mut dst_lc = vec![0xCDu8; 32];
+        let fl_n = unsafe {
+            fl::strlcpy(
+                dst_fl.as_mut_ptr() as *mut c_char,
+                src_z.as_ptr() as *const c_char,
+                *dstsize,
+            )
+        };
+        let lc_n = unsafe {
+            strlcpy(
+                dst_lc.as_mut_ptr() as *mut c_char,
+                src_z.as_ptr() as *const c_char,
+                *dstsize,
+            )
+        };
+        let case = format!("(src={:?}, dstsize={})", src, dstsize);
+        if fl_n != lc_n {
+            divs.push(Divergence {
+                function: "strlcpy",
+                case: case.clone(),
+                field: "return",
+                frankenlibc: format!("{fl_n}"),
+                glibc: format!("{lc_n}"),
+            });
+        }
+        if dst_fl != dst_lc {
+            divs.push(Divergence {
+                function: "strlcpy",
+                case,
+                field: "dst_buffer",
+                frankenlibc: format!("{:?}", &dst_fl[..16]),
+                glibc: format!("{:?}", &dst_lc[..16]),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strlcpy divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+const STRLCAT_CASES: &[(&[u8], &[u8], usize)] = &[
+    (b"", b"", 0),
+    (b"", b"a", 1),
+    (b"", b"a", 2),
+    (b"hi", b"", 8),
+    (b"hi", b"!", 8),
+    (b"hello", b" world", 10),
+    (b"hello", b" world", 12),
+    (b"abcdef", b"XYZ", 3),
+];
+
+fn seed_strlcat_dst(dst: &mut [u8], initial: &[u8]) {
+    dst.fill(0xCD);
+    dst[..initial.len()].copy_from_slice(initial);
+    dst[initial.len()] = 0;
+}
+
+#[test]
+fn diff_strlcat_cases() {
+    let mut divs = Vec::new();
+    for (initial, src, dstsize) in STRLCAT_CASES {
+        let src_z = cstr(src);
+        let mut dst_fl = vec![0xCDu8; 40];
+        let mut dst_lc = vec![0xCDu8; 40];
+        seed_strlcat_dst(&mut dst_fl, initial);
+        seed_strlcat_dst(&mut dst_lc, initial);
+        let fl_n = unsafe {
+            fl::strlcat(
+                dst_fl.as_mut_ptr() as *mut c_char,
+                src_z.as_ptr() as *const c_char,
+                *dstsize,
+            )
+        };
+        let lc_n = unsafe {
+            strlcat(
+                dst_lc.as_mut_ptr() as *mut c_char,
+                src_z.as_ptr() as *const c_char,
+                *dstsize,
+            )
+        };
+        let case = format!(
+            "(initial={:?}, src={:?}, dstsize={})",
+            initial, src, dstsize
+        );
+        if fl_n != lc_n {
+            divs.push(Divergence {
+                function: "strlcat",
+                case: case.clone(),
+                field: "return",
+                frankenlibc: format!("{fl_n}"),
+                glibc: format!("{lc_n}"),
+            });
+        }
+        if dst_fl != dst_lc {
+            divs.push(Divergence {
+                function: "strlcat",
+                case,
+                field: "dst_buffer",
+                frankenlibc: format!("{:?}", &dst_fl[..16]),
+                glibc: format!("{:?}", &dst_lc[..16]),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strlcat divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // bzero / bcmp / bcopy — BSD legacy memory ops (mostly aliases for the
 // memcmp/memmove/memset trio with arg-shape quirks)
 // ===========================================================================
@@ -1567,6 +1704,6 @@ fn diff_memfrob_cases() {
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":30,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":32,\"divergences\":0}}",
     );
 }
