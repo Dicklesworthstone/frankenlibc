@@ -13,6 +13,7 @@
     "--output"
   ],
   "optional_flags": [],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::evidence::derive_repair_symbol_count_v1",
     "frankenlibc_membrane::runtime_math::evidence::loss_fraction_max_ppm_v1"

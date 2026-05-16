@@ -19,6 +19,7 @@
     "--pareto-exhausted",
     "--consistency-faults"
   ],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::policy_table::risk_bucket_v1",
     "frankenlibc_membrane::runtime_math::policy_table::budget_bucket_v1",

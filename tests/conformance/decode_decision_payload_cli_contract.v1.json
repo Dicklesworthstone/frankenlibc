@@ -12,6 +12,7 @@
     "--output"
   ],
   "optional_flags": [],
+  "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::decode_decision_payload_v1",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::evidence::decode_decision_payload_v1"
