@@ -4,22 +4,46 @@
 //! 1. Canonical `reality_report.v1.json` exists and has the expected schema.
 //! 2. Drift guard script passes (support_matrix -> harness report -> docs).
 
+use std::error::Error;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn workspace_root() -> PathBuf {
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    Path::new(manifest)
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+type TestResult<T = ()> = Result<T, Box<dyn Error>>;
+
+fn test_error(message: impl Into<String>) -> io::Error {
+    io::Error::other(message.into())
+}
+
+fn workspace_root() -> TestResult<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let harness_root = manifest.parent().ok_or_else(|| {
+        test_error(format!(
+            "{} has no harness-crate parent",
+            manifest.display()
+        ))
+    })?;
+    let workspace_root = harness_root.parent().ok_or_else(|| {
+        test_error(format!(
+            "{} has no workspace-root parent",
+            harness_root.display()
+        ))
+    })?;
+    Ok(workspace_root.to_path_buf())
+}
+
+fn load_json(path: &Path) -> TestResult<serde_json::Value> {
+    let body = fs::read_to_string(path)
+        .map_err(|source| test_error(format!("failed to read {}: {source}", path.display())))?;
+    serde_json::from_str(&body).map_err(|source| {
+        test_error(format!("failed to parse JSON {}: {source}", path.display())).into()
+    })
 }
 
 #[test]
-fn canonical_reality_report_schema_is_valid() {
-    let root = workspace_root();
+fn canonical_reality_report_schema_is_valid() -> TestResult {
+    let root = workspace_root()?;
     let report_path = root.join("tests/conformance/reality_report.v1.json");
 
     assert!(
@@ -28,9 +52,7 @@ fn canonical_reality_report_schema_is_valid() {
         report_path.display()
     );
 
-    let body = std::fs::read_to_string(&report_path).expect("report should be readable");
-    let report: serde_json::Value =
-        serde_json::from_str(&body).expect("report should be valid JSON");
+    let report = load_json(&report_path)?;
 
     assert_eq!(
         report["schema_version"].as_str(),
@@ -60,19 +82,25 @@ fn canonical_reality_report_schema_is_valid() {
             "counts.{key} must be an unsigned integer"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn support_matrix_docs_drift_guard_passes() {
-    let root = workspace_root();
+fn support_matrix_docs_drift_guard_passes() -> TestResult {
+    let root = workspace_root()?;
     let script = root.join("scripts/check_support_matrix_drift.sh");
     assert!(script.exists(), "missing script {}", script.display());
 
     let output = Command::new("bash")
-        .arg(script)
+        .arg(&script)
         .current_dir(&root)
         .output()
-        .expect("check_support_matrix_drift.sh should execute");
+        .map_err(|source| {
+            test_error(format!(
+                "failed to execute support-matrix drift guard {}: {source}",
+                script.display()
+            ))
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -83,4 +111,5 @@ fn support_matrix_docs_drift_guard_passes() {
         stdout,
         stderr
     );
+    Ok(())
 }
