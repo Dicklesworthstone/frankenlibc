@@ -3293,7 +3293,7 @@ pub unsafe extern "C" fn res_send_setrhook(rhook: *mut c_void) {
 /// sequence of length-prefixed labels terminated by a 0-length byte.
 /// The total encoded length cannot exceed 255 bytes.
 ///
-/// Returns 0 on success and writes the lowered copy to `dst`.
+/// Returns the encoded byte length on success and writes the lowered copy to `dst`.
 /// Returns -1 if `dst` is too small or the encoded name is malformed
 /// (label too long, no terminator within 255 bytes).
 ///
@@ -3307,18 +3307,26 @@ pub unsafe extern "C" fn ns_name_ntol(src: *const u8, dst: *mut u8, dstsiz: usiz
     if src.is_null() || dst.is_null() {
         return -1;
     }
+    #[inline]
+    unsafe fn ntol_emsgsize() -> c_int {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        -1
+    }
     let src_limit = known_remaining(src as usize).map_or(256, |remaining| remaining.min(256));
     let dst_limit = known_remaining(dst as usize).map_or(dstsiz, |remaining| remaining.min(dstsiz));
     let mut total = 0usize;
     loop {
         if total >= src_limit {
-            return -1;
+            return unsafe { ntol_emsgsize() };
         }
         // SAFETY: caller-supplied wire-format name; traversal is capped by
         // DNS length and any tracked allocation size.
         let len = unsafe { *src.add(total) };
+        if len & 0xC0 == 0xC0 {
+            return unsafe { ntol_emsgsize() };
+        }
         if total >= dst_limit {
-            return -1;
+            return unsafe { ntol_emsgsize() };
         }
         // Lowercase ASCII letters in the LABEL bytes; the length byte
         // itself is copied verbatim.
@@ -3326,31 +3334,20 @@ pub unsafe extern "C" fn ns_name_ntol(src: *const u8, dst: *mut u8, dstsiz: usiz
         unsafe { *dst.add(total) = len };
         total += 1;
         if len == 0 {
-            return 0;
+            return match c_int::try_from(total) {
+                Ok(n) => n,
+                Err(_) => unsafe { ntol_emsgsize() },
+            };
         }
         if len > 63 {
-            // Compression pointer (top two bits set) or invalid label.
-            // The Itanium nameserver lib treats compression as a copy
-            // of the remainder, but lowercase only labels we can see.
-            // For simplicity, refuse compressed names.
-            if len & 0xC0 == 0xC0 {
-                if total >= src_limit || total >= dst_limit {
-                    return -1;
-                }
-                // Copy the second pointer byte verbatim.
-                // SAFETY: total is within both tracked source and
-                // destination limits.
-                unsafe { *dst.add(total) = *src.add(total) };
-                return 0;
-            }
-            return -1;
+            return unsafe { ntol_emsgsize() };
         }
         let label_end = match total.checked_add(len as usize) {
             Some(end) => end,
-            None => return -1,
+            None => return unsafe { ntol_emsgsize() },
         };
-        if label_end > src_limit || label_end > dst_limit {
-            return -1;
+        if label_end >= src_limit || label_end >= dst_limit {
+            return unsafe { ntol_emsgsize() };
         }
         for _ in 0..len {
             // SAFETY: bounded by label_end within source and destination.

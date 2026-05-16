@@ -2836,7 +2836,7 @@ fn ns_name_ntol_lowercases_labels() {
     let src: [u8; 9] = [3, b'F', b'O', b'O', 3, b'C', b'O', b'M', 0];
     let mut dst = [0u8; 9];
     let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
-    assert_eq!(rc, 0);
+    assert_eq!(rc, 9);
     assert_eq!(&dst, &[3, b'f', b'o', b'o', 3, b'c', b'o', b'm', 0]);
 }
 
@@ -2846,7 +2846,7 @@ fn ns_name_ntol_preserves_already_lowercase() {
     let src: [u8; 9] = [3, b'b', b'a', b'r', 3, b'n', b'e', b't', 0];
     let mut dst = [0u8; 9];
     let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
-    assert_eq!(rc, 0);
+    assert_eq!(rc, 9);
     assert_eq!(&dst, &src);
 }
 
@@ -2854,9 +2854,15 @@ fn ns_name_ntol_preserves_already_lowercase() {
 fn ns_name_ntol_rejects_dst_too_small() {
     use frankenlibc_abi::resolv_abi::ns_name_ntol;
     let src: [u8; 9] = [3, b'F', b'O', b'O', 3, b'C', b'O', b'M', 0];
-    let mut dst = [0u8; 4]; // too small
+    let mut dst = [0xAAu8; 4]; // too small
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
     let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
     assert_eq!(rc, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EMSGSIZE
+    );
+    assert_eq!(&dst, &[3, 0xAA, 0xAA, 0xAA]);
 }
 
 #[test]
@@ -2866,7 +2872,7 @@ fn ns_name_ntol_handles_empty_root_name() {
     let src: [u8; 1] = [0];
     let mut dst = [0xFFu8; 4];
     let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
-    assert_eq!(rc, 0);
+    assert_eq!(rc, 1);
     assert_eq!(dst[0], 0);
 }
 
@@ -2875,17 +2881,28 @@ fn ns_name_ntol_rejects_tracked_short_src_label() {
     use frankenlibc_abi::resolv_abi::ns_name_ntol;
     let src = malloc_bytes(&[3]);
     let mut dst = [0u8; 4];
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
     let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
     assert_eq!(rc, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EMSGSIZE
+    );
 }
 
 #[test]
 fn ns_name_ntol_rejects_tracked_short_src_compression_pointer() {
     use frankenlibc_abi::resolv_abi::ns_name_ntol;
     let src = malloc_bytes(&[0xC0]);
-    let mut dst = [0u8; 2];
+    let mut dst = [0xAAu8; 2];
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
     let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
     assert_eq!(rc, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EMSGSIZE
+    );
+    assert_eq!(&dst, &[0xAA; 2]);
 }
 
 #[test]
@@ -2893,8 +2910,14 @@ fn ns_name_ntol_rejects_tracked_short_dst() {
     use frankenlibc_abi::resolv_abi::ns_name_ntol;
     let src: [u8; 5] = [3, b'F', b'O', b'O', 0];
     let mut dst = malloc_filled_bytes(2, 0xAA);
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
     let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), 64) };
     assert_eq!(rc, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EMSGSIZE
+    );
+    assert_eq!(dst.as_slice(), &[3, 0xAA]);
 }
 
 #[test]
