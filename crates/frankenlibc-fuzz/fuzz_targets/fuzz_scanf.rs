@@ -14,7 +14,7 @@
 //!
 //! Bead: bd-1oz.7
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::stdio::scanf::{ScanDirective, ScanValue, parse_scanf_format, scan_input};
@@ -24,6 +24,9 @@ const MAX_FORMAT: usize = 1024;
 
 /// Maximum input length for scanning.
 const MAX_INPUT: usize = 4096;
+
+/// Human-readable directed seed prefix.
+const DIRECTED_PREFIX: &[u8] = b"scan:";
 
 /// A structured fuzz input for the scanf engine.
 #[derive(Debug, Arbitrary)]
@@ -36,7 +39,21 @@ struct ScanfFuzzInput {
     op: u8,
 }
 
-fuzz_target!(|input: ScanfFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    if let Some(input) = directed_input(data) {
+        fuzz_scanf(input);
+        return;
+    }
+
+    let mut raw = Unstructured::new(data);
+    let Ok(input) = ScanfFuzzInput::arbitrary(&mut raw) else {
+        return;
+    };
+
+    fuzz_scanf(input);
+});
+
+fn fuzz_scanf(input: ScanfFuzzInput) {
     if input.format_bytes.len() > MAX_FORMAT || input.input_bytes.len() > MAX_INPUT {
         return;
     }
@@ -45,10 +62,64 @@ fuzz_target!(|input: ScanfFuzzInput| {
         0 => fuzz_parse_format(&input),
         1 => fuzz_scan_input(&input),
         2 => fuzz_known_formats(&input),
-        3 => fuzz_scanset_edge_cases(&input),
-        _ => unreachable!(),
+        _ => fuzz_scanset_edge_cases(&input),
     }
-});
+}
+
+/// Decode text seeds shaped as:
+///
+/// ```text
+/// scan:<op>
+/// <format>
+/// ---
+/// <input>
+/// ```
+///
+/// The op is one of `parse`, `scan`, `known`, or `scanset`.
+fn directed_input(data: &[u8]) -> Option<ScanfFuzzInput> {
+    let rest = data.strip_prefix(DIRECTED_PREFIX)?;
+    let (op_name, payload) = split_once_byte(rest, b'\n')?;
+    let (format_bytes, input_bytes) = split_once_marker(payload, b"\n---\n")?;
+    let input_bytes = strip_single_trailing_newline(input_bytes);
+
+    Some(ScanfFuzzInput {
+        format_bytes: format_bytes.to_vec(),
+        input_bytes: input_bytes.to_vec(),
+        op: directed_op(op_name)?,
+    })
+}
+
+fn directed_op(op_name: &[u8]) -> Option<u8> {
+    match op_name {
+        b"parse" => Some(0),
+        b"scan" => Some(1),
+        b"known" => Some(2),
+        b"scanset" => Some(3),
+        _ => None,
+    }
+}
+
+fn split_once_byte(data: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
+    let split_at = data.iter().position(|&b| b == byte)?;
+    let (head, tail) = data.split_at(split_at);
+    Some((head, tail.get(1..)?))
+}
+
+fn split_once_marker<'a>(data: &'a [u8], marker: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
+    if marker.is_empty() {
+        return None;
+    }
+
+    let split_at = data
+        .windows(marker.len())
+        .position(|window| window == marker)?;
+    let (head, tail) = data.split_at(split_at);
+    Some((head, tail.get(marker.len()..)?))
+}
+
+fn strip_single_trailing_newline(data: &[u8]) -> &[u8] {
+    data.strip_suffix(b"\n").unwrap_or(data)
+}
 
 /// Fuzz parse_scanf_format with arbitrary format strings.
 fn fuzz_parse_format(input: &ScanfFuzzInput) {
@@ -139,7 +210,7 @@ fn fuzz_known_formats(input: &ScanfFuzzInput) {
     let data = if input.input_bytes.is_empty() {
         b"42 -17 3.14 hello 0xDEAD".as_slice()
     } else {
-        &input.input_bytes[..input.input_bytes.len().min(MAX_INPUT)]
+        &input.input_bytes
     };
 
     let formats: &[&[u8]] = &[
