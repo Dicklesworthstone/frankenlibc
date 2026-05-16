@@ -1,0 +1,41 @@
+{
+  "schema_version": "fuzz_corpus_quality.v1",
+  "bead": "bd-n0apt.2",
+  "description": "Inventory fuzz target corpus quality, readable directed seed coverage, directive-parser evidence, and remote rch smoke commands.",
+  "artifacts": {
+    "checker": "scripts/check_fuzz_corpus_quality.sh",
+    "report": "target/conformance/fuzz_corpus_quality.report.json",
+    "harness_test": "crates/frankenlibc-harness/tests/fuzz_corpus_quality_test.rs"
+  },
+  "policy": {
+    "min_corpus_files": 1,
+    "advisory_min_corpus_files": 15,
+    "required_targets": [
+      "fuzz_ctype",
+      "fuzz_regex",
+      "fuzz_c11threads",
+      "fuzz_resolver",
+      "fuzz_resolv",
+      "fuzz_etc_db",
+      "fuzz_printf_adversarial"
+    ],
+    "required_directed_targets": {
+      "fuzz_ctype": {
+        "min_readable_seed_files": 7,
+        "required_prefixes": [
+          "ctype:"
+        ]
+      }
+    }
+  },
+  "validation": {
+    "commands": [
+      "jq empty tests/conformance/fuzz_corpus_quality.v1.json",
+      "bash -n scripts/check_fuzz_corpus_quality.sh",
+      "bash scripts/check_fuzz_corpus_quality.sh",
+      "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/fuzz_corpus_quality_test.rs",
+      "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fuzz_corpus_quality_test -- --nocapture",
+      "RCH_FORCE_REMOTE=true rch exec -- env CARGO_TARGET_DIR=<target> cargo clippy -p frankenlibc-harness --test fuzz_corpus_quality_test -- -D warnings"
+    ]
+  }
+}
