@@ -1,0 +1,3 @@
+netgroup:admins
+---
+admins ( host , user , domain ) (host2,-,example.invalid)
