@@ -32,10 +32,12 @@
 //! spellings for the standard control characters. `VIS_SAFE`,
 //! `VIS_DQ`, `VIS_GLOB`, `VIS_SHELL`, and `VIS_META` alter the
 //! encoded character set, while `VIS_NOSLASH` suppresses the leading
-//! backslash in the default `\^X` / `\M-X` forms. Other libutil
-//! representation flags (`VIS_HTTPSTYLE`, `VIS_MIMESTYLE`, etc.) are
-//! accepted but currently ignored — the v1 port focuses on the
-//! byte-stream-safe default representation.
+//! backslash in the default `\^X` / `\M-X` forms. `VIS_HTTPSTYLE`
+//! uses URI `%xx` escapes and `VIS_MIMESTYLE` uses MIME
+//! quoted-printable `=XX` escapes for bytes required by those formats.
+//! Other libutil representation flags (`VIS_NOLOCALE`, etc.) are
+//! accepted for flag-string compatibility but have no byte-level
+//! effect in this safe C-locale encoder.
 
 /// Render all non-printable bytes as `\NNN` octal triples instead
 /// of the default `\^X` / `\M-X` notation.
@@ -59,6 +61,12 @@ pub const VIS_WHITE: u32 = VIS_SP | VIS_TAB | VIS_NL;
 pub const VIS_SAFE: u32 = 0x20;
 /// Suppress the leading slash in default visual escape forms.
 pub const VIS_NOSLASH: u32 = 0x40;
+/// Use URI percent encoding (`%xx`) for bytes outside the HTTP-safe set.
+pub const VIS_HTTPSTYLE: u32 = 0x80;
+/// Historical alias for [`VIS_HTTPSTYLE`].
+pub const VIS_HTTP1808: u32 = VIS_HTTPSTYLE;
+/// Use MIME quoted-printable encoding (`=XX`) for MIME-unsafe bytes.
+pub const VIS_MIMESTYLE: u32 = 0x100;
 /// Encode double quotes.
 pub const VIS_DQ: u32 = 0x8000;
 /// Encode glob(3) magic characters.
@@ -73,10 +81,9 @@ pub const VIS_META: u32 = VIS_WHITE | VIS_GLOB | VIS_SHELL;
 ///
 /// Tokens are comma-separated and case-sensitive. Recognized
 /// tokens map to the corresponding `VIS_*` constants in this
-/// module; tokens that name other NetBSD vis(3) representation flags
-/// this port does not (yet) implement (e.g. `VIS_HTTPSTYLE`) are
-/// silently ignored, matching NetBSD's "best-effort" parse.
-/// Unknown tokens are also ignored.
+/// module. NetBSD-only locale/decoder tokens with no byte-level
+/// encoder effect here are accepted and ignored. Unknown tokens are
+/// also ignored.
 ///
 /// Whitespace inside tokens is trimmed; empty tokens (e.g. from
 /// trailing commas) are skipped.
@@ -96,14 +103,14 @@ pub fn parse_vis_options(s: &[u8]) -> u32 {
             b"VIS_WHITE" => flags |= VIS_WHITE,
             b"VIS_SAFE" => flags |= VIS_SAFE,
             b"VIS_NOSLASH" => flags |= VIS_NOSLASH,
+            b"VIS_HTTPSTYLE" | b"VIS_HTTP1808" => flags |= VIS_HTTPSTYLE,
+            b"VIS_MIMESTYLE" => flags |= VIS_MIMESTYLE,
             b"VIS_DQ" => flags |= VIS_DQ,
             b"VIS_GLOB" => flags |= VIS_GLOB,
             b"VIS_SHELL" => flags |= VIS_SHELL,
             b"VIS_META" => flags |= VIS_META,
-            // NetBSD-specific tokens that we accept (and silently
-            // discard, since the bits aren't part of our v1 byte
-            // encoder's behavior).
-            b"VIS_HTTPSTYLE" | b"VIS_HTTP1808" | b"VIS_MIMESTYLE" | b"VIS_NOLOCALE" => {}
+            // NetBSD-specific token accepted for VIS_OPTIONS parity.
+            b"VIS_NOLOCALE" => {}
             _ => {} // Unknown token — silently ignore.
         }
     }
@@ -132,6 +139,58 @@ fn push_octal(c: u8, out: &mut Vec<u8>) {
     out.push(b'0' + ((c >> 6) & 0x07));
     out.push(b'0' + ((c >> 3) & 0x07));
     out.push(b'0' + (c & 0x07));
+}
+
+fn lower_hex_digit(n: u8) -> u8 {
+    let digit = n & 0x0f;
+    if digit < 10 {
+        b'0' + digit
+    } else {
+        b'a' + (digit - 10)
+    }
+}
+
+fn upper_hex_digit(n: u8) -> u8 {
+    let digit = n & 0x0f;
+    if digit < 10 {
+        b'0' + digit
+    } else {
+        b'A' + (digit - 10)
+    }
+}
+
+fn push_http_escape(c: u8, out: &mut Vec<u8>) {
+    out.push(b'%');
+    out.push(lower_hex_digit(c >> 4));
+    out.push(lower_hex_digit(c));
+}
+
+fn push_mime_escape(c: u8, out: &mut Vec<u8>) {
+    out.push(b'=');
+    out.push(upper_hex_digit(c >> 4));
+    out.push(upper_hex_digit(c));
+}
+
+fn http_safe_passthrough(c: u8) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(
+            c,
+            b'$' | b'-' | b'_' | b'.' | b'+' | b'!' | b'*' | b'\'' | b'(' | b')' | b','
+        )
+}
+
+fn mime_space(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+}
+
+fn mime_must_escape(c: u8, nextc: Option<u8>) -> bool {
+    c != b'\n'
+        && ((mime_space(c) && matches!(nextc, Some(b'\r' | b'\n')))
+            || (!mime_space(c) && (c < 33 || c == b'=' || c > 126))
+            || matches!(
+                c,
+                b'#' | b'$' | b'@' | b'[' | b'\\' | b']' | b'^' | b'`' | b'{' | b'|' | b'}' | b'~'
+            ))
 }
 
 fn whitespace_passthrough(c: u8, flags: u32) -> bool {
@@ -202,6 +261,18 @@ pub fn encode_byte(c: u8, flags: u32, out: &mut Vec<u8>) {
 /// Encode a single byte, using `nextc` for `VIS_CSTYLE` NUL
 /// disambiguation.
 pub fn encode_byte_with_next(c: u8, flags: u32, nextc: Option<u8>, out: &mut Vec<u8>) {
+    if flags & VIS_HTTPSTYLE != 0 && !http_safe_passthrough(c) {
+        push_http_escape(c, out);
+        return;
+    }
+    if flags & VIS_MIMESTYLE != 0 && mime_must_escape(c, nextc) {
+        push_mime_escape(c, out);
+        return;
+    }
+    encode_standard_byte_with_next(c, flags, nextc, out);
+}
+
+fn encode_standard_byte_with_next(c: u8, flags: u32, nextc: Option<u8>, out: &mut Vec<u8>) {
     let octal_mode = flags & VIS_OCTAL != 0;
     let cstyle_mode = flags & VIS_CSTYLE != 0;
 
@@ -288,6 +359,14 @@ pub fn encode_byte_with_extra_and_next(
     extra: &[u8],
     out: &mut Vec<u8>,
 ) {
+    if flags & VIS_HTTPSTYLE != 0 && !http_safe_passthrough(c) {
+        push_http_escape(c, out);
+        return;
+    }
+    if flags & VIS_MIMESTYLE != 0 && mime_must_escape(c, nextc) {
+        push_mime_escape(c, out);
+        return;
+    }
     if extra.contains(&c) && c != b'\\' && (0x20..=0x7e).contains(&c) {
         // Extra-escaped printable bytes still have to be safe inside
         // a NUL-terminated C output string. Caret form would turn
@@ -296,7 +375,7 @@ pub fn encode_byte_with_extra_and_next(
         push_octal(c, out);
         return;
     }
-    encode_byte_with_next(c, flags, nextc, out);
+    encode_standard_byte_with_next(c, flags, nextc, out);
 }
 
 /// Encode `src` into a fresh `Vec<u8>` with `extra` bytes also forced
@@ -541,6 +620,59 @@ mod tests {
             b"\\n".to_vec()
         );
         assert_eq!(strvis_to_vec(b" ", VIS_NOSLASH | VIS_SP), b"\\040".to_vec());
+    }
+
+    #[test]
+    fn httpstyle_uses_uri_percent_lower_hex() {
+        let safe = b"AZaz09$-_.+!*'(),";
+        assert_eq!(strvis_to_vec(safe, VIS_HTTPSTYLE), safe.to_vec());
+        assert_eq!(
+            strvis_to_vec(b" /\\\x01\x7f\xff", VIS_HTTPSTYLE),
+            b"%20%2f%5c%01%7f%ff".to_vec()
+        );
+    }
+
+    #[test]
+    fn httpstyle_takes_precedence_over_default_cstyle_octal_and_noslash() {
+        let flags = VIS_HTTPSTYLE | VIS_CSTYLE | VIS_OCTAL | VIS_NOSLASH;
+        assert_eq!(strvis_to_vec(b"\n\\\xff", flags), b"%0a%5c%ff".to_vec());
+    }
+
+    #[test]
+    fn mimestyle_uses_quoted_printable_upper_hex() {
+        assert_eq!(
+            strvis_to_vec(b"#=@[\\]^`{|}~\x01\x7f\xff", VIS_MIMESTYLE),
+            b"=23=3D=40=5B=5C=5D=5E=60=7B=7C=7D=7E=01=7F=FF".to_vec()
+        );
+        assert_eq!(
+            strvis_to_vec(b"AZaz09!?\n", VIS_MIMESTYLE),
+            b"AZaz09!?\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn mimestyle_encodes_space_and_tab_at_line_end_only() {
+        assert_eq!(strvis_to_vec(b" \tX", VIS_MIMESTYLE), b" \tX".to_vec());
+        assert_eq!(
+            strvis_to_vec(b" \t\r\n", VIS_MIMESTYLE),
+            b" =09=0D\n".to_vec()
+        );
+        assert_eq!(
+            strvis_to_vec(b"\x01", VIS_MIMESTYLE | VIS_OCTAL | VIS_CSTYLE),
+            b"=01".to_vec()
+        );
+    }
+
+    #[test]
+    fn representation_styles_preserve_extra_for_safe_bytes() {
+        assert_eq!(
+            strvis_to_vec_with_extra(b"A/", VIS_HTTPSTYLE, b"A/"),
+            b"\\101%2f".to_vec()
+        );
+        assert_eq!(
+            strvis_to_vec_with_extra(b"A\\", VIS_MIMESTYLE, b"A\\"),
+            b"\\101=5C".to_vec()
+        );
     }
 
     // ---- VIS_OCTAL mode ----
@@ -1251,7 +1383,7 @@ mod unvis_tests {
 
     #[test]
     fn parse_vis_options_recognizes_implemented_flags() {
-        let s = b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP,VIS_WHITE,VIS_SAFE,VIS_NOSLASH,VIS_DQ,VIS_GLOB,VIS_SHELL,VIS_META";
+        let s = b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP,VIS_WHITE,VIS_SAFE,VIS_NOSLASH,VIS_HTTPSTYLE,VIS_MIMESTYLE,VIS_DQ,VIS_GLOB,VIS_SHELL,VIS_META";
         let flags = parse_vis_options(s);
         assert_eq!(
             flags,
@@ -1262,12 +1394,15 @@ mod unvis_tests {
                 | VIS_SP
                 | VIS_SAFE
                 | VIS_NOSLASH
+                | VIS_HTTPSTYLE
+                | VIS_MIMESTYLE
                 | VIS_DQ
                 | VIS_GLOB
                 | VIS_SHELL
         );
         assert_eq!(flags & VIS_CSTYLE, 0x02);
         assert_eq!(flags & VIS_META, VIS_META);
+        assert_eq!(VIS_HTTP1808, VIS_HTTPSTYLE);
     }
 
     #[test]
@@ -1287,11 +1422,11 @@ mod unvis_tests {
     }
 
     #[test]
-    fn parse_vis_options_silently_accepts_unimplemented_netbsd_flags() {
-        // NetBSD-specific tokens we accept but don't yet honor —
-        // they must NOT contribute random bits that would break
-        // the encoder.
-        let s = b"VIS_HTTPSTYLE,VIS_MIMESTYLE,VIS_NOLOCALE,VIS_OCTAL";
+    fn parse_vis_options_silently_accepts_ignored_netbsd_flags() {
+        // NetBSD-specific tokens with no byte-level encoder effect
+        // here must NOT contribute random bits that would break the
+        // encoder.
+        let s = b"VIS_NOLOCALE,VIS_OCTAL";
         let flags = parse_vis_options(s);
         assert_eq!(flags, VIS_OCTAL);
     }

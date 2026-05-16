@@ -4187,6 +4187,9 @@ const ABI_VIS_TAB: c_int = 0x08;
 const ABI_VIS_NL: c_int = 0x10;
 const ABI_VIS_SAFE: c_int = 0x20;
 const ABI_VIS_NOSLASH: c_int = 0x40;
+const ABI_VIS_HTTPSTYLE: c_int = 0x80;
+const ABI_VIS_HTTP1808: c_int = ABI_VIS_HTTPSTYLE;
+const ABI_VIS_MIMESTYLE: c_int = 0x100;
 const ABI_VIS_WHITE: c_int = ABI_VIS_SP | ABI_VIS_TAB | ABI_VIS_NL;
 const ABI_VIS_GLOB: c_int = 0x1000;
 const ABI_VIS_SHELL: c_int = 0x2000;
@@ -4303,6 +4306,55 @@ fn strvis_noslash_does_not_change_octal_or_cstyle_forms() {
         )
     };
     assert_eq!(vis_string(&cstyle, cstyle_n), b"\\n");
+}
+
+#[test]
+fn strvis_httpstyle_uses_percent_lower_hex() {
+    let payload: &[u8] = b"AZaz09$-_.+!*'(), /\\\x01\x7f\xff";
+    let mut buf = [0 as c_char; 96];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_HTTPSTYLE,
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b"AZaz09$-_.+!*'(),%20%2f%5c%01%7f%ff");
+    assert_eq!(ABI_VIS_HTTP1808, ABI_VIS_HTTPSTYLE);
+}
+
+#[test]
+fn strvis_mimestyle_uses_quoted_printable_upper_hex() {
+    let payload: &[u8] = b"#=@[\\]^`{|}~\x01\x7f\xff";
+    let mut buf = [0 as c_char; 96];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_MIMESTYLE,
+        )
+    };
+    assert_eq!(
+        vis_string(&buf, n),
+        b"=23=3D=40=5B=5C=5D=5E=60=7B=7C=7D=7E=01=7F=FF"
+    );
+}
+
+#[test]
+fn strvis_mimestyle_encodes_trailing_whitespace_only() {
+    let payload: &[u8] = b" \t\r\n";
+    let mut buf = [0 as c_char; 32];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_MIMESTYLE,
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b" =09=0D\n");
 }
 
 #[test]
@@ -5558,6 +5610,48 @@ fn strenvisx_honors_noslash_from_env() {
     assert_eq!(cerr, 0);
     let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
     assert_eq!(bytes, b"^A".to_vec());
+}
+
+#[test]
+fn strenvisx_honors_httpstyle_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(Some(c"VIS_HTTPSTYLE"));
+    let payload: &[u8] = b" /";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"%20%2f".to_vec());
+}
+
+#[test]
+fn strenvisx_honors_mimestyle_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(Some(c"VIS_MIMESTYLE"));
+    let payload: &[u8] = b"=\x7f";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"=3D=7F".to_vec());
 }
 
 #[test]
