@@ -1,15 +1,13 @@
 //! Meta-gate: every `tests/conformance/*_cli_contract.v1.json` manifest must
 //! declare a non-empty `rejected_evidence_kinds` JSON array of snake_case
-//! strings (bd-lssv2). Catches manifests that don't enumerate the fail-closed
-//! evidence kinds the gate test should reject.
+//! strings. Catches manifests that don't enumerate the fail-closed evidence
+//! kinds the gate test should reject.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 type TestResult<T = ()> = Result<T, String>;
-
-const LEGACY_REJECTED_MISSING_CEILING: usize = 2;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -33,8 +31,7 @@ fn every_cli_contract_manifest_declares_nonempty_rejected_evidence_kinds() -> Te
     let entries = std::fs::read_dir(&conformance_dir)
         .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
 
-    let mut missing: Vec<String> = Vec::new();
-    let mut shape_violations: Vec<String> = Vec::new();
+    let mut violations: Vec<String> = Vec::new();
     let mut checked = 0usize;
     for entry in entries {
         let entry = entry.map_err(|e| format!("read entry: {e}"))?;
@@ -49,8 +46,10 @@ fn every_cli_contract_manifest_declares_nonempty_rejected_evidence_kinds() -> Te
         let manifest: Value =
             serde_json::from_str(&body).map_err(|e| format!("parse {path:?}: {e}"))?;
         match manifest.get("rejected_evidence_kinds") {
-            None => missing.push(stem.to_string()),
-            Some(Value::Array(a)) if a.is_empty() => missing.push(stem.to_string()),
+            None => violations.push(format!("{stem}: rejected_evidence_kinds missing")),
+            Some(Value::Array(a)) if a.is_empty() => {
+                violations.push(format!("{stem}: rejected_evidence_kinds must be non-empty"))
+            }
             Some(Value::Array(a)) => {
                 let bad: Vec<String> = a
                     .iter()
@@ -59,12 +58,12 @@ fn every_cli_contract_manifest_declares_nonempty_rejected_evidence_kinds() -> Te
                     .map(String::from)
                     .collect();
                 if !bad.is_empty() {
-                    shape_violations.push(format!(
+                    violations.push(format!(
                         "{stem}: rejected_evidence_kinds has non-snake_case entries: {bad:?}"
                     ));
                 }
             }
-            Some(_) => shape_violations.push(format!(
+            Some(_) => violations.push(format!(
                 "{stem}: rejected_evidence_kinds must be a JSON array"
             )),
         }
@@ -76,19 +75,11 @@ fn every_cli_contract_manifest_declares_nonempty_rejected_evidence_kinds() -> Te
         "expected at least 20 CLI contract manifests; found {checked}"
     );
 
-    if !shape_violations.is_empty() {
+    if !violations.is_empty() {
         return Err(format!(
-            "{} CLI contract manifest rejected_evidence_kinds shape violation(s):\n  {}",
-            shape_violations.len(),
-            shape_violations.join("\n  ")
-        ));
-    }
-
-    if missing.len() > LEGACY_REJECTED_MISSING_CEILING {
-        return Err(format!(
-            "{} CLI contract manifest(s) with missing or empty rejected_evidence_kinds (ceiling {LEGACY_REJECTED_MISSING_CEILING}):\n  {}",
-            missing.len(),
-            missing.join("\n  ")
+            "{} CLI contract manifest rejected_evidence_kinds violation(s):\n  {}",
+            violations.len(),
+            violations.join("\n  ")
         ));
     }
     Ok(())

@@ -69,6 +69,16 @@
     "ci_indistinguishable_over_budget_must_fail_closed": true,
     "amplification_above_threshold_must_fail_closed": true
   },
+  "rejected_evidence_kinds": [
+    "missing_jsonl_file",
+    "wrong_record_kind",
+    "invalid_bool_field",
+    "invalid_amplification_threshold",
+    "insufficient_samples",
+    "over_budget",
+    "amplification_above_threshold",
+    "ci_indistinguishable_over_budget"
+  ],
   "summary": {
     "bead": "bd-gfhc9",
     "subcommand": "validate-p99-delta",

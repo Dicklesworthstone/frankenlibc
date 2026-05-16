@@ -65,6 +65,14 @@
     "non_numeric_samples_must_fail_closed": true,
     "same_samples_and_seed_must_be_deterministic": true
   },
+  "rejected_evidence_kinds": [
+    "missing_samples_file",
+    "invalid_samples_json",
+    "non_array_samples_root",
+    "empty_samples",
+    "non_numeric_sample",
+    "non_finite_sample"
+  ],
   "summary": {
     "bead": "bd-t3fcw",
     "subcommand": "tail-stats",
