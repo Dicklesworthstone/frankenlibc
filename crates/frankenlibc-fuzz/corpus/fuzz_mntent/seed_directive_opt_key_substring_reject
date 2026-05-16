@@ -1,0 +1,3 @@
+opt:rw,size=64k,noatime
+---
+size

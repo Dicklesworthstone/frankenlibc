@@ -1,0 +1,1 @@
+line:server:/export /mnt nfs4 rw,vers=4.2,hard,timeo=600 5 6

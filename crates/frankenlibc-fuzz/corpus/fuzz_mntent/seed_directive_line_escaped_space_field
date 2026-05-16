@@ -1,0 +1,1 @@
+line:LABEL=foo\040bar /media/foo ext4 rw,noatime,user_xattr 0 2
