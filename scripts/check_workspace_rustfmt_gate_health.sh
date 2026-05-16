@@ -52,14 +52,19 @@ if artifact.get("schema_version") != "v1":
     errors.append("schema_version must be v1")
 if artifact.get("bead") != "bd-bp8fl.7.1":
     errors.append("bead must be bd-bp8fl.7.1")
-if artifact.get("status") != "quarantined":
-    errors.append("status must be quarantined")
+artifact_status = artifact.get("status")
+if artifact_status not in {"quarantined", "clean"}:
+    errors.append("status must be quarantined or clean")
 
 quarantine = artifact.get("quarantine", {})
 expected_files = sorted(set(quarantine.get("files", [])))
 declared_count = quarantine.get("file_count")
 if declared_count != len(expected_files):
     errors.append(f"file_count={declared_count} does not match files length={len(expected_files)}")
+if artifact_status == "clean" and expected_files:
+    errors.append("status clean requires an empty quarantine.files list")
+if artifact_status == "quarantined" and not expected_files:
+    errors.append("status quarantined requires at least one quarantine.files entry")
 
 missing_paths = [path for path in expected_files if not (root / path).exists()]
 if missing_paths:
@@ -107,6 +112,7 @@ if missing:
     errors.append("stale quarantined rustfmt entries: " + ", ".join(missing))
 
 status = "pass" if not errors else "fail"
+success_signature = "rustfmt_clean" if not expected_files else "rustfmt_drift_matches_quarantine"
 source_commit = subprocess.run(
     ["git", "rev-parse", "HEAD"],
     cwd=root,
@@ -135,7 +141,7 @@ report = {
     "artifact_refs": [artifact_path.relative_to(root).as_posix(), fmt_output_path.relative_to(root).as_posix()],
     "source_commit": source_commit,
     "target_dir": "target/conformance",
-    "failure_signature": "rustfmt_drift_set_mismatch" if errors else "rustfmt_drift_matches_quarantine",
+    "failure_signature": "rustfmt_drift_set_mismatch" if errors else success_signature,
     "errors": errors,
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -175,6 +181,23 @@ with log_path.open("w", encoding="utf-8") as log:
             "failure_signature": "unquarantined_rustfmt_drift",
         }
         log.write(json.dumps(record, sort_keys=True) + "\n")
+    if not expected_files and not extra:
+        record = {
+            "trace_id": artifact.get("trace_id"),
+            "bead_id": "bd-bp8fl.7.1",
+            "command": "cargo fmt --check",
+            "exit_status": proc.returncode,
+            "validation_scope": "workspace-rustfmt-quarantine",
+            "owner": quarantine.get("owner_bead"),
+            "expected": "no_tracked_rustfmt_drift",
+            "actual": "no_tracked_rustfmt_drift" if proc.returncode == 0 else "cargo_fmt_failed_without_tracked_drift",
+            "artifact_refs": [artifact_path.relative_to(root).as_posix()],
+            "source_commit": source_commit,
+            "target_dir": "target/conformance",
+            "file_path": "",
+            "failure_signature": "ok" if not errors else "rustfmt_command_failed",
+        }
+        log.write(json.dumps(record, sort_keys=True) + "\n")
 
 if errors:
     print("FAIL: workspace rustfmt gate health mismatch")
@@ -182,7 +205,10 @@ if errors:
         print(f"  - {error}")
     sys.exit(1)
 
-print(f"PASS: rustfmt drift matches quarantine ({len(actual_files)} files)")
+if expected_files:
+    print(f"PASS: rustfmt drift matches quarantine ({len(actual_files)} files)")
+else:
+    print("PASS: tracked rustfmt drift is clean")
 print(f"report: {report_path.relative_to(root)}")
 print(f"log: {log_path.relative_to(root)}")
 PY

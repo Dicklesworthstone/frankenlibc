@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.7.3",
-  "generated_at_utc": "2026-05-04T12:18:00Z",
-  "source_commit": "618405fa5310aa9694f5417cc887158d9c17004e",
+  "generated_at_utc": "2026-05-16T17:24:00Z",
+  "source_commit": "e6f144a2ce4de9627ddafb2ee7223d160ce89e99",
   "trace_id": "bd-bp8fl-7-3-workspace-validation-dashboard-v1",
   "purpose": "Record current workspace validation state without hiding unrelated drift or stale gate artifacts.",
   "policy": {
@@ -36,21 +36,21 @@
   "dashboard_records": [
     {
       "id": "workspace_fmt_quarantine",
-      "status": "fail",
+      "status": "pass",
       "command": "bash scripts/check_workspace_rustfmt_gate_health.sh",
-      "exit_status": 1,
+      "exit_status": 0,
       "validation_scope": "workspace-fmt",
       "owner": "bd-bp8fl.7.1",
-      "expected": "cargo fmt --check drift set matches tests/conformance/workspace_rustfmt_gate_health.v1.json",
-      "actual": "1 unquarantined rustfmt drift file and 14 stale quarantine entries",
+      "expected": "cargo fmt --check has no tracked rustfmt drift",
+      "actual": "pass; tests/conformance/workspace_rustfmt_gate_health.v1.json declares a clean drift set",
       "artifact_refs": [
         "tests/conformance/workspace_rustfmt_gate_health.v1.json",
         "target/conformance/workspace_rustfmt_gate_health.report.json",
         "target/conformance/workspace_rustfmt_gate_health.log.jsonl"
       ],
-      "source_commit": "618405fa5310aa9694f5417cc887158d9c17004e",
+      "source_commit": "e6f144a2ce4de9627ddafb2ee7223d160ce89e99",
       "target_dir": "target/conformance",
-      "failure_signature": "rustfmt_drift_set_mismatch"
+      "failure_signature": "ok"
     },
     {
       "id": "workspace_check",
@@ -136,53 +136,6 @@
   ],
   "failure_ledger": [
     {
-      "failure_id": "fmt-unquarantined-runtime-evidence-replay-test",
-      "classification": "unrelated_failure",
-      "severity": "warning",
-      "owner": "bd-bp8fl.7.1",
-      "validation_scope": "workspace-fmt",
-      "file_path": "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs",
-      "expected": "not present in current rustfmt drift outside quarantine",
-      "actual": "present as unquarantined rustfmt drift",
-      "next_safe_action": "refresh the rustfmt quarantine artifact or format this file in a dedicated fmt bead",
-      "artifact_refs": [
-        "target/conformance/workspace_rustfmt_gate_health.report.json"
-      ],
-      "failure_signature": "unquarantined_rustfmt_drift"
-    },
-    {
-      "failure_id": "fmt-stale-quarantine-after-clippy-cleanup",
-      "classification": "stale_report",
-      "severity": "warning",
-      "owner": "bd-bp8fl.7.1",
-      "validation_scope": "workspace-fmt",
-      "file_count": 14,
-      "files": [
-        "crates/frankenlibc-abi/tests/conformance_diff_aligned_alloc.rs",
-        "crates/frankenlibc-abi/tests/conformance_diff_bsd_signal.rs",
-        "crates/frankenlibc-abi/tests/conformance_diff_dprintf.rs",
-        "crates/frankenlibc-abi/tests/conformance_diff_keyctl.rs",
-        "crates/frankenlibc-abi/tests/conformance_diff_mbrtowc.rs",
-        "crates/frankenlibc-abi/tests/conformance_diff_priority.rs",
-        "crates/frankenlibc-abi/tests/conformance_diff_strerror_np.rs",
-        "crates/frankenlibc-abi/tests/conformance_diff_sym_table.rs",
-        "crates/frankenlibc-abi/tests/conformance_diff_wcrtomb.rs",
-        "crates/frankenlibc-abi/tests/metamorphic_alphasort_versionsort.rs",
-        "crates/frankenlibc-abi/tests/metamorphic_ffs.rs",
-        "crates/frankenlibc-abi/tests/metamorphic_inet_aton_ntoa.rs",
-        "crates/frankenlibc-abi/tests/metamorphic_loc_codec.rs",
-        "crates/frankenlibc-abi/tests/metamorphic_strerror.rs"
-      ],
-      "expected": "quarantine entries still appear in current rustfmt drift",
-      "actual": "entries no longer appear after focused formatting slices",
-      "next_safe_action": "refresh tests/conformance/workspace_rustfmt_gate_health.v1.json in a dedicated rustfmt-quarantine update",
-      "artifact_refs": [
-        "tests/conformance/workspace_rustfmt_gate_health.v1.json",
-        "target/conformance/workspace_rustfmt_gate_health.report.json"
-      ],
-      "failure_signature": "stale_quarantine_entry"
-    },
-    {
       "failure_id": "workspace-test-sweep-not-refreshed",
       "classification": "not_run",
       "severity": "info",
@@ -229,5 +182,5 @@
       "expected_next_safe_action": "retry_with_tighter_scope_or_record_tool_failure"
     }
   ],
-  "next_safe_action": "Refresh the rustfmt quarantine artifact, then build the bead-closure checklist for changed-surface validation."
+  "next_safe_action": "Run a dedicated rch workspace test sweep or continue ready beads with focused changed-surface validation."
 }

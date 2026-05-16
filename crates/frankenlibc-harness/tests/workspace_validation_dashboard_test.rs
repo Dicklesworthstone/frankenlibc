@@ -123,8 +123,8 @@ fn dashboard_preserves_current_failures_and_passes() -> TestResult {
     assert!(
         records
             .iter()
-            .any(|record| record["status"].as_str() == Some("fail")),
-        "dashboard should preserve current failure rows"
+            .any(|record| { matches!(record["status"].as_str(), Some("fail") | Some("not_run")) }),
+        "dashboard should preserve current non-pass rows"
     );
     assert!(
         records
@@ -142,15 +142,16 @@ fn dashboard_preserves_current_failures_and_passes() -> TestResult {
     assert!(
         records.iter().any(|record| {
             record["validation_scope"].as_str() == Some("workspace-fmt")
-                && record["failure_signature"].as_str() == Some("rustfmt_drift_set_mismatch")
+                && record["status"].as_str() == Some("pass")
+                && matches!(record["failure_signature"].as_str(), Some("ok"))
         }),
-        "workspace fmt mismatch should be explicit"
+        "workspace fmt clean pass should be explicit"
     );
     Ok(())
 }
 
 #[test]
-fn failure_ledger_names_unrelated_stale_and_not_run_states() -> TestResult {
+fn failure_ledger_names_remaining_not_run_state() -> TestResult {
     let doc = artifact()?;
     let ledger = doc["failure_ledger"]
         .as_array()
@@ -160,13 +161,11 @@ fn failure_ledger_names_unrelated_stale_and_not_run_states() -> TestResult {
         .filter_map(|entry| entry["classification"].as_str())
         .collect();
 
-    for class in ["unrelated_failure", "stale_report", "not_run"] {
-        assert!(classes.contains(class), "missing failure class {class}");
-    }
-    assert!(ledger.iter().any(|entry| {
-        entry["file_path"].as_str()
-            == Some("crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs")
-    }));
+    assert_eq!(classes, HashSet::from(["not_run"]));
+    assert!(ledger.iter().any(|entry| matches!(
+        entry["failure_signature"].as_str(),
+        Some("workspace_test_sweep_not_refreshed")
+    )));
     Ok(())
 }
 
@@ -212,26 +211,27 @@ fn gate_script_emits_report_and_structured_log() -> TestResult {
     assert_eq!(report_json["status"].as_str(), Some("pass"));
     assert_eq!(report_json["current_gate_state"].as_str(), Some("degraded"));
     assert_eq!(report_json["dashboard_record_count"].as_u64(), Some(6));
-    assert_eq!(report_json["failure_ledger_count"].as_u64(), Some(3));
+    assert_eq!(report_json["failure_ledger_count"].as_u64(), Some(1));
 
     let log_content = std::fs::read_to_string(&log)?;
     let rows: Vec<Value> = log_content
         .lines()
         .map(serde_json::from_str)
         .collect::<Result<_, _>>()?;
-    assert!(rows.len() >= 9);
+    assert_eq!(rows.len(), 7);
 
     for row in &rows {
         for field in REQUIRED_RECORD_FIELDS {
             assert!(row.get(*field).is_some(), "missing log field {field}");
         }
     }
-    assert!(
-        rows.iter()
-            .any(|row| { row["failure_signature"].as_str() == Some("rustfmt_drift_set_mismatch") })
-    );
     assert!(rows.iter().any(|row| {
-        row["failure_signature"].as_str() == Some("workspace_test_sweep_not_refreshed")
+        row["validation_scope"].as_str() == Some("workspace-fmt")
+            && matches!(row["failure_signature"].as_str(), Some("ok"))
     }));
+    assert!(rows.iter().any(|row| matches!(
+        row["failure_signature"].as_str(),
+        Some("workspace_test_sweep_not_refreshed")
+    )));
     Ok(())
 }
