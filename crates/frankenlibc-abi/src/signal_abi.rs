@@ -21,7 +21,7 @@ use crate::runtime_policy;
 const MAX_TRACKED_SIGNAL: usize = 128;
 const HJI_WARMUP_OBSERVATIONS: usize = 64;
 const SIGNAL_ABBREVS: [&[u8]; 32] = [
-    b"0\0",      // 0
+    b"\0",       // 0 (not returned by sigabbrev_np)
     b"HUP\0",    // 1
     b"INT\0",    // 2
     b"QUIT\0",   // 3
@@ -50,7 +50,7 @@ const SIGNAL_ABBREVS: [&[u8]; 32] = [
     b"VTALRM\0", // 26
     b"PROF\0",   // 27
     b"WINCH\0",  // 28
-    b"IO\0",     // 29
+    b"POLL\0",   // 29
     b"PWR\0",    // 30
     b"SYS\0",    // 31
 ];
@@ -58,7 +58,7 @@ const SIGNAL_ABBREVS: [&[u8]; 32] = [
 const SA_RESTORER_FLAG: c_int = 0x04000000;
 
 fn sigabbrev_bytes(sig: c_int) -> Option<&'static [u8]> {
-    if sig < 0 {
+    if sig <= 0 {
         return None;
     }
     SIGNAL_ABBREVS.get(sig as usize).copied()
@@ -1485,7 +1485,7 @@ pub unsafe extern "C" fn sigdescr_np(sig: c_int) -> *const std::ffi::c_char {
         b"Power failure\0",            // 30
         b"Bad system call\0",          // 31
     ];
-    if sig < 0 || sig as usize >= DESCS.len() {
+    if sig <= 0 || sig as usize >= DESCS.len() {
         return std::ptr::null();
     }
     DESCS[sig as usize].as_ptr().cast()

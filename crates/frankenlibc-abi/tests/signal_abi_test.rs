@@ -279,12 +279,14 @@ fn sigabbrev_np_known_signals() {
     check(libc::SIGVTALRM, b"VTALRM");
     check(libc::SIGPROF, b"PROF");
     check(libc::SIGWINCH, b"WINCH");
+    check(libc::SIGIO, b"POLL");
     check(libc::SIGSYS, b"SYS");
 }
 
 #[test]
 fn sigabbrev_np_invalid_returns_null() {
     assert!(unsafe { sigabbrev_np(-1) }.is_null());
+    assert!(unsafe { sigabbrev_np(0) }.is_null());
     assert!(unsafe { sigabbrev_np(100) }.is_null());
 }
 
@@ -320,6 +322,7 @@ fn sigdescr_np_known_signals() {
 #[test]
 fn sigdescr_np_invalid_returns_null() {
     assert!(unsafe { sigdescr_np(-1) }.is_null());
+    assert!(unsafe { sigdescr_np(0) }.is_null());
     assert!(unsafe { sigdescr_np(100) }.is_null());
 }
 

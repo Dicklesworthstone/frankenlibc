@@ -17,11 +17,16 @@
 //!
 //! Bead: CONFORMANCE: libc signal.h sigset helpers diff matrix.
 
-use std::ffi::{c_int, c_void};
+use std::ffi::{CStr, c_char, c_int, c_void};
 use std::mem::MaybeUninit;
 
 use frankenlibc_abi::signal_abi as fl;
 use frankenlibc_abi::string_abi as fl_str;
+
+unsafe extern "C" {
+    fn sigabbrev_np(sig: c_int) -> *const c_char;
+    fn sigdescr_np(sig: c_int) -> *const c_char;
+}
 
 #[derive(Debug)]
 struct Divergence {
@@ -60,6 +65,18 @@ fn sigset_bytes(s: &libc::sigset_t) -> Vec<u8> {
 /// for sigaddset since glibc rejects them in some sets but not others;
 /// stick to the regular 1..=31 range plus a few real-time ones.
 const SIGNALS: &[c_int] = &[1, 2, 3, 6, 8, 10, 13, 14, 15, 17, 22, 30, 31];
+const SIGNAL_NP_CASES: &[c_int] = &[
+    -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+    25, 26, 27, 28, 29, 30, 31, 32, 33, 64, 65, 100,
+];
+
+fn cstr_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(ptr).to_bytes().to_vec() })
+    }
+}
 
 // ===========================================================================
 // sigemptyset — both impls produce identical empty set
@@ -275,6 +292,56 @@ fn diff_sigaddset_invalid_signal() {
 }
 
 // ===========================================================================
+// GNU signal name helpers — signal number → abbreviation / description
+// ===========================================================================
+
+#[test]
+fn diff_sigabbrev_np_cases() {
+    let mut divs = Vec::new();
+    for &sig in SIGNAL_NP_CASES {
+        let fl_bytes = cstr_bytes(unsafe { fl::sigabbrev_np(sig) });
+        let lc_bytes = cstr_bytes(unsafe { sigabbrev_np(sig) });
+        if fl_bytes != lc_bytes {
+            divs.push(Divergence {
+                function: "sigabbrev_np",
+                case: format!("sig={sig}"),
+                field: "text",
+                frankenlibc: format!("{fl_bytes:?}"),
+                glibc: format!("{lc_bytes:?}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "sigabbrev_np divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_sigdescr_np_cases() {
+    let mut divs = Vec::new();
+    for &sig in SIGNAL_NP_CASES {
+        let fl_bytes = cstr_bytes(unsafe { fl::sigdescr_np(sig) });
+        let lc_bytes = cstr_bytes(unsafe { sigdescr_np(sig) });
+        if fl_bytes != lc_bytes {
+            divs.push(Divergence {
+                function: "sigdescr_np",
+                case: format!("sig={sig}"),
+                field: "text",
+                frankenlibc: format!("{fl_bytes:?}"),
+                glibc: format!("{lc_bytes:?}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "sigdescr_np divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // strsignal — signal number → message
 // ===========================================================================
 
@@ -426,6 +493,7 @@ fn diff_sigset_compose_membership() {
 #[test]
 fn signal_helpers_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"signal.h sigset helpers\",\"reference\":\"glibc\",\"functions\":6,\"divergences\":0}}",
+        "{{\"family\":\"signal.h sigset helpers\",\"reference\":\"glibc\",\"functions\":8,\"signal_np_cases\":{},\"divergences\":0}}",
+        SIGNAL_NP_CASES.len(),
     );
 }
