@@ -20,6 +20,7 @@
     "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available",
     "frankenlibc_harness::asupersync_lab_replay::classify_outcome"
   ],
+  "io_pattern": "replay_expected_observed_jsonl_to_outcome_jsonl",
   "input_record_required_fields": [
     "schema_version",
     "trace_class",
@@ -41,6 +42,16 @@
     "trace_class",
     "source_commit"
   ],
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "format": "replay outcome JSONL record",
+    "required_kind": "replay_outcome",
+    "outcome_enum": [
+      "pass",
+      "code_failure",
+      "tool_failure"
+    ]
+  },
   "valid_outcomes": [
     "pass",
     "code_failure",

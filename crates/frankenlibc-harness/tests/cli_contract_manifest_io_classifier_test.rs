@@ -2,7 +2,7 @@
 //! `tests/conformance/` declares at least one I/O classifier field:
 //! `io_pattern`, `output_contract`, or `jsonl_output_contract`
 //! (bd-jrx0f). Catches manifests that drop the I/O classifier entirely
-//! during retrofit. Four legacy manifests are ratcheted as exempt.
+//! during retrofit.
 
 use std::path::{Path, PathBuf};
 
@@ -11,13 +11,6 @@ use serde_json::Value;
 type TestResult<T = ()> = Result<T, String>;
 
 const IO_CLASSIFIER_FIELDS: &[&str] = &["io_pattern", "output_contract", "jsonl_output_contract"];
-
-const LEGACY_MANIFESTS_WITHOUT_IO_CLASSIFIER: &[&str] = &[
-    "decision_trace_minimize_cli_contract.v1.json",
-    "decode_evidence_cli_contract.v1.json",
-    "env_fingerprint_cli_contract.v1.json",
-    "replay_classify_cli_contract.v1.json",
-];
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -36,7 +29,6 @@ fn every_cli_contract_manifest_declares_io_classifier() -> TestResult {
         .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
 
     let mut violations: Vec<String> = Vec::new();
-    let mut legacy_count = 0usize;
     let mut checked = 0usize;
     for entry in entries {
         let entry = entry.map_err(|e| format!("read entry: {e}"))?;
@@ -54,13 +46,9 @@ fn every_cli_contract_manifest_declares_io_classifier() -> TestResult {
             .iter()
             .any(|field| manifest.get(*field).is_some());
         if !has_any_classifier {
-            if LEGACY_MANIFESTS_WITHOUT_IO_CLASSIFIER.contains(&name) {
-                legacy_count += 1;
-            } else {
-                violations.push(format!(
-                    "{name}: missing all I/O classifier fields (need one of {IO_CLASSIFIER_FIELDS:?})"
-                ));
-            }
+            violations.push(format!(
+                "{name}: missing all I/O classifier fields (need one of {IO_CLASSIFIER_FIELDS:?})"
+            ));
         }
         checked += 1;
     }
@@ -78,11 +66,5 @@ fn every_cli_contract_manifest_declares_io_classifier() -> TestResult {
         ));
     }
 
-    if legacy_count > LEGACY_MANIFESTS_WITHOUT_IO_CLASSIFIER.len() {
-        return Err(format!(
-            "legacy manifests without io classifier rose to {legacy_count} (ceiling: {})",
-            LEGACY_MANIFESTS_WITHOUT_IO_CLASSIFIER.len()
-        ));
-    }
     Ok(())
 }

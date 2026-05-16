@@ -18,6 +18,13 @@
     "frankenlibc_harness::system_fingerprint::environment_fingerprint",
     "frankenlibc_harness::system_fingerprint::validate_environment_fingerprint"
   ],
+  "io_pattern": "environment_fingerprint_probe_to_single_jsonl_record",
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "output_path_selected_by": "--output",
+    "detect_kind": "environment_fingerprint",
+    "validate_kind": "environment_fingerprint_validation"
+  },
   "modes": {
     "detect": {
       "selected_when": "validate is absent",

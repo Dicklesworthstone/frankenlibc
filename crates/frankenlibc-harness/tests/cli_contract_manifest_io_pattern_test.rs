@@ -9,7 +9,7 @@ use serde_json::Value;
 
 type TestResult<T = ()> = Result<T, String>;
 
-const LEGACY_IO_PATTERN_MISSING_CEILING: usize = 31;
+const LEGACY_IO_PATTERN_MISSING_CEILING: usize = 27;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");

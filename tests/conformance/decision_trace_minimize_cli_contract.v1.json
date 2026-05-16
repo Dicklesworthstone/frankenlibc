@@ -16,6 +16,7 @@
     "frankenlibc_harness::decision_trace_minimizer::minimize",
     "frankenlibc_harness::decision_trace_minimizer::serialize_minimized_trace_jsonl"
   ],
+  "io_pattern": "jsonl_trace_rows_to_single_minimized_trace_jsonl",
   "input_row_required_fields": [
     "schema_version",
     "scenario",
@@ -28,6 +29,12 @@
     "source_commit",
     "artifact_refs"
   ],
+  "jsonl_output_contract": {
+    "record_count": 1,
+    "format": "single MinimizedTrace JSONL record",
+    "required_fields_const": "frankenlibc_harness::decision_trace_minimizer::MINIMIZED_TRACE_REQUIRED_FIELDS",
+    "round_trip_parser": "frankenlibc_harness::decision_trace_minimizer::parse_minimized_trace_jsonl"
+  },
   "output_jsonl_required_fields_const": "frankenlibc_harness::decision_trace_minimizer::MINIMIZED_TRACE_REQUIRED_FIELDS",
   "policy": {
     "fail_closed_when_input_row_missing_required_field": true,

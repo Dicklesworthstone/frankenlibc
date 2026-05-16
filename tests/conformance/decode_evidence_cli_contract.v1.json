@@ -22,6 +22,14 @@
     "frankenlibc_harness::evidence_decode_render::render_plain",
     "frankenlibc_harness::evidence_decode_render::render_ftui"
   ],
+  "io_pattern": "binary_evidence_records_to_decode_report",
+  "output_contract": {
+    "input_format": "concatenated 256-byte EvidenceSymbolRecord blobs",
+    "json_format_selected_by": "--format json",
+    "json_output_path_selected_by": "--output",
+    "plain_output_supported": true,
+    "ftui_output_supported": true
+  },
   "json_output_contract": {
     "root_required_fields": [
       "epochs"
