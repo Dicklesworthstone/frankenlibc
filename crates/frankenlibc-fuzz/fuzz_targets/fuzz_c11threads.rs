@@ -36,7 +36,7 @@ use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use frankenlibc_abi::c11threads_abi::{
     call_once, cnd_broadcast, cnd_destroy, cnd_init, cnd_signal, cnd_timedwait, mtx_destroy,
     mtx_init, mtx_lock, mtx_timedlock, mtx_trylock, mtx_unlock, thrd_create, thrd_detach,
@@ -77,6 +77,71 @@ enum Op {
 #[derive(Debug, Arbitrary)]
 struct C11FuzzInput {
     ops: Vec<Op>,
+}
+
+fn directed_input(data: &[u8]) -> Option<C11FuzzInput> {
+    let scenario = data.strip_prefix(b"c11threads:")?;
+    let scenario = std::str::from_utf8(scenario).ok()?;
+    let scenario = scenario.trim_matches(|c: char| c.is_ascii_whitespace());
+
+    let ops = match scenario {
+        "mutex-cond-basic" => vec![
+            Op::MtxRoundTripPlain,
+            Op::MtxRoundTripTimedShort,
+            Op::CndRoundTrip,
+            Op::CndBroadcastNoWaiter,
+        ],
+        "cond-timedwait" => vec![Op::CndTimedwaitShort],
+        "tss-values" => vec![
+            Op::TssCreateSetDelete { value_sel: 0 },
+            Op::TssCreateSetDelete { value_sel: 1 },
+            Op::TssCreateSetDelete { value_sel: u8::MAX },
+        ],
+        "call-once" => vec![
+            Op::CallOnceExactlyOnce { times: 0 },
+            Op::CallOnceExactlyOnce { times: 4 },
+            Op::CallOnceExactlyOnce { times: u8::MAX },
+        ],
+        "thread-join-detach-sleep" => vec![
+            Op::ThrdCreateJoinRoundTrip,
+            Op::ThrdCreateDetach,
+            Op::ThrdSleepShort,
+        ],
+        "all-paths" => vec![
+            Op::MtxRoundTripPlain,
+            Op::MtxRoundTripTimedShort,
+            Op::CndRoundTrip,
+            Op::CndBroadcastNoWaiter,
+            Op::CndTimedwaitShort,
+            Op::TssCreateSetDelete { value_sel: 7 },
+            Op::CallOnceExactlyOnce { times: 8 },
+            Op::ThrdCreateJoinRoundTrip,
+            Op::ThrdCreateDetach,
+            Op::ThrdSleepShort,
+        ],
+        "repeat-lifecycle" => vec![
+            Op::MtxRoundTripPlain,
+            Op::CndRoundTrip,
+            Op::TssCreateSetDelete { value_sel: 2 },
+            Op::MtxRoundTripTimedShort,
+            Op::CndTimedwaitShort,
+            Op::TssCreateSetDelete { value_sel: 3 },
+            Op::CallOnceExactlyOnce { times: 2 },
+            Op::ThrdSleepShort,
+        ],
+        _ => return None,
+    };
+
+    Some(C11FuzzInput { ops })
+}
+
+fn input_from_bytes(data: &[u8]) -> Option<C11FuzzInput> {
+    if let Some(input) = directed_input(data) {
+        return Some(input);
+    }
+
+    let mut unstructured = Unstructured::new(data);
+    C11FuzzInput::arbitrary(&mut unstructured).ok()
 }
 
 fn init_hardened_mode() {
@@ -272,7 +337,10 @@ fn apply_op(op: &Op) {
     }
 }
 
-fuzz_target!(|input: C11FuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    let Some(input) = input_from_bytes(data) else {
+        return;
+    };
     if input.ops.len() > MAX_OPS {
         return;
     }
