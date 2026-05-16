@@ -1,0 +1,11 @@
+runtime-math:strict_stdio_contention
+mode:strict
+family:stdio
+addr:0x40404040
+bytes:4096
+contention:65535
+cost:4095
+iterations:10
+adverse:0
+write:true
+bloom:false

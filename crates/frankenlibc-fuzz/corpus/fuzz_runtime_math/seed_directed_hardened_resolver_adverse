@@ -1,0 +1,11 @@
+runtime-math:hardened_resolver_adverse
+mode:hardened
+family:resolver
+addr:0x2000
+bytes:512
+contention:128
+cost:997
+iterations:14
+adverse:0xaaaa5555
+write:false
+bloom:true

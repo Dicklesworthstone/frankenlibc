@@ -1,0 +1,11 @@
+runtime-math:hardened_allocator_bloom_negative
+mode:hardened
+family:allocator
+addr:0xdeadbeef
+bytes:128
+contention:16
+cost:32
+iterations:6
+adverse:0x11
+write:true
+bloom:true

@@ -1,1 +1,11 @@
-hardened-locale
+runtime-math:hardened_locale
+mode:hardened
+family:locale
+addr:0x7fff0000
+bytes:256
+contention:32
+cost:64
+iterations:5
+adverse:0
+write:false
+bloom:false

@@ -1,1 +1,11 @@
-strict-pointer
+runtime-math:strict_pointer
+mode:strict
+family:pointer
+addr:0x1000
+bytes:64
+contention:0
+cost:16
+iterations:4
+adverse:0
+write:false
+bloom:false

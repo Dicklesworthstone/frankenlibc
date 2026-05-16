@@ -1,0 +1,11 @@
+runtime-math:off_socket_high_addr
+mode:off
+family:socket
+addr:0xfffffffffffff000
+bytes:65535
+contention:0
+cost:65535
+iterations:8
+adverse:0
+write:true
+bloom:false
