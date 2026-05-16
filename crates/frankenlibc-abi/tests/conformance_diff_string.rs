@@ -11,7 +11,7 @@
 //! (`libc::*`) are called on identical inputs and the results are
 //! compared:
 //!
-//! - `strchr / strrchr / strchrnul / strstr / strcasestr / strpbrk / memchr / memrchr`
+//! - `strchr / strrchr / strchrnul / strstr / strcasestr / strpbrk / memchr / memrchr / rawmemchr`
 //!   compare offset-from-base (or "no match" sentinel).
 //! - `strspn / strcspn / strnlen` compare returned length.
 //! - `memmem` compares bounded byte-substring match offsets.
@@ -33,6 +33,9 @@ unsafe extern "C" {
         needle: *const c_void,
         needle_len: usize,
     ) -> *mut c_void;
+    /// Host glibc GNU `rawmemchr`: unbounded byte search with the
+    /// precondition that the byte is present.
+    fn rawmemchr(s: *const c_void, c: c_int) -> *mut c_void;
     /// Host glibc GNU `strchrnul` — like strchr but returns ptr to NUL
     /// when no match (instead of NULL). Not exposed by libc crate.
     fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char;
@@ -582,6 +585,50 @@ fn diff_memmem_cases() {
 }
 
 // ===========================================================================
+// rawmemchr - GNU unbounded byte search, present-needle cases only
+// ===========================================================================
+//
+// rawmemchr has undefined behavior when the byte is absent, so every case
+// below contains the searched byte inside the allocation.
+
+const RAWMEMCHR_CASES: &[(&[u8], i32)] = &[
+    (b"\0", 0),               // empty C string terminator buffer
+    (b"target", b't' as i32), // first byte
+    (b"target", b'g' as i32), // middle byte
+    (b"target", b't' as i32), // repeated byte returns first match
+    (b"abc\0def", 0),         // embedded NUL
+    (b"\xff\xfe\xfd", 0xff),  // high byte
+    (b"\xff\xfe\xfd", 0x1ff), // wide value: low 8 bits = 0xff
+    (b"x", b'x' as i32),      // single-byte buffer
+    (b"prefix-suffix", b'-' as i32),
+];
+
+#[test]
+fn diff_rawmemchr_cases() {
+    let mut divs = Vec::new();
+    for (bytes, c) in RAWMEMCHR_CASES {
+        let p = bytes.as_ptr().cast::<c_void>();
+        let fl_r = unsafe { fl::rawmemchr(p, *c) };
+        let lc_r = unsafe { rawmemchr(p, *c) };
+        let fo = offset_void_or_none(bytes.as_ptr(), fl_r);
+        let lo = offset_void_or_none(bytes.as_ptr(), lc_r);
+        if fo != lo {
+            divs.push(Divergence {
+                function: "rawmemchr",
+                case: format!("({:?}, {:#x})", bytes, c),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "rawmemchr divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // strcasecmp / strncasecmp — ASCII-case-insensitive byte compare
 // ===========================================================================
 //
@@ -820,12 +867,13 @@ fn string_diff_coverage_report() {
         + MEMCHR_CASES.len() * 2          // memchr + memrchr
         + MEMCMP_CASES.len()
         + MEMMEM_CASES.len()
+        + RAWMEMCHR_CASES.len()
         + STRCASECMP_CASES.len()
         + STRNCASECMP_CASES.len()
         + STRCHRNUL_CASES.len()
         + STRVERSCMP_CASES.len();
     eprintln!(
-        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":16,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":17,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
