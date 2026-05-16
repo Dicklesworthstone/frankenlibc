@@ -11,7 +11,7 @@
 //! (`libc::*`) are called on identical inputs and the results are
 //! compared:
 //!
-//! - `strchr / strrchr / strchrnul / strstr / strcasestr / strpbrk / memchr / memrchr / rawmemchr`
+//! - `strchr / strrchr / index / rindex / strchrnul / strstr / strcasestr / strpbrk / memchr / memrchr / rawmemchr`
 //!   compare offset-from-base (or "no match" sentinel).
 //! - `strspn / strcspn / strnlen` compare returned length.
 //! - `memmem` compares bounded byte-substring match offsets.
@@ -36,6 +36,12 @@ unsafe extern "C" {
     /// Host glibc GNU `rawmemchr`: unbounded byte search with the
     /// precondition that the byte is present.
     fn rawmemchr(s: *const c_void, c: c_int) -> *mut c_void;
+    /// Host glibc BSD/GNU `index`: legacy alias for strchr.
+    #[link_name = "index"]
+    fn libc_index(s: *const c_char, c: c_int) -> *mut c_char;
+    /// Host glibc BSD/GNU `rindex`: legacy alias for strrchr.
+    #[link_name = "rindex"]
+    fn libc_rindex(s: *const c_char, c: c_int) -> *mut c_char;
     /// Host glibc GNU `strchrnul` — like strchr but returns ptr to NUL
     /// when no match (instead of NULL). Not exposed by libc crate.
     fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char;
@@ -175,6 +181,58 @@ fn diff_strrchr_cases() {
     assert!(
         divs.is_empty(),
         "strrchr divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_index_cases() {
+    let mut divs = Vec::new();
+    for (s, c) in STRCHR_CASES {
+        let buf = cstr(s);
+        let base = buf.as_ptr() as *const c_char;
+        let fl_r = unsafe { fl::index(base, *c) };
+        let lc_r = unsafe { libc_index(base, *c) };
+        let fo = offset_or_none(base, fl_r);
+        let lo = offset_or_none(base, lc_r);
+        if fo != lo {
+            divs.push(Divergence {
+                function: "index",
+                case: format!("({:?}, {:#x})", s, c),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "index divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_rindex_cases() {
+    let mut divs = Vec::new();
+    for (s, c) in STRCHR_CASES {
+        let buf = cstr(s);
+        let base = buf.as_ptr() as *const c_char;
+        let fl_r = unsafe { fl::rindex(base, *c) };
+        let lc_r = unsafe { libc_rindex(base, *c) };
+        let fo = offset_or_none(base, fl_r);
+        let lo = offset_or_none(base, lc_r);
+        if fo != lo {
+            divs.push(Divergence {
+                function: "rindex",
+                case: format!("({:?}, {:#x})", s, c),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "rindex divergences:\n{}",
         render_divs(&divs)
     );
 }
@@ -859,7 +917,7 @@ fn diff_strverscmp_cases() {
 
 #[test]
 fn string_diff_coverage_report() {
-    let total = STRCHR_CASES.len() * 2 // strchr + strrchr
+    let total = STRCHR_CASES.len() * 4 // strchr + strrchr + index + rindex
         + STRSTR_CASES.len()
         + STRCASESTR_CASES.len()
         + PBRK_CASES.len() * 3            // strpbrk + strspn + strcspn
@@ -873,7 +931,7 @@ fn string_diff_coverage_report() {
         + STRCHRNUL_CASES.len()
         + STRVERSCMP_CASES.len();
     eprintln!(
-        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":17,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":19,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
