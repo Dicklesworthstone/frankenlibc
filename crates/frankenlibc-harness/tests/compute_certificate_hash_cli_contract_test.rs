@@ -177,6 +177,31 @@ fn manifest_anchors_to_ohq9t_with_subcommand_name() -> TestResult {
 }
 
 #[test]
+fn manifest_required_flags_pin_cli_surface() -> TestResult {
+    let root = workspace_root()?;
+    let m = load_json(&manifest_path(&root))?;
+    let flags = m
+        .get("required_flags")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing required_flags".to_string())?;
+    for flag in [
+        "--gram-matrix",
+        "--monomial-degree",
+        "--barrier-budget-milli",
+        "--output",
+    ] {
+        require(
+            flags.iter().any(|value| value.as_str() == Some(flag)),
+            format!("required_flags must include {flag}"),
+        )?;
+    }
+    require(
+        flags.len() == 4,
+        format!("compute-certificate-hash required_flags drifted: {flags:?}"),
+    )
+}
+
+#[test]
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;

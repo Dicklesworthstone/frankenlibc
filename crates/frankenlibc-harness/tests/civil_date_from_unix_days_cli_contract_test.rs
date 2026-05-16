@@ -160,6 +160,26 @@ fn manifest_anchors_to_9ws64_with_subcommand_name() -> TestResult {
 }
 
 #[test]
+fn manifest_required_flags_pin_cli_surface() -> TestResult {
+    let root = workspace_root()?;
+    let m = load_json(&manifest_path(&root))?;
+    let flags = m
+        .get("required_flags")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing required_flags".to_string())?;
+    for flag in ["--unix-days", "--output"] {
+        require(
+            flags.iter().any(|value| value.as_str() == Some(flag)),
+            format!("required_flags must include {flag}"),
+        )?;
+    }
+    require(
+        flags.len() == 2,
+        format!("civil-date-from-unix-days required_flags drifted: {flags:?}"),
+    )
+}
+
+#[test]
 fn manifest_policy_pins_required_invariants() -> TestResult {
     let root = workspace_root()?;
     let m = load_json(&manifest_path(&root))?;
