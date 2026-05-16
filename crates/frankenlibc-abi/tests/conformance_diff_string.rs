@@ -17,6 +17,8 @@
 //! - `memmem` compares bounded byte-substring match offsets.
 //! - `memcmp` compares the sign of the returned int (POSIX requires
 //!   only the sign, not the magnitude, to be portable).
+//! - `__memcmpeq` compares zero-vs-nonzero equality semantics; glibc
+//!   only promises nonzero for unequal.
 //!
 //! Reference: glibc / musl, POSIX.1-2017.
 //! Bead: CONFORMANCE: libc string.h diff matrix.
@@ -51,6 +53,8 @@ unsafe extern "C" {
     /// Host glibc GNU `strverscmp` — version-aware string compare:
     /// "file9" < "file10". Not exposed by libc crate.
     fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_int;
+    /// Host glibc internal `__memcmpeq`: returns 0 if equal, nonzero otherwise.
+    fn __memcmpeq(s1: *const c_void, s2: *const c_void, n: usize) -> c_int;
 }
 
 #[derive(Debug)]
@@ -582,6 +586,30 @@ fn diff_memcmp_cases() {
     );
 }
 
+#[test]
+fn diff_memcmpeq_cases() {
+    let mut divs = Vec::new();
+    for (a, b, n) in MEMCMP_CASES {
+        let ap = a.as_ptr() as *const c_void;
+        let bp = b.as_ptr() as *const c_void;
+        let fl_r = unsafe { fl::__memcmpeq(ap, bp, *n) };
+        let lc_r = unsafe { __memcmpeq(ap, bp, *n) };
+        if (fl_r == 0) != (lc_r == 0) {
+            divs.push(Divergence {
+                function: "__memcmpeq",
+                case: format!("({:?}, {:?}, {})", a, b, n),
+                frankenlibc: format!("is_equal={}", fl_r == 0),
+                glibc: format!("is_equal={}", lc_r == 0),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "__memcmpeq divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 // ===========================================================================
 // memmem — bounded byte substring search (NUL-permissible)
 // ===========================================================================
@@ -924,6 +952,7 @@ fn string_diff_coverage_report() {
         + STRNLEN_CASES.len()
         + MEMCHR_CASES.len() * 2          // memchr + memrchr
         + MEMCMP_CASES.len()
+        + MEMCMP_CASES.len()              // __memcmpeq
         + MEMMEM_CASES.len()
         + RAWMEMCHR_CASES.len()
         + STRCASECMP_CASES.len()
@@ -931,7 +960,7 @@ fn string_diff_coverage_report() {
         + STRCHRNUL_CASES.len()
         + STRVERSCMP_CASES.len();
     eprintln!(
-        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":19,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":20,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
