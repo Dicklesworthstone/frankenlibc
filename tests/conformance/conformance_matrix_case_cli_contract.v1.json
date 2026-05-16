@@ -15,6 +15,7 @@
     "--function",
     "--mode"
   ],
+  "optional_flags": [],
   "stdin_contract": {
     "format": "single JSON value",
     "passed_to": "frankenlibc_fixture_exec::execute_fixture_case(function, inputs, mode)",

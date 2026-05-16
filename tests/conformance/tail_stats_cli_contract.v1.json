@@ -12,6 +12,7 @@
     "--seed",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_harness::tail_stats::compute",
   "underlying_lib_functions": [
     "frankenlibc_harness::tail_stats::compute"

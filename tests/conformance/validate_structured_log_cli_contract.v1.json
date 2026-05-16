@@ -11,6 +11,7 @@
     "--jsonl",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_harness::structured_log::validate_log_file",
   "underlying_lib_functions": [
     "frankenlibc_harness::structured_log::validate_log_file"

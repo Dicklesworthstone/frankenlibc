@@ -11,6 +11,7 @@
     "--output-md",
     "--output-json"
   ],
+  "optional_flags": [],
   "default_inputs": {
     "support_matrix": "support_matrix.json",
     "fixture": "tests/conformance/fixtures",

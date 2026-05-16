@@ -11,6 +11,7 @@
     "--pcpt",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::policy_table::verify_pcpt",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::policy_table::verify_pcpt"

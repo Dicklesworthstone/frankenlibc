@@ -12,6 +12,7 @@
     "--output",
     "--family"
   ],
+  "optional_flags": [],
   "io_pattern": "fixture_template_directory_to_refreshed_fixture_directory",
   "underlying_lib_functions": [
     "frankenlibc_harness::capture::capture_family_fixtures",

@@ -11,6 +11,7 @@
     "--unix-days",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::util::civil_date_from_unix_days",
   "underlying_lib_functions": [
     "frankenlibc_membrane::util::civil_date_from_unix_days"

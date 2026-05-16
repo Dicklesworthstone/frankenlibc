@@ -13,6 +13,7 @@
     "--pressure-raw-score-milli",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::sos_barrier::depth_to_arena_utilization_ppm",
     "frankenlibc_membrane::runtime_math::sos_barrier::compose_memory_pressure_ppm"

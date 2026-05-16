@@ -13,6 +13,7 @@
     "--overhead-percent",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1"

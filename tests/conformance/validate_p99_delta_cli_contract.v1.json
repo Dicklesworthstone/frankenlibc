@@ -13,6 +13,7 @@
     "--amplification-threshold",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_harness::tail_stats::validate_p99_delta_against_budget",
   "underlying_lib_functions": [
     "frankenlibc_harness::tail_stats::validate_p99_delta_against_budget"

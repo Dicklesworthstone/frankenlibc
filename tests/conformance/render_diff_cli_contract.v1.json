@@ -12,6 +12,7 @@
     "--actual",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_harness::diff::render_diff",
   "underlying_lib_functions": [
     "frankenlibc_harness::diff::render_diff"

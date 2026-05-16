@@ -18,6 +18,7 @@
   "required_flags": [
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::grobner::canonical_class_from_support",
   "underlying_lib_functions": [
     "frankenlibc_membrane::grobner::canonical_class_from_support"

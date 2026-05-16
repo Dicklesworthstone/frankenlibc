@@ -11,6 +11,7 @@
     "--class-id",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::heal::recommended_healing_for_canonical_class",
   "underlying_lib_functions": [
     "frankenlibc_membrane::heal::recommended_healing_for_canonical_class"

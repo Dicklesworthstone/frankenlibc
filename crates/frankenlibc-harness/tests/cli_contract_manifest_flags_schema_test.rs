@@ -1,9 +1,10 @@
 //! Meta-gate: every `tests/conformance/*_cli_contract.v1.json` manifest must
-//! declare `required_flags` (if present) and `optional_flags` (if present) as
-//! JSON arrays of strings starting with `--` (bd-1igth). It also requires
+//! declare `required_flags` and `optional_flags` as JSON arrays of strings
+//! starting with `--` (bd-1igth, bd-e3oco). It also requires
 //! `source_commit` to be either an 8-hex short SHA or a 40-hex full SHA.
 //! Catches schema drift where a manifest emits a wrong type, a flag name
-//! without the long-form `--` prefix, or a placeholder-style source commit.
+//! without the long-form `--` prefix, omits the split between required and
+//! optional flags, or uses a placeholder-style source commit.
 
 use std::path::{Path, PathBuf};
 
@@ -22,6 +23,7 @@ fn workspace_root() -> TestResult<PathBuf> {
 
 fn validate_flag_array(manifest: &Value, field: &str, stem: &str, violations: &mut Vec<String>) {
     let Some(value) = manifest.get(field) else {
+        violations.push(format!("{stem}: `{field}` missing"));
         return;
     };
     let Some(arr) = value.as_array() else {
@@ -59,7 +61,7 @@ fn is_short_or_full_lower_hex_sha(value: &str) -> bool {
 }
 
 #[test]
-fn flag_arrays_have_well_typed_entries_starting_with_double_dash() -> TestResult {
+fn flag_arrays_are_declared_and_have_well_typed_entries_starting_with_double_dash() -> TestResult {
     let root = workspace_root()?;
     let conformance_dir = root.join("tests").join("conformance");
     let entries = std::fs::read_dir(&conformance_dir)

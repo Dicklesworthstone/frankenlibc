@@ -14,6 +14,7 @@
     "--arena-pressure-ppm",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_provenance_barrier",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_provenance_barrier"

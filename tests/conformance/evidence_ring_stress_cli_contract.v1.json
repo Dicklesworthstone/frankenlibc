@@ -14,6 +14,7 @@
     "--source-commit",
     "--output"
   ],
+  "optional_flags": [],
   "supported_cap_values": [32, 128, 1024],
   "underlying_lib_function": "frankenlibc_harness::evidence_ring_backpressure::run_real_ring_stress",
   "underlying_lib_functions": [

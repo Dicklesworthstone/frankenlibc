@@ -13,6 +13,7 @@
     "--repair-esi",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1"

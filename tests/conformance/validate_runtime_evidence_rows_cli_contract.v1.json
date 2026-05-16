@@ -11,6 +11,7 @@
     "--jsonl",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1"

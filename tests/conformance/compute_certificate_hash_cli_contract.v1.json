@@ -13,6 +13,7 @@
     "--barrier-budget-milli",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::compute_certificate_hash",
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::sos_barrier::compute_certificate_hash"

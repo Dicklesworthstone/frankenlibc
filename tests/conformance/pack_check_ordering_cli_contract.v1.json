@@ -10,6 +10,7 @@
   "required_flags": [
     "--stage"
   ],
+  "optional_flags": [],
   "underlying_lib_functions": [
     "frankenlibc_membrane::check_oracle::pack_ordering",
     "frankenlibc_membrane::check_oracle::unpack_ordering"

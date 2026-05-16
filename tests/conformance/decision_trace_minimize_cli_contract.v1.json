@@ -11,6 +11,7 @@
     "--input",
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_functions": [
     "frankenlibc_harness::decision_trace_minimizer::minimize",
     "frankenlibc_harness::decision_trace_minimizer::serialize_minimized_trace_jsonl"

@@ -10,6 +10,7 @@
   "required_flags": [
     "--output"
   ],
+  "optional_flags": [],
   "underlying_lib_function": "frankenlibc_harness::explainability_workbench::tooling_contract",
   "underlying_lib_functions": [
     "frankenlibc_harness::explainability_workbench::tooling_contract"
