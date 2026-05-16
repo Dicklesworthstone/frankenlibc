@@ -1,0 +1,10 @@
+runtime-math:strict_pointer
+family:math_fenv
+addr:0x8000000000000000
+bytes:65535
+contention:65535
+cost:0
+iterations:15
+adverse:0xffffffff
+write:true
+bloom:true

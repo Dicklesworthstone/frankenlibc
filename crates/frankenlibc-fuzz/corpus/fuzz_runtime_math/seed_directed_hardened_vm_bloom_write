@@ -1,0 +1,10 @@
+runtime-math:hardened_locale
+family:virtual_memory
+addr:0xffff800000000000
+bytes:65535
+contention:32768
+cost:65535
+iterations:12
+adverse:0x80000001
+write:true
+bloom:true

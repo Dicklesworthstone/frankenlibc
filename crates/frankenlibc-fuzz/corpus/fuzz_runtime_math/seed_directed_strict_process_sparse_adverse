@@ -1,0 +1,10 @@
+runtime-math:strict_stdio_contention
+family:process
+addr:0x100000001
+bytes:1
+contention:1
+cost:1
+iterations:15
+adverse:0x01020408
+write:false
+bloom:false

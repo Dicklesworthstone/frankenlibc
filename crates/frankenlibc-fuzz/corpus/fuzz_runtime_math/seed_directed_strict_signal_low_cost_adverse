@@ -1,0 +1,10 @@
+runtime-math:strict_pointer
+family:signal
+addr:0x2
+bytes:0
+contention:0
+cost:1
+iterations:15
+adverse:0xaaaaaaaa
+write:false
+bloom:false

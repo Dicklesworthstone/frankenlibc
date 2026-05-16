@@ -1,0 +1,10 @@
+runtime-math:off_socket_high_addr
+family:poll
+addr:0xffffffffffffffff
+bytes:65535
+contention:65535
+cost:65535
+iterations:15
+adverse:0x55555555
+write:false
+bloom:true

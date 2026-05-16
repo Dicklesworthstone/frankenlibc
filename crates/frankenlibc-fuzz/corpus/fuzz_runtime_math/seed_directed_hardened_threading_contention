@@ -1,0 +1,10 @@
+runtime-math:hardened_allocator_bloom_negative
+family:threading
+addr:0x404040404040
+bytes:2048
+contention:65535
+cost:4095
+iterations:15
+adverse:0x0f0f0f0f
+write:true
+bloom:false
