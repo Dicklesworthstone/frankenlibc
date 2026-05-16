@@ -885,12 +885,29 @@ fn strerror_returns_message_for_known_errno() {
 }
 
 #[test]
+fn strerror_unknown_errno_includes_number() {
+    let msg = unsafe { strerror(99999) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) };
+    assert_eq!(s.to_bytes(), b"Unknown error 99999");
+}
+
+#[test]
 fn strerror_r_populates_buffer() {
     let mut buf = [0_i8; 128];
     let rc = unsafe { strerror_r(libc::EACCES, buf.as_mut_ptr(), buf.len()) };
     assert_eq!(rc, 0);
     let s = unsafe { CStr::from_ptr(buf.as_ptr()) };
     assert!(!s.to_bytes().is_empty());
+}
+
+#[test]
+fn strerror_r_unknown_errno_returns_einval_and_message() {
+    let mut buf = [0_i8; 128];
+    let rc = unsafe { strerror_r(99999, buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(rc, libc::EINVAL);
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(s.to_bytes(), b"Unknown error 99999");
 }
 
 // ===========================================================================

@@ -612,6 +612,7 @@ fn diff_strerror_cases() {
         libc::EAGAIN,
         libc::EIO,
         99999,
+        -1,
     ];
     for &code in codes {
         let p_fl = unsafe { fl::strerror(code) };
@@ -628,15 +629,11 @@ fn diff_strerror_cases() {
         }
         let s_fl = unsafe { std::ffi::CStr::from_ptr(p_fl).to_bytes() };
         let s_lc = unsafe { std::ffi::CStr::from_ptr(p_lc).to_bytes() };
-        // strerror messages can vary across libc/musl versions. Don't
-        // require exact match; instead require both produce a non-empty
-        // string, AND for known errno values both contain the expected
-        // POSIX-derived keyword. Document the relaxation explicitly.
-        if s_fl.is_empty() != s_lc.is_empty() {
+        if s_fl != s_lc {
             divs.push(Divergence {
                 function: "strerror",
                 case: format!("errnum={code}"),
-                field: "empty_match",
+                field: "text",
                 frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
                 glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
             });
@@ -652,7 +649,7 @@ fn diff_strerror_cases() {
 #[test]
 fn diff_strerror_r_cases() {
     let mut divs = Vec::new();
-    let codes: &[c_int] = &[0, libc::EINVAL, libc::ENOENT, libc::EACCES];
+    let codes: &[c_int] = &[0, libc::EINVAL, libc::ENOENT, libc::EACCES, 99999, -1];
     for &code in codes {
         let mut buf_fl = vec![0i8; 256];
         let mut buf_lc = vec![0i8; 256];
@@ -670,6 +667,17 @@ fn diff_strerror_r_cases() {
                 field: "return",
                 frankenlibc: format!("{r_fl}"),
                 glibc: format!("{r_lc}"),
+            });
+        }
+        let s_fl = unsafe { std::ffi::CStr::from_ptr(buf_fl.as_ptr()).to_bytes() };
+        let s_lc = unsafe { std::ffi::CStr::from_ptr(buf_lc.as_ptr()).to_bytes() };
+        if s_fl != s_lc {
+            divs.push(Divergence {
+                function: "strerror_r (XSI)",
+                case: format!("errnum={code}"),
+                field: "text",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
             });
         }
     }

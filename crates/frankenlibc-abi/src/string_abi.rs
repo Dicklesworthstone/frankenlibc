@@ -4007,6 +4007,15 @@ thread_local! {
     static STRERROR_BUF: std::cell::RefCell<[u8; 256]> = const { std::cell::RefCell::new([0u8; 256]) };
 }
 
+pub(crate) fn rendered_strerror_message(errnum: c_int) -> (String, bool) {
+    let msg = frankenlibc_core::errno::strerror_message(errnum);
+    if msg == "Unknown error" {
+        (format!("Unknown error {errnum}"), true)
+    } else {
+        (msg.to_owned(), false)
+    }
+}
+
 /// POSIX `strerror` -- returns a pointer to a string describing the error number.
 ///
 /// The returned string is stored in a thread-local buffer and must not be freed.
@@ -4016,7 +4025,7 @@ thread_local! {
 /// The returned pointer is valid until the next call to `strerror` on the same thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strerror(errnum: c_int) -> *mut c_char {
-    let msg = frankenlibc_core::errno::strerror_message(errnum);
+    let (msg, _) = rendered_strerror_message(errnum);
     STRERROR_BUF
         .try_with(|buf_cell| {
             let mut buf = buf_cell.borrow_mut();
@@ -4046,7 +4055,7 @@ pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usi
         return frankenlibc_core::errno::EINVAL;
     }
 
-    let msg = frankenlibc_core::errno::strerror_message(errnum);
+    let (msg, unknown_errno) = rendered_strerror_message(errnum);
     let msg_bytes = msg.as_bytes();
     let copy_len = msg_bytes.len().min(buflen - 1);
 
@@ -4056,7 +4065,9 @@ pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usi
         *buf.add(copy_len) = 0;
     }
 
-    if msg_bytes.len() >= buflen {
+    if unknown_errno {
+        frankenlibc_core::errno::EINVAL
+    } else if msg_bytes.len() >= buflen {
         frankenlibc_core::errno::ERANGE
     } else {
         0

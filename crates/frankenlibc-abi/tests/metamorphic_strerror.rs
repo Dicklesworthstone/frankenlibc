@@ -108,12 +108,12 @@ fn metamorphic_strerrorname_np_eacces() {
 
 #[test]
 fn metamorphic_strerror_unknown_errno_returns_some_string() {
-    // Glibc returns "Unknown error N" for unknown errnos. fl
-    // matches. Either way, must be non-NULL non-empty.
+    // Glibc returns "Unknown error N" for unknown errnos; this text is
+    // externally visible through strerror/perror/%m.
     let p = unsafe { fl_string::strerror(99999) };
     let s = cstr(p);
     assert!(s.is_some(), "strerror(99999) returned NULL");
-    assert!(!s.unwrap().is_empty());
+    assert_eq!(s.unwrap(), "Unknown error 99999");
 }
 
 #[test]

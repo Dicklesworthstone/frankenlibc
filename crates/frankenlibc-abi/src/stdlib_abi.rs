@@ -4329,7 +4329,7 @@ pub unsafe extern "C" fn __xpg_strerror_r(errnum: c_int, buf: *mut c_char, bufle
     if buf.is_null() || buflen == 0 {
         return libc::ERANGE;
     }
-    let msg = frankenlibc_core::errno::strerror_message(errnum);
+    let (msg, unknown_errno) = crate::string_abi::rendered_strerror_message(errnum);
     let msg_bytes = msg.as_bytes();
     if msg_bytes.len() >= buflen {
         // Truncate and null-terminate
@@ -4337,13 +4337,17 @@ pub unsafe extern "C" fn __xpg_strerror_r(errnum: c_int, buf: *mut c_char, bufle
             ptr::copy_nonoverlapping(msg_bytes.as_ptr(), buf as *mut u8, buflen - 1);
             *buf.add(buflen - 1) = 0;
         }
-        return libc::ERANGE;
+        return if unknown_errno {
+            libc::EINVAL
+        } else {
+            libc::ERANGE
+        };
     }
     unsafe {
         ptr::copy_nonoverlapping(msg_bytes.as_ptr(), buf as *mut u8, msg_bytes.len());
         *buf.add(msg_bytes.len()) = 0;
     }
-    0
+    if unknown_errno { libc::EINVAL } else { 0 }
 }
 
 // ===========================================================================
