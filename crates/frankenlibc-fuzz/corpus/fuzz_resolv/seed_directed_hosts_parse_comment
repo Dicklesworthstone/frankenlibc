@@ -1,0 +1,4 @@
+resolv:parse_hosts
+---
+# comment-only line
+192.0.2.10 example.test example-alias

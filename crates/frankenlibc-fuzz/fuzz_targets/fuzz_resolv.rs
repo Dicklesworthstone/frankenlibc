@@ -11,10 +11,12 @@
 //!
 //! Bead: bd-2hh.4
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::resolv;
+
+const DIRECTED_PREFIX: &[u8] = b"resolv:";
 
 #[derive(Debug, Arbitrary)]
 struct ResolvFuzzInput {
@@ -26,7 +28,21 @@ struct ResolvFuzzInput {
     op: u8,
 }
 
-fuzz_target!(|input: ResolvFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    if let Some(input) = directed_input(data) {
+        fuzz_resolv(input);
+        return;
+    }
+
+    let mut raw = Unstructured::new(data);
+    let Ok(input) = ResolvFuzzInput::arbitrary(&mut raw) else {
+        return;
+    };
+
+    fuzz_resolv(input);
+});
+
+fn fuzz_resolv(input: ResolvFuzzInput) {
     match input.op % 7 {
         0 => fuzz_parse_hosts_line(&input),
         1 => fuzz_lookup_hosts(&input),
@@ -36,7 +52,115 @@ fuzz_target!(|input: ResolvFuzzInput| {
         5 => fuzz_getaddrinfo(&input),
         _ => fuzz_getnameinfo(&input),
     }
-});
+}
+
+/// Decode readable directed seeds shaped as:
+///
+/// ```text
+/// resolv:<op>
+/// name:<host-or-service>
+/// addr:<address-or-service>
+/// protocol:<tcp-or-udp>
+/// family:<inet|inet6|unspec|numeric>
+/// ---
+/// <hosts-or-services-content>
+/// ```
+///
+/// Header fields are optional. The op is one of `parse_hosts`,
+/// `lookup_hosts`, `reverse_lookup_hosts`, `parse_services`,
+/// `lookup_service`, `getaddrinfo`, or `getnameinfo`. Legacy libFuzzer
+/// corpus bytes still use the `Arbitrary` struct path.
+fn directed_input(data: &[u8]) -> Option<ResolvFuzzInput> {
+    let rest = data.strip_prefix(DIRECTED_PREFIX)?;
+    let (op_name, payload) = split_once_byte(rest, b'\n')?;
+    let empty_header: &[u8] = b"";
+    let (header, body) = split_once_marker(payload, b"\n---\n").unwrap_or((empty_header, payload));
+
+    let mut name = Vec::new();
+    let mut addr = Vec::new();
+    let mut protocol = Vec::new();
+    let mut family = resolv::AF_UNSPEC;
+    for raw_line in header.split(|&byte| byte == b'\n') {
+        let line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix(b"name:") {
+            name = value.to_vec();
+        } else if let Some(value) = line.strip_prefix(b"addr:") {
+            addr = value.to_vec();
+        } else if let Some(value) = line.strip_prefix(b"protocol:") {
+            protocol = value.to_vec();
+        } else {
+            let value = line.strip_prefix(b"family:")?;
+            family = parse_directed_family(value)?;
+        }
+    }
+
+    Some(ResolvFuzzInput {
+        data: strip_single_trailing_newline(body).to_vec(),
+        name,
+        addr,
+        protocol,
+        family,
+        op: directed_op(op_name)?,
+    })
+}
+
+fn directed_op(op_name: &[u8]) -> Option<u8> {
+    match op_name {
+        b"parse_hosts" => Some(0),
+        b"lookup_hosts" => Some(1),
+        b"reverse_lookup_hosts" => Some(2),
+        b"parse_services" => Some(3),
+        b"lookup_service" => Some(4),
+        b"getaddrinfo" => Some(5),
+        b"getnameinfo" => Some(6),
+        _ => None,
+    }
+}
+
+fn parse_directed_family(value: &[u8]) -> Option<i32> {
+    match value {
+        b"inet" => Some(resolv::AF_INET),
+        b"inet6" => Some(resolv::AF_INET6),
+        b"unspec" => Some(resolv::AF_UNSPEC),
+        _ => parse_directed_i32(value),
+    }
+}
+
+fn split_once_byte(data: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
+    let split_at = data.iter().position(|&b| b == byte)?;
+    let (head, tail) = data.split_at(split_at);
+    Some((head, tail.get(1..)?))
+}
+
+fn split_once_marker<'a>(data: &'a [u8], marker: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
+    if marker.is_empty() {
+        return None;
+    }
+
+    let split_at = data
+        .windows(marker.len())
+        .position(|window| window == marker)?;
+    let (head, tail) = data.split_at(split_at);
+    Some((head, tail.get(marker.len()..)?))
+}
+
+fn strip_single_trailing_newline(data: &[u8]) -> &[u8] {
+    data.strip_suffix(b"\n").unwrap_or(data)
+}
+
+fn parse_directed_i32(value: &[u8]) -> Option<i32> {
+    if value.is_empty() {
+        return None;
+    }
+    let digits = value.strip_prefix(b"-").unwrap_or(value);
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    core::str::from_utf8(value).ok()?.parse().ok()
+}
 
 fn fuzz_parse_hosts_line(input: &ResolvFuzzInput) {
     let line = &input.data[..input.data.len().min(1024)];
@@ -153,7 +277,7 @@ fn fuzz_getaddrinfo(input: &ResolvFuzzInput) {
         }
         Err(code) => {
             // Error codes should be negative (EAI_*).
-            assert!(code < 0 || code == 0, "unexpected error code: {code}");
+            assert!(code <= 0, "unexpected error code: {code}");
         }
     }
 }

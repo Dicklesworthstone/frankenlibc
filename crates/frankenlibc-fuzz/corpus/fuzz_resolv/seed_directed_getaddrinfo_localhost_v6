@@ -1,0 +1,7 @@
+resolv:getaddrinfo
+name:localhost
+addr:https
+family:inet6
+---
+::1 localhost ip6-localhost
+127.0.0.1 localhost loopback

@@ -1,0 +1,7 @@
+resolv:lookup_service
+name:domain
+protocol:udp
+---
+http 80/tcp www
+domain 53/tcp
+domain 53/udp dns
