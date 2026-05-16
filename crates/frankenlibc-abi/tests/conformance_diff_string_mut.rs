@@ -3,7 +3,7 @@
 //! Differential conformance harness for `<string.h>` mutating + comparison
 //! functions: strlen, strcmp, strncmp, strcpy, strncpy, strcat, strncat,
 //! strdup, strndup, strerror, strerror_r, memcpy, memmove, memset, memccpy,
-//! explicit_bzero, strtok_r.
+//! explicit_bzero, strtok_r, strsep.
 //!
 //! Compares FrankenLibC vs glibc on identical inputs; for mutating ops the
 //! comparison is on the post-call buffer state of paired output buffers.
@@ -46,6 +46,8 @@ unsafe extern "C" {
     /// Host glibc/POSIX `swab` — byte-swap pairs in n bytes from src
     /// to dst. POSIX takes `ssize_t` for the count.
     fn swab(src: *const c_void, dst: *mut c_void, n: isize);
+    /// Host glibc/BSD `strsep` — token extraction with delimiter overwrite.
+    fn strsep(stringp: *mut *mut c_char, delim: *const c_char) -> *mut c_char;
     /// Host glibc GNU `memfrob` — XOR each of n bytes with 42.
     fn memfrob(s: *mut c_void, n: usize) -> *mut c_void;
 }
@@ -721,6 +723,79 @@ fn diff_strtok_r_cases() {
     assert!(
         divs.is_empty(),
         "strtok_r divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
+// strsep — tokenizer that preserves empty fields and advances *stringp
+// ===========================================================================
+
+type StrsepTraceStep = (Option<usize>, Option<usize>);
+type StrsepTrace = Vec<StrsepTraceStep>;
+
+fn strsep_trace_with(
+    f: unsafe extern "C" fn(*mut *mut c_char, *const c_char) -> *mut c_char,
+    src: &[u8],
+    delim: &[u8],
+) -> (StrsepTrace, Vec<u8>) {
+    let mut buf = cstr(src);
+    buf.extend_from_slice(&[0xCD; 4]);
+    let dlm = cstr(delim);
+    let base = buf.as_ptr() as usize;
+    let mut cursor = buf.as_mut_ptr() as *mut c_char;
+    let mut trace = Vec::new();
+    for _ in 0..=src.len() + 2 {
+        let tok = unsafe { f(&mut cursor, dlm.as_ptr() as *const c_char) };
+        let tok_off = (!tok.is_null()).then(|| (tok as usize).wrapping_sub(base));
+        let cursor_off = (!cursor.is_null()).then(|| (cursor as usize).wrapping_sub(base));
+        trace.push((tok_off, cursor_off));
+        if tok.is_null() {
+            break;
+        }
+    }
+    (trace, buf)
+}
+
+#[test]
+fn diff_strsep_cases() {
+    let mut divs = Vec::new();
+    let cases: &[(&[u8], &[u8])] = &[
+        (b"a:b:c", b":"),
+        (b":a", b":"),
+        (b"a:", b":"),
+        (b"a::b", b":"),
+        (b"abc", b":"),
+        (b"", b":"),
+        (b"a,b:c", b",:"),
+        (b"abc", b""),
+    ];
+    for &(src, delim) in cases {
+        let (fl_trace, fl_buf) = strsep_trace_with(fl::strsep, src, delim);
+        let (lc_trace, lc_buf) = strsep_trace_with(strsep, src, delim);
+        let case = format!("(src={:?}, delim={:?})", src, delim);
+        if fl_trace != lc_trace {
+            divs.push(Divergence {
+                function: "strsep",
+                case: case.clone(),
+                field: "token_and_cursor_offsets",
+                frankenlibc: format!("{fl_trace:?}"),
+                glibc: format!("{lc_trace:?}"),
+            });
+        }
+        if fl_buf != lc_buf {
+            divs.push(Divergence {
+                function: "strsep",
+                case,
+                field: "buffer",
+                frankenlibc: format!("{:?}", &fl_buf[..fl_buf.len().min(24)]),
+                glibc: format!("{:?}", &lc_buf[..lc_buf.len().min(24)]),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strsep divergences:\n{}",
         render_divs(&divs)
     );
 }
@@ -1492,6 +1567,6 @@ fn diff_memfrob_cases() {
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":29,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":30,\"divergences\":0}}",
     );
 }
