@@ -55,12 +55,10 @@ fn singular_underlying_lib_function_must_appear_in_plural_list_when_both_present
             });
 
         match (singular, plural.as_ref()) {
-            (Some(s), Some(plural_vec)) => {
-                if !plural_vec.iter().any(|p| p == s) {
-                    consolidation_violations.push(format!(
-                        "{stem}: singular underlying_lib_function=`{s}` not present in plural list {plural_vec:?}"
-                    ));
-                }
+            (Some(s), Some(plural_vec)) if !plural_vec.iter().any(|p| p == s) => {
+                consolidation_violations.push(format!(
+                    "{stem}: singular underlying_lib_function=`{s}` not present in plural list {plural_vec:?}"
+                ));
             }
             (Some(_), None) => singular_only.push(stem.to_string()),
             _ => {}
