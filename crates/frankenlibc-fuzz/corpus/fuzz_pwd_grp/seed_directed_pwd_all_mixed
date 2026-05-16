@@ -1,0 +1,6 @@
+pwdgrp:pwd_all
+---
+# passwd
+malformed
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash

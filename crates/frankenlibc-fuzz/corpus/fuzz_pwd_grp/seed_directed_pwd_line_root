@@ -1,0 +1,2 @@
+pwdgrp:pwd_line
+root:x:0:0:root:/root:/bin/bash

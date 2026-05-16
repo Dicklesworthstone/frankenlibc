@@ -1,0 +1,6 @@
+pwdgrp:grp_all
+---
+# groups
+bad-group-line
+root:x:0:
+ubuntu:x:1000:

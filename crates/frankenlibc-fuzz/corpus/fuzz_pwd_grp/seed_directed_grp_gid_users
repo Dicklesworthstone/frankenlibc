@@ -1,0 +1,6 @@
+pwdgrp:grp_gid
+name:users
+gid:100
+---
+root:x:0:
+users:x:100:alice,bob,charlie

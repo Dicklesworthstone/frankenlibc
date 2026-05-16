@@ -10,11 +10,13 @@
 //!
 //! Bead: bd-2hh.4
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::grp;
 use frankenlibc_core::pwd;
+
+const DIRECTED_PREFIX: &[u8] = b"pwdgrp:";
 
 #[derive(Debug, Arbitrary)]
 struct PwdGrpFuzzInput {
@@ -25,7 +27,21 @@ struct PwdGrpFuzzInput {
     op: u8,
 }
 
-fuzz_target!(|input: PwdGrpFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    if let Some(input) = directed_input(data) {
+        fuzz_pwd_grp(input);
+        return;
+    }
+
+    let mut raw = Unstructured::new(data);
+    let Ok(input) = PwdGrpFuzzInput::arbitrary(&mut raw) else {
+        return;
+    };
+
+    fuzz_pwd_grp(input);
+});
+
+fn fuzz_pwd_grp(input: PwdGrpFuzzInput) {
     match input.op % 8 {
         0 => fuzz_parse_passwd_line(&input),
         1 => fuzz_pwd_lookup_by_name(&input),
@@ -36,7 +52,97 @@ fuzz_target!(|input: PwdGrpFuzzInput| {
         6 => fuzz_grp_lookup_by_gid(&input),
         _ => fuzz_grp_parse_all(&input),
     }
-});
+}
+
+/// Decode readable directed seeds shaped as:
+///
+/// ```text
+/// pwdgrp:<op>
+/// name:<lookup-name>
+/// uid:<uid>
+/// gid:<gid>
+/// ---
+/// <passwd-or-group-content>
+/// ```
+///
+/// Header fields are optional. The op is one of `pwd_line`, `pwd_name`,
+/// `pwd_uid`, `pwd_all`, `grp_line`, `grp_name`, `grp_gid`, or `grp_all`.
+/// Legacy libFuzzer corpus bytes still use the `Arbitrary` struct path.
+fn directed_input(data: &[u8]) -> Option<PwdGrpFuzzInput> {
+    let rest = data.strip_prefix(DIRECTED_PREFIX)?;
+    let (op_name, payload) = split_once_byte(rest, b'\n')?;
+    let empty_header: &[u8] = b"";
+    let (header, body) = split_once_marker(payload, b"\n---\n").unwrap_or((empty_header, payload));
+
+    let mut name = Vec::new();
+    let mut uid = 0u32;
+    let mut gid = 0u32;
+    for raw_line in header.split(|&byte| byte == b'\n') {
+        let line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix(b"name:") {
+            name = value.to_vec();
+        } else if let Some(value) = line.strip_prefix(b"uid:") {
+            uid = parse_directed_u32(value)?;
+        } else {
+            let value = line.strip_prefix(b"gid:")?;
+            gid = parse_directed_u32(value)?;
+        }
+    }
+
+    Some(PwdGrpFuzzInput {
+        data: strip_single_trailing_newline(body).to_vec(),
+        name,
+        uid,
+        gid,
+        op: directed_op(op_name)?,
+    })
+}
+
+fn directed_op(op_name: &[u8]) -> Option<u8> {
+    match op_name {
+        b"pwd_line" => Some(0),
+        b"pwd_name" => Some(1),
+        b"pwd_uid" => Some(2),
+        b"pwd_all" => Some(3),
+        b"grp_line" => Some(4),
+        b"grp_name" => Some(5),
+        b"grp_gid" => Some(6),
+        b"grp_all" => Some(7),
+        _ => None,
+    }
+}
+
+fn split_once_byte(data: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
+    let split_at = data.iter().position(|&b| b == byte)?;
+    let (head, tail) = data.split_at(split_at);
+    Some((head, tail.get(1..)?))
+}
+
+fn split_once_marker<'a>(data: &'a [u8], marker: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
+    if marker.is_empty() {
+        return None;
+    }
+
+    let split_at = data
+        .windows(marker.len())
+        .position(|window| window == marker)?;
+    let (head, tail) = data.split_at(split_at);
+    Some((head, tail.get(marker.len()..)?))
+}
+
+fn strip_single_trailing_newline(data: &[u8]) -> &[u8] {
+    data.strip_suffix(b"\n").unwrap_or(data)
+}
+
+fn parse_directed_u32(value: &[u8]) -> Option<u32> {
+    if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    core::str::from_utf8(value).ok()?.parse().ok()
+}
 
 fn fuzz_parse_passwd_line(input: &PwdGrpFuzzInput) {
     let line = &input.data[..input.data.len().min(1024)];

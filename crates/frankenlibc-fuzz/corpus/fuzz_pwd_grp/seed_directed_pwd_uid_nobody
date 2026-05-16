@@ -1,0 +1,7 @@
+pwdgrp:pwd_uid
+name:nobody
+uid:65534
+gid:65534
+---
+root:x:0:0:root:/root:/bin/bash
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin

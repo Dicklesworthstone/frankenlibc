@@ -1,0 +1,2 @@
+pwdgrp:grp_line
+adm:x:4:syslog,ubuntu

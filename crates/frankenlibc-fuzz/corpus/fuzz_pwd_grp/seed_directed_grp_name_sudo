@@ -1,0 +1,6 @@
+pwdgrp:grp_name
+name:sudo
+gid:27
+---
+root:x:0:
+sudo:x:27:ubuntu
