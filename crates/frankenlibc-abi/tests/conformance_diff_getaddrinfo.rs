@@ -357,14 +357,25 @@ fn diff_getnameinfo_v4_numeric() {
 
 #[test]
 fn diff_gai_strerror_known_codes() {
-    // EAI codes are negative on glibc Linux. Use known constants:
+    // EAI codes are negative on glibc Linux. Cover the known glibc
+    // text table plus unknown-code fallbacks.
     let codes: &[c_int] = &[
-        -2, // EAI_AGAIN
-        -3, // EAI_BADFLAGS
-        -4, // EAI_FAIL
-        -5, // EAI_FAMILY
-        -6, // EAI_MEMORY
-        -8, // EAI_NONAME (varies)
+        -12, // EAI_OVERFLOW
+        -11, // EAI_SYSTEM
+        -10, // EAI_MEMORY
+        -9,  // EAI_ADDRFAMILY
+        -8,  // EAI_SERVICE
+        -7,  // EAI_SOCKTYPE
+        -6,  // EAI_FAMILY
+        -5,  // EAI_NODATA
+        -4,  // EAI_FAIL
+        -3,  // EAI_AGAIN
+        -2,  // EAI_NONAME
+        -1,  // EAI_BADFLAGS
+        0,   // success
+        -13, // unknown
+        1,   // unknown
+        100, // unknown
     ];
     let mut divs = Vec::new();
     for code in codes {
@@ -383,13 +394,11 @@ fn diff_gai_strerror_known_codes() {
         if !p_fl.is_null() && !p_lc.is_null() {
             let s_fl = unsafe { CStr::from_ptr(p_fl).to_string_lossy().into_owned() };
             let s_lc = unsafe { CStr::from_ptr(p_lc).to_string_lossy().into_owned() };
-            // We only require both to be non-empty; exact wording is
-            // implementation-defined.
-            if s_fl.is_empty() != s_lc.is_empty() {
+            if s_fl != s_lc {
                 divs.push(Divergence {
                     function: "gai_strerror",
                     case: format!("code={code}"),
-                    field: "non_empty_match",
+                    field: "text",
                     frankenlibc: format!("{s_fl:?}"),
                     glibc: format!("{s_lc:?}"),
                 });

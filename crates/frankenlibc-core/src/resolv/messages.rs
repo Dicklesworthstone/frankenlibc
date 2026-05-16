@@ -16,10 +16,13 @@ pub const EAI_BADFLAGS: i32 = -1;
 pub const EAI_NONAME: i32 = -2;
 pub const EAI_AGAIN: i32 = -3;
 pub const EAI_FAIL: i32 = -4;
+pub const EAI_NODATA: i32 = -5;
 pub const EAI_FAMILY: i32 = -6;
 pub const EAI_SOCKTYPE: i32 = -7;
 pub const EAI_SERVICE: i32 = -8;
 pub const EAI_ADDRFAMILY: i32 = -9;
+pub const EAI_MEMORY: i32 = -10;
+pub const EAI_SYSTEM: i32 = -11;
 pub const EAI_OVERFLOW: i32 = -12;
 
 /// Canonical glibc message for a `getaddrinfo` error code.
@@ -31,15 +34,18 @@ pub fn gai_strerror_text(errcode: i32) -> &'static str {
     match errcode {
         0 => "Success",
         EAI_AGAIN => "Temporary failure in name resolution",
-        EAI_BADFLAGS => "Invalid value for ai_flags",
+        EAI_BADFLAGS => "Bad value for ai_flags",
         EAI_FAIL => "Non-recoverable failure in name resolution",
+        EAI_NODATA => "No address associated with hostname",
         EAI_FAMILY => "ai_family not supported",
         EAI_ADDRFAMILY => "Address family for hostname not supported",
         EAI_NONAME => "Name or service not known",
-        EAI_SERVICE => "Service not supported for socket type",
-        EAI_SOCKTYPE => "Socket type not supported",
-        EAI_OVERFLOW => "Argument buffer overflow",
-        _ => "Unknown getaddrinfo error",
+        EAI_SERVICE => "Servname not supported for ai_socktype",
+        EAI_SOCKTYPE => "ai_socktype not supported",
+        EAI_MEMORY => "Memory allocation failure",
+        EAI_SYSTEM => "System error",
+        EAI_OVERFLOW => "Result too large for supplied buffer",
+        _ => "Unknown error",
     }
 }
 
@@ -84,13 +90,14 @@ mod tests {
             gai_strerror_text(EAI_AGAIN),
             "Temporary failure in name resolution"
         );
-        assert_eq!(
-            gai_strerror_text(EAI_BADFLAGS),
-            "Invalid value for ai_flags"
-        );
+        assert_eq!(gai_strerror_text(EAI_BADFLAGS), "Bad value for ai_flags");
         assert_eq!(
             gai_strerror_text(EAI_FAIL),
             "Non-recoverable failure in name resolution"
+        );
+        assert_eq!(
+            gai_strerror_text(EAI_NODATA),
+            "No address associated with hostname"
         );
         assert_eq!(gai_strerror_text(EAI_FAMILY), "ai_family not supported");
         assert_eq!(
@@ -100,10 +107,15 @@ mod tests {
         assert_eq!(gai_strerror_text(EAI_NONAME), "Name or service not known");
         assert_eq!(
             gai_strerror_text(EAI_SERVICE),
-            "Service not supported for socket type"
+            "Servname not supported for ai_socktype"
         );
-        assert_eq!(gai_strerror_text(EAI_SOCKTYPE), "Socket type not supported");
-        assert_eq!(gai_strerror_text(EAI_OVERFLOW), "Argument buffer overflow");
+        assert_eq!(gai_strerror_text(EAI_SOCKTYPE), "ai_socktype not supported");
+        assert_eq!(gai_strerror_text(EAI_MEMORY), "Memory allocation failure");
+        assert_eq!(gai_strerror_text(EAI_SYSTEM), "System error");
+        assert_eq!(
+            gai_strerror_text(EAI_OVERFLOW),
+            "Result too large for supplied buffer"
+        );
     }
 
     #[test]
@@ -111,7 +123,7 @@ mod tests {
         for code in [-99, 1, 100, i32::MIN, i32::MAX] {
             assert_eq!(
                 gai_strerror_text(code),
-                "Unknown getaddrinfo error",
+                "Unknown error",
                 "code {code} did not return fallback"
             );
         }

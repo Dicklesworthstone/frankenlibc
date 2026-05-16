@@ -1972,21 +1972,24 @@ pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
     match text {
         "Success" => c"Success".as_ptr(),
         "Temporary failure in name resolution" => c"Temporary failure in name resolution".as_ptr(),
-        "Invalid value for ai_flags" => c"Invalid value for ai_flags".as_ptr(),
+        "Bad value for ai_flags" => c"Bad value for ai_flags".as_ptr(),
         "Non-recoverable failure in name resolution" => {
             c"Non-recoverable failure in name resolution".as_ptr()
         }
+        "No address associated with hostname" => c"No address associated with hostname".as_ptr(),
         "ai_family not supported" => c"ai_family not supported".as_ptr(),
         "Address family for hostname not supported" => {
             c"Address family for hostname not supported".as_ptr()
         }
         "Name or service not known" => c"Name or service not known".as_ptr(),
-        "Service not supported for socket type" => {
-            c"Service not supported for socket type".as_ptr()
+        "Servname not supported for ai_socktype" => {
+            c"Servname not supported for ai_socktype".as_ptr()
         }
-        "Socket type not supported" => c"Socket type not supported".as_ptr(),
-        "Argument buffer overflow" => c"Argument buffer overflow".as_ptr(),
-        _ => c"Unknown getaddrinfo error".as_ptr(),
+        "ai_socktype not supported" => c"ai_socktype not supported".as_ptr(),
+        "Memory allocation failure" => c"Memory allocation failure".as_ptr(),
+        "System error" => c"System error".as_ptr(),
+        "Result too large for supplied buffer" => c"Result too large for supplied buffer".as_ptr(),
+        _ => c"Unknown error".as_ptr(),
     }
 }
 
