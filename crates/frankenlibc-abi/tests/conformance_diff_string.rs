@@ -11,7 +11,7 @@
 //! (`libc::*`) are called on identical inputs and the results are
 //! compared:
 //!
-//! - `strchr / strrchr / strchrnul / strstr / strpbrk / memchr / memrchr`
+//! - `strchr / strrchr / strchrnul / strstr / strcasestr / strpbrk / memchr / memrchr`
 //!   compare offset-from-base (or "no match" sentinel).
 //! - `strspn / strcspn / strnlen` compare returned length.
 //! - `memmem` compares bounded byte-substring match offsets.
@@ -36,6 +36,9 @@ unsafe extern "C" {
     /// Host glibc GNU `strchrnul` — like strchr but returns ptr to NUL
     /// when no match (instead of NULL). Not exposed by libc crate.
     fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char;
+    /// Host glibc GNU `strcasestr` — case-insensitive substring search.
+    #[link_name = "strcasestr"]
+    fn libc_strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char;
     /// Host glibc GNU `strverscmp` — version-aware string compare:
     /// "file9" < "file10". Not exposed by libc crate.
     fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_int;
@@ -217,6 +220,56 @@ fn diff_strstr_cases() {
     assert!(
         divs.is_empty(),
         "strstr divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
+// strcasestr — GNU case-insensitive substring search
+// ===========================================================================
+
+const STRCASESTR_CASES: &[(&[u8], &[u8])] = &[
+    (b"", b""),                   // empty needle matches at start
+    (b"Hello World", b""),        // empty needle, non-empty haystack
+    (b"", b"x"),                  // non-empty needle, empty haystack
+    (b"Hello World", b"world"),   // case-insensitive suffix match
+    (b"Hello World", b"HELLO"),   // match at start
+    (b"Hello World", b"nomatch"), // absent needle
+    (b"abc123-XYZ", b"123-x"),    // digits and punctuation pass through
+    (b"aaaaAA", b"AAa"),          // repeated overlapping candidates
+    (b"prefix-MixedCase-suffix", b"mixedcase"),
+    (b"\xffAlpha", b"\xffa"),     // high byte plus ASCII fold
+    (b"a\0BC", b"bc"),            // haystack stops at first NUL
+    (b"abc\0def", b"DEF"),        // bytes past NUL are not searched
+    (b"short", b"longer needle"), // needle longer than haystack
+    (b"symbols_[]{}", b"_[]"),    // punctuation-only subsequence
+    (b"CaseCase", b"sec"),        // match crosses folded case boundary
+];
+
+#[test]
+fn diff_strcasestr_cases() {
+    let mut divs = Vec::new();
+    for (haystack, needle) in STRCASESTR_CASES {
+        let hbuf = cstr(haystack);
+        let nbuf = cstr(needle);
+        let hp = hbuf.as_ptr() as *const c_char;
+        let np = nbuf.as_ptr() as *const c_char;
+        let fl_r = unsafe { fl::strcasestr(hp, np) };
+        let lc_r = unsafe { libc_strcasestr(hp, np) };
+        let fo = offset_or_none(hp, fl_r);
+        let lo = offset_or_none(hp, lc_r);
+        if fo != lo {
+            divs.push(Divergence {
+                function: "strcasestr",
+                case: format!("({:?}, {:?})", haystack, needle),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strcasestr divergences:\n{}",
         render_divs(&divs)
     );
 }
@@ -761,6 +814,7 @@ fn diff_strverscmp_cases() {
 fn string_diff_coverage_report() {
     let total = STRCHR_CASES.len() * 2 // strchr + strrchr
         + STRSTR_CASES.len()
+        + STRCASESTR_CASES.len()
         + PBRK_CASES.len() * 3            // strpbrk + strspn + strcspn
         + STRNLEN_CASES.len()
         + MEMCHR_CASES.len() * 2          // memchr + memrchr
@@ -771,7 +825,7 @@ fn string_diff_coverage_report() {
         + STRCHRNUL_CASES.len()
         + STRVERSCMP_CASES.len();
     eprintln!(
-        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":15,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":16,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
