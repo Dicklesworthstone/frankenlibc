@@ -42,7 +42,9 @@
       "production_retain": 25,
       "research_retire": 44,
       "blocked": 0,
-      "errors": 0
+      "errors": 0,
+      "warnings": 0,
+      "expected_research_annex_omissions": 44
     },
     "ablation_contract": {
       "required_summary_fields": [
@@ -51,7 +53,8 @@
         "research_retire",
         "blocked",
         "errors",
-        "warnings"
+        "warnings",
+        "expected_research_annex_omissions"
       ],
       "required_decision_fields": [
         "module",

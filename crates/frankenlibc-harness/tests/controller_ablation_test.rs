@@ -2,10 +2,12 @@
 // Verifies that the controller ablation harness runs without errors,
 // produces valid partition decisions, and generates a migration plan.
 
+use std::error::Error;
+use std::io;
 use std::process::Command;
 
 #[test]
-fn controller_ablation_passes() {
+fn controller_ablation_passes() -> Result<(), Box<dyn Error>> {
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -22,18 +24,17 @@ fn controller_ablation_passes() {
     let output = Command::new("python3")
         .arg(&script)
         .current_dir(repo_root)
-        .output()
-        .expect("failed to run controller_ablation.py");
+        .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
-        panic!(
-            "Failed to parse ablation report: {}\nstdout: {}\nstderr: {}",
-            e, stdout, stderr
-        );
-    });
+    let report: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to parse ablation report: {e}\nstdout: {stdout}\nstderr: {stderr}"),
+        )
+    })?;
 
     // Gate: status must be "pass" (zero errors)
     let status = report["status"].as_str().unwrap_or("unknown");
@@ -52,6 +53,7 @@ fn controller_ablation_passes() {
         "summary",
         "partition_decisions",
         "migration_plan",
+        "expected_research_annex_omissions",
         "findings",
         "governance_source",
         "manifest_source",
@@ -66,6 +68,11 @@ fn controller_ablation_passes() {
     // Validate summary fields
     let summary = &report["summary"];
     assert_eq!(summary["errors"].as_u64().unwrap_or(999), 0);
+    assert_eq!(
+        summary["warnings"].as_u64().unwrap_or(999),
+        0,
+        "Expected research-annex omissions must not be emitted as warnings"
+    );
     assert!(summary["total_modules"].as_u64().unwrap_or(0) > 0);
     assert!(summary["production_retain"].as_u64().is_some());
     assert!(summary["research_retire"].as_u64().is_some());
@@ -110,6 +117,19 @@ fn controller_ablation_passes() {
         retire_count, plan_count,
         "Migration plan module count ({plan_count}) != research_retire ({retire_count})"
     );
+
+    let expected_omissions = &report["expected_research_annex_omissions"];
+    assert_eq!(
+        expected_omissions["count"].as_u64(),
+        Some(retire_count),
+        "Expected omission count must match research_retire"
+    );
+    assert_eq!(
+        summary["expected_research_annex_omissions"].as_u64(),
+        Some(retire_count),
+        "Summary expected omission count must match research_retire"
+    );
+    Ok(())
 }
 
 #[test]
@@ -190,9 +210,25 @@ fn controller_ablation_partition_invariants() {
     let retain = summary["production_retain"].as_u64().unwrap();
     let retire = summary["research_retire"].as_u64().unwrap();
     let blocked = summary["blocked"].as_u64().unwrap();
+    let expected_omissions = summary["expected_research_annex_omissions"]
+        .as_u64()
+        .unwrap();
     assert_eq!(
         total,
         retain + retire + blocked,
         "Partition counts don't sum to total: {retain}+{retire}+{blocked} != {total}"
+    );
+    assert_eq!(
+        expected_omissions, retire,
+        "Expected research-annex omissions should exactly match retired research modules"
+    );
+
+    let omission_modules = report["expected_research_annex_omissions"]["modules"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        omission_modules.len() as u64,
+        retire,
+        "Expected omission module list should match retired research modules"
     );
 }

@@ -93,9 +93,10 @@ def compute_partition_decision(
 def validate_manifest_governance_consistency(
     manifest_modules: list[str],
     governance_modules: dict[str, dict[str, str]],
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """Check that manifest and governance are consistent."""
     findings: list[dict[str, str]] = []
+    expected_research_omissions: list[dict[str, str]] = []
 
     manifest_set = set(manifest_modules)
     governance_set = set(governance_modules.keys())
@@ -111,13 +112,30 @@ def validate_manifest_governance_consistency(
         })
 
     for m in sorted(in_governance_not_manifest):
+        governance = governance_modules[m]
+        tier = governance.get("tier", "")
+        rationale = governance.get("rationale", "")
+        if tier == "research":
+            expected_research_omissions.append({
+                "module": m,
+                "tier": tier,
+                "rationale": rationale,
+                "reason": (
+                    "Research-tier module is intentionally absent from the "
+                    "production manifest and covered by the runtime-math-research annex"
+                ),
+            })
+            continue
         findings.append({
-            "severity": "warning",
+            "severity": "error",
             "category": "manifest_governance_mismatch",
-            "message": f"Module '{m}' classified in governance but not in manifest",
+            "message": (
+                f"Production-tier module '{m}' classified in governance "
+                "but missing from production manifest"
+            ),
         })
 
-    return findings
+    return findings, expected_research_omissions
 
 
 def main() -> int:
@@ -146,7 +164,10 @@ def main() -> int:
     ]
 
     # Validate consistency
-    findings = validate_manifest_governance_consistency(manifest_modules, governance_modules)
+    findings, expected_research_omissions = validate_manifest_governance_consistency(
+        manifest_modules,
+        governance_modules,
+    )
 
     # Compute partition decisions
     decisions = []
@@ -196,9 +217,20 @@ def main() -> int:
             "blocked": blocked_count,
             "errors": errors,
             "warnings": warnings,
+            "expected_research_annex_omissions": len(expected_research_omissions),
         },
         "partition_decisions": decisions,
         "migration_plan": migration_plan,
+        "expected_research_annex_omissions": {
+            "description": (
+                "Research-tier governance entries intentionally omitted from "
+                "the production manifest because they are retired to the "
+                "runtime-math-research annex."
+            ),
+            "manifest_scope": "production_only",
+            "count": len(expected_research_omissions),
+            "modules": expected_research_omissions,
+        },
         "findings": findings,
         "governance_source": "tests/conformance/math_governance.json",
         "manifest_source": "tests/runtime_math/production_kernel_manifest.v1.json",

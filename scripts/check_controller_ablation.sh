@@ -25,13 +25,31 @@ with open(sys.argv[1]) as f:
     report = json.load(f)
 
 required = ["schema_version", "bead", "status", "summary",
-            "partition_decisions", "migration_plan", "findings"]
+            "partition_decisions", "migration_plan",
+            "expected_research_annex_omissions", "findings"]
 missing = [k for k in required if k not in report]
 if missing:
     print(f"FAIL: report missing keys: {missing}")
     sys.exit(1)
 
 s = report["summary"]
+warnings = s.get("warnings")
+if warnings != 0:
+    print(f"FAIL: expected zero warnings, got {warnings!r}")
+    sys.exit(1)
+expected = report.get("expected_research_annex_omissions", {})
+expected_count = expected.get("count")
+retire_count = s.get("research_retire")
+if expected_count != retire_count:
+    print(
+        "FAIL: expected_research_annex_omissions.count "
+        f"{expected_count!r} != research_retire {retire_count!r}"
+    )
+    sys.exit(1)
+modules = expected.get("modules")
+if not isinstance(modules, list) or len(modules) != retire_count:
+    print("FAIL: expected research-annex omissions must enumerate retired modules")
+    sys.exit(1)
 print(f"PASS: ablation report validated")
 print(f"  Total modules: {s.get('total_modules', 0)}")
 print(f"  Production retain: {s.get('production_retain', 0)}")

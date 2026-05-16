@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3ot.2",
-  "generated_at": "2026-04-27T03:59:01Z",
+  "generated_at": "2026-05-16T16:06:36Z",
   "status": "pass",
   "summary": {
     "total_modules": 69,
@@ -9,7 +9,8 @@
     "research_retire": 44,
     "blocked": 0,
     "errors": 0,
-    "warnings": 44
+    "warnings": 0,
+    "expected_research_annex_omissions": 44
   },
   "partition_decisions": [
     {
@@ -750,228 +751,278 @@
     ],
     "verification": "After migration, production build must compile and pass all tests without runtime-math-research feature"
   },
-  "findings": [
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'admm_budget' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'approachability' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'atiyah_bott' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'bifurcation_detector' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'birkhoff_ergodic' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'clifford' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'cohomology' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'coupling' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'derived_tstructure' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'design' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'dobrushin_contraction' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'entropy_rate' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'equivariant' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'fano_bound' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'grobner_normalizer' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'grothendieck_glue' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'higher_topos' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'hodge_decomposition' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'hurst_exponent' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'info_geometry' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'ito_quadratic_variation' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'kernel_mmd' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'ktheory' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'lempel_ziv' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'localization_chooser' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'lyapunov_stability' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'malliavin_sensitivity' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'matrix_concentration' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'microlocal' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'nerve_complex' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'obstruction_detector' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'operator_norm' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'ornstein_uhlenbeck' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'pac_bayes' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'pomdp_repair' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'rademacher_complexity' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'serre_spectral' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'sos_barrier' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'sos_invariant' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'sparse' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'spectral_gap' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'stein_discrepancy' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'transfer_entropy' classified in governance but not in manifest"
-    },
-    {
-      "severity": "warning",
-      "category": "manifest_governance_mismatch",
-      "message": "Module 'wasserstein_drift' classified in governance but not in manifest"
-    }
-  ],
+  "expected_research_annex_omissions": {
+    "description": "Research-tier governance entries intentionally omitted from the production manifest because they are retired to the runtime-math-research annex.",
+    "manifest_scope": "production_only",
+    "count": 44,
+    "modules": [
+      {
+        "module": "admm_budget",
+        "tier": "research",
+        "rationale": "Online ADMM for joint resource optimization",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "approachability",
+        "tier": "research",
+        "rationale": "Blackwell approachability; multi-objective routing convergence",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "atiyah_bott",
+        "tier": "research",
+        "rationale": "Atiyah-Bott fixed-point localization; hot path compression",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "bifurcation_detector",
+        "tier": "research",
+        "rationale": "Critical slowing down; universal early warning for bifurcations",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "birkhoff_ergodic",
+        "tier": "research",
+        "rationale": "Birkhoff ergodic convergence; detects non-ergodic state trapping",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "clifford",
+        "tier": "research",
+        "rationale": "Clifford/geometric algebra SIMD alignment; Spin/Pin symmetry",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "cohomology",
+        "tier": "research",
+        "rationale": "Incremental overlap-consistency monitor; cocycle-like constraints",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "coupling",
+        "tier": "research",
+        "rationale": "Optimal probabilistic coupling; strict/hardened decision alignment",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "derived_tstructure",
+        "tier": "research",
+        "rationale": "Derived-category t-structure bootstrap ordering",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "design",
+        "tier": "research",
+        "rationale": "Runtime optimal experimental design; budget-feasible probe selection",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "dobrushin_contraction",
+        "tier": "research",
+        "rationale": "Dobrushin contraction coefficient; Markov chain ergodicity loss",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "entropy_rate",
+        "tier": "research",
+        "rationale": "Shannon entropy rate for stationary Markov chains",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "equivariant",
+        "tier": "research",
+        "rationale": "Equivariant transport controller; representation stability",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "fano_bound",
+        "tier": "research",
+        "rationale": "Fano inequality; information-theoretic prediction error lower bound",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "grobner_normalizer",
+        "tier": "research",
+        "rationale": "Grobner-basis constraint normalization; confluent polynomial division",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "grothendieck_glue",
+        "tier": "research",
+        "rationale": "Topos theory descent/stackification; local-to-global coherence",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "higher_topos",
+        "tier": "research",
+        "rationale": "Higher-topos internal logic descent; locale fallback chain",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "hodge_decomposition",
+        "tier": "research",
+        "rationale": "Combinatorial Hodge decomposition; gradient/curl/harmonic separation",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "hurst_exponent",
+        "tier": "research",
+        "rationale": "Rescaled range (R/S); persistent trends vs independence",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "info_geometry",
+        "tier": "research",
+        "rationale": "Fisher-Rao geodesic distance; structural regime shift detection",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "ito_quadratic_variation",
+        "tier": "research",
+        "rationale": "Ito quadratic variation; realized volatility tracking",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "kernel_mmd",
+        "tier": "research",
+        "rationale": "Maximum Mean Discrepancy; universal nonparametric two-sample test",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "ktheory",
+        "tier": "research",
+        "rationale": "K-theory transport ABI compatibility; topological obstruction detection",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "lempel_ziv",
+        "tier": "research",
+        "rationale": "LZ76 complexity; compressibility analysis for anomalous patterns",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "localization_chooser",
+        "tier": "research",
+        "rationale": "Localization-based policy arm selection; fixed-point weights",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "lyapunov_stability",
+        "tier": "research",
+        "rationale": "Maximal Lyapunov exponent; chaotic/divergent ensemble dynamics",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "malliavin_sensitivity",
+        "tier": "research",
+        "rationale": "Discrete Malliavin calculus; sensitivity to state perturbations",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "matrix_concentration",
+        "tier": "research",
+        "rationale": "Matrix Bernstein inequality; spectral bounds on ensemble covariance",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "microlocal",
+        "tier": "research",
+        "rationale": "Kashiwara-Schapira microlocal sheaf propagation; fault-surface control",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "nerve_complex",
+        "tier": "research",
+        "rationale": "Cech nerve theorem; Betti numbers for structural fragmentation",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "obstruction_detector",
+        "tier": "research",
+        "rationale": "Spectral-sequence obstruction detector; cross-layer defects",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "operator_norm",
+        "tier": "research",
+        "rationale": "Online power iteration for spectral radius; emergent instability",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "ornstein_uhlenbeck",
+        "tier": "research",
+        "rationale": "OU mean-reversion estimator; loss of equilibrium tendency",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "pac_bayes",
+        "tier": "research",
+        "rationale": "PAC-Bayes generalization bound; finite-sample ensemble prediction error",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "pomdp_repair",
+        "tier": "research",
+        "rationale": "Constrained POMDP repair policy; point-based value iteration",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "rademacher_complexity",
+        "tier": "research",
+        "rationale": "Data-dependent generalization bound; capacity of severity space",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "serre_spectral",
+        "tier": "research",
+        "rationale": "Serre spectral sequence invariant lifting; cross-layer consistency",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "sos_barrier",
+        "tier": "research",
+        "rationale": "SOS polynomial evaluator for pre-computed barrier certificates",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "sos_invariant",
+        "tier": "research",
+        "rationale": "SOS polynomial invariant guard for nonlinear cross-controller invariants",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "sparse",
+        "tier": "research",
+        "rationale": "Online L1-regularized sparse recovery (ISTA); latent fault inference",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "spectral_gap",
+        "tier": "research",
+        "rationale": "Spectral gap via Cheeger inequality; slow mixing/metastability",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "stein_discrepancy",
+        "tier": "research",
+        "rationale": "Kernelized Stein Discrepancy; distribution-free goodness-of-fit",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "transfer_entropy",
+        "tier": "research",
+        "rationale": "Schreiber transfer entropy; directed causality between controllers",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      },
+      {
+        "module": "wasserstein_drift",
+        "tier": "research",
+        "rationale": "1-Wasserstein distance for distributional shift detection",
+        "reason": "Research-tier module is intentionally absent from the production manifest and covered by the runtime-math-research annex"
+      }
+    ]
+  },
+  "findings": [],
   "governance_source": "tests/conformance/math_governance.json",
   "manifest_source": "tests/runtime_math/production_kernel_manifest.v1.json"
 }

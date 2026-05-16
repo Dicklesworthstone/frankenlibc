@@ -185,6 +185,8 @@ fn manifest_binds_unit_e2e_and_migration_evidence() -> TestResult {
         "research_retire",
         "blocked",
         "errors",
+        "warnings",
+        "expected_research_annex_omissions",
     ] {
         assert_eq!(
             report["summary"][field].as_u64(),
@@ -243,6 +245,17 @@ fn manifest_binds_unit_e2e_and_migration_evidence() -> TestResult {
             .as_array()
             .is_some_and(|modules| modules.len() as u64 == retired),
         "migration plan should enumerate retired modules"
+    );
+    assert_eq!(
+        report["expected_research_annex_omissions"]["count"].as_u64(),
+        Some(retired),
+        "expected research-annex omission count should match retired modules"
+    );
+    assert!(
+        report["expected_research_annex_omissions"]["modules"]
+            .as_array()
+            .is_some_and(|modules| modules.len() as u64 == retired),
+        "expected research-annex omissions should enumerate retired modules"
     );
 
     let production_manifest_path = artifacts["production_manifest"]

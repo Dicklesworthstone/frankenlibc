@@ -38,6 +38,7 @@ REQUIRED_SUMMARY_FIELDS = {
     "blocked",
     "errors",
     "warnings",
+    "expected_research_annex_omissions",
 }
 REQUIRED_DECISION_FIELDS = {
     "module",
@@ -221,7 +222,15 @@ if not isinstance(summary, dict):
 for field in sorted(REQUIRED_SUMMARY_FIELDS):
     if field not in summary:
         errors.append(f"controller_ablation_report.summary missing {field}")
-for field in ("total_modules", "production_retain", "research_retire", "blocked", "errors"):
+for field in (
+    "total_modules",
+    "production_retain",
+    "research_retire",
+    "blocked",
+    "errors",
+    "warnings",
+    "expected_research_annex_omissions",
+):
     expected_value = expected_partition.get(field)
     if isinstance(expected_value, int) and summary.get(field) != expected_value:
         errors.append(
@@ -282,6 +291,10 @@ if summary.get("research_retire") != len(research_modules):
     errors.append("research retired count must match summary.research_retire")
 if summary.get("blocked") != len(blocked_modules):
     errors.append("blocked count must match summary.blocked")
+if summary.get("expected_research_annex_omissions") != len(research_modules):
+    errors.append(
+        "expected_research_annex_omissions count must match retired research modules"
+    )
 
 migration_plan = ablation_report.get("migration_plan", {})
 if not isinstance(migration_plan, dict):
@@ -319,6 +332,41 @@ for row in plan_modules:
         errors.append(f"migration_plan module {module!r} missing runtime-math-research action")
 if research_plan_modules != research_modules:
     errors.append("migration_plan.modules must exactly match retired research modules")
+
+expected_omissions = ablation_report.get("expected_research_annex_omissions", {})
+if not isinstance(expected_omissions, dict):
+    errors.append(
+        "controller_ablation_report.expected_research_annex_omissions must be an object"
+    )
+    expected_omissions = {}
+if expected_omissions.get("count") != len(research_modules):
+    errors.append(
+        "expected_research_annex_omissions.count must match retired research modules"
+    )
+omission_rows = expected_omissions.get("modules", [])
+if not isinstance(omission_rows, list):
+    errors.append("expected_research_annex_omissions.modules must be an array")
+    omission_rows = []
+omission_modules = set()
+for row in omission_rows:
+    if not isinstance(row, dict):
+        errors.append("expected_research_annex_omissions.modules entries must be objects")
+        continue
+    module = row.get("module")
+    tier = row.get("tier")
+    reason = row.get("reason")
+    if isinstance(module, str):
+        omission_modules.add(module)
+    if tier != "research":
+        errors.append(f"expected research omission {module!r} must use research tier")
+    if "runtime-math-research" not in str(reason):
+        errors.append(
+            f"expected research omission {module!r} missing runtime-math-research reason"
+        )
+if omission_modules != research_modules:
+    errors.append(
+        "expected_research_annex_omissions.modules must exactly match retired research modules"
+    )
 
 manifest_production = set(production_manifest.get("production_modules", []))
 manifest_research = set(production_manifest.get("research_only_modules", []))
