@@ -13,13 +13,14 @@
 //!
 //! Bead: bd-2hh.4
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::inet;
 
 const AF_INET: i32 = 2;
 const AF_INET6: i32 = 10;
+const DIRECTED_PREFIX: &[u8] = b"inet:";
 
 #[derive(Debug, Arbitrary)]
 struct InetFuzzInput {
@@ -39,7 +40,21 @@ struct InetFuzzInput {
 
 const MAX_INPUT: usize = 256;
 
-fuzz_target!(|input: InetFuzzInput| {
+fuzz_target!(|data: &[u8]| {
+    if let Some(input) = directed_input(data) {
+        fuzz_inet(input);
+        return;
+    }
+
+    let mut raw = Unstructured::new(data);
+    let Ok(input) = InetFuzzInput::arbitrary(&mut raw) else {
+        return;
+    };
+
+    fuzz_inet(input);
+});
+
+fn fuzz_inet(input: InetFuzzInput) {
     if input.data.len() > MAX_INPUT {
         return;
     }
@@ -53,7 +68,77 @@ fuzz_target!(|input: InetFuzzInput| {
         5 => fuzz_parse_consistency(&input),
         _ => unreachable!(),
     }
-});
+}
+
+/// Decode readable directed seeds shaped as:
+///
+/// ```text
+/// inet:<op>
+/// <address-text>
+/// ```
+///
+/// The op is one of `addr`, `pton4`, `pton6`, `ntop`, `order`, or `parse`.
+/// Legacy libFuzzer corpus bytes still use the `Arbitrary` struct path.
+fn directed_input(data: &[u8]) -> Option<InetFuzzInput> {
+    let rest = data.strip_prefix(DIRECTED_PREFIX)?;
+    let (op_name, payload) = split_once_byte(rest, b'\n')?;
+    let text = strip_single_trailing_newline(payload);
+    if text.len() > MAX_INPUT {
+        return None;
+    }
+
+    let ipv4_bytes = inet::parse_ipv4(text)
+        .or_else(|| inet::parse_ipv4_bsd(text))
+        .unwrap_or([0, 0, 0, 0]);
+    let ipv6_bytes = inet::parse_ipv6(text).unwrap_or([0; 16]);
+
+    Some(InetFuzzInput {
+        data: text.to_vec(),
+        ipv4_bytes,
+        ipv6_bytes,
+        val16: directed_u16(text),
+        val32: directed_u32(text),
+        op: directed_op(op_name)?,
+    })
+}
+
+fn directed_op(op_name: &[u8]) -> Option<u8> {
+    match op_name {
+        b"addr" => Some(0),
+        b"pton4" => Some(1),
+        b"pton6" => Some(2),
+        b"ntop" => Some(3),
+        b"order" => Some(4),
+        b"parse" => Some(5),
+        _ => None,
+    }
+}
+
+fn split_once_byte(data: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
+    let split_at = data.iter().position(|&b| b == byte)?;
+    let (head, tail) = data.split_at(split_at);
+    Some((head, tail.get(1..)?))
+}
+
+fn strip_single_trailing_newline(data: &[u8]) -> &[u8] {
+    data.strip_suffix(b"\n").unwrap_or(data)
+}
+
+fn directed_u16(data: &[u8]) -> u16 {
+    u16::from_be_bytes([
+        data.first().copied().unwrap_or(0x12),
+        data.get(1).copied().unwrap_or(0x34),
+    ])
+}
+
+fn directed_u32(data: &[u8]) -> u32 {
+    u32::from_be_bytes([
+        data.first().copied().unwrap_or(0x12),
+        data.get(1).copied().unwrap_or(0x34),
+        data.get(2).copied().unwrap_or(0x56),
+        data.get(3).copied().unwrap_or(0x78),
+    ])
+}
 
 /// Test inet_addr with arbitrary byte strings.
 fn fuzz_inet_addr(input: &InetFuzzInput) {
@@ -64,14 +149,14 @@ fn fuzz_inet_addr(input: &InetFuzzInput) {
     assert_eq!(result, result2, "inet_addr not deterministic");
 
     // If valid, parse_ipv4 should agree
-    if result != inet::INADDR_NONE {
-        if let Some(octets) = inet::parse_ipv4(&input.data) {
-            assert_eq!(
-                result.to_ne_bytes(),
-                octets,
-                "inet_addr and parse_ipv4 disagree"
-            );
-        }
+    if result != inet::INADDR_NONE
+        && let Some(octets) = inet::parse_ipv4(&input.data)
+    {
+        assert_eq!(
+            result.to_ne_bytes(),
+            octets,
+            "inet_addr and parse_ipv4 disagree"
+        );
     }
 }
 
@@ -176,28 +261,40 @@ fn fuzz_byte_order(input: &InetFuzzInput) {
     );
 }
 
-/// Test parse_ipv4 / inet_aton / inet_addr consistency.
+/// Test strict IPv4 parsing and BSD inet_aton/inet_addr consistency.
 fn fuzz_parse_consistency(input: &InetFuzzInput) {
-    let parsed = inet::parse_ipv4(&input.data);
+    let parsed_strict = inet::parse_ipv4(&input.data);
+    let parsed_bsd = inet::parse_ipv4_bsd(&input.data);
     let addr = inet::inet_addr(&input.data);
 
+    let mut pton_dst = [0u8; 4];
+    let pton_rc = inet::inet_pton(AF_INET, &input.data, &mut pton_dst);
     let mut aton_dst = [0u8; 4];
     let aton_rc = inet::inet_aton(&input.data, &mut aton_dst);
 
-    // If parse_ipv4 succeeds, inet_aton must also succeed
-    if let Some(octets) = parsed {
-        assert_eq!(aton_rc, 1, "parse_ipv4 succeeded but inet_aton failed");
-        assert_eq!(aton_dst, octets, "inet_aton and parse_ipv4 disagree");
-        // inet_addr stores in network byte order
+    if let Some(octets) = parsed_strict {
+        assert_eq!(pton_rc, 1, "parse_ipv4 succeeded but inet_pton failed");
+        assert_eq!(pton_dst, octets, "inet_pton and parse_ipv4 disagree");
+    } else {
+        assert_eq!(pton_rc, 0, "parse_ipv4 failed but inet_pton succeeded");
+    }
+
+    // inet_aton/inet_addr use the broader BSD numbers-and-dots grammar,
+    // while parse_ipv4 is intentionally strict inet_pton grammar.
+    if let Some(octets) = parsed_bsd {
+        assert_eq!(aton_rc, 1, "parse_ipv4_bsd succeeded but inet_aton failed");
+        assert_eq!(aton_dst, octets, "inet_aton and parse_ipv4_bsd disagree");
         assert_eq!(
             addr.to_ne_bytes(),
             octets,
-            "inet_addr and parse_ipv4 disagree"
+            "inet_addr and parse_ipv4_bsd disagree"
         );
-    }
-
-    // If parse_ipv4 fails, inet_aton should fail too
-    if parsed.is_none() {
-        assert_eq!(aton_rc, 0, "parse_ipv4 failed but inet_aton succeeded");
+    } else {
+        assert_eq!(aton_rc, 0, "parse_ipv4_bsd failed but inet_aton succeeded");
+        assert_eq!(
+            addr,
+            inet::INADDR_NONE,
+            "parse_ipv4_bsd failed but inet_addr succeeded"
+        );
     }
 }
