@@ -125,14 +125,8 @@ fuzz_target!(|input: SysvInput| {
                 let payload_n = input.msg_bytes.len().min(MSG_BUF_BYTES);
                 let snd_buf = build_msg(input.msg_type.max(1), &input.msg_bytes[..payload_n]);
                 let snd_flags = input.flags | libc::IPC_NOWAIT;
-                let snd_rc = unsafe {
-                    msgsnd(
-                        id,
-                        snd_buf.as_ptr() as *const c_void,
-                        payload_n,
-                        snd_flags,
-                    )
-                };
+                let snd_rc =
+                    unsafe { msgsnd(id, snd_buf.as_ptr() as *const c_void, payload_n, snd_flags) };
                 assert!(snd_rc == 0 || snd_rc == -1, "msgsnd rc={snd_rc}");
 
                 let mut rcv_buf = vec![0u8; 8 + MSG_BUF_BYTES];
@@ -155,7 +149,11 @@ fuzz_target!(|input: SysvInput| {
             // semget + semop + semctl(IPC_RMID).
             let nsems = ((input.nsems_raw as c_int) & 0x7).max(1);
             let id = unsafe {
-                semget(libc::IPC_PRIVATE, nsems, (input.flags & 0o777) | libc::IPC_CREAT)
+                semget(
+                    libc::IPC_PRIVATE,
+                    nsems,
+                    (input.flags & 0o777) | libc::IPC_CREAT,
+                )
             };
             assert!(id == -1 || id >= 0, "semget rc={id}");
             if id >= 0 {

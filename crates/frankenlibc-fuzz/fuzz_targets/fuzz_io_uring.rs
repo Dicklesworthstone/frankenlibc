@@ -129,7 +129,12 @@ fuzz_target!(|input: IoUringInput| {
             let mut buf = populate_guard_buf(&input.register_arg_bytes);
             let arg_ptr = unsafe { buf.as_mut_ptr().add(GUARD_BYTES) as *mut c_void };
             let rc = unsafe {
-                io_uring_register(u32::MAX, input.register_opcode, arg_ptr, input.register_nr_args)
+                io_uring_register(
+                    u32::MAX,
+                    input.register_opcode,
+                    arg_ptr,
+                    input.register_nr_args,
+                )
             };
             assert!(rc >= -1, "io_uring_register rc={rc}");
             assert_guards_intact(&buf, "io_uring_register");
@@ -152,7 +157,11 @@ fuzz_target!(|input: IoUringInput| {
         5 => {
             // io_submit with NULL iocbpp + bogus ctx_id (EFAULT/EINVAL path).
             let rc = unsafe {
-                io_submit(input.aio_ctx_id, input.aio_max_nr as libc::c_long, std::ptr::null_mut())
+                io_submit(
+                    input.aio_ctx_id,
+                    input.aio_max_nr as libc::c_long,
+                    std::ptr::null_mut(),
+                )
             };
             assert!(rc >= -1, "io_submit rc={rc}");
         }

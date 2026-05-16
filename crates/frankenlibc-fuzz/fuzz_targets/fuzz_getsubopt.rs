@@ -61,8 +61,8 @@ const MAX_OPTION: usize = 192;
 /// Pool of token names the harness can pick from. Each token is plain
 /// ASCII so it can pass through `CString::new` without rewrites.
 const TOKEN_POOL: &[&[u8]] = &[
-    b"ro", b"rw", b"size", b"name", b"foo", b"bar", b"baz", b"speed",
-    b"mode", b"x", b"y", b"key", b"value", b"len",
+    b"ro", b"rw", b"size", b"name", b"foo", b"bar", b"baz", b"speed", b"mode", b"x", b"y", b"key",
+    b"value", b"len",
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -102,8 +102,10 @@ fuzz_target!(|data: &[u8]| {
         Ok(v) => v,
         Err(_) => return,
     };
-    let mut tok_ptrs: Vec<*mut c_char> =
-        cstr_tokens.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+    let mut tok_ptrs: Vec<*mut c_char> = cstr_tokens
+        .iter()
+        .map(|c| c.as_ptr() as *mut c_char)
+        .collect();
     tok_ptrs.push(std::ptr::null_mut());
 
     // Two writable copies — fl mutates one, host mutates the other.
@@ -120,7 +122,8 @@ fuzz_target!(|data: &[u8]| {
     fl_buf_again.push(0);
     let fl_hits_again = unsafe { walk(fl::getsubopt, &mut fl_buf_again, &tok_ptrs) };
     assert_eq!(
-        fl_hits, fl_hits_again,
+        fl_hits,
+        fl_hits_again,
         "fl::getsubopt non-deterministic\n  input={:?}\n  tokens={:?}\n  hit1={:?}\n  hit2={:?}",
         ascii_lossy(&option),
         tokens.iter().map(|t| ascii_lossy(t)).collect::<Vec<_>>(),
@@ -139,7 +142,8 @@ fuzz_target!(|data: &[u8]| {
 
     // Differential: fl and host must agree on the sequence and post-state.
     assert_eq!(
-        fl_hits, lc_hits,
+        fl_hits,
+        lc_hits,
         "getsubopt hits differ\n  input={:?}\n  tokens={:?}\n  fl={:?}\n  glibc={:?}",
         ascii_lossy(&option),
         tokens.iter().map(|t| ascii_lossy(t)).collect::<Vec<_>>(),
@@ -147,7 +151,8 @@ fuzz_target!(|data: &[u8]| {
         lc_hits,
     );
     assert_eq!(
-        fl_buf, lc_buf,
+        fl_buf,
+        lc_buf,
         "getsubopt buffer mutation differs\n  input={:?}\n  tokens={:?}\n  fl_buf={:?}\n  lc_buf={:?}",
         ascii_lossy(&option),
         tokens.iter().map(|t| ascii_lossy(t)).collect::<Vec<_>>(),
@@ -173,7 +178,11 @@ unsafe fn walk(
         } else {
             Some(unsafe { copy_cstr(value) })
         };
-        hits.push(Hit { idx: r, name, value: value_buf });
+        hits.push(Hit {
+            idx: r,
+            name,
+            value: value_buf,
+        });
         if cursor.is_null() || unsafe { *cursor } == 0 {
             break;
         }
@@ -207,8 +216,7 @@ fn sanitize(input: &[u8]) -> Vec<u8> {
         .iter()
         .copied()
         .filter(|&b| {
-            (b == b'=' || b == b',' || b == b'_' || b == b' ')
-                || b.is_ascii_alphanumeric()
+            (b == b'=' || b == b',' || b == b'_' || b == b' ') || b.is_ascii_alphanumeric()
         })
         .take(MAX_OPTION)
         .collect()

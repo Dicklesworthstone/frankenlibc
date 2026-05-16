@@ -83,18 +83,59 @@ struct FormatSpec {
 
 /// Curated format menu — see module docs.
 const FORMATS: &[FormatSpec] = &[
-    FormatSpec { fmt: b"%Y",                                fields: TM_FIELD_YEAR },
-    FormatSpec { fmt: b"%y",                                fields: TM_FIELD_YEAR },
-    FormatSpec { fmt: b"%C%y",                              fields: TM_FIELD_YEAR },
-    FormatSpec { fmt: b"%Y-%m-%d",                          fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY },
-    FormatSpec { fmt: b"%Y-%m-%d %H:%M:%S",                 fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC },
-    FormatSpec { fmt: b"%H:%M:%S",                          fields: TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC },
-    FormatSpec { fmt: b"%I:%M %p",                          fields: TM_FIELD_HOUR | TM_FIELD_MIN },
-    FormatSpec { fmt: b"%T",                                fields: TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC },
-    FormatSpec { fmt: b"%D",                                fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY },
-    FormatSpec { fmt: b"%R",                                fields: TM_FIELD_HOUR | TM_FIELD_MIN },
-    FormatSpec { fmt: b"%F",                                fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY },
-    FormatSpec { fmt: b"%B %d, %Y",                         fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR },
+    FormatSpec {
+        fmt: b"%Y",
+        fields: TM_FIELD_YEAR,
+    },
+    FormatSpec {
+        fmt: b"%y",
+        fields: TM_FIELD_YEAR,
+    },
+    FormatSpec {
+        fmt: b"%C%y",
+        fields: TM_FIELD_YEAR,
+    },
+    FormatSpec {
+        fmt: b"%Y-%m-%d",
+        fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY,
+    },
+    FormatSpec {
+        fmt: b"%Y-%m-%d %H:%M:%S",
+        fields: TM_FIELD_YEAR
+            | TM_FIELD_MON
+            | TM_FIELD_MDAY
+            | TM_FIELD_HOUR
+            | TM_FIELD_MIN
+            | TM_FIELD_SEC,
+    },
+    FormatSpec {
+        fmt: b"%H:%M:%S",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC,
+    },
+    FormatSpec {
+        fmt: b"%I:%M %p",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+    },
+    FormatSpec {
+        fmt: b"%T",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC,
+    },
+    FormatSpec {
+        fmt: b"%D",
+        fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY,
+    },
+    FormatSpec {
+        fmt: b"%R",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+    },
+    FormatSpec {
+        fmt: b"%F",
+        fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY,
+    },
+    FormatSpec {
+        fmt: b"%B %d, %Y",
+        fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR,
+    },
 ];
 
 fuzz_target!(|data: &[u8]| {
@@ -126,7 +167,8 @@ fuzz_target!(|data: &[u8]| {
     let fl_ok = !fl_end.is_null();
     let lc_ok = !lc_end.is_null();
     assert_eq!(
-        fl_ok, lc_ok,
+        fl_ok,
+        lc_ok,
         "strptime success-mismatch: fmt={:?}, input={:?}: fl={}, libc={}",
         ascii_lossy(spec.fmt),
         ascii_lossy(&input),
@@ -143,7 +185,8 @@ fuzz_target!(|data: &[u8]| {
     let fl_off = unsafe { fl_end.offset_from(input_p) };
     let lc_off = unsafe { lc_end.offset_from(input_p) };
     assert_eq!(
-        fl_off, lc_off,
+        fl_off,
+        lc_off,
         "strptime end-offset divergence: fmt={:?}, input={:?}: fl={}, libc={}",
         ascii_lossy(spec.fmt),
         ascii_lossy(&input),
@@ -163,7 +206,8 @@ fuzz_target!(|data: &[u8]| {
     for &(mask, field, fv, lv) in pairs {
         if spec.fields & mask != 0 {
             assert_eq!(
-                fv, lv,
+                fv,
+                lv,
                 "strptime {field} divergence: fmt={:?}, input={:?}: fl={}, libc={}",
                 ascii_lossy(spec.fmt),
                 ascii_lossy(&input),

@@ -58,9 +58,9 @@ const KEYRING_IDS: &[i32] = &[
     -7, // KEY_SPEC_REQKEY_AUTH_KEY
     -8, // KEY_SPEC_REQUESTOR_KEYRING
     -1, // KEY_SPEC_THREAD_KEYRING (intentionally last; using this with
-        // add_key actually creates a per-thread key, which we want to keep
-        // bounded — the harness add_key payloads are <=256 bytes).
-    0,  // bogus
+    // add_key actually creates a per-thread key, which we want to keep
+    // bounded — the harness add_key payloads are <=256 bytes).
+    0, // bogus
     i32::MAX,
 ];
 
@@ -190,8 +190,7 @@ fuzz_target!(|input: KeyringInput| {
             // add_key with bounded payload + guarded buffer.
             let payload_n = input.payload_bytes.len().min(PAYLOAD_CAP);
             let mut buf = populate_guard_payload(&input.payload_bytes, PAYLOAD_CAP);
-            let payload_ptr =
-                unsafe { buf.as_ptr().add(GUARD_BYTES) as *const std::ffi::c_void };
+            let payload_ptr = unsafe { buf.as_ptr().add(GUARD_BYTES) as *const std::ffi::c_void };
             let rc = unsafe {
                 add_key(
                     typ.as_ptr(),

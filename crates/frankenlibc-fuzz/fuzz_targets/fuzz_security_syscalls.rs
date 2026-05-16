@@ -132,15 +132,8 @@ fuzz_target!(|input: SecInput| {
             } else {
                 unsafe { buf.as_mut_ptr().add(GUARD_BYTES) as *mut c_void }
             };
-            let fd = unsafe {
-                perf_event_open(
-                    attr_ptr,
-                    -1,
-                    -1,
-                    -1,
-                    input.perf_flags as libc::c_ulong,
-                )
-            };
+            let fd =
+                unsafe { perf_event_open(attr_ptr, -1, -1, -1, input.perf_flags as libc::c_ulong) };
             assert!(fd >= -1, "perf_event_open rc={fd}");
             if fd >= 0 {
                 unsafe {

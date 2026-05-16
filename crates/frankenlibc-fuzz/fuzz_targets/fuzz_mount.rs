@@ -12,8 +12,7 @@ use std::ffi::{CString, c_void};
 
 use arbitrary::Arbitrary;
 use frankenlibc_abi::unistd_abi::{
-    fsconfig, fsmount, fsopen, fspick, mount, mount_setattr, move_mount, open_tree, umount,
-    umount2,
+    fsconfig, fsmount, fsopen, fspick, mount, mount_setattr, move_mount, open_tree, umount, umount2,
 };
 use libfuzzer_sys::fuzz_target;
 
