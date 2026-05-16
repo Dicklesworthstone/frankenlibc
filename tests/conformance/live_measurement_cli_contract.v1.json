@@ -19,6 +19,10 @@
   ],
   "underlying_bridge_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta",
   "underlying_default_fingerprint_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta_and_detected_fingerprint",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta",
+    "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta_and_detected_fingerprint"
+  ],
   "jsonl_output_contract": {
     "record_count": 3,
     "record_order": [

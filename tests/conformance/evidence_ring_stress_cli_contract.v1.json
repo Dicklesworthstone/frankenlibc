@@ -16,6 +16,9 @@
   ],
   "supported_cap_values": [32, 128, 1024],
   "underlying_lib_function": "frankenlibc_harness::evidence_ring_backpressure::run_real_ring_stress",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::evidence_ring_backpressure::run_real_ring_stress"
+  ],
   "underlying_serializer_function": "frankenlibc_harness::evidence_ring_backpressure::serialize_real_ring_report_jsonl",
   "jsonl_output_contract": {
     "record_count": 1,

@@ -16,6 +16,9 @@
     "--reads-per-phase"
   ],
   "underlying_lib_function": "frankenlibc_harness::read_mostly_fast_path_prototype::isomorphism_witness",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::read_mostly_fast_path_prototype::isomorphism_witness"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "isomorphism_report",

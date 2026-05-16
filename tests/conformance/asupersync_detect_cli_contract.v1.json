@@ -16,6 +16,9 @@
     "--path-search-paths"
   ],
   "underlying_lib_function": "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "lab_availability",

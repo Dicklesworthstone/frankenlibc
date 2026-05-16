@@ -14,6 +14,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1"
+  ],
   "jsonl_output_contract": {
     "record_count": "R+1 (one per repair payload + summary)",
     "per_repair_record_kind_marker": "repair_payload",

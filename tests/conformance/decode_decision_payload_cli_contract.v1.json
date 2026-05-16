@@ -12,6 +12,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::decode_decision_payload_v1",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::evidence::decode_decision_payload_v1"
+  ],
   "payload_size_bytes": 128,
   "jsonl_output_contract": {
     "record_count": 1,

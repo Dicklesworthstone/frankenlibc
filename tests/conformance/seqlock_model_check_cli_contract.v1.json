@@ -15,6 +15,9 @@
   ],
   "write_count_cap": 4,
   "underlying_lib_function": "frankenlibc_harness::concurrency_model_check::check_seqlock",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::concurrency_model_check::check_seqlock"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "seqlock_model_report",

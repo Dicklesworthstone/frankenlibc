@@ -12,6 +12,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::design::probe_cost_ns",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::design::probe_cost_ns"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "probe_cost_ns",

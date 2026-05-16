@@ -12,6 +12,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::evidence::validate_runtime_evidence_row_v1"
+  ],
   "jsonl_output_contract": {
     "record_count": "N+1 (one per input row plus one summary)",
     "per_row_record_kind_marker": "evidence_row_validation",

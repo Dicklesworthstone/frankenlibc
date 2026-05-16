@@ -14,6 +14,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1"
+  ],
   "repair_max_degree_v1": 16,
   "jsonl_output_contract": {
     "record_count": 1,

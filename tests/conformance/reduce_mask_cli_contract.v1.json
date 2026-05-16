@@ -16,6 +16,9 @@
     "--step-limit"
   ],
   "underlying_lib_function": "frankenlibc_membrane::grobner::reduce_mask_with_limit",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::grobner::reduce_mask_with_limit"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "reduce_mask",

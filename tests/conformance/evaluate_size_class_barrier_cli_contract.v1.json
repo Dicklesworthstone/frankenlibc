@@ -16,6 +16,9 @@
     "--class-membership-valid"
   ],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "size_class_barrier",

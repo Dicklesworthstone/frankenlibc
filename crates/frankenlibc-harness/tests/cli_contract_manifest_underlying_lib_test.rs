@@ -18,8 +18,6 @@ fn workspace_root() -> TestResult<PathBuf> {
         .ok_or_else(|| format!("could not derive workspace root from {manifest}"))
 }
 
-const LEGACY_LIB_FUNCTIONS_CEILING: usize = 31;
-
 fn is_plausible_lib_path(s: &str) -> bool {
     s.contains("::")
         && (s.starts_with("frankenlibc")
@@ -35,7 +33,6 @@ fn every_cli_contract_manifest_declares_at_least_one_underlying_lib_function() -
         .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
 
     let mut violations: Vec<String> = Vec::new();
-    let mut legacy_count = 0usize;
     let mut checked = 0usize;
     for entry in entries {
         let entry = entry.map_err(|e| format!("read entry: {e}"))?;
@@ -58,7 +55,9 @@ fn every_cli_contract_manifest_declares_at_least_one_underlying_lib_function() -
             .unwrap_or_default();
 
         if names.is_empty() {
-            legacy_count += 1;
+            violations.push(format!(
+                "{stem}: missing non-empty underlying_lib_functions array"
+            ));
         } else {
             let bad: Vec<&&str> = names.iter().filter(|n| !is_plausible_lib_path(n)).collect();
             if !bad.is_empty() {
@@ -74,13 +73,6 @@ fn every_cli_contract_manifest_declares_at_least_one_underlying_lib_function() -
         checked >= 20,
         "expected at least 20 CLI contract manifests; found {checked}"
     );
-
-    if legacy_count > LEGACY_LIB_FUNCTIONS_CEILING {
-        return Err(format!(
-            "manifests with missing/empty underlying_lib_functions rose to {legacy_count} \
-             (ceiling: {LEGACY_LIB_FUNCTIONS_CEILING}); retrofit a manifest or update the ratchet"
-        ));
-    }
 
     if !violations.is_empty() {
         return Err(format!(

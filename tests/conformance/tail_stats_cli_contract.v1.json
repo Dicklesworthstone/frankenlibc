@@ -13,6 +13,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_harness::tail_stats::compute",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::tail_stats::compute"
+  ],
   "input_contract": {
     "format": "json_array",
     "sample_type": "finite_json_number",

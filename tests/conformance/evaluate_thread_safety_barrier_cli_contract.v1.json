@@ -18,6 +18,9 @@
     "--arena-owner-conflict"
   ],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "thread_safety_barrier",

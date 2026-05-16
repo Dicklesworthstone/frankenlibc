@@ -17,6 +17,9 @@
     "--deny-unexpected-denials"
   ],
   "underlying_lib_function": "frankenlibc_harness::runtime_evidence_verifier::verify_runtime_evidence_jsonl",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::runtime_evidence_verifier::verify_runtime_evidence_jsonl"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_schema_marker": "runtime_evidence_verifier.v1",

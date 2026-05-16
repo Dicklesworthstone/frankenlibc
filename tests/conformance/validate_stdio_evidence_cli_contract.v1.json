@@ -12,6 +12,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_harness::stdio_evidence::parse_stdio_evidence_file",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::stdio_evidence::parse_stdio_evidence_file"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "stdio_evidence_validation",

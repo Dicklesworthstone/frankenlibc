@@ -13,6 +13,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_harness::diff::render_diff",
+  "underlying_lib_functions": [
+    "frankenlibc_harness::diff::render_diff"
+  ],
   "output_contract": {
     "format": "plain_text",
     "identical_marker_default": "[identical]",

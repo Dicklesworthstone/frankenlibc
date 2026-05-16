@@ -19,6 +19,9 @@
     "--overlap"
   ],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "simd_string_certificate",

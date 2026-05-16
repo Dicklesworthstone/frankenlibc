@@ -19,6 +19,9 @@
     "--output"
   ],
   "underlying_lib_function": "frankenlibc_membrane::grobner::canonical_class_from_support",
+  "underlying_lib_functions": [
+    "frankenlibc_membrane::grobner::canonical_class_from_support"
+  ],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "canonical_class_from_support",
