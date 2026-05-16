@@ -3,7 +3,7 @@
   "manifest_id": "env-fingerprint-cli-contract",
   "bead": "bd-fmdp3",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "6d67b7a3a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "6d67b7a3",
   "purpose": "Pin the harness binary subcommand that exposes system_fingerprint::{detect_components, environment_fingerprint, validate_environment_fingerprint} (bd-6epxt) as a standalone CLI. Previously these were only reachable transitively via LiveMeasurement; the env-fingerprint subcommand makes them invokable for CI artifact pinning + fingerprint validation without writing Rust.",
   "subcommand_name": "env-fingerprint",
   "binary_target": "harness",

@@ -3,7 +3,7 @@
   "manifest_id": "derive-repair-schedule-cli-contract",
   "bead": "bd-sef4y",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "cf5f9e9aa4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "cf5f9e9a",
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::derive_repair_schedule_v1 as a standalone CLI. The lib API derives the deterministic repair schedule (subset of source indices) for a single repair symbol given (epoch_seed, k_source, repair_esi). The algorithm picks a degree via splitmix64 trailing-zeros distribution capped by REPAIR_MAX_DEGREE_V1=16, then chooses distinct indices with linear-probe duplicate resolution. Previously reachable only from Rust callers; the CLI bridge lets CI verify schedule derivation determinism + invariants without compiling.",
   "subcommand_name": "derive-repair-schedule",
   "binary_target": "harness",

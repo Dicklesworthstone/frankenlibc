@@ -3,7 +3,7 @@
   "manifest_id": "evaluate-fragmentation-barrier-cli-contract",
   "bead": "bd-c4w0t",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "6727ccd9a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "6727ccd9",
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::sos_barrier::evaluate_fragmentation_barrier as a standalone CLI. The lib API computes an allocator-fragmentation barrier certificate over four telemetry inputs (allocation_count, free_count, size_class_dispersion_ppm, arena_utilization_ppm) and returns an i64 score where positive => certified-safe headroom and negative => certificate violation. Previously reachable only from Rust callers; the CLI bridge lets CI verify fragmentation invariants without compiling.",
   "subcommand_name": "evaluate-fragmentation-barrier",
   "binary_target": "harness",

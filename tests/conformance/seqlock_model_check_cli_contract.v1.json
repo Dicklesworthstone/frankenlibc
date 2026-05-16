@@ -3,7 +3,7 @@
   "manifest_id": "seqlock-model-check-cli-contract",
   "bead": "bd-gdotb",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "a5f6734ba4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "a5f6734b",
   "purpose": "Pin the harness binary subcommand that exposes concurrency_model_check::check_seqlock as a standalone CLI. The function exhaustively enumerates every interleaving of write_count writer publications and one reader read-attempt, then asserts the seqlock invariants (no stable read at odd version; no stale read accepted; retry-count monotonicity; no missed publication). Previously this proof was reachable only via Rust unit tests; the CLI bridge lets CI run it without linking.",
   "subcommand_name": "seqlock-model-check",
   "binary_target": "harness",

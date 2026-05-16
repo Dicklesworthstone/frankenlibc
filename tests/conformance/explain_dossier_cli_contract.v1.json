@@ -3,7 +3,7 @@
   "manifest_id": "explain-dossier-cli-contract",
   "bead": "bd-hk1t2",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "f9ef7abaa4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "f9ef7aba",
   "purpose": "Pin the harness binary subcommand that exposes explain_dossier::{load_dossier_inputs_from_disk, build_dossier, render_markdown} as a standalone CLI. The pipeline loads the five canonical evidence rows (workload_replay, runtime_decision_log, standalone_blocker_snapshot, l1_dashboard_row, semantic_overlay) from canonical on-disk paths, enforces per-row source_commit + artifact_refs guards, applies the support-taxonomy parity guard, builds a deterministic Dossier, and renders markdown. Previously reachable only from Rust callers.",
   "subcommand_name": "explain-dossier",
   "binary_target": "harness",

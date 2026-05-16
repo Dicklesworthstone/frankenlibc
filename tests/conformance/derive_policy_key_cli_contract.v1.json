@@ -3,7 +3,7 @@
   "manifest_id": "derive-policy-key-cli-contract",
   "bead": "bd-87vkk",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "a66f4109a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "a66f4109",
   "purpose": "Pin the harness binary subcommand that composes frankenlibc_membrane::runtime_math::policy_table::{risk_bucket_v1, budget_bucket_v1, consistency_bucket_v1, key_v1_index} into a single CLI for discretizing a runtime control decision's continuous state onto a u32 row index into the Policy Compaction Profile Table. Previously the four bucket helpers were reachable only from Rust callers; the CLI bridge lets CI verify the discretization pipeline + key index math without compiling.",
   "subcommand_name": "derive-policy-key",
   "binary_target": "harness",

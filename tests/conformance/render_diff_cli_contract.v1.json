@@ -3,7 +3,7 @@
   "manifest_id": "render-diff-cli-contract",
   "bead": "bd-bdi7r",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "03478f89a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "03478f89",
   "purpose": "Pin the harness binary subcommand that exposes diff::render_diff as a standalone CLI for surfacing expected-vs-actual divergences from CI without compiling.",
   "subcommand_name": "render-diff",
   "binary_target": "harness",

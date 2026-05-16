@@ -3,7 +3,7 @@
   "manifest_id": "evaluate-thread-safety-barrier-cli-contract",
   "bead": "bd-fq2t0",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "d6a7d906a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "d6a7d906",
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier as a standalone CLI. The lib API computes the thread-safety barrier certificate over five inputs (thread_count, concurrent_writers, arena_owner_conflict bool, free_list_skew_ppm, allocation_epoch_lag_ppm) and returns an i64 score where positive => certified-safe headroom and negative => certificate violation. Previously reachable only from Rust callers; the CLI bridge lets CI verify thread-safety invariants without compiling.",
   "subcommand_name": "evaluate-thread-safety-barrier",
   "binary_target": "harness",

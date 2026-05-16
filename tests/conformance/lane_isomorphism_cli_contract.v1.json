@@ -3,7 +3,7 @@
   "manifest_id": "lane-isomorphism-cli-contract",
   "bead": "bd-r0315",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "f282a1f6a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "f282a1f6",
   "purpose": "Pin the harness binary subcommand that exposes read_mostly_fast_path_prototype::isomorphism_witness as a standalone CLI. The function is the deterministic isomorphism proof for the read_mostly fast path: it drives conservative + seqlock lanes through the same write history and asserts both lanes observed identical value sequences. Previously this was reachable only via Rust unit tests; the CLI surface lets CI run the proof without linking.",
   "subcommand_name": "lane-isomorphism",
   "binary_target": "harness",

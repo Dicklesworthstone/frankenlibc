@@ -3,7 +3,7 @@
   "manifest_id": "replay-classify-cli-contract",
   "bead": "bd-tzx36",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "a03640e7a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "a03640e7",
   "purpose": "Pin the harness binary subcommand that exposes asupersync_lab_replay::{validate_replay, classify_outcome} (bd-juvqm.15) plus detect_asupersync_available (bd-qfbhc) as a standalone CLI. Previously these were reachable only via Rust callers in the conformance suite; the replay-classify subcommand makes the validation+classification pipeline invokable from rch cargo run and CI without writing Rust.",
   "subcommand_name": "replay-classify",
   "binary_target": "harness",

@@ -3,7 +3,7 @@
   "manifest_id": "derive-repair-math-cli-contract",
   "bead": "bd-qxh1x",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "ad64b4cba4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "ad64b4cb",
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::{derive_repair_symbol_count_v1, loss_fraction_max_ppm_v1} (bd-1es / bd-3a9) as a standalone CLI. These deterministic numeric helpers size repair symbols + bound the maximum tolerated loss fraction for the runtime_math evidence pipeline. Previously reachable only from Rust callers; the CLI bridge lets CI verify repair-math invariants from the shell.",
   "subcommand_name": "derive-repair-math",
   "binary_target": "harness",

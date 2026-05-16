@@ -3,7 +3,7 @@
   "manifest_id": "validate-stdio-evidence-cli-contract",
   "bead": "bd-2t33m",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "2b77ec6fa4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "2b77ec6f",
   "purpose": "Pin the harness binary subcommand that exposes stdio_evidence::parse_stdio_evidence_file as a standalone CLI. The lib API is the canonical parser for stdio_evidence JSONL artifacts emitted by the ABI stdio entrypoints (bd-9chy.4): it iterates the file line-by-line, validates each row against StdioEvidenceRow, and rejects unsupported schema versions. Previously reachable only from Rust callers; the CLI bridge lets CI validate stdio_evidence artifacts without compiling.",
   "subcommand_name": "validate-stdio-evidence",
   "binary_target": "harness",

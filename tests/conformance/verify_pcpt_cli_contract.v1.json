@@ -3,7 +3,7 @@
   "manifest_id": "verify-pcpt-cli-contract",
   "bead": "bd-toeyn",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "b0f537efa4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "b0f537ef",
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::policy_table::verify_pcpt as a standalone CLI. The lib API is the canonical verifier for Policy Compaction Profile Table (.pcpt) artifacts: it validates magic, schema_version, hash algorithm, key/cell spec ids, table length, table+meta hashes, and per-cell invariants (strict-repair-not-allowed, deny-must-not-repair, risk monotonicity, mode refinement) before returning a VerifiedPolicyTable summary. Previously reachable only from Rust callers; the CLI bridge lets CI verify .pcpt artifacts without compiling.",
   "subcommand_name": "verify-pcpt",
   "binary_target": "harness",

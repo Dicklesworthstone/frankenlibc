@@ -3,7 +3,7 @@
   "manifest_id": "validate-setjmp-contract-cli-contract",
   "bead": "bd-b5gfg",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "2e44139ba4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "2e44139b",
   "purpose": "Pin the harness binary subcommand that exposes setjmp_contract::parse_contract_str + SetjmpSemanticsContract::validate_intrinsic as a standalone CLI. These are the canonical validators for tests/conformance/setjmp_semantics_contract.v1.json (bd-2xp3): parsing the document, then checking internal consistency (required symbols, no overlap between phase1_deferred and support_matrix_visible_now, ContractSummary totals match, ParityChecks references real artifacts). Previously reachable only from Rust callers; the CLI bridge lets CI validate the contract artifact without compiling.",
   "subcommand_name": "validate-setjmp-contract",
   "binary_target": "harness",

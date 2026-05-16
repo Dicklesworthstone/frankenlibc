@@ -3,7 +3,7 @@
   "manifest_id": "verify-runtime-evidence-cli-contract",
   "bead": "bd-5mczh",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "c2cc3523a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "c2cc3523",
   "purpose": "Pin the harness binary subcommand that exposes runtime_evidence_verifier::verify_runtime_evidence_jsonl as a standalone CLI. The lib API is the canonical replay-gate verifier: it consumes runtime_evidence.decision.v1 JSONL rows emitted by the membrane evidence log, applies the membrane-owned schema, then enforces replay-specific invariants (freshness, monotone timestamps, valid decision transitions, repair evidence, gate expectations). Previously reachable only from Rust callers; the CLI bridge lets CI run replay-gate verification without linking to the crate.",
   "subcommand_name": "verify-runtime-evidence",
   "binary_target": "harness",

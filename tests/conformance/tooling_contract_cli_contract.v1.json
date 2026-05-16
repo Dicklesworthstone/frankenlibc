@@ -3,7 +3,7 @@
   "manifest_id": "tooling-contract-cli-contract",
   "bead": "bd-38wu3",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "bb1d6932a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "bb1d6932",
   "purpose": "Pin the harness binary subcommand that dumps this binary's compile-time ToolingContract (from explainability_workbench::tooling_contract) as a JSONL record so CI workflows can verify the deployed binary was built with the expected feature flags (asupersync-tooling, frankentui-ui) without linking to the Rust crate.",
   "subcommand_name": "tooling-contract",
   "binary_target": "harness",

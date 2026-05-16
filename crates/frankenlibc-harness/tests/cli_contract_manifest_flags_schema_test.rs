@@ -1,8 +1,9 @@
 //! Meta-gate: every `tests/conformance/*_cli_contract.v1.json` manifest must
 //! declare `required_flags` (if present) and `optional_flags` (if present) as
-//! JSON arrays of strings starting with `--` (bd-1igth). Catches schema drift
-//! where a manifest emits a wrong type or a flag name without the long-form
-//! `--` prefix.
+//! JSON arrays of strings starting with `--` (bd-1igth). It also requires
+//! `source_commit` to be either an 8-hex short SHA or a 40-hex full SHA.
+//! Catches schema drift where a manifest emits a wrong type, a flag name
+//! without the long-form `--` prefix, or a placeholder-style source commit.
 
 use std::path::{Path, PathBuf};
 
@@ -50,6 +51,13 @@ fn validate_flag_array(manifest: &Value, field: &str, stem: &str, violations: &m
     }
 }
 
+fn is_short_or_full_lower_hex_sha(value: &str) -> bool {
+    matches!(value.len(), 8 | 40)
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 #[test]
 fn flag_arrays_have_well_typed_entries_starting_with_double_dash() -> TestResult {
     let root = workspace_root()?;
@@ -84,6 +92,63 @@ fn flag_arrays_have_well_typed_entries_starting_with_double_dash() -> TestResult
     if !violations.is_empty() {
         return Err(format!(
             "{} CLI contract flag schema violation(s):\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn source_commit_is_short_or_full_lower_hex_sha() -> TestResult {
+    let root = workspace_root()?;
+    let conformance_dir = root.join("tests").join("conformance");
+    let entries = std::fs::read_dir(&conformance_dir)
+        .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
+
+    let mut violations: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let path = entry.path();
+        let Some(stem) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !stem.ends_with("_cli_contract.v1.json") {
+            continue;
+        }
+        let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
+        let manifest: Value =
+            serde_json::from_str(&body).map_err(|e| format!("parse {path:?}: {e}"))?;
+        match manifest.get("source_commit") {
+            Some(Value::String(commit)) if is_short_or_full_lower_hex_sha(commit) => {}
+            Some(Value::String(commit)) => violations.push(format!(
+                "{stem}: `source_commit`=`{commit}` must be 8 or 40 lowercase hex chars"
+            )),
+            Some(other) => violations.push(format!(
+                "{stem}: `source_commit` must be a string (got {})",
+                match other {
+                    Value::Null => "null",
+                    Value::Bool(_) => "bool",
+                    Value::Number(_) => "number",
+                    Value::String(_) => "string",
+                    Value::Array(_) => "array",
+                    Value::Object(_) => "object",
+                }
+            )),
+            None => violations.push(format!("{stem}: `source_commit` missing")),
+        }
+        checked += 1;
+    }
+
+    assert!(
+        checked >= 20,
+        "expected at least 20 CLI contract manifests; found {checked}"
+    );
+
+    if !violations.is_empty() {
+        return Err(format!(
+            "{} CLI contract source_commit shape violation(s):\n  {}",
             violations.len(),
             violations.join("\n  ")
         ));

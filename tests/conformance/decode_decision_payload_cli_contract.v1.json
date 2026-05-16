@@ -3,7 +3,7 @@
   "manifest_id": "decode-decision-payload-cli-contract",
   "bead": "bd-3o3tw",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "caf1482ea4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "caf1482e",
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::decode_decision_payload_v1 as a standalone CLI. The lib API decodes the 128-byte v1 decision payload embedded in EvidenceSymbolRecords (the structure-of-arrays carriers for runtime membrane decisions) — validating magic, version, event kind, and optional LossBlock version before returning the parsed fields. Previously reachable only from Rust callers; the CLI bridge lets CI decode raw payload bytes without compiling.",
   "subcommand_name": "decode-decision-payload",
   "binary_target": "harness",

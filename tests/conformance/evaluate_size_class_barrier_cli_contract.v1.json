@@ -3,7 +3,7 @@
   "manifest_id": "evaluate-size-class-barrier-cli-contract",
   "bead": "bd-51q2g",
   "generated_utc": "2026-05-13T00:00:00Z",
-  "source_commit": "54431289a4f0f7e0d7c2c2bdd6e1f0bb1234567890",
+  "source_commit": "54431289",
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier as a standalone CLI. The lib API computes the size-class admissibility barrier certificate over (requested_size, mapped_class_size, class_membership_valid) and returns an i64 score where positive => certified-safe headroom and negative => certificate violation. The SDP quadratic form penalizes waste ratio + membership violations + range violations + underflow. Previously reachable only from Rust callers; the CLI bridge lets CI verify size-class invariants without compiling.",
   "subcommand_name": "evaluate-size-class-barrier",
   "binary_target": "harness",
