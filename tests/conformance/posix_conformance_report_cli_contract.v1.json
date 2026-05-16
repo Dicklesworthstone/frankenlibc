@@ -3,7 +3,7 @@
   "manifest_id": "posix-conformance-report-cli-contract",
   "bead": "bd-s1amj",
   "generated_utc": "2026-05-14T00:00:00Z",
-  "source_commit": "41a180b3077d2eea4759fd35440d584b62e5c565",
+  "source_commit": "8b0bda6f",
   "purpose": "Pin the harness binary `posix-conformance-report` subcommand that builds the bd-18qq.7 POSIX conformance coverage report from support_matrix.json, fixture JSON, and conformance_matrix.v1.json. The command must write a v1 JSON report with summary counts, per-symbol category and execution counts, sorted symbol rows, and quality flags, and must fail closed when any required input cannot be read or parsed.",
   "subcommand_name": "posix-conformance-report",
   "binary_target": "harness",
