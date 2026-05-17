@@ -124,6 +124,7 @@ ltrace*.log
 
 # Remote compilation helper artifacts
 .rch-target/
+.rch-target-*/
 .rch-deploy-root/
 rch-bin/
 rch-install/
