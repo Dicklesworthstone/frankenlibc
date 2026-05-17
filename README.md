@@ -3177,7 +3177,7 @@ When the allocator publishes a page that lives in a chunk the L1 has flagged, an
 
 ### The Bravo RW Lock
 
-`BravoRwLock` is a "bias for reads" RwLock that uses a per-thread read-side fast path with optimistic version checking. Readers acquire via an atomic-load + comparison; writers bump a global version. The lock is from the Bravo paper (Dice & Kogan, 2019) and lives in `crates/frankenlibc-membrane/src/bravo.rs`. It's used in the membrane wherever read-mostly access patterns dominate; the page oracle is the canonical example.
+`BravoRwLock` is a reader-biased RwLock that augments a conventional reader/writer lock with a visible-readers table. Readers hash their thread identity with the lock address to claim a slot in the table and bypass the base lock entirely; writers revoke the reader bias, acquire the base lock, then wait for the visible readers to drain before mutating. The technique is from Dice & Kogan, *BRAVO — Biased Locking for Reader-Writer Locks* (USENIX ATC 2019). Source lives in `crates/frankenlibc-membrane/src/bravo.rs`. It's used in the membrane wherever read-mostly access patterns dominate; the page oracle is the canonical example.
 
 ### Performance vs Arena Lookup
 
