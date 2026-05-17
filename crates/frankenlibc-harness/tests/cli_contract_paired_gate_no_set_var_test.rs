@@ -19,8 +19,16 @@ fn workspace_root() -> TestResult<PathBuf> {
         .ok_or_else(|| format!("could not derive workspace root from {manifest}"))
 }
 
+fn contains_process_env_mutator(body: &str) -> bool {
+    let needle = ["set", "_var"].concat();
+    body.lines().any(|line| {
+        let trimmed = line.trim_start();
+        !trimmed.starts_with("//") && trimmed.contains(&needle)
+    })
+}
+
 #[test]
-fn no_paired_gate_test_invokes_set_var() -> TestResult {
+fn no_paired_gate_test_invokes_process_env_mutator() -> TestResult {
     let root = workspace_root()?;
     let tests_dir = root
         .join("crates")
@@ -41,9 +49,9 @@ fn no_paired_gate_test_invokes_set_var() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if body.contains("set_var") {
+        if contains_process_env_mutator(&body) {
             violations.push(format!(
-                "{stem}: contains `set_var` (test-process env mutation hazard)"
+                "{stem}: contains process-environment mutation hazard"
             ));
         }
         checked += 1;
@@ -56,10 +64,27 @@ fn no_paired_gate_test_invokes_set_var() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate `set_var` violation(s):\n  {}",
+            "{} paired gate process-environment mutation violation(s):\n  {}",
             violations.len(),
             violations.join("\n  ")
         ));
     }
     Ok(())
+}
+
+#[test]
+fn process_env_mutator_detector_handles_canonical_spellings() {
+    let mutation = ["set", "_var"].concat();
+    assert!(contains_process_env_mutator(&format!(
+        "std::env::{mutation}(\"A\", \"B\");"
+    )));
+    assert!(contains_process_env_mutator(&format!(
+        "env::{mutation}(\"A\", \"B\");"
+    )));
+    assert!(!contains_process_env_mutator(&format!(
+        "// std::env::{mutation}(\"A\", \"B\");"
+    )));
+    assert!(!contains_process_env_mutator(
+        "Command::new(\"env\").arg(\"A=B\");"
+    ));
 }
