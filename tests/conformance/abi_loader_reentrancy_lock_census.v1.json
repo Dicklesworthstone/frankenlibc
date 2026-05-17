@@ -1,0 +1,499 @@
+{
+  "schema_version": "abi_loader_reentrancy_lock_census.v1",
+  "manifest_id": "abi-loader-reentrancy-lock-census",
+  "bead": "bd-esbow",
+  "source_commit": "711d488044a309ce28f6a5633d8027e8983ff032",
+  "source_commit_freshness": {
+    "require_no_scan_root_changes_since_source_commit": true,
+    "failure_reason": "Refresh this manifest whenever ABI/startup source roots add, remove, or move loader-reentrancy primitives."
+  },
+  "scan_roots": [
+    "crates/frankenlibc-abi/src",
+    "crates/frankenlibc-membrane/src/config.rs",
+    "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs"
+  ],
+  "patterns": {
+    "lazy_lock_static": "static declarations whose type contains LazyLock",
+    "once_lock_static": "static declarations whose type contains OnceLock",
+    "thread_local_macro": "thread_local! or std::thread_local! macro blocks",
+    "static_mutex": "static declarations whose type contains Mutex",
+    "static_condvar": "static declarations whose type contains Condvar",
+    "std_env_var": "std::env::var or std::env::var_os calls"
+  },
+  "policy": {
+    "fail_on_unclassified_surface": true,
+    "fail_on_count_drift": true,
+    "fail_on_missing_classification": true,
+    "allow_post_bootstrap_locks_with_rationale": true,
+    "do_not_treat_census_as_fix": true
+  },
+  "required_telemetry_events": [
+    "abi_reentrancy_census_source_commit",
+    "abi_reentrancy_census_scan",
+    "abi_reentrancy_census_classification",
+    "abi_reentrancy_census_summary"
+  ],
+  "classified_surfaces": [
+    {
+      "path": "crates/frankenlibc-abi/src/ctype_abi.rs",
+      "classification": "thread_local_c_locale_buffer",
+      "risk_rationale": "ctype ABI keeps per-thread locale/lookup state; not a loader lock, but thread-local use contributes to standalone TLS inventory.",
+      "linked_beads": [
+        "bd-emcn5"
+      ],
+      "counts": {
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/dirent_abi.rs",
+      "classification": "post_bootstrap_directory_registry",
+      "risk_rationale": "DIR registry state is process-global and lock-backed after explicit directory calls; keep classified so new pre-main locks do not slip in silently.",
+      "linked_beads": [
+        "bd-zo01r"
+      ],
+      "counts": {
+        "static_mutex": 1,
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "classification": "loader_boundary_thread_local_guard",
+      "risk_rationale": "dlfcn is loader-adjacent; any TLS expansion must remain visible to standalone loader/TLS blockers.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-emcn5"
+      ],
+      "counts": {
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/efun_abi.rs",
+      "classification": "post_bootstrap_errno_compat_state",
+      "risk_rationale": "small compatibility state guarded by a static mutex; keep classified because extern C callers must not see poison panics or reentrant self-deadlocks.",
+      "linked_beads": [
+        "bd-zo01r"
+      ],
+      "counts": {
+        "static_mutex": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/err_abi.rs",
+      "classification": "post_bootstrap_err_hook_state",
+      "risk_rationale": "err/errx hook and program-name storage are user-call surfaces; OnceLock and Mutex additions must stay reviewed for callback reentrancy.",
+      "linked_beads": [
+        "bd-zo01r"
+      ],
+      "counts": {
+        "once_lock_static": 1,
+        "static_mutex": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/errno_abi.rs",
+      "classification": "errno_tls_storage",
+      "risk_rationale": "errno is loader-sensitive and thread-local by design; any new lazy lock here must stay explicit.",
+      "linked_beads": [
+        "bd-emcn5"
+      ],
+      "counts": {
+        "lazy_lock_static": 1,
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "classification": "glibc_private_internal_state",
+      "risk_rationale": "GLIBC_PRIVATE helpers include startup, NSS, regex, profiling, and stdio compatibility paths; static locks/TLS here are replacement-risk surfaces.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-zo01r",
+        "bd-emcn5"
+      ],
+      "counts": {
+        "once_lock_static": 2,
+        "static_mutex": 3,
+        "thread_local_macro": 6
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/grp_abi.rs",
+      "classification": "nss_group_reentrant_state",
+      "risk_rationale": "group database code uses static state, TLS, and environment selection; keep tied to NSS/reentrant startup review.",
+      "linked_beads": [
+        "bd-zo01r",
+        "bd-emcn5"
+      ],
+      "counts": {
+        "static_mutex": 1,
+        "std_env_var": 1,
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "classification": "post_bootstrap_host_symbol_cache",
+      "risk_rationale": "host resolver caches are explicit interpose-boundary state; OnceLock additions must remain replacement-level blockers or reviewed exceptions.",
+      "linked_beads": [
+        "bd-zo01r",
+        "bd-c51oi"
+      ],
+      "counts": {
+        "once_lock_static": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/htm_fast_path.rs",
+      "classification": "testable_htm_runtime_state",
+      "risk_rationale": "HTM test/runtime mode state uses OnceLock and Mutex; classified as runtime support, not loader proof.",
+      "linked_beads": [
+        "bd-juvqm"
+      ],
+      "counts": {
+        "once_lock_static": 1,
+        "static_mutex": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/iconv_abi.rs",
+      "classification": "post_bootstrap_iconv_registry",
+      "risk_rationale": "iconv descriptor registry is explicit user-call state; static lock drift must remain reviewed.",
+      "linked_beads": [
+        "bd-zo01r"
+      ],
+      "counts": {
+        "once_lock_static": 1,
+        "static_mutex": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/inet_abi.rs",
+      "classification": "inet_thread_local_static_buffers",
+      "risk_rationale": "legacy inet return buffers are TLS-backed; this is expected but relevant to standalone TLS removal accounting.",
+      "linked_beads": [
+        "bd-emcn5"
+      ],
+      "counts": {
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/io_internal_abi.rs",
+      "classification": "native_file_registry_and_stdio_vtables",
+      "risk_rationale": "stdio internals have loader-adjacent vtable and stream registry state; lazy locks must be deliberately classified.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-zo01r"
+      ],
+      "counts": {
+        "lazy_lock_static": 3,
+        "static_mutex": 2
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/locale_abi.rs",
+      "classification": "locale_registry_state",
+      "risk_rationale": "locale state can be touched during process startup in real programs; static locks and OnceLocks must stay visible.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-zo01r"
+      ],
+      "counts": {
+        "once_lock_static": 3,
+        "static_mutex": 3
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "classification": "allocator_reentry_and_tls_guards",
+      "risk_rationale": "malloc is loader-sensitive under interposition; OnceLock/TLS drift here is high-risk and must stay classified.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-emcn5",
+        "bd-c51oi"
+      ],
+      "counts": {
+        "once_lock_static": 6,
+        "thread_local_macro": 3
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/process_abi.rs",
+      "classification": "process_env_policy_reads",
+      "risk_rationale": "process helpers read environment policy; env reads must stay separate from early loader-safe paths.",
+      "linked_beads": [
+        "bd-8ol5y"
+      ],
+      "counts": {
+        "std_env_var": 2
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "classification": "pthread_global_registry_and_startup_state",
+      "risk_rationale": "pthread exports are central concurrency/startup surfaces; LazyLock, OnceLock, Mutex, TLS, and env reads here require explicit census coverage.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-emcn5",
+        "bd-c51oi"
+      ],
+      "counts": {
+        "lazy_lock_static": 10,
+        "once_lock_static": 13,
+        "static_mutex": 10,
+        "std_env_var": 1,
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/pwd_abi.rs",
+      "classification": "nss_passwd_reentrant_state",
+      "risk_rationale": "passwd database code uses static state, TLS, and environment selection; keep tied to NSS/reentrant startup review.",
+      "linked_beads": [
+        "bd-zo01r",
+        "bd-emcn5"
+      ],
+      "counts": {
+        "static_mutex": 1,
+        "std_env_var": 1,
+        "thread_local_macro": 3
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/resolv_abi.rs",
+      "classification": "resolver_tls_and_env_state",
+      "risk_rationale": "resolver state is reentrant/TLS-heavy and environment-sensitive; changes must stay visible to standalone TLS and NSS blockers.",
+      "linked_beads": [
+        "bd-emcn5",
+        "bd-zo01r"
+      ],
+      "counts": {
+        "std_env_var": 3,
+        "thread_local_macro": 14
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/rpc_abi.rs",
+      "classification": "rpc_thread_local_iteration_state",
+      "risk_rationale": "RPC iteration and reentrant wrappers use TLS buffers; track for standalone TLS inventory.",
+      "linked_beads": [
+        "bd-emcn5"
+      ],
+      "counts": {
+        "thread_local_macro": 7
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "classification": "runtime_kernel_singleton_and_policy_state",
+      "risk_rationale": "runtime policy sits on hot ABI entry paths; lock/TLS/env surfaces must stay reviewed for loader and reentry hazards.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-c51oi"
+      ],
+      "counts": {
+        "once_lock_static": 1,
+        "static_mutex": 2,
+        "std_env_var": 1,
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/search_abi.rs",
+      "classification": "search_global_table_state",
+      "risk_rationale": "search.h non-reentrant global table is process state; static lock drift should remain explicit.",
+      "linked_beads": [
+        "bd-zo01r"
+      ],
+      "counts": {
+        "static_mutex": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/setjmp_abi.rs",
+      "classification": "setjmp_transfer_state",
+      "risk_rationale": "setjmp/longjmp is control-transfer sensitive; static lock additions must be reviewed for async-safety expectations.",
+      "linked_beads": [
+        "bd-8ol5y"
+      ],
+      "counts": {
+        "once_lock_static": 1,
+        "static_mutex": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/signal_abi.rs",
+      "classification": "signal_thread_local_state",
+      "risk_rationale": "signal surfaces carry async-safety constraints; TLS drift must remain classified.",
+      "linked_beads": [
+        "bd-emcn5",
+        "bd-8ol5y"
+      ],
+      "counts": {
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "classification": "startup_tls_state",
+      "risk_rationale": "startup ABI is pre-main by definition; TLS additions here are standalone blocker inputs.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-emcn5"
+      ],
+      "counts": {
+        "thread_local_macro": 2
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "classification": "stdio_registry_and_native_file_state",
+      "risk_rationale": "stdio is loader-adjacent and heavily interposed by real programs; OnceLock/Mutex/TLS drift must stay fail-closed.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-zo01r",
+        "bd-c51oi"
+      ],
+      "counts": {
+        "once_lock_static": 26,
+        "static_mutex": 7,
+        "thread_local_macro": 2
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
+      "classification": "stdlib_exit_random_path_state",
+      "risk_rationale": "exit hooks and random state include callbacks and global state; lock drift must be reviewed for reentrant callback hazards.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-zo01r"
+      ],
+      "counts": {
+        "once_lock_static": 1,
+        "static_mutex": 7,
+        "thread_local_macro": 3
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/string_abi.rs",
+      "classification": "string_thread_local_signal_buffers",
+      "risk_rationale": "string APIs can be reached by the dynamic loader under interposition; TLS use must remain visible.",
+      "linked_beads": [
+        "bd-emcn5",
+        "bd-8ol5y"
+      ],
+      "counts": {
+        "thread_local_macro": 4
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/termios_abi.rs",
+      "classification": "terminal_runtime_registry_state",
+      "risk_rationale": "termios state uses lazy global registries after explicit terminal calls; keep classified to prevent unreviewed growth.",
+      "linked_beads": [
+        "bd-zo01r"
+      ],
+      "counts": {
+        "lazy_lock_static": 3,
+        "static_mutex": 3
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/time_abi.rs",
+      "classification": "time_thread_local_buffers",
+      "risk_rationale": "time conversion legacy APIs use TLS buffers; standalone TLS accounting must see drift.",
+      "linked_beads": [
+        "bd-emcn5"
+      ],
+      "counts": {
+        "once_lock_static": 1,
+        "thread_local_macro": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "classification": "unistd_tls_env_and_guard_state",
+      "risk_rationale": "unistd owns many process, resolver, guard, and TLS surfaces; this is the largest standalone TLS/startup blocker cluster.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-emcn5",
+        "bd-c51oi"
+      ],
+      "counts": {
+        "lazy_lock_static": 3,
+        "once_lock_static": 3,
+        "static_condvar": 2,
+        "static_mutex": 6,
+        "std_env_var": 3,
+        "thread_local_macro": 25
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/util.rs",
+      "classification": "test_allocator_bounds_state",
+      "risk_rationale": "utility test/support state is static mutex-backed; keep it classified so production expansion is visible.",
+      "linked_beads": [
+        "bd-zo01r"
+      ],
+      "counts": {
+        "static_mutex": 1
+      }
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
+      "classification": "wide_char_registry_and_tls_buffers",
+      "risk_rationale": "wide-char APIs include legacy static/TLS buffers; track for loader and standalone TLS review.",
+      "linked_beads": [
+        "bd-emcn5",
+        "bd-zo01r"
+      ],
+      "counts": {
+        "once_lock_static": 1,
+        "static_mutex": 1,
+        "thread_local_macro": 2
+      }
+    },
+    {
+      "path": "crates/frankenlibc-membrane/src/config.rs",
+      "classification": "startup_reentrant_mode_parser",
+      "risk_rationale": "config.rs deliberately avoids OnceLock init deadlocks for FRANKENLIBC_MODE; its remaining test lock/env reads are pinned by this census.",
+      "linked_beads": [
+        "bd-yf86e",
+        "bd-8ol5y"
+      ],
+      "counts": {
+        "static_mutex": 1,
+        "std_env_var": 3
+      }
+    },
+    {
+      "path": "crates/frankenlibc-membrane/src/evidence_ledger.rs",
+      "classification": "evidence_logging_runtime_state",
+      "risk_rationale": "evidence logging has redaction/env and LazyLock state; not a loader fix, but runtime ABI paths must classify it.",
+      "linked_beads": [
+        "bd-c51oi"
+      ],
+      "counts": {
+        "lazy_lock_static": 1,
+        "std_env_var": 2
+      }
+    },
+    {
+      "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "classification": "membrane_validator_tls_and_logging_env",
+      "risk_rationale": "pointer validation has TLS cache/logging env state on ABI hot paths; keep drift visible to loader and runtime policy work.",
+      "linked_beads": [
+        "bd-emcn5",
+        "bd-c51oi"
+      ],
+      "counts": {
+        "std_env_var": 2,
+        "thread_local_macro": 1
+      }
+    }
+  ]
+}
