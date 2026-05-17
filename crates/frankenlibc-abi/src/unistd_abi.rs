@@ -16724,9 +16724,37 @@ impl NetIterState {
     }
 }
 
+// SAFETY: `NetIterState` is process-owned scratch state keyed by kernel
+// thread id under the owned-TLS experiment. Raw pointer arrays are rebuilt from
+// the per-slot buffers before each returned `netent` and never cross slots.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for NetIterState {}
+
+#[cfg(feature = "owned-tls-cache")]
+static NET_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<NetIterState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(NetIterState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static NET_ITER: std::cell::UnsafeCell<NetIterState> =
         const { std::cell::UnsafeCell::new(NetIterState::new()) };
+}
+
+#[inline]
+fn with_net_iter_state<R>(callback: impl FnOnce(&mut NetIterState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        NET_ITER_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NET_ITER.with(|cell| {
+            // SAFETY: NET_ITER is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// Parse a /etc/networks line: "name number [aliases...]"
@@ -16802,20 +16830,16 @@ unsafe fn net_iter_next(state: &mut NetIterState) -> *mut c_void {
 /// `setnetent` — open /etc/networks for iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setnetent(_stayopen: c_int) {
-    NET_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
-        match std::fs::File::open(NETWORKS_PATH) {
-            Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-            Err(_) => state.reader = None,
-        }
+    with_net_iter_state(|state| match std::fs::File::open(NETWORKS_PATH) {
+        Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+        Err(_) => state.reader = None,
     });
 }
 
 /// `endnetent` — close /etc/networks iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endnetent() {
-    NET_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_net_iter_state(|state| {
         state.reader = None;
     });
 }
@@ -16823,8 +16847,7 @@ pub unsafe extern "C" fn endnetent() {
 /// `getnetent` — get next /etc/networks entry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetent() -> *mut c_void {
-    NET_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_net_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(NETWORKS_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
@@ -16853,10 +16876,7 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
         if let Some((pname, net)) = parse_networks_line(line)
             && pname.eq_ignore_ascii_case(&needle)
         {
-            return NET_ITER.with(|cell| {
-                let state = unsafe { &mut *cell.get() };
-                unsafe { fill_netent_buf(state, &pname, net) }
-            });
+            return with_net_iter_state(|state| unsafe { fill_netent_buf(state, &pname, net) });
         }
     }
     std::ptr::null_mut()
@@ -16873,10 +16893,7 @@ pub unsafe extern "C" fn getnetbyaddr(net: u32, _type: c_int) -> *mut c_void {
         if let Some((pname, pnet)) = parse_networks_line(line)
             && pnet == net
         {
-            return NET_ITER.with(|cell| {
-                let state = unsafe { &mut *cell.get() };
-                unsafe { fill_netent_buf(state, &pname, pnet) }
-            });
+            return with_net_iter_state(|state| unsafe { fill_netent_buf(state, &pname, pnet) });
         }
     }
     std::ptr::null_mut()
@@ -23313,8 +23330,7 @@ pub unsafe extern "C" fn getnetent_r(
         return libc::EINVAL;
     }
 
-    NET_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_net_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(NETWORKS_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
