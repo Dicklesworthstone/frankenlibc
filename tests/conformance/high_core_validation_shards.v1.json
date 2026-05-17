@@ -1,0 +1,346 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "high-core-validation-shards",
+  "bead": "bd-z71ti",
+  "purpose": "Define deterministic, cost-aware validation units that future high-core planners can shard, execute through rch where cargo is involved, and merge into stable evidence packets.",
+  "planner_contract": {
+    "input_manifest": "tests/conformance/high_core_validation_shards.v1.json",
+    "planner_output": "target/conformance/high_core_validation/shard_plan.report.json",
+    "merge_output": "target/conformance/high_core_validation/merge.report.json",
+    "event_log": "target/conformance/high_core_validation/events.log.jsonl",
+    "stable_ordering": "unit_id_ascending_then_shard_id",
+    "supported_lane_counts": [1, 2, 4, 8, 16, 32, 64],
+    "required_unit_fields": [
+      "unit_id",
+      "category",
+      "description",
+      "execution_kind",
+      "command_template",
+      "estimated_cost",
+      "resource_hints",
+      "artifacts"
+    ],
+    "required_result_fields": [
+      "run_id",
+      "unit_id",
+      "shard_id",
+      "command_template",
+      "status",
+      "exit_code",
+      "duration_ms",
+      "artifact_refs",
+      "failure_signature"
+    ]
+  },
+  "remote_execution_policy": {
+    "cargo_requires_rch": true,
+    "required_env": ["RCH_FORCE_REMOTE=true", "RCH_NO_SELF_HEALING=1"],
+    "required_rch_args": ["--no-self-healing", "exec"],
+    "local_fallback_signature": "[RCH] local",
+    "local_metadata_may_not_run_cargo": true
+  },
+  "merge_contract": {
+    "fail_if_planned_unit_missing_result": true,
+    "fail_if_unplanned_unit_has_result": true,
+    "fail_if_duplicate_results_disagree": true,
+    "fail_if_jsonl_row_malformed": true,
+    "failure_index_fields": [
+      "unit_id",
+      "shard_id",
+      "category",
+      "command_template",
+      "first_artifact",
+      "reproduction_command"
+    ]
+  },
+  "categories": [
+    "cli_contract_meta_gates",
+    "completion_contract_gates",
+    "ld_preload_smoke",
+    "support_matrix_gates",
+    "focused_harness_tests"
+  ],
+  "units": [
+    {
+      "unit_id": "hcvs-cli-contract-json-meta",
+      "category": "cli_contract_meta_gates",
+      "description": "Validate the CLI contract manifest catalog for JSON integrity and corruption guards.",
+      "execution_kind": "remote_rch",
+      "command_template": [
+        "env",
+        "RCH_FORCE_REMOTE=true",
+        "RCH_NO_SELF_HEALING=1",
+        "rch",
+        "--no-self-healing",
+        "exec",
+        "--",
+        "cargo",
+        "test",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "cli_contract_manifest_well_formed_json_test",
+        "--",
+        "--nocapture"
+      ],
+      "estimated_cost": {
+        "cost_class": "cheap",
+        "cost_points": 8,
+        "estimated_wall_seconds": 45,
+        "parallelism": 1
+      },
+      "resource_hints": {
+        "max_lanes": 8,
+        "target_memory_mb": 512,
+        "timeout_seconds": 180
+      },
+      "artifacts": [
+        {
+          "kind": "json_report",
+          "path": "target/conformance/high_core_validation/cli_contract_json_meta.report.json",
+          "required": true
+        },
+        {
+          "kind": "jsonl_log",
+          "path": "target/conformance/high_core_validation/cli_contract_json_meta.log.jsonl",
+          "required": true
+        }
+      ],
+      "source_refs": [
+        "crates/frankenlibc-harness/tests/cli_contract_manifest_well_formed_json_test.rs",
+        "tests/conformance"
+      ]
+    },
+    {
+      "unit_id": "hcvs-cli-contract-source-anchors",
+      "category": "cli_contract_meta_gates",
+      "description": "Validate CLI contract manifests still bind to source commits and source anchors.",
+      "execution_kind": "remote_rch",
+      "command_template": [
+        "env",
+        "RCH_FORCE_REMOTE=true",
+        "RCH_NO_SELF_HEALING=1",
+        "rch",
+        "--no-self-healing",
+        "exec",
+        "--",
+        "cargo",
+        "test",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "cli_contract_manifest_source_commit_test",
+        "--",
+        "--nocapture"
+      ],
+      "estimated_cost": {
+        "cost_class": "cheap",
+        "cost_points": 10,
+        "estimated_wall_seconds": 60,
+        "parallelism": 1
+      },
+      "resource_hints": {
+        "max_lanes": 8,
+        "target_memory_mb": 512,
+        "timeout_seconds": 240
+      },
+      "artifacts": [
+        {
+          "kind": "json_report",
+          "path": "target/conformance/high_core_validation/cli_contract_source_anchors.report.json",
+          "required": true
+        },
+        {
+          "kind": "jsonl_log",
+          "path": "target/conformance/high_core_validation/cli_contract_source_anchors.log.jsonl",
+          "required": true
+        }
+      ],
+      "source_refs": [
+        "crates/frankenlibc-harness/tests/cli_contract_manifest_source_commit_test.rs",
+        "tests/conformance"
+      ]
+    },
+    {
+      "unit_id": "hcvs-completion-contract-runtime-math",
+      "category": "completion_contract_gates",
+      "description": "Run a representative completion-contract harness test for runtime-math controller evidence.",
+      "execution_kind": "remote_rch",
+      "command_template": [
+        "env",
+        "RCH_FORCE_REMOTE=true",
+        "RCH_NO_SELF_HEALING=1",
+        "rch",
+        "--no-self-healing",
+        "exec",
+        "--",
+        "cargo",
+        "test",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "runtime_math_controller_manifest_completion_contract_test",
+        "--",
+        "--nocapture"
+      ],
+      "estimated_cost": {
+        "cost_class": "medium",
+        "cost_points": 28,
+        "estimated_wall_seconds": 160,
+        "parallelism": 1
+      },
+      "resource_hints": {
+        "max_lanes": 16,
+        "target_memory_mb": 1024,
+        "timeout_seconds": 600
+      },
+      "artifacts": [
+        {
+          "kind": "json_report",
+          "path": "target/conformance/high_core_validation/runtime_math_completion_contract.report.json",
+          "required": true
+        },
+        {
+          "kind": "jsonl_log",
+          "path": "target/conformance/high_core_validation/runtime_math_completion_contract.log.jsonl",
+          "required": true
+        }
+      ],
+      "source_refs": [
+        "crates/frankenlibc-harness/tests/runtime_math_controller_manifest_completion_contract_test.rs",
+        "tests/conformance/runtime_math_controller_manifest_completion_contract.v1.json"
+      ]
+    },
+    {
+      "unit_id": "hcvs-ld-preload-c-fixture-smoke",
+      "category": "ld_preload_smoke",
+      "description": "Run selected strict and hardened C fixture coverage through the existing LD_PRELOAD fixture lane.",
+      "execution_kind": "remote_rch",
+      "command_template": [
+        "env",
+        "RCH_FORCE_REMOTE=true",
+        "RCH_NO_SELF_HEALING=1",
+        "BEAD_ID=bd-z71ti",
+        "FIXTURE_FILTER=fixture_stdio.c",
+        "rch",
+        "--no-self-healing",
+        "exec",
+        "--",
+        "bash",
+        "scripts/c_fixture_suite.sh"
+      ],
+      "estimated_cost": {
+        "cost_class": "expensive",
+        "cost_points": 90,
+        "estimated_wall_seconds": 900,
+        "parallelism": 2
+      },
+      "resource_hints": {
+        "max_lanes": 4,
+        "target_memory_mb": 4096,
+        "timeout_seconds": 1800
+      },
+      "artifacts": [
+        {
+          "kind": "json_report",
+          "path": "target/c_fixture_suite/<run_id>/results.json",
+          "required": true
+        },
+        {
+          "kind": "jsonl_log",
+          "path": "target/c_fixture_suite/<run_id>/trace.jsonl",
+          "required": true
+        },
+        {
+          "kind": "json_report",
+          "path": "target/c_fixture_suite/<run_id>/artifact_index.json",
+          "required": true
+        }
+      ],
+      "source_refs": [
+        "scripts/c_fixture_suite.sh",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ]
+    },
+    {
+      "unit_id": "hcvs-support-matrix-drift",
+      "category": "support_matrix_gates",
+      "description": "Validate support-matrix drift and reality-report alignment without invoking cargo locally.",
+      "execution_kind": "local_metadata",
+      "command_template": ["bash", "scripts/check_support_matrix_drift.sh"],
+      "estimated_cost": {
+        "cost_class": "cheap",
+        "cost_points": 6,
+        "estimated_wall_seconds": 30,
+        "parallelism": 1
+      },
+      "resource_hints": {
+        "max_lanes": 1,
+        "target_memory_mb": 256,
+        "timeout_seconds": 120
+      },
+      "artifacts": [
+        {
+          "kind": "json_report",
+          "path": "target/conformance/support_matrix_drift.report.json",
+          "required": true
+        },
+        {
+          "kind": "jsonl_log",
+          "path": "target/conformance/support_matrix_drift.log.jsonl",
+          "required": true
+        }
+      ],
+      "source_refs": ["scripts/check_support_matrix_drift.sh", "support_matrix.json"]
+    },
+    {
+      "unit_id": "hcvs-focused-stub-guard",
+      "category": "focused_harness_tests",
+      "description": "Run a focused support-matrix stub guard test as a cheap high-signal harness lane.",
+      "execution_kind": "remote_rch",
+      "command_template": [
+        "env",
+        "RCH_FORCE_REMOTE=true",
+        "RCH_NO_SELF_HEALING=1",
+        "rch",
+        "--no-self-healing",
+        "exec",
+        "--",
+        "cargo",
+        "test",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "stub_guard_test",
+        "support_matrix_exists_and_valid",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "estimated_cost": {
+        "cost_class": "cheap",
+        "cost_points": 12,
+        "estimated_wall_seconds": 75,
+        "parallelism": 1
+      },
+      "resource_hints": {
+        "max_lanes": 16,
+        "target_memory_mb": 1024,
+        "timeout_seconds": 300
+      },
+      "artifacts": [
+        {
+          "kind": "json_report",
+          "path": "target/conformance/high_core_validation/focused_stub_guard.report.json",
+          "required": true
+        },
+        {
+          "kind": "jsonl_log",
+          "path": "target/conformance/high_core_validation/focused_stub_guard.log.jsonl",
+          "required": true
+        }
+      ],
+      "source_refs": ["crates/frankenlibc-harness/tests/stub_guard_test.rs", "support_matrix.json"]
+    }
+  ]
+}
