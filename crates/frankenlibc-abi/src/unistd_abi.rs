@@ -20282,7 +20282,6 @@ pub unsafe extern "C" fn getnetgrent_r(
 // ---------------------------------------------------------------------------
 
 const RPC_ENTRY_STORAGE_BYTES: usize = 1024;
-const RPC_ENTRY_STRUCT_BYTES: usize = 24;
 const RPC_ENTRY_ALIAS_SLOTS: usize = 32;
 
 /// Persistent RPC database iteration state.
@@ -20339,6 +20338,52 @@ impl RpcDb {
 
 static RPC_DB: std::sync::Mutex<RpcDb> = std::sync::Mutex::new(RpcDb::new());
 
+struct RpcEntryState {
+    buffer: [u8; RPC_ENTRY_STORAGE_BYTES],
+    entry: RpcEnt,
+    aliases: [*mut c_char; RPC_ENTRY_ALIAS_SLOTS],
+}
+
+fn new_rpc_entry_state() -> RpcEntryState {
+    RpcEntryState {
+        buffer: [0; RPC_ENTRY_STORAGE_BYTES],
+        entry: RpcEnt {
+            r_name: std::ptr::null_mut(),
+            r_aliases: std::ptr::null_mut(),
+            r_number: 0,
+        },
+        aliases: [std::ptr::null_mut(); RPC_ENTRY_ALIAS_SLOTS],
+    }
+}
+
+// SAFETY: the owned-TLS experiment stores one boxed RPC scratch state per
+// thread id. `RpcEnt` raw pointers are rebuilt to point into the same boxed
+// state's buffer and alias table before the pointer is returned.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for RpcEntryState {}
+
+#[cfg(feature = "owned-tls-cache")]
+static RPC_ENTRY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcEntryState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_rpc_entry_state);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static RPC_ENTRY_TLS: std::cell::RefCell<RpcEntryState> =
+        std::cell::RefCell::new(new_rpc_entry_state());
+}
+
+fn with_rpc_entry_state<R>(callback: impl FnOnce(&mut RpcEntryState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_ENTRY_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_ENTRY_TLS.with(|cell| callback(&mut cell.borrow_mut()))
+    }
+}
+
 /// Parse an /etc/rpc line into the thread-local rpcent buffer.
 /// Format: `name  number  alias1 alias2 ...`
 /// Returns pointer to static rpcent or null on failure.
@@ -20354,65 +20399,41 @@ fn parse_rpc_line_to_static(line: &str) -> *mut c_void {
 /// rpcent storage and return a pointer to the layout-compatible
 /// rpcent struct (or null if the entry exceeds the storage budget).
 fn fill_rpc_tls_from_entry(entry: &frankenlibc_core::rpc::RpcEntry) -> *mut c_void {
-    // glibc rpcent layout (x86_64):
-    // struct rpcent {
-    //     char *r_name;        // offset 0
-    //     char **r_aliases;    // offset 8
-    //     int r_number;        // offset 16
-    // };
-    // Size: 24 bytes (with padding)
-    thread_local! {
-        static RPC_BUF: std::cell::RefCell<[u8; RPC_ENTRY_STORAGE_BYTES]> = const { std::cell::RefCell::new([0u8; RPC_ENTRY_STORAGE_BYTES]) };
-        static RPC_ENT: std::cell::RefCell<[u8; RPC_ENTRY_STRUCT_BYTES]> = const { std::cell::RefCell::new([0u8; RPC_ENTRY_STRUCT_BYTES]) };
-        static RPC_ALIASES: std::cell::RefCell<[*mut c_char; RPC_ENTRY_ALIAS_SLOTS]> = const { std::cell::RefCell::new([std::ptr::null_mut(); RPC_ENTRY_ALIAS_SLOTS]) };
-    }
-
     let name_bytes = entry.name.as_slice();
     let aliases = &entry.aliases;
     let number = entry.number;
 
-    RPC_BUF.with(|buf| {
-        RPC_ENT.with(|ent| {
-            RPC_ALIASES.with(|al| {
-                let mut buf = buf.borrow_mut();
-                let mut ent = ent.borrow_mut();
-                let mut al = al.borrow_mut();
+    with_rpc_entry_state(|state| {
+        state.aliases.fill(std::ptr::null_mut());
+        let mut off = 0usize;
+        if off + name_bytes.len() + 1 > state.buffer.len() {
+            return std::ptr::null_mut();
+        }
+        state.buffer[off..off + name_bytes.len()].copy_from_slice(name_bytes);
+        state.buffer[off + name_bytes.len()] = 0;
+        let name_ptr = state.buffer[off..].as_ptr() as *mut c_char;
+        off += name_bytes.len() + 1;
 
-                al.fill(std::ptr::null_mut());
-                let mut off = 0usize;
-                if off + name_bytes.len() + 1 > buf.len() {
-                    return std::ptr::null_mut();
-                }
-                buf[off..off + name_bytes.len()].copy_from_slice(name_bytes);
-                buf[off + name_bytes.len()] = 0;
-                let name_ptr = buf[off..].as_ptr() as *mut c_char;
-                off += name_bytes.len() + 1;
+        let max_aliases = state.aliases.len() - 1; // Leave room for NULL terminator.
+        let mut copied_aliases = 0usize;
+        for (i, alias) in aliases.iter().take(max_aliases).enumerate() {
+            let ab = alias.as_slice();
+            if off + ab.len() + 1 > state.buffer.len() {
+                break;
+            }
+            state.buffer[off..off + ab.len()].copy_from_slice(ab);
+            state.buffer[off + ab.len()] = 0;
+            state.aliases[i] = state.buffer[off..].as_ptr() as *mut c_char;
+            off += ab.len() + 1;
+            copied_aliases = i + 1;
+        }
+        state.aliases[copied_aliases] = std::ptr::null_mut();
 
-                let max_aliases = al.len() - 1; // Leave room for NULL terminator.
-                let mut copied_aliases = 0usize;
-                for (i, alias) in aliases.iter().take(max_aliases).enumerate() {
-                    let ab = alias.as_slice();
-                    if off + ab.len() + 1 > buf.len() {
-                        break;
-                    }
-                    buf[off..off + ab.len()].copy_from_slice(ab);
-                    buf[off + ab.len()] = 0;
-                    al[i] = buf[off..].as_ptr() as *mut c_char;
-                    off += ab.len() + 1;
-                    copied_aliases = i + 1;
-                }
-                al[copied_aliases] = std::ptr::null_mut();
+        state.entry.r_name = name_ptr;
+        state.entry.r_aliases = state.aliases.as_mut_ptr();
+        state.entry.r_number = number;
 
-                let ent_ptr = ent.as_mut_ptr();
-                unsafe {
-                    *(ent_ptr as *mut *mut c_char) = name_ptr;
-                    *(ent_ptr.add(8) as *mut *mut *mut c_char) = al.as_mut_ptr();
-                    *(ent_ptr.add(16) as *mut c_int) = number;
-                }
-
-                ent_ptr as *mut c_void
-            })
-        })
+        (&mut state.entry as *mut RpcEnt).cast()
     })
 }
 
