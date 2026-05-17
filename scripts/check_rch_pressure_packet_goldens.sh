@@ -70,6 +70,10 @@ def add_error(source: str, signature: str, message: str) -> None:
     errors.append({"source": source, "failure_signature": signature, "message": message})
 
 
+def is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool) -> None:
     if packet.get("schema_version") != "rch_pressure_approval_packet_schema.v1":
         add_error(source, "schema_version", "packet schema_version mismatch")
@@ -86,6 +90,27 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
         add_error(source, "missing_rch_e100_worker", "packet must include a disabled/unreachable RCH-E100 worker")
     if not any(worker.get("bounded_du_findings") for worker in workers if isinstance(worker, dict)):
         add_error(source, "missing_du_findings", "packet must preserve bounded du findings")
+    for worker in workers:
+        if not isinstance(worker, dict) or worker.get("pressure_state") != "critical":
+            continue
+        worker_id = worker.get("worker_id", "<unknown>")
+        target = worker.get("estimated_free_ratio_target")
+        if not is_number(target):
+            add_error(source, "missing_pressure_gap_target", f"{worker_id} missing numeric estimated_free_ratio_target")
+        elif not (0 < float(target) <= 1):
+            add_error(source, "invalid_pressure_gap_target", f"{worker_id} has invalid estimated_free_ratio_target={target}")
+        gap = worker.get("estimated_gb_needed_to_reach_target_ratio")
+        if gap is None:
+            if worker.get("pressure_disk_free_gb") is not None or worker.get("pressure_disk_total_gb") is not None:
+                add_error(source, "missing_pressure_gap_estimate", f"{worker_id} missing gap estimate despite disk metrics")
+        elif not is_number(gap) or float(gap) < 0:
+            add_error(source, "invalid_pressure_gap_estimate", f"{worker_id} has invalid gap estimate={gap}")
+        if worker.get("pressure_disk_free_gb") is not None and not is_number(worker.get("pressure_disk_free_gb")):
+            add_error(source, "invalid_pressure_free_gb", f"{worker_id} pressure_disk_free_gb is not numeric")
+        if worker.get("pressure_disk_total_gb") is not None and not is_number(worker.get("pressure_disk_total_gb")):
+            add_error(source, "invalid_pressure_total_gb", f"{worker_id} pressure_disk_total_gb is not numeric")
+        if worker.get("pressure_disk_free_ratio") is not None and not is_number(worker.get("pressure_disk_free_ratio")):
+            add_error(source, "invalid_pressure_free_ratio", f"{worker_id} pressure_disk_free_ratio is not numeric")
 
     candidates = packet.get("cleanup_candidates", [])
     if not candidates:
