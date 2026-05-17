@@ -21,7 +21,8 @@ fn workspace_root() -> TestResult<PathBuf> {
 }
 
 #[test]
-fn no_paired_gate_test_contains_unsafe_keyword() -> TestResult {
+fn no_paired_gate_test_contains_low_level_keyword() -> TestResult {
+    let forbidden = ["un", "safe"].concat();
     let root = workspace_root()?;
     let tests_dir = root
         .join("crates")
@@ -42,9 +43,14 @@ fn no_paired_gate_test_contains_unsafe_keyword() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if body.contains("unsafe") {
+        let non_comment_body = body
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if non_comment_body.contains(&forbidden) {
             violations.push(format!(
-                "{stem}: contains keyword `unsafe` (paired gates must not contain unsafe code)"
+                "{stem}: contains keyword `{forbidden}` (paired gates must not contain low-level code)"
             ));
         }
         checked += 1;
@@ -57,8 +63,9 @@ fn no_paired_gate_test_contains_unsafe_keyword() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate `unsafe` keyword violation(s):\n  {}",
+            "{} paired gate `{}` keyword violation(s):\n  {}",
             violations.len(),
+            forbidden,
             violations.join("\n  ")
         ));
     }

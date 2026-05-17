@@ -20,6 +20,7 @@ fn workspace_root() -> TestResult<PathBuf> {
 
 #[test]
 fn no_paired_gate_test_calls_thread_spawn() -> TestResult {
+    let forbidden = ["thread", "::spawn"].concat();
     let root = workspace_root()?;
     let tests_dir = root
         .join("crates")
@@ -40,9 +41,14 @@ fn no_paired_gate_test_calls_thread_spawn() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if body.contains("thread::spawn") {
+        let non_comment_body = body
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if non_comment_body.contains(&forbidden) {
             violations.push(format!(
-                "{stem}: calls `thread::spawn` (paired gates must be single-threaded)"
+                "{stem}: calls `{forbidden}` (paired gates must be single-threaded)"
             ));
         }
         checked += 1;
@@ -55,8 +61,9 @@ fn no_paired_gate_test_calls_thread_spawn() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate `thread::spawn` violation(s):\n  {}",
+            "{} paired gate `{}` violation(s):\n  {}",
             violations.len(),
+            forbidden,
             violations.join("\n  ")
         ));
     }

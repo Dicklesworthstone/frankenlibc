@@ -21,6 +21,7 @@ fn workspace_root() -> TestResult<PathBuf> {
 
 #[test]
 fn no_paired_gate_test_declares_async_fn() -> TestResult {
+    let forbidden = ["async", " fn"].concat();
     let root = workspace_root()?;
     let tests_dir = root
         .join("crates")
@@ -41,9 +42,14 @@ fn no_paired_gate_test_declares_async_fn() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if body.contains("async fn") {
+        let non_comment_body = body
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if non_comment_body.contains(&forbidden) {
             violations.push(format!(
-                "{stem}: declares `async fn` (paired gates must be synchronous)"
+                "{stem}: declares `{forbidden}` (paired gates must be synchronous)"
             ));
         }
         checked += 1;
@@ -56,8 +62,9 @@ fn no_paired_gate_test_declares_async_fn() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate `async fn` violation(s):\n  {}",
+            "{} paired gate `{}` violation(s):\n  {}",
             violations.len(),
+            forbidden,
             violations.join("\n  ")
         ));
     }
