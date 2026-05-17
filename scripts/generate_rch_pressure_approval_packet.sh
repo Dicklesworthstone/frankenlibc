@@ -137,6 +137,28 @@ def load_status_json() -> dict[str, Any]:
         return {"success": False, "parse_error": str(exc), "raw": text("rch_status")}
 
 
+CRITICAL_FREE_RATIO_TARGET = 0.05
+
+
+def float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def estimated_gap_to_target_ratio_gb(worker: dict[str, Any]) -> float | None:
+    free_gb = float_or_none(worker.get("pressure_disk_free_gb"))
+    total_gb = float_or_none(worker.get("pressure_disk_total_gb"))
+    if total_gb is None:
+        ratio = float_or_none(worker.get("pressure_disk_free_ratio"))
+        if free_gb is not None and ratio is not None and ratio > 0:
+            total_gb = free_gb / ratio
+    if free_gb is None or total_gb is None or total_gb <= 0:
+        return None
+    return round(max(0.0, (total_gb * CRITICAL_FREE_RATIO_TARGET) - free_gb), 3)
+
+
 def worker_probe_signature(worker_id: str, worker_status: str) -> str:
     worker_err = err_text(f"worker_{worker_id}")
     worker_out = text(f"worker_{worker_id}")
@@ -211,8 +233,11 @@ def parse_workers(status_json: dict[str, Any]) -> tuple[list[dict[str, Any]], li
                 "pressure_state": worker.get("pressure_state", "unknown"),
                 "pressure_reason_code": worker.get("pressure_reason_code"),
                 "pressure_disk_free_gb": worker.get("pressure_disk_free_gb"),
+                "pressure_disk_total_gb": worker.get("pressure_disk_total_gb"),
                 "pressure_disk_free_ratio": worker.get("pressure_disk_free_ratio"),
                 "pressure_telemetry_fresh": worker.get("pressure_telemetry_fresh"),
+                "estimated_free_ratio_target": CRITICAL_FREE_RATIO_TARGET,
+                "estimated_gb_needed_to_reach_target_ratio": estimated_gap_to_target_ratio_gb(worker),
                 "probe_command": f"ssh read-only df/sbh/du probe for {worker_id}",
                 "probe_exit_status": status(f"worker_{worker_id}"),
                 "probe_failure_signature": worker_probe_signature(worker_id, worker_status),
@@ -318,6 +343,16 @@ report = {
 REPORT.parent.mkdir(parents=True, exist_ok=True)
 REPORT.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+critical_workers = [worker for worker in workers if worker.get("pressure_state") == "critical"]
+
+
+def markdown_value(value: Any, suffix: str = "") -> str:
+    numeric = float_or_none(value)
+    if numeric is None:
+        return "unknown"
+    return f"{numeric:.2f}{suffix}"
+
+
 lines = [
     "# rch Pressure Approval Packet",
     "",
@@ -329,8 +364,26 @@ lines = [
     f"- Dry-run selection: `{report['rch_gate']['worker_selection_status']}`",
     f"- Skip reason: `{report['rch_gate']['skip_reason']}`",
     "",
-    "## Cleanup Candidates",
+    "## Worker Pressure Gaps",
 ]
+if critical_workers:
+    for worker in critical_workers:
+        ratio = float_or_none(worker.get("pressure_disk_free_ratio"))
+        ratio_text = f"{ratio:.2%}" if ratio is not None else "unknown"
+        gap_text = markdown_value(worker.get("estimated_gb_needed_to_reach_target_ratio"), "G")
+        lines.append(
+            f"- `{worker['worker_id']}` free `{markdown_value(worker.get('pressure_disk_free_gb'), 'G')}` "
+            f"ratio `{ratio_text}` reason `{worker.get('pressure_reason_code')}`; "
+            f"estimated `{gap_text}` to reach 5% free ratio"
+        )
+else:
+    lines.append("- No critical-pressure workers were reported by rch status.")
+lines.extend(
+    [
+        "",
+        "## Cleanup Candidates",
+    ]
+)
 if candidates:
     for candidate in candidates:
         lines.append(
