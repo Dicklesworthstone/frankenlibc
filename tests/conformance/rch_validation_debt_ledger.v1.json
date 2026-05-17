@@ -1,0 +1,135 @@
+{
+  "schema_version": "rch_validation_debt_ledger.v1",
+  "ledger_kind": "static_replay_plan",
+  "bead": "bd-5d3aa",
+  "purpose": "Track static-only changes that still require RCH-only cargo proof after the bd-716tv worker-admissibility blocker is resolved.",
+  "claim_policy": {
+    "claim_allowed": false,
+    "reason": "This ledger is a replay plan, not remote cargo evidence."
+  },
+  "blocker_bead": "bd-716tv",
+  "local_fallback_policy": {
+    "accept_local_cargo": false,
+    "required_remote_env": "RCH_REQUIRE_REMOTE=1",
+    "rejected_markers": [
+      "[RCH] local",
+      "remote required; refusing local fallback"
+    ]
+  },
+  "expected_pending_beads": [
+    "bd-gsw2h",
+    "bd-7xjbo",
+    "bd-5oqtx",
+    "bd-q4sri"
+  ],
+  "entries": [
+    {
+      "bead_id": "bd-gsw2h",
+      "title": "tests(meta): pin no cli_contract.v1.json manifest contains Windows backslash path",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "dd0b245151f4782e66fa553531a1eb43ee8a7fcb",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_manifest_no_windows_backslash_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_manifest_no_windows_backslash_test.rs",
+          "status": "pass"
+        },
+        {
+          "command": "rg -n \"\\\\\\\\\\\\\\\\\" tests/conformance/*_cli_contract.v1.json",
+          "status": "pass",
+          "expected_output": "no matches"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_manifest_no_windows_backslash_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_manifest_no_windows_backslash_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_manifest_no_windows_backslash_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-7xjbo",
+      "title": "tests(meta): pin no paired *_cli_contract_test.rs declares a trait",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "dd0b245151f4782e66fa553531a1eb43ee8a7fcb",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_trait_decl_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_trait_decl_test.rs",
+          "status": "pass"
+        },
+        {
+          "command": "rg -n \"^\\\\s*(pub\\\\s+)?trait\\\\s+\" crates/frankenlibc-harness/tests -g \"*_cli_contract_test.rs\"",
+          "status": "pass",
+          "expected_output": "no matches"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_trait_decl_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_trait_decl_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_trait_decl_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-5oqtx",
+      "title": "tests(meta): pin no paired *_cli_contract_test.rs declares const fn",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "dd0b245151f4782e66fa553531a1eb43ee8a7fcb",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_const_fn_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_const_fn_test.rs",
+          "status": "pass"
+        },
+        {
+          "command": "awk non-comment scan for const-fn token over crates/frankenlibc-harness/tests/*_cli_contract_test.rs",
+          "status": "pass",
+          "expected_output": "no matches"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_const_fn_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_const_fn_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_const_fn_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-q4sri",
+      "title": "tests(meta): pin no paired *_cli_contract_test.rs uses raw file descriptor traits",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "dd0b245151f4782e66fa553531a1eb43ee8a7fcb",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_raw_fd_traits_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_raw_fd_traits_test.rs",
+          "status": "pass"
+        },
+        {
+          "command": "awk non-comment scan for AsRawFd/IntoRawFd/FromRawFd over crates/frankenlibc-harness/tests/*_cli_contract_test.rs",
+          "status": "pass",
+          "expected_output": "no matches"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_raw_fd_traits_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_raw_fd_traits_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_raw_fd_traits_test -- -D warnings"
+      ],
+      "remote_proof": null
+    }
+  ]
+}
