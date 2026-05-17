@@ -3,7 +3,8 @@
 //! is a non-empty string starting with `-` or `--` followed by a
 //! lowercase ASCII letter (bd-ptrn6). Catches stub flag entries
 //! (empty strings, hexdumps, accidental object form, or missing
-//! leading dashes).
+//! leading dashes). Also pins `optional_flags` to flag-only form
+//! without `=` so values stay in separate args (bd-3xozg).
 
 use std::path::{Path, PathBuf};
 
@@ -30,6 +31,10 @@ fn looks_like_cli_flag(s: &str) -> bool {
         },
     };
     matches!(stripped.chars().next(), Some(c) if c.is_ascii_lowercase())
+}
+
+fn is_flag_only_form(s: &str) -> bool {
+    !s.contains('=')
 }
 
 #[test]
@@ -98,6 +103,86 @@ fn every_cli_contract_manifest_flag_entries_look_like_cli_flags() -> TestResult 
 }
 
 #[test]
+fn every_cli_contract_manifest_optional_flags_are_flag_only_form() -> TestResult {
+    let root = workspace_root()?;
+    let conformance_dir = root.join("tests").join("conformance");
+    let entries = std::fs::read_dir(&conformance_dir)
+        .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
+
+    let mut violations: Vec<String> = Vec::new();
+    let mut checked_manifests = 0usize;
+    let mut checked_entries = 0usize;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("_cli_contract.v1.json") {
+            continue;
+        }
+        let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
+        let manifest: Value =
+            serde_json::from_str(&body).map_err(|e| format!("parse {name}: {e}"))?;
+        let Some(value) = manifest.get("optional_flags") else {
+            violations.push(format!("{name}: missing optional_flags array"));
+            checked_manifests += 1;
+            continue;
+        };
+        let Some(optional_flags) = value.as_array() else {
+            violations.push(format!(
+                "{name}: optional_flags is not an array (found {})",
+                match value {
+                    Value::Null => "null",
+                    Value::Bool(_) => "bool",
+                    Value::Number(_) => "number",
+                    Value::String(_) => "string",
+                    Value::Array(_) => "array",
+                    Value::Object(_) => "object",
+                }
+            ));
+            checked_manifests += 1;
+            continue;
+        };
+        for (i, v) in optional_flags.iter().enumerate() {
+            checked_entries += 1;
+            match v.as_str() {
+                Some(s) if is_flag_only_form(s) => {}
+                Some(s) => violations.push(format!(
+                    "{name}: optional_flags[{i}] = `{s}` contains `=`; use flag-only form"
+                )),
+                None => violations.push(format!(
+                    "{name}: optional_flags[{i}] is not a string (found {})",
+                    match v {
+                        Value::Null => "null",
+                        Value::Bool(_) => "bool",
+                        Value::Number(_) => "number",
+                        Value::String(_) => "string",
+                        Value::Array(_) => "array",
+                        Value::Object(_) => "object",
+                    }
+                )),
+            }
+        }
+        checked_manifests += 1;
+    }
+
+    assert!(
+        checked_manifests >= 30,
+        "expected at least 30 cli_contract manifests; found {checked_manifests}"
+    );
+
+    if !violations.is_empty() {
+        return Err(format!(
+            "{} optional_flags flag-only violation(s) across {checked_entries} entries:\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn cli_flag_validator_handles_canonical_forms() {
     assert!(looks_like_cli_flag("-x"));
     assert!(looks_like_cli_flag("--foo"));
@@ -111,4 +196,12 @@ fn cli_flag_validator_handles_canonical_forms() {
     assert!(!looks_like_cli_flag("--1abc"));
     assert!(!looks_like_cli_flag("foo"));
     assert!(!looks_like_cli_flag("---foo"));
+}
+
+#[test]
+fn flag_only_form_validator_rejects_inline_values() {
+    assert!(is_flag_only_form("--output"));
+    assert!(is_flag_only_form("--output-file"));
+    assert!(!is_flag_only_form("--output=foo"));
+    assert!(!is_flag_only_form("-o=foo"));
 }
