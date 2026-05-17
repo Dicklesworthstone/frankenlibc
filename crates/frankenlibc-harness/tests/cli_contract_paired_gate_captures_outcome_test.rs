@@ -1,10 +1,10 @@
 //! Meta-gate: every paired `*_cli_contract_test.rs` file in
 //! `crates/frankenlibc-harness/tests/` invokes at least one of
-//! `.output(` or `.status(` (bd-5p69l). Confirms the gate captures
-//! the spawned binary's outcome — exit status or stdout/stderr —
-//! rather than spawning the binary with `.spawn()` and ignoring the
-//! result (which would prove only that the binary exists, not that
-//! the contract holds).
+//! `.output(`, `.status(`, or `.wait_with_output(` (bd-5p69l).
+//! Confirms the gate captures the spawned binary's outcome — exit
+//! status or stdout/stderr — rather than spawning the binary with
+//! `.spawn()` and discarding the result (which would prove only
+//! that the binary exists, not that the contract holds).
 
 use std::path::{Path, PathBuf};
 
@@ -41,9 +41,12 @@ fn every_paired_gate_test_captures_outcome() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if !body.contains(".output(") && !body.contains(".status(") {
+        if !body.contains(".output(")
+            && !body.contains(".status(")
+            && !body.contains(".wait_with_output(")
+        {
             violations.push(format!(
-                "{stem}: invokes neither .output() nor .status() (does not capture spawned outcome)"
+                "{stem}: invokes none of .output() / .status() / .wait_with_output() (no spawned outcome captured)"
             ));
         }
         checked += 1;
