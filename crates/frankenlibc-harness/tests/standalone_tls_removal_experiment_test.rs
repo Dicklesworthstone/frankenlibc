@@ -44,6 +44,19 @@ fn manifest_path(root: &Path) -> PathBuf {
         .join("standalone_tls_removal_experiment.v1.json")
 }
 
+fn abi_cargo_toml_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("Cargo.toml")
+}
+
+fn abi_unistd_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("unistd_abi.rs")
+}
+
 fn load_manifest() -> TestResult<Value> {
     let root = workspace_root()?;
     let path = manifest_path(&root);
@@ -543,5 +556,62 @@ fn summary_anchors_to_lane_and_cluster_counts() -> TestResult {
     require(
         !json_bool(summary, "promotion_allowed")?,
         "summary promotion_allowed must be false",
+    )
+}
+
+#[test]
+fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
+    let root = workspace_root()?;
+    let m = load_manifest()?;
+    let summary = json_field(&m, "summary")?;
+    require(
+        json_string(summary, "owned_tls_cache_feature_gate_status")? == "wired",
+        "owned_tls_cache feature gate status",
+    )?;
+    let substituted = summary
+        .get("owned_tls_cache_substituted_macro_count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "summary owned_tls_cache_substituted_macro_count".to_string())?;
+    let remaining = summary
+        .get("owned_tls_cache_remaining_macro_count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "summary owned_tls_cache_remaining_macro_count".to_string())?;
+    let total = summary
+        .get("thread_local_macro_count_in_targeted_clusters")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
+    require(
+        substituted == 2,
+        "first owned-tls slice substitutes two macros",
+    )?;
+    require(
+        substituted + remaining == total,
+        "owned-tls substituted plus remaining count",
+    )?;
+    require(
+        json_string(summary, "claim_status")? == "claim_blocked",
+        "summary remains claim_blocked",
+    )?;
+    require(
+        !json_bool(summary, "promotion_allowed")?,
+        "owned-tls slice must not promote replacement claims",
+    )?;
+
+    let cargo_toml = std::fs::read_to_string(abi_cargo_toml_path(&root))
+        .map_err(|err| format!("read frankenlibc-abi Cargo.toml: {err}"))?;
+    require(
+        cargo_toml
+            .lines()
+            .any(|line| line.trim() == "owned-tls-cache = []"),
+        "frankenlibc-abi Cargo.toml must define owned-tls-cache feature",
+    )?;
+
+    let unistd = std::fs::read_to_string(abi_unistd_path(&root))
+        .map_err(|err| format!("read unistd_abi.rs: {err}"))?;
+    require(
+        unistd.contains("CRYPT_BUF_OWNED_TLS")
+            && unistd.contains("GENSALT_OWNED_TLS")
+            && unistd.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "unistd ABI must route the first crypt/gensalt slice through owned TLS cache",
     )
 }

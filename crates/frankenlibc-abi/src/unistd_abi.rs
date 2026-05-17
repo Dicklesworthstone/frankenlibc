@@ -7150,9 +7150,31 @@ pub unsafe extern "C" fn posix_openpt(flags: c_int) -> c_int {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static CRYPT_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_crypt_buf);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_crypt_buf() -> [u8; 256] {
+    [0u8; 256]
+}
+
 // Thread-local buffer for crypt() result (POSIX allows static return).
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static CRYPT_BUF: std::cell::RefCell<[u8; 256]> = const { std::cell::RefCell::new([0u8; 256]) };
+}
+
+#[inline]
+fn with_crypt_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        CRYPT_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        CRYPT_BUF.with(|cell| f(&mut cell.borrow_mut()))
+    }
 }
 
 /// POSIX `crypt` — one-way password hashing.
@@ -7191,8 +7213,7 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
     };
 
     match result {
-        Some(hash_string) => CRYPT_BUF.with(|cell| {
-            let mut buf = cell.borrow_mut();
+        Some(hash_string) => with_crypt_buf(|buf| {
             let len = hash_string.len().min(buf.len() - 1);
             buf[..len].copy_from_slice(&hash_string.as_bytes()[..len]);
             buf[len] = 0;
@@ -7517,9 +7538,26 @@ fn build_gensalt(
     Ok(())
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static GENSALT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static GENSALT_TLS: core::cell::RefCell<Vec<u8>> =
         const { core::cell::RefCell::new(Vec::new()) };
+}
+
+#[inline]
+fn with_gensalt_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GENSALT_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GENSALT_TLS.with(|cell| f(&mut cell.borrow_mut()))
+    }
 }
 
 /// libcrypt `crypt_gensalt(prefix, count, *rbytes, nrbytes) ->
@@ -7549,14 +7587,11 @@ pub unsafe extern "C" fn crypt_gensalt(
             return core::ptr::null_mut();
         }
     };
-    GENSALT_TLS.with(|cell| {
-        let mut buf = cell.borrow_mut();
-        match build_gensalt(prefix, count, rbytes, n, &mut buf) {
-            Ok(()) => buf.as_mut_ptr() as *mut c_char,
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                core::ptr::null_mut()
-            }
+    with_gensalt_buf(|buf| match build_gensalt(prefix, count, rbytes, n, buf) {
+        Ok(()) => buf.as_mut_ptr() as *mut c_char,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            core::ptr::null_mut()
         }
     })
 }
