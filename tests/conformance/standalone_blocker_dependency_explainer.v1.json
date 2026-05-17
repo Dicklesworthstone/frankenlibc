@@ -1,0 +1,86 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone_blocker_dependency_explainer",
+  "bead": "bd-i1fwe",
+  "generated_utc": "2026-05-17T23:22:00Z",
+  "source_commit": "current",
+  "purpose": "Fail-closed explainer for why bd-c51oi remains open after report-only standalone burndown experiments. The checker ties tracker dependency state to the standalone blocker rollup so agents do not mistake partial experiment progress for default forge promotion.",
+  "inputs": {
+    "tracker_jsonl": ".beads/issues.jsonl",
+    "standalone_blocker_burndown_dag": "tests/conformance/standalone_blocker_burndown_dag.v1.json",
+    "standalone_blocker_burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json",
+    "standalone_blocker_burndown_progress_rollup_checker": "scripts/check_standalone_blocker_burndown_progress_rollup.sh"
+  },
+  "target_issue_contract": {
+    "target_issue_id": "bd-c51oi",
+    "target_issue_must_remain_status": "in_progress",
+    "required_blocker_issue_id": "bd-716tv",
+    "required_blocker_issue_status": "in_progress",
+    "required_dependency_type": "blocks",
+    "missing_dependency_result": "fail_closed",
+    "target_closed_before_default_forge_exit_result": "fail_closed",
+    "blocker_closed_before_rch_admissible_result": "fail_closed"
+  },
+  "standalone_claim_contract": {
+    "rollup_claim_status": "claim_blocked",
+    "promotion_allowed": false,
+    "minimum_current_blocking_reason_count": 10,
+    "minimum_blocked_progress_category_count": 8,
+    "required_dag_dedupe_key": "burn-runtime_linkage-host_needed_libraries_present",
+    "required_validation_lane": "standalone-forge-scripts",
+    "required_partial_experiments": [
+      "owned-unwind-stub-experiment",
+      "owned-tls-cache-source-surface-experiment"
+    ],
+    "partial_experiments_must_be_report_only": true,
+    "partial_experiments_must_keep_default_forge_path_unchanged": true,
+    "partial_experiments_must_not_allow_promotion": true,
+    "report_only_progress_result": "keep_bd_c51oi_claim_blocked"
+  },
+  "report_contract": {
+    "output_path": "target/conformance/standalone_blocker_dependency_explainer.report.json",
+    "must_materialize": [
+      "target_issue",
+      "blocker_dependency",
+      "standalone_claim_state",
+      "dag_node",
+      "partial_burndown_experiments",
+      "closure_blockers",
+      "negative_controls"
+    ],
+    "closure_blocker_reasons": [
+      "bd-c51oi still depends on bd-716tv",
+      "RCH cargo validation is not admissible",
+      "standalone blocker rollup remains claim_blocked",
+      "partial burndown experiments are report-only and non-promotable"
+    ]
+  },
+  "negative_controls": [
+    {
+      "control_id": "missing_required_dependency_fails",
+      "mutation": "drop bd-c51oi dependency on bd-716tv",
+      "expected_error": "target_missing_required_dependency"
+    },
+    {
+      "control_id": "target_closed_before_claim_exit_fails",
+      "mutation": "mark bd-c51oi closed while standalone rollup remains claim_blocked",
+      "expected_error": "target_status_not_in_progress"
+    },
+    {
+      "control_id": "report_only_experiment_promotion_fails",
+      "mutation": "set a partial experiment promotion_allowed=true",
+      "expected_error": "partial_experiment_allows_promotion"
+    }
+  ],
+  "validation": {
+    "commands": [
+      "bash -n scripts/check_standalone_blocker_dependency_explainer.sh",
+      "jq empty tests/conformance/standalone_blocker_dependency_explainer.v1.json",
+      "bash scripts/check_standalone_blocker_dependency_explainer.sh",
+      "git diff --check -- scripts/check_standalone_blocker_dependency_explainer.sh tests/conformance/standalone_blocker_dependency_explainer.v1.json .beads/issues.jsonl",
+      "AGENT_NAME=DarkShore br dep cycles --json"
+    ],
+    "cargo_required": false,
+    "cargo_reason": "This slice adds a shell/Python JSON contract checker only; it does not touch Rust code or compiled tests."
+  }
+}
