@@ -13475,8 +13475,26 @@ pub unsafe extern "C" fn ctermid(s: *mut c_char) -> *mut c_char {
 /// Maximum password length for getpass.
 const GETPASS_MAX: usize = 128;
 
+#[cfg(feature = "owned-tls-cache")]
+static GETPASS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[c_char; GETPASS_MAX]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [0; GETPASS_MAX]);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static GETPASS_BUF: std::cell::RefCell<[c_char; GETPASS_MAX]> = const { std::cell::RefCell::new([0; GETPASS_MAX]) };
+}
+
+#[inline]
+fn with_getpass_buf<R>(callback: impl FnOnce(&mut [c_char; GETPASS_MAX]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GETPASS_BUF_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GETPASS_BUF.with(|cell| callback(&mut cell.borrow_mut()))
+    }
 }
 
 /// POSIX `getpass` — read a password from /dev/tty with echo disabled.
@@ -13521,8 +13539,7 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
     }
 
     // Read password
-    let result = GETPASS_BUF.with(|cell| {
-        let mut buf = cell.borrow_mut();
+    let result = with_getpass_buf(|buf| {
         let mut pos = 0usize;
         loop {
             let mut ch = 0u8;

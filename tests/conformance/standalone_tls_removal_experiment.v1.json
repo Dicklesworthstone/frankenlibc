@@ -231,8 +231,8 @@
   ],
   "live_experiment_environment_blockers": [
     {
-      "blocker": "owned-tls-cache feature gate plus the unistd crypt/crypt_gensalt, NIS helper, resolver nameserver, getmntent, cuserid, utmp-state, pututxline return-buffer, NSS systemd block-flag, services/networks/protocols/hosts/aliases/netgroup iterators, fstab-state, ttyent-state, and getdate-tm slices are wired, but the substitute is not complete across every tracked source surface.",
-      "remediation": "Continue migrating the remaining 35 `thread_local!` macros across the 5 owner-surface rows to owned process-keyed cache primitives. Until every required cluster exits and nm/readelf prove `__tls_get_addr` absent, the owned-tls-cache lane MUST stay report-only with build_status_until_owned_substitute_complete=report_only_blocked."
+      "blocker": "owned-tls-cache feature gate plus the unistd crypt/crypt_gensalt, NIS helper, resolver nameserver, getmntent, getpass, cuserid, utmp-state, pututxline return-buffer, NSS systemd block-flag, services/networks/protocols/hosts/aliases/netgroup iterators, fstab-state, ttyent-state, and getdate-tm slices are wired, but the substitute is not complete across every tracked source surface.",
+      "remediation": "Continue migrating the remaining 34 `thread_local!` macros across the 5 owner-surface rows to owned process-keyed cache primitives. Until every required cluster exits and nm/readelf prove `__tls_get_addr` absent, the owned-tls-cache lane MUST stay report-only with build_status_until_owned_substitute_complete=report_only_blocked."
     }
   ],
   "summary": {
@@ -251,9 +251,9 @@
     "tls_blocker_symbol_count_owned_tls_cache_when_complete": 0,
     "owner_surface_cluster_count": 5,
     "owned_tls_cache_feature_gate_status": "wired",
-    "owned_tls_cache_substituted_macro_count": 21,
-    "owned_tls_cache_remaining_macro_count": 35,
-    "owned_tls_cache_current_slice": "crates/frankenlibc-abi/src/unistd_abi.rs crypt/crypt_gensalt, NIS helper, resolver nameserver, getmntent, cuserid, utmp-state, pututxline return buffers, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state",
+    "owned_tls_cache_substituted_macro_count": 22,
+    "owned_tls_cache_remaining_macro_count": 34,
+    "owned_tls_cache_current_slice": "crates/frankenlibc-abi/src/unistd_abi.rs crypt/crypt_gensalt, NIS helper, resolver nameserver, getmntent, getpass, cuserid, utmp-state, pututxline return buffers, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state",
     "thread_local_macro_count_in_targeted_clusters": 56,
     "next_safe_action": "Land the owned-tls-cache feature gate + pthread-key substitute crate, then re-run the experiment lane and update each cluster's owned_tls_cache_disposition to `pthread_key_substituted` atomically with source_commit. Promotion remains forbidden until __tls_get_addr is absent from nm -D output AND every owner-surface cluster reports owned_tls_cache_disposition=pthread_key_substituted."
   }
