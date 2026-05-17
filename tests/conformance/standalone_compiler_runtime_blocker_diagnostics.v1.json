@@ -238,6 +238,34 @@
       ]
     },
     {
+      "experiment_id": "standalone-final-link-no-default-libs",
+      "status": "observed_ineffective_report_only",
+      "command": "temporarily add cargo:rustc-cdylib-link-arg=-nostdlib under the standalone feature and run rch --no-self-healing exec -- cargo build -vv -p frankenlibc-abi --release --features=standalone",
+      "panic_strategy": "implicit-unwind",
+      "expected_claim_status": "report_only",
+      "must_not_change_default_profile": true,
+      "remote_worker": "vmi1264463",
+      "observed_link_arg": "-C link-arg=-nostdlib",
+      "observed_forge_claim_status": "claim_blocked",
+      "observed_delta_classification": "unchanged",
+      "observed_needed_libraries": [
+        "ld-linux-x86-64.so.2",
+        "libgcc_s.so.1"
+      ],
+      "observed_host_resolved_libraries": [
+        "/lib64/ld-linux-x86-64.so.2",
+        "libc.so.6",
+        "libgcc_s.so.1"
+      ],
+      "interpretation": "Suppressing host default libraries at the final cdylib link is not sufficient; the remaining blocker surface is rooted in the owned TLS, unwind, compiler-runtime, and loader startup workstreams.",
+      "validation": [
+        "rch remote build stderr showed cargo:rustc-cdylib-link-arg=-nostdlib",
+        "rch remote build stderr showed rustc received -C link-arg=-nostdlib",
+        "scripts/check_standalone_replacement_artifact.sh --forge still reported blocker_delta.delta_classification=unchanged",
+        "the temporary build.rs change was reverted and must not become default profile policy"
+      ]
+    },
+    {
       "experiment_id": "owned-unwinder-symbol-surface",
       "status": "proposed_followup",
       "command": "add no code in this diagnostic; future bead must supply owned symbols or prove no unresolved _Unwind edges",
@@ -256,6 +284,7 @@
     "libgcc_needed_library_count": 1,
     "undefined_unwind_symbol_count": 12,
     "libgcc_version_need_count": 3,
+    "final_link_no_default_libs_status": "observed_ineffective_report_only",
     "report_only": true,
     "next_bead": "bd-zyck1.89"
   }

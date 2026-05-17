@@ -638,6 +638,64 @@ fn compiler_runtime_experiment_matrix_keeps_non_baseline_lanes_report_only() -> 
         "baseline panic strategy",
     )?;
 
+    let no_default_libs = experiments
+        .iter()
+        .find(|row| row["experiment_id"].as_str() == Some("standalone-final-link-no-default-libs"))
+        .ok_or_else(|| "missing standalone-final-link-no-default-libs experiment".to_string())?;
+    ensure_eq(
+        as_str(&no_default_libs["status"], "no_default_libs.status")?,
+        "observed_ineffective_report_only",
+        "no-default-libs status",
+    )?;
+    ensure_eq(
+        as_str(
+            &no_default_libs["observed_link_arg"],
+            "no_default_libs.observed_link_arg",
+        )?,
+        "-C link-arg=-nostdlib",
+        "observed no-default-libs link arg",
+    )?;
+    ensure_eq(
+        as_str(
+            &no_default_libs["observed_forge_claim_status"],
+            "no_default_libs.observed_forge_claim_status",
+        )?,
+        "claim_blocked",
+        "observed no-default-libs forge claim status",
+    )?;
+    ensure_eq(
+        as_str(
+            &no_default_libs["observed_delta_classification"],
+            "no_default_libs.observed_delta_classification",
+        )?,
+        "unchanged",
+        "no-default-libs delta classification",
+    )?;
+    ensure(
+        string_set(
+            &no_default_libs["observed_needed_libraries"],
+            "no_default_libs.observed_needed_libraries",
+        )?
+        .contains("ld-linux-x86-64.so.2"),
+        "no-default-libs row must retain ld-linux direct dependency",
+    )?;
+    ensure(
+        string_set(
+            &no_default_libs["observed_host_resolved_libraries"],
+            "no_default_libs.observed_host_resolved_libraries",
+        )?
+        .contains("libc.so.6"),
+        "no-default-libs row must retain host libc resolution",
+    )?;
+    ensure_eq(
+        as_str(
+            &diagnostic["summary"]["final_link_no_default_libs_status"],
+            "summary.final_link_no_default_libs_status",
+        )?,
+        "observed_ineffective_report_only",
+        "summary final-link no-default-libs status",
+    )?;
+
     for experiment in experiments {
         if experiment["experiment_id"].as_str() == Some("baseline-release-standalone") {
             continue;
