@@ -59,7 +59,7 @@ fn every_cli_contract_bead_length_within_bounds() -> TestResult {
         if len > max_seen.0 {
             max_seen = (len, b.to_string());
         }
-        if len < MIN_BEAD_LEN || len > MAX_BEAD_LEN {
+        if !(MIN_BEAD_LEN..=MAX_BEAD_LEN).contains(&len) {
             violations.push(format!(
                 "{name}: bead `{b}` length {len} outside [{MIN_BEAD_LEN},{MAX_BEAD_LEN}]"
             ));
