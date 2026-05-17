@@ -75,6 +75,47 @@ def is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+REQUIRED_PRE_CLEANUP_CHECK_KINDS = {"sbh_protect_marker_absence", "open_file_absence"}
+FORBIDDEN_PRE_CLEANUP_COMMAND = re.compile(
+    r"\brm\b|\brmdir\b|\bunlink\b|-delete|git reset|git clean|sbh clean|sbh ballast release|sbh emergency"
+)
+
+
+def validate_pre_cleanup_checks(source: str, path: Any, checks: Any, missing_signature: str) -> None:
+    if not isinstance(checks, list) or not checks:
+        add_error(source, missing_signature, f"{path} must include read-only pre-cleanup checks")
+        return
+    seen: set[str] = set()
+    for check in checks:
+        if not isinstance(check, dict):
+            add_error(source, "malformed_pre_cleanup_check", f"{path} has malformed pre-cleanup check")
+            continue
+        kind = check.get("check_kind")
+        command = check.get("command")
+        if kind not in REQUIRED_PRE_CLEANUP_CHECK_KINDS:
+            add_error(source, "unexpected_pre_cleanup_check_kind", f"{path} has check kind {kind}")
+        else:
+            seen.add(str(kind))
+        if not isinstance(command, str) or not command.startswith("ssh "):
+            add_error(source, "invalid_pre_cleanup_check_command", f"{path} has invalid command {command}")
+        else:
+            if isinstance(path, str) and path not in command:
+                add_error(source, "pre_cleanup_check_missing_path", f"{path} check command does not name path")
+            if FORBIDDEN_PRE_CLEANUP_COMMAND.search(command):
+                add_error(source, "pre_cleanup_check_not_read_only", f"{path} check command is not read-only")
+            if kind == "sbh_protect_marker_absence" and ".sbh-protect" not in command:
+                add_error(source, "pre_cleanup_check_missing_protect_marker", f"{path} protect check is incomplete")
+            if kind == "open_file_absence" and "lsof +D" not in command:
+                add_error(source, "pre_cleanup_check_missing_lsof", f"{path} open-file check is incomplete")
+        if check.get("expected_safe_result") != "exit 0 with no stdout":
+            add_error(source, "invalid_pre_cleanup_expected_result", f"{path} check must expect no stdout")
+        if not isinstance(check.get("blocks_cleanup_if"), str) or not check.get("blocks_cleanup_if"):
+            add_error(source, "missing_pre_cleanup_blocker_text", f"{path} check must describe blockers")
+    missing = REQUIRED_PRE_CLEANUP_CHECK_KINDS - seen
+    if missing:
+        add_error(source, "missing_pre_cleanup_check_kind", f"{path} missing checks {sorted(missing)}")
+
+
 def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool) -> None:
     if packet.get("schema_version") != "rch_pressure_approval_packet_schema.v1":
         add_error(source, "schema_version", "packet schema_version mismatch")
@@ -128,6 +169,14 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
             add_error(source, "candidate_executed", f"{candidate.get('path')} must remain executed=false")
         if not str(candidate.get("path", "")).startswith("/data/projects/"):
             add_error(source, "candidate_path_scope", f"{candidate.get('path')} is outside /data/projects")
+        if not isinstance(candidate.get("host"), str) or not candidate.get("host"):
+            add_error(source, "missing_candidate_host", f"{candidate.get('path')} must identify its worker host")
+        validate_pre_cleanup_checks(
+            source,
+            candidate.get("path"),
+            candidate.get("pre_cleanup_read_only_checks"),
+            "missing_pre_cleanup_checks",
+        )
         if candidate.get("estimated_size_gb") is not None and (not is_number(candidate.get("estimated_size_gb")) or float(candidate.get("estimated_size_gb")) < 0):
             add_error(source, "invalid_candidate_size_estimate", f"{candidate.get('path')} has invalid estimated_size_gb={candidate.get('estimated_size_gb')}")
 
@@ -148,6 +197,12 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
             add_error(source, "recommended_candidate_executed", f"{path} must remain executed=false")
         if candidate.get("recommendation_kind") != "smallest_listed_candidate_meeting_estimated_gap":
             add_error(source, "recommended_candidate_kind", f"{path} has unexpected recommendation_kind")
+        validate_pre_cleanup_checks(
+            source,
+            path,
+            candidate.get("pre_cleanup_read_only_checks"),
+            "recommended_candidate_missing_pre_cleanup_checks",
+        )
         size_gb = candidate.get("estimated_size_gb")
         gap_gb = candidate.get("estimated_gap_gb")
         if not is_number(size_gb) or float(size_gb) < 0:
@@ -265,6 +320,19 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             f"{source}::recommended_candidate_too_small",
             "recommended_candidate_too_small",
             "make first recommended candidate smaller than its estimated gap",
+        )
+
+    missing_recommendation_checks_packet = deepcopy(packet)
+    candidate = first_recommended_candidate(missing_recommendation_checks_packet)
+    if candidate is None:
+        add_error(source, "negative_control_no_recommended_candidate", "golden packet has no recommended candidate for mutation")
+    else:
+        candidate.pop("pre_cleanup_read_only_checks", None)
+        expect_validation_failure(
+            missing_recommendation_checks_packet,
+            f"{source}::recommended_candidate_missing_pre_cleanup_checks",
+            "recommended_candidate_missing_pre_cleanup_checks",
+            "remove read-only pre-cleanup checks from first recommended candidate",
         )
 
 

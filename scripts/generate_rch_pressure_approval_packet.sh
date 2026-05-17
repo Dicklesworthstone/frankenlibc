@@ -85,6 +85,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import shlex
 import sys
 import time
 from typing import Any
@@ -169,6 +170,27 @@ def human_size_to_gb(size: str) -> float | None:
     return round(value * factors[unit], 3)
 
 
+def read_only_pre_cleanup_checks(host: str, path: str) -> list[dict[str, str]]:
+    ssh_target = shlex.quote(f"ubuntu@{host}")
+    path_arg = shlex.quote(path)
+    protect_cmd = f"if test -e {path_arg}; then find {path_arg} -name .sbh-protect -print -quit; fi"
+    lsof_cmd = f"if test -e {path_arg}; then sudo -n lsof +D {path_arg} 2>/dev/null | head -20; fi"
+    return [
+        {
+            "check_kind": "sbh_protect_marker_absence",
+            "command": f"ssh {ssh_target} {shlex.quote(protect_cmd)}",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit",
+        },
+        {
+            "check_kind": "open_file_absence",
+            "command": f"ssh {ssh_target} {shlex.quote(lsof_cmd)}",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit",
+        },
+    ]
+
+
 def worker_probe_signature(worker_id: str, worker_status: str) -> str:
     worker_err = err_text(f"worker_{worker_id}")
     worker_out = text(f"worker_{worker_id}")
@@ -183,8 +205,9 @@ def worker_probe_signature(worker_id: str, worker_status: str) -> str:
     return "unknown"
 
 
-def cleanup_candidates(worker_id: str, worker_out: str) -> list[dict[str, Any]]:
+def cleanup_candidates(worker_id: str, worker_host: Any, worker_out: str) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
+    host = str(worker_host or worker_id)
     for line in worker_out.splitlines():
         match = re.match(r"^(?P<size>\S+)\s+(?P<path>/data/projects/\S+)$", line.strip())
         if not match:
@@ -207,10 +230,12 @@ def cleanup_candidates(worker_id: str, worker_out: str) -> list[dict[str, Any]]:
         candidates.append(
             {
                 "worker_id": worker_id,
+                "host": host,
                 "path": path,
                 "size_human": size,
                 "size_bytes": None,
                 "estimated_size_gb": human_size_to_gb(size),
+                "pre_cleanup_read_only_checks": read_only_pre_cleanup_checks(host, path),
                 "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
                 "candidate_kind": candidate_kind,
                 "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
@@ -235,7 +260,7 @@ def parse_workers(status_json: dict[str, Any]) -> tuple[list[dict[str, Any]], li
         worker_out = text(f"worker_{worker_id}")
         worker_err = err_text(f"worker_{worker_id}")
         worker_status = str(worker.get("status", "unknown"))
-        candidates.extend(cleanup_candidates(worker_id, worker_out))
+        candidates.extend(cleanup_candidates(worker_id, worker.get("host"), worker_out))
         parsed.append(
             {
                 "worker_id": worker_id,
@@ -434,6 +459,19 @@ if recommended_candidates:
         )
 else:
     lines.append("- No listed cleanup candidate was large enough to clear a worker's estimated pressure gap.")
+lines.extend(
+    [
+        "",
+        "## Read-Only Pre-Cleanup Checks",
+    ]
+)
+if recommended_candidates:
+    for candidate in recommended_candidates:
+        lines.append(f"- `{candidate['worker_id']}` `{candidate['path']}`")
+        for check in candidate.get("pre_cleanup_read_only_checks", []):
+            lines.append(f"  - `{check['check_kind']}`: `{check['command']}`")
+else:
+    lines.append("- No recommended cleanup candidate requires pre-cleanup checks.")
 lines.extend(
     [
         "",

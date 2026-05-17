@@ -106,10 +106,25 @@
     "cleanup_candidates": [
       {
         "worker_id": "vmi1264463",
+        "host": "38.242.209.154",
         "path": "/data/projects/franken_engine/target_PearlTower_focused",
         "size_human": "15G",
         "size_bytes": null,
         "estimated_size_gb": 15.0,
+        "pre_cleanup_read_only_checks": [
+          {
+            "check_kind": "sbh_protect_marker_absence",
+            "command": "ssh ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
+          },
+          {
+            "check_kind": "open_file_absence",
+            "command": "ssh ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
+          }
+        ],
         "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
         "candidate_kind": "build_target_dir",
         "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
@@ -119,10 +134,25 @@
       },
       {
         "worker_id": "vmi1149989",
+        "host": "212.90.121.76",
         "path": "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
         "size_human": "564M",
         "size_bytes": null,
         "estimated_size_gb": 0.551,
+        "pre_cleanup_read_only_checks": [
+          {
+            "check_kind": "sbh_protect_marker_absence",
+            "command": "ssh ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then find /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 -name .sbh-protect -print -quit; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
+          },
+          {
+            "check_kind": "open_file_absence",
+            "command": "ssh ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then sudo -n lsof +D /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 2>/dev/null | head -20; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
+          }
+        ],
         "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
         "candidate_kind": "build_incremental_dir",
         "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
@@ -134,10 +164,25 @@
     "recommended_cleanup_candidates": [
       {
         "worker_id": "vmi1264463",
+        "host": "38.242.209.154",
         "path": "/data/projects/franken_engine/target_PearlTower_focused",
         "size_human": "15G",
         "size_bytes": null,
         "estimated_size_gb": 15.0,
+        "pre_cleanup_read_only_checks": [
+          {
+            "check_kind": "sbh_protect_marker_absence",
+            "command": "ssh ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
+          },
+          {
+            "check_kind": "open_file_absence",
+            "command": "ssh ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
+          }
+        ],
         "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
         "candidate_kind": "build_target_dir",
         "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
@@ -149,10 +194,25 @@
       },
       {
         "worker_id": "vmi1149989",
+        "host": "212.90.121.76",
         "path": "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
         "size_human": "564M",
         "size_bytes": null,
         "estimated_size_gb": 0.551,
+        "pre_cleanup_read_only_checks": [
+          {
+            "check_kind": "sbh_protect_marker_absence",
+            "command": "ssh ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then find /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 -name .sbh-protect -print -quit; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
+          },
+          {
+            "check_kind": "open_file_absence",
+            "command": "ssh ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then sudo -n lsof +D /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 2>/dev/null | head -20; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
+          }
+        ],
         "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
         "candidate_kind": "build_incremental_dir",
         "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
@@ -216,6 +276,9 @@
     "# rch Pressure Approval Packet",
     "Worker Pressure Gaps",
     "Smallest Sufficient Listed Candidates",
+    "Read-Only Pre-Cleanup Checks",
+    "sbh_protect_marker_absence",
+    "open_file_absence",
     "Cleanup Candidates",
     "requires explicit written approval; not executed",
     "This packet is read-only evidence. It does not authorize cleanup.",
