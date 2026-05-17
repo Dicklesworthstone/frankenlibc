@@ -408,6 +408,18 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "pre_cleanup_read_only_checks",
         },
     )
+    require_list_contains(
+        schema,
+        source,
+        "allowed_worker_statuses",
+        {
+            "healthy",
+            "degraded",
+            "disabled",
+            "unreachable",
+            "unknown",
+        },
+    )
     approval_contract = schema.get("approval_request_contract", {})
     if not isinstance(approval_contract, dict):
         add_error(source, "schema_contract_missing_approval_contract", "approval_request_contract must be an object")
