@@ -10195,20 +10195,46 @@ pub unsafe extern "C" fn __res_context_send(
     unsafe { crate::glibc_internal_abi::__res_nsend(ctx, buf, buflen, answer, anslen) }
 }
 
+const fn empty_res_nsaddr() -> libc::sockaddr_in {
+    libc::sockaddr_in {
+        sin_family: 0,
+        sin_port: 0,
+        sin_addr: libc::in_addr { s_addr: 0 },
+        sin_zero: [0; 8],
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RES_NSADDR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<libc::sockaddr_in> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_res_nsaddr);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static RES_NSADDR: core::cell::UnsafeCell<libc::sockaddr_in> =
+        const { core::cell::UnsafeCell::new(empty_res_nsaddr()) };
+}
+
+#[inline]
+fn with_res_nsaddr<R>(f: impl FnOnce(&mut libc::sockaddr_in) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_NSADDR_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_NSADDR.with(|cell| {
+            // SAFETY: RES_NSADDR is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            f(unsafe { &mut *cell.get() })
+        })
+    }
+}
+
 /// `__res_get_nsaddr(*statp, n) -> *struct sockaddr_in` — return
 /// nameserver `n`'s IPv4 address from the active resolver config.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_get_nsaddr(_statp: *mut c_void, n: c_uint) -> *mut c_void {
-    thread_local! {
-        static RES_NSADDR: core::cell::UnsafeCell<libc::sockaddr_in> =
-            const { core::cell::UnsafeCell::new(libc::sockaddr_in {
-                sin_family: 0,
-                sin_port: 0,
-                sin_addr: libc::in_addr { s_addr: 0 },
-                sin_zero: [0; 8],
-            }) };
-    }
-
     let Some(addr) = RESOLV_CONFIG.nameservers.get(n as usize) else {
         return core::ptr::null_mut();
     };
@@ -10216,19 +10242,16 @@ pub unsafe extern "C" fn __res_get_nsaddr(_statp: *mut c_void, n: c_uint) -> *mu
         return core::ptr::null_mut();
     };
 
-    RES_NSADDR.with(|cell| {
-        let ptr = cell.get();
-        unsafe {
-            *ptr = libc::sockaddr_in {
-                sin_family: libc::AF_INET as libc::sa_family_t,
-                sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
-                sin_addr: libc::in_addr {
-                    s_addr: u32::from_ne_bytes(ip.octets()),
-                },
-                sin_zero: [0; 8],
-            };
-        }
-        ptr.cast::<c_void>()
+    with_res_nsaddr(|slot| {
+        *slot = libc::sockaddr_in {
+            sin_family: libc::AF_INET as libc::sa_family_t,
+            sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes(ip.octets()),
+            },
+            sin_zero: [0; 8],
+        };
+        (slot as *mut libc::sockaddr_in).cast::<c_void>()
     })
 }
 

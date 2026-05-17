@@ -17,7 +17,7 @@ pub(crate) struct OwnedTlsCache<T> {
 
 struct OwnedTlsSlot<T> {
     tid: i32,
-    value: T,
+    value: Box<T>,
 }
 
 impl<T> OwnedTlsCache<T>
@@ -42,11 +42,11 @@ where
             None => {
                 slots.push(OwnedTlsSlot {
                     tid,
-                    value: (self.init)(),
+                    value: Box::new((self.init)()),
                 });
                 slots.len() - 1
             }
         };
-        f(&mut slots[index].value)
+        f(slots[index].value.as_mut())
     }
 }
