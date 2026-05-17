@@ -742,7 +742,7 @@ The membrane is called on every libc entrypoint. Global locks would create unacc
 | `RCU` | `rcu.rs` | Read-copy-update for membership structures read on every call | ~31 KB |
 | `EBR` | `ebr.rs` | Epoch-based reclamation for safe deferred freeing of shared metadata | ~29 KB |
 | `FlatCombining` | `flat_combining.rs` | Flat combining for contended access aggregation | ~27 KB |
-| `HtmFastPath` | `htm_fast_path.rs` (in ABI crate) | Hardware-transactional-memory acceleration | ~19 KB |
+| `htm_fast_path` module (`HtmSite`, `HtmSiteSnapshot`, `HtmTestMode`) | `htm_fast_path.rs` (in ABI crate) | Hardware-transactional-memory acceleration with adaptive abort cooldown | ~19 KB |
 
 Unified metrics across all primitives live in `alien_cs_metrics.rs` (~64 KB) with contention scoring, deadlock-proximity detection, and exit-pressure telemetry. The TLS validation cache is the first line of defense (1,024-entry direct-mapped); these primitives handle the cases where the cache misses and shared state must be consulted.
 
@@ -1952,7 +1952,7 @@ Each `alien_cs` primitive solves a specific contention shape. Knowing which to r
 | **`RCU`** | The protected structure is a long-lived membership graph (e.g., live-allocation index, registered-callback set) read on every call; updates are infrequent and structural | Updates are point-mutations (use `SeqLock` instead); memory cost of versioned copies is unacceptable |
 | **`EBR`** | Safe deferred reclamation of any pointer that may still be reachable by a reader; combines with RCU and SeqLock | The cost of a fully grace-period-bounded scheme (e.g., QSBR) is not tolerable |
 | **`FlatCombining`** | Many threads contend for the same critical section, and the critical section is short; a single combining thread can do everyone's work in one batch | The work per request is asymmetric; combining doesn't amortize |
-| **`HtmFastPath`** | The transaction fits in the CPU's HTM commit budget; conflicts are rare; the fallback path is correct | The architecture lacks HTM (graceful fallback); workload exhibits adversarial conflict patterns |
+| **`htm_fast_path::HtmSite`** | The transaction fits in the CPU's HTM commit budget; conflicts are rare; the fallback path is correct | The architecture lacks HTM (graceful fallback); workload exhibits adversarial conflict patterns |
 
 Unified metrics across all primitives live in `alien_cs_metrics.rs`: contention scores, deadlock-proximity indicators, exit-pressure telemetry, abort rates (for HTM), grace-period durations (for EBR), and combiner throughput (for FC). The runtime math control plane reads these metrics and adapts validation routing accordingly.
 
@@ -3502,7 +3502,7 @@ XDR (External Data Representation, RFC 4506) is what RPC and NFS speak on the wi
 
 Phase 5 (per the CHANGELOG) replaced all 68 XDR symbols with a pure-Rust implementation. The implementation lives in `crates/frankenlibc-core/src/rpc/`. Key design choices:
 
-- **Type-erased XDR streams** — `XdrEncode` and `XdrDecode` traits cover the basic XDR types; complex types compose via `xdr_array`, `xdr_pointer`, etc.
+- **Function-per-type encoding pattern** — each basic XDR type has a dedicated `xdr_<type>` function (`xdr_int`, `xdr_long`, `xdr_string`, etc.); complex types compose via `xdr_array`, `xdr_pointer`, `xdr_union`, and a shared `XDR` stream state. No encoder/decoder trait abstraction is layered over them; the API mirrors glibc's C-style entry points one-for-one.
 - **Bounded recursion** — `xdr_pointer` and `xdr_union` track recursion depth and refuse to recurse beyond a configured limit. This defeats the "4 GB XDR DoS" bug Phase 10 discovered: a malicious payload with deeply-nested pointers would have exhausted the stack.
 - **`elsize=0` rejection** — `xdr_array(eltsize=0, ...)` returns `false` (XDR failure) rather than computing nonsense. Phase 10's fuzz_xdr campaign caught this case explicitly.
 - **No external state** — every XDR call is stateless beyond the explicit stream pointer. No global lookup tables, no per-process registries.
