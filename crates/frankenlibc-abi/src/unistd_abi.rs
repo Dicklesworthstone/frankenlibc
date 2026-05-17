@@ -19646,9 +19646,38 @@ impl AliasIterState {
     }
 }
 
+// SAFETY: `AliasIterState` is process-owned scratch state keyed by kernel
+// thread id under the owned-TLS experiment. The raw member pointer array is
+// rebuilt from `entry_buf` before each returned alias entry and never crosses
+// slots.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for AliasIterState {}
+
+#[cfg(feature = "owned-tls-cache")]
+static ALIAS_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<AliasIterState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(AliasIterState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static ALIAS_ITER: std::cell::UnsafeCell<AliasIterState> =
         const { std::cell::UnsafeCell::new(AliasIterState::new()) };
+}
+
+#[inline]
+fn with_alias_iter_state<R>(callback: impl FnOnce(&mut AliasIterState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        ALIAS_ITER_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        ALIAS_ITER.with(|cell| {
+            // SAFETY: ALIAS_ITER is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 // Parse an /etc/aliases line into name + member list.
@@ -19733,8 +19762,7 @@ unsafe fn alias_iter_next(state: &mut AliasIterState) -> *mut c_void {
 /// `endaliasent` — close alias database iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endaliasent() {
-    ALIAS_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_alias_iter_state(|state| {
         state.reader = None;
     });
 }
@@ -19761,8 +19789,7 @@ pub unsafe extern "C" fn getaliasbyname(name: *const c_char) -> *mut c_void {
         if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(line)
             && entry.name.eq_ignore_ascii_case(&needle)
         {
-            return ALIAS_ITER.with(|cell| {
-                let state = unsafe { &mut *cell.get() };
+            return with_alias_iter_state(|state| {
                 let member_refs: Vec<&[u8]> = entry.members.iter().map(|v| v.as_slice()).collect();
                 unsafe { fill_aliasent_buf(state, &entry.name, &member_refs) }
             });
@@ -19856,8 +19883,7 @@ pub unsafe extern "C" fn getaliasbyname_r(
 /// `getaliasent` — get next alias entry from /etc/aliases.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaliasent() -> *mut c_void {
-    let result = ALIAS_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    let result = with_alias_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(ALIASES_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
@@ -19888,8 +19914,7 @@ pub unsafe extern "C" fn getaliasent_r(
         return libc::EINVAL;
     }
 
-    ALIAS_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_alias_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(ALIASES_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),

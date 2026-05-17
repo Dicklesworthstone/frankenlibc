@@ -581,8 +581,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 20,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver nsaddr, getmntent, cuserid, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, and netgroup iterator state",
+        substituted == 21,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver nsaddr, getmntent, cuserid, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state",
     )?;
     require(
         substituted + remaining == total,
@@ -629,7 +629,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && unistd.contains("PROTO_ITER_OWNED_TLS")
             && unistd.contains("HOST_ITER_OWNED_TLS")
             && unistd.contains("NETGROUP_ITER_OWNED_TLS")
+            && unistd.contains("ALIAS_ITER_OWNED_TLS")
             && unistd.contains("crate::owned_tls_cache::OwnedTlsCache"),
-        "unistd ABI must route the crypt/gensalt, NIS helper, resolver nsaddr, getmntent, cuserid, utmp-state, pututxline return-buffer, NSS systemd block-flag, fstab-state, ttyent-state, getdate-tm, services-iterator, networks-iterator, protocols-iterator, hosts-iterator, and netgroup-iterator slices through owned TLS cache",
+        "unistd ABI must route the crypt/gensalt, NIS helper, resolver nsaddr, getmntent, cuserid, utmp-state, pututxline return-buffer, NSS systemd block-flag, fstab-state, ttyent-state, getdate-tm, services-iterator, networks-iterator, protocols-iterator, hosts-iterator, netgroup-iterator, and alias-iterator slices through owned TLS cache",
     )
 }
