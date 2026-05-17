@@ -116,22 +116,53 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     candidates = packet.get("cleanup_candidates", [])
     if not candidates:
         add_error(source, "missing_cleanup_candidates", "packet must include approval-only cleanup candidates")
+    candidate_paths = set()
     for candidate in candidates:
         if not isinstance(candidate, dict):
             add_error(source, "malformed_candidate", "cleanup candidate must be an object")
             continue
+        candidate_paths.add(candidate.get("path"))
         if candidate.get("requires_explicit_approval") is not True:
             add_error(source, "candidate_not_approval_gated", f"{candidate.get('path')} lacks approval gate")
         if candidate.get("executed") is not False:
             add_error(source, "candidate_executed", f"{candidate.get('path')} must remain executed=false")
         if not str(candidate.get("path", "")).startswith("/data/projects/"):
             add_error(source, "candidate_path_scope", f"{candidate.get('path')} is outside /data/projects")
+        if candidate.get("estimated_size_gb") is not None and (not is_number(candidate.get("estimated_size_gb")) or float(candidate.get("estimated_size_gb")) < 0):
+            add_error(source, "invalid_candidate_size_estimate", f"{candidate.get('path')} has invalid estimated_size_gb={candidate.get('estimated_size_gb')}")
+
+    recommended = packet.get("recommended_cleanup_candidates", [])
+    if not isinstance(recommended, list):
+        add_error(source, "malformed_recommended_candidates", "recommended_cleanup_candidates must be a list")
+        recommended = []
+    for candidate in recommended:
+        if not isinstance(candidate, dict):
+            add_error(source, "malformed_recommended_candidate", "recommended cleanup candidate must be an object")
+            continue
+        path = candidate.get("path")
+        if path not in candidate_paths:
+            add_error(source, "recommended_candidate_not_listed", f"{path} is not present in cleanup_candidates")
+        if candidate.get("requires_explicit_approval") is not True:
+            add_error(source, "recommended_candidate_not_approval_gated", f"{path} lacks approval gate")
+        if candidate.get("executed") is not False:
+            add_error(source, "recommended_candidate_executed", f"{path} must remain executed=false")
+        if candidate.get("recommendation_kind") != "smallest_listed_candidate_meeting_estimated_gap":
+            add_error(source, "recommended_candidate_kind", f"{path} has unexpected recommendation_kind")
+        size_gb = candidate.get("estimated_size_gb")
+        gap_gb = candidate.get("estimated_gap_gb")
+        if not is_number(size_gb) or float(size_gb) < 0:
+            add_error(source, "invalid_recommended_candidate_size", f"{path} has invalid estimated_size_gb={size_gb}")
+        if not is_number(gap_gb) or float(gap_gb) < 0:
+            add_error(source, "invalid_recommended_candidate_gap", f"{path} has invalid estimated_gap_gb={gap_gb}")
+        elif is_number(size_gb) and float(size_gb) < float(gap_gb):
+            add_error(source, "recommended_candidate_too_small", f"{path} is smaller than estimated gap")
 
     approval = packet.get("approval_request", {})
     required_approval_fields = [
         "operator_summary",
         "exact_worker_ids",
         "exact_candidate_paths",
+        "smallest_sufficient_candidate_paths",
         "why_read_only_collection_is_insufficient",
         "explicit_user_text_required_before_cleanup",
         "commands_not_executed",
@@ -160,6 +191,13 @@ def first_critical_worker(packet: dict[str, Any]) -> dict[str, Any] | None:
     for worker in packet.get("workers", []):
         if isinstance(worker, dict) and worker.get("pressure_state") == "critical":
             return worker
+    return None
+
+
+def first_recommended_candidate(packet: dict[str, Any]) -> dict[str, Any] | None:
+    for candidate in packet.get("recommended_cleanup_candidates", []):
+        if isinstance(candidate, dict):
+            return candidate
     return None
 
 
@@ -213,6 +251,20 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             f"{source}::invalid_pressure_gap_estimate",
             "invalid_pressure_gap_estimate",
             "set negative estimated_gb_needed_to_reach_target_ratio on first critical worker",
+        )
+
+    too_small_recommendation_packet = deepcopy(packet)
+    candidate = first_recommended_candidate(too_small_recommendation_packet)
+    if candidate is None:
+        add_error(source, "negative_control_no_recommended_candidate", "golden packet has no recommended candidate for mutation")
+    else:
+        candidate["estimated_size_gb"] = 0.0
+        candidate["estimated_gap_gb"] = 1.0
+        expect_validation_failure(
+            too_small_recommendation_packet,
+            f"{source}::recommended_candidate_too_small",
+            "recommended_candidate_too_small",
+            "make first recommended candidate smaller than its estimated gap",
         )
 
 

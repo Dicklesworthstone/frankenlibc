@@ -109,6 +109,7 @@
         "path": "/data/projects/franken_engine/target_PearlTower_focused",
         "size_human": "15G",
         "size_bytes": null,
+        "estimated_size_gb": 15.0,
         "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
         "candidate_kind": "build_target_dir",
         "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
@@ -121,12 +122,45 @@
         "path": "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
         "size_human": "564M",
         "size_bytes": null,
+        "estimated_size_gb": 0.551,
         "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
         "candidate_kind": "build_incremental_dir",
         "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
         "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
         "requires_explicit_approval": true,
         "executed": false
+      }
+    ],
+    "recommended_cleanup_candidates": [
+      {
+        "worker_id": "vmi1264463",
+        "path": "/data/projects/franken_engine/target_PearlTower_focused",
+        "size_human": "15G",
+        "size_bytes": null,
+        "estimated_size_gb": 15.0,
+        "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
+        "candidate_kind": "build_target_dir",
+        "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
+        "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
+        "requires_explicit_approval": true,
+        "executed": false,
+        "estimated_gap_gb": 5.009,
+        "recommendation_kind": "smallest_listed_candidate_meeting_estimated_gap"
+      },
+      {
+        "worker_id": "vmi1149989",
+        "path": "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
+        "size_human": "564M",
+        "size_bytes": null,
+        "estimated_size_gb": 0.551,
+        "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
+        "candidate_kind": "build_incremental_dir",
+        "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
+        "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
+        "requires_explicit_approval": true,
+        "executed": false,
+        "estimated_gap_gb": 0.255,
+        "recommendation_kind": "smallest_listed_candidate_meeting_estimated_gap"
       }
     ],
     "approval_request": {
@@ -136,6 +170,10 @@
         "vmi1264463"
       ],
       "exact_candidate_paths": [
+        "/data/projects/franken_engine/target_PearlTower_focused",
+        "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9"
+      ],
+      "smallest_sufficient_candidate_paths": [
         "/data/projects/franken_engine/target_PearlTower_focused",
         "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9"
       ],
@@ -177,6 +215,7 @@
   "golden_markdown_required_lines": [
     "# rch Pressure Approval Packet",
     "Worker Pressure Gaps",
+    "Smallest Sufficient Listed Candidates",
     "Cleanup Candidates",
     "requires explicit written approval; not executed",
     "This packet is read-only evidence. It does not authorize cleanup.",

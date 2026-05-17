@@ -159,6 +159,16 @@ def estimated_gap_to_target_ratio_gb(worker: dict[str, Any]) -> float | None:
     return round(max(0.0, (total_gb * CRITICAL_FREE_RATIO_TARGET) - free_gb), 3)
 
 
+def human_size_to_gb(size: str) -> float | None:
+    match = re.match(r"^(?P<value>[0-9]+(?:\.[0-9]+)?)(?P<unit>[KMGT])$", size.strip(), re.IGNORECASE)
+    if not match:
+        return None
+    value = float(match.group("value"))
+    unit = match.group("unit").upper()
+    factors = {"K": 1 / (1024 * 1024), "M": 1 / 1024, "G": 1.0, "T": 1024.0}
+    return round(value * factors[unit], 3)
+
+
 def worker_probe_signature(worker_id: str, worker_status: str) -> str:
     worker_err = err_text(f"worker_{worker_id}")
     worker_out = text(f"worker_{worker_id}")
@@ -200,6 +210,7 @@ def cleanup_candidates(worker_id: str, worker_out: str) -> list[dict[str, Any]]:
                 "path": path,
                 "size_human": size,
                 "size_bytes": None,
+                "estimated_size_gb": human_size_to_gb(size),
                 "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
                 "candidate_kind": candidate_kind,
                 "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
@@ -286,6 +297,34 @@ workers, candidates = parse_workers(status_json)
 candidate_worker_ids = sorted({candidate["worker_id"] for candidate in candidates})
 candidate_paths = [candidate["path"] for candidate in candidates]
 
+
+def smallest_sufficient_candidates(workers: list[dict[str, Any]], candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    recommended: list[dict[str, Any]] = []
+    for worker in workers:
+        if worker.get("pressure_state") != "critical":
+            continue
+        gap_gb = float_or_none(worker.get("estimated_gb_needed_to_reach_target_ratio"))
+        if gap_gb is None or gap_gb <= 0:
+            continue
+        worker_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.get("worker_id") == worker.get("worker_id")
+            and float_or_none(candidate.get("estimated_size_gb")) is not None
+            and float(candidate["estimated_size_gb"]) >= gap_gb
+        ]
+        if not worker_candidates:
+            continue
+        selected = min(worker_candidates, key=lambda candidate: float(candidate["estimated_size_gb"]))
+        recommendation = dict(selected)
+        recommendation["estimated_gap_gb"] = gap_gb
+        recommendation["recommendation_kind"] = "smallest_listed_candidate_meeting_estimated_gap"
+        recommended.append(recommendation)
+    return recommended
+
+
+recommended_candidates = smallest_sufficient_candidates(workers, candidates)
+
 report = {
     "schema_version": "rch_pressure_approval_packet_schema.v1",
     "packet_id": PACKET_ID,
@@ -308,10 +347,12 @@ report = {
     "rch_gate": dry_run_summary(),
     "workers": workers,
     "cleanup_candidates": candidates,
+    "recommended_cleanup_candidates": recommended_candidates,
     "approval_request": {
         "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
         "exact_worker_ids": candidate_worker_ids,
         "exact_candidate_paths": candidate_paths,
+        "smallest_sufficient_candidate_paths": [candidate["path"] for candidate in recommended_candidates],
         "why_read_only_collection_is_insufficient": "Read-only collection can identify pressure and candidates, but cannot free space under repo rules.",
         "explicit_user_text_required_before_cleanup": "The user must provide written approval naming exact paths and commands before cleanup can run.",
         "commands_not_executed": [
@@ -378,6 +419,21 @@ if critical_workers:
         )
 else:
     lines.append("- No critical-pressure workers were reported by rch status.")
+lines.extend(
+    [
+        "",
+        "## Smallest Sufficient Listed Candidates",
+    ]
+)
+if recommended_candidates:
+    for candidate in recommended_candidates:
+        lines.append(
+            f"- `{candidate['worker_id']}` gap `{markdown_value(candidate.get('estimated_gap_gb'), 'G')}`; "
+            f"smallest listed candidate `{candidate['size_human']}` `{candidate['path']}` "
+            "(requires explicit written approval; not executed)"
+        )
+else:
+    lines.append("- No listed cleanup candidate was large enough to clear a worker's estimated pressure gap.")
 lines.extend(
     [
         "",
