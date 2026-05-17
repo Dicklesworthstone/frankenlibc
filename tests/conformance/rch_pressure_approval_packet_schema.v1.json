@@ -1,0 +1,303 @@
+{
+  "schema_version": "rch_pressure_approval_packet_schema.v1",
+  "bead": "bd-xvsum",
+  "purpose": "Define the approval-safe packet shape used when rch cannot select a remote worker because storage pressure blocks all cargo validation lanes.",
+  "safety_policy": {
+    "collection_mode": "read_only",
+    "destructive_actions_authorized_by_this_schema": false,
+    "destructive_action_rule": "Packet generators may report candidate cleanup paths, but they must not delete files, release ballast, rewrite git state, run package cleanup, or execute any command that can remove or overwrite data. Cleanup remains blocked until the user provides explicit written approval for exact paths and commands.",
+    "must_distinguish": [
+      "read_only_evidence",
+      "requires_explicit_approval",
+      "executed_actions"
+    ],
+    "local_cargo_fallback_rule": "A packet may record local fallback as a failure signature only. It must never count local cargo execution as validation proof."
+  },
+  "required_top_level_fields": [
+    "schema_version",
+    "packet_id",
+    "generated_at_utc",
+    "project",
+    "repo_state",
+    "rch_gate",
+    "workers",
+    "cleanup_candidates",
+    "approval_request",
+    "executed_actions",
+    "validation_commands",
+    "artifact_paths"
+  ],
+  "repo_state_fields": [
+    "cwd",
+    "branch",
+    "head_commit",
+    "origin_main_commit",
+    "origin_master_commit",
+    "worktree_list",
+    "dirty_summary",
+    "untracked_summary"
+  ],
+  "rch_gate_fields": [
+    "dry_run_command",
+    "dry_run_exit_status",
+    "would_offload",
+    "worker_selection_status",
+    "skip_reason",
+    "required_remote_env",
+    "fallback_markers_rejected"
+  ],
+  "worker_fields": [
+    "worker_id",
+    "host",
+    "status",
+    "pressure_state",
+    "pressure_reason_code",
+    "pressure_disk_free_gb",
+    "pressure_disk_free_ratio",
+    "pressure_telemetry_fresh",
+    "probe_command",
+    "probe_exit_status",
+    "probe_failure_signature",
+    "df_snapshot",
+    "sbh_snapshot",
+    "ballast_snapshot",
+    "bounded_du_findings",
+    "collection_errors"
+  ],
+  "cleanup_candidate_fields": [
+    "worker_id",
+    "path",
+    "size_human",
+    "size_bytes",
+    "source_command",
+    "candidate_kind",
+    "reason_it_might_help",
+    "risk_notes",
+    "requires_explicit_approval",
+    "executed"
+  ],
+  "allowed_worker_statuses": [
+    "healthy",
+    "disabled",
+    "unreachable",
+    "unknown"
+  ],
+  "allowed_pressure_states": [
+    "green",
+    "warning",
+    "critical",
+    "telemetry_gap",
+    "unknown"
+  ],
+  "allowed_probe_failure_signatures": [
+    "ok",
+    "RCH-E100",
+    "timeout",
+    "ssh_permission_denied",
+    "sbh_permission_denied",
+    "no_matches",
+    "unknown"
+  ],
+  "required_failure_signatures": [
+    "critical_pressure",
+    "RCH-E100",
+    "absent_or_non_releasable_ballast",
+    "local_fallback_rejected"
+  ],
+  "approval_request_contract": {
+    "must_include": [
+      "operator_summary",
+      "exact_worker_ids",
+      "exact_candidate_paths",
+      "why_read_only_collection_is_insufficient",
+      "explicit_user_text_required_before_cleanup",
+      "commands_not_executed"
+    ],
+    "must_not_include": [
+      "claim_that_cleanup_already_happened",
+      "cargo_validation_success_when_worker_selection_skipped",
+      "implicit_permission_to_delete"
+    ]
+  },
+  "example_packets": [
+    {
+      "scenario_id": "current_critical_pressure_6",
+      "packet_id": "bd-xvsum-example-critical-pressure-6",
+      "generated_at_utc": "2026-05-17T09:22:23Z",
+      "project": "frankenlibc",
+      "repo_state": {
+        "cwd": "/data/projects/frankenlibc",
+        "branch": "main",
+        "head_commit": "3b4960ef",
+        "origin_main_commit": "3b4960ef",
+        "origin_master_commit": "3b4960ef",
+        "worktree_list": [
+          "/data/projects/frankenlibc  3b4960ef [main]"
+        ],
+        "dirty_summary": "no tracked code changes in packet collection scope",
+        "untracked_summary": [
+          "=",
+          "crates/frankenlibc-harness/tests/cli_contract_manifest_paired_gate_file_test.rs",
+          "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_env_set_var_test.rs"
+        ]
+      },
+      "rch_gate": {
+        "dry_run_command": "RCH_TEST_SLOTS=1 RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS=30 RCH_PRIORITY=high rch diagnose --dry-run 'cargo test -p frankenlibc-harness --test standalone_owned_unwind_experiment_test -- --nocapture'",
+        "dry_run_exit_status": 0,
+        "would_offload": true,
+        "worker_selection_status": "skipped",
+        "skip_reason": "no admissible workers: critical_pressure=6",
+        "required_remote_env": "RCH_REQUIRE_REMOTE=1",
+        "fallback_markers_rejected": [
+          "[RCH] local",
+          "remote required; refusing local fallback"
+        ]
+      },
+      "workers": [
+        {
+          "worker_id": "vmi1149989",
+          "host": "212.90.121.76",
+          "status": "healthy",
+          "pressure_state": "critical",
+          "pressure_reason_code": "disk_critical_without_fresh_telemetry",
+          "pressure_disk_free_gb": 38.49,
+          "pressure_disk_free_ratio": 0.0497,
+          "pressure_telemetry_fresh": false,
+          "probe_command": "rch workers probe vmi1149989",
+          "probe_exit_status": 0,
+          "probe_failure_signature": "ok",
+          "df_snapshot": "/dev/sda1 774G 736G 39G 96% /; tmpfs 30G 336M 30G 2% /tmp",
+          "sbh_snapshot": "overall critical; configured pool metadata present",
+          "ballast_snapshot": "sudo sbh ballast status reports available_count=0, releasable_bytes=0, missing_count=10; /var/lib/sbh/ballast absent",
+          "bounded_du_findings": [
+            "116K /data/projects/asupersync/target"
+          ],
+          "collection_errors": []
+        },
+        {
+          "worker_id": "vmi1227854",
+          "host": "109.123.245.77",
+          "status": "healthy",
+          "pressure_state": "critical",
+          "pressure_reason_code": "disk_critical_without_fresh_telemetry",
+          "pressure_disk_free_gb": 38.02,
+          "pressure_disk_free_ratio": 0.0491,
+          "pressure_telemetry_fresh": false,
+          "probe_command": "rch workers probe vmi1227854",
+          "probe_exit_status": 0,
+          "probe_failure_signature": "ok",
+          "df_snapshot": "/dev/sda1 774G 736G 39G 96% /; tmpfs 30G 6.1G 24G 21% /tmp",
+          "sbh_snapshot": "overall critical; configured pool metadata present",
+          "ballast_snapshot": "sudo sbh ballast status reports available_count=0, releasable_bytes=0, missing_count=10; /var/lib/sbh/ballast absent",
+          "bounded_du_findings": [
+            "68K /data/projects/frankenlibc/target"
+          ],
+          "collection_errors": []
+        },
+        {
+          "worker_id": "vmi1264463",
+          "host": "38.242.209.154",
+          "status": "healthy",
+          "pressure_state": "critical",
+          "pressure_reason_code": "disk_ratio_below_critical",
+          "pressure_disk_free_gb": 53.06,
+          "pressure_disk_free_ratio": 0.0457,
+          "pressure_telemetry_fresh": true,
+          "probe_command": "rch workers probe vmi1264463",
+          "probe_exit_status": 0,
+          "probe_failure_signature": "ok",
+          "df_snapshot": "/dev/sda1 1.2T 1.1T 54G 96% /",
+          "sbh_snapshot": "overall critical",
+          "ballast_snapshot": "sudo sbh ballast status reports available_count=0, releasable_bytes=0, missing_count=10; /var/lib/sbh/ballast absent",
+          "bounded_du_findings": [
+            "15G /data/projects/franken_engine/target_PearlTower_focused",
+            "16G /data/projects/fcp-beads-a4-final-20260516T2140/target"
+          ],
+          "collection_errors": []
+        },
+        {
+          "worker_id": "vmi1152480",
+          "host": "109.205.181.92",
+          "status": "disabled",
+          "pressure_state": "telemetry_gap",
+          "pressure_reason_code": "disk_metrics_unavailable",
+          "pressure_disk_free_gb": null,
+          "pressure_disk_free_ratio": null,
+          "pressure_telemetry_fresh": false,
+          "probe_command": "rch workers probe vmi1152480",
+          "probe_exit_status": 1,
+          "probe_failure_signature": "RCH-E100",
+          "df_snapshot": null,
+          "sbh_snapshot": null,
+          "ballast_snapshot": null,
+          "bounded_du_findings": [],
+          "collection_errors": [
+            "SSH connection failed for ubuntu@109.205.181.92"
+          ]
+        }
+      ],
+      "cleanup_candidates": [
+        {
+          "worker_id": "vmi1264463",
+          "path": "/data/projects/fcp-beads-a4-final-20260516T2140/target",
+          "size_human": "16G",
+          "size_bytes": null,
+          "source_command": "find /data/projects -maxdepth 2 -type d \\( -name target -o -name 'target_*' -o -name 'target-*' \\) -prune -exec du -sh {} +",
+          "candidate_kind": "build_target_dir",
+          "reason_it_might_help": "Could move vmi1264463 closer to the rch disk-ratio admissibility threshold.",
+          "risk_notes": "Repository work may be embedded in target-adjacent state; deletion requires exact written approval.",
+          "requires_explicit_approval": true,
+          "executed": false
+        },
+        {
+          "worker_id": "vmi1264463",
+          "path": "/data/projects/franken_engine/target_PearlTower_focused",
+          "size_human": "15G",
+          "size_bytes": null,
+          "source_command": "find /data/projects -maxdepth 2 -type d \\( -name target -o -name 'target_*' -o -name 'target-*' \\) -prune -exec du -sh {} +",
+          "candidate_kind": "build_target_dir",
+          "reason_it_might_help": "Could move vmi1264463 closer to the rch disk-ratio admissibility threshold.",
+          "risk_notes": "Repository work may be embedded in target-adjacent state; deletion requires exact written approval.",
+          "requires_explicit_approval": true,
+          "executed": false
+        }
+      ],
+      "approval_request": {
+        "operator_summary": "rch cannot run FrankenLibC cargo validation because all healthy workers are excluded by critical storage pressure and disabled workers fail SSH probes.",
+        "exact_worker_ids": [
+          "vmi1264463"
+        ],
+        "exact_candidate_paths": [
+          "/data/projects/fcp-beads-a4-final-20260516T2140/target",
+          "/data/projects/franken_engine/target_PearlTower_focused"
+        ],
+        "why_read_only_collection_is_insufficient": "No releasable SBH ballast was found and the remaining candidates require deletion-level cleanup.",
+        "explicit_user_text_required_before_cleanup": "The user must provide written approval that names the exact paths and commands before cleanup can run.",
+        "commands_not_executed": [
+          "no file deletion command executed",
+          "no sbh ballast release command executed",
+          "no git cleanup command executed"
+        ]
+      },
+      "executed_actions": [
+        {
+          "action": "read_only_rch_status",
+          "executed": true
+        },
+        {
+          "action": "read_only_worker_df_sbh_du",
+          "executed": true
+        }
+      ],
+      "validation_commands": [
+        "jq empty tests/conformance/rch_pressure_approval_packet_schema.v1.json",
+        "git diff --check -- tests/conformance/rch_pressure_approval_packet_schema.v1.json .beads/issues.jsonl",
+        "AGENT_NAME=SunnyHeron br dep cycles --json",
+        "AGENT_NAME=SunnyHeron br sync --status --json"
+      ],
+      "artifact_paths": [
+        "tests/conformance/rch_pressure_approval_packet_schema.v1.json"
+      ]
+    }
+  ]
+}
