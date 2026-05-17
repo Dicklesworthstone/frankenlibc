@@ -347,10 +347,11 @@ EXPECTED_FAILURE_CLASSIFICATIONS = {
     "host_glibc_dependency": "claim_blocked",
     "artifact_dependency_inspection_failed": "claim_blocked",
     "symbol_evidence_missing": "claim_blocked",
+    "rch_local_fallback": "claim_blocked",
 }
 
 EXPECTED_CLAIM_POLICY = {
-    "current_level_must_remain": "L0",
+    "current_level_must_remain": "L1",
     "successful_forge_is_not_promotion": True,
     "claim_unblocked_only_when": [
         "artifact_status=current",
@@ -935,6 +936,12 @@ def run_command(command, *, env=None, cwd=root, timeout=900):
         }
 
 
+def detected_rch_local_fallback(command, result):
+    if not command or Path(command[0]).name != "rch":
+        return False
+    return "[RCH] local" in (result["stdout"] + "\n" + result["stderr"])
+
+
 def first_nonempty_line(text):
     for line in text.splitlines():
         stripped = line.strip()
@@ -1139,8 +1146,8 @@ def validate_manifest():
         errors.append("packaging_spec replace profile must require standalone feature")
     if replace_spec.get("host_glibc_required") is not False:
         errors.append("packaging_spec replace profile must declare host_glibc_required=false")
-    if levels.get("current_level") != "L0":
-        errors.append("replacement level must remain L0 while this gate only forges evidence")
+    if levels.get("current_level") != "L1":
+        errors.append("replacement level must remain L1 while this gate only forges evidence")
 
     checks["manifest_contract"] = "pass" if not errors else "fail"
 
@@ -1228,17 +1235,26 @@ def forge_artifact():
         result = run_command(command, env=env)
         write_text(build_stdout, result["stdout"])
         write_text(build_stderr, result["stderr"])
+        rch_local_fallback = detected_rch_local_fallback(command, result)
+        build_failed = result["returncode"] != 0 or rch_local_fallback
         append_log(
             "build",
             artifact_path=None,
-            artifact_status="build_failed" if result["returncode"] != 0 else "build_completed",
-            claim_status="claim_blocked" if result["returncode"] != 0 else "build_completed",
+            artifact_status="build_failed" if build_failed else "build_completed",
+            claim_status="claim_blocked" if build_failed else "build_completed",
             artifact_hash=None,
             command=command,
             exit_code=result["returncode"],
-            failure_signature="build_failed" if result["returncode"] != 0 else "none",
+            failure_signature=(
+                "rch_local_fallback"
+                if rch_local_fallback
+                else ("build_failed" if result["returncode"] != 0 else "none")
+            ),
             refs=[rel(build_stdout), rel(build_stderr)],
         )
+        if rch_local_fallback:
+            errors.append("rch local fallback is not valid standalone replacement proof")
+            return None
         if result["returncode"] != 0:
             errors.append("standalone replacement build command failed")
             return None

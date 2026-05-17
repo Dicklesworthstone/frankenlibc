@@ -1199,6 +1199,7 @@ fn manifest_matches_forge_contract() {
             ("host_glibc_dependency", "claim_blocked"),
             ("artifact_dependency_inspection_failed", "claim_blocked"),
             ("symbol_evidence_missing", "claim_blocked"),
+            ("rch_local_fallback", "claim_blocked"),
         ])
     );
     for signature in [
@@ -1209,12 +1210,13 @@ fn manifest_matches_forge_contract() {
         "host_glibc_dependency",
         "artifact_dependency_inspection_failed",
         "symbol_evidence_missing",
+        "rch_local_fallback",
     ] {
         assert!(classifications.contains(signature), "missing {signature}");
     }
     assert_eq!(
         manifest["claim_policy"]["current_level_must_remain"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         manifest["claim_policy"]["successful_forge_is_not_promotion"].as_bool(),
@@ -1696,7 +1698,7 @@ fn validate_only_rejects_claim_policy_contract_drift() {
         "standalone-artifact-claim-policy-drift-manifest",
         |manifest| {
             manifest["claim_policy"]["current_level_must_remain"] =
-                serde_json::Value::String("L1".to_owned());
+                serde_json::Value::String("L2".to_owned());
             manifest["claim_policy"]["successful_forge_is_not_promotion"] =
                 serde_json::Value::Bool(false);
             let criteria = manifest["claim_policy"]["claim_unblocked_only_when"]

@@ -202,10 +202,15 @@
       "failure_signature": "symbol_evidence_missing",
       "expected_result": "claim_blocked",
       "description": "The artifact exists, but sampled public replacement symbols are missing from dynamic-symbol evidence."
+    },
+    {
+      "failure_signature": "rch_local_fallback",
+      "expected_result": "claim_blocked",
+      "description": "The forge build fell back to local execution, which is not accepted as standalone replacement proof."
     }
   ],
   "claim_policy": {
-    "current_level_must_remain": "L0",
+    "current_level_must_remain": "L1",
     "successful_forge_is_not_promotion": true,
     "claim_unblocked_only_when": [
       "artifact_status=current",
