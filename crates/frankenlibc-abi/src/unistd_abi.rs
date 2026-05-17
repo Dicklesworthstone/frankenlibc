@@ -25035,8 +25035,36 @@ pub unsafe extern "C" fn _nss_systemd_initgroups_dyn(
     NSS_STATUS_NOTFOUND
 }
 
+const fn empty_nss_systemd_block_flag() -> c_int {
+    0
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static NSS_SYSTEMD_BLOCK_FLAG_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_nss_systemd_block_flag);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static NSS_SYSTEMD_BLOCK_FLAG: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
+    static NSS_SYSTEMD_BLOCK_FLAG: std::cell::Cell<c_int> =
+        const { std::cell::Cell::new(empty_nss_systemd_block_flag()) };
+}
+
+#[inline]
+fn with_nss_systemd_block_flag<R>(callback: impl FnOnce(&mut c_int) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        NSS_SYSTEMD_BLOCK_FLAG_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NSS_SYSTEMD_BLOCK_FLAG.with(|cell| {
+            let mut flag = cell.get();
+            let result = callback(&mut flag);
+            cell.set(flag);
+            result
+        })
+    }
 }
 
 /// `_nss_systemd_block(b) -> int` — set the per-thread reentrancy
@@ -25044,9 +25072,9 @@ thread_local! {
 /// break recursion when nss_systemd itself calls into NSS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn _nss_systemd_block(b: c_int) -> c_int {
-    NSS_SYSTEMD_BLOCK_FLAG.with(|f| {
-        let prev = f.get();
-        f.set(b);
+    with_nss_systemd_block_flag(|flag| {
+        let prev = *flag;
+        *flag = b;
         prev
     })
 }
@@ -25055,7 +25083,7 @@ pub extern "C" fn _nss_systemd_block(b: c_int) -> c_int {
 /// reentrancy guard flag (non-zero ⇒ blocked).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn _nss_systemd_is_blocked() -> c_int {
-    NSS_SYSTEMD_BLOCK_FLAG.with(|f| f.get())
+    with_nss_systemd_block_flag(|flag| *flag)
 }
 
 // ---------------------------------------------------------------------------
