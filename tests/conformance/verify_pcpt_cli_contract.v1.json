@@ -42,8 +42,8 @@
     "must_emit_exactly_one_jsonl_record": true,
     "ok_true_iff_verify_pcpt_succeeds": true,
     "exit_non_zero_when_ok_false": true,
-    "too_short_input_must_fail_closed_with_TooShort_error": true,
-    "non_magic_bytes_must_fail_closed_with_BadMagic_error": true,
+    "too_short_input_must_fail_closed_with_too_short_error": true,
+    "non_magic_bytes_must_fail_closed_with_bad_magic_error": true,
     "missing_pcpt_file_must_fail_closed": true
   },
   "rejected_evidence_kinds": [

@@ -124,12 +124,12 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
             "exit_non_zero_when_ok_false must be true",
         ),
         (
-            "too_short_input_must_fail_closed_with_TooShort_error",
-            "too_short_input_must_fail_closed_with_TooShort_error must be true",
+            "too_short_input_must_fail_closed_with_too_short_error",
+            "too_short_input_must_fail_closed_with_too_short_error must be true",
         ),
         (
-            "non_magic_bytes_must_fail_closed_with_BadMagic_error",
-            "non_magic_bytes_must_fail_closed_with_BadMagic_error must be true",
+            "non_magic_bytes_must_fail_closed_with_bad_magic_error",
+            "non_magic_bytes_must_fail_closed_with_bad_magic_error must be true",
         ),
         (
             "missing_pcpt_file_must_fail_closed",

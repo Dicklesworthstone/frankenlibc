@@ -37,7 +37,7 @@
     "echoes_inputs_into_output_record": true,
     "indices_array_length_equals_degree": true,
     "degree_zero_when_k_source_zero": true,
-    "degree_at_or_below_REPAIR_MAX_DEGREE_V1": true,
+    "degree_at_or_below_repair_max_degree_v1": true,
     "degree_at_or_below_k_source_when_positive": true,
     "indices_all_below_k_source_when_positive": true,
     "indices_all_distinct": true,

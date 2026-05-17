@@ -142,8 +142,8 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
             "degree_zero_when_k_source_zero must be true",
         ),
         (
-            "degree_at_or_below_REPAIR_MAX_DEGREE_V1",
-            "degree_at_or_below_REPAIR_MAX_DEGREE_V1 must be true",
+            "degree_at_or_below_repair_max_degree_v1",
+            "degree_at_or_below_repair_max_degree_v1 must be true",
         ),
         (
             "degree_at_or_below_k_source_when_positive",

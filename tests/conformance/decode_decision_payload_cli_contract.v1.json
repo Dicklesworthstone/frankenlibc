@@ -49,7 +49,7 @@
     "ok_true_iff_decode_succeeds": true,
     "exit_non_zero_when_ok_false": true,
     "wrong_payload_size_must_fail_closed": true,
-    "zero_bytes_payload_must_fail_with_BadMagic": true,
+    "zero_bytes_payload_must_fail_with_bad_magic": true,
     "missing_payload_file_must_fail_closed": true
   },
   "rejected_evidence_kinds": [

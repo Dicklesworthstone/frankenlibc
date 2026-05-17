@@ -147,8 +147,8 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
             "wrong_payload_size_must_fail_closed must be true",
         ),
         (
-            "zero_bytes_payload_must_fail_with_BadMagic",
-            "zero_bytes_payload_must_fail_with_BadMagic must be true",
+            "zero_bytes_payload_must_fail_with_bad_magic",
+            "zero_bytes_payload_must_fail_with_bad_magic must be true",
         ),
         (
             "missing_payload_file_must_fail_closed",
