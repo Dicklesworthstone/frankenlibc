@@ -101,6 +101,14 @@ def validate_pre_cleanup_checks(source: str, path: Any, checks: Any, missing_sig
         else:
             if isinstance(path, str) and path not in command:
                 add_error(source, "pre_cleanup_check_missing_path", f"{path} check command does not name path")
+            if "-o BatchMode=yes" not in command or "-i " not in command:
+                add_error(
+                    source,
+                    "pre_cleanup_check_may_prompt",
+                    f"{path} check command must be noninteractive and name an identity file",
+                )
+            if "-o ConnectTimeout=" not in command:
+                add_error(source, "pre_cleanup_check_missing_timeout", f"{path} check command must bound connection time")
             if FORBIDDEN_PRE_CLEANUP_COMMAND.search(command):
                 add_error(source, "pre_cleanup_check_not_read_only", f"{path} check command is not read-only")
             if kind == "sbh_protect_marker_absence" and ".sbh-protect" not in command:
@@ -334,6 +342,24 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             "recommended_candidate_missing_pre_cleanup_checks",
             "remove read-only pre-cleanup checks from first recommended candidate",
         )
+
+    prompting_check_packet = deepcopy(packet)
+    candidate = first_recommended_candidate(prompting_check_packet)
+    if candidate is None:
+        add_error(source, "negative_control_no_recommended_candidate", "golden packet has no recommended candidate for mutation")
+    else:
+        checks = candidate.get("pre_cleanup_read_only_checks")
+        if isinstance(checks, list) and checks:
+            checks[0]["command"] = re.sub(r"\s-o BatchMode=yes", "", str(checks[0].get("command", "")))
+            checks[0]["command"] = re.sub(r"\s-i\s+\S+", "", checks[0]["command"])
+            expect_validation_failure(
+                prompting_check_packet,
+                f"{source}::pre_cleanup_check_may_prompt",
+                "pre_cleanup_check_may_prompt",
+                "remove BatchMode and identity file from first recommended pre-cleanup command",
+            )
+        else:
+            add_error(source, "negative_control_no_pre_cleanup_check", "golden packet has no pre-cleanup check for mutation")
 
 
 golden = load_json(GOLDEN)

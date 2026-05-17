@@ -79,7 +79,7 @@ if [[ "${SSH_ENABLED}" == "1" && -s "${RAW_DIR}/rch_status.out" && -r "${SSH_KEY
   done
 fi
 
-python3 - "${ROOT}" "${RAW_DIR}" "${REPORT}" "${MARKDOWN}" "${PACKET_ID}" "${FOCUS_CMD}" <<'PY'
+python3 - "${ROOT}" "${RAW_DIR}" "${REPORT}" "${MARKDOWN}" "${PACKET_ID}" "${FOCUS_CMD}" "${SSH_KEY}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -96,6 +96,7 @@ REPORT = pathlib.Path(sys.argv[3])
 MARKDOWN = pathlib.Path(sys.argv[4])
 PACKET_ID = sys.argv[5]
 FOCUS_CMD = sys.argv[6]
+SSH_KEY = sys.argv[7]
 
 
 def utc_now() -> str:
@@ -172,19 +173,21 @@ def human_size_to_gb(size: str) -> float | None:
 
 def read_only_pre_cleanup_checks(host: str, path: str) -> list[dict[str, str]]:
     ssh_target = shlex.quote(f"ubuntu@{host}")
+    ssh_key = shlex.quote(SSH_KEY)
+    ssh_prefix = f"ssh -o BatchMode=yes -o ConnectTimeout=10 -i {ssh_key} {ssh_target}"
     path_arg = shlex.quote(path)
     protect_cmd = f"if test -e {path_arg}; then find {path_arg} -name .sbh-protect -print -quit; fi"
     lsof_cmd = f"if test -e {path_arg}; then sudo -n lsof +D {path_arg} 2>/dev/null | head -20; fi"
     return [
         {
             "check_kind": "sbh_protect_marker_absence",
-            "command": f"ssh {ssh_target} {shlex.quote(protect_cmd)}",
+            "command": f"{ssh_prefix} {shlex.quote(protect_cmd)}",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit",
         },
         {
             "check_kind": "open_file_absence",
-            "command": f"ssh {ssh_target} {shlex.quote(lsof_cmd)}",
+            "command": f"{ssh_prefix} {shlex.quote(lsof_cmd)}",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit",
         },

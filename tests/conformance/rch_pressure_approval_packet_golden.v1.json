@@ -114,13 +114,13 @@
         "pre_cleanup_read_only_checks": [
           {
             "check_kind": "sbh_protect_marker_absence",
-            "command": "ssh ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
           },
           {
             "check_kind": "open_file_absence",
-            "command": "ssh ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
           }
@@ -142,13 +142,13 @@
         "pre_cleanup_read_only_checks": [
           {
             "check_kind": "sbh_protect_marker_absence",
-            "command": "ssh ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then find /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 -name .sbh-protect -print -quit; fi'",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then find /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 -name .sbh-protect -print -quit; fi'",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
           },
           {
             "check_kind": "open_file_absence",
-            "command": "ssh ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then sudo -n lsof +D /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 2>/dev/null | head -20; fi'",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then sudo -n lsof +D /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 2>/dev/null | head -20; fi'",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
           }
@@ -172,13 +172,13 @@
         "pre_cleanup_read_only_checks": [
           {
             "check_kind": "sbh_protect_marker_absence",
-            "command": "ssh ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
           },
           {
             "check_kind": "open_file_absence",
-            "command": "ssh ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
           }
@@ -202,13 +202,13 @@
         "pre_cleanup_read_only_checks": [
           {
             "check_kind": "sbh_protect_marker_absence",
-            "command": "ssh ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then find /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 -name .sbh-protect -print -quit; fi'",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then find /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 -name .sbh-protect -print -quit; fi'",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
           },
           {
             "check_kind": "open_file_absence",
-            "command": "ssh ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then sudo -n lsof +D /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 2>/dev/null | head -20; fi'",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@212.90.121.76 'if test -e /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9; then sudo -n lsof +D /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9 2>/dev/null | head -20; fi'",
             "expected_safe_result": "exit 0 with no stdout",
             "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
           }
