@@ -290,6 +290,18 @@ def validate_contract(contract: dict[str, Any]) -> list[dict[str, str]]:
 
 def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) -> list[dict[str, Any]]:
     controls: list[dict[str, Any]] = []
+
+    missing_forbidden = deepcopy(contract)
+    missing_forbidden["forbidden_sources"] = [".beads/beads.db", ".beads/issues.db", "br"]
+    signatures = {err["failure_signature"] for err in validate_contract(missing_forbidden)}
+    controls.append(
+        {
+            "name": "missing_forbidden_source_fails_contract",
+            "expected_signature": "forbidden_source_missing",
+            "status": "pass" if "forbidden_source_missing" in signatures else "fail",
+        }
+    )
+
     base = deepcopy(rows)
     base.append(
         {

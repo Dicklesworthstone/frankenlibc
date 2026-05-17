@@ -52,6 +52,7 @@
     "failures"
   ],
   "required_negative_controls": [
+    "missing_forbidden_source_fails_contract",
     "blocks_dependency_excludes_ready",
     "old_in_progress_is_stale",
     "permissioned_ready_is_separated",
