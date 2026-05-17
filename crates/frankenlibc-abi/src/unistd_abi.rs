@@ -10501,8 +10501,31 @@ impl UtmpState {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static UTMP_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<UtmpState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(UtmpState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static UTMP_TLS: std::cell::RefCell<UtmpState> = const { std::cell::RefCell::new(UtmpState::new()) };
+    static UTMP_TLS: std::cell::UnsafeCell<UtmpState> =
+        const { std::cell::UnsafeCell::new(UtmpState::new()) };
+}
+
+#[inline]
+fn with_utmp_state<R>(f: impl FnOnce(&mut UtmpState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        UTMP_STATE_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        UTMP_TLS.with(|cell| {
+            // SAFETY: UTMP_TLS is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            f(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// POSIX `getutent` — read the next entry from the utmp file.
@@ -10511,20 +10534,19 @@ std::thread_local! {
 /// Returns NULL on EOF or error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getutent() -> *mut c_void {
-    UTMP_TLS.with(|cell| cell.borrow_mut().next_entry())
+    with_utmp_state(UtmpState::next_entry)
 }
 
 /// POSIX `setutent` — rewind utmp file to beginning.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setutent() {
-    UTMP_TLS.with(|cell| cell.borrow_mut().rewind());
+    with_utmp_state(UtmpState::rewind);
 }
 
 /// POSIX `endutent` — close utmp file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endutent() {
-    UTMP_TLS.with(|cell| {
-        let mut state = cell.borrow_mut();
+    with_utmp_state(|state| {
         state.data.clear();
         state.offset = 0;
         state.loaded = false;
@@ -10545,7 +10567,7 @@ pub unsafe extern "C" fn utmpname(file: *const c_char) -> c_int {
         return -1;
     };
     let path_str = std::str::from_utf8(&path_bytes).unwrap_or(UTMP_DEFAULT_PATH);
-    UTMP_TLS.with(|cell| cell.borrow_mut().set_path(path_str));
+    with_utmp_state(|state| state.set_path(path_str));
     0
 }
 
@@ -18957,8 +18979,7 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     if ut.is_null() {
         return std::ptr::null_mut();
     }
-    let path = UTMP_TLS.with(|cell| {
-        let state = cell.borrow();
+    let path = with_utmp_state(|state| {
         if state.path.is_empty() {
             UTMP_DEFAULT_PATH.to_string()
         } else {
