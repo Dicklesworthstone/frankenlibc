@@ -14634,16 +14634,45 @@ pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -
 // ---------------------------------------------------------------------------
 
 /// POSIX `cuserid` — get login name (deprecated).
+const CUSERID_BUFSIZE: usize = 32;
+
+const fn empty_cuserid_buf() -> [u8; CUSERID_BUFSIZE] {
+    [0u8; CUSERID_BUFSIZE]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static CUSERID_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; CUSERID_BUFSIZE]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_cuserid_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static CUSERID_BUF: std::cell::UnsafeCell<[u8; CUSERID_BUFSIZE]> =
+        const { std::cell::UnsafeCell::new(empty_cuserid_buf()) };
+}
+
+#[inline]
+fn with_cuserid_buf<R>(f: impl FnOnce(&mut [u8; CUSERID_BUFSIZE]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        CUSERID_BUF_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        CUSERID_BUF.with(|cell| {
+            // SAFETY: CUSERID_BUF is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            f(unsafe { &mut *cell.get() })
+        })
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cuserid(s: *mut c_char) -> *mut c_char {
     let uid = syscall::sys_getuid();
     let name = if uid == 0 { "root" } else { "user" };
     if s.is_null() {
-        std::thread_local! {
-            static BUF: std::cell::RefCell<[u8; 32]> = const { std::cell::RefCell::new([0u8; 32]) };
-        }
-        return BUF.with(|cell| {
-            let mut buf = cell.borrow_mut();
+        return with_cuserid_buf(|buf| {
             let len = name.len().min(buf.len() - 1);
             buf[..len].copy_from_slice(&name.as_bytes()[..len]);
             buf[len] = 0;

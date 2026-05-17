@@ -133,24 +133,25 @@ use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
     FTSENT as AbiFtsEnt, access, aio_suspend, alarm, arc4random_buf, bsd_getopt, chdir, chmod,
-    chown, close, closelog, creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod,
-    fchown, fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, flopen, flopenat,
-    fmtmsg, fstat, fsync, ftruncate, fts_children as abi_fts_children, fts_close as abi_fts_close,
-    fts_open as abi_fts_open, fts_read as abi_fts_read, fts_set as abi_fts_set, ftw as abi_ftw,
-    gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r,
-    getaliasent, getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile,
-    getfsspec, getgid, gethostbyname2, gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r,
-    getnetbyname, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getopt, getopt_long,
-    getpid, getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent,
-    getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
-    getutline_r, glob64, globfree64, gsignal, isatty, link, logout, logwtmp, lseek, lstat, mkdir,
-    mkfifo, mount_setattr, msgrcv, msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd,
-    process_madvise, process_mrelease, process_vm_readv, process_vm_writev, putspent, read,
-    readlink, readpassphrase, rename, rmdir, sem_open, sem_unlink, semctl, semop, setfsent,
-    sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent,
-    setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
-    strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
-    updwtmpx, usleep, utmpname, wctrans, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    chown, close, closelog, creat, cuserid, eaccess, endaliasent, ether_line, euidaccess,
+    faccessat, fchmod, fchown, fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock,
+    flopen, flopenat, fmtmsg, fstat, fsync, ftruncate, fts_children as abi_fts_children,
+    fts_close as abi_fts_close, fts_open as abi_fts_open, fts_read as abi_fts_read,
+    fts_set as abi_fts_set, ftw as abi_ftw, gai_cancel, gai_error, gai_suspend, getaddrinfo_a,
+    getaliasbyname, getaliasbyname_r, getaliasent, getaliasent_r, getcwd, getdate, getdate_r,
+    getegid, geteuid, getfsent, getfsfile, getfsspec, getgid, gethostbyname2, gethostbyname2_r,
+    gethostent_r, gethostname, getnetbyaddr_r, getnetbyname, getnetbyname_r, getnetent_r,
+    getnetgrent, getnetgrent_r, getopt, getopt_long, getpid, getppid, getprotobyname_r,
+    getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r, getttyent, getttynam,
+    getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64, gsignal,
+    isatty, link, logout, logwtmp, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd,
+    nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise, process_mrelease,
+    process_vm_readv, process_vm_writev, putspent, read, readlink, readpassphrase, rename, rmdir,
+    sem_open, sem_unlink, semctl, semop, setfsent, sethostent, setnetent, setnetgrent, setns,
+    setproctitle, setproctitle_init, setprotoent, setservent, setttyent, setutent, shmdt, sigpause,
+    sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, syslog,
+    truncate, umask, uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wctrans,
+    wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -4563,6 +4564,27 @@ fn geteuid_returns_valid_uid() {
     // In test context, euid should match uid
     let uid = unsafe { getuid() };
     assert_eq!(euid, uid);
+}
+
+#[test]
+fn cuserid_null_uses_internal_stable_buffer() {
+    let first = unsafe { cuserid(std::ptr::null_mut()) };
+    assert!(!first.is_null());
+    let expected = if unsafe { libc::getuid() } == 0 {
+        "root"
+    } else {
+        "user"
+    };
+    let first_text = unsafe { CStr::from_ptr(first) }
+        .to_str()
+        .expect("cuserid internal buffer must contain utf-8");
+    assert_eq!(first_text, expected);
+
+    let second = unsafe { cuserid(std::ptr::null_mut()) };
+    assert_eq!(
+        second, first,
+        "cuserid(NULL) should reuse the caller-thread internal buffer"
+    );
 }
 
 #[test]
