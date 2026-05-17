@@ -389,7 +389,7 @@ The Galois proofs live under `docs/proofs/galois_monotonic_probability_bounds.md
 
 The progression is geometric in spirit but not strictly so; the larger bins jump to power-of-two-friendly steps so the LargeAllocator threshold (`MAX_SMALL_SIZE = 32 KiB`) is reached without wasting slab slots on rarely-used intermediate sizes. The table is declared as `SIZE_TABLE: [usize; NUM_SIZE_CLASSES]` in `crates/frankenlibc-core/src/malloc/size_class.rs`.
 
-Each size class is backed by **64 KB slabs**. Every allocation carries 32 bytes of per-object membrane metadata (24-byte fingerprint header + 8-byte trailing canary) plus any alignment padding the size class requires. `FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` are declared as constants in `crates/frankenlibc-membrane/src/fingerprint.rs`.
+Each size class is backed by **64 KB slabs**. Every allocation carries 32 bytes of fingerprint+canary metadata (`FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` declared in `crates/frankenlibc-membrane/src/fingerprint.rs`); the allocator rounds this up to `PER_OBJECT_OVERHEAD = 64` per allocation including alignment padding (declared in `crates/frankenlibc-core/src/malloc/size_class.rs`).
 
 ### Thread-Local Magazine Cache
 
@@ -677,7 +677,7 @@ Representative families already live in the runtime, not just in design docs:
 | Control / routing | `bandit.rs`, `control.rs`, `pareto.rs`, `design.rs`, `admm_budget.rs`, `redundancy_tuner.rs`, `loss_minimizer.rs`, `approachability.rs`, `pomdp_repair.rs` |
 | Consistency / coherence | `cohomology.rs`, `higher_topos.rs`, `grothendieck_glue.rs`, `hodge_decomposition.rs`, `nerve_complex.rs`, `serre_spectral.rs`, `obstruction_detector.rs`, `derived_tstructure.rs` |
 | Drift / anomaly detection | `kernel_mmd.rs`, `wasserstein_drift.rs`, `matrix_concentration.rs`, `transfer_entropy.rs`, `stein_discrepancy.rs`, `azuma_hoeffding.rs`, `bifurcation_detector.rs`, `birkhoff_ergodic.rs`, `borel_cantelli.rs`, `dispersion_index.rs`, `dobrushin_contraction.rs`, `doob_decomposition.rs`, `entropy_rate.rs`, `fano_bound.rs`, `hurst_exponent.rs`, `ito_quadratic_variation.rs`, `lempel_ziv.rs`, `ornstein_uhlenbeck.rs`, `renewal_theory.rs`, `spectral_gap.rs`, `submodular_coverage.rs` |
-| Certified safety machinery | `hji_reachability.rs`, `sos_barrier.rs`, `sos_invariant.rs`, `mean_field_game.rs`, `barrier.rs`, `ktheory.rs`, `atiyah_bott.rs`, `localization_chooser.rs`, `microlocal.rs`, `lyapunov_stability.rs`, `clifford.rs`, `coupling.rs`, `equivariant.rs`, `commitment_audit.rs` |
+| Certified safety machinery | `sos_barrier.rs`, `sos_invariant.rs`, `barrier.rs`, `ktheory.rs`, `atiyah_bott.rs`, `localization_chooser.rs`, `microlocal.rs`, `lyapunov_stability.rs`, `clifford.rs`, `coupling.rs`, `equivariant.rs`, `commitment_audit.rs` (and at top-level: `hji_reachability.rs`, `mean_field_game.rs`) |
 | Information / provenance | `provenance_info.rs`, `info_geometry.rs`, `malliavin_sensitivity.rs`, `operator_norm.rs` |
 | Combinatorial / sampling | `sobol.rs`, `covering_array.rs`, `grobner_normalizer.rs`, `sparse.rs`, `fusion.rs` |
 | Policy & evidence | `policy_table.rs` (PCPT proof-carrying policy table loader/verifier), `evidence.rs` (runtime evidence symbol record + ring buffer) |
@@ -695,6 +695,8 @@ Standalone (non-`runtime_math/`) controllers in the membrane:
 - `large_deviations.rs` — Cramér rate-function rare-event monitor
 - `padic_valuation.rs` — Non-Archimedean error calculus
 - `symplectic_reduction.rs` — GIT / symplectic reduction for SysV IPC admissibility and deadlock detection
+- `hji_reachability.rs` — Hamilton-Jacobi-Isaacs differential-game reachability viability controller (also referenced in the runtime-math safety family above)
+- `mean_field_game.rs` — Mean-field-game Nash equilibrium congestion controller (also referenced above)
 
 The runtime decision logic compiles to compact deterministic guards. The heavy math machinery (theorem proofs, SOS certificate synthesis, formal verification) lives in offline `build.rs` artifacts and proof reports, never in the runtime hot path.
 
@@ -1799,7 +1801,7 @@ Fewer classes waste memory (large internal fragmentation); more classes inflate 
 | Per-slab free list | Compact intrusive linked list |
 | Per-slab usage counter | Tracks live count for partial/full classification |
 
-A 64 KB slab holds 4,096 × 16-byte allocations at the smallest size class and 2 × 32 KB allocations at the largest pre-`mmap` class. The free list lives in the unused portion of each object, so per-object overhead beyond the fingerprint and canary is zero in the steady state.
+`size_class.rs` declares `PER_OBJECT_OVERHEAD = 64` (fingerprint + canary + alignment padding). The per-class object count is `64 KiB / (size + 64)`: roughly 819 objects per slab at the 16-byte class, 341 at 128 bytes, 40 at 1,536 bytes, and 1 at 32 KiB (which is the LargeAllocator threshold). The free list lives in the unused portion of each object, so the steady-state intrusive overhead beyond the fingerprint and canary is zero.
 
 ### Magazine cache eviction policy
 
