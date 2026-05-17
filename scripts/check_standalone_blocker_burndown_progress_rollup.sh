@@ -10,12 +10,13 @@ ROLLUP="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP:-${ROOT}/tests/conformance/stand
 PLAN="${FRANKENLIBC_STANDALONE_HOST_DEP_PLAN:-${ROOT}/tests/conformance/standalone_host_dependency_probe_plan.v1.json}"
 VERSION_BURNDOWN="${FRANKENLIBC_STANDALONE_VERSION_BURNDOWN:-${ROOT}/tests/conformance/standalone_host_version_requirement_burndown.v1.json}"
 OWNER_LEDGER="${FRANKENLIBC_STANDALONE_BLOCKER_OWNER_LEDGER:-${ROOT}/tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json}"
+OWNED_UNWIND="${FRANKENLIBC_STANDALONE_OWNED_UNWIND_EXPERIMENT:-${ROOT}/tests/conformance/standalone_owned_unwind_experiment.v1.json}"
 OUT_DIR="${ROOT}/target/conformance"
 REPORT="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP_REPORT:-${OUT_DIR}/standalone_blocker_burndown_progress_rollup.report.json}"
 
 mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")"
 
-python3 - "${ROOT}" "${ROLLUP}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${REPORT}" <<'PY'
+python3 - "${ROOT}" "${ROLLUP}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${OWNED_UNWIND}" "${REPORT}" <<'PY'
 import json
 import subprocess
 import sys
@@ -27,8 +28,9 @@ rollup_path = Path(sys.argv[2])
 plan_path = Path(sys.argv[3])
 version_path = Path(sys.argv[4])
 owner_path = Path(sys.argv[5])
-report_path = Path(sys.argv[6])
-for name in ["rollup_path", "plan_path", "version_path", "owner_path", "report_path"]:
+owned_unwind_path = Path(sys.argv[6])
+report_path = Path(sys.argv[7])
+for name in ["rollup_path", "plan_path", "version_path", "owner_path", "owned_unwind_path", "report_path"]:
     path = locals()[name]
     if not path.is_absolute():
         locals()[name] = root / path
@@ -38,6 +40,7 @@ EXPECTED_INPUTS = {
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
     "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
+    "standalone_owned_unwind_experiment": "tests/conformance/standalone_owned_unwind_experiment.v1.json",
 }
 EXPECTED_FRESHNESS_POLICY = {
     "recorded_source_commit_field": "source_commit",
@@ -51,6 +54,7 @@ EXPECTED_ROLLUP_POLICY = {
         "standalone_host_dependency_probe_plan.current_forge_blocker_projection.current_forge_blocker_value_snapshot",
         "standalone_forge_blocker_owner_action_ledger.ledger_rows",
         "standalone_host_version_requirement_burndown.version_requirement_matrix",
+        "standalone_owned_unwind_experiment.summary",
     ],
     "duplicate_source_values_in_manifest": False,
     "checker_report_materializes_values": True,
@@ -150,7 +154,8 @@ rollup = load_json(rollup_path)
 plan = load_json(plan_path)
 version_burndown = load_json(version_path)
 owner_ledger = load_json(owner_path)
-for value_name in ["rollup", "plan", "version_burndown", "owner_ledger"]:
+owned_unwind = load_json(owned_unwind_path)
+for value_name in ["rollup", "plan", "version_burndown", "owner_ledger", "owned_unwind"]:
     if not isinstance(locals()[value_name], dict):
         locals()[value_name] = {}
 
@@ -327,12 +332,106 @@ for row in provider_rows:
 if provider_seen != set(requirements_by_provider):
     errors.append("version_provider_rollup must cover every version matrix provider")
 
+partial_rows = rollup.get("partial_burndown_experiments", [])
+if not isinstance(partial_rows, list):
+    errors.append("partial_burndown_experiments must be an array")
+    partial_rows = []
+owned_summary = object_value(owned_unwind.get("summary"), "owned_unwind.summary")
+owned_policy = object_value(owned_unwind.get("report_policy"), "owned_unwind.report_policy")
+if owned_unwind.get("manifest_id") != "standalone-owned-unwind-experiment":
+    errors.append("owned_unwind manifest_id must be standalone-owned-unwind-experiment")
+if owned_summary.get("report_only") is not True:
+    errors.append("owned_unwind summary.report_only must be true")
+if owned_summary.get("promotion_allowed") is not False:
+    errors.append("owned_unwind summary.promotion_allowed must be false")
+if owned_summary.get("default_forge_path_unchanged") is not True:
+    errors.append("owned_unwind summary.default_forge_path_unchanged must be true")
+if owned_summary.get("claim_status") != "report_only":
+    errors.append("owned_unwind summary.claim_status must remain report_only")
+owned_lanes = owned_unwind.get("experiment_lanes", [])
+if not isinstance(owned_lanes, list):
+    errors.append("owned_unwind.experiment_lanes must be an array")
+    owned_lanes = []
+owned_lane_ids = {
+    lane.get("lane_id")
+    for lane in owned_lanes
+    if isinstance(lane, dict) and isinstance(lane.get("lane_id"), str)
+}
+materialized_partial_experiments = []
+partial_reduced_count = 0
+partial_seen = set()
+for row in partial_rows:
+    if not isinstance(row, dict):
+        errors.append("partial burndown experiment row must be an object")
+        continue
+    experiment_id = row.get("experiment_id")
+    context = f"partial_burndown_experiments[{experiment_id or '<missing>'}]"
+    if not isinstance(experiment_id, str) or not experiment_id:
+        errors.append(f"{context}.experiment_id must be a non-empty string")
+        continue
+    if experiment_id in partial_seen:
+        errors.append(f"partial_burndown_experiments duplicate experiment_id {experiment_id}")
+    partial_seen.add(experiment_id)
+    category = row.get("category_id")
+    if category not in category_counts:
+        errors.append(f"{context}.category_id references missing category {category}")
+    if row.get("source_manifest") != EXPECTED_INPUTS["standalone_owned_unwind_experiment"]:
+        errors.append(f"{context}.source_manifest must reference standalone_owned_unwind_experiment")
+    if row.get("baseline_lane") != owned_summary.get("baseline_lane"):
+        errors.append(f"{context}.baseline_lane must match owned unwind summary")
+    if row.get("experiment_lane") != owned_summary.get("experiment_lane"):
+        errors.append(f"{context}.experiment_lane must match owned unwind summary")
+    if row.get("baseline_lane") not in owned_lane_ids or row.get("experiment_lane") not in owned_lane_ids:
+        errors.append(f"{context}.lanes must exist in owned unwind manifest")
+    if row.get("evidence_mode") != owned_policy.get("required_mode"):
+        errors.append(f"{context}.evidence_mode must match owned unwind required_mode")
+    for bool_field in ["report_only", "default_forge_path_unchanged"]:
+        if row.get(bool_field) is not True:
+            errors.append(f"{context}.{bool_field} must be true")
+    for bool_field in ["promotion_allowed", "replacement_level_change_allowed"]:
+        if row.get(bool_field) is not False:
+            errors.append(f"{context}.{bool_field} must be false")
+    baseline_count = owned_summary.get("blocker_symbol_count_baseline")
+    experiment_count = owned_summary.get("blocker_symbol_count_owned_unwind_when_complete")
+    if row.get("baseline_value_count") != baseline_count:
+        errors.append(f"{context}.baseline_value_count must match owned unwind summary")
+    if row.get("experiment_value_count") != experiment_count:
+        errors.append(f"{context}.experiment_value_count must match owned unwind summary")
+    reduced = (
+        baseline_count - experiment_count
+        if isinstance(baseline_count, int) and isinstance(experiment_count, int)
+        else None
+    )
+    if row.get("reduced_value_count") != reduced:
+        errors.append(f"{context}.reduced_value_count must equal baseline minus experiment")
+    if row.get("evidence_source") != "standalone_owned_unwind_experiment.summary.blocker_symbol_count_owned_unwind_when_complete":
+        errors.append(f"{context}.evidence_source mismatch")
+    if row.get("status_until_default_forge_consumes_evidence") != "claim_blocked":
+        errors.append(f"{context}.status_until_default_forge_consumes_evidence must be claim_blocked")
+    if isinstance(row.get("reduced_value_count"), int):
+        partial_reduced_count += row["reduced_value_count"]
+    materialized_partial_experiments.append(
+        {
+            "experiment_id": experiment_id,
+            "category_id": category,
+            "baseline_lane": row.get("baseline_lane"),
+            "experiment_lane": row.get("experiment_lane"),
+            "baseline_value_count": row.get("baseline_value_count"),
+            "experiment_value_count": row.get("experiment_value_count"),
+            "reduced_value_count": row.get("reduced_value_count"),
+            "report_only": True,
+            "status_until_default_forge_consumes_evidence": "claim_blocked",
+        }
+    )
+
 summary = object_value(rollup.get("summary"), "summary")
 last_known_value_count = sum(row["last_known_value_count"] for row in materialized_categories)
 summary_expectations = {
     "current_blocking_reason_count": len(current_reasons),
     "progress_category_count": len(materialized_categories),
     "blocked_progress_category_count": len(materialized_categories),
+    "partial_burndown_experiment_count": len(materialized_partial_experiments),
+    "report_only_reduced_value_count": partial_reduced_count,
     "last_known_value_count": last_known_value_count,
     "host_version_requirement_count": sum(len(ids) for ids in requirements_by_provider.values()),
     "version_provider_count": len(requirements_by_provider),
@@ -353,6 +452,7 @@ report = {
     "claim_status": snapshot.get("claim_status"),
     "progress_categories": materialized_categories,
     "version_provider_rollup": materialized_providers,
+    "partial_burndown_experiments": materialized_partial_experiments,
     "summary": {
         **summary_expectations,
         "promotion_allowed": False,

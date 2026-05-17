@@ -8,7 +8,8 @@
   "inputs": {
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
-    "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json"
+    "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
+    "standalone_owned_unwind_experiment": "tests/conformance/standalone_owned_unwind_experiment.v1.json"
   },
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
@@ -21,7 +22,8 @@
     "source_of_truth": [
       "standalone_host_dependency_probe_plan.current_forge_blocker_projection.current_forge_blocker_value_snapshot",
       "standalone_forge_blocker_owner_action_ledger.ledger_rows",
-      "standalone_host_version_requirement_burndown.version_requirement_matrix"
+      "standalone_host_version_requirement_burndown.version_requirement_matrix",
+      "standalone_owned_unwind_experiment.summary"
     ],
     "duplicate_source_values_in_manifest": false,
     "checker_report_materializes_values": true,
@@ -190,10 +192,31 @@
       "status_until_exit": "claim_blocked"
     }
   ],
+  "partial_burndown_experiments": [
+    {
+      "experiment_id": "owned-unwind-stub-experiment",
+      "category_id": "unwind_runtime",
+      "source_manifest": "tests/conformance/standalone_owned_unwind_experiment.v1.json",
+      "baseline_lane": "baseline-release-standalone",
+      "experiment_lane": "owned-unwind-stub-experiment",
+      "evidence_mode": "--owned-unwind-experiment",
+      "report_only": true,
+      "default_forge_path_unchanged": true,
+      "promotion_allowed": false,
+      "replacement_level_change_allowed": false,
+      "baseline_value_count": 12,
+      "experiment_value_count": 0,
+      "reduced_value_count": 12,
+      "evidence_source": "standalone_owned_unwind_experiment.summary.blocker_symbol_count_owned_unwind_when_complete",
+      "status_until_default_forge_consumes_evidence": "claim_blocked"
+    }
+  ],
   "summary": {
     "current_blocking_reason_count": 10,
     "progress_category_count": 8,
     "blocked_progress_category_count": 8,
+    "partial_burndown_experiment_count": 1,
+    "report_only_reduced_value_count": 12,
     "last_known_value_count": 34,
     "host_version_requirement_count": 4,
     "version_provider_count": 2,

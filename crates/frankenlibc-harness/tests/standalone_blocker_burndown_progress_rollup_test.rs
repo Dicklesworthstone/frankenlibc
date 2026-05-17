@@ -20,6 +20,8 @@ const HOST_PROBE_PLAN_PATH: &str =
     "tests/conformance/standalone_host_dependency_probe_plan.v1.json";
 const VERSION_BURNDOWN_PATH: &str =
     "tests/conformance/standalone_host_version_requirement_burndown.v1.json";
+const OWNED_UNWIND_EXPERIMENT_PATH: &str =
+    "tests/conformance/standalone_owned_unwind_experiment.v1.json";
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -199,6 +201,7 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
     let owner_ledger = load_json(&root, OWNER_LEDGER_PATH)?;
     let plan = load_json(&root, HOST_PROBE_PLAN_PATH)?;
     let version_burndown = load_json(&root, VERSION_BURNDOWN_PATH)?;
+    let owned_unwind = load_json(&root, OWNED_UNWIND_EXPERIMENT_PATH)?;
     require(
         json_string(&rollup, "manifest_id")? == "standalone_blocker_burndown_progress_rollup",
         "manifest id",
@@ -275,6 +278,73 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
             format!("{provider}: provider rollup must match version matrix"),
         )?;
     }
+
+    let experiments = json_array(&rollup, "partial_burndown_experiments")?;
+    require(
+        experiments.len() == 1,
+        "rollup must expose one partial burndown experiment",
+    )?;
+    let experiment = &experiments[0];
+    let owned_summary = json_field(&owned_unwind, "summary")?;
+    require(
+        json_string(&owned_unwind, "manifest_id")? == "standalone-owned-unwind-experiment",
+        "owned unwind manifest id",
+    )?;
+    require(
+        json_field(owned_summary, "report_only")?.as_bool() == Some(true),
+        "owned unwind summary remains report-only",
+    )?;
+    require(
+        json_field(owned_summary, "promotion_allowed")?.as_bool() == Some(false),
+        "owned unwind summary forbids promotion",
+    )?;
+    require(
+        json_field(owned_summary, "default_forge_path_unchanged")?.as_bool() == Some(true),
+        "owned unwind summary leaves default forge unchanged",
+    )?;
+    require(
+        json_string(experiment, "experiment_id")? == "owned-unwind-stub-experiment",
+        "partial experiment id",
+    )?;
+    require(
+        json_string(experiment, "category_id")? == "unwind_runtime",
+        "partial experiment category",
+    )?;
+    require(
+        json_string(experiment, "source_manifest")? == OWNED_UNWIND_EXPERIMENT_PATH,
+        "partial experiment source manifest",
+    )?;
+    require(
+        json_string(experiment, "baseline_lane")? == json_string(owned_summary, "baseline_lane")?,
+        "partial experiment baseline lane",
+    )?;
+    require(
+        json_string(experiment, "experiment_lane")?
+            == json_string(owned_summary, "experiment_lane")?,
+        "partial experiment lane",
+    )?;
+    let baseline = json_field(owned_summary, "blocker_symbol_count_baseline")?
+        .as_u64()
+        .ok_or_else(|| "owned summary baseline count must be u64".to_string())?;
+    let owned_when_complete = json_field(
+        owned_summary,
+        "blocker_symbol_count_owned_unwind_when_complete",
+    )?
+    .as_u64()
+    .ok_or_else(|| "owned summary completion count must be u64".to_string())?;
+    require(
+        json_field(experiment, "baseline_value_count")?.as_u64() == Some(baseline),
+        "partial experiment baseline count",
+    )?;
+    require(
+        json_field(experiment, "experiment_value_count")?.as_u64() == Some(owned_when_complete),
+        "partial experiment completion count",
+    )?;
+    require(
+        json_field(experiment, "reduced_value_count")?.as_u64()
+            == Some(baseline - owned_when_complete),
+        "partial experiment reduced count",
+    )?;
     Ok(())
 }
 
@@ -318,6 +388,29 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
         .as_u64()
             == Some(34),
         "report summary last_known_value_count must be 34",
+    )?;
+    require(
+        json_field(
+            json_field(&report_json, "summary")?,
+            "partial_burndown_experiment_count",
+        )?
+        .as_u64()
+            == Some(1),
+        "report summary partial experiment count",
+    )?;
+    require(
+        json_field(
+            json_field(&report_json, "summary")?,
+            "report_only_reduced_value_count",
+        )?
+        .as_u64()
+            == Some(12),
+        "report summary report-only reduced value count",
+    )?;
+    let experiments = json_array(&report_json, "partial_burndown_experiments")?;
+    require(
+        experiments.len() == 1,
+        "report must materialize one partial burndown experiment",
     )
 }
 
@@ -368,5 +461,25 @@ fn checker_rejects_version_provider_drift() -> TestResult {
         &mutated,
         "rollup-version-provider-drift",
         "version_provider_rollup[libgcc_s.so.1].source_requirement_ids must match version matrix provider rows",
+    )
+}
+
+#[test]
+fn checker_rejects_partial_experiment_overclaim() -> TestResult {
+    let mutated = write_mutated_rollup("rollup-partial-overclaim", |rollup| {
+        let row = rollup
+            .get_mut("partial_burndown_experiments")
+            .and_then(Value::as_array_mut)
+            .and_then(|rows| rows.first_mut())
+            .ok_or_else(|| "partial_burndown_experiments[0] must exist".to_string())?;
+        row.as_object_mut()
+            .ok_or_else(|| "partial experiment row must be object".to_string())?
+            .insert("promotion_allowed".to_string(), Value::Bool(true));
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "rollup-partial-overclaim",
+        "partial_burndown_experiments[owned-unwind-stub-experiment].promotion_allowed must be false",
     )
 }
