@@ -17109,9 +17109,37 @@ impl HostIterState {
     }
 }
 
+// SAFETY: `HostIterState` is process-owned scratch state keyed by kernel
+// thread id under the owned-TLS experiment. Raw pointer arrays are rebuilt from
+// the per-slot buffers before each returned `hostent` and never cross slots.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for HostIterState {}
+
+#[cfg(feature = "owned-tls-cache")]
+static HOST_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostIterState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(HostIterState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static HOST_ITER: std::cell::UnsafeCell<HostIterState> =
         const { std::cell::UnsafeCell::new(HostIterState::new()) };
+}
+
+#[inline]
+fn with_host_iter_state<R>(callback: impl FnOnce(&mut HostIterState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOST_ITER_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOST_ITER.with(|cell| {
+            // SAFETY: HOST_ITER is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// Parse address text into binary. Returns (address_bytes, af, length).
@@ -17231,20 +17259,16 @@ unsafe fn host_iter_next(state: &mut HostIterState) -> *mut c_void {
 /// `sethostent` — open /etc/hosts for iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sethostent(_stayopen: c_int) {
-    HOST_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
-        match std::fs::File::open(HOSTS_PATH) {
-            Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-            Err(_) => state.reader = None,
-        }
+    with_host_iter_state(|state| match std::fs::File::open(HOSTS_PATH) {
+        Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+        Err(_) => state.reader = None,
     });
 }
 
 /// `endhostent` — close /etc/hosts iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endhostent() {
-    HOST_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_host_iter_state(|state| {
         state.reader = None;
     });
 }
@@ -17252,8 +17276,7 @@ pub unsafe extern "C" fn endhostent() {
 /// `gethostent` — get next /etc/hosts entry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostent() -> *mut c_void {
-    HOST_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_host_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(HOSTS_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
@@ -23085,8 +23108,7 @@ pub unsafe extern "C" fn gethostent_r(
         return libc::EINVAL;
     }
 
-    HOST_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_host_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(HOSTS_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
