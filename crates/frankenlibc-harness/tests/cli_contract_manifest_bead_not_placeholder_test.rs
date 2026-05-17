@@ -53,10 +53,10 @@ fn no_cli_contract_manifest_has_placeholder_bead_id() -> TestResult {
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
         let manifest: Value =
             serde_json::from_str(&body).map_err(|e| format!("parse {name}: {e}"))?;
-        if let Some(bead) = manifest.get("bead").and_then(Value::as_str) {
-            if PLACEHOLDER_BEAD_IDS.contains(&bead) {
-                violations.push(format!("{name}: bead `{bead}` is a placeholder"));
-            }
+        if let Some(bead) = manifest.get("bead").and_then(Value::as_str)
+            && PLACEHOLDER_BEAD_IDS.contains(&bead)
+        {
+            violations.push(format!("{name}: bead `{bead}` is a placeholder"));
         }
         checked += 1;
     }
