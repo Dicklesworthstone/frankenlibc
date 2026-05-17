@@ -2,15 +2,267 @@
 
 All notable changes to FrankenLibC are documented in this file.
 
-FrankenLibC has no formal releases, version tags, or GitHub Releases. The project is at **v0.1.0** (pre-release) and ships a single artifact: `target/release/libfrankenlibc_abi.so` used via `LD_PRELOAD`. This changelog is organized by capability milestones derived from the complete commit history (626 commits by a single author).
+FrankenLibC has no formal releases, version tags, or GitHub Releases. The project is at **v0.1.0** (pre-release) and ships a single artifact: `target/release/libfrankenlibc_abi.so` used via `LD_PRELOAD`. This changelog is organized by capability milestones derived from the complete commit history (4,932 commits by a single author across 97 days of active development).
 
 Repository: <https://github.com/Dicklesworthstone/frankenlibc>
 
 ---
 
-## [Unreleased] -- HEAD (as of 2026-03-21)
+## [Unreleased] -- HEAD (as of 2026-05-16)
 
-**Current state:** 3980 classified symbols | 3457 Implemented + 406 RawSyscall = **97.1% native coverage** | 117 GlibcCallThrough remaining | 0 stubs.
+**Current state:** **4119 classified symbols | 3705 Implemented + 414 RawSyscall = 100.0% native coverage** | 0 GlibcCallThrough | 0 WrapsHostLibc | 0 Stub. The classified support-matrix surface no longer reports any host-glibc call-through or wrapper rows; the shipping artifact is still the interpose-first `LD_PRELOAD` library (`libfrankenlibc_abi.so`), with replacement-level promotion gates and L1 evidence dashboards driving the path to a standalone replace artifact. Source of truth: `support_matrix.json` and `tests/conformance/reality_report.v1.json` (regenerated 2026-02-18 against the current matrix).
+
+Methodology note: the entries in phases 1-7 below were assembled from raw commit history. Phases 8-16 below cover the post-Phase-7 burst of 4,281 additional commits (2026-03-22 .. 2026-05-16) and were assembled by mining git history, the local beads_rust (`br`) tracker, and the `tests/conformance/*_completion_contract.v1.json` evidence ledger. Bead IDs in `[bd-xxxxx]` correspond to issues tracked in `.beads/` and quoted in commit subjects for traceability.
+
+---
+
+## Phase 16 -- CLI-Contract Manifest Meta-Gates and Final Hardening (2026-05-16)
+
+A single-day campaign (~255 commits) that locked down the harness CLI's machine-checkable contract. Every `*_cli_contract.v1.json` manifest now passes ~50 meta-gates covering shape, naming, JSON well-formedness, paired-test enforcement, and freshness. Final corrections to `gai_strerror`/`strsignal`/`strerror_np` text alignment with glibc. Directed fuzz seed corpora added for regex, ctype, c11threads, and adversarial printf.
+
+### Harness CLI Contract Meta-Gate Framework
+
+- Pin `cli_contract` manifests are well-formed JSON with no BOM/trailing garbage ([09d459a](https://github.com/Dicklesworthstone/frankenlibc/commit/09d459a7b4787819d7b1f399fe6dc4c293ae4471))
+- Pin every `cli_contract` manifest has a matching paired gate test ([10db70e](https://github.com/Dicklesworthstone/frankenlibc/commit/10db70ea))
+- Pin every paired gate test has a matching `cli_contract` manifest ([4fe4058](https://github.com/Dicklesworthstone/frankenlibc/commit/4fe40587ac38d30b184bc9140d5be83b253edd57))
+- Pin `manifest_id` length in [10,80] sanity bounds ([4c368fc](https://github.com/Dicklesworthstone/frankenlibc/commit/4c368fc0))
+- Pin `subcommand_name == manifest_id` minus `-cli-contract` suffix ([8d1ee97](https://github.com/Dicklesworthstone/frankenlibc/commit/8d1ee97a))
+- Pin manifest `required_flags`/`optional_flags` are arrays, disjoint, deduplicated, and flag-only form (no `=` defaults) ([0fb5ec0](https://github.com/Dicklesworthstone/frankenlibc/commit/0fb5ec07), [d57ed44](https://github.com/Dicklesworthstone/frankenlibc/commit/d57ed441), [e2fd3c7](https://github.com/Dicklesworthstone/frankenlibc/commit/e2fd3c7b), [316b6bf](https://github.com/Dicklesworthstone/frankenlibc/commit/316b6bfb), [ec48819](https://github.com/Dicklesworthstone/frankenlibc/commit/ec488194), [2770891](https://github.com/Dicklesworthstone/frankenlibc/commit/2770891c))
+- Pin `policy` keys are snake_case with at least one boolean rule ([8b42256](https://github.com/Dicklesworthstone/frankenlibc/commit/8b4e2256), [06daa70](https://github.com/Dicklesworthstone/frankenlibc/commit/06daa70b))
+- Pin `rejected_evidence_kinds` entries are snake_case array ([302420b](https://github.com/Dicklesworthstone/frankenlibc/commit/302420b8), [5ba8a48](https://github.com/Dicklesworthstone/frankenlibc/commit/5ba8a482))
+- Pin `jsonl_output_contract` has `required_fields` array (snake_case) and well-formed `record_count` ([7d4a67b](https://github.com/Dicklesworthstone/frankenlibc/commit/7d4a67b3), [933d68a](https://github.com/Dicklesworthstone/frankenlibc/commit/933d68aa), [c51849c](https://github.com/Dicklesworthstone/frankenlibc/commit/c51849c9))
+- Pin `io_pattern` is snake_case descriptive (≥10 chars) ([406a469](https://github.com/Dicklesworthstone/frankenlibc/commit/406a4693))
+- Pin `underlying_lib_functions` entries are Rust paths, unique, and singular form matches `plural[0]` ([bb3b95b](https://github.com/Dicklesworthstone/frankenlibc/commit/bb3b95bf), [4954d06](https://github.com/Dicklesworthstone/frankenlibc/commit/4954d064), [4c26c18](https://github.com/Dicklesworthstone/frankenlibc/commit/4c26c180))
+- Pin `bead` field is canonical `beads_rust` id and timestamps are valid ISO-8601 ([3034398](https://github.com/Dicklesworthstone/frankenlibc/commit/3034398d), [a287f8c](https://github.com/Dicklesworthstone/frankenlibc/commit/a287f8c1))
+- Pin `optional_flags <= 25` sanity ceiling, `summary` non-empty (object/array/string≥30) ([287cfc3](https://github.com/Dicklesworthstone/frankenlibc/commit/287cfc33), [a84c68f](https://github.com/Dicklesworthstone/frankenlibc/commit/a84c68ff))
+- Pin paired gate tests reference `env!(CARGO_MANIFEST_DIR)` ([7a4481f](https://github.com/Dicklesworthstone/frankenlibc/commit/7a4481f3))
+- Ban raw panic in CLI gates; reject manifest id double dashes ([49b8847](https://github.com/Dicklesworthstone/frankenlibc/commit/49b88471), [7a39a74](https://github.com/Dicklesworthstone/frankenlibc/commit/7a39a746))
+
+### glibc Text Alignment
+
+- Complete `strerror_np` errno tables ([b91af0e](https://github.com/Dicklesworthstone/frankenlibc/commit/b91af0e9fdc0a8a73b04ac3db46e8df07ddda205))
+- Align `gai_strerror` text with glibc ([65163ad](https://github.com/Dicklesworthstone/frankenlibc/commit/65163ad09c28ce335a5bd0173b1703296160b11b))
+
+### Fuzz Corpora
+
+- Directed regex fuzz seed corpus ([4d20ec5](https://github.com/Dicklesworthstone/frankenlibc/commit/4d20ec5d))
+
+---
+
+## Phase 15 -- L1 CRT Proofs, Harness Panic Hygiene, Differential Aliases (2026-05-13 .. 2026-05-15)
+
+Peak commit week (282 + 363 + 217 commits). L1 CRT proof rows shipped (Epic **bd-0qjk0**) for constructor order, destructor order, atexit order, errno TLS isolation, and init/fini array order. Systematic removal of panic surfaces across 50+ harness tests — every paired-gate test now returns `TestResult` instead of panicking. Differential coverage harnesses added for low-level glibc aliases. Three new ABI modules landed: `htm_fast_path.rs` (hardware-transactional-memory fast path for alien_cs), `owned_unwind_abi.rs` (owned unwinder for standalone artifact), and `nlist_abi.rs` (ELF symtab parsing).
+
+### L1 CRT Proof Rollup
+
+- Prove init/fini array order (Epic bd-0qjk0.5) ([3021dd6](https://github.com/Dicklesworthstone/frankenlibc/commit/3021dd6834f40cdd37f4610382f09e85157d4219))
+- Prove errno TLS isolation (Epic bd-0qjk0.6) ([4514aa0](https://github.com/Dicklesworthstone/frankenlibc/commit/4514aa02d59f5411122e69a07453c490b05010c7))
+- Close L1 CRT rollup gate (Epic bd-0qjk0.7) ([83b3e37](https://github.com/Dicklesworthstone/frankenlibc/commit/83b3e37dcdd2dd16bd24f06dcd506c6f797d829d))
+
+### Harness Panic-Surface Removal
+
+- Remove pthread bootstrap panic surfaces ([b9bdf36](https://github.com/Dicklesworthstone/frankenlibc/commit/b9bdf36a))
+- Remove conformance fixture pipeline panics ([e1da28f](https://github.com/Dicklesworthstone/frankenlibc/commit/e1da28f86e0494c2d72f0683b0585c2f70ede7d0))
+- Remove tail-stats metamorphic panics (Epic bd-1cb21) and 40+ similar panic-removal commits across stdio, pthread, allocator, fixture, runtime-math, and signal harnesses
+
+### Differential Alias Coverage
+
+- Unistd process wave-13 fixtures ([f9f9107](https://github.com/Dicklesworthstone/frankenlibc/commit/f9f91070813db0646ad18f7a989a2c94a9d6dd96))
+- Internal copy alias differentials: `readdir64`, `scandir64`, `fdopendir`, `telldir`/`seekdir`, `readdir_r`, `ftw64`, `index`/`rindex`, `rawmemchr`, `memccpy`, `memcmpeq` ([73ebc7a](https://github.com/Dicklesworthstone/frankenlibc/commit/73ebc7a4db4e86a96fd57d0d7b95a9c075d27029))
+- String mutating differentials for `strl*` family ([9c1e963](https://github.com/Dicklesworthstone/frankenlibc/commit/9c1e963a729f64e89216cb44edcb5f562f2c2925))
+
+### vis() Family Completion
+
+- Honor `vis` HTTP and MIME styles, NetBSD range flags, VIS_NOSLASH, C-style whitespace (Epic bd-vok9a) ([e51ca19](https://github.com/Dicklesworthstone/frankenlibc/commit/e51ca19719855a087ab400ba81925084090ca989))
+
+### New ABI Modules
+
+- `htm_fast_path.rs` — Hardware-transactional-memory fast path for alien_cs concurrency primitives (19 KB)
+- `owned_unwind_abi.rs` — Owned unwinder for the future standalone replace artifact (3 KB)
+- `nlist_abi.rs` — ELF symtab parsing surface (4 KB)
+- `efun_abi.rs` — Extern "C" lock/poison recovery (12 KB)
+
+### Bug Fixes
+
+- Match `ns_makecanon` capacity boundary ([8f2a47b](https://github.com/Dicklesworthstone/frankenlibc/commit/8f2a47b7fc647fcb04e2018fbcf8c7f3573c58b1))
+
+---
+
+## Phase 14 -- Completion-Contract Binding and Audit-Debt Burndown (2026-05-09 .. 2026-05-12)
+
+A 600+ commit window (291 + 145 + 228 + ~50 commits) where bead closure stopped meaning "ticket marked closed" and started meaning "closure is backed by a binding evidence artifact." Each closed bead now requires a `*_completion_contract.v1.json` JSONL receipt pointing at the fixtures, harness output, or proof artifact that backs it. Hundreds of dotted child beads (`*.1`, `*.bind`, `*.close`) flushed audit debt left behind by earlier epics — architecture, allocator, pthread, runtime-math, TSM, evidence ring, tracker recovery.
+
+### Completion-Contract Framework
+
+- Bind tracker recovery backlog evidence (Epic bd-bp8fl.2.10) ([135ff4f](https://github.com/Dicklesworthstone/frankenlibc/commit/135ff4ff6c12ec6f11b92454d50deb2eacbaa5b1))
+- Bind unistd fixture completion contract (Epic bd-qce2t.3) ([81c5841](https://github.com/Dicklesworthstone/frankenlibc/commit/81c58413f770473f271e0e49664e7b4aa9d74e1a))
+- Archive architecture TODO ledger (Epic bd-mp4q1) ([e6abec6](https://github.com/Dicklesworthstone/frankenlibc/commit/e6abec643b1e0ba5b9bd0f4950da4840fe90fdb7))
+- 240+ named completion contracts under `tests/conformance/*_completion_contract.v1.json` covering aarch64 raw-syscall TLS, allocator membrane invariants, pthread mutex futex core, iconv locale family, resolver NSS hardening, replacement levels L1/L2/L3, runtime math kernels, SOS barrier soundness, evidence ledger, and CLI contract gates
+
+### Fixture Waves Per Subsystem
+
+- Seed unistd filesystem wave 2 (Epic bd-pz1g1) ([40c4772](https://github.com/Dicklesworthstone/frankenlibc/commit/40c4772ba22de6ada3ee4cc6ee7a747300ba68c5))
+- Stdio libio symbol fixtures (Epic bd-6cly1.1) ([e1829ff](https://github.com/Dicklesworthstone/frankenlibc/commit/e1829ff9631ba3d7c9dd7474b1c86668d1802b83))
+- RPC legacy fixtures (Epic bd-mu4lw.1) ([3f5d41d](https://github.com/Dicklesworthstone/frankenlibc/commit/3f5d41d32d803fabb132de1bdf7c4f57f6637cf3))
+- Close pthread mutex futex debt (Epic bd-z84.1) ([34744f7](https://github.com/Dicklesworthstone/frankenlibc/commit/34744f7666037742a0bb79c4f2c05108d1d5df4b))
+
+### Epic Closures
+
+- **EPIC bd-h5x closed:** raw syscalls + futex pthread primitives delivered ([ad4666e](https://github.com/Dicklesworthstone/frankenlibc/commit/ad4666ea30cf8d6108f3b6f9b3adbebcf94e166a))
+- 11 new conformance harnesses across stdio, string, time, pthread, signal
+- 5 audit-debt epics drained (bd-58e87f, bd-27e6p, bd-exbv9, bd-6epxt, bd-gxgr5, bd-vmp2v)
+
+---
+
+## Phase 13 -- Replacement-Level Promotion and Fail-Closed Source Gates (2026-05-03 .. 2026-05-08)
+
+The "claim without evidence" loophole gets closed. L1 dashboard infrastructure, replacement-claim audit, latency-budget joins, and workload reproducer manifest all become first-class. Forge / smoke / CRT-TLS / host-probe / artifact-freshness gates become **fail-closed** ("reject stale source pins"). The /porting-to-rust epic lifted `/etc/`-database parsers (mntent, networks, protocols, aliases, netgroup, getopt, pwd/grp/shadow) into core, each with new fuzz coverage. Metamorphic test harnesses added for `inet_pton`/`inet_ntop` round-trip, `strto*`/`snprintf` round-trip, and base64 codec invertibility.
+
+### Replacement-Level Promotion
+
+- Seed replacement-acceleration beads (Epic bd-b92jd) ([41422c8](https://github.com/Dicklesworthstone/frankenlibc/commit/41422c8aa81a3322581f7e3bddf0a1b79da55996))
+- L1 replacement-level promotion gate ([19a767c](https://github.com/Dicklesworthstone/frankenlibc/commit/19a767c7fe635ee546490b0a5e1e45430646ee96))
+- L1 dashboard freshness policy ([85c6ac5](https://github.com/Dicklesworthstone/frankenlibc/commit/85c6ac5f9b3a278d68c48579f20025117fcb2c6d))
+- Workload evidence loop handoff (Epic bd-fp4tm.6) ([46cf6d3](https://github.com/Dicklesworthstone/frankenlibc/commit/46cf6d3e7954fbfd9924cc14d7a6a8aee6232645))
+
+### Runtime Evidence Pipeline
+
+- Runtime evidence JSONL schema ([a476459](https://github.com/Dicklesworthstone/frankenlibc/commit/a476459d0bde690ca100da7ae29863f8978b3dea))
+- Runtime evidence replay verifier ([777c463](https://github.com/Dicklesworthstone/frankenlibc/commit/777c46373a68cb106967c498c332e2f496131c58))
+
+### /etc-DB Parser Lift to Core
+
+- Fuzz coverage for 4 lifted parsers: `mntent`, `networks/protocols`, `aliases`, `netgroup` ([253d3ca](https://github.com/Dicklesworthstone/frankenlibc/commit/253d3cadbcb7a54f6458fef4ae2ee2ab4034468f))
+- Core subsystem directories added: `mntent/`, `netgroup/`, `aliases/`, `getopt/`, `ether/`, `proc_maps/`, `idna/`, `fmtmsg/`, `crypt/`, `ftw/`, `search/`, `stat/`, `err/`, `rpc/`
+
+### Metamorphic Test Harnesses
+
+- `inet_pton`/`inet_ntop` relation harness ([ea5c696](https://github.com/Dicklesworthstone/frankenlibc/commit/ea5c69661430fc06c0ff89722bd7f0b36b8546b8))
+- Metamorphic invariants on `strto*`/`snprintf` round-trips ([689dd82](https://github.com/Dicklesworthstone/frankenlibc/commit/689dd82fe975b7af5aa87c5a98b7124ff8623864))
+- Base64 round-trip golden checks (extending `b64_ntop_golden.v1.json`)
+
+---
+
+## Phase 12 -- Single-Pass Hot-Path Perf and BSD/Linux Compat Fill-In (2026-04-27 .. 2026-05-02)
+
+Hot-path rewrites of the string-scan family to single-pass implementations: `strchr`, `strrchr`, `strspn`, `strcspn`, `strpbrk`, `strsep`, `strstr`, `strcasestr`, `strchrnul`, `strnstr`, `wcsstr`, `wcsrchr`. BSD compat helpers ported in (`explicit_memset`, `reallocarr`, `consttime_bcmp`, `pidfile_signal`, `memset_explicit`, `stravis`). Linux 6.7+ futex2 wrappers (`futex_wake`/`futex_wait`/`futex_requeue`) added under Epic **bd-0ar9l**. NSS shadow/pwd/grp reentrant slot hardening.
+
+### Single-Pass Hot-Path Rewrites
+
+- Single-pass `strstr` absent-scan ([c3addaa](https://github.com/Dicklesworthstone/frankenlibc/commit/c3addaaa40db1d9f9c0263f21739e54bc5c645d3))
+- Single-pass `strchr` miss-scan ([42aff22](https://github.com/Dicklesworthstone/frankenlibc/commit/42aff220975277b4cfe2f13173a1b42ac0981193))
+- Route `explicit_memset` through ABI memset for guaranteed inviolability ([c8ae5bf](https://github.com/Dicklesworthstone/frankenlibc/commit/c8ae5bf5523e28c20352982195eb0bb5e317429f))
+
+### BSD Compat and Linux 6.7+ Syscalls
+
+- Port 4 BSD compat helpers (`reallocarr`, `consttime_bcmp`, `pidfile_signal`, `stravis`) ([80fb620](https://github.com/Dicklesworthstone/frankenlibc/commit/80fb620cf901a03807784705e0bb888d62593b37))
+- Port 3 Linux 6.7+ futex2 syscall wrappers (Epic bd-0ar9l) ([d74e35e](https://github.com/Dicklesworthstone/frankenlibc/commit/d74e35eabb719f783c370c345b5aaadf4e571aec))
+
+### NSS Hardening
+
+- Harden shadow passwd reentrant slots ([4a5201b](https://github.com/Dicklesworthstone/frankenlibc/commit/4a5201b14ef606ea211ca50e5bc5ba9391b2fc31))
+
+---
+
+## Phase 11 -- Tracked-Region Buffer-Bound Sweep (2026-04-27)
+
+A single 134-commit workday: every C-string and buffer entry point in the ABI got a systematic "bound X scan" hardening pass. Every input pointer scan is now bounded by a tracked-region check, defeating out-of-bounds reads on attacker-controlled buffers. A CVE-class hardening sweep finished in one day.
+
+### Tracked-Region Bound Sweep
+
+- Bound poll/select/epoll/timerfd buffers via tracked-region check ([13ae2cd](https://github.com/Dicklesworthstone/frankenlibc/commit/13ae2cdd57ab19eaa939702137acb6531ad0ca21))
+- Bound IO syscall buffers via tracked-region check ([5dc958d](https://github.com/Dicklesworthstone/frankenlibc/commit/5dc958d03dd3e56a8841984e4c35da5d6d1dcce7))
+- Bound socket syscall buffers ([01ec384](https://github.com/Dicklesworthstone/frankenlibc/commit/01ec384c785d1e57f5cba348532a3798c09432e0))
+- Bound wchar descriptor names ([7ee075e](https://github.com/Dicklesworthstone/frankenlibc/commit/7ee075eb79ad3cb72b68849214a3f9c98112bf61))
+- Bound DNS compression name scans ([1ebc198](https://github.com/Dicklesworthstone/frankenlibc/commit/1ebc198d444c8ff7a9f86d1da634ce91b3326daf))
+- Bound stringlist find scans ([5b3517c](https://github.com/Dicklesworthstone/frankenlibc/commit/5b3517c9))
+- Bound `gethostbyname2` request scan ([f970e5a](https://github.com/Dicklesworthstone/frankenlibc/commit/f970e5ae2217dbecf9576044c9e21cf81e7d3938))
+- Bound host loader path scan ([da86933](https://github.com/Dicklesworthstone/frankenlibc/commit/da8693352c67d141ae3df2da0702d4e6aae14855))
+- Bound scanf input scans ([45fffa6](https://github.com/Dicklesworthstone/frankenlibc/commit/45fffa61a05c8fdb8c25e93b45527d58808088f3))
+- ~100 additional `fix: bound <X> scans` commits across pwd/grp, netgroup, mntent, mount path, environment lookup, glob, getopt, regex, and aliases — every C-string boundary became EFAULT-correct against malformed pointers
+
+---
+
+## Phase 10 -- Fuzzing Sweep and CVE-Class Bug Burndown (2026-04-22 .. 2026-04-26)
+
+~25 new `cargo-fuzz` targets added in 5 days under Epics **bd-dvr22 / bd-jy4qu / bd-o4yda**. Real bugs found and fixed inside library code from those fuzzers, including a 4 GB XDR denial-of-service, `xdr_*` `elsize=0` OOB read, `printf %g` precision-overflow panic, reentrant malloc panic, and `atfork` lock-holding deadlock. stdio printf/scanf table-driven grammar/synthesis pipeline lands under Epic **bd-9chy.26**. Total exported symbol count crossed **4,119** (from ~3,980), propagated to README, FEATURE_PARITY, reality_report, and the CVE arena fixtures.
+
+### New Fuzz Targets
+
+- `fuzz_mmap` + 4 bug beads ([5fdae36](https://github.com/Dicklesworthstone/frankenlibc/commit/5fdae36de7843fb2e81c06a07deb1c8960b54e8b))
+- `fuzz_socket` ([693bb76](https://github.com/Dicklesworthstone/frankenlibc/commit/693bb766c9ea99d5b36ed8cb6f4670eab046680b))
+- `fuzz_signal` ([f117435](https://github.com/Dicklesworthstone/frankenlibc/commit/f117435b7f576a5f679e39a646fef63bd3bbe926))
+- `fuzz_fortify` ([94a8c7a](https://github.com/Dicklesworthstone/frankenlibc/commit/94a8c7a7bc815b4fac520e991ce3343e072da894))
+- `fuzz_setjmp` + `fuzz_dlfcn` ([d9b45f4](https://github.com/Dicklesworthstone/frankenlibc/commit/d9b45f44))
+- `fuzz_wchar` ([8ccb6b0](https://github.com/Dicklesworthstone/frankenlibc/commit/8ccb6b0933773b6e537ace0f812a66ca8d1494cb))
+- `fuzz_pthread_sync_misc` ([9d04c07](https://github.com/Dicklesworthstone/frankenlibc/commit/9d04c07afed20372c9b45904de51d1badcb541f3))
+- `fuzz_xdr` + close 4 GB DoS + elsize=0 OOB ([f7581b5](https://github.com/Dicklesworthstone/frankenlibc/commit/f7581b5e081e2307766faa62674493fddc01b136))
+- Structure-aware harnesses across XDR, regex, scanf, malloc, printf, resolver, iconv, dirent, ctype, time/math/inet — 16 total fuzz targets
+
+### Bug Fixes From Fuzz Discovery
+
+- Cap printf float-format precision at 65535 to avoid fmt panic ([9502184](https://github.com/Dicklesworthstone/frankenlibc/commit/9502184f4763222a10d6894f90c40ccc313dbb25))
+- `format_g` switches to `%e` when rounding overflows precision (Epic bd-ju24y) ([7df551a](https://github.com/Dicklesworthstone/frankenlibc/commit/7df551a56f0bb6a346cc2d318beb7d25f872217e))
+- Per-thread reentry guards in malloc ([6c60fbf](https://github.com/Dicklesworthstone/frankenlibc/commit/6c60fbf7e482ccb40fb98f7229d955bb04a13835))
+- Swap-extract `on_exit`/`at_quick_exit` handlers instead of holding lock (Epic bd-3jpoz) ([7fca17e](https://github.com/Dicklesworthstone/frankenlibc/commit/7fca17e9ee2415643b8f998f21c8e7001c724cc6))
+
+### Symbol-Count Crossing
+
+- Propagate `total_exported=4119` surface counts to README, FEATURE_PARITY, reality_report, and CVE arena ([5cf1cdb](https://github.com/Dicklesworthstone/frankenlibc/commit/5cf1cdb1))
+- libcrypt aliases, `fchmodat2`, `eventfd2`, `rt_sig*` additions
+
+---
+
+## Phase 9 -- Syscall Surface Lockdown and Native-Only ABI (2026-04-16 .. 2026-04-21)
+
+Closing out the `libc::syscall` callthrough census to **zero** (Epic **bd-h5x** finalization: 124 → 0 calls; see `memory/syscall_migration_complete.md`). New typed syscall wrappers added for io_uring, landlock, futex2, process_vm_*, scheduler, getrandom/arc4random, pidfd, statx, execveat, namespace ops, personality, and process_madvise/mrelease. Replacement-guard callthroughs aggressively trimmed across pthread, stdio, stdlib, unistd, and `glibc_internal_abi`. aarch64 arch-gate bring-up: `compile_error!` documents x86_64-primary + aarch64-supported (Epic **bd-10pq**).
+
+### Native Syscall Wrapper Expansion
+
+- io_uring, landlock, scheduling wrappers (22 callsites migrated) ([8f96a74](https://github.com/Dicklesworthstone/frankenlibc/commit/8f96a740d69c1805147dda0157952fe8f4b3bbe5))
+- Specialized syscalls (20 callsites migrated) ([c62c477](https://github.com/Dicklesworthstone/frankenlibc/commit/c62c4770d2543f4f9c29de61b01ce1e77cb4b04e))
+- Mount API wrappers + unistd callsite migration ([e4f2e6f](https://github.com/Dicklesworthstone/frankenlibc/commit/e4f2e6f7b50b7c26935df6eb320d80cc44d49ec7))
+- Personality, `process_madvise`/`process_mrelease` wrappers ([d2c9740](https://github.com/Dicklesworthstone/frankenlibc/commit/d2c974053f7d4fd6aeb3eb81d00cbc152ad58d83))
+- Eliminate all `libc::syscall` calls from `glibc_internal_abi.rs` ([f13f093](https://github.com/Dicklesworthstone/frankenlibc/commit/f13f0931ca4c95ea846174f5d7bd44c4c9b9b72c))
+
+### Native-Only pthread
+
+- Promote pthread mutex/cond/lifecycle to `Implemented` ([09ae220](https://github.com/Dicklesworthstone/frankenlibc/commit/09ae22010860fde585d5805a64acf510c12cd2a5))
+- Make mutex and condvar ABI native-only ([70597c1](https://github.com/Dicklesworthstone/frankenlibc/commit/70597c14bb72c73f91d2f9a33be87bc062a38f84))
+
+### Architecture Gate
+
+- `compile_error!` arch gate documenting x86_64 + aarch64 support matrix (Epic bd-10pq) ([5cfb2fc](https://github.com/Dicklesworthstone/frankenlibc/commit/5cfb2fc5289a8fbe0499a36750a0716783d74ff2))
+- Complete safety documentation for all `unsafe` syscall wrappers ([cb0d133](https://github.com/Dicklesworthstone/frankenlibc/commit/cb0d133f480c373cde6efbfd7f57cf473ca3bf9b))
+
+---
+
+## Phase 8 -- Conformance Harness Saturation and Raw-Syscall Migration (2026-03-22 .. 2026-04-15)
+
+Conformance fixture coverage transitions from "selective" to "exhaustive per subsystem." A parallel campaign (Epic **bd-h5x**) replaces every `libc::syscall` callsite with native raw-syscall veneers. Membrane policy instrumentation and replacement-guard census become routine. Shared-futex support shipped for pthread sync primitives.
+
+### Conformance Harness Saturation
+
+- Locale, resource, termios ops conformance tests ([e91ed7e](https://github.com/Dicklesworthstone/frankenlibc/commit/e91ed7e472c1c4d70b578ef100027fc58b539bda))
+- Pthread cond/mutex/thread harnesses ([4db6876](https://github.com/Dicklesworthstone/frankenlibc/commit/4db687658e6159bdf4926ba2cfb72da53c5c1e15))
+- `signal_ops` + `time_ops` harnesses ([c976eab](https://github.com/Dicklesworthstone/frankenlibc/commit/c976eabf9c8a2c598cd1c79cd0de877093b12439))
+- Final 6 conformance harnesses completing fixture coverage ([a675cca](https://github.com/Dicklesworthstone/frankenlibc/commit/a675cca96200e790c3d184a7cd286b2f27fa75ee))
+- `stdio_evidence.rs` JSONL schema and parser ([b3682cf](https://github.com/Dicklesworthstone/frankenlibc/commit/b3682cfcd0fae511850b8f87810dcbdd415074bb))
+
+### Raw-Syscall Migration (Epic bd-h5x: 124 → 0 libc::syscall calls)
+
+- Migrate `malloc_abi` and `rpc_abi` to native syscalls ([aa960cd](https://github.com/Dicklesworthstone/frankenlibc/commit/aa960cd18f3ec5939dca1efa77461aadcf4b1cb9))
+- `io_internal_abi` from `libc::syscall` to native raw syscalls ([02c0369](https://github.com/Dicklesworthstone/frankenlibc/commit/02c0369086a4c1d591caaa8de522b11304e7ac8f))
+- Migrate 48 `libc::syscall` calls to raw syscalls in `glibc_internal_abi.rs` ([b0396cb](https://github.com/Dicklesworthstone/frankenlibc/commit/b0396cb41f54a256e68668a10e0705ea0e80bd21))
+
+### pthread and stdio
+
+- Shared futex support and conformance suite expansion ([9fc4eee](https://github.com/Dicklesworthstone/frankenlibc/commit/9fc4eee0da70548e8d780d0859ce0eec08bad12e))
+- scanf length-modifier width wrapping + printf tweaks ([e0152ea](https://github.com/Dicklesworthstone/frankenlibc/commit/e0152ea4297f10351aba6210d6cf430d78208a61))
+
+---
+
+
 
 ---
 
