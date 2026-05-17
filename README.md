@@ -734,8 +734,8 @@ Each stage maintains a `Beta(α, β)` distribution initialized to `Beta(1, 1)`. 
 
 The membrane is called on every libc entrypoint. Global locks would create unacceptable contention. The `alien_cs` toolkit in `crates/frankenlibc-membrane/src/` provides lock-free and wait-free primitives beyond what `parking_lot` offers:
 
-| Primitive | Source | Purpose |
-|---|---|---:|
+| Primitive | Source | Purpose | Size |
+|---|---|---|---:|
 | `SeqLock` | `seqlock.rs` | Optimistic read-side concurrency for frequently-read, rarely-written metadata | ~33 KB |
 | `RCU` | `rcu.rs` | Read-copy-update for membership structures read on every call | ~31 KB |
 | `EBR` | `ebr.rs` | Epoch-based reclamation for safe deferred freeing of shared metadata | ~29 KB |
@@ -3159,19 +3159,19 @@ When `dlvsym_next` is called from `host_resolve.rs`, it walks the *host* glibc's
 
 `crates/frankenlibc-membrane/src/page_oracle.rs` is a two-level page bitmap that answers "is this page ours?" in O(1).
 
-### Layer 1 (L1): Chunk Filter
+### Layer 1 (L1): Chunk Presence Filter
 
-The address space is sliced into 16M-pointer chunks (16 MiB at 4 KiB pages). L1 is a fixed-size array indexed by `addr >> 24`, where each entry indicates "some chunk hashing to this slot has had an L2 bitmap published."
+The address space is sliced into 16 MiB chunks (4096 pages × 4 KiB/page; `decompose(page) = (page / PAGES_PER_L2, page % PAGES_PER_L2)`). The chunk index is conceptually `addr >> 24` since `2^24 = 16 MiB`. L1 is a 65,536-bit bloom-style presence filter (`[AtomicU64; 1024]`) where each chunk index is mixed through a MurmurHash-3-style finalizer and then folded into a single bit. Each bit means "some chunk hashing here may have an L2 bitmap published."
 
 L1 is monotone: bits only turn on, never off. Consequences:
 
 - Concurrent `fetch_or` produces no torn updates
-- A zero L1 bit is sufficient evidence that no allocation lives in that chunk (skip the L2 lookup)
+- A zero L1 bit is sufficient evidence that no allocation lives in any chunk hashing here (skip the L2 lookup)
 - A one L1 bit may be a false positive; promotion to L2 is required for confirmation
 
-### Layer 2 (L2): Per-Chunk Page Bitmap
+### Layer 2 (L2): Per-Chunk Page Refcount Array
 
-When the allocator publishes a page that lives in a chunk the L1 has flagged, a 512-byte bitmap is created tracking the individual 4 KiB pages within that chunk. The bitmap is stored under a `BravoRwLock` (a lock-free read-mostly RwLock variant) so concurrent readers don't contend.
+When the allocator publishes a page that lives in a chunk the L1 has flagged, an L2 entry is created tracking the individual 4 KiB pages within that chunk. The implementation uses an `[AtomicU32; PAGES_PER_L2]` refcount array (16 KiB per chunk; the source-comment shorthand says "512-byte bitmap" but the actual struct is an atomic-refcount array, supporting up to 2³² independent ownership claims per page). L2 maps are stored in a `HashMap<usize, Arc<L2Bitmap>>` under a `BravoRwLock` (a lock-free read-mostly RwLock variant) so concurrent readers don't contend.
 
 ### The Bravo RW Lock
 
