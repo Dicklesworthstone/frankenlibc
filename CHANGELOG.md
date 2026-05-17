@@ -867,17 +867,18 @@ The runtime math kernel provides the statistical foundation for the Transparent 
 |---|---|
 | **Implemented** | Native Rust-owned behavior behind the ABI symbol |
 | **RawSyscall** | ABI path delegates directly to a Linux syscall |
-| **GlibcCallThrough** | Still delegates to host glibc via `dlsym` |
-| **Stub** | Exported but returns a fixed value (currently zero in the classified surface) |
+| **WrapsHostLibc** | Native wrapper that still calls host libc symbols internally (currently zero in the classified surface) |
+| **GlibcCallThrough** | Delegates to host glibc via `dlsym` (currently zero in the classified surface) |
+| **Stub** | Exported but returns a fixed value or documented degraded contract (currently zero in the classified surface) |
 
 ---
 
 ## Project Facts
 
-- **No tags or GitHub Releases** exist in this repository as of 2026-03-21.
+- **No tags or GitHub Releases** exist in this repository as of the [Unreleased] snapshot date at the top of this changelog (`git tag -l` and `gh release list` both empty).
 - The version badge in the README reads `0.1.0`; `Cargo.toml` workspace version matches.
-- The canonical coverage source of truth is `tests/conformance/support_matrix_maintenance_report.v1.json`.
-- All 626 commits are by a single author (`Dicklesworthstone`).
+- The canonical coverage source of truth is `support_matrix.json` (with a snapshot in `tests/conformance/support_matrix_maintenance_report.v1.json`).
+- All commits are by a single author (`Dicklesworthstone`); see the [Unreleased] header for the running count.
 - The project was originally named `glibc_rust` and renamed to FrankenLibC on 2026-02-12.
 - License is MIT with an OpenAI/Anthropic rider, adopted 2026-02-18.
-- The project started 2026-02-08 and this changelog covers through 2026-03-21.
+- The project started 2026-02-08; this changelog covers through the [Unreleased] snapshot date.
