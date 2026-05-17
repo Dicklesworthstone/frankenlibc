@@ -396,11 +396,12 @@ report = {
         {"action": "bounded read-only worker probes", "executed": any(w["probe_exit_status"] is not None for w in workers)},
     ],
     "validation_commands": [
-        "bash -n scripts/generate_rch_pressure_approval_packet.sh",
-        "jq empty tests/conformance/rch_pressure_approval_packet_schema.v1.json",
+        "bash -n scripts/generate_rch_pressure_approval_packet.sh scripts/check_rch_pressure_packet_goldens.sh",
+        "jq empty tests/conformance/rch_pressure_approval_packet_schema.v1.json tests/conformance/rch_pressure_approval_packet_golden.v1.json",
         "jq empty target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json",
-        "git diff --check -- scripts/generate_rch_pressure_approval_packet.sh tests/conformance/rch_pressure_approval_packet_schema.v1.json .beads/issues.jsonl",
-        "AGENT_NAME=SunnyHeron br dep cycles --json",
+        "bash scripts/check_rch_pressure_packet_goldens.sh",
+        "git diff --check -- scripts/generate_rch_pressure_approval_packet.sh scripts/check_rch_pressure_packet_goldens.sh tests/conformance/rch_pressure_approval_packet_schema.v1.json tests/conformance/rch_pressure_approval_packet_golden.v1.json .beads/issues.jsonl",
+        "AGENT_NAME=<registered-agent> br dep cycles --json",
     ],
     "artifact_paths": [
         str(REPORT.relative_to(ROOT)),
