@@ -12529,9 +12529,36 @@ pub unsafe extern "C" fn setmntent(filename: *const c_char, type_: *const c_char
 /// glibc uses a static internal mntent + string buffer per-thread.
 /// Layout: first 48 bytes = struct mntent, rest = string data.
 const GETMNTENT_BUFSIZE: usize = 4096;
+
+const fn empty_getmntent_buf() -> [u8; GETMNTENT_BUFSIZE] {
+    [0u8; GETMNTENT_BUFSIZE]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static GETMNTENT_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; GETMNTENT_BUFSIZE]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_getmntent_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static GETMNTENT_BUF: std::cell::UnsafeCell<[u8; GETMNTENT_BUFSIZE]> =
-        const { std::cell::UnsafeCell::new([0u8; GETMNTENT_BUFSIZE]) };
+        const { std::cell::UnsafeCell::new(empty_getmntent_buf()) };
+}
+
+#[inline]
+fn with_getmntent_buf<R>(f: impl FnOnce(&mut [u8; GETMNTENT_BUFSIZE]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GETMNTENT_BUF_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GETMNTENT_BUF.with(|cell| {
+            // SAFETY: GETMNTENT_BUF is per-thread storage and this callback
+            // keeps the mutable reference scoped to the thread-local access.
+            f(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// `getmntent` — read next mount entry (non-reentrant).
@@ -12543,8 +12570,7 @@ pub unsafe extern "C" fn getmntent(stream: *mut c_void) -> *mut c_void {
     if stream.is_null() {
         return std::ptr::null_mut();
     }
-    GETMNTENT_BUF.with(|cell| {
-        let buf = unsafe { &mut *cell.get() };
+    with_getmntent_buf(|buf| {
         // struct mntent is the first 48 bytes; string data starts after.
         let mntbuf = buf.as_mut_ptr() as *mut c_void;
         let str_buf = unsafe { buf.as_mut_ptr().add(48) } as *mut c_char;
