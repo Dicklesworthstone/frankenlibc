@@ -287,7 +287,7 @@ Every exported symbol is explicitly classified as `Implemented`, `RawSyscall`, `
 
 ### 4. Clean-room over translation
 
-The codebase is not a line-by-line Rust port of glibc. Behavior is driven by contracts, fixtures, and verification artifacts rather than transliterating legacy C. Reference glibc source under `legacy_glibc_code/` is consulted for behavior, never copied.
+The codebase is not a line-by-line Rust port of glibc. Behavior is driven by contracts, fixtures, and verification artifacts rather than transliterating legacy C. Reference glibc behavior is consulted from upstream sources (the same way the POSIX spec is consulted), never copied.
 
 ### 5. Evidence beats rhetoric
 
@@ -2335,9 +2335,9 @@ Most of the `FRANKENLIBC_*` vars exist for *gates*, not runtime behavior. The ru
 
 Because the work tracking is part of the auditability story. Every implementation effort traces commit → bead → evidence → claim. Without that trace, you can't tell a real claim from an aspirational one. The `[bd-xxxxx]` prefix in commit subjects is what makes the audit gates possible.
 
-### What's the relationship to `legacy_glibc_code/`?
+### How does the project consult reference glibc behavior?
 
-Reference material for behavior research, specifically *not* a translation source. The rule (`AGENTS.md`) is clean-room: read it to understand what behavior you need to match, then implement from spec. The directory is gitignored from the workspace's normal build paths.
+`AGENTS.md` lists `legacy_glibc_code/` as a notional reference location, but no such directory is checked into this repository. The clean-room rule (also in `AGENTS.md`) is the binding constraint: read upstream glibc to understand what behavior you need to match, then implement from spec; never translate line-by-line. Behavioral parity is enforced via fixtures captured from a real glibc install at build/test time, not by copying source.
 
 ### What's in `target/conformance/`?
 
