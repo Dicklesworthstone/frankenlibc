@@ -20,7 +20,7 @@ fn workspace_root() -> TestResult<PathBuf> {
 fn count_crlf_lines(bytes: &[u8]) -> usize {
     let mut n = 0usize;
     for window in bytes.windows(2) {
-        if window == [b'\r', b'\n'] {
+        if window == b"\r\n" {
             n += 1;
         }
     }
