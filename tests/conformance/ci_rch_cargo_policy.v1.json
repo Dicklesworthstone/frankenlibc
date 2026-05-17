@@ -1,0 +1,64 @@
+{
+  "schema_version": "ci_rch_cargo_policy.v1",
+  "bead": "bd-dgxsh",
+  "purpose": "Static policy gate for the top-level CI script: cargo build/check/clippy/test validation must route through RCH, while local cargo fmt remains allowed as a formatting-only check.",
+  "policy": {
+    "remote_wrapper": "run_remote_cargo",
+    "required_remote_env": "RCH_REQUIRE_REMOTE=1",
+    "required_launcher": "rch exec -- env",
+    "required_target_dir_env": "CARGO_TARGET_DIR=",
+    "protected_subcommands": [
+      "build",
+      "check",
+      "clippy",
+      "test"
+    ],
+    "allowed_local_cargo_subcommands": [
+      "fmt"
+    ]
+  },
+  "negative_controls": [
+    {
+      "id": "negative_bare_cargo_check",
+      "mutation": {
+        "append_line": "cargo check --workspace --all-targets"
+      },
+      "expected_failure_signature": "bare_cargo_validation_command"
+    },
+    {
+      "id": "negative_missing_remote_env",
+      "mutation": {
+        "remove": "RCH_REQUIRE_REMOTE=1"
+      },
+      "expected_failure_signature": "missing_remote_env"
+    },
+    {
+      "id": "negative_missing_target_dir",
+      "mutation": {
+        "remove": "CARGO_TARGET_DIR=\"${target_dir}\""
+      },
+      "expected_failure_signature": "missing_target_dir_env"
+    },
+    {
+      "id": "negative_missing_policy_gate",
+      "mutation": {
+        "remove": "bash scripts/check_ci_rch_cargo_policy.sh --validate-only"
+      },
+      "expected_failure_signature": "ci_policy_gate_not_wired"
+    }
+  ],
+  "outputs": {
+    "report": "target/conformance/ci_rch_cargo_policy.report.json",
+    "log": "target/conformance/ci_rch_cargo_policy.log.jsonl"
+  },
+  "required_validation_commands": [
+    "jq empty tests/conformance/ci_rch_cargo_policy.v1.json",
+    "bash -n scripts/ci.sh",
+    "bash -n scripts/check_ci_rch_cargo_policy.sh",
+    "bash scripts/check_ci_rch_cargo_policy.sh --validate-only",
+    "jq empty target/conformance/ci_rch_cargo_policy.report.json",
+    "jq empty target/conformance/ci_rch_cargo_policy.log.jsonl",
+    "git diff --check -- scripts/ci.sh scripts/check_ci_rch_cargo_policy.sh tests/conformance/ci_rch_cargo_policy.v1.json .beads/issues.jsonl",
+    "br dep cycles --json"
+  ]
+}

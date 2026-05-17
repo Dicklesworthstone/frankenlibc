@@ -14,11 +14,28 @@ run_benchmark_gate() {
     scripts/check_benchmark_gate.sh
 }
 
+run_remote_cargo() {
+    if ! command -v rch >/dev/null 2>&1; then
+        echo "ERROR: rch is required for cargo-backed CI validation" >&2
+        return 1
+    fi
+
+    local target_dir="${FRANKENLIBC_CI_RCH_TARGET_DIR:-/tmp/rch_target_frankenlibc_ci}"
+    RCH_REQUIRE_REMOTE=1 \
+        RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" \
+        rch exec -- env CARGO_TARGET_DIR="${target_dir}" cargo "$@"
+}
+
 echo "=== frankenlibc CI ==="
 echo ""
 
 echo "--- main-only branch/worktree guard ---"
 bash scripts/check_main_only_worktree_guard.sh --validate-only
+echo "PASS"
+echo ""
+
+echo "--- CI RCH cargo policy gate ---"
+bash scripts/check_ci_rch_cargo_policy.sh --validate-only
 echo "PASS"
 echo ""
 
@@ -33,22 +50,22 @@ echo "PASS"
 echo ""
 
 echo "--- cargo check --workspace --all-targets ---"
-cargo check --workspace --all-targets
+run_remote_cargo check --workspace --all-targets
 echo "PASS"
 echo ""
 
 echo "--- cargo clippy --workspace --all-targets -- -D warnings ---"
-cargo clippy --workspace --all-targets -- -D warnings
+run_remote_cargo clippy --workspace --all-targets -- -D warnings
 echo "PASS"
 echo ""
 
 echo "--- cargo test --workspace --all-targets ---"
-cargo test --workspace --all-targets
+run_remote_cargo test --workspace --all-targets
 echo "PASS"
 echo ""
 
 echo "--- cargo build -p frankenlibc-abi --release ---"
-cargo build -p frankenlibc-abi --release
+run_remote_cargo build -p frankenlibc-abi --release
 echo "PASS"
 echo ""
 
