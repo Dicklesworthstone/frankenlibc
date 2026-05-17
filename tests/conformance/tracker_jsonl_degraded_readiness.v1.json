@@ -1,0 +1,65 @@
+{
+  "schema_version": "tracker_jsonl_degraded_readiness.v1",
+  "purpose": "Provide a degraded-mode readiness and stale-in-progress report from .beads/issues.jsonl without touching SQLite, br, or bv when tracker DB paths are locked or slow.",
+  "issues_source": ".beads/issues.jsonl",
+  "forbidden_sources": [
+    ".beads/beads.db",
+    ".beads/issues.db",
+    "br",
+    "bv"
+  ],
+  "ready_definition": {
+    "candidate_status": "open",
+    "blocking_dependency_type": "blocks",
+    "nonblocking_dependency_types": [
+      "parent-child"
+    ],
+    "blocked_when_dependency_status_not_in": [
+      "closed"
+    ],
+    "permissioned_ready_is_not_safe_ready": true
+  },
+  "stale_in_progress_after_hours": 72,
+  "permission_required_markers": [
+    "explicit approval",
+    "explicit operator permission",
+    "requires explicit approval",
+    "permissioned",
+    "real_run_ack",
+    "xfstests_real_run_ack",
+    "may-mutate",
+    "scratch_mnt",
+    "swarm-workload-may-use-permissioned-large-host",
+    "large host"
+  ],
+  "required_report_fields": [
+    "schema_version",
+    "status",
+    "mode",
+    "generated_at_utc",
+    "source_commit",
+    "data_sources",
+    "forbidden_sources",
+    "db_accessed",
+    "summary",
+    "safe_ready",
+    "permissioned_ready",
+    "blocked_open",
+    "stale_in_progress",
+    "negative_controls",
+    "failures"
+  ],
+  "required_negative_controls": [
+    "blocks_dependency_excludes_ready",
+    "old_in_progress_is_stale",
+    "permissioned_ready_is_separated",
+    "closed_dependency_allows_ready"
+  ],
+  "validation_commands": [
+    "jq empty tests/conformance/tracker_jsonl_degraded_readiness.v1.json",
+    "bash -n scripts/check_tracker_jsonl_degraded_readiness.sh",
+    "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only",
+    "jq '.status == \"pass\" and (.negative_controls | all(.status == \"pass\"))' target/conformance/tracker_jsonl_degraded_readiness.report.json",
+    "git diff --check -- scripts/check_tracker_jsonl_degraded_readiness.sh tests/conformance/tracker_jsonl_degraded_readiness.v1.json .beads/issues.jsonl"
+  ]
+}
