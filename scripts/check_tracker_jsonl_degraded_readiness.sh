@@ -155,6 +155,10 @@ def project_issue(issue: dict[str, Any], *, extra: dict[str, Any] | None = None)
     return row
 
 
+def is_container_parent(issue: dict[str, Any]) -> bool:
+    return issue.get("issue_type") == "epic"
+
+
 def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, Any]:
     issue_by_id = {str(row.get("id")): row for row in rows if isinstance(row.get("id"), str)}
     permission_markers = [
@@ -167,8 +171,23 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
     safe_ready: list[dict[str, Any]] = []
     permissioned_ready: list[dict[str, Any]] = []
     blocked_open: list[dict[str, Any]] = []
+    container_open: list[dict[str, Any]] = []
     stale_in_progress: list[dict[str, Any]] = []
     in_progress: list[dict[str, Any]] = []
+    active_parent_children: dict[str, list[str]] = {}
+
+    for row in rows:
+        child_id = row.get("id")
+        child_status = row.get("status")
+        dependencies = row.get("dependencies")
+        if not isinstance(child_id, str) or child_status not in ACTIVE_STATUSES or not isinstance(dependencies, list):
+            continue
+        for dep in dependencies:
+            if not isinstance(dep, dict) or dep.get("type") != "parent-child":
+                continue
+            parent_id = dep.get("depends_on_id")
+            if isinstance(parent_id, str) and parent_id:
+                active_parent_children.setdefault(parent_id, []).append(child_id)
 
     for issue in rows:
         issue_id = issue.get("id")
@@ -180,6 +199,16 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
         if status == "open":
             if blockers:
                 blocked_open.append(project_issue(issue, extra={"blockers": blockers}))
+            elif issue_id in active_parent_children and is_container_parent(issue):
+                container_open.append(
+                    project_issue(
+                        issue,
+                        extra={
+                            "active_child_ids": sorted(active_parent_children[issue_id]),
+                            "reason": "active_parent_container",
+                        },
+                    )
+                )
             else:
                 ready_row = project_issue(
                     issue,
@@ -216,6 +245,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
             "safe_ready_total": len(safe_ready),
             "permissioned_ready_total": len(permissioned_ready),
             "blocked_open_total": len(blocked_open),
+            "container_open_total": len(container_open),
             "in_progress_total": len(in_progress),
             "stale_in_progress_total": len(stale_in_progress),
             "stale_in_progress_after_hours": stale_hours,
@@ -224,6 +254,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
         "safe_ready": safe_ready,
         "permissioned_ready": permissioned_ready,
         "blocked_open": blocked_open,
+        "container_open": container_open,
         "in_progress": in_progress,
         "stale_in_progress": stale_in_progress,
     }
@@ -367,6 +398,43 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
             "status": "pass" if "bd-jsonl-negative-ready" in ready_ids else "fail",
         }
     )
+
+    parent = deepcopy(rows)
+    parent.append(
+        {
+            "id": "bd-jsonl-negative-parent",
+            "title": "negative active parent",
+            "issue_type": "epic",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
+    parent.append(
+        {
+            "id": "bd-jsonl-negative-child",
+            "title": "negative active child",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+            "dependencies": [
+                {
+                    "issue_id": "bd-jsonl-negative-child",
+                    "depends_on_id": "bd-jsonl-negative-parent",
+                    "type": "parent-child",
+                }
+            ],
+        }
+    )
+    parent_analysis = analyze(parent, contract)
+    parent_ready_ids = {row["id"] for row in parent_analysis["ready"]}
+    parent_container_ids = {row["id"] for row in parent_analysis["container_open"]}
+    ok = "bd-jsonl-negative-parent" in parent_container_ids and "bd-jsonl-negative-parent" not in parent_ready_ids
+    controls.append(
+        {
+            "name": "parent_with_active_child_excluded_ready",
+            "expected_signature": "active_parent_container_not_ready",
+            "status": "pass" if ok else "fail",
+        }
+    )
     return controls
 
 
@@ -407,6 +475,7 @@ report = {
     "safe_ready": analysis["safe_ready"],
     "permissioned_ready": analysis["permissioned_ready"],
     "blocked_open": analysis["blocked_open"],
+    "container_open": analysis["container_open"],
     "stale_in_progress": analysis["stale_in_progress"],
     "negative_controls": negative_controls,
     "failures": errors,

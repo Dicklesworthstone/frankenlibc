@@ -14,6 +14,7 @@
     "nonblocking_dependency_types": [
       "parent-child"
     ],
+    "active_epic_parent_children_exclude_ready": true,
     "blocked_when_dependency_status_not_in": [
       "closed"
     ],
@@ -45,6 +46,7 @@
     "safe_ready",
     "permissioned_ready",
     "blocked_open",
+    "container_open",
     "stale_in_progress",
     "negative_controls",
     "failures"
@@ -53,7 +55,8 @@
     "blocks_dependency_excludes_ready",
     "old_in_progress_is_stale",
     "permissioned_ready_is_separated",
-    "closed_dependency_allows_ready"
+    "closed_dependency_allows_ready",
+    "parent_with_active_child_excluded_ready"
   ],
   "validation_commands": [
     "jq empty tests/conformance/tracker_jsonl_degraded_readiness.v1.json",
