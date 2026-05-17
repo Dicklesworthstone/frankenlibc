@@ -20,7 +20,21 @@
     "bd-gsw2h",
     "bd-7xjbo",
     "bd-5oqtx",
-    "bd-q4sri"
+    "bd-q4sri",
+    "bd-7w5h5",
+    "bd-3sskv",
+    "bd-1mgww",
+    "bd-s7yyy",
+    "bd-tli1i",
+    "bd-40rcy",
+    "bd-79cwi",
+    "bd-gcuq7",
+    "bd-6ru0e",
+    "bd-eb661",
+    "bd-dk9ou",
+    "bd-3828j",
+    "bd-x4s2z",
+    "bd-qv3j1"
   ],
   "entries": [
     {
@@ -128,6 +142,314 @@
         "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_raw_fd_traits_test -- --nocapture",
         "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_raw_fd_traits_test",
         "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_raw_fd_traits_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-7w5h5",
+      "title": "follow-up repair: no paired gate declares async fn",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "b85ef7f304a9881ee136c402557527733102d753",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_async_fn_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_async_fn_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_async_fn_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_async_fn_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_async_fn_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-3sskv",
+      "title": "follow-up repair: no paired gate calls panic macro",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "b85ef7f304a9881ee136c402557527733102d753",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_panic_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_panic_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_panic_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_panic_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_panic_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-1mgww",
+      "title": "follow-up repair: no paired gate contains unsafe keyword",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "b85ef7f304a9881ee136c402557527733102d753",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_unsafe_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_unsafe_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_unsafe_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_unsafe_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_unsafe_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-s7yyy",
+      "title": "follow-up repair: no paired gate uses thread spawn",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "b85ef7f304a9881ee136c402557527733102d753",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_thread_spawn_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_thread_spawn_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_thread_spawn_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_thread_spawn_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_thread_spawn_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-tli1i",
+      "title": "follow-up repair: no paired gate uses anyhow or eyre",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "ff99ff059439c5191eaca106e4525b9c3077f785",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_anyhow_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_anyhow_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_anyhow_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_anyhow_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_anyhow_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-40rcy",
+      "title": "follow-up repair: no paired gate imports tokio",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "ff99ff059439c5191eaca106e4525b9c3077f785",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_tokio_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_tokio_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_tokio_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_tokio_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_tokio_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-79cwi",
+      "title": "follow-up repair: no paired gate imports sync mpsc",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "ff99ff059439c5191eaca106e4525b9c3077f785",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_mpsc_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_mpsc_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_mpsc_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_mpsc_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_mpsc_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-gcuq7",
+      "title": "follow-up repair: no paired gate declares macro_rules",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "ff99ff059439c5191eaca106e4525b9c3077f785",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_macro_rules_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_macro_rules_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_macro_rules_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_macro_rules_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_macro_rules_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-6ru0e",
+      "title": "follow-up repair: no paired gate invokes sleep",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "75ea0a387899e44534b2368422920f04f7138a99",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_sleep_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_sleep_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_sleep_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_sleep_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_sleep_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-eb661",
+      "title": "follow-up repair: no paired gate imports serde Deserialize",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "75ea0a387899e44534b2368422920f04f7138a99",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_serde_deserialize_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_serde_deserialize_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_serde_deserialize_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_serde_deserialize_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_serde_deserialize_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-dk9ou",
+      "title": "follow-up repair: no paired gate imports std ffi",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "75ea0a387899e44534b2368422920f04f7138a99",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_ffi_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_ffi_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_std_ffi_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_std_ffi_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_std_ffi_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-3828j",
+      "title": "follow-up repair: no paired gate imports std os",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "75ea0a387899e44534b2368422920f04f7138a99",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_os_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_os_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_std_os_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_std_os_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_std_os_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-x4s2z",
+      "title": "follow-up repair: no paired gate references sync primitives",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "46ca643b6aedd64284a74314581b3a66d7c12c4a",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_sync_primitives_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_sync_primitives_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_sync_primitives_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_sync_primitives_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_sync_primitives_test -- -D warnings"
+      ],
+      "remote_proof": null
+    },
+    {
+      "bead_id": "bd-qv3j1",
+      "title": "follow-up repair: no paired gate uses boxed error trait objects",
+      "blocker_bead": "bd-716tv",
+      "source_commit": "46ca643b6aedd64284a74314581b3a66d7c12c4a",
+      "replay_status": "pending_rch_admissibility",
+      "files": [
+        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_box_dyn_error_test.rs"
+      ],
+      "static_checks": [
+        {
+          "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_box_dyn_error_test.rs",
+          "status": "pass"
+        }
+      ],
+      "remote_validation_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test cli_contract_paired_gate_no_box_dyn_error_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test cli_contract_paired_gate_no_box_dyn_error_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test cli_contract_paired_gate_no_box_dyn_error_test -- -D warnings"
       ],
       "remote_proof": null
     }
