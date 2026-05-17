@@ -22701,10 +22701,46 @@ pub unsafe extern "C" fn getttynam(name: *const c_char) -> *mut c_void {
 
 const DATEMSK_PATH_SCAN_LIMIT: usize = libc::PATH_MAX as usize;
 
-// Thread-local static tm for the non-reentrant `getdate`.
+#[cfg(feature = "owned-tls-cache")]
+struct GetdateTm(libc::tm);
+
+// SAFETY: `GetdateTm` is process-owned scratch storage keyed by kernel thread
+// id. Access is serialized through `OwnedTlsCache::with`, and any `tm_zone`
+// pointer copied by libc parsing is only stored as an opaque C pointer inside
+// the scratch record returned to ABI callers.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for GetdateTm {}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_getdate_tm() -> GetdateTm {
+    GetdateTm(unsafe { std::mem::zeroed() })
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static GETDATE_TM_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GetdateTm> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_getdate_tm);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static GETDATE_TM: std::cell::UnsafeCell<libc::tm> =
         const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
+}
+
+#[inline]
+fn with_getdate_tm<R>(callback: impl FnOnce(&mut libc::tm) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GETDATE_TM_OWNED_TLS.with(|slot| callback(&mut slot.0))
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GETDATE_TM.with(|cell| {
+            // SAFETY: GETDATE_TM is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// Core getdate implementation: reads DATEMSK file and tries each template
@@ -22819,8 +22855,7 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
 pub unsafe extern "C" fn getdate(string: *const c_char) -> *mut c_void {
     use crate::glibc_internal_abi::getdate_err;
 
-    GETDATE_TM.with(|cell| {
-        let tm = unsafe { &mut *cell.get() };
+    with_getdate_tm(|tm| {
         let rc = unsafe { getdate_core(string, tm) };
         if rc != 0 {
             unsafe { getdate_err = rc };
