@@ -1,0 +1,146 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "rch_diff_validation_matrix",
+  "bead": "bd-5ci21",
+  "generated_utc": "2026-05-17T23:31:00Z",
+  "source_commit": "current",
+  "purpose": "Map changed source/artifact paths to focused RCH validation lanes without running cargo. This is a planning contract for pending slices when RCH worker selection is blocked: it emits the exact static checks and remote-only cargo commands agents should run once RCH is admissible.",
+  "inputs": {
+    "rch_validation_lane_plan": "tests/conformance/rch_validation_lane_plan.v1.json",
+    "rch_remote_admissibility_preflight": "scripts/check_rch_remote_admissibility.sh",
+    "standalone_tls_model_checker": "scripts/check_standalone_tls_model_startup_experiment.sh",
+    "standalone_owned_tls_surface_checker": "scripts/check_standalone_owned_tls_startup_surface.sh",
+    "standalone_blocker_rollup_checker": "scripts/check_standalone_blocker_burndown_progress_rollup.sh"
+  },
+  "policy": {
+    "all_cargo_commands_must_be_remote_only": true,
+    "remote_env_markers": [
+      "RCH_REQUIRE_REMOTE=1",
+      "RCH_FORCE_REMOTE=true"
+    ],
+    "local_cargo_is_invalid_proof": true,
+    "reject_workspace_wide_commands": true,
+    "reject_unknown_changed_paths": true,
+    "current_diff_is_informational": true,
+    "current_diff_ignored_globs": [
+      ".beads/issues.jsonl"
+    ],
+    "sample_paths_must_all_map": true
+  },
+  "sample_paths": [
+    "crates/frankenlibc-abi/src/resolv_abi.rs",
+    "crates/frankenlibc-harness/tests/standalone_tls_removal_experiment_test.rs",
+    "tests/conformance/standalone_tls_removal_experiment.v1.json"
+  ],
+  "path_rules": [
+    {
+      "rule_id": "abi-resolver-owned-tls",
+      "path_globs": [
+        "crates/frankenlibc-abi/src/resolv_abi.rs"
+      ],
+      "surface_ids": [
+        "standalone-forge-scripts"
+      ],
+      "static_checks": [
+        "rustfmt --edition 2024 --check crates/frankenlibc-abi/src/resolv_abi.rs",
+        "git diff --check -- crates/frankenlibc-abi/src/resolv_abi.rs"
+      ],
+      "remote_preflight_commands": [
+        "RCH_REQUIRE_REMOTE=1 bash scripts/check_rch_remote_admissibility.sh \"cargo check -p frankenlibc-abi --features=standalone\""
+      ],
+      "remote_cargo_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-abi --features=standalone",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-abi --features=standalone,owned-tls-cache",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-abi --features=standalone,owned-tls-cache -- -D warnings"
+      ],
+      "notes": "Resolver ABI changes need standalone and owned-tls-cache feature proof, but no local cargo proof may be counted while RCH is blocked."
+    },
+    {
+      "rule_id": "standalone-tls-removal-harness-test",
+      "path_globs": [
+        "crates/frankenlibc-harness/tests/standalone_tls_removal_experiment_test.rs"
+      ],
+      "surface_ids": [
+        "harness-conformance-gates"
+      ],
+      "static_checks": [
+        "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/standalone_tls_removal_experiment_test.rs",
+        "git diff --check -- crates/frankenlibc-harness/tests/standalone_tls_removal_experiment_test.rs"
+      ],
+      "remote_preflight_commands": [
+        "RCH_REQUIRE_REMOTE=1 bash scripts/check_rch_remote_admissibility.sh \"cargo test -p frankenlibc-harness --test standalone_tls_removal_experiment_test -- --nocapture\""
+      ],
+      "remote_cargo_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test standalone_tls_removal_experiment_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test standalone_tls_removal_experiment_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test standalone_tls_removal_experiment_test -- -D warnings"
+      ],
+      "notes": "Harness test changes use focused test/check/clippy lanes for the single integration test binary."
+    },
+    {
+      "rule_id": "standalone-tls-removal-manifest",
+      "path_globs": [
+        "tests/conformance/standalone_tls_removal_experiment.v1.json"
+      ],
+      "surface_ids": [
+        "standalone-forge-scripts"
+      ],
+      "static_checks": [
+        "jq empty tests/conformance/standalone_tls_removal_experiment.v1.json",
+        "bash scripts/check_standalone_tls_model_startup_experiment.sh",
+        "bash scripts/check_standalone_owned_tls_startup_surface.sh",
+        "bash scripts/check_standalone_blocker_burndown_progress_rollup.sh",
+        "git diff --check -- tests/conformance/standalone_tls_removal_experiment.v1.json"
+      ],
+      "remote_preflight_commands": [
+        "RCH_REQUIRE_REMOTE=1 bash scripts/check_rch_remote_admissibility.sh \"cargo test -p frankenlibc-harness --test standalone_tls_removal_experiment_test -- --nocapture\""
+      ],
+      "remote_cargo_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test standalone_tls_removal_experiment_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test standalone_tls_removal_experiment_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test standalone_tls_removal_experiment_test -- -D warnings"
+      ],
+      "notes": "Manifest changes need JSON plus standalone/TLS rollup checkers and the focused harness test lane once RCH is admissible."
+    }
+  ],
+  "negative_controls": [
+    {
+      "control_id": "unknown_path_fails",
+      "mutation": "append src/unknown_surface.rs to sample paths",
+      "expected_error": "unmapped_path"
+    },
+    {
+      "control_id": "bare_cargo_command_fails",
+      "mutation": "replace one remote command with cargo check -p frankenlibc-abi",
+      "expected_error": "bare_cargo_command"
+    },
+    {
+      "control_id": "workspace_command_fails",
+      "mutation": "append RCH_REQUIRE_REMOTE=1 rch exec -- cargo check --workspace",
+      "expected_error": "workspace_wide_command"
+    }
+  ],
+  "report_contract": {
+    "output_path": "target/conformance/rch_diff_validation_matrix.report.json",
+    "must_materialize": [
+      "sample_matrix",
+      "current_diff_matrix",
+      "static_checks",
+      "remote_preflight_commands",
+      "remote_cargo_commands",
+      "negative_controls"
+    ]
+  },
+  "validation": {
+    "commands": [
+      "bash -n scripts/check_rch_diff_validation_matrix.sh",
+      "jq empty tests/conformance/rch_diff_validation_matrix.v1.json",
+      "bash scripts/check_rch_diff_validation_matrix.sh",
+      "jq empty target/conformance/rch_diff_validation_matrix.report.json",
+      "git diff --check -- scripts/check_rch_diff_validation_matrix.sh tests/conformance/rch_diff_validation_matrix.v1.json .beads/issues.jsonl",
+      "AGENT_NAME=DarkShore br dep cycles --json"
+    ],
+    "cargo_required": false,
+    "cargo_reason": "This is a shell/Python planner and contract checker. It emits cargo commands for future remote execution but does not run cargo."
+  }
+}
