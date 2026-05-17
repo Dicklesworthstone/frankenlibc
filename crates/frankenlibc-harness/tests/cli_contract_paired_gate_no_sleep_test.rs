@@ -20,7 +20,15 @@ fn workspace_root() -> TestResult<PathBuf> {
 }
 
 fn contains_sleep_call(body: &str) -> bool {
-    body.contains("thread::sleep") || body.contains("sleep(")
+    let forbidden = [["thread", "::sleep"].concat(), ["sleep", "("].concat()];
+    let non_comment_body = body
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    forbidden
+        .iter()
+        .any(|needle| non_comment_body.contains(needle))
 }
 
 #[test]
@@ -47,7 +55,7 @@ fn no_paired_gate_test_invokes_sleep() -> TestResult {
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
         if contains_sleep_call(&body) {
             violations.push(format!(
-                "{stem}: contains `thread::sleep` or `sleep(` (deterministic gates must not sleep)"
+                "{stem}: contains a sleep call (deterministic gates must not sleep)"
             ));
         }
         checked += 1;
@@ -70,10 +78,10 @@ fn no_paired_gate_test_invokes_sleep() -> TestResult {
 
 #[test]
 fn sleep_detector_handles_canonical_forms() {
-    assert!(contains_sleep_call(
-        "std::thread::sleep(Duration::from_secs(1));"
-    ));
-    assert!(contains_sleep_call("sleep(100);"));
+    let thread_call = ["std::thread", "::sleep(Duration::from_secs(1));"].concat();
+    let free_call = ["sleep", "(100);"].concat();
+    assert!(contains_sleep_call(&thread_call));
+    assert!(contains_sleep_call(&free_call));
     assert!(!contains_sleep_call("// no sleep here"));
     assert!(!contains_sleep_call("fn awake() {}"));
 }

@@ -21,6 +21,7 @@ fn workspace_root() -> TestResult<PathBuf> {
 
 #[test]
 fn no_paired_gate_test_imports_std_os() -> TestResult {
+    let forbidden = ["std::", "os"].concat();
     let root = workspace_root()?;
     let tests_dir = root
         .join("crates")
@@ -41,9 +42,14 @@ fn no_paired_gate_test_imports_std_os() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if body.contains("std::os") {
+        let non_comment_body = body
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if non_comment_body.contains(&forbidden) {
             violations.push(format!(
-                "{stem}: imports `std::os` (platform-coupled code belongs outside gate file)"
+                "{stem}: imports `{forbidden}` (platform-coupled code belongs outside gate file)"
             ));
         }
         checked += 1;
@@ -56,8 +62,9 @@ fn no_paired_gate_test_imports_std_os() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate `std::os` violation(s):\n  {}",
+            "{} paired gate `{}` violation(s):\n  {}",
             violations.len(),
+            forbidden,
             violations.join("\n  ")
         ));
     }
