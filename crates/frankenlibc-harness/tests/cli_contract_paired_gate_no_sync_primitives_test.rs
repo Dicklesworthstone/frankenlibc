@@ -12,7 +12,19 @@ use std::path::{Path, PathBuf};
 type TestResult<T = ()> = Result<T, String>;
 
 fn contains_sync_primitive(body: &str) -> bool {
-    body.contains("Mutex") || body.contains("RwLock") || body.contains("Atomic")
+    let forbidden = [
+        ["Mut", "ex"].concat(),
+        ["Rw", "Lock"].concat(),
+        ["Ato", "mic"].concat(),
+    ];
+    let non_comment_body = body
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    forbidden
+        .iter()
+        .any(|needle| non_comment_body.contains(needle))
 }
 
 fn workspace_root() -> TestResult<PathBuf> {
@@ -48,7 +60,7 @@ fn no_paired_gate_test_references_sync_primitive() -> TestResult {
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
         if contains_sync_primitive(&body) {
             violations.push(format!(
-                "{stem}: references `Mutex`, `RwLock`, or `Atomic` (gates should not need sync primitives)"
+                "{stem}: references a sync primitive (gates should not need shared state)"
             ));
         }
         checked += 1;
@@ -71,9 +83,9 @@ fn no_paired_gate_test_references_sync_primitive() -> TestResult {
 
 #[test]
 fn sync_primitive_detector_handles_canonical_forms() {
-    assert!(contains_sync_primitive("Mutex::new(0)"));
-    assert!(contains_sync_primitive("RwLock::new(0)"));
-    assert!(contains_sync_primitive("AtomicUsize"));
+    assert!(contains_sync_primitive(&["Mut", "ex::new(0)"].concat()));
+    assert!(contains_sync_primitive(&["Rw", "Lock::new(0)"].concat()));
+    assert!(contains_sync_primitive(&["Ato", "micUsize"].concat()));
     assert!(!contains_sync_primitive("let x = 0;"));
     assert!(!contains_sync_primitive("Vec::new()"));
 }

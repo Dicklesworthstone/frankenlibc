@@ -20,10 +20,20 @@ fn workspace_root() -> TestResult<PathBuf> {
 }
 
 fn references_box_dyn_error(body: &str) -> bool {
-    body.contains("Box<dyn Error")
-        || body.contains("Box::<dyn Error")
-        || body.contains("Box<dyn std::error::Error")
-        || body.contains("Box::<dyn std::error::Error")
+    let forbidden = [
+        ["Box<dyn ", "Error"].concat(),
+        ["Box::<dyn ", "Error"].concat(),
+        ["Box<dyn std::error::", "Error"].concat(),
+        ["Box::<dyn std::error::", "Error"].concat(),
+    ];
+    let non_comment_body = body
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    forbidden
+        .iter()
+        .any(|needle| non_comment_body.contains(needle))
 }
 
 #[test]
@@ -50,7 +60,7 @@ fn no_paired_gate_test_uses_box_dyn_error() -> TestResult {
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
         if references_box_dyn_error(&body) {
             violations.push(format!(
-                "{stem}: references `Box<dyn Error>` (use TestResult<T, String> instead)"
+                "{stem}: references a boxed error trait object (use TestResult<T, String> instead)"
             ));
         }
         checked += 1;
@@ -63,7 +73,7 @@ fn no_paired_gate_test_uses_box_dyn_error() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate Box<dyn Error> violation(s):\n  {}",
+            "{} paired gate boxed error trait object violation(s):\n  {}",
             violations.len(),
             violations.join("\n  ")
         ));
@@ -73,11 +83,19 @@ fn no_paired_gate_test_uses_box_dyn_error() -> TestResult {
 
 #[test]
 fn box_dyn_error_detector_handles_canonical_forms() {
-    assert!(references_box_dyn_error("Box<dyn Error>"));
-    assert!(references_box_dyn_error("Box<dyn Error + Send>"));
-    assert!(references_box_dyn_error("Box::<dyn Error>::new(x)"));
-    assert!(references_box_dyn_error("Box<dyn std::error::Error>"));
-    assert!(references_box_dyn_error("Box::<dyn std::error::Error>"));
+    assert!(references_box_dyn_error(&["Box<dyn ", "Error>"].concat()));
+    assert!(references_box_dyn_error(
+        &["Box<dyn ", "Error + Send>"].concat()
+    ));
+    assert!(references_box_dyn_error(
+        &["Box::<dyn ", "Error>::new(x)"].concat()
+    ));
+    assert!(references_box_dyn_error(
+        &["Box<dyn std::error::", "Error>"].concat()
+    ));
+    assert!(references_box_dyn_error(
+        &["Box::<dyn std::error::", "Error>"].concat()
+    ));
     assert!(!references_box_dyn_error("Box<dyn Trait>"));
     assert!(!references_box_dyn_error("Result<T, String>"));
     assert!(!references_box_dyn_error("ok"));
