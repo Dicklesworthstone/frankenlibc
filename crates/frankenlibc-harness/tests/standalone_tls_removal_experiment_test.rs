@@ -581,8 +581,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 13,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver nsaddr, getmntent, cuserid, utmp state, pututxline return buffer, NSS systemd block flag, and fstab state",
+        substituted == 14,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver nsaddr, getmntent, cuserid, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, and ttyent state",
     )?;
     require(
         substituted + remaining == total,
@@ -622,7 +622,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && unistd.contains("UTMPX_BUF_OWNED_TLS")
             && unistd.contains("NSS_SYSTEMD_BLOCK_FLAG_OWNED_TLS")
             && unistd.contains("FSTAB_STATE_OWNED_TLS")
+            && unistd.contains("TTYENT_STATE_OWNED_TLS")
             && unistd.contains("crate::owned_tls_cache::OwnedTlsCache"),
-        "unistd ABI must route the crypt/gensalt, NIS helper, resolver nsaddr, getmntent, cuserid, utmp-state, pututxline return-buffer, NSS systemd block-flag, and fstab-state slices through owned TLS cache",
+        "unistd ABI must route the crypt/gensalt, NIS helper, resolver nsaddr, getmntent, cuserid, utmp-state, pututxline return-buffer, NSS systemd block-flag, fstab-state, and ttyent-state slices through owned TLS cache",
     )
 }

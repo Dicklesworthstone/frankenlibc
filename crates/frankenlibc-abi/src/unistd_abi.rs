@@ -20479,8 +20479,7 @@ pub unsafe extern "C" fn getrpcent_r(
 /// Native implementation: resets the thread-local ttyent parser state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endttyent() -> c_int {
-    TTYENT_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_ttyent_state(|state| {
         state.reader = None;
     });
     1
@@ -22527,9 +22526,31 @@ impl TtyentState {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static TTYENT_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<TtyentState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(TtyentState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static TTYENT_STATE: std::cell::UnsafeCell<TtyentState> =
         const { std::cell::UnsafeCell::new(TtyentState::new()) };
+}
+
+#[inline]
+fn with_ttyent_state<R>(callback: impl FnOnce(&mut TtyentState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        TTYENT_STATE_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TTYENT_STATE.with(|cell| {
+            // SAFETY: TTYENT_STATE is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// Parse the next ttyent line into the entry buffer.
@@ -22628,18 +22649,15 @@ unsafe fn ttyent_next(state: &mut TtyentState) -> *mut c_void {
 /// failure to match glibc behavior.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setttyent() -> c_int {
-    TTYENT_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
-        match std::fs::File::open(TTYENT_PATH) {
-            Ok(f) => {
-                state.reader = Some(std::io::BufReader::new(f));
-                1
-            }
-            Err(_) => {
-                state.reader = None;
-                unsafe { set_abi_errno(libc::ENOENT) };
-                0
-            }
+    with_ttyent_state(|state| match std::fs::File::open(TTYENT_PATH) {
+        Ok(f) => {
+            state.reader = Some(std::io::BufReader::new(f));
+            1
+        }
+        Err(_) => {
+            state.reader = None;
+            unsafe { set_abi_errno(libc::ENOENT) };
+            0
         }
     })
 }
@@ -22647,10 +22665,7 @@ pub unsafe extern "C" fn setttyent() -> c_int {
 /// `getttyent` — read next entry from /etc/ttys.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getttyent() -> *mut c_void {
-    TTYENT_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
-        unsafe { ttyent_next(state) }
-    })
+    with_ttyent_state(|state| unsafe { ttyent_next(state) })
 }
 
 /// `getttynam` — find ttyent entry by terminal name.
@@ -22664,8 +22679,7 @@ pub unsafe extern "C" fn getttynam(name: *const c_char) -> *mut c_void {
         return std::ptr::null_mut();
     };
     unsafe { setttyent() };
-    TTYENT_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_ttyent_state(|state| {
         loop {
             let ent = unsafe { ttyent_next(state) };
             if ent.is_null() {
