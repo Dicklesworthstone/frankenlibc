@@ -581,8 +581,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 2,
-        "first owned-tls slice substitutes two macros",
+        substituted == 6,
+        "owned-tls slices substitute crypt/gensalt plus four NIS helper macros",
     )?;
     require(
         substituted + remaining == total,
@@ -611,7 +611,11 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
     require(
         unistd.contains("CRYPT_BUF_OWNED_TLS")
             && unistd.contains("GENSALT_OWNED_TLS")
+            && unistd.contains("NIS_SPERRNO_OWNED_TLS")
+            && unistd.contains("NIS_DOMAIN_OF_OWNED_TLS")
+            && unistd.contains("NIS_LEAF_OF_OWNED_TLS")
+            && unistd.contains("NIS_NAME_OF_OWNED_TLS")
             && unistd.contains("crate::owned_tls_cache::OwnedTlsCache"),
-        "unistd ABI must route the first crypt/gensalt slice through owned TLS cache",
+        "unistd ABI must route the crypt/gensalt and NIS helper slices through owned TLS cache",
     )
 }

@@ -8115,18 +8115,36 @@ fn nis_error_text(status: c_int) -> &'static [u8] {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static NIS_SPERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static NIS_SPERRNO_TLS: core::cell::RefCell<Vec<u8>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
+#[inline]
+fn with_nis_sperrno_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        NIS_SPERRNO_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NIS_SPERRNO_TLS.with(|cell| f(&mut cell.borrow_mut()))
+    }
+}
+
 /// libnsl `nis_sperrno(status) -> *const c_char` — return a static
 /// human-readable description of a NIS+ status code. The returned
 /// pointer is backed by a thread-local buffer and remains valid until
 /// the next `nis_sperrno` call on the same thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nis_sperrno(status: c_int) -> *const c_char {
-    thread_local! {
-        static NIS_SPERRNO_TLS: core::cell::RefCell<Vec<u8>> =
-            const { core::cell::RefCell::new(Vec::new()) };
-    }
-    NIS_SPERRNO_TLS.with(|cell| {
-        let mut buf = cell.borrow_mut();
+    with_nis_sperrno_buf(|buf| {
         buf.clear();
         buf.extend_from_slice(nis_error_text(status));
         buf.push(0);
@@ -8292,6 +8310,19 @@ unsafe fn read_optional_c_string_bytes(ptr: *const c_char) -> Result<Option<Vec<
         .ok_or(errno::EINVAL)
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static NIS_DOMAIN_OF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(feature = "owned-tls-cache")]
+static NIS_LEAF_OF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(feature = "owned-tls-cache")]
+static NIS_NAME_OF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static NIS_DOMAIN_OF_TLS: core::cell::RefCell<Vec<u8>> =
         const { core::cell::RefCell::new(Vec::new()) };
@@ -8299,6 +8330,45 @@ thread_local! {
         const { core::cell::RefCell::new(Vec::new()) };
     static NIS_NAME_OF_TLS: core::cell::RefCell<Vec<u8>> =
         const { core::cell::RefCell::new(Vec::new()) };
+}
+
+#[inline]
+fn with_nis_domain_of_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        NIS_DOMAIN_OF_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NIS_DOMAIN_OF_TLS.with(|cell| f(&mut cell.borrow_mut()))
+    }
+}
+
+#[inline]
+fn with_nis_leaf_of_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        NIS_LEAF_OF_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NIS_LEAF_OF_TLS.with(|cell| f(&mut cell.borrow_mut()))
+    }
+}
+
+#[inline]
+fn with_nis_name_of_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        NIS_NAME_OF_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NIS_NAME_OF_TLS.with(|cell| f(&mut cell.borrow_mut()))
+    }
 }
 
 /// libnsl `nis_domain_of(name) -> *mut c_char` — strip the first
@@ -8311,8 +8381,7 @@ thread_local! {
 /// `name`, when non-NULL, must be a NUL-terminated C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nis_domain_of(name: *const c_char) -> *mut c_char {
-    NIS_DOMAIN_OF_TLS.with(|cell| {
-        let mut buf = cell.borrow_mut();
+    with_nis_domain_of_buf(|buf| {
         buf.clear();
         match unsafe { read_optional_c_string_bytes(name) } {
             Ok(Some(bytes)) => {
@@ -8380,8 +8449,7 @@ pub unsafe extern "C" fn nis_domain_of_r(
 /// `name`, when non-NULL, must be a NUL-terminated C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nis_leaf_of(name: *const c_char) -> *mut c_char {
-    NIS_LEAF_OF_TLS.with(|cell| {
-        let mut buf = cell.borrow_mut();
+    with_nis_leaf_of_buf(|buf| {
         buf.clear();
         match unsafe { read_optional_c_string_bytes(name) } {
             Ok(Some(bytes)) => {
@@ -8444,8 +8512,7 @@ pub unsafe extern "C" fn nis_leaf_of_r(
 /// `name`, when non-NULL, must be a NUL-terminated C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nis_name_of(name: *const c_char) -> *mut c_char {
-    NIS_NAME_OF_TLS.with(|cell| {
-        let mut buf = cell.borrow_mut();
+    with_nis_name_of_buf(|buf| {
         buf.clear();
         match unsafe { read_optional_c_string_bytes(name) } {
             Ok(Some(bytes)) => {
