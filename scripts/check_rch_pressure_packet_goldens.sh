@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCHEMA="${FRANKENLIBC_RCH_PACKET_SCHEMA:-${ROOT}/tests/conformance/rch_pressure_approval_packet_schema.v1.json}"
 GOLDEN="${FRANKENLIBC_RCH_PACKET_GOLDEN:-${ROOT}/tests/conformance/rch_pressure_approval_packet_golden.v1.json}"
 LIVE_REPORT="${FRANKENLIBC_RCH_PACKET_REPORT:-${ROOT}/target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json}"
 LIVE_MARKDOWN="${FRANKENLIBC_RCH_PACKET_MARKDOWN:-${ROOT}/target/rch-pressure-approval-packet/rch_pressure_approval_packet.approval.md}"
@@ -12,7 +13,7 @@ LOG="${OUT_DIR}/rch_pressure_packet_goldens.log.jsonl"
 
 mkdir -p "${OUT_DIR}"
 
-python3 - "${ROOT}" "${GOLDEN}" "${LIVE_REPORT}" "${LIVE_MARKDOWN}" "${REPORT}" "${LOG}" <<'PY'
+python3 - "${ROOT}" "${SCHEMA}" "${GOLDEN}" "${LIVE_REPORT}" "${LIVE_MARKDOWN}" "${REPORT}" "${LOG}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -24,11 +25,12 @@ from copy import deepcopy
 from typing import Any
 
 ROOT = pathlib.Path(sys.argv[1])
-GOLDEN = pathlib.Path(sys.argv[2])
-LIVE_REPORT = pathlib.Path(sys.argv[3])
-LIVE_MARKDOWN = pathlib.Path(sys.argv[4])
-REPORT = pathlib.Path(sys.argv[5])
-LOG = pathlib.Path(sys.argv[6])
+SCHEMA = pathlib.Path(sys.argv[2])
+GOLDEN = pathlib.Path(sys.argv[3])
+LIVE_REPORT = pathlib.Path(sys.argv[4])
+LIVE_MARKDOWN = pathlib.Path(sys.argv[5])
+REPORT = pathlib.Path(sys.argv[6])
+LOG = pathlib.Path(sys.argv[7])
 FORBIDDEN_TEXT = re.compile(r"\brm\b|git reset|git clean|sbh ballast release|sbh emergency|apt(?:-get)?\s+.*clean")
 
 
@@ -362,6 +364,84 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             add_error(source, "negative_control_no_pre_cleanup_check", "golden packet has no pre-cleanup check for mutation")
 
 
+def require_list_contains(schema: dict[str, Any], source: str, field: str, required: set[str]) -> None:
+    value = schema.get(field)
+    if not isinstance(value, list):
+        add_error(source, "schema_contract_missing_list", f"{field} must be a list")
+        return
+    present = {str(item) for item in value}
+    missing = sorted(required - present)
+    if missing:
+        add_error(source, "schema_contract_missing_fields", f"{field} missing {missing}")
+
+
+def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
+    if schema.get("schema_version") != "rch_pressure_approval_packet_schema.v1":
+        add_error(source, "packet_schema_contract_version", "schema contract version mismatch")
+    require_list_contains(
+        schema,
+        source,
+        "required_top_level_fields",
+        {
+            "recommended_cleanup_candidates",
+            "validation_commands",
+            "artifact_paths",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "worker_fields",
+        {
+            "pressure_disk_total_gb",
+            "estimated_free_ratio_target",
+            "estimated_gb_needed_to_reach_target_ratio",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "cleanup_candidate_fields",
+        {
+            "host",
+            "estimated_size_gb",
+            "pre_cleanup_read_only_checks",
+        },
+    )
+    approval_contract = schema.get("approval_request_contract", {})
+    if not isinstance(approval_contract, dict):
+        add_error(source, "schema_contract_missing_approval_contract", "approval_request_contract must be an object")
+    else:
+        approval_required = approval_contract.get("must_include")
+        if not isinstance(approval_required, list) or "smallest_sufficient_candidate_paths" not in approval_required:
+            add_error(
+                source,
+                "schema_contract_missing_smallest_paths",
+                "approval_request_contract.must_include must name smallest_sufficient_candidate_paths",
+            )
+    examples = schema.get("example_packets")
+    if not isinstance(examples, list) or not examples:
+        add_error(source, "schema_contract_missing_examples", "schema contract must include example packets")
+        return
+    for index, example in enumerate(examples):
+        if not isinstance(example, dict):
+            add_error(source, "schema_contract_bad_example", f"example {index} must be an object")
+            continue
+        validate_packet(example, f"{source}::example[{index}]", require_rch_e100=True)
+        commands = example.get("validation_commands")
+        if not isinstance(commands, list):
+            add_error(source, "schema_contract_missing_validation_commands", f"example {index} missing validation_commands")
+            continue
+        command_text = "\n".join(str(command) for command in commands)
+        if "scripts/check_rch_pressure_packet_goldens.sh" not in command_text:
+            add_error(source, "schema_contract_missing_packet_checker", f"example {index} validation_commands omit packet checker")
+        if "AGENT_NAME=SunnyHeron" in command_text:
+            add_error(source, "schema_contract_hardcoded_agent", f"example {index} hardcodes another agent name")
+
+
+schema_contract = load_json(SCHEMA)
+validate_schema_contract(schema_contract, rel(SCHEMA))
+
 golden = load_json(GOLDEN)
 if golden.get("schema_version") != "rch_pressure_approval_packet_golden.v1":
     add_error(rel(GOLDEN), "golden_schema_version", "golden schema_version mismatch")
@@ -391,6 +471,7 @@ if LIVE_MARKDOWN.exists() and isinstance(required_lines, list):
 report = {
     "schema_version": "rch_pressure_packet_goldens.report.v1",
     "generated_at_utc": utc_now(),
+    "schema": rel(SCHEMA),
     "golden": rel(GOLDEN),
     "live_report": rel(LIVE_REPORT) if LIVE_REPORT.exists() else None,
     "live_markdown": rel(LIVE_MARKDOWN) if LIVE_MARKDOWN.exists() else None,

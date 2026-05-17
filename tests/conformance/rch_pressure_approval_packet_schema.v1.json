@@ -22,6 +22,7 @@
     "rch_gate",
     "workers",
     "cleanup_candidates",
+    "recommended_cleanup_candidates",
     "approval_request",
     "executed_actions",
     "validation_commands",
@@ -53,8 +54,11 @@
     "pressure_state",
     "pressure_reason_code",
     "pressure_disk_free_gb",
+    "pressure_disk_total_gb",
     "pressure_disk_free_ratio",
     "pressure_telemetry_fresh",
+    "estimated_free_ratio_target",
+    "estimated_gb_needed_to_reach_target_ratio",
     "probe_command",
     "probe_exit_status",
     "probe_failure_signature",
@@ -66,9 +70,12 @@
   ],
   "cleanup_candidate_fields": [
     "worker_id",
+    "host",
     "path",
     "size_human",
     "size_bytes",
+    "estimated_size_gb",
+    "pre_cleanup_read_only_checks",
     "source_command",
     "candidate_kind",
     "reason_it_might_help",
@@ -109,6 +116,7 @@
       "operator_summary",
       "exact_worker_ids",
       "exact_candidate_paths",
+      "smallest_sufficient_candidate_paths",
       "why_read_only_collection_is_insufficient",
       "explicit_user_text_required_before_cleanup",
       "commands_not_executed"
@@ -121,6 +129,7 @@
   },
   "example_packets": [
     {
+      "schema_version": "rch_pressure_approval_packet_schema.v1",
       "scenario_id": "current_critical_pressure_6",
       "packet_id": "bd-xvsum-example-critical-pressure-6",
       "generated_at_utc": "2026-05-17T09:22:23Z",
@@ -161,8 +170,11 @@
           "pressure_state": "critical",
           "pressure_reason_code": "disk_critical_without_fresh_telemetry",
           "pressure_disk_free_gb": 38.49,
+          "pressure_disk_total_gb": 773.9,
           "pressure_disk_free_ratio": 0.0497,
           "pressure_telemetry_fresh": false,
+          "estimated_free_ratio_target": 0.05,
+          "estimated_gb_needed_to_reach_target_ratio": 0.205,
           "probe_command": "rch workers probe vmi1149989",
           "probe_exit_status": 0,
           "probe_failure_signature": "ok",
@@ -181,8 +193,11 @@
           "pressure_state": "critical",
           "pressure_reason_code": "disk_critical_without_fresh_telemetry",
           "pressure_disk_free_gb": 38.02,
+          "pressure_disk_total_gb": 773.9,
           "pressure_disk_free_ratio": 0.0491,
           "pressure_telemetry_fresh": false,
+          "estimated_free_ratio_target": 0.05,
+          "estimated_gb_needed_to_reach_target_ratio": 0.675,
           "probe_command": "rch workers probe vmi1227854",
           "probe_exit_status": 0,
           "probe_failure_signature": "ok",
@@ -201,8 +216,11 @@
           "pressure_state": "critical",
           "pressure_reason_code": "disk_ratio_below_critical",
           "pressure_disk_free_gb": 53.06,
+          "pressure_disk_total_gb": 1161.4,
           "pressure_disk_free_ratio": 0.0457,
           "pressure_telemetry_fresh": true,
+          "estimated_free_ratio_target": 0.05,
+          "estimated_gb_needed_to_reach_target_ratio": 5.01,
           "probe_command": "rch workers probe vmi1264463",
           "probe_exit_status": 0,
           "probe_failure_signature": "ok",
@@ -222,8 +240,11 @@
           "pressure_state": "telemetry_gap",
           "pressure_reason_code": "disk_metrics_unavailable",
           "pressure_disk_free_gb": null,
+          "pressure_disk_total_gb": null,
           "pressure_disk_free_ratio": null,
           "pressure_telemetry_fresh": false,
+          "estimated_free_ratio_target": 0.05,
+          "estimated_gb_needed_to_reach_target_ratio": null,
           "probe_command": "rch workers probe vmi1152480",
           "probe_exit_status": 1,
           "probe_failure_signature": "RCH-E100",
@@ -239,9 +260,25 @@
       "cleanup_candidates": [
         {
           "worker_id": "vmi1264463",
+          "host": "38.242.209.154",
           "path": "/data/projects/fcp-beads-a4-final-20260516T2140/target",
           "size_human": "16G",
           "size_bytes": null,
+          "estimated_size_gb": 16.0,
+          "pre_cleanup_read_only_checks": [
+            {
+              "check_kind": "sbh_protect_marker_absence",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/fcp-beads-a4-final-20260516T2140/target; then find /data/projects/fcp-beads-a4-final-20260516T2140/target -name .sbh-protect -print -quit; fi'",
+              "expected_safe_result": "exit 0 with no stdout",
+              "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
+            },
+            {
+              "check_kind": "open_file_absence",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/fcp-beads-a4-final-20260516T2140/target; then sudo -n lsof +D /data/projects/fcp-beads-a4-final-20260516T2140/target 2>/dev/null | head -20; fi'",
+              "expected_safe_result": "exit 0 with no stdout",
+              "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
+            }
+          ],
           "source_command": "find /data/projects -maxdepth 2 -type d \\( -name target -o -name 'target_*' -o -name 'target-*' \\) -prune -exec du -sh {} +",
           "candidate_kind": "build_target_dir",
           "reason_it_might_help": "Could move vmi1264463 closer to the rch disk-ratio admissibility threshold.",
@@ -251,9 +288,57 @@
         },
         {
           "worker_id": "vmi1264463",
+          "host": "38.242.209.154",
           "path": "/data/projects/franken_engine/target_PearlTower_focused",
           "size_human": "15G",
           "size_bytes": null,
+          "estimated_size_gb": 15.0,
+          "pre_cleanup_read_only_checks": [
+            {
+              "check_kind": "sbh_protect_marker_absence",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
+              "expected_safe_result": "exit 0 with no stdout",
+              "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
+            },
+            {
+              "check_kind": "open_file_absence",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+              "expected_safe_result": "exit 0 with no stdout",
+              "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
+            }
+          ],
+          "source_command": "find /data/projects -maxdepth 2 -type d \\( -name target -o -name 'target_*' -o -name 'target-*' \\) -prune -exec du -sh {} +",
+          "candidate_kind": "build_target_dir",
+          "reason_it_might_help": "Could move vmi1264463 closer to the rch disk-ratio admissibility threshold.",
+          "risk_notes": "Repository work may be embedded in target-adjacent state; deletion requires exact written approval.",
+          "requires_explicit_approval": true,
+          "executed": false
+        }
+      ],
+      "recommended_cleanup_candidates": [
+        {
+          "worker_id": "vmi1264463",
+          "host": "38.242.209.154",
+          "path": "/data/projects/franken_engine/target_PearlTower_focused",
+          "size_human": "15G",
+          "size_bytes": null,
+          "estimated_size_gb": 15.0,
+          "estimated_gap_gb": 5.01,
+          "recommendation_kind": "smallest_listed_candidate_meeting_estimated_gap",
+          "pre_cleanup_read_only_checks": [
+            {
+              "check_kind": "sbh_protect_marker_absence",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
+              "expected_safe_result": "exit 0 with no stdout",
+              "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
+            },
+            {
+              "check_kind": "open_file_absence",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+              "expected_safe_result": "exit 0 with no stdout",
+              "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
+            }
+          ],
           "source_command": "find /data/projects -maxdepth 2 -type d \\( -name target -o -name 'target_*' -o -name 'target-*' \\) -prune -exec du -sh {} +",
           "candidate_kind": "build_target_dir",
           "reason_it_might_help": "Could move vmi1264463 closer to the rch disk-ratio admissibility threshold.",
@@ -271,12 +356,15 @@
           "/data/projects/fcp-beads-a4-final-20260516T2140/target",
           "/data/projects/franken_engine/target_PearlTower_focused"
         ],
+        "smallest_sufficient_candidate_paths": [
+          "/data/projects/franken_engine/target_PearlTower_focused"
+        ],
         "why_read_only_collection_is_insufficient": "No releasable SBH ballast was found and the remaining candidates require deletion-level cleanup.",
         "explicit_user_text_required_before_cleanup": "The user must provide written approval that names the exact paths and commands before cleanup can run.",
         "commands_not_executed": [
           "no file deletion command executed",
-          "no sbh ballast release command executed",
-          "no git cleanup command executed"
+          "no ballast release command executed",
+          "no repository cleanup command executed"
         ]
       },
       "executed_actions": [
@@ -290,13 +378,17 @@
         }
       ],
       "validation_commands": [
-        "jq empty tests/conformance/rch_pressure_approval_packet_schema.v1.json",
-        "git diff --check -- tests/conformance/rch_pressure_approval_packet_schema.v1.json .beads/issues.jsonl",
-        "AGENT_NAME=SunnyHeron br dep cycles --json",
-        "AGENT_NAME=SunnyHeron br sync --status --json"
+        "bash -n scripts/generate_rch_pressure_approval_packet.sh scripts/check_rch_pressure_packet_goldens.sh",
+        "jq empty tests/conformance/rch_pressure_approval_packet_schema.v1.json tests/conformance/rch_pressure_approval_packet_golden.v1.json",
+        "jq empty target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json",
+        "bash scripts/check_rch_pressure_packet_goldens.sh",
+        "git diff --check -- scripts/generate_rch_pressure_approval_packet.sh scripts/check_rch_pressure_packet_goldens.sh tests/conformance/rch_pressure_approval_packet_schema.v1.json tests/conformance/rch_pressure_approval_packet_golden.v1.json .beads/issues.jsonl",
+        "AGENT_NAME=<registered-agent> br dep cycles --json"
       ],
       "artifact_paths": [
-        "tests/conformance/rch_pressure_approval_packet_schema.v1.json"
+        "target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json",
+        "target/rch-pressure-approval-packet/rch_pressure_approval_packet.approval.md",
+        "target/rch-pressure-approval-packet/raw/bd-xvsum-example-critical-pressure-6"
       ]
     }
   ]
