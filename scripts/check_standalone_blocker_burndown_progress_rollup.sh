@@ -11,12 +11,13 @@ PLAN="${FRANKENLIBC_STANDALONE_HOST_DEP_PLAN:-${ROOT}/tests/conformance/standalo
 VERSION_BURNDOWN="${FRANKENLIBC_STANDALONE_VERSION_BURNDOWN:-${ROOT}/tests/conformance/standalone_host_version_requirement_burndown.v1.json}"
 OWNER_LEDGER="${FRANKENLIBC_STANDALONE_BLOCKER_OWNER_LEDGER:-${ROOT}/tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json}"
 OWNED_UNWIND="${FRANKENLIBC_STANDALONE_OWNED_UNWIND_EXPERIMENT:-${ROOT}/tests/conformance/standalone_owned_unwind_experiment.v1.json}"
+TLS_REMOVAL="${FRANKENLIBC_STANDALONE_TLS_REMOVAL_EXPERIMENT:-${ROOT}/tests/conformance/standalone_tls_removal_experiment.v1.json}"
 OUT_DIR="${ROOT}/target/conformance"
 REPORT="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP_REPORT:-${OUT_DIR}/standalone_blocker_burndown_progress_rollup.report.json}"
 
 mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")"
 
-python3 - "${ROOT}" "${ROLLUP}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${OWNED_UNWIND}" "${REPORT}" <<'PY'
+python3 - "${ROOT}" "${ROLLUP}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${OWNED_UNWIND}" "${TLS_REMOVAL}" "${REPORT}" <<'PY'
 import json
 import subprocess
 import sys
@@ -29,8 +30,9 @@ plan_path = Path(sys.argv[3])
 version_path = Path(sys.argv[4])
 owner_path = Path(sys.argv[5])
 owned_unwind_path = Path(sys.argv[6])
-report_path = Path(sys.argv[7])
-for name in ["rollup_path", "plan_path", "version_path", "owner_path", "owned_unwind_path", "report_path"]:
+tls_removal_path = Path(sys.argv[7])
+report_path = Path(sys.argv[8])
+for name in ["rollup_path", "plan_path", "version_path", "owner_path", "owned_unwind_path", "tls_removal_path", "report_path"]:
     path = locals()[name]
     if not path.is_absolute():
         locals()[name] = root / path
@@ -41,6 +43,7 @@ EXPECTED_INPUTS = {
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
     "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
     "standalone_owned_unwind_experiment": "tests/conformance/standalone_owned_unwind_experiment.v1.json",
+    "standalone_tls_removal_experiment": "tests/conformance/standalone_tls_removal_experiment.v1.json",
 }
 EXPECTED_FRESHNESS_POLICY = {
     "recorded_source_commit_field": "source_commit",
@@ -55,6 +58,7 @@ EXPECTED_ROLLUP_POLICY = {
         "standalone_forge_blocker_owner_action_ledger.ledger_rows",
         "standalone_host_version_requirement_burndown.version_requirement_matrix",
         "standalone_owned_unwind_experiment.summary",
+        "standalone_tls_removal_experiment.summary",
     ],
     "duplicate_source_values_in_manifest": False,
     "checker_report_materializes_values": True,
@@ -155,7 +159,8 @@ plan = load_json(plan_path)
 version_burndown = load_json(version_path)
 owner_ledger = load_json(owner_path)
 owned_unwind = load_json(owned_unwind_path)
-for value_name in ["rollup", "plan", "version_burndown", "owner_ledger", "owned_unwind"]:
+tls_removal = load_json(tls_removal_path)
+for value_name in ["rollup", "plan", "version_burndown", "owner_ledger", "owned_unwind", "tls_removal"]:
     if not isinstance(locals()[value_name], dict):
         locals()[value_name] = {}
 
@@ -357,6 +362,51 @@ owned_lane_ids = {
     for lane in owned_lanes
     if isinstance(lane, dict) and isinstance(lane.get("lane_id"), str)
 }
+tls_summary = object_value(tls_removal.get("summary"), "tls_removal.summary")
+tls_policy = object_value(tls_removal.get("report_policy"), "tls_removal.report_policy")
+if tls_removal.get("manifest_id") != "standalone-tls-removal-experiment":
+    errors.append("tls_removal manifest_id must be standalone-tls-removal-experiment")
+if tls_policy.get("report_only") is not True:
+    errors.append("tls_removal report_policy.report_only must be true")
+if tls_policy.get("promotion_allowed") is not False:
+    errors.append("tls_removal report_policy.promotion_allowed must be false")
+if tls_summary.get("promotion_allowed") is not False:
+    errors.append("tls_removal summary.promotion_allowed must be false")
+if tls_summary.get("default_forge_path_unchanged") is not True:
+    errors.append("tls_removal summary.default_forge_path_unchanged must be true")
+if tls_summary.get("claim_status") != "claim_blocked":
+    errors.append("tls_removal summary.claim_status must remain claim_blocked")
+tls_lanes = tls_removal.get("experiment_lanes", [])
+if not isinstance(tls_lanes, list):
+    errors.append("tls_removal.experiment_lanes must be an array")
+    tls_lanes = []
+tls_lane_ids = {
+    lane.get("lane_id")
+    for lane in tls_lanes
+    if isinstance(lane, dict) and isinstance(lane.get("lane_id"), str)
+}
+partial_specs = {
+    "owned-unwind-stub-experiment": {
+        "source_manifest": EXPECTED_INPUTS["standalone_owned_unwind_experiment"],
+        "summary": owned_summary,
+        "policy": owned_policy,
+        "lane_ids": owned_lane_ids,
+        "baseline_count_field": "blocker_symbol_count_baseline",
+        "experiment_count_field": "blocker_symbol_count_owned_unwind_when_complete",
+        "evidence_source": "standalone_owned_unwind_experiment.summary.blocker_symbol_count_owned_unwind_when_complete",
+        "label": "owned unwind",
+    },
+    "owned-tls-cache-source-surface-experiment": {
+        "source_manifest": EXPECTED_INPUTS["standalone_tls_removal_experiment"],
+        "summary": tls_summary,
+        "policy": tls_policy,
+        "lane_ids": tls_lane_ids,
+        "baseline_count_field": "tls_blocker_symbol_count_baseline",
+        "experiment_count_field": "tls_blocker_symbol_count_owned_tls_cache_when_complete",
+        "evidence_source": "standalone_tls_removal_experiment.summary.tls_blocker_symbol_count_owned_tls_cache_when_complete",
+        "label": "TLS removal",
+    },
+}
 materialized_partial_experiments = []
 partial_reduced_count = 0
 partial_seen = set()
@@ -372,31 +422,35 @@ for row in partial_rows:
     if experiment_id in partial_seen:
         errors.append(f"partial_burndown_experiments duplicate experiment_id {experiment_id}")
     partial_seen.add(experiment_id)
+    spec = partial_specs.get(experiment_id)
+    if spec is None:
+        errors.append(f"{context}.experiment_id is not a recognized partial experiment")
+        continue
     category = row.get("category_id")
     if category not in category_counts:
         errors.append(f"{context}.category_id references missing category {category}")
-    if row.get("source_manifest") != EXPECTED_INPUTS["standalone_owned_unwind_experiment"]:
-        errors.append(f"{context}.source_manifest must reference standalone_owned_unwind_experiment")
-    if row.get("baseline_lane") != owned_summary.get("baseline_lane"):
-        errors.append(f"{context}.baseline_lane must match owned unwind summary")
-    if row.get("experiment_lane") != owned_summary.get("experiment_lane"):
-        errors.append(f"{context}.experiment_lane must match owned unwind summary")
-    if row.get("baseline_lane") not in owned_lane_ids or row.get("experiment_lane") not in owned_lane_ids:
-        errors.append(f"{context}.lanes must exist in owned unwind manifest")
-    if row.get("evidence_mode") != owned_policy.get("required_mode"):
-        errors.append(f"{context}.evidence_mode must match owned unwind required_mode")
+    if row.get("source_manifest") != spec["source_manifest"]:
+        errors.append(f"{context}.source_manifest must reference {spec['source_manifest']}")
+    if row.get("baseline_lane") != spec["summary"].get("baseline_lane"):
+        errors.append(f"{context}.baseline_lane must match {spec['label']} summary")
+    if row.get("experiment_lane") != spec["summary"].get("experiment_lane"):
+        errors.append(f"{context}.experiment_lane must match {spec['label']} summary")
+    if row.get("baseline_lane") not in spec["lane_ids"] or row.get("experiment_lane") not in spec["lane_ids"]:
+        errors.append(f"{context}.lanes must exist in {spec['label']} manifest")
+    if row.get("evidence_mode") != spec["policy"].get("required_mode"):
+        errors.append(f"{context}.evidence_mode must match {spec['label']} required_mode")
     for bool_field in ["report_only", "default_forge_path_unchanged"]:
         if row.get(bool_field) is not True:
             errors.append(f"{context}.{bool_field} must be true")
     for bool_field in ["promotion_allowed", "replacement_level_change_allowed"]:
         if row.get(bool_field) is not False:
             errors.append(f"{context}.{bool_field} must be false")
-    baseline_count = owned_summary.get("blocker_symbol_count_baseline")
-    experiment_count = owned_summary.get("blocker_symbol_count_owned_unwind_when_complete")
+    baseline_count = spec["summary"].get(spec["baseline_count_field"])
+    experiment_count = spec["summary"].get(spec["experiment_count_field"])
     if row.get("baseline_value_count") != baseline_count:
-        errors.append(f"{context}.baseline_value_count must match owned unwind summary")
+        errors.append(f"{context}.baseline_value_count must match {spec['label']} summary")
     if row.get("experiment_value_count") != experiment_count:
-        errors.append(f"{context}.experiment_value_count must match owned unwind summary")
+        errors.append(f"{context}.experiment_value_count must match {spec['label']} summary")
     reduced = (
         baseline_count - experiment_count
         if isinstance(baseline_count, int) and isinstance(experiment_count, int)
@@ -404,7 +458,7 @@ for row in partial_rows:
     )
     if row.get("reduced_value_count") != reduced:
         errors.append(f"{context}.reduced_value_count must equal baseline minus experiment")
-    if row.get("evidence_source") != "standalone_owned_unwind_experiment.summary.blocker_symbol_count_owned_unwind_when_complete":
+    if row.get("evidence_source") != spec["evidence_source"]:
         errors.append(f"{context}.evidence_source mismatch")
     if row.get("status_until_default_forge_consumes_evidence") != "claim_blocked":
         errors.append(f"{context}.status_until_default_forge_consumes_evidence must be claim_blocked")
@@ -423,6 +477,8 @@ for row in partial_rows:
             "status_until_default_forge_consumes_evidence": "claim_blocked",
         }
     )
+if partial_seen != set(partial_specs):
+    errors.append("partial_burndown_experiments must cover owned-unwind and TLS-removal experiments")
 
 summary = object_value(rollup.get("summary"), "summary")
 last_known_value_count = sum(row["last_known_value_count"] for row in materialized_categories)

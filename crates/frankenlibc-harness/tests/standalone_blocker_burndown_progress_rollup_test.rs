@@ -22,6 +22,8 @@ const VERSION_BURNDOWN_PATH: &str =
     "tests/conformance/standalone_host_version_requirement_burndown.v1.json";
 const OWNED_UNWIND_EXPERIMENT_PATH: &str =
     "tests/conformance/standalone_owned_unwind_experiment.v1.json";
+const TLS_REMOVAL_EXPERIMENT_PATH: &str =
+    "tests/conformance/standalone_tls_removal_experiment.v1.json";
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -173,6 +175,19 @@ fn provider_row_mut<'a>(rollup: &'a mut Value, provider: &str) -> TestResult<&'a
         .ok_or_else(|| format!("missing provider {provider}"))
 }
 
+fn partial_experiment_row_mut<'a>(
+    rollup: &'a mut Value,
+    experiment_id: &str,
+) -> TestResult<&'a mut Value> {
+    let rows = rollup
+        .get_mut("partial_burndown_experiments")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "partial_burndown_experiments must be an array".to_string())?;
+    rows.iter_mut()
+        .find(|row| row.get("experiment_id").and_then(Value::as_str) == Some(experiment_id))
+        .ok_or_else(|| format!("missing partial experiment {experiment_id}"))
+}
+
 fn get_path<'a>(mut value: &'a Value, dotted: &str) -> TestResult<&'a Value> {
     for segment in dotted.split('.') {
         value = value
@@ -202,6 +217,7 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
     let plan = load_json(&root, HOST_PROBE_PLAN_PATH)?;
     let version_burndown = load_json(&root, VERSION_BURNDOWN_PATH)?;
     let owned_unwind = load_json(&root, OWNED_UNWIND_EXPERIMENT_PATH)?;
+    let tls_removal = load_json(&root, TLS_REMOVAL_EXPERIMENT_PATH)?;
     require(
         json_string(&rollup, "manifest_id")? == "standalone_blocker_burndown_progress_rollup",
         "manifest id",
@@ -281,10 +297,18 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
 
     let experiments = json_array(&rollup, "partial_burndown_experiments")?;
     require(
-        experiments.len() == 1,
-        "rollup must expose one partial burndown experiment",
+        experiments.len() == 2,
+        "rollup must expose two partial burndown experiments",
     )?;
-    let experiment = &experiments[0];
+    let experiment_by_id: BTreeMap<String, &Value> = experiments
+        .iter()
+        .map(|experiment| {
+            json_string(experiment, "experiment_id").map(|id| (id.to_owned(), experiment))
+        })
+        .collect::<TestResult<_>>()?;
+    let experiment = *experiment_by_id
+        .get("owned-unwind-stub-experiment")
+        .ok_or_else(|| "missing owned unwind partial experiment".to_string())?;
     let owned_summary = json_field(&owned_unwind, "summary")?;
     require(
         json_string(&owned_unwind, "manifest_id")? == "standalone-owned-unwind-experiment",
@@ -345,6 +369,62 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
             == Some(baseline - owned_when_complete),
         "partial experiment reduced count",
     )?;
+    let tls_experiment = *experiment_by_id
+        .get("owned-tls-cache-source-surface-experiment")
+        .ok_or_else(|| "missing TLS removal partial experiment".to_string())?;
+    let tls_summary = json_field(&tls_removal, "summary")?;
+    require(
+        json_string(&tls_removal, "manifest_id")? == "standalone-tls-removal-experiment",
+        "TLS removal manifest id",
+    )?;
+    require(
+        json_field(tls_summary, "promotion_allowed")?.as_bool() == Some(false),
+        "TLS removal summary forbids promotion",
+    )?;
+    require(
+        json_field(tls_summary, "default_forge_path_unchanged")?.as_bool() == Some(true),
+        "TLS removal summary leaves default forge unchanged",
+    )?;
+    require(
+        json_string(tls_experiment, "category_id")? == "tls_startup",
+        "TLS partial experiment category",
+    )?;
+    require(
+        json_string(tls_experiment, "source_manifest")? == TLS_REMOVAL_EXPERIMENT_PATH,
+        "TLS partial experiment source manifest",
+    )?;
+    require(
+        json_string(tls_experiment, "baseline_lane")? == json_string(tls_summary, "baseline_lane")?,
+        "TLS partial experiment baseline lane",
+    )?;
+    require(
+        json_string(tls_experiment, "experiment_lane")?
+            == json_string(tls_summary, "experiment_lane")?,
+        "TLS partial experiment lane",
+    )?;
+    let tls_baseline = json_field(tls_summary, "tls_blocker_symbol_count_baseline")?
+        .as_u64()
+        .ok_or_else(|| "TLS summary baseline count must be u64".to_string())?;
+    let tls_owned_when_complete = json_field(
+        tls_summary,
+        "tls_blocker_symbol_count_owned_tls_cache_when_complete",
+    )?
+    .as_u64()
+    .ok_or_else(|| "TLS summary completion count must be u64".to_string())?;
+    require(
+        json_field(tls_experiment, "baseline_value_count")?.as_u64() == Some(tls_baseline),
+        "TLS partial experiment baseline count",
+    )?;
+    require(
+        json_field(tls_experiment, "experiment_value_count")?.as_u64()
+            == Some(tls_owned_when_complete),
+        "TLS partial experiment completion count",
+    )?;
+    require(
+        json_field(tls_experiment, "reduced_value_count")?.as_u64()
+            == Some(tls_baseline - tls_owned_when_complete),
+        "TLS partial experiment reduced count",
+    )?;
     Ok(())
 }
 
@@ -395,7 +475,7 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
             "partial_burndown_experiment_count",
         )?
         .as_u64()
-            == Some(1),
+            == Some(2),
         "report summary partial experiment count",
     )?;
     require(
@@ -404,13 +484,13 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
             "report_only_reduced_value_count",
         )?
         .as_u64()
-            == Some(12),
+            == Some(13),
         "report summary report-only reduced value count",
     )?;
     let experiments = json_array(&report_json, "partial_burndown_experiments")?;
     require(
-        experiments.len() == 1,
-        "report must materialize one partial burndown experiment",
+        experiments.len() == 2,
+        "report must materialize two partial burndown experiments",
     )
 }
 
@@ -467,11 +547,7 @@ fn checker_rejects_version_provider_drift() -> TestResult {
 #[test]
 fn checker_rejects_partial_experiment_overclaim() -> TestResult {
     let mutated = write_mutated_rollup("rollup-partial-overclaim", |rollup| {
-        let row = rollup
-            .get_mut("partial_burndown_experiments")
-            .and_then(Value::as_array_mut)
-            .and_then(|rows| rows.first_mut())
-            .ok_or_else(|| "partial_burndown_experiments[0] must exist".to_string())?;
+        let row = partial_experiment_row_mut(rollup, "owned-unwind-stub-experiment")?;
         row.as_object_mut()
             .ok_or_else(|| "partial experiment row must be object".to_string())?
             .insert("promotion_allowed".to_string(), Value::Bool(true));
@@ -481,5 +557,21 @@ fn checker_rejects_partial_experiment_overclaim() -> TestResult {
         &mutated,
         "rollup-partial-overclaim",
         "partial_burndown_experiments[owned-unwind-stub-experiment].promotion_allowed must be false",
+    )
+}
+
+#[test]
+fn checker_rejects_tls_partial_experiment_count_drift() -> TestResult {
+    let mutated = write_mutated_rollup("rollup-tls-partial-count-drift", |rollup| {
+        let row = partial_experiment_row_mut(rollup, "owned-tls-cache-source-surface-experiment")?;
+        row.as_object_mut()
+            .ok_or_else(|| "partial experiment row must be object".to_string())?
+            .insert("experiment_value_count".to_string(), Value::from(1));
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "rollup-tls-partial-count-drift",
+        "partial_burndown_experiments[owned-tls-cache-source-surface-experiment].experiment_value_count must match TLS removal summary",
     )
 }
