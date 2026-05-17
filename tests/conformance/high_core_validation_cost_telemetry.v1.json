@@ -1,0 +1,95 @@
+{
+  "schema_version": "v1",
+  "contract_id": "high-core-validation-cost-telemetry",
+  "bead": "bd-whlqo",
+  "purpose": "Define the checked-in row contract and deterministic aggregation rules for longitudinal high-core validation cost telemetry without committing generated target artifacts.",
+  "log_contract": {
+    "unit_source": "tests/conformance/high_core_validation_shards.v1.json",
+    "cost_log": "target/conformance/high_core_validation/costs.log.jsonl",
+    "aggregation_report": "target/conformance/high_core_validation/costs.report.json",
+    "event_log": "target/conformance/high_core_validation/costs.events.log.jsonl",
+    "run_id_format": "run-[0-9]+",
+    "run_id_monotonic": "strictly_increasing_by_numeric_suffix",
+    "percentile_algorithm": "nearest_rank",
+    "required_row_fields": [
+      "run_id",
+      "unit_id",
+      "shard_id",
+      "status",
+      "exit_code",
+      "duration_ms",
+      "worker_id",
+      "cache_state",
+      "artifact_count",
+      "artifact_bytes",
+      "failure_count"
+    ],
+    "allowed_statuses": ["passed", "failed", "skipped"],
+    "allowed_cache_states": ["hit", "miss", "partial", "unknown"],
+    "max_duration_ms": 7200000,
+    "max_artifact_count": 100000,
+    "max_artifact_bytes": 1073741824,
+    "max_failure_count": 100000
+  },
+  "row_schema": {
+    "run_id": "string matching run-[0-9]+; numeric suffix must increase strictly within each log",
+    "unit_id": "string present in tests/conformance/high_core_validation_shards.v1.json units[].unit_id",
+    "shard_id": "non-empty shard identifier from the shard plan",
+    "status": "one of passed, failed, skipped",
+    "exit_code": "integer process exit code for the validation unit",
+    "duration_ms": "finite positive numeric wall-clock duration in milliseconds",
+    "worker_id": "non-empty rch worker identifier or unknown",
+    "cache_state": "one of hit, miss, partial, unknown",
+    "artifact_count": "non-negative integer count of artifacts retrieved or emitted",
+    "artifact_bytes": "non-negative integer total artifact bytes, bounded by max_artifact_bytes",
+    "failure_count": "non-negative integer count of failed assertions, rows, or checks"
+  },
+  "aggregation_contract": {
+    "stable_ordering": "unit_id ascending",
+    "per_unit_fields": [
+      "unit_id",
+      "sample_count",
+      "status_counts",
+      "failure_count",
+      "failure_frequency",
+      "duration_ms_p50",
+      "duration_ms_p95",
+      "artifact_bytes_p95",
+      "worker_ids",
+      "cache_states",
+      "current_cost_class",
+      "suggested_cost_class"
+    ],
+    "suggested_cost_class_thresholds": [
+      {
+        "cost_class": "cheap",
+        "p95_wall_seconds_lte": 60
+      },
+      {
+        "cost_class": "medium",
+        "p95_wall_seconds_lte": 300
+      },
+      {
+        "cost_class": "expensive",
+        "p95_wall_seconds_gt": 300
+      }
+    ],
+    "fail_closed_signatures": [
+      "contract_unreadable",
+      "invalid_contract",
+      "manifest_unreadable",
+      "invalid_manifest",
+      "cost_log_missing",
+      "malformed_jsonl",
+      "invalid_row",
+      "missing_row_field",
+      "invalid_run_id",
+      "nonmonotonic_run_id",
+      "unknown_unit_id",
+      "invalid_duration",
+      "unbounded_artifact_size",
+      "invalid_artifact_count",
+      "invalid_failure_count"
+    ]
+  }
+}
