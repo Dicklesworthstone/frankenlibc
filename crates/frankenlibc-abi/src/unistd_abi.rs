@@ -20692,15 +20692,50 @@ pub unsafe extern "C" fn endttyent() -> c_int {
 /// `fgetspent` — read shadow entry from stream.
 ///
 /// Native implementation: reads a line from the FILE stream and parses it as /etc/shadow format.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
-    thread_local! {
-        static BUF: std::cell::RefCell<[u8; 1024]> = const { std::cell::RefCell::new([0u8; 1024]) };
-        static ENTRY: std::cell::RefCell<libc::spwd> = const {
-            std::cell::RefCell::new(unsafe { std::mem::zeroed() })
-        };
+struct FgetspentState {
+    buffer: [u8; 1024],
+    entry: libc::spwd,
+}
+
+fn new_fgetspent_state() -> FgetspentState {
+    FgetspentState {
+        buffer: [0; 1024],
+        // SAFETY: `libc::spwd` is a C record type and all-zero is the empty
+        // scratch entry state before fields are populated below.
+        entry: unsafe { std::mem::zeroed() },
+    }
+}
+
+// SAFETY: the owned-TLS experiment stores one boxed shadow-entry scratch state
+// per thread id. `entry` raw pointers are always rebuilt to point into the
+// same boxed state's `buffer` before the pointer is returned.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for FgetspentState {}
+
+#[cfg(feature = "owned-tls-cache")]
+static FGETSPENT_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<FgetspentState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_fgetspent_state);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static FGETSPENT_TLS: std::cell::RefCell<FgetspentState> =
+        std::cell::RefCell::new(new_fgetspent_state());
+}
+
+fn with_fgetspent_state<R>(callback: impl FnOnce(&mut FgetspentState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        FGETSPENT_STATE_OWNED_TLS.with(callback)
     }
 
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        FGETSPENT_TLS.with(|cell| callback(&mut cell.borrow_mut()))
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
     if stream.is_null() {
         return std::ptr::null_mut();
     }
@@ -20723,31 +20758,27 @@ pub unsafe extern "C" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
             continue;
         };
 
-        return BUF.with(|buf| {
-            ENTRY.with(|entry| {
-                let mut buf = buf.borrow_mut();
-                let mut entry = entry.borrow_mut();
-                let needed = parsed.name.len() + 1 + parsed.passwd.len() + 1;
-                if needed > buf.len() {
-                    return std::ptr::null_mut();
-                }
-                buf[..parsed.name.len()].copy_from_slice(&parsed.name);
-                buf[parsed.name.len()] = 0;
-                let pass_off = parsed.name.len() + 1;
-                buf[pass_off..pass_off + parsed.passwd.len()].copy_from_slice(&parsed.passwd);
-                buf[pass_off + parsed.passwd.len()] = 0;
+        return with_fgetspent_state(|state| {
+            let needed = parsed.name.len() + 1 + parsed.passwd.len() + 1;
+            if needed > state.buffer.len() {
+                return std::ptr::null_mut();
+            }
+            state.buffer[..parsed.name.len()].copy_from_slice(&parsed.name);
+            state.buffer[parsed.name.len()] = 0;
+            let pass_off = parsed.name.len() + 1;
+            state.buffer[pass_off..pass_off + parsed.passwd.len()].copy_from_slice(&parsed.passwd);
+            state.buffer[pass_off + parsed.passwd.len()] = 0;
 
-                entry.sp_namp = buf.as_mut_ptr() as *mut c_char;
-                entry.sp_pwdp = buf[pass_off..].as_mut_ptr() as *mut c_char;
-                entry.sp_lstchg = parsed.lstchg;
-                entry.sp_min = parsed.min;
-                entry.sp_max = parsed.max;
-                entry.sp_warn = parsed.warn;
-                entry.sp_inact = parsed.inact;
-                entry.sp_expire = parsed.expire;
-                entry.sp_flag = parsed.flag;
-                &mut *entry as *mut libc::spwd
-            })
+            state.entry.sp_namp = state.buffer.as_mut_ptr() as *mut c_char;
+            state.entry.sp_pwdp = state.buffer[pass_off..].as_mut_ptr() as *mut c_char;
+            state.entry.sp_lstchg = parsed.lstchg;
+            state.entry.sp_min = parsed.min;
+            state.entry.sp_max = parsed.max;
+            state.entry.sp_warn = parsed.warn;
+            state.entry.sp_inact = parsed.inact;
+            state.entry.sp_expire = parsed.expire;
+            state.entry.sp_flag = parsed.flag;
+            &mut state.entry as *mut libc::spwd
         });
     }
 }
