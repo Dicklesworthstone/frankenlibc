@@ -166,7 +166,7 @@ Hot-path rewrites of the string-scan family to single-pass implementations: `str
 
 ## Phase 11 -- Tracked-Region Buffer-Bound Sweep (2026-04-27)
 
-A single 134-commit workday: every C-string and buffer entry point in the ABI got a systematic "bound X scan" hardening pass. Every input pointer scan is now bounded by a tracked-region check, defeating out-of-bounds reads on attacker-controlled buffers. A CVE-class hardening sweep finished in one day.
+A ~150-commit workday: every C-string and buffer entry point in the ABI got a systematic "bound X scan" hardening pass. Every input pointer scan is now bounded by a tracked-region check, defeating out-of-bounds reads on attacker-controlled buffers. A CVE-class hardening sweep finished in one day.
 
 ### Tracked-Region Bound Sweep
 

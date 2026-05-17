@@ -380,12 +380,14 @@ The Galois proofs live under `docs/proofs/galois_monotonic_probability_bounds.md
 
 **32 size classes** span from 16 bytes to 32,768 bytes:
 
-| Bin range | Increment | Sizes |
+| Bin range | Steps | Sizes |
 |---|---|---|
-| 0–7 | 16 bytes | 16, 32, 48, 64, 80, 96, 112, 128 |
-| 8–15 | 32 bytes | 160, 192, 224, 256, 288, 320, 352, 384 |
-| 16–23 | 64 bytes | 448, 512, 640, 768, 896, 1024, 1280, 1536 |
-| 24–31 | 128+ bytes | up to 32,768 |
+| 0–7 | 16-byte | 16, 32, 48, 64, 80, 96, 112, 128 |
+| 8–15 | 32-byte | 160, 192, 224, 256, 288, 320, 352, 384 |
+| 16–23 | mixed (64/128/256) | 448, 512, 640, 768, 896, 1024, 1280, 1536 |
+| 24–31 | widening | 2048, 2560, 3072, 4096, 8192, 16384, 24576, 32768 |
+
+The progression is geometric in spirit but not strictly so; the larger bins jump to power-of-two-friendly steps so the LargeAllocator threshold (`MAX_SMALL_SIZE = 32 KiB`) is reached without wasting slab slots on rarely-used intermediate sizes. The table is declared as `SIZE_TABLE: [usize; NUM_SIZE_CLASSES]` in `crates/frankenlibc-core/src/malloc/size_class.rs`.
 
 Each size class is backed by **64 KB slabs**. Every allocation carries 32 bytes of per-object membrane metadata (24-byte fingerprint header + 8-byte trailing canary) plus any alignment padding the size class requires. `FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` are declared as constants in `crates/frankenlibc-membrane/src/fingerprint.rs`.
 
@@ -592,7 +594,7 @@ The 128-byte `JmpBuf` (16 × `u64`) reserves the first six slots for membrane me
 | 1 | Context ID (unique per capture) |
 | 2 | Generation (re-entrance counter) |
 | 3 | Owner thread ID |
-| 4 | Mode tag (`0x5354524943540001` strict, `0x4841524445450002` hardened) |
+| 4 | Mode tag (`0x5354524943540001` strict — ASCII "STRICT" + `\x00\x01`; `0x48415244454E0002` hardened — ASCII "HARDEN" + `\x00\x02`) |
 | 5 | Guard (rotated XOR checksum of slots 0–4) |
 
 ### Validation Before Restore
@@ -627,7 +629,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 12. call rtld_fini hook
 ```
 
-If validation fails at any checkpoint, the startup policy decides whether to deny (abort) or fall back to host `__libc_start_main` via `dlvsym_next()` with version-symbol priority order `GLIBC_2.34 → GLIBC_2.2.5 → GLIBC_2.17`. Program-name globals (`program_invocation_name`, `__progname`) are stored as `AtomicPtr` values extracted from `argv[0]`.
+If validation fails at any checkpoint, the startup policy decides whether to deny (abort) or fall back to host `__libc_start_main` via `host_resolve::resolve_host_symbol_raw()`. Other host-fallback chains in the codebase have their own version-symbol priority orders: `pthread_abi.rs` walks `GLIBC_2.34 → GLIBC_2.3.2 → GLIBC_2.2.5` for `pthread_create`, and `dlfcn_abi.rs` accepts any of `GLIBC_2.2.5`, `GLIBC_2.17`, or `GLIBC_2.34` from a caller's `dlvsym` request. Program-name globals (`program_invocation_name`, `__progname`) are stored as `AtomicPtr` values extracted from `argv[0]`.
 
 ### L1 CRT Proof Rollup
 
@@ -3115,33 +3117,29 @@ Wrong ordering here is the kind of bug that *only* surfaces under heavy multi-th
 
 Linux dynamic linking is *versioned*. A binary built against glibc-2.34 expects `__libc_start_main@@GLIBC_2.34`; a binary built against glibc-2.17 expects `__libc_start_main@@GLIBC_2.17`. The two have different argument conventions.
 
-FrankenLibC's `version_scripts/libc.map` (4,687 lines) is a GNU ld version script that maps symbols to versions. The structure:
+FrankenLibC's `version_scripts/libc.map` (4,687 lines) is a GNU ld version script that maps symbols to versions. The actual structure on disk:
 
 ```
 GLIBC_2.2.5 {
   global:
+    __errno_location;
     malloc;
     free;
     memcpy;
-    /* hundreds of others */
+    /* thousands of others */
+    ynl;
+
   local:
     *;
 };
 
-GLIBC_2.17 {
+GLIBC_2.11 {
   global:
-    clock_gettime;
-    /* GLIBC_2.17-specific or newer */
+    __longjmp_chk;
 } GLIBC_2.2.5;
-
-GLIBC_2.34 {
-  global:
-    __libc_start_main;
-    /* GLIBC_2.34-specific or newer */
-} GLIBC_2.17;
 ```
 
-The trailing version on each block (`} GLIBC_2.2.5;`) creates a parent relationship: symbols in `GLIBC_2.17` are also resolvable as `GLIBC_2.2.5` if the binary asks for the older version. This is how a single `.so` file exports the same symbol at multiple versions simultaneously.
+Almost the entire surface exports under `GLIBC_2.2.5`. The `GLIBC_2.11` block carries only one symbol (`__longjmp_chk`, used by `_FORTIFY_SOURCE` builds) and inherits from `GLIBC_2.2.5`. The trailing version on a block (`} GLIBC_2.2.5;`) creates a parent relationship: callers asking for the older parent version still resolve a child-version symbol. This is how a single `.so` file can export the same symbol at multiple versions simultaneously, and how host-glibc-versioned binaries find a compatible entry without us declaring every legacy version explicitly.
 
 In Rust, the version binding is done with assembly `.symver` directives emitted by the build system. For example, `fortify_abi.rs` contains:
 
@@ -3151,7 +3149,7 @@ In Rust, the version binding is done with assembly `.symver` directives emitted 
 
 This makes the Rust function `__frankenlibc_longjmp_chk_impl` available to dynamic linking as `__longjmp_chk@@GLIBC_2.11`. The `, remove` directive cleans up the underlying Rust name from the exported set so only the versioned alias is visible.
 
-When `dlvsym_next` is called (e.g., from the startup fallback chain), it walks this version-name space looking for the requested `(symbol, version)` pair. The priority chain `GLIBC_2.34 → GLIBC_2.17 → GLIBC_2.2.5` lets the startup envelope try the newest API first, falling back to older variants if necessary.
+When `dlvsym_next` is called from `host_resolve.rs`, it walks the *host* glibc's version-name space looking for the requested `(symbol, version)` pair. Different subsystems pick different priority chains for the host-fallback case — `pthread_abi.rs` tries `GLIBC_2.34 → GLIBC_2.3.2 → GLIBC_2.2.5` for `pthread_create`, while `dlfcn_abi.rs` accepts any of `GLIBC_2.2.5`, `GLIBC_2.17`, or `GLIBC_2.34` from a caller's request. This lets a subsystem try the newest host API first and fall back to older variants for compatibility with older host-glibc installs.
 
 ---
 
