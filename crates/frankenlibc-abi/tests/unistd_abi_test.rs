@@ -143,15 +143,15 @@ use frankenlibc_abi::unistd_abi::{
     gethostent_r, gethostname, getnetbyaddr_r, getnetbyname, getnetbyname_r, getnetent_r,
     getnetgrent, getnetgrent_r, getopt, getopt_long, getpid, getppid, getprotobyname_r,
     getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r, getttyent, getttynam,
-    getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64, gsignal,
-    isatty, link, logout, logwtmp, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd,
-    nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise, process_mrelease,
-    process_vm_readv, process_vm_writev, putspent, read, readlink, readpassphrase, rename, rmdir,
-    sem_open, sem_unlink, semctl, semop, setfsent, sethostent, setnetent, setnetgrent, setns,
-    setproctitle, setproctitle_init, setprotoent, setservent, setttyent, setutent, shmdt, sigpause,
-    sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, syslog,
-    truncate, umask, uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wctrans,
-    wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    getuid, getutent, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64,
+    gsignal, isatty, link, logout, logwtmp, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv,
+    msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise,
+    process_mrelease, process_vm_readv, process_vm_writev, putspent, pututxline, read, readlink,
+    readpassphrase, rename, rmdir, sem_open, sem_unlink, semctl, semop, setfsent, sethostent,
+    setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent, setservent,
+    setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon,
+    strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
+    updwtmpx, usleep, utmpname, wctrans, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -5029,6 +5029,31 @@ fn getutid_r_invalid_type_sets_einval_and_nulls_result() {
             outp.is_null(),
             "failed getutid_r should null the result pointer"
         );
+    });
+}
+
+#[test]
+fn pututxline_appends_entry_and_returns_internal_copy() {
+    let entry = utmp_entry(libc::USER_PROCESS, b"px1", b"tty-putx", b"dana");
+    with_temp_utmp_fixture("utmpx_put", &[], || {
+        let returned = unsafe { pututxline(&entry as *const libc::utmpx) };
+        assert!(!returned.is_null(), "pututxline should return stored entry");
+        assert_ne!(
+            returned,
+            (&entry as *const libc::utmpx).cast_mut(),
+            "pututxline should return its internal storage, not caller storage"
+        );
+        let returned_user = unsafe { std::ffi::CStr::from_ptr((*returned).ut_user.as_ptr()) };
+        assert_eq!(returned_user.to_bytes(), b"dana");
+
+        unsafe { setutent() };
+        let read_back = unsafe { getutent() as *mut libc::utmpx };
+        assert!(
+            !read_back.is_null(),
+            "pututxline should append to the active utmp file"
+        );
+        let read_line = unsafe { std::ffi::CStr::from_ptr((*read_back).ut_line.as_ptr()) };
+        assert_eq!(read_line.to_bytes(), b"tty-putx");
     });
 }
 

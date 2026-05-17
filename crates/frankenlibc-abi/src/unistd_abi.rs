@@ -18971,6 +18971,40 @@ pub unsafe extern "C" fn getutxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     }
 }
 
+const fn empty_utmpx_buf() -> libc::utmpx {
+    // SAFETY: `libc::utmpx` is a C record type, and an all-zero value is the
+    // empty scratch-buffer state used by the surrounding utmpx APIs.
+    unsafe { std::mem::zeroed() }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static UTMPX_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<libc::utmpx> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_utmpx_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static UTMPX_BUF: std::cell::UnsafeCell<libc::utmpx> = const {
+        std::cell::UnsafeCell::new(empty_utmpx_buf())
+    };
+}
+
+#[inline]
+fn with_utmpx_buf<R>(f: impl FnOnce(&mut libc::utmpx) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        UTMPX_BUF_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        UTMPX_BUF.with(|buf| {
+            // SAFETY: UTMPX_BUF is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            f(unsafe { &mut *buf.get() })
+        })
+    }
+}
+
 /// `pututxline` — write utmpx entry.
 ///
 /// Native: appends the entry to the utmp file.
@@ -19009,15 +19043,9 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     let _ = syscall::sys_close(fd);
 
     if written as usize == record_size {
-        thread_local! {
-            static UTMPX_BUF: std::cell::UnsafeCell<libc::utmpx> = const {
-                std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() })
-            };
-        }
-        UTMPX_BUF.with(|buf| {
-            let ptr = buf.get();
-            unsafe { *ptr = *ut };
-            ptr
+        with_utmpx_buf(|buf| {
+            unsafe { *buf = *ut };
+            buf as *mut libc::utmpx
         })
     } else {
         std::ptr::null_mut()
