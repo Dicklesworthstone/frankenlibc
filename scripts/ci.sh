@@ -17,6 +17,11 @@ run_benchmark_gate() {
 echo "=== frankenlibc CI ==="
 echo ""
 
+echo "--- main-only branch/worktree guard ---"
+bash scripts/check_main_only_worktree_guard.sh --validate-only
+echo "PASS"
+echo ""
+
 echo "--- cargo fmt --check ---"
 cargo fmt --check
 echo "PASS"

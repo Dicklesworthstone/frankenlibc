@@ -65,6 +65,7 @@
     "bash scripts/check_main_only_worktree_guard.sh --validate-only",
     "jq empty target/conformance/main_only_worktree_guard.report.json",
     "jq empty target/conformance/main_only_worktree_guard.log.jsonl",
+    "rg -n \"bash scripts/check_main_only_worktree_guard.sh --validate-only\" scripts/ci.sh",
     "git diff --check -- scripts/check_main_only_worktree_guard.sh tests/conformance/main_only_worktree_guard.v1.json .beads/issues.jsonl",
     "br dep cycles --json"
   ]
