@@ -1,0 +1,142 @@
+{
+  "schema_version": "rch_pressure_approval_packet_golden.v1",
+  "bead": "bd-myuyl",
+  "purpose": "Golden approval-boundary fixture for rch pressure packets. This fixture pins the JSON shape and required Markdown facts for critical pressure, stale telemetry, missing ballast, disabled workers, and cleanup candidates that must remain approval-only.",
+  "golden_report": {
+    "schema_version": "rch_pressure_approval_packet_schema.v1",
+    "packet_id": "golden-critical-pressure-6",
+    "generated_at_utc": "2026-05-17T09:40:00Z",
+    "project": "frankenlibc",
+    "repo_state": {
+      "cwd": "/data/projects/frankenlibc",
+      "branch": "main",
+      "head_commit": "0000000000000000000000000000000000000000",
+      "origin_main_commit": "0000000000000000000000000000000000000000",
+      "origin_master_commit": "0000000000000000000000000000000000000000",
+      "worktree_list": [
+        "/data/projects/frankenlibc  0000000 [main]"
+      ],
+      "dirty_summary": [],
+      "untracked_summary": []
+    },
+    "rch_gate": {
+      "dry_run_command": "RCH_REQUIRE_REMOTE=1 rch diagnose --dry-run 'cargo check -p frankenlibc-harness'",
+      "dry_run_exit_status": 0,
+      "would_offload": true,
+      "worker_selection_status": "skipped",
+      "skip_reason": "no admissible workers: critical_pressure=6",
+      "required_remote_env": "RCH_REQUIRE_REMOTE=1",
+      "fallback_markers_rejected": [
+        "[RCH] local",
+        "remote required; refusing local fallback"
+      ]
+    },
+    "workers": [
+      {
+        "worker_id": "vmi1264463",
+        "host": "38.242.209.154",
+        "status": "healthy",
+        "pressure_state": "critical",
+        "pressure_reason_code": "disk_ratio_below_critical",
+        "pressure_disk_free_gb": 53.06,
+        "pressure_disk_free_ratio": 0.0457,
+        "pressure_telemetry_fresh": true,
+        "probe_command": "ssh read-only df/sbh/du probe for vmi1264463",
+        "probe_exit_status": 0,
+        "probe_failure_signature": "ok",
+        "df_snapshot": "/dev/sda1 1.2T 1.1T 54G 96% /",
+        "sbh_snapshot": "overall critical",
+        "ballast_snapshot": "available_count=0, releasable_bytes=0, missing_count=10",
+        "bounded_du_findings": [
+          "15G /data/projects/franken_engine/target_PearlTower_focused",
+          "16G /data/projects/fcp-beads-a4-final-20260516T2140/target"
+        ],
+        "collection_errors": []
+      },
+      {
+        "worker_id": "vmi1152480",
+        "host": "109.205.181.92",
+        "status": "disabled",
+        "pressure_state": "telemetry_gap",
+        "pressure_reason_code": "disk_metrics_unavailable",
+        "pressure_disk_free_gb": null,
+        "pressure_disk_free_ratio": null,
+        "pressure_telemetry_fresh": false,
+        "probe_command": "rch workers probe vmi1152480",
+        "probe_exit_status": 1,
+        "probe_failure_signature": "RCH-E100",
+        "df_snapshot": null,
+        "sbh_snapshot": null,
+        "ballast_snapshot": null,
+        "bounded_du_findings": [],
+        "collection_errors": [
+          "SSH connection failed for ubuntu@109.205.181.92"
+        ]
+      }
+    ],
+    "cleanup_candidates": [
+      {
+        "worker_id": "vmi1264463",
+        "path": "/data/projects/franken_engine/target_PearlTower_focused",
+        "size_human": "15G",
+        "size_bytes": null,
+        "source_command": "find /data/projects -maxdepth 2 -type d ( -name target -o -name target_* -o -name target-* ) -prune -exec du -sh {} +",
+        "candidate_kind": "build_target_dir",
+        "reason_it_might_help": "Large build-output directory on a worker excluded by rch pressure policy.",
+        "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
+        "requires_explicit_approval": true,
+        "executed": false
+      }
+    ],
+    "approval_request": {
+      "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
+      "exact_worker_ids": [
+        "vmi1264463"
+      ],
+      "exact_candidate_paths": [
+        "/data/projects/franken_engine/target_PearlTower_focused"
+      ],
+      "why_read_only_collection_is_insufficient": "Read-only collection can identify pressure and candidates, but cannot free space under repo rules.",
+      "explicit_user_text_required_before_cleanup": "The user must provide written approval naming exact paths and commands before cleanup can run.",
+      "commands_not_executed": [
+        "no deletion command executed",
+        "no ballast release command executed",
+        "no repository cleanup command executed"
+      ]
+    },
+    "executed_actions": [
+      {
+        "action": "git repo-state inspection",
+        "executed": true
+      },
+      {
+        "action": "rch status",
+        "executed": true
+      },
+      {
+        "action": "rch dry-run",
+        "executed": true
+      },
+      {
+        "action": "bounded read-only worker probes",
+        "executed": true
+      }
+    ],
+    "validation_commands": [
+      "bash -n scripts/generate_rch_pressure_approval_packet.sh",
+      "jq empty target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json"
+    ],
+    "artifact_paths": [
+      "target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json",
+      "target/rch-pressure-approval-packet/rch_pressure_approval_packet.approval.md"
+    ]
+  },
+  "golden_markdown_required_lines": [
+    "# rch Pressure Approval Packet",
+    "Cleanup Candidates",
+    "requires explicit written approval; not executed",
+    "This packet is read-only evidence. It does not authorize cleanup.",
+    "no deletion command executed",
+    "no ballast release command executed"
+  ]
+}
