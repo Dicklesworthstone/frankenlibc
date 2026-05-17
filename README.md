@@ -1045,7 +1045,7 @@ C caller
 
 ## Harness CLI Reference
 
-`cargo run -p frankenlibc-harness --bin harness` is the verification frontend. Subcommands:
+`cargo run -p frankenlibc-harness --bin harness` is the verification frontend. The `Subcommand` enum in `crates/frankenlibc-harness/src/bin/harness.rs` declares **70 subcommands** spanning fixture capture, replay, reality reports, POSIX conformance, healing-oracle verification, runtime-math proofs, shadow runs, fault injection, evidence compliance, kernel snapshots, tail-stats, and certificate / probe / policy utilities. Representative entries:
 
 | Subcommand | Purpose | Key output |
 |---|---|---|
@@ -1057,8 +1057,16 @@ C caller
 | `posix-obligation-report` | Obligation traceability across unit + C fixtures | `posix_obligation_matrix.current.v1.json` |
 | `errno-edge-report` | Errno and edge-case prioritization | `errno_edge_report.current.v1.json` |
 | `verify-membrane` | Strict/hardened healing-oracle verification | JSON healing evidence |
+| `evidence-compliance` | Validate a structured-log + artifact-index bundle | JSON compliance report |
+| `runtime-math-linkage-proofs` | Runtime math linkage integrity | Proof JSON |
+| `runtime-math-determinism-proofs` | Snapshot determinism for runtime-math controllers | Proof JSON |
+| `runtime-math-hji-viability-proofs` | HJI reachability viability kernel proofs | Proof JSON |
+| `runtime-math-cpomdp-feasibility-proofs` | Constrained POMDP repair-policy feasibility | Proof JSON |
+| `shadow-run` | Shadow-mode comparison run (FrankenLibC vs host glibc) | Divergence JSONL |
+| `fault-inject` | Targeted fault-injection campaign | Per-case evidence |
+| `tail-stats` | Tail-latency distribution analysis from evidence ring | JSON statistics |
 
-Every subcommand has a paired `*_cli_contract.v1.json` manifest under `tests/conformance/` enforcing schema, naming, flag shape, JSONL output contract, and policy keys. The contracts themselves are validated by ~50 meta-gates (see [CLI-Contract Manifest Meta-Gates](#cli-contract-manifest-meta-gates) below).
+Every subcommand has a paired `*_cli_contract.v1.json` manifest under `tests/conformance/` (68 such manifests currently) enforcing schema, naming, flag shape, JSONL output contract, and policy keys. The contracts themselves are validated by ~50 meta-gates (see [CLI-Contract Manifest Meta-Gates](#cli-contract-manifest-meta-gates) below).
 
 ### Healing Oracle Test Matrix
 
@@ -2120,17 +2128,11 @@ Each kind has a different cost / signal trade-off. Cheap kinds (unit, property) 
 
 ## Cargo Profile and Build Configuration
 
-```toml
-[profile.release]
-opt-level = 3       # Maximum performance optimization
-lto = true          # Link-time optimization across the entire workspace
-codegen-units = 1   # Single codegen unit for better optimization
-strip = true        # Remove debug symbols from the shipped .so
-```
+The workspace currently uses Cargo's default release profile (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`). `AGENTS.md` documents an aggressive target profile (`lto = true`, `codegen-units = 1`, `strip = true`) intended for the shipping artifact; that tuning is a tracked item, not the current default.
 
-`opt-level = 3` enables aggressive inlining. `lto = true` lets the linker collapse cross-crate boundaries (so the ABI → membrane → core hot path becomes a single optimized unit). `codegen-units = 1` trades parallel build time for tighter code generation. `strip = true` keeps the shipped artifact compact.
+`Cargo.toml` declares the workspace edition as **Rust 2024** (nightly required, pinned via `rust-toolchain.toml` to `nightly-2026-04-28`). The membrane and core crates set `#![deny(unsafe_code)]` at the crate root and selectively `#[allow]` it per-module with mandatory `// SAFETY:` comments.
 
-The workspace edition is **Rust 2024** (nightly required, pinned via `rust-toolchain.toml`). The membrane and core crates set `#![deny(unsafe_code)]` and selectively `#[allow]` it per-module with mandatory `// SAFETY:` comments.
+The ABI crate declares its `[lib]` block as `crate-type = ["cdylib", "staticlib", "rlib"]`. The `cdylib` output is `libfrankenlibc_abi.so` (the `LD_PRELOAD` artifact); the `staticlib` is `libfrankenlibc_abi.a` (used by native packaging checks like `scripts/check_setjmp_native.sh` that link against the version script directly via `cc`); the `rlib` is the Rust library form used by other workspace crates.
 
 ---
 
@@ -3578,7 +3580,7 @@ In FrankenLibC's hardened mode, the double-free is caught *at the offending call
 1. Cargo reads workspace Cargo.toml and the ABI crate's Cargo.toml.
 2. The ABI crate declares:
      [lib]
-     crate-type = ["cdylib", "staticlib"]
+     crate-type = ["cdylib", "staticlib", "rlib"]
 3. Cargo compiles all transitive dependencies (membrane, core,
    parking_lot, blake3, …) in release mode.
 4. The membrane crate's build.rs runs:
@@ -3595,17 +3597,15 @@ In FrankenLibC's hardened mode, the double-free is caught *at the offending call
    - cdylib output: target/release/libfrankenlibc_abi.so
    - Linker flag: --version-script=version_scripts/libc.map applied
      so symbols are exported under the right GLIBC_x.y tags.
-   - LTO (lto=true in Cargo.toml release profile) collapses
-     cross-crate boundaries.
-   - codegen-units=1 produces one optimized translation unit.
-   - strip=true removes debug symbols (release only).
+   - opt-level=3 enables aggressive inlining (Cargo's release default).
+   - Cargo defaults are otherwise used today; AGENTS.md tracks LTO,
+     codegen-units=1, and strip=true as future tightening.
 8. The output .so is ABI-compatible with binaries expecting
-   GLIBC_2.2.5/2.17/2.34 symbol versions.
+   GLIBC_2.2.5 symbol versions (with GLIBC_2.11 inheriting for the
+   `__longjmp_chk` fortify wrapper).
 ```
 
 The static library (`libfrankenlibc_abi.a`) is also produced. It's used by `scripts/check_setjmp_native.sh` and similar native packaging checks that need to link the symbols into a standalone `libc.so` via `cc -Wl,--version-script=libc.map`.
-
-The release profile is tuned aggressively (`lto = true`, `codegen-units = 1`, `opt-level = 3`, `strip = true`) because the hot path through the membrane and ABI matters more than incremental build speed.
 
 ---
 
@@ -3848,7 +3848,7 @@ This split lets the project develop new controllers (e.g., a new e-process varia
 
 Other reasons we use `parking_lot`:
 
-- **Smaller footprint**: `parking_lot::Mutex` is 1 byte; `std::sync::Mutex` includes a poison flag and platform-specific fields.
+- **Smaller footprint**: `parking_lot::RawMutex` is 1 byte (so `Mutex<T>` adds only 1 byte plus padding to `T`); `std::sync::Mutex` includes a poison flag and platform-specific fields.
 - **Faster uncontended path**: `parking_lot` uses an inline CAS without entering the kernel.
 - **Adaptive parking**: contended waiters spin briefly before parking, optimizing for short-critical-section workloads.
 - **Fair RwLock semantics** are available via `RawRwLock` if needed.
