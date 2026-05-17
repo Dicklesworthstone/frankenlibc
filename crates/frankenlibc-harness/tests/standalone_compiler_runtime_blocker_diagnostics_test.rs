@@ -254,6 +254,22 @@ fi
     Ok(path)
 }
 
+fn fake_rch_local_fallback_path(temp: &Path) -> TestResult<OsString> {
+    let fake_bin = temp.join("fake-rch-local-bin");
+    std::fs::create_dir_all(&fake_bin).map_err(|err| format!("{}: {err}", fake_bin.display()))?;
+    write_executable(
+        &fake_bin.join("rch"),
+        r#"#!/bin/sh
+echo "[RCH] local (test-injected fallback)" >&2
+exit 0
+"#,
+    )?;
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    Ok(path)
+}
+
 fn lane_by_id<'a>(report: &'a Value, lane_id: &str) -> TestResult<&'a Value> {
     as_array(&report["lanes"], "lanes")?
         .iter()
@@ -862,6 +878,78 @@ fn compiler_runtime_experiment_gate_reports_lane_deltas_without_promotion() -> T
         .contains("libgcc_s.so.1:GCC_3.0"),
         "comparison should record removed libgcc version requirement",
     )?;
+    ensure(
+        log.exists(),
+        format!("experiment log should exist at {}", log.display()),
+    )
+}
+
+#[test]
+fn compiler_runtime_experiment_rejects_rch_local_fallback() -> TestResult {
+    let root = workspace_root()?;
+    let temp = unique_temp_dir("compiler-runtime-experiment-rch-local")?;
+    let out_dir = temp.join("out");
+    let target_root = temp.join("targets");
+    let report = temp.join("standalone_compiler_runtime_experiment.report.json");
+    let log = temp.join("standalone_compiler_runtime_experiment.log.jsonl");
+    let fake_path = fake_rch_local_fallback_path(&temp)?;
+
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--compiler-runtime-experiment")
+        .current_dir(&root)
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+        .env(
+            "STANDALONE_COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT",
+            &target_root,
+        )
+        .env("STANDALONE_COMPILER_RUNTIME_EXPERIMENT_REPORT", &report)
+        .env("STANDALONE_COMPILER_RUNTIME_EXPERIMENT_LOG", &log)
+        .env("PATH", fake_path)
+        .env_remove("FRANKENLIBC_STANDALONE_LIB")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .map_err(|err| format!("compiler runtime fallback gate failed to start: {err}"))?;
+    ensure(
+        !output.status.success(),
+        format!(
+            "compiler runtime experiment should fail on RCH local fallback\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+
+    let report_json = load_json(&root, report.to_str().ok_or("report path must be UTF-8")?)?;
+    ensure_eq(
+        as_str(&report_json["status"], "report.status")?,
+        "fail",
+        "report status",
+    )?;
+    for lane_id in [
+        "baseline-release-standalone",
+        "panic-abort-compiler-runtime-minimized",
+    ] {
+        let lane = lane_by_id(&report_json, lane_id)?;
+        ensure_eq(
+            as_str(&lane["build_status"], "lane.build_status")?,
+            "fail",
+            format!("{lane_id} build status"),
+        )?;
+        ensure_eq(
+            as_str(
+                &lane["artifact_state"]["failure_signature"],
+                "lane.artifact_state.failure_signature",
+            )?,
+            "rch_local_fallback",
+            format!("{lane_id} failure signature"),
+        )?;
+        ensure(
+            as_array(&lane["artifact_state"]["refs"], "lane.artifact_state.refs")?
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|entry| entry.ends_with("build.stderr.txt")),
+            format!("{lane_id} must retain fallback stderr evidence"),
+        )?;
+    }
     ensure(
         log.exists(),
         format!("experiment log should exist at {}", log.display()),

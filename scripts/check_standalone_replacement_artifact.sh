@@ -1450,7 +1450,8 @@ def run_compiler_runtime_lane(lane):
         env["RCH_ENV_ALLOWLIST"] = ",".join(allowed)
         result = run_command(command, env=env)
         build_exit_code = result["returncode"]
-        build_status = "pass" if result["returncode"] == 0 else "fail"
+        rch_local_fallback = detected_rch_local_fallback(command, result)
+        build_status = "pass" if result["returncode"] == 0 and not rch_local_fallback else "fail"
         write_text(build_stdout, result["stdout"])
         write_text(build_stderr, result["stderr"])
     else:
@@ -1462,12 +1463,13 @@ def run_compiler_runtime_lane(lane):
     target = lane_target_dir / "release" / "libfrankenlibc_replace.so"
     lane_tool_evidence = {}
     if build_status == "fail":
+        failure_signature = "rch_local_fallback" if not skip_build and rch_local_fallback else "build_failed"
         artifact_state = {
             "status": "build_failed",
             "path": str(target),
             "sha256": None,
             "mtime": None,
-            "failure_signature": "build_failed",
+            "failure_signature": failure_signature,
             "host_glibc_dependency": None,
             "sampled_symbols_present": False,
             "symbol_samples": empty_symbol_samples(),
