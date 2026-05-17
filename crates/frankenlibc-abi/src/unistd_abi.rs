@@ -16555,9 +16555,38 @@ impl ServIterState {
     }
 }
 
+// SAFETY: `ServIterState` is process-owned scratch state keyed by kernel
+// thread id under the owned-TLS experiment. The raw alias pointers are
+// rebuilt from `entry_buf` on each successful parse and never transferred
+// between thread-keyed slots.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for ServIterState {}
+
+#[cfg(feature = "owned-tls-cache")]
+static SERV_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServIterState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(ServIterState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static SERV_ITER: std::cell::UnsafeCell<ServIterState> =
         const { std::cell::UnsafeCell::new(ServIterState::new()) };
+}
+
+#[inline]
+fn with_serv_iter_state<R>(callback: impl FnOnce(&mut ServIterState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERV_ITER_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERV_ITER.with(|cell| {
+            // SAFETY: SERV_ITER is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// Parse the next service entry into the entry_buf.
@@ -16639,12 +16668,9 @@ unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
 /// Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setservent(_stayopen: c_int) {
-    SERV_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
-        match std::fs::File::open(SERVICES_PATH) {
-            Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-            Err(_) => state.reader = None,
-        }
+    with_serv_iter_state(|state| match std::fs::File::open(SERVICES_PATH) {
+        Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+        Err(_) => state.reader = None,
     });
 }
 
@@ -16653,8 +16679,7 @@ pub unsafe extern "C" fn setservent(_stayopen: c_int) {
 /// Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endservent() {
-    SERV_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_serv_iter_state(|state| {
         state.reader = None;
     });
 }
@@ -16664,8 +16689,7 @@ pub unsafe extern "C" fn endservent() {
 /// Native implementation using thread-local iterator state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservent() -> *mut c_void {
-    SERV_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_serv_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(SERVICES_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
@@ -23585,8 +23609,7 @@ pub unsafe extern "C" fn getservent_r(
         return libc::EINVAL;
     }
 
-    SERV_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_serv_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(SERVICES_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
