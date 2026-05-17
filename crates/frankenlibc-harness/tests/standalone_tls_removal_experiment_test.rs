@@ -581,8 +581,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 22,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver nsaddr, getmntent, getpass, cuserid, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state",
+        substituted == 23,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver nsaddr, getmntent, getpass, cuserid, C++ EH globals, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state",
     )?;
     require(
         substituted + remaining == total,
@@ -619,6 +619,7 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && unistd.contains("GETMNTENT_BUF_OWNED_TLS")
             && unistd.contains("GETPASS_BUF_OWNED_TLS")
             && unistd.contains("CUSERID_BUF_OWNED_TLS")
+            && unistd.contains("CXA_EH_GLOBALS_OWNED_TLS")
             && unistd.contains("UTMP_STATE_OWNED_TLS")
             && unistd.contains("UTMPX_BUF_OWNED_TLS")
             && unistd.contains("NSS_SYSTEMD_BLOCK_FLAG_OWNED_TLS")
@@ -632,6 +633,6 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && unistd.contains("NETGROUP_ITER_OWNED_TLS")
             && unistd.contains("ALIAS_ITER_OWNED_TLS")
             && unistd.contains("crate::owned_tls_cache::OwnedTlsCache"),
-        "unistd ABI must route the crypt/gensalt, NIS helper, resolver nsaddr, getmntent, getpass, cuserid, utmp-state, pututxline return-buffer, NSS systemd block-flag, fstab-state, ttyent-state, getdate-tm, services-iterator, networks-iterator, protocols-iterator, hosts-iterator, netgroup-iterator, and alias-iterator slices through owned TLS cache",
+        "unistd ABI must route the crypt/gensalt, NIS helper, resolver nsaddr, getmntent, getpass, cuserid, C++ EH globals, utmp-state, pututxline return-buffer, NSS systemd block-flag, fstab-state, ttyent-state, getdate-tm, services-iterator, networks-iterator, protocols-iterator, hosts-iterator, netgroup-iterator, and alias-iterator slices through owned TLS cache",
     )
 }

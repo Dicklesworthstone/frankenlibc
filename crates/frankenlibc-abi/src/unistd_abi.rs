@@ -16431,6 +16431,26 @@ pub struct CxaEhGlobals {
     pub uncaught_exceptions: u32,
 }
 
+// SAFETY: `CxaEhGlobals` is process-keyed by thread id in the owned-TLS
+// experiment. The raw pointer is ABI payload state for that one thread; moving
+// the storage box between the cache mutex and caller does not transfer
+// ownership of the pointed-to exception chain.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for CxaEhGlobals {}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_cxa_eh_globals() -> CxaEhGlobals {
+    CxaEhGlobals {
+        caught_exceptions: core::ptr::null_mut(),
+        uncaught_exceptions: 0,
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static CXA_EH_GLOBALS_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<CxaEhGlobals> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_cxa_eh_globals);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     /// Per-thread storage for `__cxa_get_globals` / `__cxa_get_globals_fast`.
     /// `UnsafeCell` is not needed because callers receive a `*mut`
@@ -16444,7 +16464,15 @@ std::thread_local! {
 }
 
 fn cxa_eh_globals_ptr() -> *mut CxaEhGlobals {
-    CXA_EH_GLOBALS.with(|cell| cell.get())
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        CXA_EH_GLOBALS_OWNED_TLS.with(|globals| globals as *mut CxaEhGlobals)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        CXA_EH_GLOBALS.with(|cell| cell.get())
+    }
 }
 
 /// Itanium C++ ABI `__cxa_get_globals()` — return the calling
