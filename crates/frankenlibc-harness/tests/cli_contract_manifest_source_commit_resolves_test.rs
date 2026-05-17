@@ -1,8 +1,9 @@
 //! Meta-gate: every `tests/conformance/*_cli_contract.v1.json` manifest
 //! declares a `source_commit` that resolves to a real commit object in this
-//! repository (bd-5zmd3). This closes the gap left by shape-only checks: a
-//! lowercase hex string is not enough evidence if the referenced commit is not
-//! part of the repository history.
+//! repository (bd-5zmd3), and that the referenced commit is an ancestor of
+//! HEAD (bd-yckpc). This closes the gap left by shape-only checks: a lowercase
+//! hex string is not enough evidence if the referenced commit is not part of
+//! the repository history.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -43,6 +44,33 @@ fn git_ref_exists(root: &Path, git_ref: &str) -> TestResult<bool> {
 
 fn git_commit_exists(root: &Path, commit: &str) -> TestResult<bool> {
     git_ref_exists(root, &commit_object_ref(commit))
+}
+
+fn git_commit_is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> TestResult<bool> {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("merge-base")
+        .arg("--is-ancestor")
+        .arg(ancestor)
+        .arg(descendant)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| {
+            format!("spawn git merge-base --is-ancestor `{ancestor}` `{descendant}`: {e}")
+        })?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        Some(code) => Err(format!(
+            "git merge-base --is-ancestor `{ancestor}` `{descendant}` exited with {code}"
+        )),
+        None => Err(format!(
+            "git merge-base --is-ancestor `{ancestor}` `{descendant}` terminated by signal"
+        )),
+    }
 }
 
 fn repository_has_usable_history(root: &Path) -> TestResult<bool> {
@@ -104,6 +132,68 @@ fn every_cli_contract_manifest_source_commit_resolves_to_repo_commit() -> TestRe
     if !violations.is_empty() {
         return Err(format!(
             "{} CLI contract source_commit resolution violation(s):\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn every_cli_contract_manifest_source_commit_is_ancestor_of_head() -> TestResult {
+    let root = workspace_root()?;
+    if !repository_has_usable_history(&root)? {
+        eprintln!(
+            "skipping cli_contract source_commit ancestry check because this checkout lacks the required git history anchor {REQUIRED_HISTORY_ANCHOR}"
+        );
+        return Ok(());
+    }
+
+    let conformance_dir = root.join("tests").join("conformance");
+    let entries = std::fs::read_dir(&conformance_dir)
+        .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
+
+    let mut violations: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("_cli_contract.v1.json") {
+            continue;
+        }
+
+        let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
+        let manifest: Value =
+            serde_json::from_str(&body).map_err(|e| format!("parse {name}: {e}"))?;
+        let Some(source_commit) = manifest.get("source_commit") else {
+            violations.push(format!("{name}: missing source_commit field"));
+            checked += 1;
+            continue;
+        };
+        let Some(source_commit) = source_commit.as_str() else {
+            violations.push(format!("{name}: source_commit must be a string"));
+            checked += 1;
+            continue;
+        };
+        if !git_commit_is_ancestor(&root, source_commit, "HEAD")? {
+            violations.push(format!(
+                "{name}: source_commit `{source_commit}` is not an ancestor of HEAD"
+            ));
+        }
+        checked += 1;
+    }
+
+    assert!(
+        checked >= 30,
+        "expected at least 30 CLI contract manifests; found {checked}"
+    );
+
+    if !violations.is_empty() {
+        return Err(format!(
+            "{} CLI contract source_commit ancestry violation(s):\n  {}",
             violations.len(),
             violations.join("\n  ")
         ));
