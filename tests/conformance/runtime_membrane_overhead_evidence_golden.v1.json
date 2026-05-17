@@ -1,0 +1,182 @@
+{
+  "schema_version": "runtime_membrane_overhead_evidence_golden.v1",
+  "bead": "bd-jz1gf",
+  "purpose": "Golden schema sample for runtime membrane overhead evidence. This fixture pins the required fields, freshness contract, RCH-only proof boundary, strict/hardened budget shape, ABI family coverage, and runtime-math telemetry shape. It is not live performance proof and must never upgrade release or README claims by itself.",
+  "golden_report": {
+    "schema_version": "runtime_membrane_overhead_evidence.v1",
+    "evidence_id": "runtime-membrane-overhead-schema-golden",
+    "evidence_kind": "schema_golden",
+    "generated_at_utc": "2026-05-17T19:00:00Z",
+    "source_commit": "SCHEMA_GOLDEN_NOT_LIVE",
+    "source_commit_freshness": {
+      "recorded_source_commit_field": "source_commit",
+      "comparison_target": "current git HEAD for live claim evidence",
+      "schema_golden_may_use_non_current_source_commit": true,
+      "claim_allowed_when_stale": false,
+      "rejected_evidence_kind": "stale_source_commit"
+    },
+    "claim_policy": {
+      "claim_status": "claim_blocked",
+      "claim_allowed": false,
+      "reason": "This golden only proves schema/checker shape; live performance claims require current-source RCH evidence.",
+      "blocked_release_claims": [
+        "strict-mode membrane overhead below 20ns/call",
+        "hardened-mode membrane overhead below 200ns/call",
+        "large-host or swarm-scale responsiveness"
+      ]
+    },
+    "rch_proof": {
+      "required_remote_env": "RCH_REQUIRE_REMOTE=1",
+      "offload_required": true,
+      "command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo bench -p frankenlibc-bench --bench runtime_membrane_overhead",
+      "worker_id": "schema-golden-worker",
+      "worker_identity": {
+        "host": "schema-golden.example.invalid",
+        "cpu_model": "schema sample",
+        "logical_cpus": 64,
+        "memory_gb": 256
+      },
+      "fallback_markers_rejected": [
+        "[RCH] local",
+        "remote required; refusing local fallback"
+      ],
+      "local_fallback_seen": false,
+      "transcript_artifact": "target/conformance/runtime_membrane_overhead/schema_golden_transcript.txt"
+    },
+    "budgets": [
+      {
+        "mode": "strict",
+        "target_budget_ns": 20.0,
+        "budget_source": "AGENTS.md performance target"
+      },
+      {
+        "mode": "hardened",
+        "target_budget_ns": 200.0,
+        "budget_source": "AGENTS.md performance target"
+      }
+    ],
+    "required_families": [
+      "string",
+      "malloc"
+    ],
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "measurements": [
+      {
+        "abi_family": "string",
+        "operation": "memcpy_64",
+        "mode": "strict",
+        "sample_count": 100000,
+        "quantiles_ns": {
+          "p50": 7.1,
+          "p95": 11.3,
+          "p99": 15.8
+        },
+        "target_budget_ns": 20.0,
+        "budget_status": "pass",
+        "runtime_math_decision_summary": {
+          "telemetry_present": true,
+          "validation_profile": "fast",
+          "allow_count": 100000,
+          "full_validate_count": 0,
+          "repair_count": 0,
+          "deny_count": 0
+        },
+        "artifact_refs": [
+          "target/conformance/runtime_membrane_overhead/string_memcpy_64_strict.jsonl"
+        ]
+      },
+      {
+        "abi_family": "string",
+        "operation": "memcpy_64",
+        "mode": "hardened",
+        "sample_count": 100000,
+        "quantiles_ns": {
+          "p50": 44.0,
+          "p95": 88.0,
+          "p99": 132.0
+        },
+        "target_budget_ns": 200.0,
+        "budget_status": "pass",
+        "runtime_math_decision_summary": {
+          "telemetry_present": true,
+          "validation_profile": "full",
+          "allow_count": 85000,
+          "full_validate_count": 15000,
+          "repair_count": 0,
+          "deny_count": 0
+        },
+        "artifact_refs": [
+          "target/conformance/runtime_membrane_overhead/string_memcpy_64_hardened.jsonl"
+        ]
+      },
+      {
+        "abi_family": "malloc",
+        "operation": "malloc_free_64",
+        "mode": "strict",
+        "sample_count": 100000,
+        "quantiles_ns": {
+          "p50": 8.8,
+          "p95": 13.7,
+          "p99": 18.2
+        },
+        "target_budget_ns": 20.0,
+        "budget_status": "pass",
+        "runtime_math_decision_summary": {
+          "telemetry_present": true,
+          "validation_profile": "fast",
+          "allow_count": 100000,
+          "full_validate_count": 0,
+          "repair_count": 0,
+          "deny_count": 0
+        },
+        "artifact_refs": [
+          "target/conformance/runtime_membrane_overhead/malloc_free_64_strict.jsonl"
+        ]
+      },
+      {
+        "abi_family": "malloc",
+        "operation": "malloc_free_64",
+        "mode": "hardened",
+        "sample_count": 100000,
+        "quantiles_ns": {
+          "p50": 51.0,
+          "p95": 104.0,
+          "p99": 166.0
+        },
+        "target_budget_ns": 200.0,
+        "budget_status": "pass",
+        "runtime_math_decision_summary": {
+          "telemetry_present": true,
+          "validation_profile": "full",
+          "allow_count": 91000,
+          "full_validate_count": 9000,
+          "repair_count": 0,
+          "deny_count": 0
+        },
+        "artifact_refs": [
+          "target/conformance/runtime_membrane_overhead/malloc_free_64_hardened.jsonl"
+        ]
+      }
+    ],
+    "validation_commands": [
+      "bash -n scripts/check_runtime_membrane_overhead_evidence.sh",
+      "jq empty tests/conformance/runtime_membrane_overhead_evidence_golden.v1.json",
+      "bash scripts/check_runtime_membrane_overhead_evidence.sh",
+      "git diff --check -- scripts/check_runtime_membrane_overhead_evidence.sh tests/conformance/runtime_membrane_overhead_evidence_golden.v1.json .beads/issues.jsonl",
+      "AGENT_NAME=DarkShore br dep cycles --json"
+    ]
+  },
+  "negative_controls_expected": [
+    "stale_source_commit",
+    "missing_rch_remote",
+    "local_fallback_seen",
+    "missing_family",
+    "missing_mode",
+    "invalid_quantile",
+    "budget_regression",
+    "missing_runtime_math_telemetry"
+  ]
+}
