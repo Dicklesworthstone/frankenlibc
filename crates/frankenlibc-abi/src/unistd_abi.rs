@@ -19995,9 +19995,31 @@ impl NetgroupIterState {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static NETGROUP_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<NetgroupIterState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(NetgroupIterState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static NETGROUP_ITER: std::cell::UnsafeCell<NetgroupIterState> =
         const { std::cell::UnsafeCell::new(NetgroupIterState::new()) };
+}
+
+#[inline]
+fn with_netgroup_iter_state<R>(callback: impl FnOnce(&mut NetgroupIterState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        NETGROUP_ITER_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        NETGROUP_ITER.with(|cell| {
+            // SAFETY: NETGROUP_ITER is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 // parse_netgroup_triples moved to frankenlibc_core::netgroup. The
@@ -20007,8 +20029,7 @@ std::thread_local! {
 /// `endnetgrent` — end netgroup iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endnetgrent() {
-    NETGROUP_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_netgroup_iter_state(|state| {
         state.triples.clear();
         state.pos = 0;
     });
@@ -20025,8 +20046,7 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
     }
     let Some(group) = (unsafe { read_c_string_bytes(netgroup) }) else {
         unsafe { set_abi_errno(libc::EINVAL) };
-        NETGROUP_ITER.with(|cell| {
-            let state = unsafe { &mut *cell.get() };
+        with_netgroup_iter_state(|state| {
             state.triples.clear();
             state.pos = 0;
         });
@@ -20036,8 +20056,7 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
         Ok(c) => c,
         Err(_) => {
             // No /etc/netgroup — not an error, just empty results
-            NETGROUP_ITER.with(|cell| {
-                let state = unsafe { &mut *cell.get() };
+            with_netgroup_iter_state(|state| {
                 state.triples.clear();
                 state.pos = 0;
             });
@@ -20045,8 +20064,7 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
         }
     };
     let triples = frankenlibc_core::netgroup::parse_netgroup_triples(&content, &group);
-    NETGROUP_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_netgroup_iter_state(|state| {
         state.triples = triples;
         state.pos = 0;
     });
@@ -20066,8 +20084,7 @@ pub unsafe extern "C" fn getnetgrent(
     if hostp.is_null() || userp.is_null() || domainp.is_null() {
         return 0;
     }
-    NETGROUP_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_netgroup_iter_state(|state| {
         if state.pos >= state.triples.len() {
             return 0;
         }
@@ -20119,8 +20136,7 @@ pub unsafe extern "C" fn getnetgrent_r(
     if hostp.is_null() || userp.is_null() || domainp.is_null() || buffer.is_null() {
         return 0;
     }
-    NETGROUP_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_netgroup_iter_state(|state| {
         if state.pos >= state.triples.len() {
             return 0;
         }
