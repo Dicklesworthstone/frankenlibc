@@ -65,6 +65,7 @@ if artifact.get("bead") != "bd-1pbw":
 exported = artifact.get("exported_taxonomy_view", {})
 replacement_view = artifact.get("replacement_claim_view", {})
 source_debt = artifact.get("critical_source_debt", {})
+comment_stub_surface = artifact.get("exported_comment_stub_surface", {})
 risk_rows = artifact.get("risk_ranked_debt", [])
 recon = artifact.get("reconciliation", {})
 summary = artifact.get("summary", {})
@@ -73,6 +74,8 @@ if not isinstance(exported, dict):
     raise SystemExit("FAIL: exported_taxonomy_view must be object")
 if not isinstance(source_debt, dict):
     raise SystemExit("FAIL: critical_source_debt must be object")
+if not isinstance(comment_stub_surface, dict):
+    raise SystemExit("FAIL: exported_comment_stub_surface must be object")
 if not isinstance(replacement_view, dict):
     raise SystemExit("FAIL: replacement_claim_view must be object")
 if not isinstance(risk_rows, list):
@@ -183,6 +186,52 @@ for row in entries:
     if line <= 0:
         raise SystemExit(f"FAIL: debt entry has invalid line number: {symbol}")
 
+comment_stub_entries = comment_stub_surface.get("entries", [])
+if not isinstance(comment_stub_entries, list):
+    raise SystemExit("FAIL: exported_comment_stub_surface.entries must be array")
+if int(comment_stub_surface.get("occurrence_count", -1)) != len(comment_stub_entries):
+    raise SystemExit("FAIL: exported_comment_stub_surface.occurrence_count mismatch")
+comment_stub_symbols = sorted({str(row.get("symbol", "")) for row in comment_stub_entries})
+if int(comment_stub_surface.get("unique_symbol_count", -1)) != len(comment_stub_symbols):
+    raise SystemExit("FAIL: exported_comment_stub_surface.unique_symbol_count mismatch")
+comment_stub_family_counter = Counter(str(row.get("family", "")) for row in comment_stub_entries)
+if comment_stub_surface.get("by_family", {}) != dict(sorted(comment_stub_family_counter.items())):
+    raise SystemExit("FAIL: exported_comment_stub_surface.by_family mismatch")
+claim_policy = comment_stub_surface.get("claim_policy", {})
+if claim_policy.get("claim_allowed") is not False:
+    raise SystemExit("FAIL: exported_comment_stub_surface.claim_policy.claim_allowed must be false")
+required_comment_stub_symbols = {
+    "yp_bind",
+    "nis_local_directory",
+    "_nss_dns_getcanonname_r",
+    "__nss_lookup",
+    "__libc_unwind_link_get",
+    "__fp_query",
+    "__res_close",
+}
+missing_comment_stub_symbols = sorted(required_comment_stub_symbols - set(comment_stub_symbols))
+if missing_comment_stub_symbols:
+    raise SystemExit(
+        "FAIL: exported_comment_stub_surface missing representative symbols: "
+        + ", ".join(missing_comment_stub_symbols)
+    )
+for row in comment_stub_entries:
+    symbol = str(row.get("symbol", ""))
+    if not symbol:
+        raise SystemExit("FAIL: comment stub entry missing symbol")
+    if row.get("evidence_scope") != "exported_comment_declared_stub":
+        raise SystemExit(f"FAIL: invalid comment stub evidence_scope for {symbol}")
+    if row.get("claim_impact") != "visibility_only_not_semantic_parity_proof":
+        raise SystemExit(f"FAIL: invalid comment stub claim_impact for {symbol}")
+    if not str(row.get("path", "")).startswith("crates/frankenlibc-"):
+        raise SystemExit(f"FAIL: invalid comment stub path for {symbol}")
+    if int(row.get("line", 0)) <= 0:
+        raise SystemExit(f"FAIL: invalid comment stub line for {symbol}")
+    if not str(row.get("comment_excerpt", "")):
+        raise SystemExit(f"FAIL: missing comment excerpt for {symbol}")
+    if not str(row.get("return_contract_hint", "")):
+        raise SystemExit(f"FAIL: missing return contract hint for {symbol}")
+
 risk_symbols = sorted({str(row.get("symbol", "")) for row in risk_rows})
 expected_risk_symbols = sorted(
     set(unique_symbols)
@@ -240,6 +289,10 @@ if sorted(recon.get("interpose_unapproved_callthrough_symbols", [])) != sorted(
     [row["symbol"] for row in expected_unapproved_ct]
 ):
     raise SystemExit("FAIL: reconciliation.interpose_unapproved_callthrough_symbols mismatch")
+if int(recon.get("exported_comment_declared_stub_count", -1)) != len(comment_stub_entries):
+    raise SystemExit("FAIL: reconciliation.exported_comment_declared_stub_count mismatch")
+if sorted(recon.get("exported_comment_declared_stub_symbols", [])) != comment_stub_symbols:
+    raise SystemExit("FAIL: reconciliation.exported_comment_declared_stub_symbols mismatch")
 
 if int(summary.get("priority_item_count", -1)) != len(risk_rows):
     raise SystemExit("FAIL: summary.priority_item_count mismatch")
@@ -252,6 +305,8 @@ if int(summary.get("replacement_blocker_count", -1)) != len(expected_blockers):
     raise SystemExit("FAIL: summary.replacement_blocker_count mismatch")
 if int(summary.get("interpose_unapproved_callthrough_count", -1)) != len(expected_unapproved_ct):
     raise SystemExit("FAIL: summary.interpose_unapproved_callthrough_count mismatch")
+if int(summary.get("exported_comment_declared_stub_count", -1)) != len(comment_stub_entries):
+    raise SystemExit("FAIL: summary.exported_comment_declared_stub_count mismatch")
 
 report = {
     "schema_version": "v1",
@@ -271,6 +326,7 @@ report = {
         "critical_non_exported_todo_count": len(non_exported_symbols),
         "critical_exported_shadow_todo_count": len(exported_symbols),
         "matrix_delta_count": len(recon.get("matrix_summary_deltas", [])),
+        "exported_comment_declared_stub_count": len(comment_stub_entries),
     },
 }
 report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -327,6 +383,7 @@ event = {
         "critical_non_exported_todo_count": recon.get("critical_non_exported_todo_count", 0),
         "critical_exported_shadow_todo_count": recon.get("critical_exported_shadow_todo_count", 0),
         "summary_deltas": delta_rows,
+        "exported_comment_declared_stub_count": recon.get("exported_comment_declared_stub_count", 0),
         "priority_reasoning": priority_reasoning,
     },
 }

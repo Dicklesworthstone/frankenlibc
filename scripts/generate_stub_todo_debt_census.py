@@ -26,7 +26,11 @@ TODO_RE = re.compile(r"\btodo!\s*\(")
 UNIMPLEMENTED_RE = re.compile(r"\bunimplemented!\s*\(")
 PENDING_PANIC_RE = re.compile(r"\bpanic!\s*\(")
 FN_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+EXPORT_FN_RE = re.compile(
+    r'\bpub\s+unsafe\s+extern\s+"C"\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\('
+)
 MSG_RE = re.compile(r"(?:todo|unimplemented|panic)!\s*\(\s*\"([^\"]*)\"")
+COMMENT_DECLARED_STUB_RE = re.compile(r"\bStub(?:bed)?\b")
 
 STATUS_ORDER = [
     "Implemented",
@@ -220,6 +224,117 @@ def scan_source_debt(
             row["macro"],
         )
     )
+    return rows
+
+
+def classify_comment_stub_family(symbol: str) -> str:
+    if symbol.startswith("yp_"):
+        return "nis"
+    if symbol.startswith("nis_") or symbol.startswith("__nis"):
+        return "nis_plus"
+    if (
+        symbol.startswith("_nss_")
+        or symbol.startswith("__nss")
+        or symbol.startswith("__internal_")
+    ):
+        return "nss"
+    if (
+        symbol.startswith("__libc_")
+        or symbol.startswith("__open_catalog")
+        or symbol.startswith("__rpc")
+        or symbol.startswith("__pmap")
+        or symbol.startswith("_dl_")
+    ):
+        return "glibc_private"
+    if symbol.startswith("__fp_") or symbol.startswith("__res_"):
+        return "resolver"
+    return classify_family(symbol)
+
+
+def compact_comment_excerpt(lines: list[str]) -> str:
+    cleaned: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        stripped = stripped.removeprefix("///").removeprefix("//!").removeprefix("//").strip()
+        if stripped:
+            cleaned.append(stripped)
+    return " ".join(cleaned)[:260]
+
+
+def infer_stub_return_contract(comment_excerpt: str) -> str:
+    lowered = comment_excerpt.lower()
+    if "no-op" in lowered or "no op" in lowered:
+        return "no_op"
+    if "nss_status_notfound" in lowered or "notfound" in lowered:
+        return "nss_status_notfound"
+    if "yperr_" in lowered:
+        return "yperr_failure"
+    if "nis_" in lowered and "unreachable" in lowered:
+        return "nis_nameunreachable"
+    if "returns null" in lowered or "return null" in lowered:
+        return "returns_null"
+    if "empty string" in lowered:
+        return "returns_empty_string"
+    if "returns -1" in lowered or "return -1" in lowered:
+        return "returns_minus_one"
+    if "returns 0" in lowered or "return 0" in lowered:
+        return "returns_zero"
+    if "returns 1" in lowered or "return 1" in lowered:
+        return "returns_one"
+    return "deterministic_failure_or_noop"
+
+
+def scan_exported_comment_stubs(
+    workspace_root: Path,
+    scan_roots: list[Path],
+    support_symbols: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for scan_root in sorted(scan_roots, key=lambda p: p.as_posix()):
+        for path in sorted(scan_root.rglob("*.rs")):
+            path_str = path.as_posix()
+            if "/tests/" in path_str:
+                continue
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for idx, line in enumerate(lines):
+                match = EXPORT_FN_RE.search(line)
+                if not match:
+                    continue
+                symbol = match.group(1)
+                comment_lines: list[str] = []
+                cursor = idx - 1
+                while cursor >= 0:
+                    stripped = lines[cursor].strip()
+                    if not stripped or stripped.startswith("#["):
+                        cursor -= 1
+                        continue
+                    break
+                while cursor >= 0 and lines[cursor].strip().startswith(("///", "//! ", "//")):
+                    comment_lines.append(lines[cursor])
+                    cursor -= 1
+                comment_lines.reverse()
+                excerpt = compact_comment_excerpt(comment_lines)
+                if not COMMENT_DECLARED_STUB_RE.search(excerpt):
+                    continue
+                support = support_symbols.get(symbol)
+                family = classify_comment_stub_family(symbol)
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "family": family,
+                        "path": path.relative_to(workspace_root).as_posix(),
+                        "line": idx + 1,
+                        "in_support_matrix": support is not None,
+                        "support_status": support.get("status") if support else None,
+                        "support_module": support.get("module") if support else None,
+                        "return_contract_hint": infer_stub_return_contract(excerpt),
+                        "comment_excerpt": excerpt,
+                        "evidence_scope": "exported_comment_declared_stub",
+                        "claim_impact": "visibility_only_not_semantic_parity_proof",
+                    }
+                )
+
+    rows.sort(key=lambda row: (row["family"], row["path"], row["line"], row["symbol"]))
     return rows
 
 
@@ -527,11 +642,15 @@ def build_payload(
     exported_view = build_exported_view(matrix)
     replacement_view = build_replacement_view(matrix, replacement_profile)
     source_rows = scan_source_debt(workspace_root, scan_roots, support_symbols)
+    comment_stub_rows = scan_exported_comment_stubs(
+        workspace_root, scan_roots, support_symbols
+    )
     risk_rows = build_risk_ranking(source_rows, replacement_view)
 
     unique_symbols = sorted({row["symbol"] for row in source_rows})
     by_scope = Counter(row["debt_scope"] for row in source_rows)
     by_family = Counter(row["family"] for row in source_rows)
+    comment_stub_by_family = Counter(row["family"] for row in comment_stub_rows)
 
     matrix_deltas = [
         row
@@ -573,6 +692,9 @@ def build_payload(
             "replacement_profile_sha256": _sha256(replacement_profile_path),
             "scan_roots": [root.relative_to(workspace_root).as_posix() for root in scan_roots],
             "detection_macros": ["todo!", "unimplemented!", "panic!(pending-only)"],
+            "comment_stub_detection": [
+                "exported unsafe extern C functions whose attached comments contain Stub/Stubbed"
+            ],
         },
         "exported_taxonomy_view": exported_view,
         "replacement_claim_view": replacement_view,
@@ -582,6 +704,26 @@ def build_payload(
             "by_scope": dict(sorted(by_scope.items())),
             "by_family": dict(sorted(by_family.items())),
             "entries": source_rows,
+        },
+        "exported_comment_stub_surface": {
+            "purpose": (
+                "Visibility ledger for exported deterministic stubs declared in active "
+                "ABI comments. These rows do not by themselves prove semantic parity or "
+                "count as macro TODO debt."
+            ),
+            "claim_policy": {
+                "claim_allowed": False,
+                "claim_impact": "visibility_only_not_semantic_parity_proof",
+                "replacement_or_parity_claim_requires": [
+                    "explicit support-matrix classification",
+                    "conformance evidence or documented deterministic failure contract",
+                    "RCH-only validation for any Rust behavior change",
+                ],
+            },
+            "occurrence_count": len(comment_stub_rows),
+            "unique_symbol_count": len({row["symbol"] for row in comment_stub_rows}),
+            "by_family": dict(sorted(comment_stub_by_family.items())),
+            "entries": comment_stub_rows,
         },
         "risk_policy": {
             "family_weights": FAMILY_WEIGHTS,
@@ -619,11 +761,16 @@ def build_payload(
                 for row in replacement_view["exported_interpose_unapproved_callthroughs"]
             ],
             "matrix_summary_deltas": matrix_deltas,
+            "exported_comment_declared_stub_count": len(comment_stub_rows),
+            "exported_comment_declared_stub_symbols": [
+                row["symbol"] for row in comment_stub_rows
+            ],
             "ambiguity_resolved": True,
             "notes": [
                 "Exported status and source debt are reported in separate sections to avoid blind spots.",
                 "Non-exported critical TODO debt is explicitly ranked so hidden backlog cannot be mistaken for zero debt.",
                 "Replacement/interpose claim alignment is included so policy drift is visible in the same ledger.",
+                "Comment-declared exported stubs are tracked separately from macro TODO debt so fail-safe ABI placeholders remain visible without being treated as live semantic parity proof.",
             ],
         },
         "summary": {
@@ -645,6 +792,7 @@ def build_payload(
                 else 0.0
             ),
             "nonzero_matrix_delta_count": len(matrix_deltas),
+            "exported_comment_declared_stub_count": len(comment_stub_rows),
         },
     }
     return payload
