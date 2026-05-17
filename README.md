@@ -1130,7 +1130,7 @@ Every `*_cli_contract.v1.json` manifest is subject to ~50 machine-checkable meta
 
 The combined effect: a harness subcommand cannot land without its contract; a contract cannot land without its paired gate; a gate cannot panic; and every claim points at fresh evidence.
 
-### Curated LD_PRELOAD Smoke Battery
+### Curated LD_PRELOAD Smoke Battery — Workloads and Failure Signatures
 
 | Category | Programs |
 |---|---|
@@ -1819,7 +1819,7 @@ On drain (empty magazine):
 
 The 64-objects-per-class threshold is chosen so that bulk transfers amortize the central-allocator lock acquisition across enough objects that the per-object overhead falls below the membrane overhead budget.
 
-### Large-allocation path
+### Large-allocation path (deep dive)
 
 `LargeAllocator` is a parallel allocator just for requests > 32 KB:
 
