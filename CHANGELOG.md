@@ -45,7 +45,7 @@ A single-day campaign (~255 commits) that locked down the harness CLI's machine-
 
 ### Fuzz Corpora
 
-- Directed regex fuzz seed corpus ([4d20ec5](https://github.com/Dicklesworthstone/frankenlibc/commit/4d20ec5d))
+- Directed regex fuzz seed corpus ([d50ec5d](https://github.com/Dicklesworthstone/frankenlibc/commit/d50ec5d8))
 
 ---
 
@@ -61,7 +61,7 @@ Peak commit week (282 + 363 + 217 commits). L1 CRT proof rows shipped (Epic **bd
 
 ### Harness Panic-Surface Removal
 
-- Remove pthread bootstrap panic surfaces ([b9bdf36](https://github.com/Dicklesworthstone/frankenlibc/commit/b9bdf36a))
+- Remove pthread bootstrap panic surfaces ([bdf3836](https://github.com/Dicklesworthstone/frankenlibc/commit/bdf3836a))
 - Remove conformance fixture pipeline panics ([e1da28f](https://github.com/Dicklesworthstone/frankenlibc/commit/e1da28f86e0494c2d72f0683b0585c2f70ede7d0))
 - Remove tail-stats metamorphic panics (Epic bd-1cb21) and 40+ similar panic-removal commits across stdio, pthread, allocator, fixture, runtime-math, and signal harnesses
 
@@ -175,7 +175,7 @@ A ~150-commit workday: every C-string and buffer entry point in the ABI got a sy
 - Bound socket syscall buffers ([01ec384](https://github.com/Dicklesworthstone/frankenlibc/commit/01ec384c785d1e57f5cba348532a3798c09432e0))
 - Bound wchar descriptor names ([7ee075e](https://github.com/Dicklesworthstone/frankenlibc/commit/7ee075eb79ad3cb72b68849214a3f9c98112bf61))
 - Bound DNS compression name scans ([1ebc198](https://github.com/Dicklesworthstone/frankenlibc/commit/1ebc198d444c8ff7a9f86d1da634ce91b3326daf))
-- Bound stringlist find scans ([5b3517c](https://github.com/Dicklesworthstone/frankenlibc/commit/5b3517c9))
+- Bound stringlist find scans ([db3517c](https://github.com/Dicklesworthstone/frankenlibc/commit/db3517c9))
 - Bound `gethostbyname2` request scan ([f970e5a](https://github.com/Dicklesworthstone/frankenlibc/commit/f970e5ae2217dbecf9576044c9e21cf81e7d3938))
 - Bound host loader path scan ([da86933](https://github.com/Dicklesworthstone/frankenlibc/commit/da8693352c67d141ae3df2da0702d4e6aae14855))
 - Bound scanf input scans ([45fffa6](https://github.com/Dicklesworthstone/frankenlibc/commit/45fffa61a05c8fdb8c25e93b45527d58808088f3))
@@ -193,7 +193,7 @@ A ~150-commit workday: every C-string and buffer entry point in the ABI got a sy
 - `fuzz_socket` ([693bb76](https://github.com/Dicklesworthstone/frankenlibc/commit/693bb766c9ea99d5b36ed8cb6f4670eab046680b))
 - `fuzz_signal` ([f117435](https://github.com/Dicklesworthstone/frankenlibc/commit/f117435b7f576a5f679e39a646fef63bd3bbe926))
 - `fuzz_fortify` ([94a8c7a](https://github.com/Dicklesworthstone/frankenlibc/commit/94a8c7a7bc815b4fac520e991ce3343e072da894))
-- `fuzz_setjmp` + `fuzz_dlfcn` ([d9b45f4](https://github.com/Dicklesworthstone/frankenlibc/commit/d9b45f44))
+- `fuzz_setjmp` + `fuzz_dlfcn` ([d9c7c43](https://github.com/Dicklesworthstone/frankenlibc/commit/d9c7c43d))
 - `fuzz_wchar` ([8ccb6b0](https://github.com/Dicklesworthstone/frankenlibc/commit/8ccb6b0933773b6e537ace0f812a66ca8d1494cb))
 - `fuzz_pthread_sync_misc` ([9d04c07](https://github.com/Dicklesworthstone/frankenlibc/commit/9d04c07afed20372c9b45904de51d1badcb541f3))
 - `fuzz_xdr` + close 4 GB DoS + elsize=0 OOB ([f7581b5](https://github.com/Dicklesworthstone/frankenlibc/commit/f7581b5e081e2307766faa62674493fddc01b136))
@@ -208,7 +208,7 @@ A ~150-commit workday: every C-string and buffer entry point in the ABI got a sy
 
 ### Symbol-Count Crossing
 
-- Propagate `total_exported=4119` surface counts to README, FEATURE_PARITY, reality_report, and CVE arena ([5cf1cdb](https://github.com/Dicklesworthstone/frankenlibc/commit/5cf1cdb1))
+- Propagate `total_exported=4119` surface counts to README, FEATURE_PARITY, reality_report, and CVE arena ([141a797](https://github.com/Dicklesworthstone/frankenlibc/commit/141a797d))
 - libcrypt aliases, `fchmodat2`, `eventfd2`, `rt_sig*` additions
 
 ---
@@ -638,7 +638,7 @@ Deep work on pthread correctness (futex-based condvar, self-join deadlock resolu
 - Expand fixture verification with ELF/resolver/DNS differential cases ([e653911](https://github.com/Dicklesworthstone/frankenlibc/commit/e653911d255fcd859028ab21e13306bb0b5c07c1))
 - Gentoo security validation, CVE arena, CI gates, new C fixtures ([fe8c231](https://github.com/Dicklesworthstone/frankenlibc/commit/fe8c231addf8c2bb00f33e5017ec97c089314eab))
 - Comprehensive test harness, Gentoo tooling, conformance validation ([96ffeb7](https://github.com/Dicklesworthstone/frankenlibc/commit/96ffeb72fd80789c0adbdd5a2ce6547bc8b33179))
-- Add E2E manifest validation, Gentoo test tooling, expanded harness coverage ([6c1f3ce](https://github.com/Dicklesworthstone/frankenlibc/commit/6c1f3ce5a309712f3b7ff114422ebbc9ebbf41b33))
+- Add E2E manifest validation, Gentoo test tooling, expanded harness coverage ([6c1f3ce](https://github.com/Dicklesworthstone/frankenlibc/commit/6c1f3ce5a309712f3b7ff114422ebbc9ebbf41b8))
 
 ### Stdio
 
