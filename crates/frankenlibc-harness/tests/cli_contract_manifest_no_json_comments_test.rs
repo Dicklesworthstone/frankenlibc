@@ -31,10 +31,12 @@ fn find_comment_marker(body: &str) -> Option<(usize, usize)> {
     let mut col = 1usize;
     let mut prev: Option<char> = None;
     for c in body.chars() {
-        if !in_string && let Some(p) = prev {
-            if p == '/' && (c == '/' || c == '*') {
-                return Some((line, col.saturating_sub(1)));
-            }
+        if !in_string
+            && let Some(p) = prev
+            && p == '/'
+            && (c == '/' || c == '*')
+        {
+            return Some((line, col.saturating_sub(1)));
         }
         if c == '\n' {
             line += 1;
