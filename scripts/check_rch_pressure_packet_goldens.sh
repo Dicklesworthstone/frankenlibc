@@ -20,6 +20,7 @@ import pathlib
 import re
 import sys
 import time
+from copy import deepcopy
 from typing import Any
 
 ROOT = pathlib.Path(sys.argv[1])
@@ -155,6 +156,66 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     )
 
 
+def first_critical_worker(packet: dict[str, Any]) -> dict[str, Any] | None:
+    for worker in packet.get("workers", []):
+        if isinstance(worker, dict) and worker.get("pressure_state") == "critical":
+            return worker
+    return None
+
+
+def expect_validation_failure(packet: dict[str, Any], source: str, signature: str, mutation: str) -> None:
+    before_errors = len(errors)
+    before_events = len(events)
+    validate_packet(packet, source, require_rch_e100=False)
+    observed_errors = errors[before_errors:]
+    del errors[before_errors:]
+    del events[before_events:]
+    if any(error.get("failure_signature") == signature for error in observed_errors):
+        events.append(
+            {
+                "source": source,
+                "expected_failure_signature": signature,
+                "mutation": mutation,
+                "status": "negative_checked",
+            }
+        )
+        return
+    observed = sorted({str(error.get("failure_signature")) for error in observed_errors})
+    add_error(
+        source,
+        "negative_control_missed",
+        f"{mutation} did not trigger {signature}; observed={observed}",
+    )
+
+
+def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
+    missing_target_packet = deepcopy(packet)
+    worker = first_critical_worker(missing_target_packet)
+    if worker is None:
+        add_error(source, "negative_control_no_critical_worker", "golden packet has no critical worker for mutation")
+    else:
+        worker.pop("estimated_free_ratio_target", None)
+        expect_validation_failure(
+            missing_target_packet,
+            f"{source}::missing_pressure_gap_target",
+            "missing_pressure_gap_target",
+            "remove estimated_free_ratio_target from first critical worker",
+        )
+
+    invalid_gap_packet = deepcopy(packet)
+    worker = first_critical_worker(invalid_gap_packet)
+    if worker is None:
+        add_error(source, "negative_control_no_critical_worker", "golden packet has no critical worker for mutation")
+    else:
+        worker["estimated_gb_needed_to_reach_target_ratio"] = -1.0
+        expect_validation_failure(
+            invalid_gap_packet,
+            f"{source}::invalid_pressure_gap_estimate",
+            "invalid_pressure_gap_estimate",
+            "set negative estimated_gb_needed_to_reach_target_ratio on first critical worker",
+        )
+
+
 golden = load_json(GOLDEN)
 if golden.get("schema_version") != "rch_pressure_approval_packet_golden.v1":
     add_error(rel(GOLDEN), "golden_schema_version", "golden schema_version mismatch")
@@ -163,6 +224,7 @@ if not isinstance(golden_report, dict):
     add_error(rel(GOLDEN), "missing_golden_report", "golden_report must be an object")
 else:
     validate_packet(golden_report, rel(GOLDEN), require_rch_e100=True)
+    validate_negative_controls(golden_report, rel(GOLDEN))
 
 required_lines = golden.get("golden_markdown_required_lines", [])
 if not isinstance(required_lines, list) or not all(isinstance(line, str) for line in required_lines):
