@@ -1,9 +1,9 @@
 //! Meta-gate: every `*_cli_contract.v1.json` manifest under
 //! `tests/conformance/` is well-formed JSON with no UTF-8 BOM, no
-//! trailing garbage after the closing `}`, and parses cleanly via
-//! `serde_json::from_str` (bd-n5yk9). Defense-in-depth against silent
-//! corruption from accidental concatenation, CRLF/BOM rewrites, or
-//! truncated writes.
+//! trailing garbage after the closing `}`, no JSONC-style comments, and
+//! parses cleanly via `serde_json::from_str` (bd-n5yk9, bd-mrqcj).
+//! Defense-in-depth against silent corruption from accidental concatenation,
+//! CRLF/BOM rewrites, JSONC copy-paste, or truncated writes.
 
 use std::path::{Path, PathBuf};
 
@@ -33,6 +33,39 @@ fn trailing_garbage_after_close_brace(body: &str) -> Option<&str> {
     None
 }
 
+fn comment_token_outside_string(body: &str) -> Option<(usize, &'static str)> {
+    let bytes = body.as_bytes();
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if b == b'"' {
+            in_string = true;
+        } else if b == b'/' {
+            match bytes.get(i + 1) {
+                Some(b'/') => return Some((i, "//")),
+                Some(b'*') => return Some((i, "/*")),
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 #[test]
 fn every_cli_contract_manifest_is_well_formed_json() -> TestResult {
     let root = workspace_root()?;
@@ -58,6 +91,11 @@ fn every_cli_contract_manifest_is_well_formed_json() -> TestResult {
         }
         let body =
             std::str::from_utf8(&bytes).map_err(|e| format!("{name}: not valid UTF-8: {e}"))?;
+        if let Some((offset, token)) = comment_token_outside_string(body) {
+            violations.push(format!(
+                "{name}: contains JSONC-style comment token `{token}` outside a string at byte {offset}"
+            ));
+        }
         match serde_json::from_str::<Value>(body) {
             Ok(_) => {}
             Err(e) => violations.push(format!("{name}: serde_json::from_str failed: {e}")),
@@ -98,4 +136,28 @@ fn trailing_garbage_detector_handles_canonical_forms() {
     // by this detector — JSON parsing catches the structural error instead.
     assert_eq!(trailing_garbage_after_close_brace("{}}"), None);
     assert_eq!(trailing_garbage_after_close_brace("{}x"), Some("x"));
+}
+
+#[test]
+fn comment_token_detector_ignores_json_strings_and_flags_jsonc_comments() {
+    assert_eq!(
+        comment_token_outside_string(r#"{"url":"https://host/a"}"#),
+        None
+    );
+    assert_eq!(
+        comment_token_outside_string(r#"{"text":"literal /* not a comment */"}"#),
+        None
+    );
+    assert_eq!(
+        comment_token_outside_string("{\n  // nope\n}"),
+        Some((4, "//"))
+    );
+    assert_eq!(
+        comment_token_outside_string("{\"a\":1} /* trailing */"),
+        Some((8, "/*"))
+    );
+    assert_eq!(
+        comment_token_outside_string(r#"{"escaped":"quote \" // still string"}"#),
+        None
+    );
 }
