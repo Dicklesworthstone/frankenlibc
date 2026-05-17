@@ -16540,37 +16540,68 @@ pub(crate) fn init_stack_canary() {
 // Batch: Network database iterators — Implemented (parse /etc/ files)
 // ===========================================================================
 
+struct GetHostByName2State {
+    hostent: libc::hostent,
+    buffer: [c_char; 1024],
+}
+
+// SAFETY: the owned-TLS experiment keys one boxed state value per thread id.
+// `hostent` contains pointers into this same state's buffer and caller-owned
+// resolver data; moving the box under the cache mutex does not transfer
+// ownership of those pointed-to bytes across threads.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for GetHostByName2State {}
+
+fn new_gethostbyname2_state() -> GetHostByName2State {
+    GetHostByName2State {
+        // SAFETY: zero is the C ABI empty value for hostent pointer/integer fields.
+        hostent: unsafe { std::mem::zeroed() },
+        buffer: [0; 1024],
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static GETHOSTBYNAME2_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GetHostByName2State> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_gethostbyname2_state);
+
+fn with_gethostbyname2_state<R>(callback: impl FnOnce(&mut GetHostByName2State) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GETHOSTBYNAME2_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        thread_local! {
+            static GETHOSTBYNAME2_TLS: std::cell::RefCell<GetHostByName2State> =
+                std::cell::RefCell::new(new_gethostbyname2_state());
+        }
+
+        GETHOSTBYNAME2_TLS.with(|cell| callback(&mut cell.borrow_mut()))
+    }
+}
+
 /// `gethostbyname2` — IPv6-aware hostname lookup (C locale, /etc/hosts only).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut c_void {
-    thread_local! {
-        static HOSTENT: std::cell::RefCell<libc::hostent> =
-            const { std::cell::RefCell::new(unsafe { std::mem::zeroed() }) };
-        static BUFFER: std::cell::RefCell<[c_char; 1024]> = const { std::cell::RefCell::new([0; 1024]) };
-    }
-
-    HOSTENT.with(|hostent| {
-        BUFFER.with(|buffer| {
-            let mut hostent = hostent.borrow_mut();
-            let mut buffer = buffer.borrow_mut();
-            let mut result: *mut libc::hostent = std::ptr::null_mut();
-            let h_errno = unsafe { crate::resolv_abi::__h_errno_location() };
-            let rc = unsafe {
-                gethostbyname2_r(
-                    name,
-                    af,
-                    (&mut *hostent as *mut libc::hostent).cast(),
-                    buffer.as_mut_ptr(),
-                    buffer.len(),
-                    (&mut result as *mut *mut libc::hostent).cast(),
-                    h_errno,
-                )
-            };
-            if rc != 0 || result.is_null() {
-                return std::ptr::null_mut();
-            }
-            result.cast()
-        })
+    with_gethostbyname2_state(|state| {
+        let mut result: *mut libc::hostent = std::ptr::null_mut();
+        let h_errno = unsafe { crate::resolv_abi::__h_errno_location() };
+        let rc = unsafe {
+            gethostbyname2_r(
+                name,
+                af,
+                (&mut state.hostent as *mut libc::hostent).cast(),
+                state.buffer.as_mut_ptr(),
+                state.buffer.len(),
+                (&mut result as *mut *mut libc::hostent).cast(),
+                h_errno,
+            )
+        };
+        if rc != 0 || result.is_null() {
+            return std::ptr::null_mut();
+        }
+        result.cast()
     })
 }
 
