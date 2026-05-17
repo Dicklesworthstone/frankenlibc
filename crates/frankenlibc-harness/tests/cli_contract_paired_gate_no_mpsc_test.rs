@@ -21,6 +21,10 @@ fn workspace_root() -> TestResult<PathBuf> {
 
 #[test]
 fn no_paired_gate_test_imports_sync_mpsc() -> TestResult {
+    let forbidden = [
+        ["std::sync", "::mpsc"].concat(),
+        ["sync", "::mpsc"].concat(),
+    ];
     let root = workspace_root()?;
     let tests_dir = root
         .join("crates")
@@ -41,9 +45,17 @@ fn no_paired_gate_test_imports_sync_mpsc() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if body.contains("std::sync::mpsc") || body.contains("sync::mpsc") {
+        let non_comment_body = body
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if forbidden
+            .iter()
+            .any(|needle| non_comment_body.contains(needle))
+        {
             violations.push(format!(
-                "{stem}: imports std::sync::mpsc (cross-thread channels indicate misplaced parallelism)"
+                "{stem}: imports cross-thread channels (indicates misplaced parallelism)"
             ));
         }
         checked += 1;
@@ -56,7 +68,7 @@ fn no_paired_gate_test_imports_sync_mpsc() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate sync::mpsc violation(s):\n  {}",
+            "{} paired gate cross-thread channel violation(s):\n  {}",
             violations.len(),
             violations.join("\n  ")
         ));

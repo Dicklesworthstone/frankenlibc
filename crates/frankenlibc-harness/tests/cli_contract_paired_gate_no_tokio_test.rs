@@ -20,7 +20,8 @@ fn workspace_root() -> TestResult<PathBuf> {
 }
 
 #[test]
-fn no_paired_gate_test_references_tokio() -> TestResult {
+fn no_paired_gate_test_references_async_runtime() -> TestResult {
+    let forbidden = ["to", "kio"].concat();
     let root = workspace_root()?;
     let tests_dir = root
         .join("crates")
@@ -41,9 +42,14 @@ fn no_paired_gate_test_references_tokio() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if body.contains("tokio") {
+        let non_comment_body = body
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if non_comment_body.contains(&forbidden) {
             violations.push(format!(
-                "{stem}: references `tokio` (paired CLI contract gates must be synchronous)"
+                "{stem}: references `{forbidden}` (paired CLI contract gates must be synchronous)"
             ));
         }
         checked += 1;
@@ -56,8 +62,9 @@ fn no_paired_gate_test_references_tokio() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate `tokio`-reference violation(s):\n  {}",
+            "{} paired gate `{}`-reference violation(s):\n  {}",
             violations.len(),
+            forbidden,
             violations.join("\n  ")
         ));
     }

@@ -20,7 +20,8 @@ fn workspace_root() -> TestResult<PathBuf> {
 }
 
 #[test]
-fn no_paired_gate_test_uses_anyhow_or_eyre() -> TestResult {
+fn no_paired_gate_test_uses_third_party_error_crates() -> TestResult {
+    let forbidden = [["any", "how"].concat(), ["ey", "re"].concat()];
     let root = workspace_root()?;
     let tests_dir = root
         .join("crates")
@@ -41,9 +42,17 @@ fn no_paired_gate_test_uses_anyhow_or_eyre() -> TestResult {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if body.contains("anyhow") || body.contains("eyre") {
+        let non_comment_body = body
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if forbidden
+            .iter()
+            .any(|needle| non_comment_body.contains(needle))
+        {
             violations.push(format!(
-                "{stem}: references `anyhow` or `eyre` (must use TestResult<T> = Result<T, String>)"
+                "{stem}: references a third-party error crate (must use TestResult<T> = Result<T, String>)"
             ));
         }
         checked += 1;
@@ -56,7 +65,7 @@ fn no_paired_gate_test_uses_anyhow_or_eyre() -> TestResult {
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} paired gate anyhow/eyre violation(s):\n  {}",
+            "{} paired gate third-party error crate violation(s):\n  {}",
             violations.len(),
             violations.join("\n  ")
         ));
