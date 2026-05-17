@@ -1,0 +1,71 @@
+{
+  "schema_version": "main_only_worktree_guard.v1",
+  "bead": "bd-kt64l",
+  "purpose": "No-cargo conformance guard for the repository policy that all FrankenLibC work happens only on local branch main with exactly one Git worktree.",
+  "policy": {
+    "required_current_branch": "main",
+    "allowed_local_branches": [
+      "main"
+    ],
+    "expected_worktree_count": 1,
+    "required_worktree_branch": "refs/heads/main",
+    "forbid_linked_worktrees": true,
+    "forbid_local_non_main_branches": true
+  },
+  "negative_controls": [
+    {
+      "id": "negative_current_branch_feature",
+      "mutations": {
+        "current_branch": "feature/unsafe-worktree"
+      },
+      "expected_failure_signature": "current_branch_not_main"
+    },
+    {
+      "id": "negative_extra_local_branch",
+      "mutations": {
+        "local_branches": [
+          "main",
+          "feature/unsafe-worktree"
+        ]
+      },
+      "expected_failure_signature": "local_non_main_branch"
+    },
+    {
+      "id": "negative_extra_linked_worktree",
+      "mutations": {
+        "append_worktree": {
+          "worktree": "/tmp/frankenlibc-feature-worktree",
+          "HEAD": "0000000000000000000000000000000000000000",
+          "branch": "refs/heads/feature/unsafe-worktree"
+        }
+      },
+      "expected_failure_signature": "worktree_count_mismatch"
+    },
+    {
+      "id": "negative_detached_root_worktree",
+      "mutations": {
+        "worktrees": [
+          {
+            "worktree": "$ROOT",
+            "HEAD": "0000000000000000000000000000000000000000",
+            "detached": "true"
+          }
+        ]
+      },
+      "expected_failure_signature": "worktree_branch_not_main"
+    }
+  ],
+  "outputs": {
+    "report": "target/conformance/main_only_worktree_guard.report.json",
+    "log": "target/conformance/main_only_worktree_guard.log.jsonl"
+  },
+  "required_validation_commands": [
+    "jq empty tests/conformance/main_only_worktree_guard.v1.json",
+    "bash -n scripts/check_main_only_worktree_guard.sh",
+    "bash scripts/check_main_only_worktree_guard.sh --validate-only",
+    "jq empty target/conformance/main_only_worktree_guard.report.json",
+    "jq empty target/conformance/main_only_worktree_guard.log.jsonl",
+    "git diff --check -- scripts/check_main_only_worktree_guard.sh tests/conformance/main_only_worktree_guard.v1.json .beads/issues.jsonl",
+    "br dep cycles --json"
+  ]
+}
