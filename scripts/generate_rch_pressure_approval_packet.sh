@@ -4,7 +4,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${FRANKENLIBC_RCH_PACKET_OUT_DIR:-${ROOT}/target/rch-pressure-approval-packet}"
-RAW_DIR="${OUT_DIR}/raw"
 REPORT="${FRANKENLIBC_RCH_PACKET_REPORT:-${OUT_DIR}/rch_pressure_approval_packet.report.json}"
 MARKDOWN="${FRANKENLIBC_RCH_PACKET_MARKDOWN:-${OUT_DIR}/rch_pressure_approval_packet.approval.md}"
 FOCUS_CMD="${FRANKENLIBC_RCH_PACKET_FOCUS_CMD:-cargo test -p frankenlibc-harness --test standalone_owned_unwind_experiment_test -- --nocapture}"
@@ -13,6 +12,7 @@ SSH_KEY="${FRANKENLIBC_RCH_PACKET_SSH_KEY:-${HOME}/.ssh/contabo_vps_ed25519}"
 SSH_TIMEOUT_SECS="${FRANKENLIBC_RCH_PACKET_SSH_TIMEOUT_SECS:-25}"
 MAX_WORKERS="${FRANKENLIBC_RCH_PACKET_MAX_WORKERS:-6}"
 PACKET_ID="${FRANKENLIBC_RCH_PACKET_ID:-frankenlibc-rch-pressure-$(date -u +%Y%m%dT%H%M%SZ)}"
+RAW_DIR="${OUT_DIR}/raw/${PACKET_ID}"
 
 mkdir -p "${RAW_DIR}"
 
@@ -70,6 +70,8 @@ if [[ "${SSH_ENABLED}" == "1" && -s "${RAW_DIR}/rch_status.out" && -r "${SSH_KEY
             shopt -s nullglob
             du -sh /tmp/rch-* /tmp/rch_target_* 2>/dev/null | sort -h | tail -40 || true
             find /data/projects -maxdepth 2 -type d \\( -name target -o -name \"target_*\" -o -name \"target-*\" \\) -prune -exec du -sh {} + 2>/dev/null | sort -h | tail -40 || true
+            find /data/projects -maxdepth 2 -type d -name \".rch-target-*\" -prune -exec du -sh {} + 2>/dev/null | sort -h | tail -5 || true
+            find /data/projects -maxdepth 5 -type d -path \"*/.rch-target-*/debug/incremental/*\" -prune -exec du -sh {} + 2>/dev/null | sort -h | tail -5 || true
           '" >"${RAW_DIR}/worker_${safe_id}.out" 2>"${RAW_DIR}/worker_${safe_id}.err"
         status=$?
         set -e
@@ -157,9 +159,18 @@ def cleanup_candidates(worker_id: str, worker_out: str) -> list[dict[str, Any]]:
             continue
         path = match.group("path")
         size = match.group("size")
-        if "/target" not in path:
+        is_target_artifact = "/target" in path
+        is_rch_artifact = "/.rch-target-" in path
+        if not (is_target_artifact or is_rch_artifact):
             continue
-        if not re.search(r"[0-9](G|T)$", size):
+        if not re.search(r"[0-9](G|T)$", size) and not (is_rch_artifact and re.search(r"[0-9](M|G|T)$", size)):
+            continue
+        candidate_kind = "build_incremental_dir" if "/debug/incremental/" in path else "build_target_dir"
+        if candidate_kind == "build_incremental_dir" and any(
+            path.startswith(f"{candidate['path'].rstrip('/')}/")
+            for candidate in candidates
+            if candidate.get("candidate_kind") == "build_target_dir" and "/.rch-target-" in str(candidate.get("path"))
+        ):
             continue
         candidates.append(
             {
@@ -167,9 +178,9 @@ def cleanup_candidates(worker_id: str, worker_out: str) -> list[dict[str, Any]]:
                 "path": path,
                 "size_human": size,
                 "size_bytes": None,
-                "source_command": "find /data/projects -maxdepth 2 -type d ( -name target -o -name target_* -o -name target-* ) -prune -exec du -sh {} +",
-                "candidate_kind": "build_target_dir",
-                "reason_it_might_help": "Large build-output directory on a worker excluded by rch pressure policy.",
+                "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
+                "candidate_kind": candidate_kind,
+                "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
                 "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
                 "requires_explicit_approval": True,
                 "executed": False,

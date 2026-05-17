@@ -54,6 +54,26 @@
         "collection_errors": []
       },
       {
+        "worker_id": "vmi1149989",
+        "host": "212.90.121.76",
+        "status": "healthy",
+        "pressure_state": "critical",
+        "pressure_reason_code": "disk_ratio_below_critical",
+        "pressure_disk_free_gb": 38.44,
+        "pressure_disk_free_ratio": 0.0497,
+        "pressure_telemetry_fresh": true,
+        "probe_command": "ssh read-only df/sbh/du probe for vmi1149989",
+        "probe_exit_status": 0,
+        "probe_failure_signature": "ok",
+        "df_snapshot": "/dev/sda1 774G 736G 39G 96% /",
+        "sbh_snapshot": "overall critical",
+        "ballast_snapshot": "available_count=0, releasable_bytes=0, missing_count=10",
+        "bounded_du_findings": [
+          "564M /data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9"
+        ],
+        "collection_errors": []
+      },
+      {
         "worker_id": "vmi1152480",
         "host": "109.205.181.92",
         "status": "disabled",
@@ -80,9 +100,21 @@
         "path": "/data/projects/franken_engine/target_PearlTower_focused",
         "size_human": "15G",
         "size_bytes": null,
-        "source_command": "find /data/projects -maxdepth 2 -type d ( -name target -o -name target_* -o -name target-* ) -prune -exec du -sh {} +",
+        "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
         "candidate_kind": "build_target_dir",
-        "reason_it_might_help": "Large build-output directory on a worker excluded by rch pressure policy.",
+        "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
+        "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
+        "requires_explicit_approval": true,
+        "executed": false
+      },
+      {
+        "worker_id": "vmi1149989",
+        "path": "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
+        "size_human": "564M",
+        "size_bytes": null,
+        "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
+        "candidate_kind": "build_incremental_dir",
+        "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
         "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
         "requires_explicit_approval": true,
         "executed": false
@@ -91,10 +123,12 @@
     "approval_request": {
       "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
       "exact_worker_ids": [
+        "vmi1149989",
         "vmi1264463"
       ],
       "exact_candidate_paths": [
-        "/data/projects/franken_engine/target_PearlTower_focused"
+        "/data/projects/franken_engine/target_PearlTower_focused",
+        "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9"
       ],
       "why_read_only_collection_is_insufficient": "Read-only collection can identify pressure and candidates, but cannot free space under repo rules.",
       "explicit_user_text_required_before_cleanup": "The user must provide written approval naming exact paths and commands before cleanup can run.",
