@@ -49,7 +49,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind a glibc-shaped A
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
 | Verification is first-class | Harness CLI, 40+ fixture families, **258 completion-contract artifacts**, **68 CLI-contract manifests** subject to ~50 meta-gates each, **66 `cargo-fuzz` targets**, 9 formal proofs |
-| Runtime math is live code | `frankenlibc-membrane/src/runtime_math/` contains **~71 active control kernels**, not just design docs |
+| Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 active control kernels**, not just design docs |
 | Build-time formal infrastructure | SOS polynomial certificates synthesized and verified at build; per-file atomic-barrier coverage audit |
 
 ### Claim-Field Contract
@@ -2099,7 +2099,7 @@ The list is not a "we used all the math" trophy. The design audit rejects shortc
 Two consumers matter most:
 
 1. **Runtime metrics:** atomic counters in `metrics.rs` aggregate decisions by `(family, decision)` pair. The counters are scraped by the harness for end-of-run summaries.
-2. **Replay verifier:** the JSONL schema in `tests/conformance/runtime_evidence.v1.json` is parsed by a verifier that re-runs the recorded sequence against a fresh process and asserts the decisions match. This is how `deterministic_replay.md` is operationalized into a gate.
+2. **Replay verifier:** the JSONL record format is declared in code (`crates/frankenlibc-membrane/src/runtime_math/evidence.rs`); the gate config lives in `tests/conformance/runtime_evidence_replay_gate.v1.json` and is consumed by the harness's `validate-runtime-evidence-rows` subcommand. This is how `deterministic_replay.md` is operationalized into a gate.
 
 Bead `bd-fp4tm.6` ("workload evidence loop handoff") landed the end-to-end pipeline in Phase 13.
 
@@ -2154,7 +2154,7 @@ The workspace deliberately keeps the external dependency graph small. Every depe
 | `thiserror` | Ergonomic error types in the harness crate |
 | `clap` | CLI argument parsing in the harness binary |
 | `criterion` | Benchmark framework in `frankenlibc-bench` |
-| `libc` | Type definitions only (e.g., `c_int`, `pid_t`, `mode_t`). **Never** for function calls; raw syscall wrappers live in `frankenlibc-core/src/syscall/` |
+| `libc` | Type definitions only (e.g., `c_int`, `pid_t`, `mode_t`). **Never** for function calls; raw syscall wrappers live in `crates/frankenlibc-core/src/syscall/` |
 | `libm` | Pure-Rust math implementations for `math_abi` cross-platform determinism |
 | `asupersync-conformance` | Build-tooling-only: deterministic conformance orchestration |
 | `ftui-harness` | Build-tooling-only: TUI-driven harness output for diff/snapshot inspection |
@@ -2829,7 +2829,7 @@ The performance discipline is "measure, don't assume."
 
 **Concurrency primitives.** Bench matrix in `frankenlibc-bench` measures flat-combining vs lock-based access patterns at controlled contention levels.
 
-**Perf budget enforcement.** `scripts/check_perf_regression_gate.sh` compares the current run against rolling baselines stored in `tests/conformance/perf_baseline.v1.json`. `FRANKENLIBC_PERF_MAX_REGRESSION_PCT=15` is the default budget. Overloaded hosts (load average > 0.85 × CPU count) get skipped via `FRANKENLIBC_PERF_SKIP_OVERLOADED=1` to keep the evidence trustworthy.
+**Perf budget enforcement.** `scripts/check_perf_regression_gate.sh` compares the current run against rolling baselines stored in `scripts/perf_baseline.json` (with the schema spec at `tests/conformance/perf_baseline_spec.json`). `FRANKENLIBC_PERF_MAX_REGRESSION_PCT=15` is the default budget. Overloaded hosts (load average > 0.85 × CPU count) get skipped via `FRANKENLIBC_PERF_SKIP_OVERLOADED=1` to keep the evidence trustworthy.
 
 What we *don't* measure (yet):
 
@@ -3271,7 +3271,7 @@ A safety-critical libc must be deterministically replayable. The mechanisms:
 
 1. **Fixed RNG seeds** for any randomized path that goes through tests. `FRANKENLIBC_E2E_SEED=42` is the default.
 2. **Fixed clocks where appropriate.** Test harnesses use a frozen monotonic clock; the membrane uses real clock in production but emits `ts_ns` to the evidence ledger so traces can be aligned post-hoc.
-3. **Evidence replay verifier.** `tests/conformance/runtime_evidence.v1.json` and the replay tool re-run a recorded decision sequence against a fresh process and assert match.
+3. **Evidence replay verifier.** `tests/conformance/runtime_evidence_replay_gate.v1.json` and the replay tool re-run a recorded decision sequence against a fresh process and assert match.
 4. **Controller snapshot hashing.** Every runtime-math controller's state is hashable to a BLAKE3 digest; the evidence record carries the hash so replay can verify the same controller state at each decision point.
 5. **Deterministic SOS certificate generation.** The build script produces identical certificates given identical sources, so the build artifact hashes are reproducible.
 6. **Deterministic fixture-pack format.** Fixtures are JSON with stable key ordering; capture is rerun-stable.
@@ -3674,7 +3674,7 @@ Phase 5's Symbol cleanup removed 175 duplicate `#[no_mangle]` symbol definitions
 - **Frequency lock**: benches are typically run after `cpupower frequency-set --governor performance` to keep the CPU at its rated frequency.
 - **Warmup**: Criterion's default warmup elapses `3.0s` of dummy iterations before timing.
 - **Statistical analysis**: each benchmark reports mean, median, std dev, slope, and 95% confidence interval. Criterion is good enough to detect ~1% regressions reliably on a tuned host.
-- **Comparison vs baseline**: `scripts/check_perf_regression_gate.sh` compares the run against `tests/conformance/perf_baseline.v1.json`. A regression beyond `FRANKENLIBC_PERF_MAX_REGRESSION_PCT` (default 15%) fails the gate.
+- **Comparison vs baseline**: `scripts/check_perf_regression_gate.sh` compares the run against `scripts/perf_baseline.json`. A regression beyond `FRANKENLIBC_PERF_MAX_REGRESSION_PCT` (default 15%) fails the gate.
 - **Skip on overloaded host**: `FRANKENLIBC_PERF_SKIP_OVERLOADED=1` causes the gate to abstain if `loadavg/cpus > FRANKENLIBC_PERF_MAX_LOAD_FACTOR` (default 0.85). This keeps the evidence trustworthy — a perf run on a busy host generates noise, not signal.
 
 Bench groups cover:
