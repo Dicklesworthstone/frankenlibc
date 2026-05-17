@@ -15,6 +15,10 @@ LOG="${STANDALONE_REPLACEMENT_LOG:-${ROOT}/target/conformance/standalone_replace
 COMPILER_RUNTIME_EXPERIMENT_REPORT="${STANDALONE_COMPILER_RUNTIME_EXPERIMENT_REPORT:-${ROOT}/target/conformance/standalone_compiler_runtime_experiment.report.json}"
 COMPILER_RUNTIME_EXPERIMENT_LOG="${STANDALONE_COMPILER_RUNTIME_EXPERIMENT_LOG:-${ROOT}/target/conformance/standalone_compiler_runtime_experiment.log.jsonl}"
 COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT="${STANDALONE_COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT:-${OUT_DIR}/compiler-runtime-experiment-targets}"
+OWNED_UNWIND_EXPERIMENT_MANIFEST="${STANDALONE_OWNED_UNWIND_EXPERIMENT_MANIFEST:-${ROOT}/tests/conformance/standalone_owned_unwind_experiment.v1.json}"
+OWNED_UNWIND_EXPERIMENT_REPORT="${STANDALONE_OWNED_UNWIND_EXPERIMENT_REPORT:-${ROOT}/target/conformance/standalone_owned_unwind_experiment.report.json}"
+OWNED_UNWIND_EXPERIMENT_LOG="${STANDALONE_OWNED_UNWIND_EXPERIMENT_LOG:-${ROOT}/target/conformance/standalone_owned_unwind_experiment.log.jsonl}"
+OWNED_UNWIND_EXPERIMENT_TARGET_ROOT="${STANDALONE_OWNED_UNWIND_EXPERIMENT_TARGET_ROOT:-${OUT_DIR}/owned-unwind-experiment-targets}"
 MODE="check"
 
 case "${1:-}" in
@@ -33,15 +37,18 @@ case "${1:-}" in
   --compiler-runtime-experiment)
     MODE="compiler-runtime-experiment"
     ;;
+  --owned-unwind-experiment)
+    MODE="owned-unwind-experiment"
+    ;;
   *)
-    echo "usage: $0 [--check|--forge|--validate-only|--compiler-runtime-experiment]" >&2
+    echo "usage: $0 [--check|--forge|--validate-only|--compiler-runtime-experiment|--owned-unwind-experiment]" >&2
     exit 2
     ;;
 esac
 
-mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")" "${CARGO_TARGET_DIR_VALUE}/release" "$(dirname "${COMPILER_RUNTIME_EXPERIMENT_REPORT}")" "$(dirname "${COMPILER_RUNTIME_EXPERIMENT_LOG}")" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}"
+mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")" "${CARGO_TARGET_DIR_VALUE}/release" "$(dirname "${COMPILER_RUNTIME_EXPERIMENT_REPORT}")" "$(dirname "${COMPILER_RUNTIME_EXPERIMENT_LOG}")" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}" "$(dirname "${OWNED_UNWIND_EXPERIMENT_REPORT}")" "$(dirname "${OWNED_UNWIND_EXPERIMENT_LOG}")" "${OWNED_UNWIND_EXPERIMENT_TARGET_ROOT}"
 
-python3 - "${ROOT}" "${MANIFEST}" "${PACKAGING}" "${LEVELS}" "${OUT_DIR}" "${CARGO_TARGET_DIR_VALUE}" "${REPORT}" "${LOG}" "${MODE}" "${COMPILER_RUNTIME_EXPERIMENT_MANIFEST}" "${COMPILER_RUNTIME_EXPERIMENT_REPORT}" "${COMPILER_RUNTIME_EXPERIMENT_LOG}" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}" "${HOST_DEPENDENCY_PROBE_PLAN}" <<'PY'
+python3 - "${ROOT}" "${MANIFEST}" "${PACKAGING}" "${LEVELS}" "${OUT_DIR}" "${CARGO_TARGET_DIR_VALUE}" "${REPORT}" "${LOG}" "${MODE}" "${COMPILER_RUNTIME_EXPERIMENT_MANIFEST}" "${COMPILER_RUNTIME_EXPERIMENT_REPORT}" "${COMPILER_RUNTIME_EXPERIMENT_LOG}" "${COMPILER_RUNTIME_EXPERIMENT_TARGET_ROOT}" "${HOST_DEPENDENCY_PROBE_PLAN}" "${OWNED_UNWIND_EXPERIMENT_MANIFEST}" "${OWNED_UNWIND_EXPERIMENT_REPORT}" "${OWNED_UNWIND_EXPERIMENT_LOG}" "${OWNED_UNWIND_EXPERIMENT_TARGET_ROOT}" <<'PY'
 import hashlib
 import json
 import os
@@ -67,6 +74,10 @@ compiler_runtime_report_path = Path(sys.argv[11])
 compiler_runtime_log_path = Path(sys.argv[12])
 compiler_runtime_target_root = Path(sys.argv[13])
 host_dependency_probe_plan_path = Path(sys.argv[14])
+owned_unwind_manifest_path = Path(sys.argv[15])
+owned_unwind_report_path = Path(sys.argv[16])
+owned_unwind_log_path = Path(sys.argv[17])
+owned_unwind_target_root = Path(sys.argv[18])
 
 REQUIRED_LOG_FIELDS = [
     "trace_id",
@@ -339,6 +350,48 @@ EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY = {
     "default_forge_path_unchanged": True,
 }
 
+EXPECTED_OWNED_UNWIND_EXPERIMENT_MANIFEST_ID = "standalone-owned-unwind-experiment"
+EXPECTED_OWNED_UNWIND_EXPERIMENT_POLICY = {
+    "report_only": True,
+    "promotion_allowed": False,
+    "replacement_level_change_allowed": False,
+    "default_forge_path_change_allowed": False,
+    "default_build_profile_change_allowed": False,
+    "panic_strategy_change_allowed_on_baseline": False,
+    "non_baseline_lanes_require_explicit_mode": True,
+    "required_mode": "--owned-unwind-experiment",
+    "claim_status_until_all_symbols_exit": "claim_blocked",
+}
+EXPECTED_OWNED_UNWIND_EXPERIMENT_LANES = [
+    {
+        "lane_id": "baseline-release-standalone",
+        "role": "baseline",
+        "panic_strategy": "implicit-unwind",
+        "expected_claim_status": "claim_blocked",
+    },
+    {
+        "lane_id": "panic-abort-compiler-runtime-minimized",
+        "role": "comparison",
+        "panic_strategy": "abort",
+        "expected_claim_status": "report_only",
+    },
+    {
+        "lane_id": "owned-unwind-stub-experiment",
+        "role": "experiment",
+        "panic_strategy": "abort",
+        "expected_claim_status": "report_only",
+    },
+]
+EXPECTED_OWNED_UNWIND_EXPERIMENT_SUMMARY = {
+    "bead": "bd-juvqm.4",
+    "lane_count": 3,
+    "baseline_lane": "baseline-release-standalone",
+    "experiment_lane": "owned-unwind-stub-experiment",
+    "report_only": True,
+    "default_forge_path_unchanged": True,
+}
+OWNED_UNWIND_SYMBOL_COUNT = 12
+
 EXPECTED_FAILURE_CLASSIFICATIONS = {
     "standalone_artifact_missing": "claim_blocked",
     "standalone_artifact_stale": "claim_blocked",
@@ -467,6 +520,11 @@ host_dependency_probe_plan = load_json(host_dependency_probe_plan_path)
 compiler_runtime_manifest = (
     load_json(compiler_runtime_manifest_path)
     if mode == "compiler-runtime-experiment"
+    else {}
+)
+owned_unwind_manifest = (
+    load_json(owned_unwind_manifest_path)
+    if mode == "owned-unwind-experiment"
     else {}
 )
 packaging = load_json(packaging_path)
@@ -1201,6 +1259,106 @@ def validate_compiler_runtime_experiment_manifest():
     )
 
 
+def validate_owned_unwind_experiment_manifest():
+    if owned_unwind_manifest.get("schema_version") != "v1":
+        errors.append("owned unwind experiment schema_version must be v1")
+    if owned_unwind_manifest.get("manifest_id") != EXPECTED_OWNED_UNWIND_EXPERIMENT_MANIFEST_ID:
+        errors.append("owned unwind experiment manifest_id does not match script contract")
+    if owned_unwind_manifest.get("bead") != EXPECTED_OWNED_UNWIND_EXPERIMENT_SUMMARY["bead"]:
+        errors.append("owned unwind experiment manifest must be linked to bd-juvqm.4")
+
+    manifest_source_commit = owned_unwind_manifest.get("source_commit")
+    source_commit_policy = owned_unwind_manifest.get("source_commit_freshness_policy")
+    expected_source_commit_policy = {
+        "recorded_source_commit_field": "source_commit",
+        "comparison_target": "current git HEAD",
+        "stale_result": "block_owned_unwind_experiment",
+        "experiment_evidence_allowed_when_stale": False,
+        "rejected_evidence_kind": "stale_owned_unwind_experiment",
+    }
+    source_commit_policy_ok = (
+        (manifest_source_commit == "current" or full_git_commit(manifest_source_commit))
+        and source_commit_policy == expected_source_commit_policy
+    )
+    checks["owned_unwind_experiment_source_commit_freshness_policy"] = (
+        "pass" if source_commit_policy_ok else "fail"
+    )
+    checks["owned_unwind_experiment_recorded_source_commit_freshness"] = (
+        "pass"
+        if source_commit_policy_ok and source_commit_marker_is_current(manifest_source_commit)
+        else "fail"
+    )
+    if not source_commit_policy_ok:
+        errors.append("owned unwind experiment source_commit_freshness_policy does not match script contract")
+    elif not source_commit_marker_is_current(manifest_source_commit):
+        errors.append("owned unwind experiment source_commit must be 'current' or match current git HEAD")
+
+    policy = owned_unwind_manifest.get("report_policy", {})
+    for key, expected in EXPECTED_OWNED_UNWIND_EXPERIMENT_POLICY.items():
+        if policy.get(key) != expected:
+            errors.append(f"owned unwind experiment report_policy.{key} does not match script contract")
+
+    lanes = owned_unwind_manifest.get("experiment_lanes", [])
+    if not isinstance(lanes, list):
+        errors.append("owned unwind experiment lanes must be an array")
+        lanes = []
+    lane_by_id = {
+        lane.get("lane_id"): lane
+        for lane in lanes
+        if isinstance(lane, dict) and isinstance(lane.get("lane_id"), str)
+    }
+    if set(lane_by_id) != {lane["lane_id"] for lane in EXPECTED_OWNED_UNWIND_EXPERIMENT_LANES}:
+        errors.append("owned unwind experiment lanes do not match script contract")
+    for expected in EXPECTED_OWNED_UNWIND_EXPERIMENT_LANES:
+        lane = lane_by_id.get(expected["lane_id"], {})
+        for key, value in expected.items():
+            if lane.get(key) != value:
+                errors.append(
+                    f"owned unwind experiment lane {expected['lane_id']} {key} does not match script contract"
+                )
+        if lane.get("must_not_change_default_profile") is not True:
+            errors.append(
+                f"owned unwind experiment lane {expected['lane_id']} must keep default profile locked"
+            )
+        if expected["lane_id"] == EXPECTED_OWNED_UNWIND_EXPERIMENT_SUMMARY["experiment_lane"]:
+            command = lane.get("build_command", [])
+            rustflags = lane.get("rustflags", [])
+            env = lane.get("env", {})
+            if "--features=standalone,owned-unwind-stub" not in command:
+                errors.append("owned unwind experiment lane must build standalone,owned-unwind-stub")
+            if rustflags != ["-C", "link-arg=-Wl,--no-undefined"]:
+                errors.append("owned unwind experiment lane must pin no-undefined rustflags")
+            if env.get("CARGO_PROFILE_RELEASE_PANIC") != "abort":
+                errors.append("owned unwind experiment lane must set panic=abort through env")
+
+    rows = owned_unwind_manifest.get("symbol_disposition_rows", [])
+    if not isinstance(rows, list):
+        errors.append("owned unwind experiment symbol_disposition_rows must be an array")
+        rows = []
+    baseline_undefined = [
+        row for row in rows
+        if isinstance(row, dict)
+        and row.get("baseline_disposition") == "still_undefined"
+        and isinstance(row.get("symbol"), str)
+        and row.get("bare_symbol", "").startswith("_Unwind_")
+    ]
+    owned_substitutes = [
+        row for row in rows
+        if isinstance(row, dict) and row.get("owned_unwind_disposition") == "owned_substitute"
+    ]
+    if len(baseline_undefined) != OWNED_UNWIND_SYMBOL_COUNT:
+        errors.append("owned unwind experiment must track all 12 baseline _Unwind_* symbols")
+    if len(owned_substitutes) != OWNED_UNWIND_SYMBOL_COUNT:
+        errors.append("owned unwind experiment must mark all 12 symbols as owned substitutes")
+    if owned_unwind_manifest.get("summary", {}).get("claim_status") not in {"claim_blocked", "report_only"}:
+        errors.append("owned unwind experiment summary must remain claim_blocked or report_only")
+    checks["owned_unwind_experiment_manifest_contract"] = (
+        "pass"
+        if not any(error.startswith("owned unwind experiment") for error in errors)
+        else "fail"
+    )
+
+
 def build_command():
     raw = os.environ.get("STANDALONE_REPLACEMENT_BUILD_CMD")
     if raw:
@@ -1419,15 +1577,15 @@ def artifact_claim_status(artifact_state):
     return "claim_blocked"
 
 
-def compiler_runtime_source_override(lane_id):
-    specific_env = f"STANDALONE_COMPILER_RUNTIME_{env_key_fragment(lane_id)}_SOURCE_LIB"
+def experiment_source_override(lane_id, env_prefix):
+    specific_env = f"{env_prefix}_{env_key_fragment(lane_id)}_SOURCE_LIB"
     return os.environ.get(specific_env) or os.environ.get("STANDALONE_REPLACEMENT_SOURCE_LIB")
 
 
-def run_compiler_runtime_lane(lane):
+def run_experiment_lane(lane, *, target_root, out_subdir, source_env_prefix):
     lane_id = lane["lane_id"]
-    lane_out_dir = out_dir / "compiler-runtime-experiment" / lane_id
-    lane_target_dir = compiler_runtime_target_root / lane["cargo_target_dir_suffix"]
+    lane_out_dir = out_dir / out_subdir / lane_id
+    lane_target_dir = target_root / lane["cargo_target_dir_suffix"]
     lane_out_dir.mkdir(parents=True, exist_ok=True)
     (lane_target_dir / "release").mkdir(parents=True, exist_ok=True)
     command = lane["build_command"]
@@ -1442,11 +1600,18 @@ def run_compiler_runtime_lane(lane):
         env["CARGO_TARGET_DIR"] = str(lane_target_dir)
         for key, value in lane.get("env", {}).items():
             env[key] = value
+        rustflags = lane.get("rustflags", [])
+        if isinstance(rustflags, list) and rustflags:
+            existing = env.get("RUSTFLAGS", "").strip()
+            manifest_flags = " ".join(str(flag) for flag in rustflags)
+            env["RUSTFLAGS"] = f"{existing} {manifest_flags}".strip()
         allowlist = env.get("RCH_ENV_ALLOWLIST", "")
         allowed = [item for item in allowlist.split(",") if item]
         for key in ["CARGO_TARGET_DIR", *lane.get("env", {}).keys()]:
             if key not in allowed:
                 allowed.append(key)
+        if isinstance(rustflags, list) and rustflags and "RUSTFLAGS" not in allowed:
+            allowed.append("RUSTFLAGS")
         env["RCH_ENV_ALLOWLIST"] = ",".join(allowed)
         result = run_command(command, env=env)
         build_exit_code = result["returncode"]
@@ -1458,7 +1623,7 @@ def run_compiler_runtime_lane(lane):
         write_text(build_stdout, "build skipped by STANDALONE_COMPILER_RUNTIME_EXPERIMENT_SKIP_BUILD=1\n")
         write_text(build_stderr, "")
 
-    source_override = compiler_runtime_source_override(lane_id)
+    source_override = experiment_source_override(lane_id, source_env_prefix)
     source = Path(source_override) if source_override else lane_target_dir / "release" / "libfrankenlibc_abi.so"
     target = lane_target_dir / "release" / "libfrankenlibc_replace.so"
     lane_tool_evidence = {}
@@ -1518,10 +1683,26 @@ def run_compiler_runtime_lane(lane):
     return lane_report
 
 
-def compiler_runtime_comparison(lanes):
+def run_compiler_runtime_lane(lane):
+    return run_experiment_lane(
+        lane,
+        target_root=compiler_runtime_target_root,
+        out_subdir="compiler-runtime-experiment",
+        source_env_prefix="STANDALONE_COMPILER_RUNTIME",
+    )
+
+
+def run_owned_unwind_lane(lane):
+    return run_experiment_lane(
+        lane,
+        target_root=owned_unwind_target_root,
+        out_subdir="owned-unwind-experiment",
+        source_env_prefix="STANDALONE_OWNED_UNWIND",
+    )
+
+
+def lane_dependency_comparison(lanes, *, baseline_id, experiment_id):
     by_id = {lane["lane_id"]: lane for lane in lanes}
-    baseline_id = EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY["baseline_lane"]
-    experiment_id = EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY["experiment_lane"]
     baseline = by_id.get(baseline_id, {})
     experiment = by_id.get(experiment_id, {})
     removed_needed, added_needed = set_delta(
@@ -1555,6 +1736,22 @@ def compiler_runtime_comparison(lanes):
         "added_version_requirements": added_versions,
         "delta_classification": delta,
     }
+
+
+def compiler_runtime_comparison(lanes):
+    return lane_dependency_comparison(
+        lanes,
+        baseline_id=EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY["baseline_lane"],
+        experiment_id=EXPECTED_COMPILER_RUNTIME_EXPERIMENT_SUMMARY["experiment_lane"],
+    )
+
+
+def owned_unwind_comparison(lanes):
+    return lane_dependency_comparison(
+        lanes,
+        baseline_id=EXPECTED_OWNED_UNWIND_EXPERIMENT_SUMMARY["baseline_lane"],
+        experiment_id=EXPECTED_OWNED_UNWIND_EXPERIMENT_SUMMARY["experiment_lane"],
+    )
 
 
 def write_compiler_runtime_experiment_report():
@@ -1626,8 +1823,115 @@ def write_compiler_runtime_experiment_report():
     sys.exit(0 if status == "pass" else 1)
 
 
+def owned_unwind_symbol_rows(lanes):
+    by_id = {lane["lane_id"]: lane for lane in lanes}
+    owned_lane = by_id.get(EXPECTED_OWNED_UNWIND_EXPERIMENT_SUMMARY["experiment_lane"], {})
+    undefined = {
+        symbol_base(symbol)
+        for symbol in owned_lane.get("undefined_unwind_symbols", [])
+        if isinstance(symbol, str)
+    }
+    rows = []
+    for row in owned_unwind_manifest.get("symbol_disposition_rows", []):
+        if not isinstance(row, dict):
+            continue
+        bare_symbol = row.get("bare_symbol")
+        if not isinstance(bare_symbol, str):
+            continue
+        observed_undefined = bare_symbol in undefined
+        rows.append(
+            {
+                "symbol": row.get("symbol"),
+                "bare_symbol": bare_symbol,
+                "provider_library": row.get("provider_library"),
+                "owned_unwind_disposition": row.get("owned_unwind_disposition"),
+                "owned_surface_status": row.get("owned_surface_status"),
+                "claim_status_until_exit": row.get("claim_status_until_exit"),
+                "observed_undefined_in_owned_lane": observed_undefined,
+                "observed_disposition": "still_undefined" if observed_undefined else "owned_or_absent",
+            }
+        )
+    return rows
+
+
+def write_owned_unwind_experiment_report():
+    validate_owned_unwind_experiment_manifest()
+    contract_failed = any(error.startswith("owned unwind experiment") for error in errors)
+    lanes = []
+    if not contract_failed:
+        lanes = [
+            run_owned_unwind_lane(lane)
+            for lane in owned_unwind_manifest.get("experiment_lanes", [])
+            if isinstance(lane, dict)
+        ]
+    if len(lanes) != EXPECTED_OWNED_UNWIND_EXPERIMENT_SUMMARY["lane_count"]:
+        errors.append("owned unwind experiment did not produce every required lane")
+    for lane in lanes:
+        if lane["status"] != "pass":
+            errors.append(f"owned unwind experiment lane failed: {lane['lane_id']}")
+    comparison = owned_unwind_comparison(lanes)
+    symbol_rows = owned_unwind_symbol_rows(lanes)
+    owned_unresolved = [
+        row["bare_symbol"]
+        for row in symbol_rows
+        if row["observed_undefined_in_owned_lane"]
+    ]
+    status = "pass" if not errors else "fail"
+    report = {
+        "schema_version": "v1",
+        "manifest_id": owned_unwind_manifest.get("manifest_id"),
+        "bead": owned_unwind_manifest.get("bead"),
+        "mode": mode,
+        "status": status,
+        "claim_status": "report_only" if not owned_unresolved else "claim_blocked",
+        "source_commit": source_commit,
+        "report_policy": owned_unwind_manifest.get("report_policy", {}),
+        "cargo_target_root": str(owned_unwind_target_root),
+        "lanes": lanes,
+        "comparison": comparison,
+        "symbol_disposition_rows": symbol_rows,
+        "owned_unwind_unresolved_symbols": owned_unresolved,
+        "checks": checks,
+        "errors": errors,
+        "artifact_refs": [
+            rel(owned_unwind_manifest_path),
+            rel(manifest_path),
+            rel(owned_unwind_report_path),
+            rel(owned_unwind_log_path),
+            rel(out_dir / "owned-unwind-experiment"),
+        ],
+    }
+    log_rows = []
+    for lane in lanes:
+        log_rows.append(
+            {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "level": "info" if lane["status"] == "pass" else "error",
+                "trace_id": f"{owned_unwind_manifest.get('bead', 'unknown')}::{source_commit}::{lane['lane_id']}",
+                "bead_id": owned_unwind_manifest.get("bead"),
+                "event": "owned_unwind_experiment_lane",
+                "mode": mode,
+                "lane_id": lane["lane_id"],
+                "build_command": lane["build_command"],
+                "cargo_target_dir": lane["cargo_target_dir"],
+                "claim_status": lane["claim_status"],
+                "artifact_claim_status": lane["artifact_claim_status"],
+                "source_commit": source_commit,
+                "exit_code": 0 if lane["status"] == "pass" else 1,
+                "failure_signature": lane["artifact_state"].get("failure_signature"),
+                "artifact_refs": lane["artifact_state"].get("refs", []),
+            }
+        )
+    write_text(owned_unwind_report_path, json.dumps(report, indent=2, sort_keys=True) + "\n")
+    write_text(owned_unwind_log_path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in log_rows))
+    print(json.dumps(report, indent=2, sort_keys=True))
+    sys.exit(0 if status == "pass" else 1)
+
+
 if mode == "compiler-runtime-experiment":
     write_compiler_runtime_experiment_report()
+if mode == "owned-unwind-experiment":
+    write_owned_unwind_experiment_report()
 
 
 validate_manifest()

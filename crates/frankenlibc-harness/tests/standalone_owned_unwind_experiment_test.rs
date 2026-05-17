@@ -14,7 +14,11 @@
 //! substitute reaches `nm_evidence_passed`.
 
 use std::collections::BTreeSet;
+use std::ffi::OsString;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -50,6 +54,50 @@ fn load_manifest() -> TestResult<Value> {
     let path = manifest_path(&root);
     let content = std::fs::read_to_string(&path).map_err(|err| format!("read {path:?}: {err}"))?;
     serde_json::from_str(&content).map_err(|err| format!("parse {path:?}: {err}"))
+}
+
+fn load_json_file(path: &Path) -> TestResult<Value> {
+    let content = std::fs::read_to_string(path).map_err(|err| format!("read {path:?}: {err}"))?;
+    serde_json::from_str(&content).map_err(|err| format!("parse {path:?}: {err}"))
+}
+
+fn unique_temp_dir(label: &str) -> TestResult<PathBuf> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("system clock before unix epoch: {err}"))?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "frankenlibc-standalone-owned-unwind-{label}-{}-{nanos}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
+    Ok(dir)
+}
+
+fn write_executable(path: &Path, content: &str) -> TestResult {
+    std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))?;
+    let mut permissions = std::fs::metadata(path)
+        .map_err(|err| format!("stat {}: {err}", path.display()))?
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions)
+        .map_err(|err| format!("chmod {}: {err}", path.display()))
+}
+
+fn fake_rch_local_fallback_path(temp: &Path) -> TestResult<OsString> {
+    let fake_bin = temp.join("fake-rch-local-bin");
+    std::fs::create_dir_all(&fake_bin).map_err(|err| format!("{}: {err}", fake_bin.display()))?;
+    write_executable(
+        &fake_bin.join("rch"),
+        r#"#!/bin/sh
+echo "[RCH] local (test-injected fallback)" >&2
+exit 0
+"#,
+    )?;
+    let mut path = OsString::from(fake_bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    Ok(path)
 }
 
 fn require(condition: bool, message: impl Into<String>) -> TestResult {
@@ -622,5 +670,70 @@ fn summary_blocker_counts_match_lane_expectations() -> TestResult {
     require(
         !json_bool(summary, "promotion_allowed")?,
         "summary promotion_allowed must be false",
+    )
+}
+
+#[test]
+fn owned_unwind_experiment_mode_rejects_rch_local_fallback() -> TestResult {
+    let root = workspace_root()?;
+    let temp = unique_temp_dir("rch-local")?;
+    let out_dir = temp.join("out");
+    let target_root = temp.join("targets");
+    let report = temp.join("standalone_owned_unwind_experiment.report.json");
+    let log = temp.join("standalone_owned_unwind_experiment.log.jsonl");
+    let fake_path = fake_rch_local_fallback_path(&temp)?;
+
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--owned-unwind-experiment")
+        .current_dir(&root)
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", &out_dir)
+        .env(
+            "STANDALONE_OWNED_UNWIND_EXPERIMENT_TARGET_ROOT",
+            &target_root,
+        )
+        .env("STANDALONE_OWNED_UNWIND_EXPERIMENT_REPORT", &report)
+        .env("STANDALONE_OWNED_UNWIND_EXPERIMENT_LOG", &log)
+        .env("PATH", fake_path)
+        .env_remove("FRANKENLIBC_STANDALONE_LIB")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .map_err(|err| format!("owned-unwind experiment gate failed to start: {err}"))?;
+    require(
+        !output.status.success(),
+        format!(
+            "owned-unwind experiment should fail on RCH local fallback\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
+
+    let report_json = load_json_file(&report)?;
+    require(
+        json_string(&report_json, "status")? == "fail",
+        "report status must fail on RCH local fallback",
+    )?;
+    let lanes = json_array(&report_json, "lanes")?;
+    require(
+        lanes.len() == 3,
+        "owned-unwind report must include all 3 lanes",
+    )?;
+    for lane_id in [BASELINE_LANE, PANIC_ABORT_LANE, OWNED_UNWIND_LANE] {
+        let lane = lanes
+            .iter()
+            .find(|lane| lane.get("lane_id").and_then(Value::as_str) == Some(lane_id))
+            .ok_or_else(|| format!("missing lane {lane_id}"))?;
+        require(
+            json_string(lane, "build_status")? == "fail",
+            format!("{lane_id} build_status must fail"),
+        )?;
+        let artifact_state = json_field(lane, "artifact_state")?;
+        require(
+            json_string(artifact_state, "failure_signature")? == "rch_local_fallback",
+            format!("{lane_id} failure_signature must be rch_local_fallback"),
+        )?;
+    }
+    require(
+        log.exists(),
+        format!("experiment log should exist at {}", log.display()),
     )
 }
