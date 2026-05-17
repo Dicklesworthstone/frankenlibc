@@ -19871,8 +19871,7 @@ pub unsafe extern "C" fn getaliasent_r(
 /// Native implementation: resets the thread-local fstab parser state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endfsent() {
-    FSTAB_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_fstab_state(|state| {
         state.reader = None;
     });
 }
@@ -22244,9 +22243,31 @@ impl FstabState {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static FSTAB_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<FstabState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(FstabState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static FSTAB_STATE: std::cell::UnsafeCell<FstabState> =
         const { std::cell::UnsafeCell::new(FstabState::new()) };
+}
+
+#[inline]
+fn with_fstab_state<R>(callback: impl FnOnce(&mut FstabState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        FSTAB_STATE_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        FSTAB_STATE.with(|cell| {
+            // SAFETY: FSTAB_STATE is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// Parse the next fstab line into the entry buffer, returning a pointer to
@@ -22383,18 +22404,15 @@ unsafe fn fstab_next(state: &mut FstabState) -> *mut c_void {
 /// Returns 1 on success, 0 on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setfsent() -> c_int {
-    FSTAB_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
-        match std::fs::File::open(FSTAB_PATH) {
-            Ok(f) => {
-                state.reader = Some(std::io::BufReader::new(f));
-                1
-            }
-            Err(_) => {
-                state.reader = None;
-                unsafe { set_abi_errno(libc::ENOENT) };
-                0
-            }
+    with_fstab_state(|state| match std::fs::File::open(FSTAB_PATH) {
+        Ok(f) => {
+            state.reader = Some(std::io::BufReader::new(f));
+            1
+        }
+        Err(_) => {
+            state.reader = None;
+            unsafe { set_abi_errno(libc::ENOENT) };
+            0
         }
     })
 }
@@ -22405,10 +22423,7 @@ pub unsafe extern "C" fn setfsent() -> c_int {
 /// or NULL at EOF.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getfsent() -> *mut c_void {
-    FSTAB_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
-        unsafe { fstab_next(state) }
-    })
+    with_fstab_state(|state| unsafe { fstab_next(state) })
 }
 
 /// `getfsfile` — find fstab entry by mount point.
@@ -22426,8 +22441,7 @@ pub unsafe extern "C" fn getfsfile(file: *const c_char) -> *mut c_void {
     };
     // Rewind
     unsafe { setfsent() };
-    FSTAB_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_fstab_state(|state| {
         loop {
             let ent = unsafe { fstab_next(state) };
             if ent.is_null() {
@@ -22459,8 +22473,7 @@ pub unsafe extern "C" fn getfsspec(spec: *const c_char) -> *mut c_void {
     };
     // Rewind
     unsafe { setfsent() };
-    FSTAB_STATE.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_fstab_state(|state| {
         loop {
             let ent = unsafe { fstab_next(state) };
             if ent.is_null() {
