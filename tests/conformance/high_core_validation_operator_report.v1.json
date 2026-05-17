@@ -1,0 +1,37 @@
+{
+  "schema_version": "v1",
+  "contract_id": "high-core-validation-operator-report",
+  "bead": "bd-2syj4",
+  "purpose": "Generate a compact operator report from merged high-core validation results and longitudinal cost telemetry.",
+  "inputs": {
+    "merge_report": "target/conformance/high_core_validation/merge.report.json",
+    "cost_report": "target/conformance/high_core_validation/costs.report.json"
+  },
+  "outputs": {
+    "json_report": "target/conformance/high_core_validation/operator.report.json",
+    "markdown_report": "target/conformance/high_core_validation/operator.report.md",
+    "event_log": "target/conformance/high_core_validation/operator.events.log.jsonl"
+  },
+  "required_sections": [
+    "lane_health",
+    "recent_p95_cost",
+    "failed_units",
+    "skipped_units",
+    "stale_artifact_warnings",
+    "rch_rerun_commands"
+  ],
+  "status_policy": {
+    "failed_units_make_report_failed": true,
+    "skipped_units_are_never_hidden_by_green_aggregate": true,
+    "stale_artifacts_warn_without_reclassifying_passed_units": true,
+    "expensive_p95_ms_threshold": 600000
+  },
+  "required_failure_fields": [
+    "unit_id",
+    "shard_id",
+    "failure_signature",
+    "first_failing_artifact",
+    "reproduction_command"
+  ],
+  "required_rerun_fields": ["unit_id", "shard_id", "status", "rch_command"]
+}
