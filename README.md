@@ -1106,7 +1106,7 @@ Categories include:
 - printf / stdio: `printf_float_precision`, `printf_fuzz_family`, `printf_star_width_precision`, `stdio_libio_*`
 - CRT / startup: `l1_crt_startup_tls`, `crt_tls_atexit_direct_link_proof`
 - Runtime math: 15+ contracts covering risk, control, anomaly, certified safety
-- Replacement levels: `replacement_levels`, `l1_dashboard_freshness`, `l2_replace_artifact`, `l3_standalone`
+- Replacement levels: `replacement_levels` (the canonical taxonomy), `standalone_replacement_artifact` (L2/L3 packaging contract); per-level dashboard freshness scenarios live in `claim_gate_positive_negative_matrix.v1.json`
 - TSM and evidence: `tsm_*`, `evidence_ledger_*`
 - CLI contracts: `*_cli_contract.v1.json` for every harness subcommand and gate
 
@@ -2862,29 +2862,13 @@ FrankenLibC's niche sits at the intersection of: glibc-shape compatibility (so e
 
 ## The Evidence Ledger Record Format
 
-Each runtime decision can emit a structured evidence record. The JSON schema:
+Each runtime decision can emit a structured evidence record. The on-disk format is a fixed-size 256-byte binary symbol (`EvidenceSymbolRecord` declared in `crates/frankenlibc-membrane/src/runtime_math/evidence.rs`, magic `"EVR1"`, with a 64-byte header carrying epoch ID, sequence number, seed, family, etc., a 128-byte symbol payload, and a 32-byte reserved auth-tag slot). For human/tooling consumption the harness's `decode-evidence` and `validate-runtime-evidence-rows` subcommands deserialize records into JSONL with fields like:
 
-```json
-{
-  "ts_ns": 1747843200000000123,
-  "thread_id": 12345,
-  "family": "Allocator",
-  "decision": "Heal",
-  "healing_action": "IgnoreDoubleFree",
-  "validation_profile": "Full",
-  "latency_ns": 137,
-  "ptr": "0x55a2c3d40140",
-  "size": 64,
-  "generation_observed": 7,
-  "generation_expected": 7,
-  "controller_snapshot_hash": "blake3:7c2e...",
-  "evidence_seqno": 42891
-}
+```jsonl
+{"ts_ns":1747843200000000123,"epoch_id":42,"seqno":42891,"family":"Allocator","decision":"Heal","healing_action":"IgnoreDoubleFree","validation_profile":"Full","latency_ns":137,"ptr":"0x55a2c3d40140","size":64,"generation":7}
 ```
 
-The ring buffer is sized so that ~1 second of activity fits at the expected rate; backpressure is handled by overwriting the oldest record (the consumer is responsible for keeping up). The replay verifier reads JSONL and asserts that a fresh process produces an identical sequence given the same inputs.
-
-`controller_snapshot_hash` is a BLAKE3 digest of the runtime-math controllers' state at the time of the decision; replay must produce the same hash for the same sequence position, which is how `deterministic_replay.md` becomes operationally testable.
+(Field-name shapes shown are illustrative; the binary format declares the bytes — see `EVIDENCE_HEADER_SIZE = 64`, `EVIDENCE_SYMBOL_SIZE_T = 128`, `EVIDENCE_RECORD_SIZE = 256` in source.) The ring buffer is sized so that ~1 second of activity fits at the expected rate; backpressure is handled by overwriting the oldest record (the consumer is responsible for keeping up). The replay verifier reads JSONL and asserts that a fresh process produces an identical sequence given the same inputs. Replay is how `deterministic_replay.md` becomes operationally testable.
 
 ---
 
@@ -3371,16 +3355,14 @@ Cache-line layout is verified empirically through benchmark variance: a 64-byte 
 
 ## Why Rust 2024
 
-The workspace edition is Rust 2024 (`edition = "2024"` in `Cargo.toml`, nightly pinned via `rust-toolchain.toml` to `nightly-2026-04-28`). Specific features used:
+The workspace edition is Rust 2024 (`edition = "2024"` in `Cargo.toml`, nightly pinned via `rust-toolchain.toml` to `nightly-2026-04-28`). The specific `#![feature(...)]` gates declared in `crates/frankenlibc-abi/src/lib.rs` are:
 
-- **Edition 2024 unsafe-extern semantics** — `extern "C"` blocks containing `fn` declarations are now `unsafe extern "C"` by default, which makes the FFI boundary explicit in syntax.
-- **Strict provenance API** (stable in nightly) — `ptr.addr()`, `from_raw_parts`, `Strict::with_addr` etc. — let the membrane reason about pointer provenance more rigorously than `as usize` casts.
-- **`#[diagnostic::on_unimplemented]`** — Improves error messages when generic membrane traits aren't implemented.
-- **`#![feature(...)` gates as needed** — Specific nightly features the membrane and core crates depend on.
-- **`async fn` in traits** (stable in nightly) — Used by some harness paths.
-- **`const_generics_defaults`**, **`generic_const_exprs`** in limited places for runtime-math controllers that benefit from compile-time parameters.
+- **`c_variadic`** — Lets ABI entry points accept C-style `...` varargs (printf, scanf, syscall variants, etc.) directly in Rust signatures.
+- **`rtm_target_feature`** — Enables the x86 Restricted Transactional Memory target-feature gate so the HTM fast path can declare `#[target_feature(enable = "rtm")]`.
+- **`stdarch_x86_rtm`** — Exposes `core::arch::x86_64::{_xbegin, _xend}` for the hardware-transactional-memory fast path.
+- **`thread_local`** — Enables the `#[thread_local]` attribute on static items for the TLS-cache and errno paths (faster than the `thread_local!` macro form for cross-FFI access).
 
-The nightly pin is not "we use exotic features"; it's "we need predictable codegen and the strict provenance API for memory-safety reasoning."
+Edition 2024 also brings `unsafe extern "C"` defaults (which make the FFI boundary explicit in syntax) and tighter `unsafe_op_in_unsafe_fn` checking. The nightly pin is not "we use exotic features"; it's "we need the four `#![feature(...)]` gates above for x86 HTM and varargs, and a frozen nightly date for predictable codegen."
 
 ---
 
