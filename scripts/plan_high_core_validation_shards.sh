@@ -4,13 +4,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${HIGH_CORE_VALIDATION_SHARD_MANIFEST:-$ROOT/tests/conformance/high_core_validation_shards.v1.json}"
+CONTRACT="${HIGH_CORE_VALIDATION_RCH_LANE_CONTRACT:-$ROOT/tests/conformance/high_core_validation_rch_lane_contract.v1.json}"
 PLAN="${HIGH_CORE_VALIDATION_SHARD_PLAN:-$ROOT/target/conformance/high_core_validation/shard_plan.report.json}"
 LOG="${HIGH_CORE_VALIDATION_SHARD_LOG:-$ROOT/target/conformance/high_core_validation/events.log.jsonl}"
 LANES="${HIGH_CORE_VALIDATION_SHARD_LANES:-8}"
 
 cd "${ROOT}"
 
-python3 - "${ROOT}" "${MANIFEST}" "${PLAN}" "${LOG}" "${LANES}" <<'PY'
+python3 - "${ROOT}" "${MANIFEST}" "${PLAN}" "${LOG}" "${LANES}" "${CONTRACT}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -20,6 +21,7 @@ manifest_path = Path(sys.argv[2])
 plan_path = Path(sys.argv[3])
 log_path = Path(sys.argv[4])
 lane_text = sys.argv[5]
+contract_path = Path(sys.argv[6])
 
 errors = []
 failure_signatures = []
@@ -66,6 +68,36 @@ def positive_int(value, context, signature):
 
 
 manifest = load_json(manifest_path)
+contract = load_json(contract_path)
+
+if contract.get("schema_version") != "v1":
+    fail("rch lane contract schema_version must be v1", "invalid_rch_lane_contract")
+if contract.get("bead") != "bd-brysl":
+    fail("rch lane contract bead must be bd-brysl", "invalid_rch_lane_contract")
+
+proof_classes = contract.get("proof_classes")
+if not isinstance(proof_classes, dict):
+    fail("rch lane contract proof_classes must be an object", "invalid_rch_lane_contract")
+    proof_classes = {}
+
+
+def proof_annotation(unit_id, execution_kind):
+    policy = proof_classes.get(execution_kind)
+    if not isinstance(policy, dict):
+        fail(f"{unit_id}: missing proof class policy for {execution_kind}", "missing_proof_class")
+        policy = {}
+    proof_class = policy.get("proof_class")
+    if not isinstance(proof_class, str) or not proof_class:
+        fail(f"{unit_id}: proof_class missing for {execution_kind}", "missing_proof_class")
+        proof_class = "unknown"
+    return {
+        "proof_class": proof_class,
+        "required_env": policy.get("required_env", []) if execution_kind == "remote_rch" else [],
+        "required_rch_args": policy.get("required_rch_args", []) if execution_kind == "remote_rch" else [],
+        "forbidden_output_markers": policy.get("forbidden_output_markers", []) if execution_kind == "remote_rch" else [],
+        "local_fallback_invalid": bool(policy.get("local_fallback_invalid", False)),
+        "cargo_allowed": bool(policy.get("cargo_allowed", execution_kind == "remote_rch")),
+    }
 
 try:
     lane_count = int(lane_text)
@@ -142,13 +174,19 @@ for index, unit in enumerate(units):
     )
     parallelism = positive_int(cost.get("parallelism"), f"{unit_id}.estimated_cost.parallelism", "invalid_cost")
 
+    execution_kind = unit.get("execution_kind")
+    proof = proof_annotation(unit_id, execution_kind)
     validated_units.append(
         {
             "unit_id": unit_id,
             "category": unit.get("category"),
             "description": unit.get("description"),
-            "execution_kind": unit.get("execution_kind"),
+            "execution_kind": execution_kind,
             "command_template": command,
+            "proof_class": proof["proof_class"],
+            "proof_annotation": proof,
+            "local_fallback_invalid": proof["local_fallback_invalid"],
+            "rerun_command": " ".join(command),
             "estimated_cost": {
                 "cost_class": cost.get("cost_class"),
                 "cost_points": cost_points,
@@ -212,10 +250,14 @@ for assignment_index, unit in enumerate(assignment_order):
         "unit_id": unit["unit_id"],
         "category": unit["category"],
         "execution_kind": unit["execution_kind"],
+        "proof_class": unit["proof_class"],
+        "proof_annotation": unit["proof_annotation"],
+        "local_fallback_invalid": unit["local_fallback_invalid"],
         "estimated_cost": unit["estimated_cost"],
         "required_artifacts": unit["required_artifacts"],
         "command_template": unit["command_template"],
-        "reproduction_command": " ".join(unit["command_template"]),
+        "reproduction_command": unit["rerun_command"],
+        "rerun_command": unit["rerun_command"],
     }
     lane["units"].append(unit_entry)
     lane["required_artifacts"].extend(unit["required_artifacts"])
@@ -234,6 +276,8 @@ for assignment_index, unit in enumerate(assignment_order):
             "lane_cost_points_after": lane["estimated_cost"]["cost_points"],
             "artifact_refs": unit["required_artifacts"],
             "command_template": unit["command_template"],
+            "proof_class": unit["proof_class"],
+            "local_fallback_invalid": unit["local_fallback_invalid"],
         }
     )
 
@@ -270,9 +314,15 @@ report = {
     "bead": "bd-qa87u",
     "status": "passed",
     "source_manifest": relative_path(manifest_path),
+    "source_rch_lane_contract": relative_path(contract_path),
     "planner_algorithm": "stable_lpt_cost_points_unit_id_tiebreak",
     "stable_ordering": "lane_index_ascending_units_by_unit_id",
     "required_result_fields": manifest.get("planner_contract", {}).get("required_result_fields", []),
+    "rch_lane_contract": {
+        "contract_id": contract.get("contract_id"),
+        "bead": contract.get("bead"),
+        "required_plan_annotations": contract.get("required_plan_annotations", []),
+    },
     "summary": summary,
     "lanes": lanes,
 }

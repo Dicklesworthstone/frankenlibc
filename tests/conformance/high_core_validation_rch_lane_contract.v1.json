@@ -1,0 +1,57 @@
+{
+  "schema_version": "v1",
+  "contract_id": "high-core-validation-rch-lane-contract",
+  "bead": "bd-brysl",
+  "source_manifest": "tests/conformance/high_core_validation_shards.v1.json",
+  "planner_output": "target/conformance/high_core_validation/shard_plan.report.json",
+  "checker": "scripts/check_high_core_validation_rch_lane_contract.sh",
+  "purpose": "Fail closed when high-core validation lanes try to count local cargo, ambiguous shell-wrapped cargo, or rch local fallback output as proof.",
+  "proof_classes": {
+    "remote_rch": {
+      "proof_class": "remote_only_rch_proof",
+      "required_env": ["RCH_FORCE_REMOTE=true", "RCH_NO_SELF_HEALING=1"],
+      "required_rch_args": ["--no-self-healing", "exec"],
+      "required_rch_command_token": "rch",
+      "forbidden_output_markers": ["[RCH] local"],
+      "required_success_markers": ["[RCH] remote"],
+      "reject_bare_cargo": true,
+      "reject_bash_wrapped_cargo": true,
+      "local_fallback_invalid": true,
+      "rerun_command_prefix": "RCH_VISIBILITY=verbose RCH_FORCE_REMOTE=true RCH_NO_SELF_HEALING=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,RCH_FORCE_REMOTE,RCH_NO_SELF_HEALING rch --no-self-healing exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_high_core_validation_<unit_id>"
+    },
+    "local_metadata": {
+      "proof_class": "cheap_local_metadata_check",
+      "cargo_allowed": false,
+      "local_fallback_invalid": false,
+      "description": "Cheap metadata checks may run locally only when they do not invoke cargo or claim remote proof."
+    }
+  },
+  "required_plan_annotations": [
+    "proof_class",
+    "proof_annotation",
+    "local_fallback_invalid",
+    "rerun_command"
+  ],
+  "diagnostic_contract": {
+    "report": "target/conformance/high_core_validation/rch_lane_contract.report.json",
+    "event_log": "target/conformance/high_core_validation/rch_lane_contract.events.log.jsonl",
+    "required_violation_fields": [
+      "unit_id",
+      "execution_kind",
+      "field",
+      "failure_signature",
+      "message",
+      "rerun_command",
+      "remediation"
+    ],
+    "failure_signatures": [
+      "missing_required_env",
+      "missing_rch_arg",
+      "bare_cargo_command",
+      "bash_wrapped_cargo",
+      "cargo_in_local_metadata",
+      "rch_local_fallback",
+      "missing_plan_annotation"
+    ]
+  }
+}
