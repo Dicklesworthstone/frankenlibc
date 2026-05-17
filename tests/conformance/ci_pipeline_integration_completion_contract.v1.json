@@ -6,6 +6,8 @@
   "source_artifacts": {
     "workflow": ".github/workflows/ci.yml",
     "ci_script": "scripts/ci.sh",
+    "ci_rch_cargo_policy": "scripts/check_ci_rch_cargo_policy.sh",
+    "ci_rch_cargo_policy_contract": "tests/conformance/ci_rch_cargo_policy.v1.json",
     "conformance_golden_gate": "scripts/conformance_golden_gate.sh",
     "snapshot_gate": "scripts/snapshot_gate.sh",
     "ld_preload_smoke": "scripts/ld_preload_smoke.sh",
@@ -49,10 +51,14 @@
     ],
     "ci_script_markers": [
       "cargo fmt --check",
-      "cargo check --workspace --all-targets",
-      "cargo clippy --workspace --all-targets -- -D warnings",
-      "cargo test --workspace --all-targets",
-      "cargo build -p frankenlibc-abi --release",
+      "run_remote_cargo check --workspace --all-targets",
+      "run_remote_cargo clippy --workspace --all-targets -- -D warnings",
+      "run_remote_cargo test --workspace --all-targets",
+      "run_remote_cargo build -p frankenlibc-abi --release",
+      "bash scripts/check_ci_rch_cargo_policy.sh --validate-only",
+      "RCH_REQUIRE_REMOTE=1",
+      "rch exec -- env",
+      "CARGO_TARGET_DIR=",
       "scripts/conformance_golden_gate.sh",
       "scripts/snapshot_gate.sh",
       "scripts/check_benchmark_gate.sh",
@@ -95,6 +101,7 @@
       "id": "tests.unit.primary",
       "description": "Harness tests assert CI script benchmark wiring, release DAG execution, and this completion contract.",
       "required_commands": [
+        "bash scripts/check_ci_rch_cargo_policy.sh --validate-only",
         "rch exec -- cargo test -p frankenlibc-harness --test ci_pipeline_integration_completion_contract_test -- --nocapture",
         "rch exec -- cargo test -p frankenlibc-harness --test ci_perf_gate_wiring_test -- --nocapture",
         "rch exec -- cargo test -p frankenlibc-harness --test release_gate_dag_test -- --nocapture"

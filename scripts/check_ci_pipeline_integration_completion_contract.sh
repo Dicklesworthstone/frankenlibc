@@ -156,6 +156,19 @@ def validate_ci_script(manifest: dict[str, Any], ci_script: str) -> dict[str, An
         require(marker in ci_script, f"ci script marker missing: {marker}")
     require("FRANKENLIBC_EXTENDED_GATES" in ci_script, "ci.sh must keep extended gate switch")
     require("FRANKENLIBC_FORCE_LOCAL_BENCHMARK_GATE" in ci_script, "ci.sh must keep deterministic benchmark fallback switch")
+    require("run_remote_cargo()" in ci_script, "ci.sh must define run_remote_cargo wrapper")
+    require("RCH_REQUIRE_REMOTE=1" in ci_script, "ci.sh cargo wrapper must require remote RCH")
+    require("rch exec -- env" in ci_script, "ci.sh cargo wrapper must launch through rch exec -- env")
+    require("CARGO_TARGET_DIR=" in ci_script, "ci.sh cargo wrapper must isolate CARGO_TARGET_DIR")
+    require(
+        "bash scripts/check_ci_rch_cargo_policy.sh --validate-only" in ci_script,
+        "ci.sh must run ci RCH cargo policy checker before cargo-backed gates",
+    )
+    for subcommand in ("check", "clippy", "test", "build"):
+        require(
+            f"run_remote_cargo {subcommand}" in ci_script,
+            f"ci.sh must route cargo {subcommand} through run_remote_cargo",
+        )
     return {"ci_script_markers": len(markers)}
 
 
