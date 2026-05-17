@@ -16924,9 +16924,37 @@ impl ProtoIterState {
     }
 }
 
+// SAFETY: `ProtoIterState` is process-owned scratch state keyed by kernel
+// thread id under the owned-TLS experiment. Raw pointer arrays are rebuilt from
+// the per-slot buffers before each returned `protoent` and never cross slots.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for ProtoIterState {}
+
+#[cfg(feature = "owned-tls-cache")]
+static PROTO_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoIterState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(ProtoIterState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static PROTO_ITER: std::cell::UnsafeCell<ProtoIterState> =
         const { std::cell::UnsafeCell::new(ProtoIterState::new()) };
+}
+
+#[inline]
+fn with_proto_iter_state<R>(callback: impl FnOnce(&mut ProtoIterState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PROTO_ITER_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PROTO_ITER.with(|cell| {
+            // SAFETY: PROTO_ITER is per-thread storage and this callback keeps
+            // the mutable reference scoped to the thread-local access.
+            callback(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// Parse the next protocol entry from the reader into the entry_buf.
@@ -17018,12 +17046,9 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
 /// Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
-    PROTO_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
-        match std::fs::File::open(PROTOCOLS_PATH) {
-            Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
-            Err(_) => state.reader = None,
-        }
+    with_proto_iter_state(|state| match std::fs::File::open(PROTOCOLS_PATH) {
+        Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+        Err(_) => state.reader = None,
     });
 }
 
@@ -17032,8 +17057,7 @@ pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
 /// Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endprotoent() {
-    PROTO_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_proto_iter_state(|state| {
         state.reader = None;
     });
 }
@@ -17043,8 +17067,7 @@ pub unsafe extern "C" fn endprotoent() {
 /// Native implementation using thread-local iterator state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotoent() -> *mut c_void {
-    PROTO_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_proto_iter_state(|state| {
         if state.reader.is_none() {
             // Auto-open on first call (glibc behavior)
             match std::fs::File::open(PROTOCOLS_PATH) {
@@ -23554,8 +23577,7 @@ pub unsafe extern "C" fn getprotoent_r(
         return libc::EINVAL;
     }
 
-    PROTO_ITER.with(|cell| {
-        let state = unsafe { &mut *cell.get() };
+    with_proto_iter_state(|state| {
         if state.reader.is_none() {
             match std::fs::File::open(PROTOCOLS_PATH) {
                 Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
