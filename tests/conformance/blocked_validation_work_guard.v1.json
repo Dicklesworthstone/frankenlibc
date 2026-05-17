@@ -1,0 +1,89 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "blocked_validation_work_guard",
+  "bead": "bd-bqh1f",
+  "generated_utc": "2026-05-17T23:27:00Z",
+  "source_commit": "current",
+  "purpose": "No-cargo swarm guard for the state where RCH cargo validation is blocked and validation-dependent beads are already waiting. The guard prevents agents from starting new cargo-backed Rust work when the useful next action is either no-cargo evidence or operator-approved RCH unblock work.",
+  "inputs": {
+    "tracker_jsonl": ".beads/issues.jsonl",
+    "tracker_jsonl_degraded_readiness_checker": "scripts/check_tracker_jsonl_degraded_readiness.sh",
+    "rch_remote_admissibility_checker": "scripts/check_rch_remote_admissibility.sh",
+    "tracker_jsonl_degraded_readiness_report": "target/conformance/tracker_jsonl_degraded_readiness.report.json",
+    "rch_remote_admissibility_report": "target/rch-remote-admissibility/rch_remote_admissibility.report.json"
+  },
+  "guard_contract": {
+    "blocking_issue_id": "bd-716tv",
+    "validation_command": "cargo check -p frankenlibc-abi --features=standalone",
+    "blocked_rch_status": "blocked",
+    "required_blocked_failure_signatures": [
+      "critical_pressure",
+      "no_admissible_workers",
+      "worker_selection_skipped"
+    ],
+    "active_statuses": [
+      "open",
+      "in_progress"
+    ],
+    "blocked_issue_dependency_type": "blocks",
+    "decision_when_safe_ready_exists": "claim_safe_ready_before_new_discovery",
+    "decision_when_rch_admissible": "resume_cargo_validation_queue",
+    "decision_when_rch_blocked_and_dependents_waiting": "avoid_new_cargo_backed_work",
+    "allowed_next_actions_when_blocked": [
+      "refresh read-only RCH evidence",
+      "request exact operator approval for cleanup candidates",
+      "ship no-cargo checker or contract evidence",
+      "close tracker-only work that does not require cargo validation"
+    ],
+    "forbidden_next_actions_when_blocked": [
+      "start new Rust implementation requiring cargo proof",
+      "count local cargo as validation proof",
+      "run cleanup or deletion without exact written approval",
+      "open a feature branch or worktree"
+    ]
+  },
+  "report_contract": {
+    "output_path": "target/conformance/blocked_validation_work_guard.report.json",
+    "must_materialize": [
+      "decision",
+      "safe_ready_count",
+      "permissioned_ready_count",
+      "rch_status",
+      "failure_signatures",
+      "blocked_validation_issue_ids",
+      "allowed_next_actions",
+      "forbidden_next_actions",
+      "negative_controls"
+    ],
+    "status_on_current_blocked_state": "pass"
+  },
+  "negative_controls": [
+    {
+      "control_id": "rch_admissible_changes_decision",
+      "mutation": "set rch status to admissible and clear failure signatures",
+      "expected_decision": "resume_cargo_validation_queue"
+    },
+    {
+      "control_id": "safe_ready_changes_decision",
+      "mutation": "add one safe_ready row",
+      "expected_decision": "claim_safe_ready_before_new_discovery"
+    },
+    {
+      "control_id": "no_waiting_dependents_removes_guard",
+      "mutation": "remove all active issues that depend on bd-716tv",
+      "expected_decision": "no_guard_needed"
+    }
+  ],
+  "validation": {
+    "commands": [
+      "bash -n scripts/check_blocked_validation_work_guard.sh",
+      "jq empty tests/conformance/blocked_validation_work_guard.v1.json",
+      "bash scripts/check_blocked_validation_work_guard.sh",
+      "jq empty target/conformance/blocked_validation_work_guard.report.json",
+      "git diff --check -- scripts/check_blocked_validation_work_guard.sh tests/conformance/blocked_validation_work_guard.v1.json .beads/issues.jsonl",
+      "AGENT_NAME=DarkShore br dep cycles --json"
+    ],
+    "cargo_required": false,
+    "cargo_reason": "This guard is a shell/Python JSON evidence checker and does not touch Rust code or compiled tests."
+  }
+}
