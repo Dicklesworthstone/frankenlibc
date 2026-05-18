@@ -1607,6 +1607,17 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "unknown",
         },
     )
+    require_list_contains(
+        schema,
+        source,
+        "required_failure_signatures",
+        {
+            "critical_pressure",
+            "RCH-E100",
+            "absent_or_non_releasable_ballast",
+            "local_fallback_rejected",
+        },
+    )
     approval_contract = schema.get("approval_request_contract", {})
     if not isinstance(approval_contract, dict):
         add_error(source, "schema_contract_missing_approval_contract", "approval_request_contract must be an object")
