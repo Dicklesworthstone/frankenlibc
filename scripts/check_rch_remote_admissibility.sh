@@ -285,6 +285,13 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
             "status": "not_generated",
             "operator_next_action": "generate_approval_packet",
             "operator_next_command": str(APPROVAL_PACKET_SCRIPT),
+            "packet_candidate_diagnostics": {
+                "status": "not_generated",
+                "candidate_count": 0,
+                "critical_worker_count": 0,
+                "diagnostic_summary": "No pressure approval packet has been generated for this checkout.",
+                "next_action": "generate_approval_packet",
+            },
             "report_path": rel(APPROVAL_PACKET_REPORT),
             "markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
             "current_head": head,
@@ -320,12 +327,24 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         isinstance(row, dict) and row.get("cleanup_executed") is not False
         for row in readiness_rows
     )
+    diagnostics = packet.get("no_candidate_diagnostics")
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    packet_candidate_diagnostics = {
+        "status": diagnostics.get("status", "missing"),
+        "candidate_count": diagnostics.get("candidate_count"),
+        "critical_worker_count": diagnostics.get("critical_worker_count"),
+        "diagnostic_summary": diagnostics.get(
+            "diagnostic_summary",
+            "Pressure packet did not include candidate-discovery diagnostics.",
+        ),
+        "next_action": diagnostics.get("next_action", "inspect_approval_packet_blockers"),
+    }
     if fresh_for_current_head and ready_paths:
         operator_next_action = "request_explicit_cleanup_approval_for_current_ready_paths"
         operator_next_command = None
         current_ready_paths = ready_paths
     elif fresh_for_current_head:
-        operator_next_action = "inspect_approval_packet_blockers"
+        operator_next_action = str(packet_candidate_diagnostics["next_action"])
         operator_next_command = str(APPROVAL_PACKET_MARKDOWN)
         current_ready_paths = []
     else:
@@ -336,6 +355,7 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         "status": "available_current" if fresh_for_current_head else "stale_for_current_head",
         "operator_next_action": operator_next_action,
         "operator_next_command": operator_next_command,
+        "packet_candidate_diagnostics": packet_candidate_diagnostics,
         "packet_id": packet.get("packet_id"),
         "generated_at_utc": packet.get("generated_at_utc"),
         "report_path": rel(APPROVAL_PACKET_REPORT),
@@ -530,6 +550,21 @@ for control in contract.get("negative_controls", []):
             and summary.get("current_ready_for_explicit_user_approval_count") == 0
             and summary.get("current_ready_candidate_paths") == []
             and summary.get("operator_next_action") == "regenerate_approval_packet_for_current_head"
+            else str(summary)
+        )
+    elif control_id == "packet_candidate_diagnostics_missing_is_reported":
+        synthetic = {
+            "packet_id": "synthetic-current-packet-without-diagnostics",
+            "repo_state": {"head_commit": head, "branch": "main"},
+            "approval_readiness": [],
+        }
+        summary = approval_packet_summary(synthetic, head)
+        diagnostics = summary.get("packet_candidate_diagnostics")
+        observed = (
+            "packet_candidate_diagnostics_missing"
+            if isinstance(diagnostics, dict)
+            and diagnostics.get("status") == "missing"
+            and summary.get("operator_next_action") == "inspect_approval_packet_blockers"
             else str(summary)
         )
     else:
