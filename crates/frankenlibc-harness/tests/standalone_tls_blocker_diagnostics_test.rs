@@ -332,7 +332,7 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
         .map(|bucket| as_str(&bucket["owner_bucket"], "owner_bucket").map(str::to_owned))
         .collect::<TestResult<BTreeSet<_>>>()?;
     for expected in [
-        "local_abi_stdio_dlfcn_string_runtime_policy",
+        "local_abi_startup_signal_pwd_grp_unistd_runtime_policy",
         "local_abi_stdio_wchar_locale_dirent_registry",
         "tracing_dispatcher_tls",
         "membrane_ptr_validator_tls",

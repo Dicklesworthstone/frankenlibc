@@ -6,7 +6,6 @@
 
 #![allow(dead_code)]
 
-use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ffi::c_char;
 use std::panic::{self, AssertUnwindSafe};
@@ -15,6 +14,8 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as A
 
 #[cfg(test)]
 use parking_lot::{ReentrantMutex, ReentrantMutexGuard};
+#[cfg(not(feature = "owned-tls-cache"))]
+use std::cell::{Cell, RefCell};
 #[cfg(test)]
 use std::sync::OnceLock;
 
@@ -589,16 +590,15 @@ fn push_mode_event(
 }
 
 fn maybe_log_mode_switch_attempt(cached_mode: SafetyLevel) {
-    let should_check = MODE_SWITCH_THREAD_LOCAL_COUNTER
-        .try_with(|counter| {
-            let next = counter.get().wrapping_add(1);
-            counter.set(next);
-            next.is_multiple_of(MODE_SWITCH_CHECK_STRIDE)
-        })
-        .unwrap_or_else(|_| {
-            let sequence = MODE_SWITCH_CHECK_COUNTER.fetch_add(1, AtomicOrdering::Relaxed) + 1;
-            sequence.is_multiple_of(MODE_SWITCH_CHECK_STRIDE)
-        });
+    let should_check = with_mode_switch_counter(|counter| {
+        let next = counter.wrapping_add(1);
+        *counter = next;
+        next.is_multiple_of(MODE_SWITCH_CHECK_STRIDE)
+    })
+    .unwrap_or_else(|| {
+        let sequence = MODE_SWITCH_CHECK_COUNTER.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+        sequence.is_multiple_of(MODE_SWITCH_CHECK_STRIDE)
+    });
     if !should_check {
         return;
     }
@@ -636,26 +636,24 @@ pub(crate) fn clear_mode_event_log() {
 }
 
 fn load_thread_local_mode_cache() -> Option<SafetyLevel> {
-    MODE_THREAD_LOCAL_CACHE
-        .try_with(|cache| {
-            let cached = cache.get();
-            if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
-                Some(u8_to_mode(cached))
-            } else {
-                None
-            }
-        })
-        .ok()
-        .flatten()
+    with_mode_cache(|cache| {
+        let cached = *cache;
+        if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
+            Some(u8_to_mode(cached))
+        } else {
+            None
+        }
+    })
+    .flatten()
 }
 
 fn store_thread_local_mode_cache(level: SafetyLevel) {
     let mode = mode_to_u8(level);
-    let _ = MODE_THREAD_LOCAL_CACHE.try_with(|cache| cache.set(mode));
+    let _ = with_mode_cache(|cache| *cache = mode);
 }
 
 fn clear_thread_local_mode_cache() {
-    let _ = MODE_THREAD_LOCAL_CACHE.try_with(|cache| cache.set(MODE_UNRESOLVED));
+    let _ = with_mode_cache(|cache| *cache = MODE_UNRESOLVED);
 }
 
 #[must_use]
@@ -795,6 +793,37 @@ impl DecisionExplainability {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+struct RuntimePolicyTls {
+    mode_cache: u8,
+    mode_switch_counter: u64,
+    trace_counter: u64,
+    decision_counter: u64,
+    trace_context: Option<TraceContext>,
+    last_explainability: Option<DecisionExplainability>,
+    policy_reentry_depth: u32,
+    decision_contract_machine: DecisionContractMachine,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+const fn runtime_policy_tls_init() -> RuntimePolicyTls {
+    RuntimePolicyTls {
+        mode_cache: MODE_UNRESOLVED,
+        mode_switch_counter: 0,
+        trace_counter: 0,
+        decision_counter: 0,
+        trace_context: None,
+        last_explainability: None,
+        policy_reentry_depth: 0,
+        decision_contract_machine: DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RUNTIME_POLICY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RuntimePolicyTls> =
+    crate::owned_tls_cache::OwnedTlsCache::new(runtime_policy_tls_init);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static MODE_THREAD_LOCAL_CACHE: Cell<u8> = const { Cell::new(MODE_UNRESOLVED) };
     static MODE_SWITCH_THREAD_LOCAL_COUNTER: Cell<u64> = const { Cell::new(0) };
@@ -807,13 +836,163 @@ thread_local! {
         const { RefCell::new(DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD)) };
 }
 
+fn with_mode_cache<R>(callback: impl FnOnce(&mut u8) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.mode_cache)))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        MODE_THREAD_LOCAL_CACHE
+            .try_with(|cache| {
+                let mut value = cache.get();
+                let result = callback(&mut value);
+                cache.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_mode_switch_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.mode_switch_counter)))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        MODE_SWITCH_THREAD_LOCAL_COUNTER
+            .try_with(|counter| {
+                let mut value = counter.get();
+                let result = callback(&mut value);
+                counter.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_trace_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.trace_counter)))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TRACE_COUNTER
+            .try_with(|counter| {
+                let mut value = counter.get();
+                let result = callback(&mut value);
+                counter.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_decision_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.decision_counter)))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        DECISION_COUNTER
+            .try_with(|counter| {
+                let mut value = counter.get();
+                let result = callback(&mut value);
+                counter.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_trace_context<R>(callback: impl FnOnce(&mut Option<TraceContext>) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.trace_context)))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TRACE_CONTEXT
+            .try_with(|slot| {
+                let mut value = slot.get();
+                let result = callback(&mut value);
+                slot.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_last_explainability<R>(
+    callback: impl FnOnce(&mut Option<DecisionExplainability>) -> R,
+) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.last_explainability)))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        LAST_EXPLAINABILITY
+            .try_with(|slot| {
+                let Ok(mut value) = slot.try_borrow_mut() else {
+                    return None;
+                };
+                Some(callback(&mut value))
+            })
+            .ok()
+            .flatten()
+    }
+}
+
+fn with_policy_reentry_depth<R>(callback: impl FnOnce(&mut u32) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.policy_reentry_depth)))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        POLICY_REENTRY_DEPTH
+            .try_with(|depth| {
+                let mut value = depth.get();
+                let result = callback(&mut value);
+                depth.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_decision_contract_machine<R>(
+    callback: impl FnOnce(&mut DecisionContractMachine) -> R,
+) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.decision_contract_machine)))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        DECISION_CONTRACT_MACHINE
+            .try_with(|slot| {
+                let Ok(mut machine) = slot.try_borrow_mut() else {
+                    return None;
+                };
+                Some(callback(&mut machine))
+            })
+            .ok()
+            .flatten()
+    }
+}
+
 pub(crate) struct EntrypointTraceGuard {
     previous: Option<TraceContext>,
 }
 
 impl Drop for EntrypointTraceGuard {
     fn drop(&mut self) {
-        let _ = TRACE_CONTEXT.try_with(|slot| slot.set(self.previous));
+        let _ = with_trace_context(|slot| *slot = self.previous);
     }
 }
 
@@ -821,33 +1000,27 @@ struct PolicyReentryGuard;
 
 impl Drop for PolicyReentryGuard {
     fn drop(&mut self) {
-        let _ = POLICY_REENTRY_DEPTH.try_with(|depth| {
-            let current = depth.get();
-            depth.set(current.saturating_sub(1));
-        });
+        let _ = with_policy_reentry_depth(|depth| *depth = depth.saturating_sub(1));
     }
 }
 
 #[inline]
 fn enter_policy_reentry_guard() -> Option<PolicyReentryGuard> {
-    POLICY_REENTRY_DEPTH
-        .try_with(|depth| {
-            let current = depth.get();
-            if current > 0 {
-                None
-            } else {
-                depth.set(current + 1);
-                Some(PolicyReentryGuard)
-            }
-        })
-        .unwrap_or(None)
+    with_policy_reentry_depth(|depth| {
+        let current = *depth;
+        if current > 0 {
+            None
+        } else {
+            *depth = current + 1;
+            Some(PolicyReentryGuard)
+        }
+    })
+    .flatten()
 }
 
 #[must_use]
 pub(crate) fn in_policy_reentry_context() -> bool {
-    POLICY_REENTRY_DEPTH
-        .try_with(|depth| depth.get() > 0)
-        .unwrap_or(false)
+    with_policy_reentry_depth(|depth| *depth > 0).unwrap_or(false)
 }
 
 #[must_use]
@@ -861,62 +1034,51 @@ pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
         pcc_index: ffi_pcc_certificate_index_for_symbol(symbol),
     };
 
-    let previous = TRACE_CONTEXT
-        .try_with(|slot| {
-            let prev = slot.get();
-            slot.set(Some(context));
-            prev
-        })
-        .ok()
-        .flatten();
+    let previous = with_trace_context(|slot| {
+        let prev = *slot;
+        *slot = Some(context);
+        prev
+    })
+    .flatten();
 
     EntrypointTraceGuard { previous }
 }
 
 #[must_use]
 pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
-    LAST_EXPLAINABILITY
-        .try_with(|slot| slot.borrow_mut().take())
-        .ok()
-        .flatten()
+    with_last_explainability(Option::take).flatten()
 }
 
 #[must_use]
 pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
-    LAST_EXPLAINABILITY
-        .try_with(|slot| *slot.borrow())
-        .ok()
-        .flatten()
+    with_last_explainability(|slot| *slot).flatten()
 }
 
 fn next_decision_span_seq() -> u64 {
-    DECISION_COUNTER
-        .try_with(|counter| {
-            let next = counter.get().wrapping_add(1);
-            counter.set(next);
-            next
-        })
-        .unwrap_or(0)
+    with_decision_counter(|counter| {
+        let next = counter.wrapping_add(1);
+        *counter = next;
+        next
+    })
+    .unwrap_or(0)
 }
 
 fn next_trace_seq() -> u64 {
-    TRACE_COUNTER
-        .try_with(|counter| {
-            let next = counter.get().wrapping_add(1);
-            counter.set(next);
-            next
-        })
-        .unwrap_or(0)
+    with_trace_counter(|counter| {
+        let next = counter.wrapping_add(1);
+        *counter = next;
+        next
+    })
+    .unwrap_or(0)
 }
 
 fn fallback_trace_context() -> TraceContext {
-    let trace_seq = TRACE_COUNTER
-        .try_with(|counter| {
-            let next = counter.get().wrapping_add(1);
-            counter.set(next);
-            next
-        })
-        .unwrap_or(0);
+    let trace_seq = with_trace_counter(|counter| {
+        let next = counter.wrapping_add(1);
+        *counter = next;
+        next
+    })
+    .unwrap_or(0);
     TraceContext {
         trace_seq,
         symbol: TRACE_UNKNOWN_SYMBOL,
@@ -1049,9 +1211,7 @@ fn write_u32_stderr(mut value: u32) {
 }
 
 fn active_trace_context() -> TraceContext {
-    TRACE_CONTEXT
-        .try_with(|slot| slot.get())
-        .ok()
+    with_trace_context(|slot| *slot)
         .flatten()
         .unwrap_or_else(fallback_trace_context)
 }
@@ -1077,30 +1237,22 @@ fn apply_decision_contract(
     decision: RuntimeDecision,
 ) -> (TsmState, DecisionContractEvent, DecisionContractAction) {
     let mut event = decision_contract_event_for_runtime_decision(decision);
-    DECISION_CONTRACT_MACHINE
-        .try_with(|slot| {
-            let Ok(mut machine) = slot.try_borrow_mut() else {
-                return (
-                    TsmState::Safe,
-                    DecisionContractEvent::CheckPass,
-                    DecisionContractAction::Log,
-                );
-            };
-            let mut transition = machine.observe(event, mode);
+    with_decision_contract_machine(|machine| {
+        let mut transition = machine.observe(event, mode);
 
-            // Hardened repairs require an explicit completion edge from Unsafe -> Safe.
-            if matches!(decision.action, MembraneAction::Repair(_)) {
-                event = DecisionContractEvent::RepairComplete;
-                transition = machine.observe(event, mode);
-            }
+        // Hardened repairs require an explicit completion edge from Unsafe -> Safe.
+        if matches!(decision.action, MembraneAction::Repair(_)) {
+            event = DecisionContractEvent::RepairComplete;
+            transition = machine.observe(event, mode);
+        }
 
-            (transition.to, event, transition.action)
-        })
-        .unwrap_or((
-            TsmState::Safe,
-            DecisionContractEvent::CheckPass,
-            DecisionContractAction::Log,
-        ))
+        (transition.to, event, transition.action)
+    })
+    .unwrap_or((
+        TsmState::Safe,
+        DecisionContractEvent::CheckPass,
+        DecisionContractAction::Log,
+    ))
 }
 
 fn record_last_explainability(
@@ -1135,11 +1287,7 @@ fn record_last_explainability(
         evidence_seqno: decision.evidence_seqno,
     };
 
-    let _ = LAST_EXPLAINABILITY.try_with(|slot| {
-        if let Ok(mut last) = slot.try_borrow_mut() {
-            *last = Some(explainability);
-        }
-    });
+    let _ = with_last_explainability(|slot| *slot = Some(explainability));
 }
 
 fn kernel() -> Option<&'static RuntimeMathKernel> {
@@ -1625,7 +1773,7 @@ pub mod conformance_testing {
     //! These are gated behind the `conformance-testing` feature and should
     //! only be used in test contexts.
 
-    use super::{MODE_HARDENED, MODE_STATE, MODE_STRICT, MODE_THREAD_LOCAL_CACHE, MODE_UNRESOLVED};
+    use super::{MODE_HARDENED, MODE_STATE, MODE_STRICT, MODE_UNRESOLVED, with_mode_cache};
     use std::sync::atomic::Ordering as AtomicOrdering;
 
     pub struct ModeGuard {
@@ -1636,18 +1784,17 @@ pub mod conformance_testing {
     impl Drop for ModeGuard {
         fn drop(&mut self) {
             MODE_STATE.store(self.previous_state, AtomicOrdering::SeqCst);
-            let _ = MODE_THREAD_LOCAL_CACHE.try_with(|cache| cache.set(self.previous_tls));
+            let _ = with_mode_cache(|cache| *cache = self.previous_tls);
         }
     }
 
     pub fn set_hardened_mode() -> ModeGuard {
-        let previous_tls = MODE_THREAD_LOCAL_CACHE
-            .try_with(|cache| {
-                let prev = cache.get();
-                cache.set(MODE_UNRESOLVED);
-                prev
-            })
-            .unwrap_or(MODE_UNRESOLVED);
+        let previous_tls = with_mode_cache(|cache| {
+            let prev = *cache;
+            *cache = MODE_UNRESOLVED;
+            prev
+        })
+        .unwrap_or(MODE_UNRESOLVED);
         let previous_state = MODE_STATE.swap(MODE_HARDENED, AtomicOrdering::SeqCst);
         ModeGuard {
             previous_state,
@@ -1656,13 +1803,12 @@ pub mod conformance_testing {
     }
 
     pub fn set_strict_mode() -> ModeGuard {
-        let previous_tls = MODE_THREAD_LOCAL_CACHE
-            .try_with(|cache| {
-                let prev = cache.get();
-                cache.set(MODE_UNRESOLVED);
-                prev
-            })
-            .unwrap_or(MODE_UNRESOLVED);
+        let previous_tls = with_mode_cache(|cache| {
+            let prev = *cache;
+            *cache = MODE_UNRESOLVED;
+            prev
+        })
+        .unwrap_or(MODE_UNRESOLVED);
         let previous_state = MODE_STATE.swap(MODE_STRICT, AtomicOrdering::SeqCst);
         ModeGuard {
             previous_state,
@@ -1697,20 +1843,18 @@ mod tests {
         fn drop(&mut self) {
             MODE_SWITCH_CHECK_COUNTER.store(self.previous_global, AtomicOrdering::SeqCst);
             if let Some(previous) = self.previous_thread_local {
-                let _ = MODE_SWITCH_THREAD_LOCAL_COUNTER.try_with(|counter| counter.set(previous));
+                let _ = with_mode_switch_counter(|counter| *counter = previous);
             }
         }
     }
 
     fn set_mode_switch_counter_for_tests(value: u64) -> ModeSwitchCounterGuard {
         let previous_global = MODE_SWITCH_CHECK_COUNTER.swap(value, AtomicOrdering::SeqCst);
-        let previous_thread_local = MODE_SWITCH_THREAD_LOCAL_COUNTER
-            .try_with(|counter| {
-                let previous = counter.get();
-                counter.set(value);
-                previous
-            })
-            .ok();
+        let previous_thread_local = with_mode_switch_counter(|counter| {
+            let previous = *counter;
+            *counter = value;
+            previous
+        });
         ModeSwitchCounterGuard {
             previous_global,
             previous_thread_local,
@@ -1732,19 +1876,18 @@ mod tests {
     impl Drop for ModeStateGuard {
         fn drop(&mut self) {
             MODE_STATE.store(self.previous, AtomicOrdering::SeqCst);
-            let _ = MODE_THREAD_LOCAL_CACHE.try_with(|cache| cache.set(self.previous_tls));
+            let _ = with_mode_cache(|cache| *cache = self.previous_tls);
         }
     }
 
     fn set_mode_state_for_tests(state: u8) -> ModeStateGuard {
         let lock = runtime_policy_test_lock();
-        let previous_tls = MODE_THREAD_LOCAL_CACHE
-            .try_with(|cache| {
-                let previous = cache.get();
-                cache.set(MODE_UNRESOLVED);
-                previous
-            })
-            .unwrap_or(MODE_UNRESOLVED);
+        let previous_tls = with_mode_cache(|cache| {
+            let previous = *cache;
+            *cache = MODE_UNRESOLVED;
+            previous
+        })
+        .unwrap_or(MODE_UNRESOLVED);
         let previous = MODE_STATE.swap(state, AtomicOrdering::SeqCst);
         ModeStateGuard {
             _lock: lock,
@@ -1830,8 +1973,8 @@ mod tests {
 
     fn reset_decision_contract_machine_for_tests() {
         let _lock = runtime_policy_test_lock();
-        let _ = DECISION_CONTRACT_MACHINE.try_with(|slot| {
-            *slot.borrow_mut() = DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD);
+        let _ = with_decision_contract_machine(|machine| {
+            *machine = DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD);
         });
     }
 
@@ -1924,9 +2067,7 @@ mod tests {
 
         assert_eq!(mode(), SafetyLevel::Hardened);
 
-        let cached = MODE_THREAD_LOCAL_CACHE
-            .try_with(Cell::get)
-            .unwrap_or(MODE_UNRESOLVED);
+        let cached = with_mode_cache(|cache| *cache).unwrap_or(MODE_UNRESOLVED);
         assert_eq!(
             cached, MODE_HARDENED,
             "resolved mode should be cached in thread-local state"

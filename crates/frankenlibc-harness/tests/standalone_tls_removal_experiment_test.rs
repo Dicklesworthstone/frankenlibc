@@ -27,7 +27,7 @@ const LOCAL_EXEC_LANE: &str = "local-exec-tls-model-probe";
 const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
-const EXPECTED_OWNER_SURFACE_COUNT: usize = 11;
+const EXPECTED_OWNER_SURFACE_COUNT: usize = 12;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -111,6 +111,13 @@ fn abi_ctype_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("ctype_abi.rs")
+}
+
+fn abi_runtime_policy_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("runtime_policy.rs")
 }
 
 fn abi_stdio_path(root: &Path) -> PathBuf {
@@ -651,8 +658,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 64,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, stdio tmpnam/fgetln buffers, and wchar c16 surrogate/fgetwln buffers",
+        substituted == 65,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, stdio tmpnam/fgetln buffers, and wchar c16 surrogate/fgetwln buffers",
     )?;
     require(
         substituted + remaining == total,
@@ -799,6 +806,17 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && ctype.contains("CtypeLocPtrs")
             && ctype.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "ctype ABI must route table-location pointer slots through owned TLS cache",
+    )?;
+
+    let runtime_policy = std::fs::read_to_string(abi_runtime_policy_path(&root))
+        .map_err(|err| format!("read runtime_policy.rs: {err}"))?;
+    require(
+        runtime_policy.contains("RUNTIME_POLICY_OWNED_TLS")
+            && runtime_policy.contains("RuntimePolicyTls")
+            && runtime_policy.contains("with_mode_cache")
+            && runtime_policy.contains("with_decision_contract_machine")
+            && runtime_policy.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "runtime policy must route mode, trace, explainability, reentry, and contract state through owned TLS cache",
     )?;
 
     let stdio = std::fs::read_to_string(abi_stdio_path(&root))
