@@ -1,11 +1,13 @@
-//! Meta-gate: no `tests/conformance/*_cli_contract.v1.json`
-//! manifest contains a JSON-escaped backslash sequence (`\\`)
-//! (bd-gsw2h). CLI contract manifests must use POSIX-style forward
-//! slash paths so evidence remains portable across hosts.
+//! Meta-gate: every `*_cli_contract.v1.json` manifest body contains no
+//! JSON-escaped Windows path-separator (`\\`) sequences (bd-gsw2h).
+//! All manifest paths must remain POSIX-style forward-slash paths so
+//! Linux harness consumers and report renderers do not drift.
 
 use std::path::{Path, PathBuf};
 
 type TestResult<T = ()> = Result<T, String>;
+
+const JSON_ESCAPED_BACKSLASH: &str = r"\\";
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -16,43 +18,58 @@ fn workspace_root() -> TestResult<PathBuf> {
         .ok_or_else(|| format!("could not derive workspace root from {manifest}"))
 }
 
-fn contains_json_escaped_backslash(body: &str) -> bool {
-    body.contains("\\\\")
-}
-
-#[test]
-fn no_cli_contract_manifest_contains_windows_backslash() -> TestResult {
-    let root = workspace_root()?;
+fn cli_contract_manifest_paths(root: &Path) -> TestResult<Vec<PathBuf>> {
     let conformance_dir = root.join("tests").join("conformance");
     let entries = std::fs::read_dir(&conformance_dir)
         .map_err(|e| format!("read_dir {conformance_dir:?}: {e}"))?;
 
-    let mut violations: Vec<String> = Vec::new();
-    let mut checked = 0usize;
+    let mut paths = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| format!("read entry: {e}"))?;
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if !name.ends_with("_cli_contract.v1.json") {
-            continue;
+        if name.ends_with("_cli_contract.v1.json") {
+            paths.push(path);
         }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn first_json_escaped_backslash_offset(body: &str) -> Option<usize> {
+    body.find(JSON_ESCAPED_BACKSLASH)
+}
+
+#[test]
+fn no_cli_contract_manifest_contains_json_escaped_windows_backslash() -> TestResult {
+    let root = workspace_root()?;
+    let manifest_paths = cli_contract_manifest_paths(&root)?;
+
+    let mut violations: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for path in manifest_paths {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         let body = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-        if contains_json_escaped_backslash(&body) {
-            violations.push(format!("{name}: contains JSON-escaped backslash sequence"));
+        if let Some(offset) = first_json_escaped_backslash_offset(&body) {
+            violations.push(format!(
+                "{name}: byte {offset} contains JSON-escaped backslash sequence (`\\\\`)"
+            ));
         }
         checked += 1;
     }
 
     assert!(
         checked >= 30,
-        "expected at least 30 CLI contract manifests; found {checked}"
+        "expected at least 30 cli_contract manifests; found {checked}"
     );
 
     if !violations.is_empty() {
         return Err(format!(
-            "{} CLI contract manifest backslash violation(s):\n  {}",
+            "{} CLI contract manifest Windows-backslash violation(s):\n  {}",
             violations.len(),
             violations.join("\n  ")
         ));
@@ -61,10 +78,22 @@ fn no_cli_contract_manifest_contains_windows_backslash() -> TestResult {
 }
 
 #[test]
-fn backslash_detector_matches_json_escaped_separator() {
-    assert!(contains_json_escaped_backslash(r#"{"path":"foo\\bar"}"#));
-    assert!(!contains_json_escaped_backslash(r#"{"path":"foo/bar"}"#));
-    assert!(!contains_json_escaped_backslash(
-        r#"{"summary":"plain text"}"#
-    ));
+fn json_escaped_backslash_detector_covers_path_shapes() {
+    assert!(
+        first_json_escaped_backslash_offset(r#"{"path":"C:\\tmp\\cli_contract.v1.json"}"#)
+            .is_some()
+    );
+    assert!(
+        first_json_escaped_backslash_offset(
+            r#"{"path":"tests\\conformance\\foo_cli_contract.v1.json"}"#
+        )
+        .is_some()
+    );
+    assert!(
+        first_json_escaped_backslash_offset(
+            r#"{"path":"tests/conformance/foo_cli_contract.v1.json"}"#
+        )
+        .is_none()
+    );
+    assert!(first_json_escaped_backslash_offset(r#"{"note":"line\nbreak escape only"}"#).is_none());
 }
