@@ -2,7 +2,7 @@
   "schema_version": "v1",
   "manifest_id": "blocked_validation_work_guard",
   "bead": "bd-bqh1f",
-  "generated_utc": "2026-05-17T23:27:00Z",
+  "generated_utc": "2026-05-18T00:32:00Z",
   "source_commit": "current",
   "purpose": "No-cargo swarm guard for the state where RCH cargo validation is blocked and validation-dependent beads are already waiting. The guard prevents agents from starting new cargo-backed Rust work when the useful next action is either no-cargo evidence or operator-approved RCH unblock work.",
   "inputs": {
@@ -26,11 +26,13 @@
       "in_progress"
     ],
     "blocked_issue_dependency_type": "blocks",
+    "decision_when_stale_in_progress_exists": "recover_stale_in_progress_before_new_discovery",
     "decision_when_safe_ready_exists": "claim_safe_ready_before_new_discovery",
     "decision_when_rch_admissible": "resume_cargo_validation_queue",
     "decision_when_rch_blocked_and_dependents_waiting": "avoid_new_cargo_backed_work",
     "allowed_next_actions_when_blocked": [
       "refresh read-only RCH evidence",
+      "recover stale in-progress beads before new discovery",
       "request exact operator approval for cleanup candidates",
       "ship no-cargo checker or contract evidence",
       "close tracker-only work that does not require cargo validation"
@@ -46,6 +48,8 @@
     "output_path": "target/conformance/blocked_validation_work_guard.report.json",
     "must_materialize": [
       "decision",
+      "stale_in_progress_count",
+      "stale_in_progress_ids",
       "safe_ready_count",
       "permissioned_ready_count",
       "rch_status",
@@ -67,6 +71,11 @@
       "control_id": "safe_ready_changes_decision",
       "mutation": "add one safe_ready row",
       "expected_decision": "claim_safe_ready_before_new_discovery"
+    },
+    {
+      "control_id": "stale_in_progress_changes_decision",
+      "mutation": "add one stale_in_progress row",
+      "expected_decision": "recover_stale_in_progress_before_new_discovery"
     },
     {
       "control_id": "no_waiting_dependents_removes_guard",

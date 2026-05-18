@@ -160,6 +160,9 @@ def active_bd716_dependents(rows, guard):
 
 
 def decide(readiness, rch, dependents, guard):
+    stale_in_progress = readiness.get("stale_in_progress", [])
+    if not isinstance(stale_in_progress, list):
+        stale_in_progress = []
     safe_ready = readiness.get("safe_ready", [])
     if not isinstance(safe_ready, list):
         safe_ready = []
@@ -167,6 +170,8 @@ def decide(readiness, rch, dependents, guard):
     required_signatures = set(guard.get("required_blocked_failure_signatures", []))
     rch_status = rch.get("status")
     rch_blocked = rch_status == guard.get("blocked_rch_status") and required_signatures.issubset(signatures)
+    if stale_in_progress:
+        return guard.get("decision_when_stale_in_progress_exists")
     if safe_ready:
         return guard.get("decision_when_safe_ready_exists")
     if rch_status == "admissible":
@@ -250,6 +255,15 @@ for control in contract.get("negative_controls", []):
                 "permission_required": False,
             }
         ]
+    elif control_id == "stale_in_progress_changes_decision":
+        mutated_readiness["stale_in_progress"] = [
+            {
+                "id": "bd-example-stale",
+                "title": "synthetic stale in-progress row",
+                "status": "in_progress",
+                "latest_activity_source": "updated_at",
+            }
+        ]
     elif control_id == "no_waiting_dependents_removes_guard":
         mutated_dependents = []
     else:
@@ -273,6 +287,9 @@ safe_ready = readiness.get("safe_ready") if isinstance(readiness.get("safe_ready
 permissioned_ready = (
     readiness.get("permissioned_ready") if isinstance(readiness.get("permissioned_ready"), list) else []
 )
+stale_in_progress = (
+    readiness.get("stale_in_progress") if isinstance(readiness.get("stale_in_progress"), list) else []
+)
 report = {
     "schema_version": "blocked_validation_work_guard.report.v1",
     "bead": "bd-bqh1f",
@@ -284,6 +301,8 @@ report = {
     "safe_ready_ids": [row.get("id") for row in safe_ready if isinstance(row, dict)],
     "permissioned_ready_count": len(permissioned_ready),
     "permissioned_ready_ids": [row.get("id") for row in permissioned_ready if isinstance(row, dict)],
+    "stale_in_progress_count": len(stale_in_progress),
+    "stale_in_progress_ids": [row.get("id") for row in stale_in_progress if isinstance(row, dict)],
     "rch_status": rch.get("status"),
     "failure_signatures": sorted(signatures),
     "blocked_validation_issue_ids": [row.get("id") for row in dependents],
