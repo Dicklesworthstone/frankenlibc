@@ -180,6 +180,39 @@ def projected_ids(rows: list[dict[str, Any]]) -> list[str]:
     return [str(row["id"]) for row in rows if isinstance(row.get("id"), str)]
 
 
+def blocker_chokepoints(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        blockers = row.get("blockers")
+        if not isinstance(blockers, list):
+            continue
+        for blocker in blockers:
+            if not isinstance(blocker, dict) or not isinstance(blocker.get("id"), str):
+                continue
+            blocker_id = str(blocker["id"])
+            entry = counts.setdefault(
+                blocker_id,
+                {
+                    "id": blocker_id,
+                    "blocked_open_count": 0,
+                    "status": blocker.get("status"),
+                    "reason": blocker.get("reason"),
+                },
+            )
+            entry["blocked_open_count"] += 1
+            if entry.get("status") is None:
+                entry["status"] = blocker.get("status")
+            if entry.get("reason") is None:
+                entry["reason"] = blocker.get("reason")
+    return sorted(
+        counts.values(),
+        key=lambda item: (
+            -int(item.get("blocked_open_count", 0)),
+            str(item.get("id", "")),
+        ),
+    )
+
+
 def is_container_parent(issue: dict[str, Any]) -> bool:
     return issue.get("issue_type") == "epic"
 
@@ -534,6 +567,7 @@ contract = load_json(CONTRACT)
 rows = load_jsonl(ISSUES)
 errors = validate_contract(contract)
 analysis = analyze(rows, contract)
+blocked_chokepoints = blocker_chokepoints(analysis["blocked_open"])
 stdout_summary = {
     "safe_ready": analysis["summary"]["safe_ready_total"],
     "safe_ready_ids": projected_ids(analysis["safe_ready"]),
@@ -543,6 +577,8 @@ stdout_summary = {
     "stale_in_progress_ids": projected_ids(analysis["stale_in_progress"]),
     "blocked_open": analysis["summary"]["blocked_open_total"],
     "blocked_open_ids": projected_ids(analysis["blocked_open"]),
+    "blocked_by_counts": blocked_chokepoints,
+    "top_blocker_ids": [str(row["id"]) for row in blocked_chokepoints[:5]],
 }
 negative_controls = run_negative_controls(rows, contract)
 required_controls = {str(name) for name in contract.get("required_negative_controls", [])}
