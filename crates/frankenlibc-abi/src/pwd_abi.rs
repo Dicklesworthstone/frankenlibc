@@ -105,6 +105,13 @@ struct PwdStorage {
     last_io_error: Option<c_int>,
 }
 
+#[cfg(feature = "owned-tls-cache")]
+// SAFETY: PwdStorage is accessed through OwnedTlsCache, which serializes access
+// and keeps each per-thread value boxed. The raw pointers stored in `pw` only
+// point into the same boxed PwdStorage buffer and are refreshed before they are
+// returned to callers.
+unsafe impl Send for PwdStorage {}
+
 impl PwdStorage {
     fn new() -> Self {
         Self::new_with_path(Self::configured_source_path())
@@ -284,40 +291,56 @@ impl PwdStorage {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static PWD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<PwdStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(PwdStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static PWD_TLS: RefCell<PwdStorage> = RefCell::new(PwdStorage::new());
+}
+
+fn with_pwd_storage<R>(callback: impl FnOnce(&mut PwdStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PWD_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PWD_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
 }
 
 /// Fill thread-local passwd struct from a parsed entry.
 /// Used by `fgetpwent` in `unistd_abi` to avoid duplicating TLS storage.
 pub(crate) fn fill_passwd_from_entry(entry: &frankenlibc_core::pwd::Passwd) -> *mut libc::passwd {
-    PWD_TLS.with(|cell| cell.borrow_mut().fill_from(entry))
+    with_pwd_storage(|storage| storage.fill_from(entry))
 }
 
 fn lookup_passwd_by_name(name: &[u8]) -> Option<frankenlibc_core::pwd::Passwd> {
-    PWD_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_pwd_storage(|storage| {
         storage.refresh_cache();
         frankenlibc_core::pwd::lookup_by_name(storage.current_content(), name)
     })
 }
 
 fn lookup_passwd_by_uid(uid: u32) -> Option<frankenlibc_core::pwd::Passwd> {
-    PWD_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_pwd_storage(|storage| {
         storage.refresh_cache();
         frankenlibc_core::pwd::lookup_by_uid(storage.current_content(), uid)
     })
 }
 
 fn passwd_backend_io_error() -> Option<c_int> {
-    PWD_TLS.with(|cell| cell.borrow().backend_io_error())
+    with_pwd_storage(|storage| storage.backend_io_error())
 }
 
 /// Read /etc/passwd and look up by name, returning a pointer to thread-local storage.
 fn do_getpwnam(name: &[u8]) -> *mut libc::passwd {
-    PWD_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_pwd_storage(|storage| {
         storage.refresh_cache();
         match frankenlibc_core::pwd::lookup_by_name(storage.current_content(), name) {
             Some(entry) => storage.fill_from(&entry),
@@ -328,8 +351,7 @@ fn do_getpwnam(name: &[u8]) -> *mut libc::passwd {
 
 /// Read /etc/passwd and look up by uid, returning a pointer to thread-local storage.
 fn do_getpwuid(uid: u32) -> *mut libc::passwd {
-    PWD_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_pwd_storage(|storage| {
         storage.refresh_cache();
         match frankenlibc_core::pwd::lookup_by_uid(storage.current_content(), uid) {
             Some(entry) => storage.fill_from(&entry),
@@ -390,8 +412,7 @@ pub unsafe extern "C" fn getpwuid(uid: libc::uid_t) -> *mut libc::passwd {
 /// POSIX `setpwent` — rewind the passwd iteration cursor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpwent() {
-    PWD_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_pwd_storage(|storage| {
         storage.refresh_cache();
         storage.rebuild_entries();
     });
@@ -400,8 +421,7 @@ pub unsafe extern "C" fn setpwent() {
 /// POSIX `endpwent` — close the passwd enumeration and free cached data.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endpwent() {
-    PWD_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_pwd_storage(|storage| {
         if storage.file_cache.is_some() || !storage.entries.is_empty() {
             storage.cache_metrics.invalidations += 1;
         }
@@ -417,8 +437,7 @@ pub unsafe extern "C" fn endpwent() {
 /// POSIX `getpwent` — return the next passwd entry in iteration order.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpwent() -> *mut libc::passwd {
-    PWD_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_pwd_storage(|storage| {
         storage.refresh_cache();
 
         // If entries haven't been loaded, call setpwent implicitly.
@@ -655,8 +674,7 @@ pub unsafe extern "C" fn getpwent_r(
         return libc::EINVAL;
     }
 
-    PWD_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_pwd_storage(|storage| {
         storage.refresh_cache();
 
         if (storage.entries.is_empty() && storage.iter_idx == 0)

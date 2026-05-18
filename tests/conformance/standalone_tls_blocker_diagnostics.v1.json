@@ -3,7 +3,7 @@
   "manifest_id": "standalone-tls-blocker-diagnostics",
   "bead": "bd-zyck1.89",
   "source_commit": "current",
-  "source_commit_hint": "19f9470a7d77",
+  "source_commit_hint": "35a12762b233",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -11,7 +11,7 @@
     "diagnostic_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_standalone_tls_blocker_diagnostics"
   },
-  "generated_utc": "2026-05-18T09:29:28Z",
+  "generated_utc": "2026-05-18T10:08:02Z",
   "purpose": "Report-only diagnostic that traces the current standalone forge __tls_get_addr@GLIBC_2.3 blocker back to FrankenLibC TLS source surfaces. It preserves the current replacement claim boundary while giving follow-up work a machine-checkable source and artifact control gate.",
   "inputs": {
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
@@ -104,11 +104,11 @@
   },
   "owned_tls_cache_artifact_probe": {
     "source_commit": "current",
-    "probe_scope": "release standalone owned-tls-cache frankenlibc-abi cdylib after resolver, glibc-internal, errno, dlfcn, dirent readdir, ctype table-location, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln, wchar C16/fgetwln, stdlib getusershell/qecvt/qfcvt, group ABI non-reentrant storage, malloc thread-cache, and fixed-buffer OwnedTlsCache migrations",
-    "latest_probe_command": "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_grp_artifact rch exec -- cargo build -p frankenlibc-abi --release --features=standalone,owned-tls-cache",
+    "probe_scope": "release standalone owned-tls-cache frankenlibc-abi cdylib after resolver, glibc-internal, errno, dlfcn, dirent readdir, ctype table-location, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln, wchar C16/fgetwln, stdlib getusershell/qecvt/qfcvt, group ABI non-reentrant storage, passwd ABI non-reentrant storage, malloc thread-cache, and fixed-buffer OwnedTlsCache migrations",
+    "latest_probe_command": "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_pwd_artifact rch exec -- cargo build -p frankenlibc-abi --release --features=standalone,owned-tls-cache",
     "latest_probe_result": "pass_remote",
-    "latest_probe_artifact": "/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_grp_artifact/release/libfrankenlibc_abi.so",
-    "latest_probe_artifact_sha256": "9358d8f78aa772fb80bc0c0c90cc753625e562be1df38d9537ec79cf4a8880fd",
+    "latest_probe_artifact": "/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_pwd_artifact/release/libfrankenlibc_abi.so",
+    "latest_probe_artifact_sha256": "2f49b9e8a1001bf9e542c3b041bce08b67db7fc5a7c320f164d5ba7f75dd5b92",
     "observed_artifact_symbols": {
       "undefined_tls_symbols": [
         "__tls_get_addr@GLIBC_2.3"
@@ -135,18 +135,18 @@
     },
     "tls_descriptor_buckets": [
       {
-        "descriptor_offset": "31ee98",
+        "descriptor_offset": "3201f8",
         "owner_bucket": "local_abi_startup_signal_pwd_grp_unistd_runtime_policy",
         "observed_call_site_examples": [
           "runtime_policy OwnedTlsCache<RuntimePolicyTls> call sites still adjacent to Rust panic/catch-unwind TLS",
           "startup_abi thread-at-exit owned cache call sites",
           "signal_abi critical-section and deferred-signal state",
-          "pwd_abi and grp_abi reentrant scratch state",
+          "pwd_abi and grp_abi owned-cache storage call sites",
           "unistd_abi resolver, service, and network iterator state"
         ]
       },
       {
-        "descriptor_offset": "3201d0",
+        "descriptor_offset": "321548",
         "owner_bucket": "local_abi_stdio_wchar_locale_dirent_registry",
         "observed_call_site_examples": [
           "stdio_abi::registry",
@@ -156,28 +156,28 @@
         ]
       },
       {
-        "descriptor_offset": "321590",
+        "descriptor_offset": "322920",
         "owner_bucket": "tracing_dispatcher_tls",
         "observed_call_site_examples": [
           "tracing_core::dispatcher::get_default"
         ]
       },
       {
-        "descriptor_offset": "321a20",
+        "descriptor_offset": "322db0",
         "owner_bucket": "membrane_ptr_validator_tls",
         "observed_call_site_examples": [
           "frankenlibc_membrane::ptr_validator::ValidationPipeline::validate"
         ]
       },
       {
-        "descriptor_offset": "321bf8",
+        "descriptor_offset": "322f88",
         "owner_bucket": "rust_library_internal_tls",
         "observed_call_site_examples": [
           "mangled Rust library internal call sites without direct FrankenLibC owner names"
         ]
       },
       {
-        "descriptor_offset": "321d50",
+        "descriptor_offset": "3230e0",
         "owner_bucket": "rust_std_thread_current_panic_tls",
         "observed_call_site_examples": [
           "std::thread::current",
@@ -185,21 +185,21 @@
         ]
       },
       {
-        "descriptor_offset": "321d98",
+        "descriptor_offset": "323128",
         "owner_bucket": "rust_std_thread_current_tls",
         "observed_call_site_examples": [
           "std::thread::current"
         ]
       },
       {
-        "descriptor_offset": "321e48",
+        "descriptor_offset": "3231d8",
         "owner_bucket": "rust_std_panic_thread_tls",
         "observed_call_site_examples": [
           "std panic and stack-overflow thread metadata paths"
         ]
       }
     ],
-    "classification": "The group ABI source migration removes the direct non-reentrant getgrnam/getgrgid/getgrent Rust thread_local fallback under owned-tls-cache, joining the prior startup, signal, stdio, wchar, stdlib, malloc, and fixed-buffer migrations, but artifact-level __tls_get_addr remains. The remaining blocker spans local ABI registries, Rust panic/catch-unwind TLS, tracing, membrane pointer validation, and Rust std/library TLS descriptors, so bd-c51oi remains claim-blocked until artifact-level nm/readelf controls are empty."
+    "classification": "The passwd ABI source migration removes the direct non-reentrant getpwnam/getpwuid/getpwent Rust thread_local fallback under owned-tls-cache, joining the prior group, startup, signal, stdio, wchar, stdlib, malloc, and fixed-buffer migrations, but artifact-level __tls_get_addr remains. The remaining blocker spans local ABI registries, Rust panic/catch-unwind TLS, tracing, membrane pointer validation, and Rust std/library TLS descriptors, so bd-c51oi remains claim-blocked until artifact-level nm/readelf controls are empty."
   },
   "source_surface_scan": {
     "source_scan_command": "rg -n \"^[[:space:]]*(std::)?thread_local!\" crates/frankenlibc-abi/src crates/frankenlibc-core/src crates/frankenlibc-membrane/src -g'*.rs'",
@@ -322,9 +322,9 @@
         "owner_surface": "abi_passwd_reentrant_storage",
         "thread_local_macro_count": 3,
         "line_numbers": [
-          287,
-          708,
-          1023
+          299,
+          726,
+          1041
         ]
       },
       {

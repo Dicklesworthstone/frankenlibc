@@ -178,6 +178,49 @@ fn getpwnam_missing_backend_sets_errno() {
     });
 }
 
+#[test]
+fn non_reentrant_passwd_storage_is_thread_local() {
+    with_passwd_file(FIXTURE, || {
+        unsafe { endpwent() };
+        let name = CString::new("root").unwrap();
+        let main_entry = unsafe { getpwnam(name.as_ptr()) };
+        assert!(
+            !main_entry.is_null(),
+            "main thread getpwnam(root) should succeed"
+        );
+        let main_ptr = main_entry as usize;
+
+        let worker_ptr = std::thread::spawn(|| {
+            let name = CString::new("alice").unwrap();
+            let entry = unsafe { getpwnam(name.as_ptr()) };
+            assert!(
+                !entry.is_null(),
+                "worker thread getpwnam(alice) should succeed"
+            );
+            let passwd = unsafe { &*entry };
+            let name = unsafe { CStr::from_ptr(passwd.pw_name) };
+            assert_eq!(name.to_bytes(), b"alice");
+            entry as usize
+        })
+        .join()
+        .expect("worker thread should complete");
+
+        assert_ne!(
+            main_ptr, worker_ptr,
+            "non-reentrant passwd storage must be isolated per thread"
+        );
+        let main_after = unsafe { &*main_entry };
+        let main_name = unsafe { CStr::from_ptr(main_after.pw_name) };
+        assert_eq!(
+            main_name.to_bytes(),
+            b"root",
+            "worker lookup must not overwrite main thread passwd storage"
+        );
+
+        unsafe { endpwent() };
+    });
+}
+
 // ---------------------------------------------------------------------------
 // getpwuid
 // ---------------------------------------------------------------------------
