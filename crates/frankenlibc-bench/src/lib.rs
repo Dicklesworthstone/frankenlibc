@@ -3,7 +3,7 @@
 //! Individual Criterion entrypoints live in `benches/`. This library keeps
 //! the benchmark artifact/report plumbing testable from ordinary unit tests.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, create_dir_all};
 use std::io::{self, Write};
 use std::path::Path;
@@ -12,6 +12,8 @@ pub const METADATA_BENCH_SCHEMA_VERSION: &str = "v1";
 pub const METADATA_BENCH_BEAD_ID: &str = "bd-3aof.3";
 pub const GLIBC_BASELINE_SCHEMA_VERSION: &str = "v1";
 pub const GLIBC_BASELINE_BEAD_ID: &str = "bd-bp8fl.8.3";
+pub const STRICT_HARDENED_OVERHEAD_SCHEMA_VERSION: &str = "v1";
+pub const STRICT_HARDENED_OVERHEAD_BEAD_ID: &str = "bd-wpr1n";
 
 /// Concrete implementation under comparison for metadata-read benchmarks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -566,6 +568,433 @@ pub fn glibc_baseline_markdown(records: &[GlibcBaselineRecord]) -> String {
     body
 }
 
+/// Runtime mode covered by the strict/hardened membrane-overhead harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum StrictHardenedOverheadMode {
+    Strict,
+    Hardened,
+}
+
+impl StrictHardenedOverheadMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Hardened => "hardened",
+        }
+    }
+}
+
+pub const STRICT_HARDENED_OVERHEAD_MODES: [StrictHardenedOverheadMode; 2] = [
+    StrictHardenedOverheadMode::Strict,
+    StrictHardenedOverheadMode::Hardened,
+];
+
+/// Execution lane for the membrane-overhead harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum StrictHardenedOverheadLane {
+    Smoke,
+    Full,
+}
+
+impl StrictHardenedOverheadLane {
+    #[must_use]
+    pub fn from_str_loose(value: &str) -> Self {
+        match value.to_ascii_lowercase().as_str() {
+            "full" | "release" => Self::Full,
+            _ => Self::Smoke,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Smoke => "smoke",
+            Self::Full => "full",
+        }
+    }
+
+    #[must_use]
+    pub const fn sample_count(self) -> usize {
+        match self {
+            Self::Smoke => 8,
+            Self::Full => 64,
+        }
+    }
+
+    #[must_use]
+    pub const fn inner_iterations(self) -> usize {
+        match self {
+            Self::Smoke => 128,
+            Self::Full => 1024,
+        }
+    }
+}
+
+/// Representative ABI family measured by the overhead harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum StrictHardenedOverheadFamily {
+    StringMemory,
+    Allocator,
+    StdioBuffer,
+    PthreadSync,
+    Ctype,
+    MathFenv,
+    RuntimeMath,
+}
+
+impl StrictHardenedOverheadFamily {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StringMemory => "string_memory",
+            Self::Allocator => "allocator",
+            Self::StdioBuffer => "stdio_buffer",
+            Self::PthreadSync => "pthread_sync",
+            Self::Ctype => "ctype",
+            Self::MathFenv => "math_fenv",
+            Self::RuntimeMath => "runtime_math",
+        }
+    }
+
+    #[must_use]
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::StringMemory => "memcpy",
+            Self::Allocator => "malloc/free",
+            Self::StdioBuffer => "fwrite",
+            Self::PthreadSync => "pthread_mutex_lock",
+            Self::Ctype => "isalpha",
+            Self::MathFenv => "sin",
+            Self::RuntimeMath => "RuntimeMathKernel::decide",
+        }
+    }
+
+    #[must_use]
+    pub const fn workload(self) -> &'static str {
+        match self {
+            Self::StringMemory => "64-byte copy plus membrane decision",
+            Self::Allocator => "small allocation lifetime plus membrane decision",
+            Self::StdioBuffer => "buffer append plus membrane decision",
+            Self::PthreadSync => "mutex fast path plus membrane decision",
+            Self::Ctype => "ASCII classifier plus membrane decision",
+            Self::MathFenv => "scalar f64 math plus membrane decision",
+            Self::RuntimeMath => "pointer-validation control decision",
+        }
+    }
+}
+
+pub const STRICT_HARDENED_OVERHEAD_FAMILIES: [StrictHardenedOverheadFamily; 7] = [
+    StrictHardenedOverheadFamily::StringMemory,
+    StrictHardenedOverheadFamily::Allocator,
+    StrictHardenedOverheadFamily::StdioBuffer,
+    StrictHardenedOverheadFamily::PthreadSync,
+    StrictHardenedOverheadFamily::Ctype,
+    StrictHardenedOverheadFamily::MathFenv,
+    StrictHardenedOverheadFamily::RuntimeMath,
+];
+
+#[must_use]
+pub const fn required_strict_hardened_overhead_families(
+    _lane: StrictHardenedOverheadLane,
+) -> &'static [StrictHardenedOverheadFamily] {
+    &STRICT_HARDENED_OVERHEAD_FAMILIES
+}
+
+/// One strict/hardened overhead harness measurement row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrictHardenedOverheadRecord {
+    pub trace_id: String,
+    pub lane: StrictHardenedOverheadLane,
+    pub runtime_mode: StrictHardenedOverheadMode,
+    pub api_family: StrictHardenedOverheadFamily,
+    pub symbol: String,
+    pub workload: String,
+    pub raw_timings_ns: Vec<u64>,
+    pub sample_count: usize,
+    pub p50_ns_op: f64,
+    pub p95_ns_op: f64,
+    pub p99_ns_op: f64,
+    pub mean_ns_op: f64,
+    pub cv_pct: f64,
+    pub throughput_ops_s: f64,
+    pub command: String,
+    pub worker_id: String,
+    pub cpu_model: String,
+    pub source_commit: String,
+    pub target_dir: String,
+    pub artifact_refs: Vec<String>,
+    pub decision_count: u64,
+    pub missing_decision_telemetry: bool,
+}
+
+#[must_use]
+pub fn mean_latency_ns(samples: &[u64]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    samples.iter().map(|&value| value as f64).sum::<f64>() / samples.len() as f64
+}
+
+pub fn validate_strict_hardened_overhead_records(
+    records: &[StrictHardenedOverheadRecord],
+    lane: StrictHardenedOverheadLane,
+) -> Result<(), String> {
+    if records.is_empty() {
+        return Err(String::from("strict/hardened overhead record set is empty"));
+    }
+
+    let mut coverage = BTreeSet::new();
+    for record in records {
+        if record.lane != lane {
+            return Err(format!(
+                "{} has lane {}, expected {}",
+                record.trace_id,
+                record.lane.as_str(),
+                lane.as_str()
+            ));
+        }
+        if record.trace_id.trim().is_empty() {
+            return Err(String::from("record has empty trace_id"));
+        }
+        if record.symbol.trim().is_empty() {
+            return Err(format!("{} missing symbol", record.trace_id));
+        }
+        if record.workload.trim().is_empty() {
+            return Err(format!("{} missing workload", record.trace_id));
+        }
+        if record.command.trim().is_empty() {
+            return Err(format!("{} missing command transcript", record.trace_id));
+        }
+        if record.worker_id.trim().is_empty() {
+            return Err(format!("{} missing worker_id", record.trace_id));
+        }
+        if record.cpu_model.trim().is_empty() {
+            return Err(format!("{} missing cpu_model", record.trace_id));
+        }
+        if record.source_commit.trim().is_empty() {
+            return Err(format!("{} missing source_commit", record.trace_id));
+        }
+        if record.target_dir.trim().is_empty() {
+            return Err(format!("{} missing target_dir", record.trace_id));
+        }
+        if record.artifact_refs.is_empty()
+            || record
+                .artifact_refs
+                .iter()
+                .any(|path| path.trim().is_empty())
+        {
+            return Err(format!("{} missing artifact refs", record.trace_id));
+        }
+        if record.sample_count == 0 || record.raw_timings_ns.is_empty() {
+            return Err(format!("{} has no timing samples", record.trace_id));
+        }
+        if record.sample_count != record.raw_timings_ns.len() {
+            return Err(format!(
+                "{} sample_count {} does not match raw timing length {}",
+                record.trace_id,
+                record.sample_count,
+                record.raw_timings_ns.len()
+            ));
+        }
+        if record.raw_timings_ns.contains(&0) {
+            return Err(format!(
+                "{} contains zero-ns timing sample",
+                record.trace_id
+            ));
+        }
+        if !record.p50_ns_op.is_finite()
+            || !record.p95_ns_op.is_finite()
+            || !record.p99_ns_op.is_finite()
+            || !record.mean_ns_op.is_finite()
+            || !record.cv_pct.is_finite()
+            || !record.throughput_ops_s.is_finite()
+        {
+            return Err(format!("{} contains non-finite metric", record.trace_id));
+        }
+        if record.mean_ns_op <= 0.0 || record.throughput_ops_s <= 0.0 {
+            return Err(format!(
+                "{} contains non-positive throughput",
+                record.trace_id
+            ));
+        }
+        if record.decision_count < record.sample_count as u64 {
+            return Err(format!(
+                "{} decision telemetry count {} is below sample count {}",
+                record.trace_id, record.decision_count, record.sample_count
+            ));
+        }
+        if record.missing_decision_telemetry {
+            return Err(format!(
+                "{} reports missing decision telemetry",
+                record.trace_id
+            ));
+        }
+
+        coverage.insert((record.runtime_mode, record.api_family));
+    }
+
+    for mode in STRICT_HARDENED_OVERHEAD_MODES {
+        for family in required_strict_hardened_overhead_families(lane) {
+            if !coverage.contains(&(mode, *family)) {
+                return Err(format!(
+                    "missing {} {} overhead row",
+                    mode.as_str(),
+                    family.as_str()
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[must_use]
+pub fn strict_hardened_overhead_json(records: &[StrictHardenedOverheadRecord]) -> String {
+    let mut body = format!(
+        "{{\n  \"schema_version\": \"{}\",\n  \"bead_id\": \"{}\",\n  \"record_count\": {},\n  \"required_modes\": [\"strict\", \"hardened\"],\n  \"records\": [\n",
+        STRICT_HARDENED_OVERHEAD_SCHEMA_VERSION,
+        STRICT_HARDENED_OVERHEAD_BEAD_ID,
+        records.len()
+    );
+    for (idx, record) in records.iter().enumerate() {
+        let comma = if idx + 1 == records.len() { "" } else { "," };
+        body.push_str("    ");
+        body.push_str(&strict_hardened_overhead_record_json(record));
+        body.push_str(comma);
+        body.push('\n');
+    }
+    body.push_str("  ]\n}\n");
+    body
+}
+
+#[must_use]
+pub fn strict_hardened_overhead_jsonl(records: &[StrictHardenedOverheadRecord]) -> String {
+    let mut body = String::new();
+    for record in records {
+        body.push_str(&strict_hardened_overhead_record_json(record));
+        body.push('\n');
+    }
+    body
+}
+
+#[must_use]
+pub fn strict_hardened_overhead_dat(records: &[StrictHardenedOverheadRecord]) -> String {
+    let mut body = String::from(
+        "# lane mode family symbol samples p50_ns p95_ns p99_ns mean_ns throughput_ops_s decisions\n",
+    );
+    for record in records {
+        body.push_str(&format!(
+            "{} {} {} {} {} {:.3} {:.3} {:.3} {:.3} {:.3} {}\n",
+            record.lane.as_str(),
+            record.runtime_mode.as_str(),
+            record.api_family.as_str(),
+            record.symbol,
+            record.sample_count,
+            record.p50_ns_op,
+            record.p95_ns_op,
+            record.p99_ns_op,
+            record.mean_ns_op,
+            record.throughput_ops_s,
+            record.decision_count
+        ));
+    }
+    body
+}
+
+/// Write the strict/hardened membrane-overhead artifact bundle into `out_dir`.
+pub fn write_strict_hardened_overhead_artifacts(
+    records: &[StrictHardenedOverheadRecord],
+    out_dir: &Path,
+) -> io::Result<Vec<String>> {
+    create_dir_all(out_dir)?;
+    let json_path = out_dir.join("strict_hardened_membrane_overhead.v1.json");
+    let jsonl_path = out_dir.join("strict_hardened_membrane_overhead.v1.jsonl");
+    let dat_path = out_dir.join("strict_hardened_membrane_overhead_summary.dat");
+
+    write_file(&json_path, &strict_hardened_overhead_json(records))?;
+    write_file(&jsonl_path, &strict_hardened_overhead_jsonl(records))?;
+    write_file(&dat_path, &strict_hardened_overhead_dat(records))?;
+
+    Ok(vec![
+        json_path.display().to_string(),
+        jsonl_path.display().to_string(),
+        dat_path.display().to_string(),
+    ])
+}
+
+fn strict_hardened_overhead_record_json(record: &StrictHardenedOverheadRecord) -> String {
+    format!(
+        "{{\"trace_id\":{},\"schema_version\":\"{}\",\"bead_id\":\"{}\",\"lane\":\"{}\",\"runtime_mode\":\"{}\",\"api_family\":\"{}\",\"symbol\":{},\"workload\":{},\"raw_timings_ns\":{},\"sample_count\":{},\"p50_ns_op\":{:.3},\"p95_ns_op\":{:.3},\"p99_ns_op\":{:.3},\"mean_ns_op\":{:.3},\"cv_pct\":{:.3},\"throughput_ops_s\":{:.3},\"command\":{},\"worker_id\":{},\"cpu_model\":{},\"source_commit\":{},\"target_dir\":{},\"artifact_refs\":{},\"decision_count\":{},\"missing_decision_telemetry\":{}}}",
+        json_string(&record.trace_id),
+        STRICT_HARDENED_OVERHEAD_SCHEMA_VERSION,
+        STRICT_HARDENED_OVERHEAD_BEAD_ID,
+        record.lane.as_str(),
+        record.runtime_mode.as_str(),
+        record.api_family.as_str(),
+        json_string(&record.symbol),
+        json_string(&record.workload),
+        json_u64_array(&record.raw_timings_ns),
+        record.sample_count,
+        record.p50_ns_op,
+        record.p95_ns_op,
+        record.p99_ns_op,
+        record.mean_ns_op,
+        record.cv_pct,
+        record.throughput_ops_s,
+        json_string(&record.command),
+        json_string(&record.worker_id),
+        json_string(&record.cpu_model),
+        json_string(&record.source_commit),
+        json_string(&record.target_dir),
+        json_string_array(&record.artifact_refs),
+        record.decision_count,
+        record.missing_decision_telemetry
+    )
+}
+
+fn json_u64_array(values: &[u64]) -> String {
+    let mut body = String::from("[");
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            body.push(',');
+        }
+        body.push_str(&value.to_string());
+    }
+    body.push(']');
+    body
+}
+
+fn json_string_array(values: &[String]) -> String {
+    let mut body = String::from("[");
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            body.push(',');
+        }
+        body.push_str(&json_string(value));
+    }
+    body.push(']');
+    body
+}
+
+fn json_string(value: &str) -> String {
+    let mut body = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => body.push_str("\\\""),
+            '\\' => body.push_str("\\\\"),
+            '\n' => body.push_str("\\n"),
+            '\r' => body.push_str("\\r"),
+            '\t' => body.push_str("\\t"),
+            c if c.is_control() => body.push_str(&format!("\\u{:04x}", c as u32)),
+            c => body.push(c),
+        }
+    }
+    body.push('"');
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -744,5 +1173,92 @@ mod tests {
         assert!(report.contains("| Rank | Profile | API family | Symbol |"));
         assert!(report.contains("`strlen_4096`"));
         assert!(report.contains("tests/conformance/fixtures/string_ops"));
+    }
+
+    fn sample_overhead_records() -> Vec<StrictHardenedOverheadRecord> {
+        let mut records = Vec::new();
+        for mode in STRICT_HARDENED_OVERHEAD_MODES {
+            for family in
+                required_strict_hardened_overhead_families(StrictHardenedOverheadLane::Smoke)
+            {
+                records.push(StrictHardenedOverheadRecord {
+                    trace_id: format!("bd-wpr1n-{}-{}", mode.as_str(), family.as_str()),
+                    lane: StrictHardenedOverheadLane::Smoke,
+                    runtime_mode: mode,
+                    api_family: *family,
+                    symbol: String::from(family.symbol()),
+                    workload: String::from(family.workload()),
+                    raw_timings_ns: vec![10, 11, 12, 13],
+                    sample_count: 4,
+                    p50_ns_op: 12.0,
+                    p95_ns_op: 13.0,
+                    p99_ns_op: 13.0,
+                    mean_ns_op: 11.5,
+                    cv_pct: 10.0,
+                    throughput_ops_s: 86_956_521.739,
+                    command: String::from(
+                        "cargo bench -p frankenlibc-bench --bench strict_hardened_overhead_harness -- --smoke",
+                    ),
+                    worker_id: String::from("rch-worker-a"),
+                    cpu_model: String::from("test-cpu"),
+                    source_commit: String::from("abc123"),
+                    target_dir: String::from("/tmp/frankenlibc-target"),
+                    artifact_refs: vec![String::from(
+                        "/tmp/frankenlibc-target/conformance/bd-wpr1n/report.json",
+                    )],
+                    decision_count: 512,
+                    missing_decision_telemetry: false,
+                });
+            }
+        }
+        records
+    }
+
+    #[test]
+    fn strict_hardened_overhead_validation_requires_complete_matrix() {
+        let records = sample_overhead_records();
+        validate_strict_hardened_overhead_records(&records, StrictHardenedOverheadLane::Smoke)
+            .expect("complete strict/hardened matrix should validate");
+
+        let mut incomplete = records.clone();
+        incomplete.pop();
+        let err = validate_strict_hardened_overhead_records(
+            &incomplete,
+            StrictHardenedOverheadLane::Smoke,
+        )
+        .expect_err("missing mode/family row should be rejected");
+        assert!(err.contains("missing hardened runtime_math overhead row"));
+    }
+
+    #[test]
+    fn strict_hardened_overhead_validation_rejects_missing_evidence() {
+        let mut records = sample_overhead_records();
+        records[0].missing_decision_telemetry = true;
+        let err =
+            validate_strict_hardened_overhead_records(&records, StrictHardenedOverheadLane::Smoke)
+                .expect_err("telemetry mismatch should be rejected");
+        assert!(err.contains("reports missing decision telemetry"));
+
+        records[0].missing_decision_telemetry = false;
+        records[0].artifact_refs.clear();
+        let err =
+            validate_strict_hardened_overhead_records(&records, StrictHardenedOverheadLane::Smoke)
+                .expect_err("missing artifact refs should be rejected");
+        assert!(err.contains("missing artifact refs"));
+    }
+
+    #[test]
+    fn strict_hardened_overhead_json_contains_audit_fields() {
+        let records = sample_overhead_records();
+        let json = strict_hardened_overhead_json(&records);
+        assert!(json.contains(STRICT_HARDENED_OVERHEAD_BEAD_ID));
+        assert!(json.contains("\"required_modes\": [\"strict\", \"hardened\"]"));
+        assert!(json.contains("\"raw_timings_ns\":[10,11,12,13]"));
+        assert!(json.contains("\"command\""));
+        assert!(json.contains("\"worker_id\""));
+        assert!(json.contains("\"artifact_refs\""));
+        assert!(json.contains("\"missing_decision_telemetry\":false"));
+        assert!(strict_hardened_overhead_jsonl(&records).contains("\"runtime_mode\":\"strict\""));
+        assert!(strict_hardened_overhead_dat(&records).contains("# lane mode family"));
     }
 }

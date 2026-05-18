@@ -38,6 +38,10 @@ name = "runtime_math_kernels_bench"
 harness = false
 
 [[bench]]
+name = "strict_hardened_overhead_harness"
+harness = false
+
+[[bench]]
 name = "stdio_bench"
 harness = false
 
