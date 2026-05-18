@@ -134,6 +134,15 @@ NO_CANDIDATE_ALLOWED_STATUSES = {
     "candidates_identified",
     "no_candidates_identified",
 }
+ALLOWED_PROBE_FAILURE_SIGNATURES = {
+    "ok",
+    "RCH-E100",
+    "timeout",
+    "ssh_permission_denied",
+    "sbh_permission_denied",
+    "no_matches",
+    "unknown",
+}
 
 
 def size_to_gb(size: str) -> float | None:
@@ -540,6 +549,13 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
         if not isinstance(worker, dict) or worker.get("pressure_state") != "critical":
             continue
         worker_id = worker.get("worker_id", "<unknown>")
+        probe_signature = worker.get("probe_failure_signature")
+        if not isinstance(probe_signature, str) or probe_signature not in ALLOWED_PROBE_FAILURE_SIGNATURES:
+            add_error(
+                source,
+                "invalid_probe_failure_signature",
+                f"{worker_id} has invalid probe_failure_signature={probe_signature}",
+            )
         target = worker.get("estimated_free_ratio_target")
         if not is_number(target):
             add_error(source, "missing_pressure_gap_target", f"{worker_id} missing numeric estimated_free_ratio_target")
@@ -1111,6 +1127,19 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             "remove estimated_free_ratio_target from first critical worker",
         )
 
+    invalid_probe_signature_packet = deepcopy(packet)
+    worker = first_critical_worker(invalid_probe_signature_packet)
+    if worker is None:
+        add_error(source, "negative_control_no_critical_worker", "golden packet has no critical worker for mutation")
+    else:
+        worker["probe_failure_signature"] = "mystery_probe_failure"
+        expect_validation_failure(
+            invalid_probe_signature_packet,
+            f"{source}::invalid_probe_failure_signature",
+            "invalid_probe_failure_signature",
+            "replace first critical worker probe failure signature with an unknown value",
+        )
+
     invalid_gap_packet = deepcopy(packet)
     worker = first_critical_worker(invalid_gap_packet)
     if worker is None:
@@ -1648,6 +1677,12 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "unreachable",
             "unknown",
         },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "allowed_probe_failure_signatures",
+        ALLOWED_PROBE_FAILURE_SIGNATURES,
     )
     require_list_contains(
         schema,
