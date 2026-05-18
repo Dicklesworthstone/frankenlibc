@@ -450,6 +450,32 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
     }
 
 
+def build_operator_message(status: str, approval_summary: dict[str, Any]) -> str:
+    if status == "admissible":
+        return "Remote rch admissibility preflight passed."
+    ready_count = approval_summary.get("current_ready_for_explicit_user_approval_count", 0)
+    packet_status = approval_summary.get("status", "unknown")
+    action = approval_summary.get("operator_next_action", "unknown")
+    parts = [
+        "Remote rch admissibility is blocked.",
+        f"operator_next_action={action}.",
+        f"approval_packet_status={packet_status}.",
+        f"approval_ready_candidates={ready_count}.",
+    ]
+    ready_by_worker = approval_summary.get("current_ready_candidate_count_by_worker")
+    if isinstance(ready_by_worker, dict) and ready_by_worker:
+        parts.append(
+            "approval_ready_workers="
+            + ",".join(f"{worker_id}:{ready_by_worker[worker_id]}" for worker_id in sorted(ready_by_worker))
+            + "."
+        )
+    ready_paths = approval_summary.get("current_ready_candidate_paths")
+    if isinstance(ready_paths, list) and ready_paths:
+        parts.append("approval_ready_paths=" + "|".join(str(path) for path in ready_paths) + ".")
+    parts.append("Do not run cleanup without explicit written approval naming exact paths and commands.")
+    return " ".join(parts)
+
+
 def validate_contract(contract: dict[str, Any], head: str) -> None:
     if contract.get("schema_version") != "v1":
         contract_errors.append("contract schema_version must be v1")
@@ -731,11 +757,7 @@ report: dict[str, Any] = {
     "approval_packet_report_path": rel(APPROVAL_PACKET_REPORT),
     "approval_packet_markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
     "approval_readiness_summary": approval_summary,
-    "operator_message": (
-        "Remote rch admissibility is blocked. Follow approval_readiness_summary.operator_next_action before attempting cargo validation."
-        if status != "admissible"
-        else "Remote rch admissibility preflight passed."
-    ),
+    "operator_message": build_operator_message(status, approval_summary),
     "local_fallback_policy": preflight_contract.get(
         "local_fallback_policy",
         "[RCH] local is never accepted as validation proof.",
