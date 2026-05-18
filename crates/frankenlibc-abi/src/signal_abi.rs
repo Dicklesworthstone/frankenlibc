@@ -347,6 +347,35 @@ struct DeferredSignalReplay {
 static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
     [const { SignalHandlerSlot::new() }; MAX_TRACKED_SIGNAL + 1];
 
+#[cfg(feature = "owned-tls-cache")]
+struct SignalTls {
+    critical_depth: AtomicU32,
+    classification: AtomicU8,
+    deferred_signals: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1],
+    hji_controller: RefCell<HjiReachabilityController>,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+// SAFETY: `OwnedTlsCache` serializes slot lookup behind a mutex and returns
+// only the slot for the current kernel TID, preserving the previous per-thread
+// access discipline for these signal controller fields.
+unsafe impl Send for SignalTls {}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_signal_tls() -> SignalTls {
+    SignalTls {
+        critical_depth: AtomicU32::new(0),
+        classification: AtomicU8::new(SignalSafetyClassification::Safe as u8),
+        deferred_signals: [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1],
+        hji_controller: RefCell::new(HjiReachabilityController::new()),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static SIGNAL_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<SignalTls> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_signal_tls);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static SIGNAL_CRITICAL_DEPTH: AtomicU32 = const { AtomicU32::new(0) };
     static SIGNAL_CLASSIFICATION: AtomicU8 =
@@ -355,6 +384,52 @@ thread_local! {
         const { [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1] };
     static SIGNAL_HJI_CONTROLLER: RefCell<HjiReachabilityController> =
         RefCell::new(HjiReachabilityController::new());
+}
+
+fn with_signal_critical_depth<R>(f: impl FnOnce(&AtomicU32) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.critical_depth))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SIGNAL_CRITICAL_DEPTH.with(f)
+    }
+}
+
+fn with_signal_classification<R>(f: impl FnOnce(&AtomicU8) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.classification))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SIGNAL_CLASSIFICATION.with(f)
+    }
+}
+
+fn with_deferred_signals<R>(
+    f: impl FnOnce(&[DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1]) -> R,
+) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_signals))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        DEFERRED_SIGNALS.with(f)
+    }
+}
+
+fn with_signal_hji_controller<R>(f: impl FnOnce(&RefCell<HjiReachabilityController>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.hji_controller))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SIGNAL_HJI_CONTROLLER.with(f)
+    }
 }
 
 static SIGNAL_DEFERRED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
@@ -386,9 +461,9 @@ fn is_signal_trampoline(handler: usize) -> bool {
 }
 
 fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSafetyClassification {
-    let depth = SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed));
+    let depth = with_signal_critical_depth(|value| value.load(Ordering::Relaxed));
     let adverse = depth > 1;
-    let hji_state = SIGNAL_HJI_CONTROLLER.with(|controller| {
+    let hji_state = with_signal_hji_controller(|controller| {
         let mut controller = controller.borrow_mut();
         for _ in 0..HJI_WARMUP_OBSERVATIONS {
             controller.observe(kind.risk_ppm(), kind.latency_ns(), adverse);
@@ -408,7 +483,7 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
     if !(1..=MAX_TRACKED_SIGNAL as c_int).contains(&signum) {
         return;
     }
-    DEFERRED_SIGNALS.with(|pending| {
+    with_deferred_signals(|pending| {
         let slot = &pending[signum as usize];
         if !info.is_null() {
             // SAFETY: the kernel owns `info` for the duration of the signal
@@ -443,7 +518,7 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
 }
 
 fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
-    DEFERRED_SIGNALS.with(|pending| {
+    with_deferred_signals(|pending| {
         let mut out = Vec::new();
         for signum in 1..=MAX_TRACKED_SIGNAL as c_int {
             let slot = &pending[signum as usize];
@@ -503,9 +578,10 @@ unsafe fn dispatch_registered_handler(
 }
 
 unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
-    let classification = SIGNAL_CLASSIFICATION
-        .with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)));
-    if SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed)) > 0
+    let classification = with_signal_classification(|value| {
+        SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
+    });
+    if with_signal_critical_depth(|value| value.load(Ordering::Relaxed)) > 0
         && !matches!(classification, SignalSafetyClassification::Safe)
     {
         queue_deferred_signal(signum, std::ptr::null_mut(), std::ptr::null_mut());
@@ -521,9 +597,10 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     info: *mut libc::siginfo_t,
     context: *mut c_void,
 ) {
-    let classification = SIGNAL_CLASSIFICATION
-        .with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)));
-    if SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed)) > 0
+    let classification = with_signal_classification(|value| {
+        SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
+    });
+    if with_signal_critical_depth(|value| value.load(Ordering::Relaxed)) > 0
         && !matches!(classification, SignalSafetyClassification::Safe)
     {
         queue_deferred_signal(signum, info, context);
@@ -559,16 +636,16 @@ impl Drop for SignalCriticalSectionGuard {
 pub fn enter_signal_critical_section(
     kind: SignalCriticalSectionKind,
 ) -> SignalCriticalSectionGuard {
-    SIGNAL_CRITICAL_DEPTH.with(|depth| {
+    with_signal_critical_depth(|depth| {
         depth.fetch_add(1, Ordering::Relaxed);
     });
     let classification = handler_dispatch_classification(kind);
-    SIGNAL_CLASSIFICATION.with(|value| value.store(classification.as_u8(), Ordering::Relaxed));
+    with_signal_classification(|value| value.store(classification.as_u8(), Ordering::Relaxed));
     SignalCriticalSectionGuard { active: true }
 }
 
 pub fn exit_signal_critical_section() {
-    let should_flush = SIGNAL_CRITICAL_DEPTH.with(|depth| {
+    let should_flush = with_signal_critical_depth(|depth| {
         let current = depth.load(Ordering::Relaxed);
         if current == 0 {
             return false;
@@ -580,8 +657,9 @@ pub fn exit_signal_critical_section() {
     if !should_flush {
         return;
     }
-    SIGNAL_CLASSIFICATION
-        .with(|value| value.store(SignalSafetyClassification::Safe.as_u8(), Ordering::Relaxed));
+    with_signal_classification(|value| {
+        value.store(SignalSafetyClassification::Safe.as_u8(), Ordering::Relaxed)
+    });
     for deferred in take_deferred_signals() {
         for _ in 0..deferred.count {
             SIGNAL_FLUSHED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
@@ -615,8 +693,9 @@ pub fn exit_signal_critical_section() {
 
 #[doc(hidden)]
 pub fn current_signal_classification_for_test() -> SignalSafetyClassification {
-    SIGNAL_CLASSIFICATION
-        .with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)))
+    with_signal_classification(|value| {
+        SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
+    })
 }
 
 #[doc(hidden)]

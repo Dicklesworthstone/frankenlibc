@@ -27,7 +27,7 @@ const LOCAL_EXEC_LANE: &str = "local-exec-tls-model-probe";
 const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
-const EXPECTED_OWNER_SURFACE_COUNT: usize = 12;
+const EXPECTED_OWNER_SURFACE_COUNT: usize = 13;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -118,6 +118,13 @@ fn abi_runtime_policy_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("runtime_policy.rs")
+}
+
+fn abi_signal_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("signal_abi.rs")
 }
 
 fn abi_stdio_path(root: &Path) -> PathBuf {
@@ -658,8 +665,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 65,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, stdio tmpnam/fgetln buffers, and wchar c16 surrogate/fgetwln buffers",
+        substituted == 66,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, and wchar c16 surrogate/fgetwln buffers",
     )?;
     require(
         substituted + remaining == total,
@@ -817,6 +824,18 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && runtime_policy.contains("with_decision_contract_machine")
             && runtime_policy.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "runtime policy must route mode, trace, explainability, reentry, and contract state through owned TLS cache",
+    )?;
+
+    let signal = std::fs::read_to_string(abi_signal_path(&root))
+        .map_err(|err| format!("read signal_abi.rs: {err}"))?;
+    require(
+        signal.contains("SIGNAL_OWNED_TLS")
+            && signal.contains("SignalTls")
+            && signal.contains("with_signal_critical_depth")
+            && signal.contains("with_deferred_signals")
+            && signal.contains("with_signal_hji_controller")
+            && signal.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "signal ABI must route critical-section, classification, deferred-signal, and HJI controller state through owned TLS cache",
     )?;
 
     let stdio = std::fs::read_to_string(abi_stdio_path(&root))
