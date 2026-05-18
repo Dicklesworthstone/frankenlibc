@@ -575,6 +575,34 @@ fn inet_ntoa_private_class_c() {
     assert_eq!(s.to_bytes(), b"192.168.1.100");
 }
 
+#[test]
+fn inet_ntoa_storage_is_thread_local() {
+    let main_ptr = unsafe { inet_ntoa(u32::from_ne_bytes([127, 0, 0, 1])) };
+    assert!(!main_ptr.is_null());
+    let main_addr = main_ptr as usize;
+
+    let worker_addr = std::thread::spawn(|| {
+        let ptr = unsafe { inet_ntoa(u32::from_ne_bytes([192, 168, 1, 100])) };
+        assert!(!ptr.is_null());
+        let text = unsafe { CStr::from_ptr(ptr) };
+        assert_eq!(text.to_bytes(), b"192.168.1.100");
+        ptr as usize
+    })
+    .join()
+    .expect("worker inet_ntoa call should complete");
+
+    assert_ne!(
+        main_addr, worker_addr,
+        "inet_ntoa return buffer must be isolated per thread"
+    );
+    let main_text = unsafe { CStr::from_ptr(main_ptr) };
+    assert_eq!(
+        main_text.to_bytes(),
+        b"127.0.0.1",
+        "worker inet_ntoa call must not overwrite main thread buffer"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // inet_addr tests
 // ---------------------------------------------------------------------------

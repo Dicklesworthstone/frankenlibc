@@ -72,6 +72,28 @@ unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
     Some(bytes.to_vec())
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static INET_NTOA_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 16]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 16]);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static INET_NTOA_BUF: std::cell::RefCell<[u8; 16]> = const { std::cell::RefCell::new([0u8; 16]) };
+}
+
+#[inline]
+fn with_inet_ntoa_buffer<R>(f: impl FnOnce(&mut [u8; 16]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        INET_NTOA_BUF_OWNED_TLS.with(f)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        INET_NTOA_BUF.with(|cell| f(&mut cell.borrow_mut()))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // htons
 // ---------------------------------------------------------------------------
@@ -282,17 +304,11 @@ pub unsafe extern "C" fn inet_aton(cp: *const c_char, inp: *mut u32) -> c_int {
 /// reentrant — the buffer is overwritten on each call from the same thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet_ntoa(addr: u32) -> *const c_char {
-    // Thread-local buffer for the returned string (max "255.255.255.255\0" = 16 bytes).
-    thread_local! {
-        static BUF: std::cell::RefCell<[u8; 16]> = const { std::cell::RefCell::new([0u8; 16]) };
-    }
-
     let octets = addr.to_ne_bytes();
     let text = inet_core::format_ipv4(&[octets[0], octets[1], octets[2], octets[3]]);
     let len = inet_core::format_ipv4_len(&[octets[0], octets[1], octets[2], octets[3]]);
 
-    BUF.with(|cell| {
-        let mut buf = cell.borrow_mut();
+    with_inet_ntoa_buffer(|buf| {
         let copy_len = len.min(15);
         buf[..copy_len].copy_from_slice(&text[..copy_len]);
         buf[copy_len] = 0; // NUL terminator
