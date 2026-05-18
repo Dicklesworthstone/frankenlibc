@@ -539,6 +539,18 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
             add_error(source, "invalid_pressure_total_gb", f"{worker_id} pressure_disk_total_gb is not numeric")
         if worker.get("pressure_disk_free_ratio") is not None and not is_number(worker.get("pressure_disk_free_ratio")):
             add_error(source, "invalid_pressure_free_ratio", f"{worker_id} pressure_disk_free_ratio is not numeric")
+        sbh_snapshot = worker.get("sbh_snapshot")
+        if sbh_snapshot == "present in raw worker output":
+            add_error(source, "coarse_sbh_snapshot", f"{worker_id} must expose parsed SBH status details")
+        elif isinstance(sbh_snapshot, str) and sbh_snapshot and "overall" not in sbh_snapshot:
+            add_error(source, "malformed_sbh_snapshot", f"{worker_id} sbh_snapshot must include overall pressure status")
+        ballast_snapshot = worker.get("ballast_snapshot")
+        if ballast_snapshot == "present in raw worker output":
+            add_error(source, "coarse_ballast_snapshot", f"{worker_id} must expose parsed ballast counts")
+        elif isinstance(ballast_snapshot, str) and ballast_snapshot:
+            for token in ["available_count=", "releasable_bytes=", "missing_count="]:
+                if token not in ballast_snapshot:
+                    add_error(source, "malformed_ballast_snapshot", f"{worker_id} ballast_snapshot missing {token}")
     for worker in workers:
         if not isinstance(worker, dict):
             continue
