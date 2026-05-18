@@ -55,6 +55,29 @@ EXPECTED_SCHEMA = "strict_hardened_decision_trace_minimizer.v1"
 EXPECTED_MANIFEST = "strict-hardened-decision-trace-minimizer"
 EXPECTED_BEAD = "bd-juvqm.6"
 EXPECTED_CHECKER = "scripts/check_strict_hardened_decision_trace_minimizer.sh --validate-only"
+EXPECTED_REPORT = "target/conformance/strict_hardened_decision_trace_minimizer.report.json"
+EXPECTED_LOG = "target/conformance/strict_hardened_decision_trace_minimizer.log.jsonl"
+REQUIRED_REPORT_FIELDS = {
+    "schema_version",
+    "bead",
+    "trace_id",
+    "source_commit",
+    "mode",
+    "case_filter",
+    "outcome",
+    "failure_signature",
+    "message",
+    "manifest",
+    "duration_ms",
+    "summary",
+    "report_path",
+    "log_path",
+    "report_contract_fields",
+    "contract_status",
+    "contract_errors",
+}
+REPORT_CONTRACT_FIELDS: list[str] = []
+CONTRACT_ERRORS: list[str] = []
 
 
 def git_head() -> str:
@@ -92,7 +115,18 @@ def finish(outcome: str, signature: str, message: str, **summary) -> None:
         "manifest": rel(manifest_path),
         "duration_ms": duration_ns // 1_000_000,
         "summary": summary,
+        "report_path": rel(report_path),
+        "log_path": rel(log_path),
+        "report_contract_fields": REPORT_CONTRACT_FIELDS,
+        "contract_status": "pending",
+        "contract_errors": [],
     }
+    contract_errors = list(CONTRACT_ERRORS)
+    missing_report_fields = [field for field in REPORT_CONTRACT_FIELDS if field not in report]
+    if missing_report_fields:
+        contract_errors.append(f"missing_report_field:{','.join(missing_report_fields)}")
+    report["contract_status"] = "pass" if not contract_errors else "fail"
+    report["contract_errors"] = contract_errors
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     log_row = {
         "timestamp": now_utc(),
@@ -110,7 +144,7 @@ def finish(outcome: str, signature: str, message: str, **summary) -> None:
         "failure_signature": signature,
     }
     log_path.write_text(json.dumps(log_row, sort_keys=True) + "\n", encoding="utf-8")
-    if outcome != "pass":
+    if outcome != "pass" or contract_errors:
         raise SystemExit(f"FAIL[{signature}]: {message}")
 
 
@@ -142,6 +176,32 @@ def non_empty_list(value: dict, key: str, context: str) -> list:
     item = value.get(key)
     require(isinstance(item, list) and item, "missing_array", f"{context}.{key} must be a non-empty array")
     return item
+
+
+def report_contract_field_list(manifest: dict) -> list[str]:
+    report_contract = manifest.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return []
+    fields = report_contract.get("must_materialize")
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, str) and field]
+
+
+def validate_report_contract(manifest: dict) -> list[str]:
+    errors: list[str] = []
+    report_contract = manifest.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return ["report_contract_not_object"]
+    if report_contract.get("output_path") != rel(report_path):
+        errors.append("report_contract_output_path_mismatch")
+    if report_contract.get("log_path") != rel(log_path):
+        errors.append("report_contract_log_path_mismatch")
+    fields = set(report_contract_field_list(manifest))
+    missing = sorted(REQUIRED_REPORT_FIELDS - fields)
+    if missing:
+        errors.append(f"report_contract_missing_required_field:{','.join(missing)}")
+    return errors
 
 
 def row_key(row: dict, identity_fields: list[str]) -> tuple:
@@ -265,10 +325,19 @@ def minimize_case(case: dict, identity_fields: list[str], divergence_fields: lis
 
 
 def validate() -> None:
+    global CONTRACT_ERRORS, REPORT_CONTRACT_FIELDS
     if mode != "validate-only":
         fail("unknown_mode", f"only --validate-only is supported; got {mode}")
 
     manifest = load_manifest()
+    REPORT_CONTRACT_FIELDS = report_contract_field_list(manifest)
+    CONTRACT_ERRORS = validate_report_contract(manifest)
+    if CONTRACT_ERRORS:
+        fail(
+            "report_contract",
+            "report_contract must bind output/log paths and required report fields",
+            contract_errors=CONTRACT_ERRORS,
+        )
     require(manifest.get("schema_version") == EXPECTED_SCHEMA, "schema_version", "unexpected schema_version")
     require(manifest.get("manifest_id") == EXPECTED_MANIFEST, "manifest_id", "unexpected manifest_id")
     require(manifest.get("bead") == EXPECTED_BEAD, "bead", "unexpected bead")

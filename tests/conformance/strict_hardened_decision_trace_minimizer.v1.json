@@ -6,6 +6,29 @@
   "canonical_checker": "scripts/check_strict_hardened_decision_trace_minimizer.sh --validate-only",
   "report_path": "target/conformance/strict_hardened_decision_trace_minimizer.report.json",
   "log_path": "target/conformance/strict_hardened_decision_trace_minimizer.log.jsonl",
+  "report_contract": {
+    "output_path": "target/conformance/strict_hardened_decision_trace_minimizer.report.json",
+    "log_path": "target/conformance/strict_hardened_decision_trace_minimizer.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "bead",
+      "trace_id",
+      "source_commit",
+      "mode",
+      "case_filter",
+      "outcome",
+      "failure_signature",
+      "message",
+      "manifest",
+      "duration_ms",
+      "summary",
+      "report_path",
+      "log_path",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ]
+  },
   "purpose": "Fail-closed contract and synthetic proof data for minimizing strict/hardened decision traces. The checker consumes runtime decision JSONL-shaped rows, finds the first strict-vs-hardened divergence by scenario/api_family/symbol/decision_path/input_class, and emits a deterministic replay bundle containing only the paired rows needed to reproduce the divergence.",
   "input_contract": {
     "supported_sources": [
