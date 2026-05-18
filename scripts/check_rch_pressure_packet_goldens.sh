@@ -191,8 +191,18 @@ def validate_repo_state(packet: dict[str, Any], source: str) -> None:
             "legacy_mirror_not_synced",
             f"repo_state.origin_master_commit must match origin_main_commit: {origin_master} != {origin_main}",
         )
-    if not isinstance(repo_state.get("worktree_list"), list):
+    worktree_list = repo_state.get("worktree_list")
+    if not isinstance(worktree_list, list):
         add_error(source, "missing_repo_state_worktrees", "repo_state.worktree_list must be a list")
+        worktree_list = []
+    elif len(worktree_list) != 1:
+        add_error(source, "worktree_count_mismatch", f"repo_state.worktree_list must contain exactly one worktree, got {len(worktree_list)}")
+    for index, worktree in enumerate(worktree_list):
+        if not isinstance(worktree, str) or not worktree:
+            add_error(source, "malformed_repo_state_worktree", f"repo_state.worktree_list[{index}] must be a non-empty string")
+            continue
+        if "[main]" not in worktree:
+            add_error(source, "worktree_branch_not_main", f"repo_state.worktree_list[{index}] must be on main: {worktree}")
     if not isinstance(repo_state.get("dirty_summary"), list):
         add_error(source, "missing_repo_state_dirty_summary", "repo_state.dirty_summary must be a list")
     if not isinstance(repo_state.get("untracked_summary"), list):
@@ -604,6 +614,19 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
         )
     else:
         add_error(source, "negative_control_no_repo_state", "golden packet has no repo_state for mutation")
+
+    extra_worktree_packet = deepcopy(packet)
+    repo_state = extra_worktree_packet.get("repo_state")
+    if isinstance(repo_state, dict) and isinstance(repo_state.get("worktree_list"), list):
+        repo_state["worktree_list"].append("/tmp/frankenlibc-feature-worktree  1111111 [feature/unsafe-worktree]")
+        expect_validation_failure(
+            extra_worktree_packet,
+            f"{source}::worktree_count_mismatch",
+            "worktree_count_mismatch",
+            "append a feature-branch worktree to packet repo_state.worktree_list",
+        )
+    else:
+        add_error(source, "negative_control_no_worktree_list", "golden packet has no worktree_list for mutation")
 
 
 def require_list_contains(schema: dict[str, Any], source: str, field: str, required: set[str]) -> None:
