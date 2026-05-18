@@ -749,12 +749,21 @@ else:
         if isinstance(operator_next_command, str) and operator_next_command
         else ""
     )
+    ready_by_worker = approval_summary.get("current_ready_candidate_count_by_worker")
+    if isinstance(ready_by_worker, dict) and ready_by_worker:
+        worker_hint = "approval_ready_workers=" + ",".join(
+            f"{worker_id}:{ready_by_worker[worker_id]}"
+            for worker_id in sorted(ready_by_worker)
+        ) + "."
+    else:
+        worker_hint = ""
     print(
         "rch remote admissibility preflight blocked; follow "
         f"operator_next_action={operator_next_action}."
         f"{operator_hint} "
         f"approval_packet_status={approval_packet_status}. "
         f"approval_ready_candidates={ready_count}. "
+        f"{worker_hint} "
         f"failure_signatures={','.join(report['failure_signatures'])}",
         file=sys.stderr,
     )
