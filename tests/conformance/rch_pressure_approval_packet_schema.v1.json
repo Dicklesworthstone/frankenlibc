@@ -75,6 +75,7 @@
     "size_human",
     "size_bytes",
     "estimated_size_gb",
+    "candidate_rank",
     "pre_cleanup_read_only_checks",
     "source_command",
     "candidate_kind",
@@ -82,6 +83,16 @@
     "risk_notes",
     "requires_explicit_approval",
     "executed"
+  ],
+  "recommended_cleanup_candidate_fields": [
+    "worker_id",
+    "path",
+    "candidate_rank",
+    "estimated_gap_gb",
+    "estimated_post_cleanup_free_ratio",
+    "estimated_surplus_gb_after_cleanup",
+    "recommendation_kind",
+    "recommendation_reason"
   ],
   "allowed_worker_statuses": [
     "healthy",
@@ -266,6 +277,7 @@
           "size_human": "16G",
           "size_bytes": null,
           "estimated_size_gb": 16.0,
+          "candidate_rank": 2,
           "pre_cleanup_read_only_checks": [
             {
               "check_kind": "sbh_protect_marker_absence",
@@ -294,6 +306,7 @@
           "size_human": "15G",
           "size_bytes": null,
           "estimated_size_gb": 15.0,
+          "candidate_rank": 1,
           "pre_cleanup_read_only_checks": [
             {
               "check_kind": "sbh_protect_marker_absence",
@@ -324,8 +337,12 @@
           "size_human": "15G",
           "size_bytes": null,
           "estimated_size_gb": 15.0,
+          "candidate_rank": 1,
           "estimated_gap_gb": 5.01,
+          "estimated_post_cleanup_free_ratio": 0.058603,
+          "estimated_surplus_gb_after_cleanup": 9.99,
           "recommendation_kind": "smallest_listed_candidate_meeting_estimated_gap",
+          "recommendation_reason": "smallest ranked candidate for this worker with estimated_size_gb >= estimated_gb_needed_to_reach_target_ratio",
           "pre_cleanup_read_only_checks": [
             {
               "check_kind": "sbh_protect_marker_absence",

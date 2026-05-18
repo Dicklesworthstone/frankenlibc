@@ -77,6 +77,47 @@ def is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def estimated_total_gb(worker: dict[str, Any]) -> float | None:
+    free_gb = float_or_none(worker.get("pressure_disk_free_gb"))
+    total_gb = float_or_none(worker.get("pressure_disk_total_gb"))
+    if total_gb is None:
+        ratio = float_or_none(worker.get("pressure_disk_free_ratio"))
+        if free_gb is not None and ratio is not None and ratio > 0:
+            total_gb = free_gb / ratio
+    return total_gb
+
+
+def expected_post_cleanup_free_ratio(worker: dict[str, Any], candidate: dict[str, Any]) -> float | None:
+    free_gb = float_or_none(worker.get("pressure_disk_free_gb"))
+    total_gb = estimated_total_gb(worker)
+    size_gb = float_or_none(candidate.get("estimated_size_gb"))
+    if free_gb is None or total_gb is None or total_gb <= 0 or size_gb is None:
+        return None
+    return round((free_gb + size_gb) / total_gb, 6)
+
+
+def expected_surplus_gb(worker: dict[str, Any], candidate: dict[str, Any]) -> float | None:
+    gap_gb = float_or_none(worker.get("estimated_gb_needed_to_reach_target_ratio"))
+    size_gb = float_or_none(candidate.get("estimated_size_gb"))
+    if gap_gb is None or size_gb is None:
+        return None
+    return round(size_gb - gap_gb, 3)
+
+
+def close_enough(actual: Any, expected: float | None, tolerance: float = 0.001) -> bool:
+    actual_float = float_or_none(actual)
+    if expected is None:
+        return actual is None
+    return actual_float is not None and abs(actual_float - expected) <= tolerance
+
+
 REQUIRED_PRE_CLEANUP_CHECK_KINDS = {"sbh_protect_marker_absence", "open_file_absence"}
 FORBIDDEN_PRE_CLEANUP_COMMAND = re.compile(
     r"\brm\b|\brmdir\b|\bunlink\b|-delete|git reset|git clean|sbh clean|sbh ballast release|sbh emergency"
@@ -136,6 +177,11 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
         add_error(source, "missing_local_fallback_rejection", "packet must reject [RCH] local")
 
     workers = packet.get("workers", [])
+    worker_by_id = {
+        str(worker.get("worker_id")): worker
+        for worker in workers
+        if isinstance(worker, dict) and worker.get("worker_id") is not None
+    }
     if not any(worker.get("pressure_state") == "critical" for worker in workers if isinstance(worker, dict)):
         add_error(source, "missing_critical_worker", "packet must include a critical-pressure worker")
     if require_rch_e100 and not any(worker.get("probe_failure_signature") == "RCH-E100" for worker in workers if isinstance(worker, dict)):
@@ -168,11 +214,20 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     if not candidates:
         add_error(source, "missing_cleanup_candidates", "packet must include approval-only cleanup candidates")
     candidate_paths = set()
+    candidates_by_worker: dict[str, list[dict[str, Any]]] = {}
+    candidate_by_worker_path: dict[tuple[str, str], dict[str, Any]] = {}
     for candidate in candidates:
         if not isinstance(candidate, dict):
             add_error(source, "malformed_candidate", "cleanup candidate must be an object")
             continue
+        worker_id = str(candidate.get("worker_id", ""))
+        path = str(candidate.get("path", ""))
+        candidates_by_worker.setdefault(worker_id, []).append(candidate)
+        candidate_by_worker_path[(worker_id, path)] = candidate
         candidate_paths.add(candidate.get("path"))
+        rank = candidate.get("candidate_rank")
+        if not isinstance(rank, int) or isinstance(rank, bool) or rank < 1:
+            add_error(source, "invalid_candidate_rank", f"{candidate.get('path')} has invalid candidate_rank={rank}")
         if candidate.get("requires_explicit_approval") is not True:
             add_error(source, "candidate_not_approval_gated", f"{candidate.get('path')} lacks approval gate")
         if candidate.get("executed") is not False:
@@ -189,24 +244,58 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
         )
         if candidate.get("estimated_size_gb") is not None and (not is_number(candidate.get("estimated_size_gb")) or float(candidate.get("estimated_size_gb")) < 0):
             add_error(source, "invalid_candidate_size_estimate", f"{candidate.get('path')} has invalid estimated_size_gb={candidate.get('estimated_size_gb')}")
+    for worker_id, worker_candidates in candidates_by_worker.items():
+        ranked = sorted(
+            worker_candidates,
+            key=lambda candidate: (
+                float_or_none(candidate.get("estimated_size_gb")) is None,
+                float_or_none(candidate.get("estimated_size_gb")) or float("inf"),
+                str(candidate.get("path", "")),
+            ),
+        )
+        for expected_rank, candidate in enumerate(ranked, start=1):
+            if candidate.get("candidate_rank") != expected_rank:
+                add_error(
+                    source,
+                    "candidate_rank_mismatch",
+                    f"{candidate.get('path')} rank={candidate.get('candidate_rank')} expected={expected_rank}",
+                )
 
     recommended = packet.get("recommended_cleanup_candidates", [])
     if not isinstance(recommended, list):
         add_error(source, "malformed_recommended_candidates", "recommended_cleanup_candidates must be a list")
         recommended = []
+    recommended_order = [
+        (
+            str(candidate.get("worker_id", "")),
+            int(candidate.get("candidate_rank", 999999)) if isinstance(candidate.get("candidate_rank"), int) else 999999,
+            str(candidate.get("path", "")),
+        )
+        for candidate in recommended
+        if isinstance(candidate, dict)
+    ]
+    if recommended_order != sorted(recommended_order):
+        add_error(source, "recommended_candidates_unsorted", "recommended cleanup candidates must be sorted by worker_id, rank, path")
     for candidate in recommended:
         if not isinstance(candidate, dict):
             add_error(source, "malformed_recommended_candidate", "recommended cleanup candidate must be an object")
             continue
+        worker_id = str(candidate.get("worker_id", ""))
         path = candidate.get("path")
+        worker = worker_by_id.get(worker_id)
+        listed_candidate = candidate_by_worker_path.get((worker_id, str(path)))
         if path not in candidate_paths:
             add_error(source, "recommended_candidate_not_listed", f"{path} is not present in cleanup_candidates")
+        elif listed_candidate is not None and candidate.get("candidate_rank") != listed_candidate.get("candidate_rank"):
+            add_error(source, "recommended_candidate_rank_mismatch", f"{path} rank does not match cleanup candidate")
         if candidate.get("requires_explicit_approval") is not True:
             add_error(source, "recommended_candidate_not_approval_gated", f"{path} lacks approval gate")
         if candidate.get("executed") is not False:
             add_error(source, "recommended_candidate_executed", f"{path} must remain executed=false")
         if candidate.get("recommendation_kind") != "smallest_listed_candidate_meeting_estimated_gap":
             add_error(source, "recommended_candidate_kind", f"{path} has unexpected recommendation_kind")
+        if not isinstance(candidate.get("recommendation_reason"), str) or "smallest" not in candidate.get("recommendation_reason", ""):
+            add_error(source, "missing_recommendation_reason", f"{path} must explain the ranking reason")
         validate_pre_cleanup_checks(
             source,
             path,
@@ -221,6 +310,43 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
             add_error(source, "invalid_recommended_candidate_gap", f"{path} has invalid estimated_gap_gb={gap_gb}")
         elif is_number(size_gb) and float(size_gb) < float(gap_gb):
             add_error(source, "recommended_candidate_too_small", f"{path} is smaller than estimated gap")
+        if not is_number(candidate.get("candidate_rank")) or int(candidate.get("candidate_rank")) < 1:
+            add_error(source, "invalid_recommended_candidate_rank", f"{path} has invalid candidate_rank")
+        if worker is not None:
+            if not close_enough(
+                candidate.get("estimated_post_cleanup_free_ratio"),
+                expected_post_cleanup_free_ratio(worker, candidate),
+                0.00001,
+            ):
+                add_error(source, "invalid_recommended_post_cleanup_ratio", f"{path} has invalid post-cleanup ratio")
+            if not close_enough(
+                candidate.get("estimated_surplus_gb_after_cleanup"),
+                expected_surplus_gb(worker, candidate),
+            ):
+                add_error(source, "invalid_recommended_surplus", f"{path} has invalid post-cleanup surplus")
+            worker_gap = float_or_none(worker.get("estimated_gb_needed_to_reach_target_ratio"))
+            if worker_gap is not None:
+                sufficient = [
+                    item
+                    for item in candidates_by_worker.get(worker_id, [])
+                    if float_or_none(item.get("estimated_size_gb")) is not None
+                    and float(item["estimated_size_gb"]) >= worker_gap
+                ]
+                if sufficient:
+                    expected = min(
+                        sufficient,
+                        key=lambda item: (
+                            float(item["estimated_size_gb"]),
+                            int(item.get("candidate_rank", 999999)),
+                            str(item.get("path", "")),
+                        ),
+                    )
+                    if str(expected.get("path")) != str(path):
+                        add_error(
+                            source,
+                            "recommended_candidate_not_smallest_sufficient",
+                            f"{path} is not the smallest sufficient candidate for {worker_id}",
+                        )
 
     approval = packet.get("approval_request", {})
     required_approval_fields = [
@@ -345,6 +471,32 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             "remove read-only pre-cleanup checks from first recommended candidate",
         )
 
+    missing_recommendation_reason_packet = deepcopy(packet)
+    candidate = first_recommended_candidate(missing_recommendation_reason_packet)
+    if candidate is None:
+        add_error(source, "negative_control_no_recommended_candidate", "golden packet has no recommended candidate for mutation")
+    else:
+        candidate.pop("recommendation_reason", None)
+        expect_validation_failure(
+            missing_recommendation_reason_packet,
+            f"{source}::missing_recommendation_reason",
+            "missing_recommendation_reason",
+            "remove recommendation_reason from first recommended candidate",
+        )
+
+    invalid_recommendation_ratio_packet = deepcopy(packet)
+    candidate = first_recommended_candidate(invalid_recommendation_ratio_packet)
+    if candidate is None:
+        add_error(source, "negative_control_no_recommended_candidate", "golden packet has no recommended candidate for mutation")
+    else:
+        candidate["estimated_post_cleanup_free_ratio"] = 0.0
+        expect_validation_failure(
+            invalid_recommendation_ratio_packet,
+            f"{source}::invalid_recommended_post_cleanup_ratio",
+            "invalid_recommended_post_cleanup_ratio",
+            "set incorrect estimated_post_cleanup_free_ratio on first recommended candidate",
+        )
+
     prompting_check_packet = deepcopy(packet)
     candidate = first_recommended_candidate(prompting_check_packet)
     if candidate is None:
@@ -404,8 +556,20 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
         "cleanup_candidate_fields",
         {
             "host",
+            "candidate_rank",
             "estimated_size_gb",
             "pre_cleanup_read_only_checks",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "recommended_cleanup_candidate_fields",
+        {
+            "candidate_rank",
+            "estimated_post_cleanup_free_ratio",
+            "estimated_surplus_gb_after_cleanup",
+            "recommendation_reason",
         },
     )
     require_list_contains(

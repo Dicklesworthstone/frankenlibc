@@ -111,6 +111,7 @@
         "size_human": "15G",
         "size_bytes": null,
         "estimated_size_gb": 15.0,
+        "candidate_rank": 1,
         "pre_cleanup_read_only_checks": [
           {
             "check_kind": "sbh_protect_marker_absence",
@@ -139,6 +140,7 @@
         "size_human": "564M",
         "size_bytes": null,
         "estimated_size_gb": 0.551,
+        "candidate_rank": 1,
         "pre_cleanup_read_only_checks": [
           {
             "check_kind": "sbh_protect_marker_absence",
@@ -163,42 +165,13 @@
     ],
     "recommended_cleanup_candidates": [
       {
-        "worker_id": "vmi1264463",
-        "host": "38.242.209.154",
-        "path": "/data/projects/franken_engine/target_PearlTower_focused",
-        "size_human": "15G",
-        "size_bytes": null,
-        "estimated_size_gb": 15.0,
-        "pre_cleanup_read_only_checks": [
-          {
-            "check_kind": "sbh_protect_marker_absence",
-            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
-            "expected_safe_result": "exit 0 with no stdout",
-            "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
-          },
-          {
-            "check_kind": "open_file_absence",
-            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
-            "expected_safe_result": "exit 0 with no stdout",
-            "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
-          }
-        ],
-        "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
-        "candidate_kind": "build_target_dir",
-        "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
-        "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
-        "requires_explicit_approval": true,
-        "executed": false,
-        "estimated_gap_gb": 5.009,
-        "recommendation_kind": "smallest_listed_candidate_meeting_estimated_gap"
-      },
-      {
         "worker_id": "vmi1149989",
         "host": "212.90.121.76",
         "path": "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
         "size_human": "564M",
         "size_bytes": null,
         "estimated_size_gb": 0.551,
+        "candidate_rank": 1,
         "pre_cleanup_read_only_checks": [
           {
             "check_kind": "sbh_protect_marker_absence",
@@ -220,7 +193,44 @@
         "requires_explicit_approval": true,
         "executed": false,
         "estimated_gap_gb": 0.255,
-        "recommendation_kind": "smallest_listed_candidate_meeting_estimated_gap"
+        "estimated_post_cleanup_free_ratio": 0.050382,
+        "estimated_surplus_gb_after_cleanup": 0.296,
+        "recommendation_kind": "smallest_listed_candidate_meeting_estimated_gap",
+        "recommendation_reason": "smallest ranked candidate for this worker with estimated_size_gb >= estimated_gb_needed_to_reach_target_ratio"
+      },
+      {
+        "worker_id": "vmi1264463",
+        "host": "38.242.209.154",
+        "path": "/data/projects/franken_engine/target_PearlTower_focused",
+        "size_human": "15G",
+        "size_bytes": null,
+        "estimated_size_gb": 15.0,
+        "candidate_rank": 1,
+        "pre_cleanup_read_only_checks": [
+          {
+            "check_kind": "sbh_protect_marker_absence",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then find /data/projects/franken_engine/target_PearlTower_focused -name .sbh-protect -print -quit; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, ssh failure, or non-zero exit"
+          },
+          {
+            "check_kind": "open_file_absence",
+            "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+            "expected_safe_result": "exit 0 with no stdout",
+            "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
+          }
+        ],
+        "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
+        "candidate_kind": "build_target_dir",
+        "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
+        "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
+        "requires_explicit_approval": true,
+        "executed": false,
+        "estimated_gap_gb": 5.009,
+        "estimated_post_cleanup_free_ratio": 0.058603,
+        "estimated_surplus_gb_after_cleanup": 9.991,
+        "recommendation_kind": "smallest_listed_candidate_meeting_estimated_gap",
+        "recommendation_reason": "smallest ranked candidate for this worker with estimated_size_gb >= estimated_gb_needed_to_reach_target_ratio"
       }
     ],
     "approval_request": {

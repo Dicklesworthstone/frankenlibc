@@ -151,14 +151,20 @@ def float_or_none(value: Any) -> float | None:
 
 def estimated_gap_to_target_ratio_gb(worker: dict[str, Any]) -> float | None:
     free_gb = float_or_none(worker.get("pressure_disk_free_gb"))
+    total_gb = estimated_total_gb(worker)
+    if free_gb is None or total_gb is None or total_gb <= 0:
+        return None
+    return round(max(0.0, (total_gb * CRITICAL_FREE_RATIO_TARGET) - free_gb), 3)
+
+
+def estimated_total_gb(worker: dict[str, Any]) -> float | None:
+    free_gb = float_or_none(worker.get("pressure_disk_free_gb"))
     total_gb = float_or_none(worker.get("pressure_disk_total_gb"))
     if total_gb is None:
         ratio = float_or_none(worker.get("pressure_disk_free_ratio"))
         if free_gb is not None and ratio is not None and ratio > 0:
             total_gb = free_gb / ratio
-    if free_gb is None or total_gb is None or total_gb <= 0:
-        return None
-    return round(max(0.0, (total_gb * CRITICAL_FREE_RATIO_TARGET) - free_gb), 3)
+    return total_gb
 
 
 def human_size_to_gb(size: str) -> float | None:
@@ -322,8 +328,53 @@ def dry_run_summary() -> dict[str, Any]:
 
 status_json = load_status_json()
 workers, candidates = parse_workers(status_json)
+
+
+def rank_cleanup_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        grouped.setdefault(str(candidate.get("worker_id", "")), []).append(candidate)
+    for worker_id, worker_candidates in grouped.items():
+        ranked = sorted(
+            worker_candidates,
+            key=lambda candidate: (
+                float_or_none(candidate.get("estimated_size_gb")) is None,
+                float_or_none(candidate.get("estimated_size_gb")) or float("inf"),
+                str(candidate.get("path", "")),
+            ),
+        )
+        for rank, candidate in enumerate(ranked, start=1):
+            candidate["candidate_rank"] = rank
+    return sorted(
+        candidates,
+        key=lambda candidate: (
+            str(candidate.get("worker_id", "")),
+            int(candidate.get("candidate_rank", 999999)),
+            str(candidate.get("path", "")),
+        ),
+    )
+
+
+candidates = rank_cleanup_candidates(candidates)
 candidate_worker_ids = sorted({candidate["worker_id"] for candidate in candidates})
 candidate_paths = [candidate["path"] for candidate in candidates]
+
+
+def estimated_post_cleanup_free_ratio(worker: dict[str, Any], candidate: dict[str, Any]) -> float | None:
+    free_gb = float_or_none(worker.get("pressure_disk_free_gb"))
+    total_gb = estimated_total_gb(worker)
+    size_gb = float_or_none(candidate.get("estimated_size_gb"))
+    if free_gb is None or total_gb is None or total_gb <= 0 or size_gb is None:
+        return None
+    return round((free_gb + size_gb) / total_gb, 6)
+
+
+def estimated_surplus_gb_after_cleanup(worker: dict[str, Any], candidate: dict[str, Any]) -> float | None:
+    gap_gb = float_or_none(worker.get("estimated_gb_needed_to_reach_target_ratio"))
+    size_gb = float_or_none(candidate.get("estimated_size_gb"))
+    if gap_gb is None or size_gb is None:
+        return None
+    return round(size_gb - gap_gb, 3)
 
 
 def smallest_sufficient_candidates(workers: list[dict[str, Any]], candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -343,12 +394,32 @@ def smallest_sufficient_candidates(workers: list[dict[str, Any]], candidates: li
         ]
         if not worker_candidates:
             continue
-        selected = min(worker_candidates, key=lambda candidate: float(candidate["estimated_size_gb"]))
+        selected = min(
+            worker_candidates,
+            key=lambda candidate: (
+                float(candidate["estimated_size_gb"]),
+                int(candidate.get("candidate_rank", 999999)),
+                str(candidate.get("path", "")),
+            ),
+        )
         recommendation = dict(selected)
         recommendation["estimated_gap_gb"] = gap_gb
+        recommendation["estimated_post_cleanup_free_ratio"] = estimated_post_cleanup_free_ratio(worker, selected)
+        recommendation["estimated_surplus_gb_after_cleanup"] = estimated_surplus_gb_after_cleanup(worker, selected)
         recommendation["recommendation_kind"] = "smallest_listed_candidate_meeting_estimated_gap"
+        recommendation["recommendation_reason"] = (
+            "smallest ranked candidate for this worker with estimated_size_gb >= "
+            "estimated_gb_needed_to_reach_target_ratio"
+        )
         recommended.append(recommendation)
-    return recommended
+    return sorted(
+        recommended,
+        key=lambda candidate: (
+            str(candidate.get("worker_id", "")),
+            int(candidate.get("candidate_rank", 999999)),
+            str(candidate.get("path", "")),
+        ),
+    )
 
 
 recommended_candidates = smallest_sufficient_candidates(workers, candidates)
@@ -457,7 +528,10 @@ lines.extend(
 if recommended_candidates:
     for candidate in recommended_candidates:
         lines.append(
-            f"- `{candidate['worker_id']}` gap `{markdown_value(candidate.get('estimated_gap_gb'), 'G')}`; "
+            f"- `{candidate['worker_id']}` rank `{candidate.get('candidate_rank')}` "
+            f"gap `{markdown_value(candidate.get('estimated_gap_gb'), 'G')}`; "
+            f"post-cleanup ratio `{markdown_value(candidate.get('estimated_post_cleanup_free_ratio'))}`; "
+            f"surplus `{markdown_value(candidate.get('estimated_surplus_gb_after_cleanup'), 'G')}`; "
             f"smallest listed candidate `{candidate['size_human']}` `{candidate['path']}` "
             "(requires explicit written approval; not executed)"
         )
