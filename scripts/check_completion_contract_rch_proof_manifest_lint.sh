@@ -33,6 +33,24 @@ EXPECTED_SCHEMA = "completion_contract_rch_proof_manifest_lint.v1"
 REPORT_SCHEMA = "completion_contract_rch_proof_manifest_lint.report.v1"
 BEAD = "bd-waaa6.4"
 TRACE_ID = "bd-waaa6.4::completion-contract-rch-proof-lint::v1"
+EXPECTED_REPORT = "target/conformance/completion_contract_rch_proof_manifest_lint.report.json"
+EXPECTED_LOG = "target/conformance/completion_contract_rch_proof_manifest_lint.log.jsonl"
+REQUIRED_REPORT_FIELDS = {
+    "schema_version",
+    "bead",
+    "status",
+    "summary",
+    "policy",
+    "contract_reports",
+    "errors",
+    "artifact_refs",
+    "source_commit",
+    "report_path",
+    "log_path",
+    "report_contract_fields",
+    "contract_status",
+    "contract_errors",
+}
 RUST_TEST_RE = re.compile(r"crates/frankenlibc-harness/tests/([A-Za-z0-9_]+)\.rs")
 CARGO_RE = re.compile(r"(?:^|[\s'\"])cargo\s+(test|check|clippy)\b")
 TEST_TARGET_RE = re.compile(r"--test\s+([A-Za-z0-9_]+)")
@@ -144,6 +162,31 @@ def as_str_list(value: Any, context: str) -> list[str]:
     if len(result) != len(value):
         add_error(rel(MANIFEST), "malformed_manifest", f"{context} must contain only strings")
     return result
+
+
+def configured_report_fields(manifest: dict[str, Any]) -> list[str]:
+    report_contract = manifest.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return []
+    fields = report_contract.get("must_materialize")
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, str) and field]
+
+
+def validate_report_contract(manifest: dict[str, Any]) -> None:
+    report_contract = manifest.get("report_contract")
+    if not isinstance(report_contract, dict):
+        add_error(rel(MANIFEST), "report_contract_missing", "report_contract must be an object")
+        return
+    if report_contract.get("output_path") != EXPECTED_REPORT:
+        add_error(rel(MANIFEST), "report_contract_output_path_mismatch", f"output_path must be {EXPECTED_REPORT}")
+    if report_contract.get("log_path") != EXPECTED_LOG:
+        add_error(rel(MANIFEST), "report_contract_log_path_mismatch", f"log_path must be {EXPECTED_LOG}")
+    fields = set(as_str_list(report_contract.get("must_materialize"), "report_contract.must_materialize"))
+    missing = sorted(REQUIRED_REPORT_FIELDS - fields)
+    if missing:
+        add_error(rel(MANIFEST), "report_contract_missing_required_field", f"must_materialize missing {missing}")
 
 
 def cargo_kind(command: str) -> str | None:
@@ -287,6 +330,7 @@ if manifest.get("schema_version") != EXPECTED_SCHEMA:
     add_error(rel(MANIFEST), "malformed_manifest", f"schema_version must be {EXPECTED_SCHEMA}")
 if manifest.get("bead") != BEAD:
     add_error(rel(MANIFEST), "malformed_manifest", f"bead must be {BEAD}")
+validate_report_contract(manifest)
 
 policy = manifest.get("policy", {})
 if not isinstance(policy, dict):
@@ -380,6 +424,7 @@ for contract_path_text, enforce_lane_matrix in contract_specs:
     events.append(event(contract_path_text, status, failure_signature, details))
 
 status = "pass" if not errors else "fail"
+report_contract_fields = configured_report_fields(manifest)
 summary = {
     "contract_count": len(contract_specs),
     "strict_contract_count": len(contract_paths),
@@ -392,14 +437,33 @@ summary = {
 report = {
     "schema_version": REPORT_SCHEMA,
     "bead": BEAD,
-    "status": status,
+    "status": "pending",
     "summary": summary,
     "policy": policy,
     "contract_reports": contract_reports,
     "errors": errors,
     "artifact_refs": [rel(MANIFEST), *contract_paths, rel(REPORT), rel(LOG)],
     "source_commit": SOURCE_COMMIT,
+    "report_path": rel(REPORT),
+    "log_path": rel(LOG),
+    "report_contract_fields": report_contract_fields,
+    "contract_status": "pending",
+    "contract_errors": [],
 }
+for field in report_contract_fields:
+    if field not in report:
+        add_error(rel(MANIFEST), "missing_report_field", f"report omitted required field: {field}")
+status = "pass" if not errors else "fail"
+contract_errors = [
+    row
+    for row in errors
+    if row["failure_signature"].startswith("report_contract_")
+    or row["failure_signature"] == "missing_report_field"
+]
+report["status"] = status
+report["errors"] = errors
+report["contract_status"] = "pass" if not contract_errors else "fail"
+report["contract_errors"] = contract_errors
 write_json(REPORT, report)
 write_jsonl(LOG, events)
 

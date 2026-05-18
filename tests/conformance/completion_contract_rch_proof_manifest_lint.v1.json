@@ -62,12 +62,33 @@
     "report": "target/conformance/completion_contract_rch_proof_manifest_lint.report.json",
     "log": "target/conformance/completion_contract_rch_proof_manifest_lint.log.jsonl"
   },
+  "report_contract": {
+    "output_path": "target/conformance/completion_contract_rch_proof_manifest_lint.report.json",
+    "log_path": "target/conformance/completion_contract_rch_proof_manifest_lint.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "bead",
+      "status",
+      "summary",
+      "policy",
+      "contract_reports",
+      "errors",
+      "artifact_refs",
+      "source_commit",
+      "report_path",
+      "log_path",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ]
+  },
   "required_validation_commands": [
     "jq empty tests/conformance/completion_contract_rch_proof_manifest_lint.v1.json",
     "bash -n scripts/check_completion_contract_rch_proof_manifest_lint.sh",
     "bash scripts/check_completion_contract_rch_proof_manifest_lint.sh",
     "jq empty target/conformance/completion_contract_rch_proof_manifest_lint.report.json",
     "jq empty target/conformance/completion_contract_rch_proof_manifest_lint.log.jsonl",
+    "jq -e '.contract_status == \"pass\" and .status == \"pass\" and .report_path == \"target/conformance/completion_contract_rch_proof_manifest_lint.report.json\"' target/conformance/completion_contract_rch_proof_manifest_lint.report.json",
     "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_icywaterfall_rch_proof_lint_test cargo test -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test -- --nocapture",
     "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_icywaterfall_rch_proof_lint_check cargo check -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test",
     "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_icywaterfall_rch_proof_lint_clippy cargo clippy -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test -- -D warnings"
