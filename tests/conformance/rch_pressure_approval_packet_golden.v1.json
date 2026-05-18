@@ -402,11 +402,19 @@
         "executed": true
       },
       {
+        "action": "rch capabilities refresh",
+        "executed": true
+      },
+      {
         "action": "rch status",
         "executed": true
       },
       {
         "action": "rch dry-run",
+        "executed": true
+      },
+      {
+        "action": "rch doctor fix dry-run",
         "executed": true
       },
       {

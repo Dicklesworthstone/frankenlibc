@@ -34,6 +34,14 @@ LOG = pathlib.Path(sys.argv[7])
 FORBIDDEN_TEXT = re.compile(
     r"\brm\b|\brmdir\b|\bunlink\b|-delete|git reset|git clean|sbh clean|sbh ballast release|sbh emergency|apt(?:-get)?\s+.*clean"
 )
+REQUIRED_EXECUTED_ACTIONS = (
+    "git repo-state inspection",
+    "rch capabilities refresh",
+    "rch status",
+    "rch dry-run",
+    "rch doctor fix dry-run",
+    "bounded read-only worker probes",
+)
 
 
 def utc_now() -> str:
@@ -1148,8 +1156,20 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
         elif next_action != "collect_passing_read_only_precheck_results_before_requesting_user_approval":
             add_error(source, "approval_readiness_next_action_mismatch", f"{key[1]} next_action mismatch")
     validate_approval_ready_summary(packet, source, readiness)
-    if not all(item.get("executed") is True for item in packet.get("executed_actions", []) if isinstance(item, dict)):
-        add_error(source, "missing_execution_log", "executed_actions must log completed read-only actions")
+    executed_actions = packet.get("executed_actions")
+    if not isinstance(executed_actions, list):
+        add_error(source, "malformed_executed_actions", "executed_actions must be a list")
+    else:
+        action_names = {str(item.get("action")) for item in executed_actions if isinstance(item, dict)}
+        missing_actions = [action for action in REQUIRED_EXECUTED_ACTIONS if action not in action_names]
+        if missing_actions:
+            add_error(
+                source,
+                "missing_executed_recovery_action",
+                f"executed_actions missing required recovery actions: {missing_actions}",
+            )
+        if not all(item.get("executed") is True for item in executed_actions if isinstance(item, dict)):
+            add_error(source, "missing_execution_log", "executed_actions must log completed read-only actions")
 
     for text in all_strings(packet):
         if FORBIDDEN_TEXT.search(text):
@@ -1341,6 +1361,23 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             add_error(source, "negative_control_no_recovery_doctor_attempt", "golden packet has no rch_doctor_fix_dry_run attempt")
     else:
         add_error(source, "negative_control_no_non_deletion_recovery", "golden packet has no non_deletion_recovery attempts for raw-path mutation")
+
+    missing_executed_recovery_action_packet = deepcopy(packet)
+    executed_actions = missing_executed_recovery_action_packet.get("executed_actions")
+    if isinstance(executed_actions, list):
+        missing_executed_recovery_action_packet["executed_actions"] = [
+            action
+            for action in executed_actions
+            if not (isinstance(action, dict) and action.get("action") == "rch doctor fix dry-run")
+        ]
+        expect_validation_failure(
+            missing_executed_recovery_action_packet,
+            f"{source}::missing_executed_recovery_action",
+            "missing_executed_recovery_action",
+            "remove rch doctor dry-run from executed_actions",
+        )
+    else:
+        add_error(source, "negative_control_no_executed_actions", "golden packet has no executed_actions list")
 
     forged_probe_count_packet = deepcopy(packet)
     recovery = forged_probe_count_packet.get("non_deletion_recovery")

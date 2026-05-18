@@ -617,11 +617,27 @@
       },
       "executed_actions": [
         {
-          "action": "read_only_rch_status",
+          "action": "git repo-state inspection",
           "executed": true
         },
         {
-          "action": "read_only_worker_df_sbh_du",
+          "action": "rch capabilities refresh",
+          "executed": true
+        },
+        {
+          "action": "rch status",
+          "executed": true
+        },
+        {
+          "action": "rch dry-run",
+          "executed": true
+        },
+        {
+          "action": "rch doctor fix dry-run",
+          "executed": true
+        },
+        {
+          "action": "bounded read-only worker probes",
           "executed": true
         }
       ],
