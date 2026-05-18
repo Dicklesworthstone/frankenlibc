@@ -92,6 +92,55 @@ def current_commit():
         return "unknown"
 
 
+def git_status_short_lines():
+    try:
+        output = subprocess.check_output(
+            ["git", "status", "--short", "--untracked-files=all"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return []
+    return [line for line in output.splitlines() if line.strip()]
+
+
+def status_path(line):
+    if not isinstance(line, str) or len(line) < 4:
+        return None
+    raw = line[3:].strip()
+    if " -> " in raw:
+        raw = raw.rsplit(" -> ", 1)[1].strip()
+    return raw.strip('"') or None
+
+
+def is_validation_path(path, guard):
+    prefixes = guard.get("dirty_validation_path_prefixes", [])
+    files = guard.get("dirty_validation_path_files", [])
+    if not isinstance(prefixes, list):
+        prefixes = []
+    if not isinstance(files, list):
+        files = []
+    return any(isinstance(prefix, str) and path.startswith(prefix) for prefix in prefixes) or path in {
+        item for item in files if isinstance(item, str)
+    }
+
+
+def dirty_validation_paths(status_lines, guard):
+    rows = []
+    seen = set()
+    for line in status_lines:
+        path = status_path(line)
+        if path is None or not is_validation_path(path, guard):
+            continue
+        key = (line[:2].strip() or "modified", path)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"status_code": key[0], "path": path})
+    return sorted(rows, key=lambda row: (row["path"], row["status_code"]))
+
+
 def is_hex_commit(value):
     return (
         isinstance(value, str)
@@ -257,6 +306,8 @@ if not isinstance(guard, dict):
     errors.append("guard_contract must be object")
     guard = {}
 required = set(string_list(guard.get("required_blocked_failure_signatures"), "guard_contract.required_blocked_failure_signatures"))
+string_list(guard.get("dirty_validation_path_prefixes"), "guard_contract.dirty_validation_path_prefixes")
+string_list(guard.get("dirty_validation_path_files"), "guard_contract.dirty_validation_path_files")
 signatures = set(rch.get("failure_signatures", []))
 if rch.get("status") == guard.get("blocked_rch_status") and not required.issubset(signatures):
     errors.append("blocked RCH report missing required failure signatures")
@@ -269,6 +320,7 @@ if not isinstance(readiness.get("permissioned_ready"), list):
 
 dependents = active_bd716_dependents(rows, guard)
 decision = decide(readiness, rch, dependents, guard)
+dirty_paths = dirty_validation_paths(git_status_short_lines(), guard)
 expected_current = guard.get("decision_when_rch_blocked_and_dependents_waiting")
 if decision != expected_current:
     errors.append(f"current guard decision {decision!r} did not match expected blocked decision {expected_current!r}")
@@ -372,6 +424,28 @@ for control in contract.get("negative_controls", []):
         ]
     elif control_id == "no_waiting_dependents_removes_guard":
         mutated_dependents = []
+    elif control_id == "dirty_validation_path_counted":
+        synthetic_dirty = dirty_validation_paths(
+            [
+                " M crates/frankenlibc-abi/src/resolv_abi.rs",
+                "?? tests/conformance/synthetic_validation_manifest.v1.json",
+                "?? =",
+            ],
+            guard,
+        )
+        observed = "dirty_validation_path_counted" if len(synthetic_dirty) == 2 else f"dirty_count_{len(synthetic_dirty)}"
+        passed = observed == expected_decision
+        if not passed:
+            errors.append(f"negative_control_failed:{control_id}: expected {expected_decision}, got {observed}")
+        negative_results.append(
+            {
+                "control_id": control_id,
+                "expected_decision": expected_decision,
+                "observed_decision": observed,
+                "status": "pass" if passed else "fail",
+            }
+        )
+        continue
     else:
         errors.append(f"unknown negative control {control_id}")
         continue
@@ -415,6 +489,9 @@ report = {
     "failure_signatures": sorted(signatures),
     "blocked_validation_issue_ids": [row.get("id") for row in dependents],
     "blocked_validation_issues": dependents,
+    "dirty_validation_path_count": len(dirty_paths),
+    "dirty_validation_paths": dirty_paths,
+    "dirty_validation_blocked": bool(dirty_paths and decision == expected_current),
     "allowed_next_actions": guard.get("allowed_next_actions_when_blocked", []),
     "forbidden_next_actions": guard.get("forbidden_next_actions_when_blocked", []),
     "report_contract_fields": must_materialize,

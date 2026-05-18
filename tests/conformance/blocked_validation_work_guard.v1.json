@@ -4,7 +4,7 @@
   "bead": "bd-bqh1f",
   "generated_utc": "2026-05-18T00:38:00Z",
   "source_commit": "current",
-  "purpose": "No-cargo swarm guard for the state where RCH cargo validation is blocked and validation-dependent beads are already waiting. The guard prevents agents from starting new cargo-backed Rust work when the useful next action is either no-cargo evidence or operator-approved RCH unblock work.",
+  "purpose": "No-cargo swarm guard for the state where RCH cargo validation is blocked and validation-dependent beads are already waiting. The guard prevents agents from starting new cargo-backed Rust work when the useful next action is either no-cargo evidence, existing dirty validation-slice closeout, or operator-approved RCH unblock work.",
   "inputs": {
     "tracker_jsonl": ".beads/issues.jsonl",
     "tracker_jsonl_degraded_readiness_checker": "scripts/check_tracker_jsonl_degraded_readiness.sh",
@@ -26,6 +26,17 @@
       "in_progress"
     ],
     "blocked_issue_dependency_type": "blocks",
+    "dirty_validation_path_prefixes": [
+      "crates/",
+      "scripts/",
+      "tests/"
+    ],
+    "dirty_validation_path_files": [
+      "Cargo.lock",
+      "Cargo.toml",
+      "build.rs",
+      "rust-toolchain.toml"
+    ],
     "decision_when_stale_in_progress_exists": "recover_stale_in_progress_before_new_discovery",
     "decision_when_safe_ready_exists": "claim_safe_ready_before_new_discovery",
     "decision_when_rch_admissible": "resume_cargo_validation_queue",
@@ -33,12 +44,14 @@
     "allowed_next_actions_when_blocked": [
       "refresh read-only RCH evidence",
       "recover stale in-progress beads before new discovery",
+      "surface existing dirty validation paths before starting overlapping work",
       "request exact operator approval for cleanup candidates",
       "ship no-cargo checker or contract evidence",
       "close tracker-only work that does not require cargo validation"
     ],
     "forbidden_next_actions_when_blocked": [
       "start new Rust implementation requiring cargo proof",
+      "start overlapping Rust or harness work while dirty validation paths are unproven",
       "count local cargo as validation proof",
       "run cleanup or deletion without exact written approval",
       "open a feature branch or worktree"
@@ -57,6 +70,9 @@
       "rch_status",
       "failure_signatures",
       "blocked_validation_issue_ids",
+      "dirty_validation_path_count",
+      "dirty_validation_paths",
+      "dirty_validation_blocked",
       "allowed_next_actions",
       "forbidden_next_actions",
       "report_contract_fields",
@@ -99,6 +115,11 @@
       "control_id": "no_waiting_dependents_removes_guard",
       "mutation": "remove all active issues that depend on bd-716tv",
       "expected_decision": "no_guard_needed"
+    },
+    {
+      "control_id": "dirty_validation_path_counted",
+      "mutation": "feed synthetic git status lines for one Rust path, one conformance path, and one non-validation path",
+      "expected_decision": "dirty_validation_path_counted"
     }
   ],
   "validation": {
@@ -107,6 +128,7 @@
       "jq empty tests/conformance/blocked_validation_work_guard.v1.json",
       "bash scripts/check_blocked_validation_work_guard.sh",
       "jq empty target/conformance/blocked_validation_work_guard.report.json",
+      "jq -e '.status == \"pass\" and .dirty_validation_path_count >= 1 and .dirty_validation_blocked == true and any(.negative_controls[]; .control_id == \"dirty_validation_path_counted\" and .status == \"pass\")' target/conformance/blocked_validation_work_guard.report.json",
       "git diff --check -- scripts/check_blocked_validation_work_guard.sh tests/conformance/blocked_validation_work_guard.v1.json .beads/issues.jsonl",
       "AGENT_NAME=DarkShore br dep cycles --json"
     ],
