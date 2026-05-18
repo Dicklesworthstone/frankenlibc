@@ -503,6 +503,15 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
         add_error(source, "schema_version", "packet schema_version mismatch")
     validate_repo_state(packet, source)
     gate = packet.get("rch_gate", {})
+    dry_run_command = gate.get("dry_run_command")
+    if (
+        not isinstance(dry_run_command, str)
+        or "rch diagnose --dry-run" not in dry_run_command
+        or "cargo " not in dry_run_command
+    ):
+        add_error(source, "invalid_rch_dry_run_command", "rch_gate.dry_run_command must be an rch diagnose --dry-run cargo command")
+    if gate.get("dry_run_exit_status") != 0:
+        add_error(source, "invalid_rch_dry_run_status", "rch_gate.dry_run_exit_status must be 0")
     if gate.get("required_remote_env") != "RCH_REQUIRE_REMOTE=1":
         add_error(source, "missing_remote_env", "packet must require RCH_REQUIRE_REMOTE=1")
     if "[RCH] local" not in gate.get("fallback_markers_rejected", []):
@@ -1063,6 +1072,19 @@ def expect_markdown_validation_failure(markdown_text: str, source: str, required
 
 
 def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
+    missing_dry_run_packet = deepcopy(packet)
+    gate = missing_dry_run_packet.get("rch_gate")
+    if isinstance(gate, dict) and isinstance(gate.get("dry_run_command"), str):
+        gate["dry_run_command"] = gate["dry_run_command"].replace(" --dry-run", "")
+        expect_validation_failure(
+            missing_dry_run_packet,
+            f"{source}::invalid_rch_dry_run_command",
+            "invalid_rch_dry_run_command",
+            "remove --dry-run from rch gate command",
+        )
+    else:
+        add_error(source, "negative_control_no_rch_dry_run_command", "golden packet has no rch dry-run command for mutation")
+
     missing_pressure_skip_packet = deepcopy(packet)
     gate = missing_pressure_skip_packet.get("rch_gate")
     if isinstance(gate, dict):
