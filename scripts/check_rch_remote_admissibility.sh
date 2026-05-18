@@ -302,18 +302,23 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
             "current_ready_for_explicit_user_approval_count": 0,
             "ready_candidate_paths": [],
             "current_ready_candidate_paths": [],
+            "current_ready_candidate_summaries": [],
             "safe_to_run_without_user_approval": False,
             "cleanup_executed": False,
             "contract_errors": [],
         }
     rows = packet.get("approval_readiness")
     readiness_rows = rows if isinstance(rows, list) else []
-    ready_paths = [
-        str(row.get("path"))
+    ready_rows = [
+        row
         for row in readiness_rows
         if isinstance(row, dict)
         and row.get("approval_state") == "ready_for_explicit_user_approval"
         and isinstance(row.get("path"), str)
+    ]
+    ready_paths = [
+        str(row.get("path"))
+        for row in ready_rows
     ]
     repo_state = packet.get("repo_state")
     repo_state = repo_state if isinstance(repo_state, dict) else {}
@@ -343,14 +348,32 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         operator_next_action = "request_explicit_cleanup_approval_for_current_ready_paths"
         operator_next_command = None
         current_ready_paths = ready_paths
+        current_ready_summaries = [
+            {
+                "worker_id": row.get("worker_id"),
+                "host": row.get("host"),
+                "path": row.get("path"),
+                "candidate_rank": row.get("candidate_rank"),
+                "recommendation_kinds": row.get("recommendation_kinds")
+                if isinstance(row.get("recommendation_kinds"), list)
+                else [],
+                "read_only_check_count": row.get("read_only_check_count"),
+                "read_only_check_results_collected": row.get("read_only_check_results_collected"),
+                "read_only_check_results_passed": row.get("read_only_check_results_passed"),
+                "next_action": row.get("next_action"),
+            }
+            for row in ready_rows
+        ]
     elif fresh_for_current_head:
         operator_next_action = str(packet_candidate_diagnostics["next_action"])
         operator_next_command = str(APPROVAL_PACKET_MARKDOWN)
         current_ready_paths = []
+        current_ready_summaries = []
     else:
         operator_next_action = "regenerate_approval_packet_for_current_head"
         operator_next_command = str(APPROVAL_PACKET_SCRIPT)
         current_ready_paths = []
+        current_ready_summaries = []
     return {
         "status": "available_current" if fresh_for_current_head else "stale_for_current_head",
         "operator_next_action": operator_next_action,
@@ -371,6 +394,7 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         "current_ready_for_explicit_user_approval_count": len(ready_paths) if fresh_for_current_head else 0,
         "ready_candidate_paths": ready_paths,
         "current_ready_candidate_paths": current_ready_paths,
+        "current_ready_candidate_summaries": current_ready_summaries,
         "safe_to_run_without_user_approval": any_safe_without_approval,
         "cleanup_executed": any_cleanup_executed,
         "contract_errors": approval_readiness_errors(rows),
@@ -549,6 +573,7 @@ for control in contract.get("negative_controls", []):
             if summary.get("status") == "stale_for_current_head"
             and summary.get("current_ready_for_explicit_user_approval_count") == 0
             and summary.get("current_ready_candidate_paths") == []
+            and summary.get("current_ready_candidate_summaries") == []
             and summary.get("operator_next_action") == "regenerate_approval_packet_for_current_head"
             else str(summary)
         )
