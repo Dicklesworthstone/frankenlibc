@@ -576,6 +576,21 @@ def validate_non_deletion_recovery(packet: dict[str, Any], source: str) -> None:
     probe_count = recovery.get("disabled_worker_probe_count")
     if not isinstance(probe_count, int) or isinstance(probe_count, bool) or probe_count < 0:
         add_error(source, "invalid_disabled_worker_probe_count", "disabled_worker_probe_count must be a nonnegative integer")
+    workers = packet.get("workers")
+    if isinstance(workers, list) and isinstance(probe_count, int) and not isinstance(probe_count, bool):
+        expected_probe_count = sum(
+            1
+            for worker in workers
+            if isinstance(worker, dict)
+            and isinstance(worker.get("direct_rch_probe_command"), str)
+            and worker.get("direct_rch_probe_command")
+        )
+        if probe_count != expected_probe_count:
+            add_error(
+                source,
+                "disabled_worker_probe_count_mismatch",
+                f"disabled_worker_probe_count={probe_count} expected={expected_probe_count}",
+            )
     attempts = recovery.get("attempts")
     if not isinstance(attempts, list):
         add_error(source, "missing_non_deletion_recovery_attempts", "non_deletion_recovery.attempts must be a list")
@@ -1286,6 +1301,19 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
         )
     else:
         add_error(source, "negative_control_no_non_deletion_recovery", "golden packet has no non_deletion_recovery attempts for mutation")
+
+    forged_probe_count_packet = deepcopy(packet)
+    recovery = forged_probe_count_packet.get("non_deletion_recovery")
+    if isinstance(recovery, dict):
+        recovery["disabled_worker_probe_count"] = int(recovery.get("disabled_worker_probe_count", 0)) + 1
+        expect_validation_failure(
+            forged_probe_count_packet,
+            f"{source}::disabled_worker_probe_count_mismatch",
+            "disabled_worker_probe_count_mismatch",
+            "make non-deletion recovery probe count disagree with worker rows",
+        )
+    else:
+        add_error(source, "negative_control_no_non_deletion_recovery", "golden packet has no non_deletion_recovery for probe-count mutation")
 
     missing_target_packet = deepcopy(packet)
     worker = first_critical_worker(missing_target_packet)
