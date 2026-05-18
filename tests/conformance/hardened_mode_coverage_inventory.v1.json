@@ -52,17 +52,17 @@
     ]
   },
   "expected_inventory": {
-    "fixture_file_count": 58,
-    "standard_case_count": 1282,
-    "family_count": 56,
+    "fixture_file_count": 126,
+    "standard_case_count": 2774,
+    "family_count": 91,
     "mode_case_counts": {
-      "strict_only": 631,
-      "hardened_only": 126,
-      "strict_hardened_pair": 525
+      "strict_only": 1354,
+      "hardened_only": 849,
+      "strict_hardened_pair": 571
     },
     "effective_mode_case_counts": {
-      "strict": 1156,
-      "hardened": 651
+      "strict": 1925,
+      "hardened": 1420
     },
     "missing_hardened_family_count": 7,
     "missing_hardened_families": [

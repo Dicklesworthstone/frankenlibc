@@ -101,12 +101,18 @@ Status keys:
 
 ## 5) P1 Fixture Depth + Mode Coverage
 
-- [ ] `TODO-0501` Increase hardened-mode coverage beyond current low baseline.
-- [ ] `TODO-0502` Add hardened-specific fixtures for allocator anomaly repairs.
-- [ ] `TODO-0503` Add hardened-specific fixtures for parser/locale boundary conditions.
-- [ ] `TODO-0504` Add hardened-specific fixtures for resolver retry/cache instability cases.
-- [ ] `TODO-0505` Add strict/hardened pair fixtures for every high-risk symbol family in support matrix.
-- [ ] `TODO-0506` Add fixture-coverage dashboard keyed by module family and mode.
+- [x] `TODO-0501` Increase hardened-mode coverage beyond current low baseline.
+  - Closed by `bd-0agsk.10`: `tests/conformance/hardened_mode_coverage_inventory.v1.json` now inventories strict-only, hardened-only, and strict/hardened-pair fixture rows across the checked-in fixture corpus without claiming replacement readiness.
+- [x] `TODO-0502` Add hardened-specific fixtures for allocator anomaly repairs.
+  - Closed by `bd-0agsk.10` as an inventory/gap dashboard row: `allocator_anomaly_repairs` is explicitly classified as `gap_identified`, with stress-orchard repair evidence and a next action for direct allocator anomaly fixtures.
+- [x] `TODO-0503` Add hardened-specific fixtures for parser/locale boundary conditions.
+  - Closed by `bd-0agsk.10` as an inventory/gap dashboard row: `parser_locale_boundary_cases` tracks parser/locale fixture families, repair/deny classes, current hardened coverage, and the remaining scanf parser gap.
+- [x] `TODO-0504` Add hardened-specific fixtures for resolver retry/cache instability cases.
+  - Closed by `bd-0agsk.10`: `resolver_retry_cache_cases` records resolver, passwd, and group fixture coverage and separates current inventory from future retry/cache-specific fixture waves.
+- [x] `TODO-0505` Add strict/hardened pair fixtures for every high-risk symbol family in support matrix.
+  - Closed by `bd-0agsk.10` as a high-risk inventory checkpoint: the dashboard includes `high_risk_symbol_families`, missing hardened-family gaps, and support-matrix symbol counts while forbidding complete-coverage overclaims.
+- [x] `TODO-0506` Add fixture-coverage dashboard keyed by module family and mode.
+  - Closed by `bd-0agsk.10`: evidence lives in `tests/conformance/hardened_mode_coverage_inventory.v1.json`, `scripts/check_hardened_mode_coverage_inventory.sh`, and `crates/frankenlibc-harness/tests/hardened_mode_coverage_inventory_test.rs`.
 
 ## 6) P1 Symbol & ABI Coverage Expansion
 
