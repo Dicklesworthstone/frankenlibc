@@ -24,6 +24,7 @@
     "cleanup_candidates",
     "recommended_cleanup_candidates",
     "approval_readiness",
+    "approval_ready_summary",
     "no_candidate_diagnostics",
     "approval_request",
     "executed_actions",
@@ -131,6 +132,17 @@
     "needs_read_only_precheck_results",
     "blocked_by_read_only_precheck_result",
     "blocked_by_missing_read_only_checks"
+  ],
+  "approval_ready_summary_fields": [
+    "status",
+    "ready_for_explicit_user_approval_count",
+    "ready_worker_ids",
+    "ready_candidate_count_by_worker",
+    "ready_candidate_paths",
+    "safe_to_run_without_user_approval",
+    "exact_user_approval_required",
+    "cleanup_executed",
+    "next_action"
   ],
   "no_candidate_diagnostics_fields": [
     "status",
@@ -453,6 +465,17 @@
           "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
         }
       ],
+      "approval_ready_summary": {
+        "status": "no_ready_candidates",
+        "ready_for_explicit_user_approval_count": 0,
+        "ready_worker_ids": [],
+        "ready_candidate_count_by_worker": {},
+        "ready_candidate_paths": [],
+        "safe_to_run_without_user_approval": false,
+        "exact_user_approval_required": true,
+        "cleanup_executed": false,
+        "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
+      },
       "no_candidate_diagnostics": {
         "status": "candidates_identified",
         "candidate_count": 2,

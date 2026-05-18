@@ -816,6 +816,40 @@ def approval_readiness_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def approval_ready_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    ready_rows = [
+        row
+        for row in rows
+        if row.get("approval_state") == "ready_for_explicit_user_approval"
+    ]
+    count_by_worker: dict[str, int] = {}
+    ready_paths: list[str] = []
+    for row in ready_rows:
+        worker_id = str(row.get("worker_id") or "")
+        path = str(row.get("path") or "")
+        if worker_id:
+            count_by_worker[worker_id] = count_by_worker.get(worker_id, 0) + 1
+        if path:
+            ready_paths.append(path)
+    ready_count_by_worker = {
+        worker_id: count_by_worker[worker_id] for worker_id in sorted(count_by_worker)
+    }
+    ready_count = len(ready_rows)
+    return {
+        "status": "ready_for_explicit_user_approval" if ready_count else "no_ready_candidates",
+        "ready_for_explicit_user_approval_count": ready_count,
+        "ready_worker_ids": sorted(count_by_worker),
+        "ready_candidate_count_by_worker": ready_count_by_worker,
+        "ready_candidate_paths": ready_paths,
+        "safe_to_run_without_user_approval": False,
+        "exact_user_approval_required": True,
+        "cleanup_executed": False,
+        "next_action": "request_explicit_user_approval_for_current_ready_paths"
+        if ready_count
+        else "collect_passing_read_only_precheck_results_before_requesting_user_approval",
+    }
+
+
 def no_candidate_diagnostics() -> dict[str, Any]:
     candidate_counts_by_worker: dict[str, int] = {}
     for candidate in candidates:
@@ -873,6 +907,8 @@ def no_candidate_diagnostics() -> dict[str, Any]:
     }
 
 
+approval_readiness = approval_readiness_rows()
+
 report = {
     "schema_version": "rch_pressure_approval_packet_schema.v1",
     "packet_id": PACKET_ID,
@@ -896,7 +932,8 @@ report = {
     "workers": workers,
     "cleanup_candidates": candidates,
     "recommended_cleanup_candidates": recommended_candidates,
-    "approval_readiness": approval_readiness_rows(),
+    "approval_readiness": approval_readiness,
+    "approval_ready_summary": approval_ready_summary(approval_readiness),
     "no_candidate_diagnostics": no_candidate_diagnostics(),
     "approval_request": {
         "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
@@ -1082,6 +1119,14 @@ else:
     lines.append("- No selected candidate has reached the approval-readiness stage; safe without user approval `false`.")
 lines.extend(
     [
+        "",
+        "## Approval Ready Summary",
+        "",
+        f"- Status: `{report['approval_ready_summary']['status']}`",
+        f"- Ready count: `{report['approval_ready_summary']['ready_for_explicit_user_approval_count']}`",
+        f"- Ready workers: `{', '.join(report['approval_ready_summary']['ready_worker_ids']) or 'none'}`",
+        f"- Next action: `{report['approval_ready_summary']['next_action']}`",
+        f"- Cleanup executed: `{str(report['approval_ready_summary']['cleanup_executed']).lower()}`",
         "",
         "## Cleanup Candidates",
     ]

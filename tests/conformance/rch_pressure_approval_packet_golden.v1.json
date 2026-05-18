@@ -290,6 +290,17 @@
         "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
       }
     ],
+    "approval_ready_summary": {
+      "status": "no_ready_candidates",
+      "ready_for_explicit_user_approval_count": 0,
+      "ready_worker_ids": [],
+      "ready_candidate_count_by_worker": {},
+      "ready_candidate_paths": [],
+      "safe_to_run_without_user_approval": false,
+      "exact_user_approval_required": true,
+      "cleanup_executed": false,
+      "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
+    },
     "no_candidate_diagnostics": {
       "status": "candidates_identified",
       "candidate_count": 2,

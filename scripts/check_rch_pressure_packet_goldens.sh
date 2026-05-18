@@ -342,6 +342,56 @@ def validate_no_candidate_diagnostics(
         add_error(source, "no_candidate_status_mismatch", "packets without cleanup candidates must report no_candidates_identified")
 
 
+def expected_approval_ready_summary(readiness: list[Any]) -> dict[str, Any]:
+    ready_rows = [
+        item
+        for item in readiness
+        if isinstance(item, dict) and item.get("approval_state") == "ready_for_explicit_user_approval"
+    ]
+    count_by_worker: dict[str, int] = {}
+    ready_paths: list[str] = []
+    for item in ready_rows:
+        worker_id = str(item.get("worker_id") or "")
+        path = str(item.get("path") or "")
+        if worker_id:
+            count_by_worker[worker_id] = count_by_worker.get(worker_id, 0) + 1
+        if path:
+            ready_paths.append(path)
+    return {
+        "status": "ready_for_explicit_user_approval" if ready_rows else "no_ready_candidates",
+        "ready_for_explicit_user_approval_count": len(ready_rows),
+        "ready_worker_ids": sorted(count_by_worker),
+        "ready_candidate_count_by_worker": {
+            worker_id: count_by_worker[worker_id] for worker_id in sorted(count_by_worker)
+        },
+        "ready_candidate_paths": ready_paths,
+        "safe_to_run_without_user_approval": False,
+        "exact_user_approval_required": True,
+        "cleanup_executed": False,
+        "next_action": "request_explicit_user_approval_for_current_ready_paths"
+        if ready_rows
+        else "collect_passing_read_only_precheck_results_before_requesting_user_approval",
+    }
+
+
+def validate_approval_ready_summary(packet: dict[str, Any], source: str, readiness: list[Any]) -> None:
+    summary = packet.get("approval_ready_summary")
+    if not isinstance(summary, dict):
+        add_error(source, "missing_approval_ready_summary", "approval_ready_summary must be an object")
+        return
+    expected = expected_approval_ready_summary(readiness)
+    for field, expected_value in expected.items():
+        if summary.get(field) != expected_value:
+            add_error(
+                source,
+                "approval_ready_summary_mismatch",
+                f"approval_ready_summary.{field}={summary.get(field)} expected={expected_value}",
+            )
+    for field in expected:
+        if field not in summary:
+            add_error(source, "approval_ready_summary_missing_field", f"approval_ready_summary missing {field}")
+
+
 def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool) -> None:
     if packet.get("schema_version") != "rch_pressure_approval_packet_schema.v1":
         add_error(source, "schema_version", "packet schema_version mismatch")
@@ -707,6 +757,7 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
                 add_error(source, "approval_readiness_next_action_mismatch", f"{key[1]} next_action mismatch")
         elif next_action != "collect_passing_read_only_precheck_results_before_requesting_user_approval":
             add_error(source, "approval_readiness_next_action_mismatch", f"{key[1]} next_action mismatch")
+    validate_approval_ready_summary(packet, source, readiness)
     if not all(item.get("executed") is True for item in packet.get("executed_actions", []) if isinstance(item, dict)):
         add_error(source, "missing_execution_log", "executed_actions must log completed read-only actions")
 
@@ -919,6 +970,21 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
     else:
         add_error(source, "negative_control_no_approval_readiness", "golden packet has no approval_readiness for mutation")
 
+    forged_summary_packet = deepcopy(packet)
+    summary = forged_summary_packet.get("approval_ready_summary")
+    if isinstance(summary, dict):
+        summary["ready_for_explicit_user_approval_count"] = int(
+            summary.get("ready_for_explicit_user_approval_count", 0)
+        ) + 1
+        expect_validation_failure(
+            forged_summary_packet,
+            f"{source}::approval_ready_summary_mismatch",
+            "approval_ready_summary_mismatch",
+            "make approval_ready_summary count disagree with approval_readiness rows",
+        )
+    else:
+        add_error(source, "negative_control_no_approval_ready_summary", "golden packet has no approval_ready_summary for mutation")
+
     missing_no_candidate_diagnostics_packet = deepcopy(packet)
     missing_no_candidate_diagnostics_packet["cleanup_candidates"] = []
     missing_no_candidate_diagnostics_packet["recommended_cleanup_candidates"] = []
@@ -943,6 +1009,7 @@ def validate_no_candidate_positive_control(packet: dict[str, Any], source: str) 
     synthetic["cleanup_candidates"] = []
     synthetic["recommended_cleanup_candidates"] = []
     synthetic["approval_readiness"] = []
+    synthetic["approval_ready_summary"] = expected_approval_ready_summary([])
     approval = synthetic.get("approval_request")
     if isinstance(approval, dict):
         approval["exact_worker_ids"] = []
@@ -1024,6 +1091,7 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
         {
             "recommended_cleanup_candidates",
             "approval_readiness",
+            "approval_ready_summary",
             "no_candidate_diagnostics",
             "validation_commands",
             "artifact_paths",
@@ -1102,6 +1170,22 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "path",
             "approval_state",
             "blocked_by",
+            "safe_to_run_without_user_approval",
+            "exact_user_approval_required",
+            "cleanup_executed",
+            "next_action",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "approval_ready_summary_fields",
+        {
+            "status",
+            "ready_for_explicit_user_approval_count",
+            "ready_worker_ids",
+            "ready_candidate_count_by_worker",
+            "ready_candidate_paths",
             "safe_to_run_without_user_approval",
             "exact_user_approval_required",
             "cleanup_executed",
