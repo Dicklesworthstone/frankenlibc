@@ -914,6 +914,29 @@ type HostCxaThreadAtExitImplFn =
 // SAFETY: pointers are only accessed by the thread that registered them.
 unsafe impl Send for TlsAtExitEntry {}
 
+#[cfg(feature = "owned-tls-cache")]
+struct StartupTls {
+    atexit_list: std::cell::RefCell<Vec<TlsAtExitEntry>>,
+    atexit_capture_for_tests: std::cell::Cell<bool>,
+    atexit_reentry: std::cell::Cell<bool>,
+    host_cxa_lookup_reentry: std::cell::Cell<bool>,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_startup_tls() -> StartupTls {
+    StartupTls {
+        atexit_list: std::cell::RefCell::new(Vec::new()),
+        atexit_capture_for_tests: std::cell::Cell::new(false),
+        atexit_reentry: std::cell::Cell::new(false),
+        host_cxa_lookup_reentry: std::cell::Cell::new(false),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static STARTUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<StartupTls> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_startup_tls);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static TLS_ATEXIT_LIST: std::cell::RefCell<Vec<TlsAtExitEntry>> = const {
         std::cell::RefCell::new(Vec::new())
@@ -939,10 +962,165 @@ static HOST_CXA_THREAD_ATEXIT_IMPL: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 const HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL: usize = usize::MAX;
 
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static HOST_CXA_LOOKUP_REENTRY: std::cell::Cell<bool> = const {
         std::cell::Cell::new(false)
     };
+}
+
+fn tls_atexit_capture_for_tests_enabled() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| tls.atexit_capture_for_tests.get())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TLS_ATEXIT_CAPTURE_FOR_TESTS.with(|capture| capture.get())
+    }
+}
+
+fn replace_tls_atexit_capture_for_tests(value: bool) -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| tls.atexit_capture_for_tests.replace(value))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TLS_ATEXIT_CAPTURE_FOR_TESTS.with(|capture| capture.replace(value))
+    }
+}
+
+fn set_tls_atexit_capture_for_tests(value: bool) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| tls.atexit_capture_for_tests.set(value));
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TLS_ATEXIT_CAPTURE_FOR_TESTS.with(|capture| capture.set(value));
+    }
+}
+
+fn enter_tls_atexit_reentry() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| {
+            if tls.atexit_reentry.get() {
+                true
+            } else {
+                tls.atexit_reentry.set(true);
+                false
+            }
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TLS_ATEXIT_REENTRY.with(|reentry| {
+            if reentry.get() {
+                true
+            } else {
+                reentry.set(true);
+                false
+            }
+        })
+    }
+}
+
+fn set_tls_atexit_reentry(value: bool) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| tls.atexit_reentry.set(value));
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TLS_ATEXIT_REENTRY.with(|reentry| reentry.set(value));
+    }
+}
+
+fn push_tls_atexit_entry(entry: TlsAtExitEntry) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| tls.atexit_list.borrow_mut().push(entry));
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TLS_ATEXIT_LIST.with(|list| list.borrow_mut().push(entry));
+    }
+}
+
+fn take_tls_atexit_entries() -> Vec<TlsAtExitEntry> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| {
+            let mut entries = tls.atexit_list.borrow_mut();
+            let mut drained = Vec::new();
+            while let Some(entry) = entries.pop() {
+                drained.push(entry);
+            }
+            drained
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TLS_ATEXIT_LIST.with(|list| {
+            let mut entries = list.borrow_mut();
+            let mut drained = Vec::new();
+            while let Some(entry) = entries.pop() {
+                drained.push(entry);
+            }
+            drained
+        })
+    }
+}
+
+fn clear_tls_atexit_entries() {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| tls.atexit_list.borrow_mut().clear());
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TLS_ATEXIT_LIST.with(|list| list.borrow_mut().clear());
+    }
+}
+
+fn enter_host_cxa_lookup_reentry() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| {
+            if tls.host_cxa_lookup_reentry.get() {
+                false
+            } else {
+                tls.host_cxa_lookup_reentry.set(true);
+                true
+            }
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOST_CXA_LOOKUP_REENTRY
+            .try_with(|c| {
+                if c.get() {
+                    false
+                } else {
+                    c.set(true);
+                    true
+                }
+            })
+            .unwrap_or(false)
+    }
+}
+
+fn set_host_cxa_lookup_reentry(value: bool) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STARTUP_OWNED_TLS.with(|tls| tls.host_cxa_lookup_reentry.set(value));
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let _ = HOST_CXA_LOOKUP_REENTRY.try_with(|c| c.set(value));
+    }
 }
 
 unsafe fn host_cxa_thread_atexit_impl() -> Option<HostCxaThreadAtExitImplFn> {
@@ -960,16 +1138,7 @@ unsafe fn host_cxa_thread_atexit_impl() -> Option<HostCxaThreadAtExitImplFn> {
     // completes, return None so the caller falls through to the in-Rust TLS
     // fallback list. Without this guard the recursive path would re-enter
     // dlsym and either hang the loader lock or stack-overflow.
-    let entered = HOST_CXA_LOOKUP_REENTRY
-        .try_with(|c| {
-            if c.get() {
-                false
-            } else {
-                c.set(true);
-                true
-            }
-        })
-        .unwrap_or(false);
+    let entered = enter_host_cxa_lookup_reentry();
     if !entered {
         return None;
     }
@@ -977,7 +1146,7 @@ unsafe fn host_cxa_thread_atexit_impl() -> Option<HostCxaThreadAtExitImplFn> {
     let resolved =
         crate::host_resolve::resolve_host_symbol_raw("__cxa_thread_atexit_impl").unwrap_or(0);
 
-    let _ = HOST_CXA_LOOKUP_REENTRY.try_with(|c| c.set(false));
+    set_host_cxa_lookup_reentry(false);
 
     let to_store = if resolved == 0 {
         HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL
@@ -1008,7 +1177,7 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     obj: *mut c_void,
     _dso_handle: *mut c_void,
 ) -> c_int {
-    if !TLS_ATEXIT_CAPTURE_FOR_TESTS.with(|capture| capture.get())
+    if !tls_atexit_capture_for_tests_enabled()
         && let Some(host) = unsafe { host_cxa_thread_atexit_impl() }
     {
         return unsafe { host(dtor, obj, _dso_handle) };
@@ -1019,21 +1188,12 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     // because our interposed dlsym also accesses TLS, creating another cycle.
     // On reentry, silently succeed without registering — the dropped destructor
     // is Rust's own TLS cleanup which is harmless to skip during init.
-    if TLS_ATEXIT_REENTRY.with(|reentry| {
-        if reentry.get() {
-            true
-        } else {
-            reentry.set(true);
-            false
-        }
-    }) {
+    if enter_tls_atexit_reentry() {
         return 0; // Silently drop reentrant registration
     }
-    let result = TLS_ATEXIT_LIST.with(|list| {
-        list.borrow_mut().push(TlsAtExitEntry { dtor, obj });
-        0
-    });
-    TLS_ATEXIT_REENTRY.with(|reentry| reentry.set(false));
+    push_tls_atexit_entry(TlsAtExitEntry { dtor, obj });
+    let result = 0;
+    set_tls_atexit_reentry(false);
     result
 }
 
@@ -1042,14 +1202,10 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
 /// Called by `__call_tls_dtors` in `glibc_internal_abi`. Each destructor is
 /// invoked exactly once with its registered object pointer, then removed.
 pub(crate) fn invoke_tls_dtors() {
-    TLS_ATEXIT_LIST.with(|list| {
-        // Drain in reverse (LIFO) order, matching glibc behavior.
-        let mut entries = list.borrow_mut();
-        while let Some(entry) = entries.pop() {
-            // SAFETY: caller registered a valid function pointer and object.
-            unsafe { (entry.dtor)(entry.obj) };
-        }
-    });
+    for entry in take_tls_atexit_entries() {
+        // SAFETY: caller registered a valid function pointer and object.
+        unsafe { (entry.dtor)(entry.obj) };
+    }
 }
 
 #[doc(hidden)]
@@ -1057,17 +1213,15 @@ pub unsafe fn register_tls_dtor_for_tests(
     dtor: unsafe extern "C" fn(*mut c_void),
     obj: *mut c_void,
 ) -> c_int {
-    TLS_ATEXIT_CAPTURE_FOR_TESTS.with(|capture| {
-        let previous = capture.replace(true);
-        let result = unsafe { __cxa_thread_atexit_impl(dtor, obj, std::ptr::null_mut()) };
-        capture.set(previous);
-        result
-    })
+    let previous = replace_tls_atexit_capture_for_tests(true);
+    let result = unsafe { __cxa_thread_atexit_impl(dtor, obj, std::ptr::null_mut()) };
+    set_tls_atexit_capture_for_tests(previous);
+    result
 }
 
 #[doc(hidden)]
 pub fn clear_tls_dtors_for_tests() {
-    TLS_ATEXIT_LIST.with(|list| list.borrow_mut().clear());
+    clear_tls_atexit_entries();
 }
 
 // ===========================================================================

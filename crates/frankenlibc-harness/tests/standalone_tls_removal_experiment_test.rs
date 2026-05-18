@@ -27,7 +27,7 @@ const LOCAL_EXEC_LANE: &str = "local-exec-tls-model-probe";
 const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
-const EXPECTED_OWNER_SURFACE_COUNT: usize = 13;
+const EXPECTED_OWNER_SURFACE_COUNT: usize = 14;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -118,6 +118,13 @@ fn abi_runtime_policy_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("runtime_policy.rs")
+}
+
+fn abi_startup_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("startup_abi.rs")
 }
 
 fn abi_signal_path(root: &Path) -> PathBuf {
@@ -665,8 +672,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 66,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, and wchar c16 surrogate/fgetwln buffers",
+        substituted == 68,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, and wchar c16 surrogate/fgetwln buffers",
     )?;
     require(
         substituted + remaining == total,
@@ -824,6 +831,18 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && runtime_policy.contains("with_decision_contract_machine")
             && runtime_policy.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "runtime policy must route mode, trace, explainability, reentry, and contract state through owned TLS cache",
+    )?;
+
+    let startup = std::fs::read_to_string(abi_startup_path(&root))
+        .map_err(|err| format!("read startup_abi.rs: {err}"))?;
+    require(
+        startup.contains("STARTUP_OWNED_TLS")
+            && startup.contains("StartupTls")
+            && startup.contains("enter_tls_atexit_reentry")
+            && startup.contains("enter_host_cxa_lookup_reentry")
+            && startup.contains("take_tls_atexit_entries")
+            && startup.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "startup ABI must route thread-at-exit list, capture flag, and reentry guards through owned TLS cache",
     )?;
 
     let signal = std::fs::read_to_string(abi_signal_path(&root))
