@@ -1305,6 +1305,8 @@ lines.extend(
         "",
         "## Approval Boundary",
         "",
+        f"Why read-only collection is insufficient: {report['approval_request']['why_read_only_collection_is_insufficient']}",
+        "",
         "This packet is read-only evidence. It does not authorize cleanup. The user must approve exact paths and commands in writing before any cleanup runs.",
         "",
         "Commands not executed:",

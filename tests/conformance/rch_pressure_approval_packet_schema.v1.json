@@ -546,7 +546,7 @@
         "margin_sufficient_candidate_paths": [
           "/data/projects/franken_engine/target_PearlTower_focused"
         ],
-        "why_read_only_collection_is_insufficient": "No releasable SBH ballast was found and the remaining candidates require deletion-level cleanup.",
+        "why_read_only_collection_is_insufficient": "No releasable SBH ballast was found; remaining cleanup candidates require explicit deletion-level approval.",
         "explicit_user_text_required_before_cleanup": "The user must provide written approval that names the exact paths and commands before cleanup can run.",
         "commands_not_executed": [
           "no file deletion command executed",

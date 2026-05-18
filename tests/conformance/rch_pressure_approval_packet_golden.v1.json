@@ -391,6 +391,7 @@
     "open_file_absence",
     "Cleanup Candidates",
     "requires explicit written approval; not executed",
+    "Why read-only collection is insufficient: No releasable SBH ballast was found; remaining cleanup candidates require explicit deletion-level approval.",
     "This packet is read-only evidence. It does not authorize cleanup.",
     "no deletion command executed",
     "no ballast release command executed"
