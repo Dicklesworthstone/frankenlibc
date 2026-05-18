@@ -799,6 +799,11 @@ else:
         ) + "."
     else:
         worker_hint = ""
+    ready_paths = approval_summary.get("current_ready_candidate_paths")
+    if isinstance(ready_paths, list) and ready_paths:
+        path_hint = "approval_ready_paths=" + "|".join(str(path) for path in ready_paths) + "."
+    else:
+        path_hint = ""
     print(
         "rch remote admissibility preflight blocked; follow "
         f"operator_next_action={operator_next_action}."
@@ -806,6 +811,7 @@ else:
         f"approval_packet_status={approval_packet_status}. "
         f"approval_ready_candidates={ready_count}. "
         f"{worker_hint} "
+        f"{path_hint} "
         f"failure_signatures={','.join(report['failure_signatures'])}",
         file=sys.stderr,
     )
