@@ -4161,7 +4161,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "field": "summary.thread_local_macro_count",
-      "expected_value": 90,
+      "expected_value": 89,
       "rationale": "Dashboard consumers must see the source TLS macro inventory size behind the blocker."
     },
     {
@@ -4177,7 +4177,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "field": "summary.abi_thread_local_macro_count",
-      "expected_value": 82,
+      "expected_value": 81,
       "rationale": "Dashboard consumers must see that most TLS macro pressure is in ABI modules."
     },
     {
@@ -4241,7 +4241,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "field": "source_surface_scan.total_thread_local_macro_count",
-      "expected_value": 90,
+      "expected_value": 89,
       "rationale": "Dashboard consumers must see the source scan total that must be refreshed with blocker movement."
     },
     {

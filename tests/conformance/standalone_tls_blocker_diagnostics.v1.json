@@ -3,7 +3,7 @@
   "manifest_id": "standalone-tls-blocker-diagnostics",
   "bead": "bd-zyck1.89",
   "source_commit": "current",
-  "source_commit_hint": "2fadeb011f6e",
+  "source_commit_hint": "0ee2fac6eb28",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -11,7 +11,7 @@
     "diagnostic_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_standalone_tls_blocker_diagnostics"
   },
-  "generated_utc": "2026-05-06T04:42:22Z",
+  "generated_utc": "2026-05-18T05:54:56Z",
   "purpose": "Report-only diagnostic that traces the current standalone forge __tls_get_addr@GLIBC_2.3 blocker back to FrankenLibC TLS source surfaces. It preserves the current replacement claim boundary while giving follow-up work a machine-checkable source and artifact control gate.",
   "inputs": {
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
@@ -102,9 +102,107 @@
       "classification": "compiler-runtime panic-abort experiment improves unwind blockers but leaves the TLS relocation unchanged, so __tls_get_addr needs a TLS/source-surface follow-up instead of a panic-profile follow-up."
     }
   },
+  "owned_tls_cache_artifact_probe": {
+    "source_commit": "0ee2fac6eb28c46d7542dd82efe7be86c2160b8b",
+    "probe_scope": "release standalone owned-tls-cache frankenlibc-abi cdylib after resolver, glibc-internal, errno, malloc thread-cache, and fixed-buffer OwnedTlsCache migrations",
+    "latest_probe_command": "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_errno_artifact rch exec -- cargo build -p frankenlibc-abi --release --features=standalone,owned-tls-cache",
+    "latest_probe_result": "pass_remote",
+    "latest_probe_artifact": "/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_errno_artifact/release/libfrankenlibc_abi.so",
+    "latest_probe_artifact_sha256": "6ceaa55e9c479c478563b91343a8979e1bdca2a379242956ef5952782f0b9920",
+    "observed_artifact_symbols": {
+      "undefined_tls_symbols": [
+        "__tls_get_addr@GLIBC_2.3"
+      ],
+      "needed_libraries": [
+        "libgcc_s.so.1",
+        "ld-linux-x86-64.so.2"
+      ],
+      "version_needs": {
+        "libgcc_s.so.1": [
+          "GCC_3.0",
+          "GCC_3.3",
+          "GCC_4.2.0"
+        ],
+        "ld-linux-x86-64.so.2": [
+          "GLIBC_2.3"
+        ]
+      }
+    },
+    "tls_relocation_summary": {
+      "dtpmod64_relocation_count": 8,
+      "tls_get_addr_jump_slot_count": 1,
+      "relocation_count_including_jump_slot": 9
+    },
+    "tls_descriptor_buckets": [
+      {
+        "descriptor_offset": "316860",
+        "owner_bucket": "local_abi_stdio_dlfcn_string_runtime_policy",
+        "observed_call_site_examples": [
+          "stdio_abi::FGETLN_BUFFER",
+          "stdio_abi::fputc/fputs/puts",
+          "dlfcn_abi::dladdr1",
+          "string_abi and runtime_policy call sites"
+        ]
+      },
+      {
+        "descriptor_offset": "317bb8",
+        "owner_bucket": "local_abi_stdio_wchar_locale_dirent_registry",
+        "observed_call_site_examples": [
+          "stdio_abi::registry",
+          "fmemopen/fopencookie/open_memstream",
+          "wchar_abi::wide_memstream_registry",
+          "locale_abi and dirent_abi registry call sites"
+        ]
+      },
+      {
+        "descriptor_offset": "318f28",
+        "owner_bucket": "tracing_dispatcher_tls",
+        "observed_call_site_examples": [
+          "tracing_core::dispatcher::get_default"
+        ]
+      },
+      {
+        "descriptor_offset": "3193b8",
+        "owner_bucket": "membrane_ptr_validator_tls",
+        "observed_call_site_examples": [
+          "frankenlibc_membrane::ptr_validator::ValidationPipeline::validate"
+        ]
+      },
+      {
+        "descriptor_offset": "319590",
+        "owner_bucket": "rust_library_internal_tls",
+        "observed_call_site_examples": [
+          "mangled Rust library internal call sites without direct FrankenLibC owner names"
+        ]
+      },
+      {
+        "descriptor_offset": "3196e8",
+        "owner_bucket": "rust_std_thread_current_panic_tls",
+        "observed_call_site_examples": [
+          "std::thread::current",
+          "std panic hook and thread metadata paths"
+        ]
+      },
+      {
+        "descriptor_offset": "319730",
+        "owner_bucket": "rust_std_thread_current_tls",
+        "observed_call_site_examples": [
+          "std::thread::current"
+        ]
+      },
+      {
+        "descriptor_offset": "3197e0",
+        "owner_bucket": "rust_std_panic_thread_tls",
+        "observed_call_site_examples": [
+          "std panic and stack-overflow thread metadata paths"
+        ]
+      }
+    ],
+    "classification": "OwnedTlsCache source migrations have not cleared artifact-level __tls_get_addr. The remaining blocker spans local ABI registries, tracing, membrane pointer validation, and Rust std/library TLS descriptors, so bd-c51oi remains claim-blocked until artifact-level nm/readelf controls are empty."
+  },
   "source_surface_scan": {
     "source_scan_command": "rg -n \"^[[:space:]]*(std::)?thread_local!\" crates/frankenlibc-abi/src crates/frankenlibc-core/src crates/frankenlibc-membrane/src -g'*.rs'",
-    "total_thread_local_macro_count": 90,
+    "total_thread_local_macro_count": 89,
     "thread_local_source_file_count": 29,
     "thread_local_inventory": [
       {
@@ -112,31 +210,31 @@
         "owner_surface": "abi_unistd_reentrant_buffers_and_lookup_state",
         "thread_local_macro_count": 25,
         "line_numbers": [
-          7114,
-          7480,
-          8049,
-          8220,
-          10060,
-          10339,
-          11620,
-          12367,
-          13265,
-          14451,
-          16175,
-          16259,
-          16316,
-          16461,
-          16644,
-          16806,
-          18771,
-          19293,
-          19643,
-          19892,
-          20226,
-          21978,
-          22248,
-          22409,
-          24769
+          7164,
+          7546,
+          8123,
+          8326,
+          10212,
+          10509,
+          11807,
+          12564,
+          13483,
+          14687,
+          16454,
+          16575,
+          16646,
+          16814,
+          17014,
+          17199,
+          19148,
+          19737,
+          20104,
+          20370,
+          20741,
+          22506,
+          22790,
+          22980,
+          25361
         ]
       },
       {
@@ -144,20 +242,20 @@
         "owner_surface": "abi_resolver_tls_and_h_errno_state",
         "thread_local_macro_count": 14,
         "line_numbers": [
-          277,
-          520,
-          1580,
-          1606,
-          2171,
-          2796,
-          3856,
-          3963,
-          4010,
-          4043,
-          4170,
-          4287,
-          4780,
-          5101
+          312,
+          817,
+          2080,
+          2106,
+          2676,
+          3344,
+          4414,
+          4457,
+          4605,
+          4635,
+          4817,
+          4954,
+          5474,
+          5811
         ]
       },
       {
@@ -165,13 +263,13 @@
         "owner_surface": "abi_rpc_thread_local_buffers",
         "thread_local_macro_count": 7,
         "line_numbers": [
-          1393,
-          2327,
-          2352,
-          2496,
-          2512,
-          2526,
-          2540
+          1403,
+          2379,
+          2425,
+          2590,
+          2628,
+          2664,
+          2700
         ]
       },
       {
@@ -179,12 +277,12 @@
         "owner_surface": "abi_glibc_internal_process_and_tls_shims",
         "thread_local_macro_count": 6,
         "line_numbers": [
-          186,
-          1249,
-          3522,
-          6463,
-          6885,
-          7794
+          196,
+          1273,
+          3568,
+          6541,
+          6989,
+          7920
         ]
       },
       {
@@ -192,21 +290,20 @@
         "owner_surface": "abi_string_membrane_recursion_and_scratch_state",
         "thread_local_macro_count": 4,
         "line_numbers": [
-          28,
-          2730,
-          3977,
-          5484
+          32,
+          2788,
+          4061,
+          4114
         ]
       },
       {
         "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
         "owner_surface": "abi_malloc_thread_cache_and_recursion_state",
-        "thread_local_macro_count": 4,
+        "thread_local_macro_count": 3,
         "line_numbers": [
           84,
-          577,
-          600,
-          920
+          576,
+          599
         ]
       },
       {
@@ -214,9 +311,9 @@
         "owner_surface": "abi_stdlib_conversion_and_random_state",
         "thread_local_macro_count": 3,
         "line_numbers": [
-          3948,
-          4843,
-          4869
+          3978,
+          4877,
+          4903
         ]
       },
       {
@@ -243,8 +340,8 @@
         "owner_surface": "abi_stdio_error_and_parser_state",
         "thread_local_macro_count": 2,
         "line_numbers": [
-          5519,
-          7017
+          5669,
+          7183
         ]
       },
       {
@@ -325,7 +422,7 @@
         "owner_surface": "abi_time_reentrant_storage",
         "thread_local_macro_count": 1,
         "line_numbers": [
-          745
+          759
         ]
       },
       {
@@ -349,7 +446,7 @@
         "owner_surface": "abi_pthread_thread_local_handles",
         "thread_local_macro_count": 1,
         "line_numbers": [
-          177
+          180
         ]
       },
       {
@@ -373,7 +470,7 @@
         "owner_surface": "abi_errno_location_tls_slot",
         "thread_local_macro_count": 1,
         "line_numbers": [
-          25
+          23
         ]
       },
       {
@@ -473,11 +570,11 @@
   "summary": {
     "report_only": true,
     "undefined_tls_symbol_count": 1,
-    "thread_local_macro_count": 90,
+    "thread_local_macro_count": 89,
     "thread_local_source_file_count": 29,
-    "abi_thread_local_macro_count": 82,
+    "abi_thread_local_macro_count": 81,
     "core_thread_local_macro_count": 4,
     "membrane_thread_local_macro_count": 4,
-    "next_safe_action": "Add a report-only TLS model/startup experiment that compares the current baseline against owned TLS runtime or explicit TLS model changes, then require nm/readelf absence of __tls_get_addr before changing any replacement claim."
+    "next_safe_action": "Use the owned_tls_cache_artifact_probe descriptor buckets to choose the next narrow source owner, then require nm/readelf absence of __tls_get_addr before changing any replacement claim."
   }
 }

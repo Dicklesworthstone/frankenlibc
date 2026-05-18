@@ -2419,7 +2419,7 @@ fn standalone_tls_blocker_diagnostics_rows_are_explicit() -> TestResult {
         ),
         (
             "standalone-tls-blocker-diagnostics-thread-local-count",
-            ("summary.thread_local_macro_count", json!(90)),
+            ("summary.thread_local_macro_count", json!(89)),
         ),
         (
             "standalone-tls-blocker-diagnostics-thread-local-file-count",
@@ -2427,7 +2427,7 @@ fn standalone_tls_blocker_diagnostics_rows_are_explicit() -> TestResult {
         ),
         (
             "standalone-tls-blocker-diagnostics-abi-thread-local-count",
-            ("summary.abi_thread_local_macro_count", json!(82)),
+            ("summary.abi_thread_local_macro_count", json!(81)),
         ),
         (
             "standalone-tls-blocker-diagnostics-current-claim-status",
@@ -2480,7 +2480,7 @@ fn standalone_tls_blocker_diagnostics_rows_are_explicit() -> TestResult {
         ),
         (
             "standalone-tls-blocker-diagnostics-scan-total",
-            ("source_surface_scan.total_thread_local_macro_count", json!(90)),
+            ("source_surface_scan.total_thread_local_macro_count", json!(89)),
         ),
         (
             "standalone-tls-blocker-diagnostics-first-hot-file",

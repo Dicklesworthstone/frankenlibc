@@ -274,6 +274,82 @@ fn tls_blocker_diagnostic_matches_current_forge_snapshot() -> TestResult {
 }
 
 #[test]
+fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
+    let root = workspace_root()?;
+    let diagnostic = load_json(&root, DIAGNOSTIC_PATH)?;
+    let probe = &diagnostic["owned_tls_cache_artifact_probe"];
+
+    ensure_eq(
+        as_str(&probe["latest_probe_result"], "latest_probe_result")?,
+        "pass_remote",
+        "owned TLS probe result",
+    )?;
+    let command = as_str(&probe["latest_probe_command"], "latest_probe_command")?;
+    ensure(
+        command.contains("rch exec") && command.contains("--features=standalone,owned-tls-cache"),
+        "owned TLS probe command must record the remote build and feature gate",
+    )?;
+    ensure_eq(
+        string_vec(
+            &probe["observed_artifact_symbols"]["undefined_tls_symbols"],
+            "owned_tls_cache_artifact_probe.undefined_tls_symbols",
+        )?,
+        vec![EXPECTED_TLS_SYMBOL.to_owned()],
+        "owned TLS probe must keep the live TLS blocker",
+    )?;
+    ensure(
+        string_set(
+            &probe["observed_artifact_symbols"]["needed_libraries"],
+            "owned_tls_cache_artifact_probe.needed_libraries",
+        )?
+        .is_superset(&BTreeSet::from([
+            "libgcc_s.so.1".to_owned(),
+            "ld-linux-x86-64.so.2".to_owned(),
+        ])),
+        "owned TLS probe must record remaining host NEEDED libraries",
+    )?;
+    ensure_eq(
+        as_u64(
+            &probe["tls_relocation_summary"]["dtpmod64_relocation_count"],
+            "dtpmod64_relocation_count",
+        )?,
+        8,
+        "DTPMOD64 relocation count",
+    )?;
+    ensure_eq(
+        as_u64(
+            &probe["tls_relocation_summary"]["tls_get_addr_jump_slot_count"],
+            "tls_get_addr_jump_slot_count",
+        )?,
+        1,
+        "tls_get_addr jump slot count",
+    )?;
+
+    let buckets = as_array(&probe["tls_descriptor_buckets"], "tls_descriptor_buckets")?;
+    ensure_eq(buckets.len(), 8, "TLS descriptor bucket count")?;
+    let owner_buckets = buckets
+        .iter()
+        .map(|bucket| as_str(&bucket["owner_bucket"], "owner_bucket").map(str::to_owned))
+        .collect::<TestResult<BTreeSet<_>>>()?;
+    for expected in [
+        "local_abi_stdio_dlfcn_string_runtime_policy",
+        "local_abi_stdio_wchar_locale_dirent_registry",
+        "tracing_dispatcher_tls",
+        "membrane_ptr_validator_tls",
+        "rust_std_thread_current_panic_tls",
+    ] {
+        ensure(
+            owner_buckets.contains(expected),
+            format!("missing owned TLS descriptor bucket {expected}"),
+        )?;
+    }
+    ensure(
+        as_str(&probe["classification"], "classification")?.contains("claim-blocked"),
+        "owned TLS probe classification must keep bd-c51oi claim-blocked",
+    )
+}
+
+#[test]
 fn source_inventory_matches_live_thread_local_macro_sites() -> TestResult {
     let root = workspace_root()?;
     let diagnostic = load_json(&root, DIAGNOSTIC_PATH)?;
