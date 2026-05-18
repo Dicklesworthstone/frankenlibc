@@ -1,0 +1,218 @@
+{
+  "schema_version": "tsm_contention_e2e_lane.v1",
+  "bead": "bd-rakj1",
+  "generated_at_utc": "2026-05-18T19:58:00Z",
+  "purpose": "Define a fail-closed E2E lane for Transparent Safety Membrane contention under agent-swarm pressure while keeping smoke evidence separate from permissioned large-host release evidence.",
+  "claim_status": "lane_contract_only",
+  "source_inputs": {
+    "membrane_contention_attribution_gate": "tests/conformance/membrane_contention_attribution_gate.v1.json",
+    "workload_latency_budget_join": "tests/conformance/workload_latency_budget_join.v1.json",
+    "pthread_malloc_stdio_stress_orchard": "tests/conformance/pthread_malloc_stdio_stress_orchard.v1.json",
+    "perf_budget_policy": "tests/conformance/perf_budget_policy.json",
+    "workload_matrix": "tests/conformance/workload_matrix.json"
+  },
+  "readiness_claim_policy": {
+    "smoke_evidence_claim_level": "shape_only",
+    "permissioned_evidence_claim_level": "large_host_release_candidate",
+    "smoke_must_not_upgrade_public_claims": true,
+    "required_release_evidence_lane": "permissioned_large_host",
+    "reject_public_readiness_when_lane": "smoke_small_host"
+  },
+  "operation_mix": [
+    "abi_malloc_free",
+    "abi_memcpy_memset",
+    "tls_cache_validation",
+    "bloom_page_oracle_lookup",
+    "runtime_math_decision",
+    "metrics_counter_sample"
+  ],
+  "required_evidence_fields": [
+    "schema_version",
+    "bead_id",
+    "lane_id",
+    "evidence_class",
+    "can_upgrade_public_readiness",
+    "worker_identity",
+    "cpu_logical_cores",
+    "memory_gib",
+    "numa_topology",
+    "thread_count",
+    "duration_ms",
+    "operation_mix",
+    "p50_latency_ns",
+    "p95_latency_ns",
+    "p99_latency_ns",
+    "repair_count",
+    "deny_count",
+    "tls_cache_hits",
+    "tls_cache_misses",
+    "bloom_positive_count",
+    "page_oracle_hits",
+    "runtime_decision_count",
+    "source_commit",
+    "target_dir",
+    "raw_log_paths",
+    "artifact_refs",
+    "readiness_claim"
+  ],
+  "lanes": [
+    {
+      "id": "smoke_small_host",
+      "evidence_class": "smoke_shape_only",
+      "can_upgrade_public_readiness": false,
+      "not_readiness_evidence": true,
+      "execution_policy": {
+        "required_launcher": "rch",
+        "requires_remote": true,
+        "forbidden_markers": [
+          "[RCH] local",
+          "public_readiness",
+          "large_host_release_candidate"
+        ],
+        "thread_count_max": 8,
+        "duration_ms_max": 1000,
+        "host_profile": {
+          "cpu_cores_min": 1,
+          "memory_gib_min": 1,
+          "numa_topology_required": false
+        }
+      },
+      "required_metrics": [
+        "parser_shape",
+        "report_shape",
+        "latency_percentile_order",
+        "counter_schema",
+        "smoke_claim_downgrade"
+      ]
+    },
+    {
+      "id": "permissioned_large_host",
+      "evidence_class": "permissioned_large_host_release",
+      "can_upgrade_public_readiness": true,
+      "not_readiness_evidence": false,
+      "execution_policy": {
+        "required_launcher": "rch",
+        "requires_remote": true,
+        "required_env": {
+          "FFS_ENABLE_PERMISSIONED_SWARM_WORKLOAD": "1",
+          "FFS_TSM_CONTENTION_REAL_RUN_ACK": "tsm-contention-may-use-permissioned-large-host"
+        },
+        "required_command_prefix": [
+          "RCH_REQUIRE_REMOTE=1",
+          "rch",
+          "exec",
+          "--"
+        ],
+        "forbidden_markers": [
+          "[RCH] local",
+          "local fallback",
+          "smoke_shape_only"
+        ],
+        "thread_count_min": 64,
+        "duration_ms_min": 10000,
+        "host_profile": {
+          "cpu_cores_min": 64,
+          "memory_gib_min": 256,
+          "numa_topology_required": true
+        },
+        "target_dir_policy": {
+          "required": true,
+          "isolation_pattern": "/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_tsm_contention_<run_id>"
+        }
+      },
+      "required_metrics": [
+        "worker_cpu_ram_topology",
+        "thread_counts",
+        "duration_ms",
+        "operation_mix",
+        "p50_p95_p99_latency",
+        "repair_and_deny_counts",
+        "tls_cache_stats",
+        "bloom_page_oracle_stats",
+        "runtime_math_decision_count",
+        "raw_log_paths"
+      ]
+    }
+  ],
+  "smoke_fixture": {
+    "schema_version": "tsm_contention_e2e_evidence.v1",
+    "bead_id": "bd-rakj1",
+    "lane_id": "smoke_small_host",
+    "evidence_class": "smoke_shape_only",
+    "can_upgrade_public_readiness": false,
+    "worker_identity": "shape-only-smoke-fixture",
+    "cpu_logical_cores": 2,
+    "memory_gib": 4,
+    "numa_topology": "not_required_for_smoke",
+    "thread_count": 4,
+    "duration_ms": 25,
+    "operation_mix": [
+      "abi_malloc_free",
+      "abi_memcpy_memset",
+      "tls_cache_validation",
+      "bloom_page_oracle_lookup",
+      "runtime_math_decision",
+      "metrics_counter_sample"
+    ],
+    "p50_latency_ns": 1000,
+    "p95_latency_ns": 2200,
+    "p99_latency_ns": 3300,
+    "repair_count": 0,
+    "deny_count": 0,
+    "tls_cache_hits": 12,
+    "tls_cache_misses": 3,
+    "bloom_positive_count": 8,
+    "page_oracle_hits": 8,
+    "runtime_decision_count": 16,
+    "source_commit": "shape-only",
+    "target_dir": "target/conformance/tsm_contention_e2e_lane_smoke",
+    "raw_log_paths": [
+      "target/conformance/tsm_contention_e2e_lane_smoke.log.jsonl"
+    ],
+    "artifact_refs": [
+      "tests/conformance/tsm_contention_e2e_lane.v1.json"
+    ],
+    "readiness_claim": "shape_only"
+  },
+  "evidence_outputs": {
+    "report": "target/conformance/tsm_contention_e2e_lane.report.json",
+    "jsonl_log": "target/conformance/tsm_contention_e2e_lane.log.jsonl",
+    "smoke_evidence": "target/conformance/tsm_contention_e2e_lane.smoke.json",
+    "permissioned_evidence": "target/conformance/tsm_contention_e2e_lane.permissioned.json"
+  },
+  "failure_signatures": {
+    "tsm_contention_missing_field": {
+      "class": "schema",
+      "decision": "fail",
+      "next_safe_action": "Add the missing field before accepting any contention evidence."
+    },
+    "tsm_contention_smoke_claim_upgrade": {
+      "class": "readiness_claim",
+      "decision": "fail",
+      "next_safe_action": "Downgrade smoke output to shape_only and rerun the checker."
+    },
+    "tsm_contention_local_execution": {
+      "class": "local_execution",
+      "decision": "fail",
+      "next_safe_action": "Discard local fallback output and rerun through RCH_REQUIRE_REMOTE=1 rch exec."
+    },
+    "tsm_contention_insufficient_host": {
+      "class": "host_capability",
+      "decision": "fail",
+      "next_safe_action": "Rerun on a worker with at least 64 logical CPUs, 256 GiB RAM, and visible NUMA topology."
+    },
+    "tsm_contention_latency_regression": {
+      "class": "tail_latency",
+      "decision": "fail",
+      "next_safe_action": "Join p99 evidence through workload_latency_budget_join before claiming readiness."
+    }
+  },
+  "validation_commands": [
+    "jq empty tests/conformance/tsm_contention_e2e_lane.v1.json",
+    "bash -n scripts/check_tsm_contention_e2e_lane.sh",
+    "bash scripts/check_tsm_contention_e2e_lane.sh",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-rakj1-test rch exec -- cargo test -p frankenlibc-harness --test tsm_contention_e2e_lane_test -- --nocapture",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-rakj1-check rch exec -- cargo check -p frankenlibc-harness --test tsm_contention_e2e_lane_test",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-rakj1-clippy rch exec -- cargo clippy -p frankenlibc-harness --test tsm_contention_e2e_lane_test -- -D warnings"
+  ]
+}
