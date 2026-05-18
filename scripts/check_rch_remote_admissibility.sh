@@ -292,6 +292,12 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
                 "diagnostic_summary": "No pressure approval packet has been generated for this checkout.",
                 "next_action": "generate_approval_packet",
             },
+            "approval_boundary": {
+                "explicit_user_text_required_before_cleanup": "The user must provide written approval naming exact paths and commands before cleanup can run.",
+                "commands_not_executed": [],
+                "safe_to_run_without_user_approval": False,
+                "cleanup_executed": False,
+            },
             "report_path": rel(APPROVAL_PACKET_REPORT),
             "markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
             "current_head": head,
@@ -344,6 +350,18 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         ),
         "next_action": diagnostics.get("next_action", "inspect_approval_packet_blockers"),
     }
+    approval_request = packet.get("approval_request")
+    approval_request = approval_request if isinstance(approval_request, dict) else {}
+    commands_not_executed = approval_request.get("commands_not_executed")
+    approval_boundary = {
+        "explicit_user_text_required_before_cleanup": approval_request.get(
+            "explicit_user_text_required_before_cleanup",
+            "The user must provide written approval naming exact paths and commands before cleanup can run.",
+        ),
+        "commands_not_executed": commands_not_executed if isinstance(commands_not_executed, list) else [],
+        "safe_to_run_without_user_approval": False,
+        "cleanup_executed": False,
+    }
     if fresh_for_current_head and ready_paths:
         operator_next_action = "request_explicit_cleanup_approval_for_current_ready_paths"
         operator_next_command = None
@@ -379,6 +397,7 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         "operator_next_action": operator_next_action,
         "operator_next_command": operator_next_command,
         "packet_candidate_diagnostics": packet_candidate_diagnostics,
+        "approval_boundary": approval_boundary,
         "packet_id": packet.get("packet_id"),
         "generated_at_utc": packet.get("generated_at_utc"),
         "report_path": rel(APPROVAL_PACKET_REPORT),
@@ -590,6 +609,26 @@ for control in contract.get("negative_controls", []):
             if isinstance(diagnostics, dict)
             and diagnostics.get("status") == "missing"
             and summary.get("operator_next_action") == "inspect_approval_packet_blockers"
+            else str(summary)
+        )
+    elif control_id == "approval_boundary_never_claims_cleanup_execution":
+        synthetic = {
+            "packet_id": "synthetic-current-packet-with-boundary",
+            "repo_state": {"head_commit": head, "branch": "main"},
+            "approval_readiness": [],
+            "approval_request": {
+                "explicit_user_text_required_before_cleanup": "approval required",
+                "commands_not_executed": ["no deletion command executed"],
+            },
+        }
+        summary = approval_packet_summary(synthetic, head)
+        boundary = summary.get("approval_boundary")
+        observed = (
+            "approval_boundary_never_claims_cleanup_execution"
+            if isinstance(boundary, dict)
+            and boundary.get("safe_to_run_without_user_approval") is False
+            and boundary.get("cleanup_executed") is False
+            and boundary.get("commands_not_executed") == ["no deletion command executed"]
             else str(summary)
         )
     else:
