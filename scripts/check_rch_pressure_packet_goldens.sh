@@ -618,6 +618,19 @@ def validate_non_deletion_recovery(packet: dict[str, Any], source: str) -> None:
         raw_path = attempt.get("raw_output_path")
         if not isinstance(raw_path, str) or not raw_path.startswith("target/rch-pressure-approval-packet/raw/") or not raw_path.endswith(".out"):
             add_error(source, "invalid_non_deletion_recovery_raw_output", f"{name} must preserve raw output path")
+        elif isinstance(name, str):
+            expected_suffix = {
+                "rch_capabilities_refresh": "/rch_capabilities_refresh.out",
+                "rch_status": "/rch_status.out",
+                "rch_focused_dry_run": "/rch_dry_run.out",
+                "rch_doctor_fix_dry_run": "/rch_doctor_fix_dry_run.out",
+            }.get(name)
+            if expected_suffix is not None and not raw_path.endswith(expected_suffix):
+                add_error(
+                    source,
+                    "non_deletion_recovery_raw_output_mismatch",
+                    f"{name} raw_output_path must end with {expected_suffix}",
+                )
         if not isinstance(attempt.get("expected_result"), str) or not attempt.get("expected_result"):
             add_error(source, "missing_non_deletion_recovery_expected_result", f"{name} missing expected_result")
     required_attempts = {
@@ -1301,6 +1314,33 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
         )
     else:
         add_error(source, "negative_control_no_non_deletion_recovery", "golden packet has no non_deletion_recovery attempts for mutation")
+
+    forged_recovery_raw_path_packet = deepcopy(packet)
+    recovery = forged_recovery_raw_path_packet.get("non_deletion_recovery")
+    if isinstance(recovery, dict) and isinstance(recovery.get("attempts"), list):
+        doctor = next(
+            (
+                attempt
+                for attempt in recovery["attempts"]
+                if isinstance(attempt, dict) and attempt.get("name") == "rch_doctor_fix_dry_run"
+            ),
+            None,
+        )
+        if doctor is not None:
+            doctor["raw_output_path"] = str(doctor.get("raw_output_path", "")).replace(
+                "rch_doctor_fix_dry_run.out",
+                "rch_status.out",
+            )
+            expect_validation_failure(
+                forged_recovery_raw_path_packet,
+                f"{source}::non_deletion_recovery_raw_output_mismatch",
+                "non_deletion_recovery_raw_output_mismatch",
+                "make rch doctor recovery attempt point at the rch status raw output",
+            )
+        else:
+            add_error(source, "negative_control_no_recovery_doctor_attempt", "golden packet has no rch_doctor_fix_dry_run attempt")
+    else:
+        add_error(source, "negative_control_no_non_deletion_recovery", "golden packet has no non_deletion_recovery attempts for raw-path mutation")
 
     forged_probe_count_packet = deepcopy(packet)
     recovery = forged_probe_count_packet.get("non_deletion_recovery")
