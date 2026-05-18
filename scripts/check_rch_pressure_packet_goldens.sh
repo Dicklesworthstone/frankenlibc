@@ -507,6 +507,13 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
         add_error(source, "missing_remote_env", "packet must require RCH_REQUIRE_REMOTE=1")
     if "[RCH] local" not in gate.get("fallback_markers_rejected", []):
         add_error(source, "missing_local_fallback_rejection", "packet must reject [RCH] local")
+    if gate.get("would_offload") is not True:
+        add_error(source, "rch_gate_not_offloadable", "rch_gate must preserve that the command would offload")
+    if gate.get("worker_selection_status") != "skipped":
+        add_error(source, "rch_gate_worker_selection_not_skipped", "rch_gate must preserve skipped worker selection")
+    skip_reason = gate.get("skip_reason")
+    if not isinstance(skip_reason, str) or "critical_pressure" not in skip_reason:
+        add_error(source, "rch_gate_missing_critical_pressure", "rch_gate.skip_reason must name critical_pressure")
 
     workers = packet.get("workers", [])
     worker_by_id = {
@@ -1056,6 +1063,19 @@ def expect_markdown_validation_failure(markdown_text: str, source: str, required
 
 
 def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
+    missing_pressure_skip_packet = deepcopy(packet)
+    gate = missing_pressure_skip_packet.get("rch_gate")
+    if isinstance(gate, dict):
+        gate["skip_reason"] = "no admissible workers"
+        expect_validation_failure(
+            missing_pressure_skip_packet,
+            f"{source}::rch_gate_missing_critical_pressure",
+            "rch_gate_missing_critical_pressure",
+            "remove critical_pressure from rch_gate skip reason",
+        )
+    else:
+        add_error(source, "negative_control_no_rch_gate", "golden packet has no rch_gate for mutation")
+
     missing_target_packet = deepcopy(packet)
     worker = first_critical_worker(missing_target_packet)
     if worker is None:
