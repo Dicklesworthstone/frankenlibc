@@ -11,6 +11,7 @@ SSH_ENABLED="${FRANKENLIBC_RCH_PACKET_SSH:-1}"
 SSH_KEY="${FRANKENLIBC_RCH_PACKET_SSH_KEY:-${HOME}/.ssh/contabo_vps_ed25519}"
 SSH_TIMEOUT_SECS="${FRANKENLIBC_RCH_PACKET_SSH_TIMEOUT_SECS:-25}"
 MAX_WORKERS="${FRANKENLIBC_RCH_PACKET_MAX_WORKERS:-6}"
+MAX_DISABLED_PROBES="${FRANKENLIBC_RCH_PACKET_MAX_DISABLED_PROBES:-6}"
 PACKET_ID="${FRANKENLIBC_RCH_PACKET_ID:-frankenlibc-rch-pressure-$(date -u +%Y%m%dT%H%M%SZ)}"
 RAW_DIR="${OUT_DIR}/raw/${PACKET_ID}"
 
@@ -41,6 +42,25 @@ capture rch_dry_run env \
   RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS="${RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS:-30}" \
   RCH_PRIORITY="${RCH_PRIORITY:-high}" \
   rch diagnose --dry-run "${FOCUS_CMD}"
+
+if [[ -s "${RAW_DIR}/rch_status.out" ]] && command -v jq >/dev/null 2>&1; then
+  mapfile -t disabled_probe_ids < <(
+    jq -r '
+      .data.daemon.workers[]?
+      | select(
+          (.status != "healthy")
+          or (.pressure_state == "telemetry_gap")
+          or (.pressure_telemetry_fresh == false)
+        )
+      | .id
+    ' "${RAW_DIR}/rch_status.out"
+  )
+  for worker_id in "${disabled_probe_ids[@]:0:${MAX_DISABLED_PROBES}}"; do
+    [[ -n "${worker_id}" ]] || continue
+    safe_id="$(printf '%s' "${worker_id}" | tr -cd 'A-Za-z0-9_.-')"
+    capture "rch_worker_probe_${safe_id}" timeout "${SSH_TIMEOUT_SECS}" rch workers probe "${worker_id}"
+  done
+fi
 
 if [[ "${SSH_ENABLED}" == "1" && -s "${RAW_DIR}/rch_status.out" && -r "${SSH_KEY}" ]] && command -v jq >/dev/null 2>&1; then
   mapfile -t worker_rows < <(
@@ -79,7 +99,7 @@ if [[ "${SSH_ENABLED}" == "1" && -s "${RAW_DIR}/rch_status.out" && -r "${SSH_KEY
   done
 fi
 
-python3 - "${ROOT}" "${RAW_DIR}" "${REPORT}" "${MARKDOWN}" "${PACKET_ID}" "${FOCUS_CMD}" "${SSH_KEY}" <<'PY'
+python3 - "${ROOT}" "${RAW_DIR}" "${REPORT}" "${MARKDOWN}" "${PACKET_ID}" "${FOCUS_CMD}" "${SSH_KEY}" "${SSH_TIMEOUT_SECS}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -97,6 +117,7 @@ MARKDOWN = pathlib.Path(sys.argv[4])
 PACKET_ID = sys.argv[5]
 FOCUS_CMD = sys.argv[6]
 SSH_KEY = sys.argv[7]
+SSH_TIMEOUT_SECS = sys.argv[8]
 
 
 def utc_now() -> str:
@@ -200,7 +221,24 @@ def read_only_pre_cleanup_checks(host: str, path: str) -> list[dict[str, str]]:
     ]
 
 
+def raw_output_path(name: str) -> str | None:
+    path = RAW_DIR / f"{name}.out"
+    if not path.exists():
+        return None
+    return str(path.relative_to(ROOT))
+
+
 def worker_probe_signature(worker_id: str, worker_status: str) -> str:
+    direct_name = f"rch_worker_probe_{worker_id}"
+    direct_err = err_text(direct_name)
+    direct_out = text(direct_name)
+    direct_status = status(direct_name)
+    if direct_status == 0:
+        return "ok"
+    if "RCH-E100" in direct_err or "RCH-E100" in direct_out:
+        return "RCH-E100"
+    if direct_status == 124:
+        return "timeout"
     worker_err = err_text(f"worker_{worker_id}")
     worker_out = text(f"worker_{worker_id}")
     if status(f"worker_{worker_id}") == 0:
@@ -269,6 +307,8 @@ def parse_workers(status_json: dict[str, Any]) -> tuple[list[dict[str, Any]], li
         worker_out = text(f"worker_{worker_id}")
         worker_err = err_text(f"worker_{worker_id}")
         worker_status = str(worker.get("status", "unknown"))
+        direct_probe_name = f"rch_worker_probe_{worker_id}"
+        direct_probe_status = status(direct_probe_name)
         candidates.extend(cleanup_candidates(worker_id, worker.get("host"), worker_out))
         parsed.append(
             {
@@ -284,6 +324,13 @@ def parse_workers(status_json: dict[str, Any]) -> tuple[list[dict[str, Any]], li
                 "estimated_free_ratio_target": CRITICAL_FREE_RATIO_TARGET,
                 "estimated_gb_needed_to_reach_target_ratio": estimated_gap_to_target_ratio_gb(worker),
                 "probe_command": f"ssh read-only df/sbh/du probe for {worker_id}",
+                "direct_rch_probe_command": f"timeout {SSH_TIMEOUT_SECS} rch workers probe {worker_id}"
+                if direct_probe_status is not None
+                else None,
+                "direct_rch_probe_exit_status": direct_probe_status,
+                "direct_rch_probe_raw_output_path": raw_output_path(direct_probe_name)
+                if direct_probe_status is not None
+                else None,
                 "probe_exit_status": status(f"worker_{worker_id}"),
                 "probe_failure_signature": worker_probe_signature(worker_id, worker_status),
                 "df_snapshot": "\n".join(

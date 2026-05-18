@@ -209,6 +209,31 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
             add_error(source, "invalid_pressure_total_gb", f"{worker_id} pressure_disk_total_gb is not numeric")
         if worker.get("pressure_disk_free_ratio") is not None and not is_number(worker.get("pressure_disk_free_ratio")):
             add_error(source, "invalid_pressure_free_ratio", f"{worker_id} pressure_disk_free_ratio is not numeric")
+    for worker in workers:
+        if not isinstance(worker, dict):
+            continue
+        worker_id = worker.get("worker_id", "<unknown>")
+        direct_command = worker.get("direct_rch_probe_command")
+        direct_status = worker.get("direct_rch_probe_exit_status")
+        direct_raw_path = worker.get("direct_rch_probe_raw_output_path")
+        if worker.get("probe_failure_signature") == "RCH-E100":
+            if not isinstance(direct_command, str) or f"rch workers probe {worker_id}" not in direct_command:
+                add_error(source, "missing_direct_rch_probe_command", f"{worker_id} RCH-E100 row lacks direct probe command")
+            elif not direct_command.startswith("timeout "):
+                add_error(source, "direct_rch_probe_unbounded", f"{worker_id} direct probe command must be timeout-bounded")
+            if not isinstance(direct_status, int) or isinstance(direct_status, bool) or direct_status == 0:
+                add_error(source, "missing_direct_rch_probe_status", f"{worker_id} RCH-E100 row lacks nonzero direct probe status")
+            if not isinstance(direct_raw_path, str) or not direct_raw_path.endswith(f"rch_worker_probe_{worker_id}.out"):
+                add_error(source, "missing_direct_rch_probe_raw_output", f"{worker_id} RCH-E100 row lacks raw output path")
+        if isinstance(direct_command, str) and direct_command:
+            if not direct_command.startswith("timeout ") or "rch workers probe " not in direct_command:
+                add_error(source, "invalid_direct_rch_probe_command", f"{worker_id} direct probe command is malformed")
+            if FORBIDDEN_PRE_CLEANUP_COMMAND.search(direct_command):
+                add_error(source, "direct_rch_probe_not_read_only", f"{worker_id} direct probe command is not read-only")
+            if not isinstance(direct_status, int) or isinstance(direct_status, bool):
+                add_error(source, "invalid_direct_rch_probe_status", f"{worker_id} direct probe status must be an integer")
+            if not isinstance(direct_raw_path, str) or not direct_raw_path:
+                add_error(source, "invalid_direct_rch_probe_raw_output", f"{worker_id} direct probe must preserve a raw output path")
 
     candidates = packet.get("cleanup_candidates", [])
     if not candidates:
@@ -497,6 +522,25 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             "set incorrect estimated_post_cleanup_free_ratio on first recommended candidate",
         )
 
+    missing_direct_probe_packet = deepcopy(packet)
+    rch_e100_worker = None
+    for worker in missing_direct_probe_packet.get("workers", []):
+        if isinstance(worker, dict) and worker.get("probe_failure_signature") == "RCH-E100":
+            rch_e100_worker = worker
+            break
+    if rch_e100_worker is None:
+        add_error(source, "negative_control_no_rch_e100_worker", "golden packet has no RCH-E100 worker for mutation")
+    else:
+        rch_e100_worker.pop("direct_rch_probe_command", None)
+        rch_e100_worker.pop("direct_rch_probe_exit_status", None)
+        rch_e100_worker.pop("direct_rch_probe_raw_output_path", None)
+        expect_validation_failure(
+            missing_direct_probe_packet,
+            f"{source}::missing_direct_rch_probe_command",
+            "missing_direct_rch_probe_command",
+            "remove direct rch probe evidence from first RCH-E100 worker",
+        )
+
     prompting_check_packet = deepcopy(packet)
     candidate = first_recommended_candidate(prompting_check_packet)
     if candidate is None:
@@ -548,6 +592,9 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "pressure_disk_total_gb",
             "estimated_free_ratio_target",
             "estimated_gb_needed_to_reach_target_ratio",
+            "direct_rch_probe_command",
+            "direct_rch_probe_exit_status",
+            "direct_rch_probe_raw_output_path",
         },
     )
     require_list_contains(
