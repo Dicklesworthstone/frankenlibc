@@ -730,9 +730,17 @@ if status == "admissible":
 else:
     ready_count = approval_summary.get("current_ready_for_explicit_user_approval_count", 0)
     approval_packet_status = approval_summary.get("status", "unknown")
+    operator_next_action = approval_summary.get("operator_next_action", "unknown")
+    operator_next_command = approval_summary.get("operator_next_command")
+    operator_hint = (
+        f" operator_next_command={operator_next_command}."
+        if isinstance(operator_next_command, str) and operator_next_command
+        else ""
+    )
     print(
-        "rch remote admissibility preflight blocked; run "
-        f"{APPROVAL_PACKET_SCRIPT} for an approval packet. "
+        "rch remote admissibility preflight blocked; follow "
+        f"operator_next_action={operator_next_action}."
+        f"{operator_hint} "
         f"approval_packet_status={approval_packet_status}. "
         f"approval_ready_candidates={ready_count}. "
         f"failure_signatures={','.join(report['failure_signatures'])}",
