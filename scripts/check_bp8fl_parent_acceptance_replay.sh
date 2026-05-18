@@ -86,6 +86,48 @@ def rel(path):
         return str(path)
 
 
+def normalize_rel(path):
+    if not isinstance(path, str) or not path:
+        return ""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return rel(candidate)
+    return str(candidate)
+
+
+def configured_report_fields():
+    contract = artifact.get("report_contract")
+    if not isinstance(contract, dict):
+        return []
+    fields = contract.get("must_materialize")
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, str) and field]
+
+
+def validate_report_contract(report):
+    contract = artifact.get("report_contract")
+    if not isinstance(contract, dict):
+        return ["missing_report_contract"]
+    errors = []
+    fields = contract.get("must_materialize")
+    if not isinstance(fields, list) or not all(isinstance(field, str) and field for field in fields):
+        errors.append("report_contract.must_materialize must be a non-empty string list")
+        fields = []
+    expected_report = normalize_rel(contract.get("output_path"))
+    expected_log = normalize_rel(contract.get("log_path"))
+    actual_report = rel(report_path)
+    actual_log = rel(log_path)
+    if actual_report == rel(root / artifact.get("report_path", "")) and expected_report != actual_report:
+        errors.append(f"report_contract.output_path expected {actual_report} got {expected_report or '<missing>'}")
+    if actual_log == rel(root / artifact.get("log_path", "")) and expected_log != actual_log:
+        errors.append(f"report_contract.log_path expected {actual_log} got {expected_log or '<missing>'}")
+    missing = [field for field in fields if field not in report]
+    if missing:
+        errors.append("report_contract missing materialized fields: " + ", ".join(missing))
+    return errors
+
+
 def phrase_group_matches(text, group):
     lower = text.lower()
     return all(str(phrase).lower() in lower for phrase in group)
@@ -270,7 +312,7 @@ report = {
     "trace_id": f"{artifact['bead']}::{mode}::bp8fl-parent-acceptance-replay",
     "source_commit": commit,
     "mode": mode,
-    "status": status,
+    "status": "pending",
     "tracker_state": tracker_state,
     "parent_count": sum(1 for issue_id in target_ids if issue_id in by_id),
     "jsonl_count": jsonl_count,
@@ -292,7 +334,18 @@ report = {
         "no_feature_loss": True,
     },
     "artifact_refs": [rel(artifact_path), rel(issues_path), rel(report_path), rel(log_path)],
+    "report_path": rel(report_path),
+    "log_path": rel(log_path),
+    "report_contract_fields": configured_report_fields(),
+    "contract_status": "pending",
+    "contract_errors": [],
 }
+contract_errors = validate_report_contract(report)
+report["contract_errors"] = contract_errors
+report["contract_status"] = "pass" if not contract_errors else "fail"
+if status == "pass" and contract_errors:
+    status = "fail"
+report["status"] = status
 
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 log_path.write_text(
