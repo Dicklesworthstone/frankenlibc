@@ -65,6 +65,51 @@ def rel(path: Path | str) -> str:
         return str(path)
 
 
+def normalize_rel(path: Any) -> str:
+    if not isinstance(path, str) or not path:
+        return ""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return rel(candidate)
+    return candidate.as_posix()
+
+
+def configured_report_fields(contract: dict[str, Any]) -> list[str]:
+    report_contract = contract.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return []
+    fields = report_contract.get("must_materialize")
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, str) and field]
+
+
+def validate_report_contract(contract: dict[str, Any], report: dict[str, Any]) -> list[str]:
+    report_contract = contract.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return ["missing_report_contract"]
+    errors: list[str] = []
+    fields = report_contract.get("must_materialize")
+    if not isinstance(fields, list) or not all(isinstance(field, str) and field for field in fields):
+        errors.append("report_contract.must_materialize must be a non-empty string list")
+        fields = []
+    expected_report = normalize_rel(report_contract.get("output_path"))
+    expected_log = normalize_rel(report_contract.get("log_path"))
+    outputs = contract.get("outputs", {})
+    canonical_report = rel(root / str(outputs.get("report", ""))) if isinstance(outputs, dict) else ""
+    canonical_log = rel(root / str(outputs.get("jsonl_log", ""))) if isinstance(outputs, dict) else ""
+    actual_report = rel(report_path)
+    actual_log = rel(log_path)
+    if actual_report == canonical_report and expected_report != actual_report:
+        errors.append(f"report_contract.output_path expected {actual_report} got {expected_report or '<missing>'}")
+    if actual_log == canonical_log and expected_log != actual_log:
+        errors.append(f"report_contract.log_path expected {actual_log} got {expected_log or '<missing>'}")
+    missing = [field for field in fields if field not in report]
+    if missing:
+        errors.append("report_contract missing materialized fields: " + ", ".join(missing))
+    return errors
+
+
 def load_json(path: Path, label: str, errors: list[str]) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -462,7 +507,7 @@ failure_counts = Counter(str(row.get("failure_signature", "<missing>")) for row 
 report = {
     "schema_version": "v1",
     "bead": BEAD_ID,
-    "status": "pass" if not errors else "fail",
+    "status": "pending",
     "generated_at_utc": utc_now(),
     "source_commit": SOURCE_COMMIT,
     "contract": rel(contract_path),
@@ -490,7 +535,19 @@ report = {
         rel(policy_path),
         rel(log_path),
     ],
+    "report_path": rel(report_path),
+    "log_path": rel(log_path),
+    "report_contract_fields": configured_report_fields(contract),
+    "contract_status": "pending",
+    "contract_errors": [],
 }
+contract_errors = validate_report_contract(contract, report)
+report["contract_errors"] = contract_errors
+report["contract_status"] = "pass" if not contract_errors else "fail"
+if contract_errors:
+    errors.extend(f"report_contract: {error}" for error in contract_errors)
+report["status"] = "pass" if not errors else "fail"
+report["errors"] = errors
 
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 log_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in joined_rows), encoding="utf-8")

@@ -18,6 +18,30 @@
     "report": "target/conformance/workload_latency_budget_join.report.json",
     "jsonl_log": "target/conformance/workload_latency_budget_join.log.jsonl"
   },
+  "report_contract": {
+    "output_path": "target/conformance/workload_latency_budget_join.report.json",
+    "log_path": "target/conformance/workload_latency_budget_join.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "bead",
+      "status",
+      "generated_at_utc",
+      "source_commit",
+      "contract",
+      "policy",
+      "input_logs",
+      "summary",
+      "workload_latency_rows",
+      "failure_signatures",
+      "errors",
+      "artifact_refs",
+      "report_path",
+      "log_path",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ]
+  },
   "required_runtime_modes": [
     "strict",
     "hardened"
