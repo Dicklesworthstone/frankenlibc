@@ -1,0 +1,110 @@
+{
+  "schema_version": "cli_contract_gate_inventory.v1",
+  "purpose": "Idea-wizard no-cargo inventory for CLI contract gates. The report scans tracked harness CLI contract test gates, separates dirty/untracked candidate gates from real recommendations, and suggests the next missing static invariant without adding Rust test files while RCH validation is blocked.",
+  "source_commit": "current",
+  "scanner": {
+    "tracked_glob": "crates/frankenlibc-harness/tests/*cli_contract*test.rs",
+    "output_path": "target/conformance/cli_contract_gate_inventory.report.json",
+    "log_path": "target/conformance/cli_contract_gate_inventory.log.jsonl",
+    "minimum_tracked_gate_count": 200,
+    "dirty_pending_status": "pending_dirty_unvalidated"
+  },
+  "candidate_invariants": [
+    {
+      "id": "no_env_set_var",
+      "priority": 1,
+      "filename_markers": [
+        "no_env_set_var"
+      ],
+      "dirty_path_markers": [
+        "no_env_set_var"
+      ],
+      "recommendation_title": "Pin that paired CLI contract gates do not call env::set_var",
+      "rationale": "Environment mutation makes parallel harness gates order-dependent; if a dirty gate already exists, keep it pending rather than recommending a duplicate."
+    },
+    {
+      "id": "paired_gate_file_contract",
+      "priority": 1,
+      "filename_markers": [
+        "paired_gate_file"
+      ],
+      "dirty_path_markers": [
+        "paired_gate_file"
+      ],
+      "recommendation_title": "Pin every manifest-to-test pairing through an explicit file contract",
+      "rationale": "The manifest/test pairing surface is easy to duplicate accidentally; dirty pending gates must be surfaced before recommending more Rust tests."
+    },
+    {
+      "id": "no_current_dir_mutation",
+      "priority": 2,
+      "filename_markers": [
+        "no_current_dir"
+      ],
+      "dirty_path_markers": [
+        "no_current_dir"
+      ],
+      "recommendation_title": "Pin that paired CLI contract gates do not mutate process current_dir",
+      "rationale": "Changing the process working directory inside test gates creates cross-test flake risk without requiring cargo execution to detect."
+    },
+    {
+      "id": "no_network_socket",
+      "priority": 3,
+      "filename_markers": [
+        "no_network_socket",
+        "no_std_net"
+      ],
+      "dirty_path_markers": [
+        "no_network_socket",
+        "no_std_net"
+      ],
+      "recommendation_title": "Pin that paired CLI contract gates do not open network sockets",
+      "rationale": "CLI contract gates should stay deterministic and offline; network-capable gates should be explicit integration tests instead."
+    },
+    {
+      "id": "no_process_kill",
+      "priority": 3,
+      "filename_markers": [
+        "no_process_kill"
+      ],
+      "dirty_path_markers": [
+        "no_process_kill"
+      ],
+      "recommendation_title": "Pin that paired CLI contract gates do not issue process-kill commands",
+      "rationale": "Static contract gates must not terminate unrelated processes; this inventory can suggest the invariant without running any compiled tests."
+    }
+  ],
+  "required_report_fields": [
+    "schema_version",
+    "status",
+    "generated_at_utc",
+    "source_commit",
+    "report_path",
+    "log_path",
+    "tracked_gate_count",
+    "tracked_gate_sample",
+    "dirty_cli_contract_paths",
+    "dirty_pending_candidates",
+    "candidate_invariants",
+    "recommendations",
+    "negative_controls",
+    "failures"
+  ],
+  "required_negative_controls": [
+    "tracked_gate_count_threshold_fails",
+    "dirty_candidate_not_recommended",
+    "duplicate_candidate_id_fails",
+    "missing_report_field_fails"
+  ],
+  "validation_commands": [
+    "bash -n scripts/check_cli_contract_gate_inventory.sh",
+    "jq empty tests/conformance/cli_contract_gate_inventory.v1.json",
+    "bash scripts/check_cli_contract_gate_inventory.sh",
+    "jq -e '.status == \"pass\" and (.negative_controls | all(.status == \"pass\"))' target/conformance/cli_contract_gate_inventory.report.json",
+    "jq -e '.report_path == \"target/conformance/cli_contract_gate_inventory.report.json\" and .log_path == \"target/conformance/cli_contract_gate_inventory.log.jsonl\"' target/conformance/cli_contract_gate_inventory.report.json",
+    "jq -e '(.tracked_gate_count >= 200) and ([.dirty_pending_candidates[].candidate_id] | index(\"no_env_set_var\")) and ([.dirty_pending_candidates[].candidate_id] | index(\"paired_gate_file_contract\")) and ([.recommendations[].candidate_id] | index(\"no_current_dir_mutation\"))' target/conformance/cli_contract_gate_inventory.report.json",
+    "git diff --check -- scripts/check_cli_contract_gate_inventory.sh tests/conformance/cli_contract_gate_inventory.v1.json .beads/issues.jsonl",
+    "AGENT_NAME=DarkShore br dep cycles --json"
+  ],
+  "cargo_required": false,
+  "cargo_reason": "This is a shell/Python JSON inventory over tracked files and git status; it does not touch Rust code or require compiled tests."
+}
