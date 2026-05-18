@@ -1390,10 +1390,63 @@ pub unsafe extern "C" fn xdr_vector(
 // deadlock class).
 const XDR_REFERENCE_DEPTH_LIMIT: u32 = 256;
 
+#[cfg(feature = "owned-tls-cache")]
+static XDR_REFERENCE_DEPTH_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<u32> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_u32);
+
+#[cfg(feature = "owned-tls-cache")]
+fn zero_u32() -> u32 {
+    0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static XDR_REFERENCE_DEPTH: std::cell::Cell<u32> = const {
         std::cell::Cell::new(0)
     };
+}
+
+#[inline]
+fn try_enter_xdr_reference_depth() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        XDR_REFERENCE_DEPTH_OWNED_TLS.with(|depth| {
+            if *depth >= XDR_REFERENCE_DEPTH_LIMIT {
+                false
+            } else {
+                *depth += 1;
+                true
+            }
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        XDR_REFERENCE_DEPTH
+            .try_with(|cell| {
+                let current = cell.get();
+                if current >= XDR_REFERENCE_DEPTH_LIMIT {
+                    false
+                } else {
+                    cell.set(current + 1);
+                    true
+                }
+            })
+            .unwrap_or(false)
+    }
+}
+
+#[inline]
+fn leave_xdr_reference_depth() {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        XDR_REFERENCE_DEPTH_OWNED_TLS.with(|depth| {
+            *depth = depth.saturating_sub(1);
+        });
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let _ = XDR_REFERENCE_DEPTH.try_with(|cell| cell.set(cell.get() - 1));
+    }
 }
 
 /// Serialize a non-null pointer to an object (allocate on decode).
@@ -1407,18 +1460,7 @@ pub unsafe extern "C" fn xdr_reference(
     // Bounded recursion depth: caller-supplied procs may recursively
     // invoke xdr_pointer/xdr_reference; cap at 256 to prevent
     // wire-controlled stack exhaustion. (bd-xpgak)
-    let depth_ok = XDR_REFERENCE_DEPTH
-        .try_with(|cell| {
-            let current = cell.get();
-            if current >= XDR_REFERENCE_DEPTH_LIMIT {
-                false
-            } else {
-                cell.set(current + 1);
-                true
-            }
-        })
-        .unwrap_or(false);
-    if !depth_ok {
+    if !try_enter_xdr_reference_depth() {
         return XDR_FALSE;
     }
 
@@ -1426,7 +1468,7 @@ pub unsafe extern "C" fn xdr_reference(
     let op = unsafe { (*x).x_op };
     if unsafe { (*pp).is_null() } {
         if op != XDR_DECODE {
-            let _ = XDR_REFERENCE_DEPTH.try_with(|c| c.set(c.get() - 1));
+            leave_xdr_reference_depth();
             return XDR_FALSE;
         }
         // mem_alloc semantics: caller frees via libc free (bd-zgifl).
@@ -1438,7 +1480,7 @@ pub unsafe extern "C" fn xdr_reference(
         // xdr_reference + memset(buf, 0, size) idiom.
         let buf = unsafe { crate::malloc_abi::calloc(1, size as usize) as *mut c_char };
         if buf.is_null() {
-            let _ = XDR_REFERENCE_DEPTH.try_with(|c| c.set(c.get() - 1));
+            leave_xdr_reference_depth();
             return XDR_FALSE;
         }
         unsafe {
@@ -1456,7 +1498,7 @@ pub unsafe extern "C" fn xdr_reference(
             }
         }
     }
-    let _ = XDR_REFERENCE_DEPTH.try_with(|c| c.set(c.get() - 1));
+    leave_xdr_reference_depth();
     result
 }
 
@@ -2323,10 +2365,32 @@ pub unsafe extern "C" fn clnt_pcreateerror(s: *const c_char) {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static SPERRNO_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_sperrno_buf);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_sperrno_buf() -> [u8; 64] {
+    [0u8; 64]
+}
+
 // Thread-local buffer for clnt_sperrno return value.
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static SPERRNO_BUF: std::cell::UnsafeCell<[u8; 64]> =
         const { std::cell::UnsafeCell::new([0u8; 64]) };
+}
+
+#[inline]
+fn with_sperrno_buf<R>(f: impl FnOnce(&mut [u8; 64]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SPERRNO_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SPERRNO_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
+    }
 }
 
 /// Return a string describing an RPC error status code. Native implementation.
@@ -2337,8 +2401,7 @@ std::thread_local! {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_sperrno(stat: c_int) -> *mut c_char {
     let msg = rpc_errstr(stat);
-    SPERRNO_BUF.with(|cell| {
-        let buf = unsafe { &mut *cell.get() };
+    with_sperrno_buf(|buf| {
         let len = msg.len().min(63);
         buf[..len].copy_from_slice(&msg.as_bytes()[..len]);
         buf[len] = 0;
@@ -2348,10 +2411,32 @@ pub unsafe extern "C" fn clnt_sperrno(stat: c_int) -> *mut c_char {
 
 rpc_native!(clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char);
 
+#[cfg(feature = "owned-tls-cache")]
+static SPCREATEERR_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_spcreateerr_buf);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_spcreateerr_buf() -> [u8; 256] {
+    [0u8; 256]
+}
+
 // Thread-local buffer for clnt_spcreateerror return value.
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static SPCREATEERR_BUF: std::cell::UnsafeCell<[u8; 256]> =
         const { std::cell::UnsafeCell::new([0u8; 256]) };
+}
+
+#[inline]
+fn with_spcreateerr_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SPCREATEERR_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SPCREATEERR_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
+    }
 }
 
 /// Return a string describing the RPC client creation error. Native implementation.
@@ -2373,8 +2458,7 @@ pub unsafe extern "C" fn clnt_spcreateerror(s: *const c_char) -> *mut c_char {
     };
     let err_msg = rpc_errstr(cf_stat);
     let formatted = format!("{}: {}\0", prefix, err_msg);
-    SPCREATEERR_BUF.with(|cell| {
-        let buf = unsafe { &mut *cell.get() };
+    with_spcreateerr_buf(|buf| {
         let len = formatted.len().min(255);
         buf[..len].copy_from_slice(&formatted.as_bytes()[..len]);
         buf[len] = 0;
@@ -2493,9 +2577,31 @@ pub unsafe extern "C" fn _rpc_dtablesize() -> c_int {
 // rpc_createerr: struct rpc_createerr { enum clnt_stat cf_stat; struct rpc_err cf_error; }
 // This is 24 bytes on x86_64 (4 + padding + 16 for rpc_err).
 // We allocate 32 bytes to be safe for alignment.
+#[cfg(feature = "owned-tls-cache")]
+static RPC_CREATEERR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 32]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_rpc_createerr);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_rpc_createerr() -> [u8; 32] {
+    [0u8; 32]
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static RPC_CREATEERR_TLS: std::cell::UnsafeCell<[u8; 32]> =
         const { std::cell::UnsafeCell::new([0u8; 32]) };
+}
+
+#[inline]
+fn rpc_createerr_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_CREATEERR_OWNED_TLS.with(|buf| buf.as_mut_ptr().cast())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_CREATEERR_TLS.with(|cell| cell.get().cast())
+    }
 }
 
 /// Returns pointer to thread-local rpc_createerr struct.
@@ -2504,14 +2610,36 @@ std::thread_local! {
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __rpc_thread_createerr() -> *mut c_void {
-    RPC_CREATEERR_TLS.with(|cell| cell.get().cast())
+    rpc_createerr_ptr()
 }
 
 // fd_set size derived from FD_SETSIZE (1024 on Linux → 128 bytes).
 const RPC_FD_SET_BYTES: usize = libc::FD_SETSIZE / 8;
+#[cfg(feature = "owned-tls-cache")]
+static RPC_SVC_FDSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; RPC_FD_SET_BYTES]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_rpc_svc_fdset);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_rpc_svc_fdset() -> [u8; RPC_FD_SET_BYTES] {
+    [0u8; RPC_FD_SET_BYTES]
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static RPC_SVC_FDSET_TLS: std::cell::UnsafeCell<[u8; RPC_FD_SET_BYTES]> =
         const { std::cell::UnsafeCell::new([0u8; RPC_FD_SET_BYTES]) };
+}
+
+#[inline]
+fn rpc_svc_fdset_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_SVC_FDSET_OWNED_TLS.with(|buf| buf.as_mut_ptr().cast())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_SVC_FDSET_TLS.with(|cell| cell.get().cast())
+    }
 }
 
 /// Returns pointer to thread-local svc_fdset (fd_set).
@@ -2520,12 +2648,34 @@ std::thread_local! {
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __rpc_thread_svc_fdset() -> *mut c_void {
-    RPC_SVC_FDSET_TLS.with(|cell| cell.get().cast())
+    rpc_svc_fdset_ptr()
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static RPC_SVC_MAX_POLLFD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_c_int);
+
+#[cfg(feature = "owned-tls-cache")]
+fn zero_c_int() -> c_int {
+    0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static RPC_SVC_MAX_POLLFD_TLS: std::cell::UnsafeCell<c_int> =
         const { std::cell::UnsafeCell::new(0) };
+}
+
+#[inline]
+fn rpc_svc_max_pollfd_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_SVC_MAX_POLLFD_OWNED_TLS.with(|value| (value as *mut c_int).cast())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_SVC_MAX_POLLFD_TLS.with(|cell| cell.get().cast())
+    }
 }
 
 /// Returns pointer to thread-local svc_max_pollfd (int).
@@ -2534,12 +2684,34 @@ std::thread_local! {
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __rpc_thread_svc_max_pollfd() -> *mut c_void {
-    RPC_SVC_MAX_POLLFD_TLS.with(|cell| cell.get().cast())
+    rpc_svc_max_pollfd_ptr()
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static RPC_SVC_POLLFD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
+
+#[cfg(feature = "owned-tls-cache")]
+fn zero_usize() -> usize {
+    0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static RPC_SVC_POLLFD_TLS: std::cell::UnsafeCell<*mut c_void> =
         const { std::cell::UnsafeCell::new(std::ptr::null_mut()) };
+}
+
+#[inline]
+fn rpc_svc_pollfd_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_SVC_POLLFD_OWNED_TLS.with(|value| (value as *mut usize).cast())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_SVC_POLLFD_TLS.with(|cell| cell.get().cast())
+    }
 }
 
 /// Returns pointer to thread-local svc_pollfd (struct pollfd *).
@@ -2548,7 +2720,7 @@ std::thread_local! {
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __rpc_thread_svc_pollfd() -> *mut c_void {
-    RPC_SVC_POLLFD_TLS.with(|cell| cell.get().cast())
+    rpc_svc_pollfd_ptr()
 }
 
 // --- _seterr_reply (native) ---
