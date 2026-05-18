@@ -87,6 +87,16 @@
     "requires_explicit_approval",
     "executed"
   ],
+  "pre_cleanup_read_only_result_fields": [
+    "executed",
+    "executed_at_utc",
+    "exit_status",
+    "stdout",
+    "stderr",
+    "timed_out",
+    "passed",
+    "skip_reason"
+  ],
   "recommended_cleanup_candidate_fields": [
     "worker_id",
     "path",
@@ -304,7 +314,7 @@
             },
             {
               "check_kind": "open_file_absence",
-              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/fcp-beads-a4-final-20260516T2140/target; then sudo -n lsof +D /data/projects/fcp-beads-a4-final-20260516T2140/target 2>/dev/null | head -20; fi'",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/fcp-beads-a4-final-20260516T2140/target; then sudo -n lsof +D /data/projects/fcp-beads-a4-final-20260516T2140/target 2>&1 | head -20; fi'",
               "expected_safe_result": "exit 0 with no stdout",
               "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
             }
@@ -333,7 +343,7 @@
             },
             {
               "check_kind": "open_file_absence",
-              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>&1 | head -20; fi'",
               "expected_safe_result": "exit 0 with no stdout",
               "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
             }
@@ -369,7 +379,7 @@
             },
             {
               "check_kind": "open_file_absence",
-              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>/dev/null | head -20; fi'",
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 -i /home/ubuntu/.ssh/contabo_vps_ed25519 ubuntu@38.242.209.154 'if test -e /data/projects/franken_engine/target_PearlTower_focused; then sudo -n lsof +D /data/projects/franken_engine/target_PearlTower_focused 2>&1 | head -20; fi'",
               "expected_safe_result": "exit 0 with no stdout",
               "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit"
             }

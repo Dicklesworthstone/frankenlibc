@@ -162,9 +162,48 @@ def validate_pre_cleanup_checks(source: str, path: Any, checks: Any, missing_sig
             add_error(source, "invalid_pre_cleanup_expected_result", f"{path} check must expect no stdout")
         if not isinstance(check.get("blocks_cleanup_if"), str) or not check.get("blocks_cleanup_if"):
             add_error(source, "missing_pre_cleanup_blocker_text", f"{path} check must describe blockers")
+        result = check.get("last_result")
+        if result is not None:
+            validate_pre_cleanup_result(source, path, kind, result)
     missing = REQUIRED_PRE_CLEANUP_CHECK_KINDS - seen
     if missing:
         add_error(source, "missing_pre_cleanup_check_kind", f"{path} missing checks {sorted(missing)}")
+
+
+def validate_pre_cleanup_result(source: str, path: Any, kind: Any, result: Any) -> None:
+    if not isinstance(result, dict):
+        add_error(source, "malformed_pre_cleanup_result", f"{path} {kind} result must be an object")
+        return
+    executed = result.get("executed")
+    if executed is not True:
+        add_error(source, "pre_cleanup_result_not_executed", f"{path} {kind} result must be executed=true")
+    if not isinstance(result.get("executed_at_utc"), str) or not result.get("executed_at_utc"):
+        add_error(source, "missing_pre_cleanup_result_timestamp", f"{path} {kind} result must include executed_at_utc")
+    timed_out = result.get("timed_out")
+    if not isinstance(timed_out, bool):
+        add_error(source, "invalid_pre_cleanup_result_timeout", f"{path} {kind} result timed_out must be boolean")
+    exit_status = result.get("exit_status")
+    if timed_out is True:
+        if exit_status is not None:
+            add_error(source, "invalid_pre_cleanup_timeout_status", f"{path} {kind} timed-out result must not have exit status")
+    elif not isinstance(exit_status, int) or isinstance(exit_status, bool):
+        add_error(source, "invalid_pre_cleanup_result_status", f"{path} {kind} result must include integer exit_status")
+    stdout = result.get("stdout")
+    stderr = result.get("stderr")
+    if not isinstance(stdout, str):
+        add_error(source, "invalid_pre_cleanup_result_stdout", f"{path} {kind} stdout must be a string")
+        stdout = ""
+    if not isinstance(stderr, str):
+        add_error(source, "invalid_pre_cleanup_result_stderr", f"{path} {kind} stderr must be a string")
+        stderr = ""
+    expected_passed = (
+        timed_out is False
+        and exit_status == 0
+        and stdout == ""
+        and stderr == ""
+    )
+    if result.get("passed") is not expected_passed:
+        add_error(source, "pre_cleanup_result_pass_mismatch", f"{path} {kind} passed flag does not match result output")
 
 
 def validate_repo_state(packet: dict[str, Any], source: str) -> None:
@@ -744,6 +783,21 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "candidate_rank",
             "estimated_size_gb",
             "pre_cleanup_read_only_checks",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "pre_cleanup_read_only_result_fields",
+        {
+            "executed",
+            "executed_at_utc",
+            "exit_status",
+            "stdout",
+            "stderr",
+            "timed_out",
+            "passed",
+            "skip_reason",
         },
     )
     require_list_contains(

@@ -133,9 +133,11 @@ python3 - "${ROOT}" "${RAW_DIR}" "${REPORT}" "${MARKDOWN}" "${PACKET_ID}" "${FOC
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 import shlex
+import subprocess
 import sys
 import time
 from typing import Any
@@ -148,6 +150,7 @@ PACKET_ID = sys.argv[5]
 FOCUS_CMD = sys.argv[6]
 SSH_KEY = sys.argv[7]
 SSH_TIMEOUT_SECS = sys.argv[8]
+PRECHECK_RESULTS_ENABLED = os.environ.get("FRANKENLIBC_RCH_PACKET_PRECHECK_RESULTS", "1") == "1"
 
 
 def utc_now() -> str:
@@ -250,7 +253,7 @@ def read_only_pre_cleanup_checks(host: str, path: str) -> list[dict[str, str]]:
     ssh_prefix = f"ssh -o BatchMode=yes -o ConnectTimeout=10 -i {ssh_key} {ssh_target}"
     path_arg = shlex.quote(path)
     protect_cmd = f"if test -e {path_arg}; then find {path_arg} -name .sbh-protect -print -quit; fi"
-    lsof_cmd = f"if test -e {path_arg}; then sudo -n lsof +D {path_arg} 2>/dev/null | head -20; fi"
+    lsof_cmd = f"if test -e {path_arg}; then sudo -n lsof +D {path_arg} 2>&1 | head -20; fi"
     return [
         {
             "check_kind": "sbh_protect_marker_absence",
@@ -265,6 +268,154 @@ def read_only_pre_cleanup_checks(host: str, path: str) -> list[dict[str, str]]:
             "blocks_cleanup_if": "any stdout, sudo authentication failure, ssh failure, or non-zero exit",
         },
     ]
+
+
+def ssh_timeout() -> int:
+    try:
+        return max(1, int(float(SSH_TIMEOUT_SECS)))
+    except ValueError:
+        return 25
+
+
+def trim_result_text(value: str | None) -> str:
+    if value is None:
+        return ""
+    if len(value) <= 4000:
+        return value
+    return value[:4000] + "\n[truncated]"
+
+
+def pre_cleanup_remote_command(check_kind: str, path: str) -> str:
+    path_arg = shlex.quote(path)
+    if check_kind == "sbh_protect_marker_absence":
+        return f"if test -e {path_arg}; then find {path_arg} -name .sbh-protect -print -quit; fi"
+    if check_kind == "open_file_absence":
+        return f"if test -e {path_arg}; then sudo -n lsof +D {path_arg} 2>&1 | head -20; fi"
+    return "printf '%s\\n' 'unknown pre-cleanup check kind'; exit 2"
+
+
+def run_pre_cleanup_check(host: str, path: str, check_kind: str) -> dict[str, Any]:
+    if not PRECHECK_RESULTS_ENABLED:
+        return {
+            "executed": False,
+            "executed_at_utc": None,
+            "exit_status": None,
+            "stdout": "",
+            "stderr": "",
+            "timed_out": False,
+            "passed": False,
+            "skip_reason": "FRANKENLIBC_RCH_PACKET_PRECHECK_RESULTS disabled result collection",
+        }
+    if not pathlib.Path(SSH_KEY).is_file():
+        return {
+            "executed": False,
+            "executed_at_utc": None,
+            "exit_status": None,
+            "stdout": "",
+            "stderr": "",
+            "timed_out": False,
+            "passed": False,
+            "skip_reason": "ssh key unavailable for read-only result collection",
+        }
+    command = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-i",
+        SSH_KEY,
+        f"ubuntu@{host}",
+        pre_cleanup_remote_command(check_kind, path),
+    ]
+    executed_at = utc_now()
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=ssh_timeout(),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = trim_result_text(exc.stdout if isinstance(exc.stdout, str) else "")
+        stderr = trim_result_text(exc.stderr if isinstance(exc.stderr, str) else "")
+        return {
+            "executed": True,
+            "executed_at_utc": executed_at,
+            "exit_status": None,
+            "stdout": stdout,
+            "stderr": stderr,
+            "timed_out": True,
+            "passed": False,
+            "skip_reason": None,
+        }
+    stdout = trim_result_text(completed.stdout)
+    stderr = trim_result_text(completed.stderr)
+    return {
+        "executed": True,
+        "executed_at_utc": executed_at,
+        "exit_status": completed.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "timed_out": False,
+        "passed": completed.returncode == 0 and stdout == "" and stderr == "",
+        "skip_reason": None,
+    }
+
+
+def attach_pre_cleanup_results(
+    candidates: list[dict[str, Any]],
+    recommended: list[dict[str, Any]],
+    margin_recommended: list[dict[str, Any]],
+) -> int:
+    selected_keys = {
+        (str(candidate.get("worker_id", "")), str(candidate.get("path", "")))
+        for candidate in recommended + margin_recommended
+        if isinstance(candidate, dict)
+    }
+    result_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
+    executed = 0
+    for candidate in sorted(
+        candidates,
+        key=lambda item: (
+            str(item.get("worker_id", "")),
+            int(item.get("candidate_rank", 999999)),
+            str(item.get("path", "")),
+        ),
+    ):
+        key = (str(candidate.get("worker_id", "")), str(candidate.get("path", "")))
+        if key not in selected_keys:
+            continue
+        host = str(candidate.get("host") or "")
+        path = str(candidate.get("path") or "")
+        if not host or not path:
+            continue
+        checks = candidate.get("pre_cleanup_read_only_checks")
+        if not isinstance(checks, list):
+            continue
+        for check in checks:
+            if not isinstance(check, dict) or "last_result" in check:
+                continue
+            check_kind = str(check.get("check_kind") or "")
+            result = run_pre_cleanup_check(host, path, check_kind)
+            check["last_result"] = result
+            result_cache[(key[0], key[1], check_kind)] = result
+            if result.get("executed") is True:
+                executed += 1
+    for recommendation in recommended + margin_recommended:
+        key = (str(recommendation.get("worker_id", "")), str(recommendation.get("path", "")))
+        checks = recommendation.get("pre_cleanup_read_only_checks")
+        if not isinstance(checks, list):
+            continue
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            check_kind = str(check.get("check_kind") or "")
+            result = result_cache.get((key[0], key[1], check_kind))
+            if result is not None:
+                check["last_result"] = dict(result)
+    return executed
 
 
 def raw_output_path(name: str) -> str | None:
@@ -580,6 +731,11 @@ margin_recommended_candidates = margin_sufficient_candidates(
     candidates,
     MARGIN_RECOMMENDATION_SURPLUS_GB,
 )
+pre_cleanup_result_count = attach_pre_cleanup_results(
+    candidates,
+    recommended_candidates,
+    margin_recommended_candidates,
+)
 
 report = {
     "schema_version": "rch_pressure_approval_packet_schema.v1",
@@ -624,6 +780,10 @@ report = {
         {"action": "rch status", "executed": status("rch_status") is not None},
         {"action": "rch dry-run", "executed": status("rch_dry_run") is not None},
         {"action": "bounded read-only worker probes", "executed": any(w["probe_exit_status"] is not None for w in workers)},
+        {
+            "action": "selected candidate read-only pre-cleanup result collection",
+            "executed": pre_cleanup_result_count > 0 or not (recommended_candidates or margin_recommended_candidates),
+        },
     ],
     "validation_commands": [
         "bash -n scripts/generate_rch_pressure_approval_packet.sh scripts/check_rch_pressure_packet_goldens.sh",
@@ -651,6 +811,40 @@ def markdown_value(value: Any, suffix: str = "") -> str:
     if numeric is None:
         return "unknown"
     return f"{numeric:.2f}{suffix}"
+
+
+def selected_precheck_display_candidates() -> list[dict[str, Any]]:
+    seen: set[tuple[str, str]] = set()
+    selected: list[dict[str, Any]] = []
+    for candidate in recommended_candidates + margin_recommended_candidates:
+        key = (str(candidate.get("worker_id", "")), str(candidate.get("path", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(candidate)
+    return sorted(
+        selected,
+        key=lambda candidate: (
+            str(candidate.get("worker_id", "")),
+            int(candidate.get("candidate_rank", 999999)),
+            str(candidate.get("path", "")),
+        ),
+    )
+
+
+def markdown_check_result(check: dict[str, Any]) -> str:
+    result = check.get("last_result")
+    if not isinstance(result, dict):
+        return "result `not collected`"
+    status_text = "pass" if result.get("passed") is True else "blocked"
+    exit_status = result.get("exit_status")
+    exit_text = "timeout" if result.get("timed_out") is True else str(exit_status)
+    stdout_len = len(str(result.get("stdout", "")))
+    stderr_len = len(str(result.get("stderr", "")))
+    return (
+        f"result `{status_text}` exit `{exit_text}` "
+        f"stdout_bytes `{stdout_len}` stderr_bytes `{stderr_len}`"
+    )
 
 
 lines = [
@@ -720,13 +914,15 @@ lines.extend(
         "## Read-Only Pre-Cleanup Checks",
     ]
 )
-if recommended_candidates:
-    for candidate in recommended_candidates:
+display_precheck_candidates = selected_precheck_display_candidates()
+if display_precheck_candidates:
+    for candidate in display_precheck_candidates:
         lines.append(f"- `{candidate['worker_id']}` `{candidate['path']}`")
         for check in candidate.get("pre_cleanup_read_only_checks", []):
             lines.append(f"  - `{check['check_kind']}`: `{check['command']}`")
+            lines.append(f"    - {markdown_check_result(check)}")
 else:
-    lines.append("- No recommended cleanup candidate requires pre-cleanup checks.")
+    lines.append("- No selected cleanup candidate requires pre-cleanup checks.")
 lines.extend(
     [
         "",
