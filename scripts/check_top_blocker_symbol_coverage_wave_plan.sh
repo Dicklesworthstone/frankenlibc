@@ -165,7 +165,8 @@ for wave, campaign in zip(waves, top_campaigns):
         require(wave.get(wave_key) == campaign.get(key), "campaign_field_drift", f"coverage wave field drifted for {campaign.get('campaign_id')}:{key}", field=key, wave=wave.get(wave_key), campaign=campaign.get(key))
     require(wave.get("first_wave_symbols") == campaign.get("first_wave_symbols"), "first_wave_symbol_drift", f"first wave symbols drifted for {campaign.get('campaign_id')}", wave=wave.get("first_wave_symbols"), campaign=campaign.get("first_wave_symbols"))
     record = threshold_records.get(wave.get("module_family"))
-    require(record is not None and record.get("decision") == "fail", "threshold_record_missing", f"missing failing family threshold for {wave.get('module_family')}", family=wave.get("module_family"))
+    require(record is not None, "threshold_record_missing", f"missing family threshold for {wave.get('module_family')}", family=wave.get("module_family"))
+    require(record.get("decision") in {"pass", "fail"}, "threshold_record_decision", f"family threshold has invalid decision for {wave.get('module_family')}", family=wave.get("module_family"), decision=record.get("decision"))
     status_counts = Counter()
     missing_status = []
     disallowed = []

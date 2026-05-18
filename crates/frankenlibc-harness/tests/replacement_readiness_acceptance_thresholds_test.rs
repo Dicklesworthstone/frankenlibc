@@ -127,7 +127,7 @@ fn contract_declares_replacement_readiness_policy() {
     );
     assert_eq!(
         contract["expected_current_summary"]["family_fail_count"].as_u64(),
-        Some(40)
+        Some(38)
     );
 }
 
@@ -153,7 +153,12 @@ fn checker_passes_and_blocks_current_readiness() {
     assert_eq!(report["bead"].as_str(), Some("bd-0agsk.17"));
     assert_eq!(report["outcome"].as_str(), Some("pass"));
     assert_eq!(report["summary"]["family_count"].as_u64(), Some(40));
-    assert_eq!(report["summary"]["family_fail_count"].as_u64(), Some(40));
+    assert_eq!(report["summary"]["family_pass_count"].as_u64(), Some(2));
+    assert_eq!(report["summary"]["family_fail_count"].as_u64(), Some(38));
+    assert_eq!(
+        report["summary"]["family_coverage_fail_count"].as_u64(),
+        Some(37)
+    );
     assert_eq!(
         report["summary"]["aggregate_support_green"].as_bool(),
         Some(true)

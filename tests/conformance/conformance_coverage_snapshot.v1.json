@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-05-15T02:14:19Z",
+  "generated_at": "2026-05-18T15:21:56Z",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1124,
-    "coverage_pct": 27,
-    "total_fixture_files": 123,
-    "total_fixture_cases": 2703,
+    "symbols_with_fixtures": 1160,
+    "coverage_pct": 28,
+    "total_fixture_files": 126,
+    "total_fixture_cases": 2775,
     "total_families": 56
   },
   "module_coverage": {
@@ -203,8 +203,8 @@
     },
     "unistd_abi": {
       "total": 742,
-      "covered": 165,
-      "pct": 22
+      "covered": 201,
+      "pct": 27
     },
     "wchar_abi": {
       "total": 146,
@@ -1426,7 +1426,7 @@
       ]
     },
     "unistd": {
-      "function_count": 146,
+      "function_count": 182,
       "functions": [
         "_Exit",
         "_Fork",
@@ -1562,6 +1562,42 @@
         "fexecve",
         "fgetgrent",
         "fgetgrent_r",
+        "fgetpwent",
+        "fgetpwent_r",
+        "fgetspent",
+        "fgetspent_r",
+        "fgetxattr",
+        "flistxattr",
+        "flock",
+        "fmtmsg",
+        "forkpty",
+        "fpathconf",
+        "freeifaddrs",
+        "fremovexattr",
+        "fsconfig",
+        "fsetxattr",
+        "fsmount",
+        "fsopen",
+        "fspick",
+        "fstat",
+        "fstat64",
+        "fstatat",
+        "fstatat64",
+        "fstatfs",
+        "fstatfs64",
+        "fstatvfs",
+        "fstatvfs64",
+        "fsync",
+        "ftok",
+        "ftruncate",
+        "ftruncate64",
+        "fts64_children",
+        "fts64_close",
+        "fts64_open",
+        "fts64_read",
+        "fts64_set",
+        "fts_children",
+        "fts_close",
         "getcwd",
         "getegid",
         "geteuid",
@@ -3915,6 +3951,72 @@
         "fexecve",
         "fgetgrent",
         "fgetgrent_r"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave11": {
+      "file": "unistd_process_filesystem_wave11.json",
+      "sha256": "29dd51871f9dd58359badd57a32a99fb9435b8a49911d9d0ff7009efbb519277",
+      "case_count": 24,
+      "functions": [
+        "fgetpwent",
+        "fgetpwent_r",
+        "fgetspent",
+        "fgetspent_r",
+        "fgetxattr",
+        "flistxattr",
+        "flock",
+        "fmtmsg",
+        "forkpty",
+        "fpathconf",
+        "freeifaddrs",
+        "fremovexattr"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave12": {
+      "file": "unistd_process_filesystem_wave12.json",
+      "sha256": "f0e27fddb3ad126f2cd5839bc73a6adc1a9ddcd949609929119b5f7b6bd1bf37",
+      "case_count": 24,
+      "functions": [
+        "fsconfig",
+        "fsetxattr",
+        "fsmount",
+        "fsopen",
+        "fspick",
+        "fstat",
+        "fstat64",
+        "fstatat",
+        "fstatat64",
+        "fstatfs",
+        "fstatfs64",
+        "fstatvfs"
+      ],
+      "families": [
+        "unistd"
+      ]
+    },
+    "unistd_process_filesystem_wave13": {
+      "file": "unistd_process_filesystem_wave13.json",
+      "sha256": "98040198833dfedf25b12575438d3a9a19c1d69fb5fd3598d9b405649a548ea1",
+      "case_count": 24,
+      "functions": [
+        "fstatvfs64",
+        "fsync",
+        "ftok",
+        "ftruncate",
+        "ftruncate64",
+        "fts64_children",
+        "fts64_close",
+        "fts64_open",
+        "fts64_read",
+        "fts64_set",
+        "fts_children",
+        "fts_close"
       ],
       "families": [
         "unistd"

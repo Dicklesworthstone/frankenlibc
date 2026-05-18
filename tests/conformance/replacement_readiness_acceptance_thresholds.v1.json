@@ -47,8 +47,8 @@
   },
   "expected_current_summary": {
     "family_count": 40,
-    "family_pass_count": 0,
-    "family_fail_count": 40,
+    "family_pass_count": 2,
+    "family_fail_count": 38,
     "aggregate_support_green": true,
     "support_symbol_count": 4119,
     "support_supported_symbol_count": 4119,
@@ -58,15 +58,15 @@
       "stdio_abi"
     ],
     "residual_forbidden_callthrough_count": 0,
-    "family_coverage_fail_count": 40,
+    "family_coverage_fail_count": 37,
     "hardened_coverage_gap_group_count": 4,
     "claim_gate_decision": "blocked"
   },
   "known_current_blockers": [
     {
-      "blocker_id": "all_family_fixture_thresholds_fail",
+      "blocker_id": "family_fixture_threshold_failures",
       "kind": "fixture_depth",
-      "family_count": 40,
+      "family_count": 37,
       "evidence": "tests/conformance/family_coverage_thresholds.v1.json#summary.fail_count"
     },
     {

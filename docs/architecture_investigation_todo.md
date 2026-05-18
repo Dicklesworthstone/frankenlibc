@@ -116,10 +116,14 @@ Status keys:
 
 ## 6) P1 Symbol & ABI Coverage Expansion
 
-- [ ] `TODO-0601` Expand implemented symbol coverage for top blocker modules in `support_matrix.json`.
-- [ ] `TODO-0602` For each newly implemented symbol, add fixture entry and expected output.
-- [ ] `TODO-0603` Keep `version_scripts/libc.map` parity checks in lockstep with symbol additions.
-- [ ] `TODO-0604` Add per-family acceptance thresholds tied to replacement readiness.
+- [x] `TODO-0601` Expand implemented symbol coverage for top blocker modules in `support_matrix.json`.
+  - Closed by `bd-0agsk.18` as the symbol-coverage wave plan: `tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json` selects the top blocker module families and first-wave symbols from live drift, readiness-threshold, fixture-prioritizer, and hardened-coverage evidence. It is intentionally planning-only and does not promote `support_matrix.json` rows.
+- [x] `TODO-0602` For each newly implemented symbol, add fixture entry and expected output.
+  - Closed by `bd-0agsk.18` as a fixture-proof plan: each coverage wave names the fixture files and required per-symbol expected-output evidence that must accompany future symbol work.
+- [x] `TODO-0603` Keep `version_scripts/libc.map` parity checks in lockstep with symbol additions.
+  - Closed by `bd-0agsk.18`: the wave plan includes `wave-00-version-script-export-parity` for the current missing exports and requires `scripts/check_support_reality_drift_triage.sh --validate-only`, `scripts/check_replacement_readiness_acceptance_thresholds.sh --validate-only`, and a focused `rch` libc-map golden lane before export parity can be claimed.
+- [x] `TODO-0604` Add per-family acceptance thresholds tied to replacement readiness.
+  - Closed by `bd-0agsk.17`: `tests/conformance/replacement_readiness_acceptance_thresholds.v1.json` and `scripts/check_replacement_readiness_acceptance_thresholds.sh --validate-only` enforce per-family readiness thresholds and keep the current aggregate-green-but-family-failing state blocked.
 
 ## 7) P1 Runtime-Mode Governance
 

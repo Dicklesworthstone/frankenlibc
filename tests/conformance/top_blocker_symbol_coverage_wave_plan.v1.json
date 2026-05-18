@@ -31,15 +31,15 @@
     "status_target_rule": "Preserve the current support_matrix status for first-wave symbols. Future implementation beads may only advance a symbol to Implemented or RawSyscall after code, version-script, fixture, expected-output, and strict+hardened evidence are updated together.",
     "readiness_blocker_inputs": [
       "version_script_missing_exports",
-      "all_family_fixture_thresholds_fail",
+      "family_fixture_threshold_failures",
       "hardened_coverage_inventory_gaps"
     ]
   },
   "current_gate_context": {
     "claim_gate_decision": "blocked",
     "family_count": 40,
-    "family_fail_count": 40,
-    "family_coverage_fail_count": 40,
+    "family_fail_count": 38,
+    "family_coverage_fail_count": 37,
     "missing_export_count": 5,
     "families_with_missing_exports": [
       "glibc_internal_abi",
@@ -97,28 +97,28 @@
       "module_family": "unistd_abi",
       "track": "unistd/syscall",
       "title": "unistd/process/filesystem syscall fixture wave",
-      "current_coverage_pct": 6.33,
-      "expected_coverage_after_first_wave_pct": 7.95,
+      "current_coverage_pct": 27.36,
+      "expected_coverage_after_first_wave_pct": 28.98,
       "target_total": 742,
-      "target_covered": 47,
-      "target_uncovered": 695,
+      "target_covered": 203,
+      "target_uncovered": 539,
       "candidate_status_counts": {
-        "Implemented": 11,
-        "RawSyscall": 1
+        "Implemented": 7,
+        "RawSyscall": 5
       },
       "first_wave_symbols": [
-        "__sched_cpualloc",
-        "__sched_cpucount",
-        "__sched_cpufree",
-        "__sched_rr_get_interval",
-        "__sched_setparam",
-        "__stack_chk_fail",
-        "__stack_chk_guard",
-        "__xpg_basename",
-        "__xstat",
-        "__xstat64",
-        "add_key",
-        "addmntent"
+        "fts_open",
+        "fts_read",
+        "fts_set",
+        "ftw",
+        "ftw64",
+        "futex",
+        "futex_requeue",
+        "futex_wait",
+        "futex_waitv",
+        "futex_wake",
+        "gai_cancel",
+        "gai_error"
       ],
       "implementation_surface": [
         "crates/frankenlibc-abi/src/unistd_abi.rs",
@@ -128,9 +128,9 @@
       ],
       "fixture_files": [
         "tests/conformance/fixtures/unistd_process_filesystem.json",
-        "tests/conformance/fixtures/unistd_ops.json",
-        "tests/conformance/fixtures/process_ops.json",
-        "tests/conformance/fixtures/startup_ops.json"
+        "tests/conformance/fixtures/unistd_process_filesystem_wave11.json",
+        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
+        "tests/conformance/fixtures/unistd_process_filesystem_wave13.json"
       ],
       "required_evidence": [
         "strict and hardened fixture rows for each first-wave symbol",
@@ -139,78 +139,33 @@
       ]
     },
     {
-      "wave_id": "wave-02-string-memory-hotpaths",
-      "campaign_id": "fcq-string-memory-hotpaths",
-      "rank": 2,
-      "module_family": "string_abi",
-      "track": "string",
-      "title": "string and memory hot-path fixture wave",
-      "current_coverage_pct": 25.34,
-      "expected_coverage_after_first_wave_pct": 33.56,
-      "target_total": 146,
-      "target_covered": 37,
-      "target_uncovered": 109,
-      "candidate_status_counts": {
-        "Implemented": 12
-      },
-      "first_wave_symbols": [
-        "__strcspn_c2",
-        "__strcspn_c3",
-        "__strdup",
-        "__strerror_r",
-        "__strfmon_l",
-        "__strftime_l",
-        "__strncasecmp_l",
-        "__strndup",
-        "__strpbrk_c2",
-        "__strpbrk_c3",
-        "__strsep_1c",
-        "__strsep_2c"
-      ],
-      "implementation_surface": [
-        "crates/frankenlibc-abi/src/string_abi.rs",
-        "crates/frankenlibc-core/src/string/",
-        "crates/frankenlibc-core/src/locale/"
-      ],
-      "fixture_files": [
-        "tests/conformance/fixtures/string_ops.json",
-        "tests/conformance/fixtures/string_memory_full.json",
-        "tests/conformance/fixtures/errno_ops.json"
-      ],
-      "required_evidence": [
-        "boundary, overlap, empty, locale, and errno rows",
-        "hardened repair rows where buffer boundaries are involved",
-        "hot-path fixture output stays byte-for-byte stable"
-      ]
-    },
-    {
-      "wave_id": "wave-03-stdio-libio",
+      "wave_id": "wave-02-stdio-libio",
       "campaign_id": "fcq-stdio-libio",
-      "rank": 3,
+      "rank": 2,
       "module_family": "stdio_abi",
       "track": "stdio",
       "title": "stdio/libio stream semantics fixture wave",
-      "current_coverage_pct": 32.54,
-      "expected_coverage_after_first_wave_pct": 42.06,
+      "current_coverage_pct": 89.68,
+      "expected_coverage_after_first_wave_pct": 99.21,
       "target_total": 126,
-      "target_covered": 41,
-      "target_uncovered": 85,
+      "target_covered": 113,
+      "target_uncovered": 13,
       "candidate_status_counts": {
         "Implemented": 12
       },
       "first_wave_symbols": [
-        "_IO_puts",
-        "_IO_seekoff",
-        "_IO_seekpos",
-        "_IO_sgetn",
-        "__isoc23_fscanf",
-        "__isoc23_scanf",
-        "__isoc23_sscanf",
-        "__isoc23_vfscanf",
-        "__isoc23_vscanf",
-        "__isoc23_vsscanf",
-        "__isoc99_fscanf",
-        "__isoc99_scanf"
+        "setbuffer",
+        "setlinebuf",
+        "stderr",
+        "stdin",
+        "stdout",
+        "tmpfile",
+        "tmpfile64",
+        "tmpnam",
+        "vfprintf",
+        "vfscanf",
+        "vprintf",
+        "vscanf"
       ],
       "implementation_surface": [
         "crates/frankenlibc-abi/src/stdio_abi.rs",
@@ -219,9 +174,9 @@
       ],
       "fixture_files": [
         "tests/conformance/fixtures/stdio_file_ops.json",
-        "tests/conformance/fixtures/printf_conformance.json",
-        "tests/conformance/fixtures/scanf_conformance.json",
-        "tests/conformance/fixtures/stdio_libio_symbols.json"
+        "tests/conformance/fixtures/stdio_libio_symbols.json",
+        "tests/conformance/fixtures/stdio_libio_wave05.json",
+        "tests/conformance/fixtures/stdio_libio_wave06.json"
       ],
       "required_evidence": [
         "stream state and _IO alias fixtures",
@@ -230,33 +185,33 @@
       ]
     },
     {
-      "wave_id": "wave-04-pthread-sync",
+      "wave_id": "wave-03-pthread-sync",
       "campaign_id": "fcq-pthread-sync",
-      "rank": 4,
+      "rank": 3,
       "module_family": "pthread_abi",
       "track": "threading",
       "title": "pthread synchronization and cancellation fixture wave",
-      "current_coverage_pct": 19.15,
-      "expected_coverage_after_first_wave_pct": 27.66,
+      "current_coverage_pct": 61.7,
+      "expected_coverage_after_first_wave_pct": 70.21,
       "target_total": 141,
-      "target_covered": 27,
-      "target_uncovered": 114,
+      "target_covered": 87,
+      "target_uncovered": 54,
       "candidate_status_counts": {
         "Implemented": 12
       },
       "first_wave_symbols": [
-        "__pthread_cleanup_routine",
-        "__pthread_get_minstack",
-        "__pthread_getspecific",
-        "__pthread_key_create",
-        "__pthread_mutex_destroy",
-        "__pthread_mutex_init",
-        "__pthread_mutex_lock",
-        "__pthread_mutexattr_destroy",
-        "__pthread_mutexattr_init",
-        "__pthread_mutexattr_settype",
-        "__pthread_once",
-        "__pthread_register_cancel"
+        "pthread_condattr_init",
+        "pthread_condattr_setclock",
+        "pthread_condattr_setpshared",
+        "pthread_exit",
+        "pthread_getaffinity_np",
+        "pthread_getattr_default_np",
+        "pthread_getconcurrency",
+        "pthread_getcpuclockid",
+        "pthread_getname_np",
+        "pthread_gettid_np",
+        "pthread_kill",
+        "pthread_mutex_clocklock"
       ],
       "implementation_surface": [
         "crates/frankenlibc-abi/src/pthread_abi.rs",
@@ -266,7 +221,7 @@
         "tests/conformance/fixtures/pthread_mutex.json",
         "tests/conformance/fixtures/pthread_cond.json",
         "tests/conformance/fixtures/pthread_thread.json",
-        "tests/conformance/fixtures/pthread_tls_keys.json"
+        "tests/conformance/fixtures/pthread_gnu_extensions.json"
       ],
       "required_evidence": [
         "deterministic mode-pair lifecycle tests",
@@ -275,174 +230,227 @@
       ]
     },
     {
-      "wave_id": "wave-05-malloc-membrane",
-      "campaign_id": "fcq-malloc-membrane",
-      "rank": 5,
-      "module_family": "malloc_abi",
-      "track": "allocator",
-      "title": "allocator ownership and membrane fixture wave",
-      "current_coverage_pct": 19.05,
-      "expected_coverage_after_first_wave_pct": 76.19,
-      "target_total": 21,
-      "target_covered": 4,
-      "target_uncovered": 17,
+      "wave_id": "wave-04-wchar-locale-encoding",
+      "campaign_id": "fcq-wchar-locale-encoding",
+      "rank": 4,
+      "module_family": "wchar_abi",
+      "track": "wchar/locale",
+      "title": "wide-character and multibyte fixture wave",
+      "current_coverage_pct": 36.99,
+      "expected_coverage_after_first_wave_pct": 45.21,
+      "target_total": 146,
+      "target_covered": 54,
+      "target_uncovered": 92,
       "candidate_status_counts": {
         "Implemented": 12
       },
       "first_wave_symbols": [
-        "__libc_allocate_rtsig",
-        "__libc_freeres",
-        "__libc_init_first",
-        "__libc_sa_len",
-        "aligned_alloc",
-        "cfree",
-        "mallinfo",
-        "mallinfo2",
-        "malloc_info",
-        "malloc_stats",
-        "malloc_trim",
-        "malloc_usable_size"
+        "__wcscasecmp_l",
+        "__wcscoll_l",
+        "__wcsftime_l",
+        "__wcsncasecmp_l",
+        "__wcstod_internal",
+        "__wcstod_l",
+        "__wcstof_internal",
+        "__wcstof_l",
+        "__wcstol_internal",
+        "__wcstol_l",
+        "__wcstold_internal",
+        "__wcstold_l"
       ],
       "implementation_surface": [
-        "crates/frankenlibc-abi/src/malloc_abi.rs",
-        "crates/frankenlibc-core/src/malloc/",
-        "crates/frankenlibc-membrane/src/arena.rs",
-        "crates/frankenlibc-membrane/src/ptr_validator.rs"
+        "crates/frankenlibc-abi/src/wchar_abi.rs",
+        "crates/frankenlibc-core/src/string/wchar.rs",
+        "crates/frankenlibc-core/src/locale/"
       ],
       "fixture_files": [
-        "tests/conformance/fixtures/allocator.json",
-        "tests/conformance/hardened_mode_coverage_inventory.v1.json"
+        "tests/conformance/fixtures/wide_string.json",
+        "tests/conformance/fixtures/wchar_locale_encoding_wave01.json",
+        "tests/conformance/fixtures/wchar_locale_encoding_wave02.json",
+        "tests/conformance/fixtures/wchar_locale_encoding_wave03.json"
       ],
       "required_evidence": [
-        "allocator parity fixtures",
-        "hardened invalid-pointer and ownership fixtures",
-        "malloc stats/usable-size expected_output rows"
+        "wide-character conversion and collation rows",
+        "locale-sensitive strict+hardened mode-pair evidence",
+        "expected_output and errno rows for conversion failures"
       ]
     },
     {
-      "wave_id": "wave-06-process-spawn",
-      "campaign_id": "fcq-process-spawn",
-      "rank": 6,
-      "module_family": "process_abi",
-      "track": "process",
-      "title": "process spawn and privilege-sensitive fixture wave",
-      "current_coverage_pct": 13.33,
-      "expected_coverage_after_first_wave_pct": 53.33,
-      "target_total": 30,
-      "target_covered": 4,
-      "target_uncovered": 26,
+      "wave_id": "wave-05-fortify-bounds",
+      "campaign_id": "fcq-fortify-bounds",
+      "rank": 5,
+      "module_family": "fortify_abi",
+      "track": "fortify",
+      "title": "fortify and checked-variant fixture wave",
+      "current_coverage_pct": 46.15,
+      "expected_coverage_after_first_wave_pct": 61.54,
+      "target_total": 78,
+      "target_covered": 36,
+      "target_uncovered": 42,
       "candidate_status_counts": {
-        "Implemented": 4,
-        "RawSyscall": 8
+        "Implemented": 12
       },
       "first_wave_symbols": [
-        "_exit",
-        "acct",
-        "chroot",
-        "clone",
-        "closefrom",
-        "execvp",
-        "execvpe",
-        "getresgid",
-        "getresuid",
-        "posix_spawn_file_actions_addchdir_np",
-        "posix_spawn_file_actions_addclose",
-        "posix_spawn_file_actions_adddup2"
+        "__pread_chk",
+        "__printf_chk",
+        "__ptsname_r_chk",
+        "__read_chk",
+        "__readlink_chk",
+        "__readlinkat_chk",
+        "__realpath_chk",
+        "__recv_chk",
+        "__recvfrom_chk",
+        "__snprintf_chk",
+        "__sprintf_chk",
+        "__stpcpy_chk"
       ],
       "implementation_surface": [
-        "crates/frankenlibc-abi/src/process_abi.rs",
-        "crates/frankenlibc-core/src/process/",
+        "crates/frankenlibc-abi/src/fortify_abi.rs",
+        "crates/frankenlibc-core/src/string/",
+        "crates/frankenlibc-core/src/stdio/"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/fortify_checked_wrapper_wave01.json",
+        "tests/conformance/fixtures/fortify_checked_wrapper_wave02.json",
+        "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json"
+      ],
+      "required_evidence": [
+        "checked-wrapper bounds fixtures",
+        "strict+hardened overflow and truncation behavior",
+        "expected errno or abort-safe-default contract rows"
+      ]
+    },
+    {
+      "wave_id": "wave-06-math-special",
+      "campaign_id": "fcq-math-special",
+      "rank": 6,
+      "module_family": "math_abi",
+      "track": "math",
+      "title": "math finite/special-function fixture wave",
+      "current_coverage_pct": 4.35,
+      "expected_coverage_after_first_wave_pct": 5.3,
+      "target_total": 1265,
+      "target_covered": 55,
+      "target_uncovered": 1210,
+      "candidate_status_counts": {
+        "Implemented": 12
+      },
+      "first_wave_symbols": [
+        "__cosh_finite",
+        "__coshf128_finite",
+        "__coshf_finite",
+        "__coshl_finite",
+        "__exp10_finite",
+        "__exp10f128_finite",
+        "__exp10f_finite",
+        "__exp10l_finite",
+        "__exp2_finite",
+        "__exp2f128_finite",
+        "__exp2f_finite",
+        "__exp2l_finite"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/math_abi.rs",
+        "crates/frankenlibc-core/src/math/"
+      ],
+      "fixture_files": [
+        "tests/conformance/fixtures/math_ops.json",
+        "tests/conformance/fixtures/math_finite_special_wave02.json",
+        "tests/conformance/fixtures/math_finite_special_wave03.json"
+      ],
+      "required_evidence": [
+        "finite and special-function numeric fixtures",
+        "fenv/errno boundary rows where applicable",
+        "host-oracle tolerance evidence for strict+hardened mode pairs"
+      ]
+    },
+    {
+      "wave_id": "wave-07-glibc-internal-compat",
+      "campaign_id": "fcq-glibc-internal-compat",
+      "rank": 7,
+      "module_family": "glibc_internal_abi",
+      "track": "glibc/internal",
+      "title": "glibc internal compatibility triage fixture wave",
+      "current_coverage_pct": 7.02,
+      "expected_coverage_after_first_wave_pct": 9.12,
+      "target_total": 570,
+      "target_covered": 40,
+      "target_uncovered": 530,
+      "candidate_status_counts": {
+        "Implemented": 12
+      },
+      "first_wave_symbols": [
+        "__ctype32_toupper",
+        "__ctype_init",
+        "__curbrk",
+        "__daylight",
+        "__dcgettext",
+        "__default_morecore",
+        "__dgettext",
+        "__dn_comp",
+        "__dn_expand",
+        "__dn_skipname",
+        "__dup2",
+        "__duplocale"
+      ],
+      "implementation_surface": [
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "crates/frankenlibc-abi/version_scripts/libc.map",
         "crates/frankenlibc-core/src/unistd/"
       ],
       "fixture_files": [
-        "tests/conformance/fixtures/process_ops.json",
-        "tests/conformance/fixtures/spawn_exec_ops.json"
+        "tests/conformance/fixtures/glibc_internal_bootstrap_wave01.json",
+        "tests/conformance/fixtures/glibc_internal_compat_wave02.json",
+        "tests/conformance/fixtures/glibc_internal_compat_wave03.json"
       ],
       "required_evidence": [
-        "exact status and errno rows",
-        "spawn file-action diagnostics",
-        "strict+hardened mode-pair process replay"
+        "bootstrap/internal compatibility fixture rows",
+        "version-script parity for exported internals",
+        "diagnostic-safe expected_output for compatibility shims"
       ]
     },
     {
-      "wave_id": "wave-07-resolver-nss-core",
-      "campaign_id": "fcq-resolver-nss-core",
-      "rank": 7,
-      "module_family": "resolv_abi",
-      "track": "resolver",
-      "title": "resolver service lookup fixture wave",
-      "current_coverage_pct": 27.27,
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "target_total": 11,
-      "target_covered": 3,
-      "target_uncovered": 8,
-      "candidate_status_counts": {
-        "Implemented": 8
-      },
-      "first_wave_symbols": [
-        "__h_errno_location",
-        "gai_strerror",
-        "gethostbyaddr",
-        "getnameinfo",
-        "getprotobyname",
-        "getprotobynumber",
-        "getservbyname",
-        "getservbyport"
-      ],
-      "implementation_surface": [
-        "crates/frankenlibc-abi/src/resolv_abi.rs",
-        "crates/frankenlibc-core/src/resolv/",
-        "crates/frankenlibc-core/src/inet/"
-      ],
-      "fixture_files": [
-        "tests/conformance/fixtures/resolver.json"
-      ],
-      "required_evidence": [
-        "localhost, invalid, service, protocol, reverse, and h_errno rows",
-        "deterministic timeout policy evidence",
-        "no ambient DNS dependency for core fixture rows"
-      ]
-    },
-    {
-      "wave_id": "wave-08-poll-event-loop",
-      "campaign_id": "fcq-poll-event-loop",
+      "wave_id": "wave-08-rpc-legacy-network",
+      "campaign_id": "fcq-rpc-legacy-network",
       "rank": 8,
-      "module_family": "poll_abi",
-      "track": "poll",
-      "title": "poll/epoll/eventfd/timerfd fixture wave",
-      "current_coverage_pct": 13.33,
-      "expected_coverage_after_first_wave_pct": 93.33,
-      "target_total": 15,
-      "target_covered": 2,
-      "target_uncovered": 13,
+      "module_family": "rpc_abi",
+      "track": "rpc",
+      "title": "legacy RPC compatibility fixture wave",
+      "current_coverage_pct": 22.64,
+      "expected_coverage_after_first_wave_pct": 30.19,
+      "target_total": 159,
+      "target_covered": 36,
+      "target_uncovered": 123,
       "candidate_status_counts": {
-        "RawSyscall": 12
+        "Implemented": 12
       },
       "first_wave_symbols": [
-        "epoll_create",
-        "epoll_create1",
-        "epoll_ctl",
-        "epoll_pwait",
-        "epoll_wait",
-        "eventfd",
-        "ppoll",
-        "prctl",
-        "pselect",
-        "sched_yield",
-        "timerfd_create",
-        "timerfd_gettime"
+        "getsecretkey",
+        "host2netname",
+        "key_decryptsession",
+        "key_decryptsession_pk",
+        "key_encryptsession",
+        "key_encryptsession_pk",
+        "key_gendes",
+        "key_get_conv",
+        "key_secretkey_is_set",
+        "key_setnet",
+        "key_setsecret",
+        "netname2host"
       ],
       "implementation_surface": [
-        "crates/frankenlibc-abi/src/poll_abi.rs",
-        "crates/frankenlibc-abi/version_scripts/libc.map"
+        "crates/frankenlibc-abi/src/rpc_abi.rs",
+        "crates/frankenlibc-core/src/rpc/"
       ],
       "fixture_files": [
-        "tests/conformance/fixtures/poll_ops.json"
+        "tests/conformance/fixtures/rpc_legacy_network.json",
+        "tests/conformance/fixtures/rpc_legacy_network_wave02.json",
+        "tests/conformance/fixtures/rpc_legacy_network_wave03.json"
       ],
       "required_evidence": [
-        "deterministic timeout and readiness rows",
-        "invalid-fd and mode-pair cases for event-loop syscalls",
-        "scheduler-yield and timerfd evidence before service-loop claims advance"
+        "legacy RPC deterministic fixture rows",
+        "network-independent expected_output contracts",
+        "strict+hardened compatibility evidence before RPC claims advance"
       ]
     }
   ],
@@ -455,10 +463,8 @@
       "missing_hardened_families": [
         "allocator"
       ],
-      "paired_wave_ids": [
-        "wave-05-malloc-membrane"
-      ],
-      "next_action": "Add direct hardened allocator anomaly fixtures before allocator wave completion."
+      "paired_wave_ids": [],
+      "next_action": "Add direct hardened allocator anomaly fixtures before allocator wave completion; allocator is not in the current top-eight prioritizer wave."
     },
     {
       "risk_group_id": "parser_locale_boundary_cases",
@@ -475,8 +481,8 @@
         "scanf_conformance"
       ],
       "paired_wave_ids": [
-        "wave-02-string-memory-hotpaths",
-        "wave-03-stdio-libio"
+        "wave-02-stdio-libio",
+        "wave-04-wchar-locale-encoding"
       ],
       "next_action": "Add hardened scanf/parser boundary fixtures before parser coverage claims advance."
     },
@@ -493,10 +499,9 @@
         "string/wide_memory"
       ],
       "paired_wave_ids": [
-        "wave-02-string-memory-hotpaths",
-        "wave-05-malloc-membrane"
+        "wave-04-wchar-locale-encoding"
       ],
-      "next_action": "Add hardened string-memory and wide-memory fixtures before high-risk family thresholds are met."
+      "next_action": "Add hardened string-memory and wide-memory fixtures before high-risk family thresholds are met; string and malloc are deferred by the current top-eight prioritizer wave."
     },
     {
       "risk_group_id": "high_risk_symbol_families",
@@ -523,9 +528,9 @@
         "scanf_conformance"
       ],
       "paired_wave_ids": [
-        "wave-03-stdio-libio",
-        "wave-04-pthread-sync",
-        "wave-05-malloc-membrane"
+        "wave-02-stdio-libio",
+        "wave-03-pthread-sync",
+        "wave-04-wchar-locale-encoding"
       ],
       "next_action": "Keep allocator and scanf hardened rows explicit before raising replacement thresholds."
     }
