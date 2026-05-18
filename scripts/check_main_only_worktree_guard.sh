@@ -139,11 +139,16 @@ def collect_state() -> dict[str, Any]:
     ]
     worktrees = parse_worktree_porcelain(run_git(["worktree", "list", "--porcelain"]))
     head = run_git(["rev-parse", "HEAD"]).strip()
+    remote_refs = {
+        "origin/main": run_git(["rev-parse", "--verify", "origin/main"]).strip(),
+        "origin/master": run_git(["rev-parse", "--verify", "origin/master"]).strip(),
+    }
     return {
         "current_branch": current_branch,
         "local_branches": sorted(local_branches),
         "worktrees": worktrees,
         "head": head,
+        "remote_refs": remote_refs,
         "root": str(ROOT),
     }
 
@@ -209,6 +214,12 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         add_error(source, "malformed_manifest", "policy.forbid_linked_worktrees must be true")
     if policy.get("forbid_local_non_main_branches") is not True:
         add_error(source, "malformed_manifest", "policy.forbid_local_non_main_branches must be true")
+    if policy.get("required_remote_primary_ref") != "origin/main":
+        add_error(source, "malformed_manifest", "policy.required_remote_primary_ref must be origin/main")
+    if policy.get("required_legacy_mirror_ref") != "origin/master":
+        add_error(source, "malformed_manifest", "policy.required_legacy_mirror_ref must be origin/master")
+    if policy.get("require_legacy_mirror_sync") is not True:
+        add_error(source, "malformed_manifest", "policy.require_legacy_mirror_sync must be true")
     validate_report_contract(manifest, source)
 
     commands = string_list(
@@ -298,6 +309,31 @@ def validate_state(state: dict[str, Any], policy: dict[str, Any], source: str) -
     if not root_seen:
         local_error("root_worktree_missing", f"root worktree {ROOT} was not present in git worktree list")
 
+    remote_refs = state.get("remote_refs")
+    if not isinstance(remote_refs, dict):
+        local_error("malformed_remote_ref_state", "remote_refs must be an object")
+        remote_refs = {}
+    primary_ref = policy.get("required_remote_primary_ref")
+    mirror_ref = policy.get("required_legacy_mirror_ref")
+    primary_commit = remote_refs.get(primary_ref)
+    mirror_commit = remote_refs.get(mirror_ref)
+    if not isinstance(primary_commit, str) or not primary_commit:
+        local_error("remote_primary_ref_missing", f"{primary_ref!r} must resolve to a commit")
+    if not isinstance(mirror_commit, str) or not mirror_commit:
+        local_error("legacy_mirror_ref_missing", f"{mirror_ref!r} must resolve to a commit")
+    if (
+        policy.get("require_legacy_mirror_sync") is True
+        and isinstance(primary_commit, str)
+        and primary_commit
+        and isinstance(mirror_commit, str)
+        and mirror_commit
+        and primary_commit != mirror_commit
+    ):
+        local_error(
+            "legacy_mirror_not_synced",
+            f"{mirror_ref!r} must match {primary_ref!r}: {mirror_commit} != {primary_commit}",
+        )
+
     return local_errors
 
 
@@ -382,6 +418,8 @@ events.append(
         "current_branch": state.get("current_branch"),
         "local_branch_count": len(state.get("local_branches", [])),
         "worktree_count": len(state.get("worktrees", [])),
+        "legacy_mirror_synced": state.get("remote_refs", {}).get("origin/main")
+        == state.get("remote_refs", {}).get("origin/master"),
         "failure_count": len(errors),
         "timestamp": utc_now(),
     }

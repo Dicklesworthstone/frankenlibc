@@ -1,7 +1,7 @@
 {
   "schema_version": "main_only_worktree_guard.v1",
   "bead": "bd-kt64l",
-  "purpose": "No-cargo conformance guard for the repository policy that all FrankenLibC work happens only on local branch main with exactly one Git worktree.",
+  "purpose": "No-cargo conformance guard for the repository policy that all FrankenLibC work happens only on local branch main with exactly one Git worktree, while the legacy remote mirror remains synchronized with origin/main.",
   "policy": {
     "required_current_branch": "main",
     "allowed_local_branches": [
@@ -10,7 +10,10 @@
     "expected_worktree_count": 1,
     "required_worktree_branch": "refs/heads/main",
     "forbid_linked_worktrees": true,
-    "forbid_local_non_main_branches": true
+    "forbid_local_non_main_branches": true,
+    "required_remote_primary_ref": "origin/main",
+    "required_legacy_mirror_ref": "origin/master",
+    "require_legacy_mirror_sync": true
   },
   "negative_controls": [
     {
@@ -53,6 +56,16 @@
         ]
       },
       "expected_failure_signature": "worktree_branch_not_main"
+    },
+    {
+      "id": "negative_stale_legacy_mirror_ref",
+      "mutations": {
+        "remote_refs": {
+          "origin/main": "1111111111111111111111111111111111111111",
+          "origin/master": "2222222222222222222222222222222222222222"
+        }
+      },
+      "expected_failure_signature": "legacy_mirror_not_synced"
     }
   ],
   "outputs": {
@@ -85,7 +98,7 @@
     "bash scripts/check_main_only_worktree_guard.sh --validate-only",
     "jq empty target/conformance/main_only_worktree_guard.report.json",
     "jq empty target/conformance/main_only_worktree_guard.log.jsonl",
-    "jq -e '.contract_status == \"pass\" and .status == \"pass\" and .report_path == \"target/conformance/main_only_worktree_guard.report.json\"' target/conformance/main_only_worktree_guard.report.json",
+    "jq -e '.contract_status == \"pass\" and .status == \"pass\" and .report_path == \"target/conformance/main_only_worktree_guard.report.json\" and .current_state.remote_refs[\"origin/main\"] == .current_state.remote_refs[\"origin/master\"] and any(.negative_controls[]; .control_id == \"negative_stale_legacy_mirror_ref\" and .status == \"pass\")' target/conformance/main_only_worktree_guard.report.json",
     "rg -n \"bash scripts/check_main_only_worktree_guard.sh --validate-only\" scripts/ci.sh",
     "git diff --check -- scripts/check_main_only_worktree_guard.sh tests/conformance/main_only_worktree_guard.v1.json .beads/issues.jsonl",
     "br dep cycles --json"
