@@ -51,22 +51,45 @@ def current_commit():
         return "unknown"
 
 
-def tracked_diff_paths(ignore_globs):
+def current_diff_entries(ignore_globs, include_untracked):
+    def ignored(path):
+        return any(fnmatch.fnmatchcase(path, pattern) for pattern in ignore_globs)
+
+    entries = []
+    seen = set()
+
+    def add_path(path, status):
+        if not path or ignored(path) or path in seen:
+            return
+        seen.add(path)
+        entries.append({"path": path, "status": status})
+
     try:
-        out = subprocess.check_output(
+        tracked_out = subprocess.check_output(
             ["git", "diff", "--name-only"],
             cwd=root,
             text=True,
             stderr=subprocess.DEVNULL,
         )
     except Exception:
-        return []
-    paths = [line.strip() for line in out.splitlines() if line.strip()]
-    return [
-        path
-        for path in paths
-        if not any(fnmatch.fnmatchcase(path, pattern) for pattern in ignore_globs)
-    ]
+        tracked_out = ""
+    for line in tracked_out.splitlines():
+        add_path(line.strip(), "tracked_modified")
+
+    if include_untracked:
+        try:
+            untracked_out = subprocess.check_output(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=root,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            untracked_out = ""
+        for line in untracked_out.splitlines():
+            add_path(line.strip(), "untracked")
+
+    return entries
 
 
 def is_hex_commit(value):
@@ -157,6 +180,11 @@ def rule_matches(path, rule):
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in rule.get("path_globs", []))
 
 
+def expand_path_placeholders(command, path):
+    test_name = Path(path).stem
+    return command.replace("{path}", path).replace("{test_name}", test_name)
+
+
 def build_matrix(paths, contract, lane_surfaces, *, label, record_global=True):
     matrix = []
     local_errors = []
@@ -174,13 +202,31 @@ def build_matrix(paths, contract, lane_surfaces, *, label, record_global=True):
         for rule in matched:
             rule_id = rule.get("rule_id", "<missing>")
             context = f"{label}.{path}.{rule_id}"
+            cargo_required = rule.get("cargo_required", True) is not False
             surfaces = string_list(rule.get("surface_ids"), f"{context}.surface_ids")
             for surface in surfaces:
                 if surface not in lane_surfaces:
                     local_errors.append(f"unknown_surface:{surface}")
-            static_checks = string_list(rule.get("static_checks"), f"{context}.static_checks")
-            preflights = string_list(rule.get("remote_preflight_commands"), f"{context}.remote_preflight_commands")
-            remote_commands = string_list(rule.get("remote_cargo_commands"), f"{context}.remote_cargo_commands")
+            static_checks = [
+                expand_path_placeholders(command, path)
+                for command in string_list(rule.get("static_checks"), f"{context}.static_checks")
+            ]
+            preflights = [
+                expand_path_placeholders(command, path)
+                for command in string_list(
+                    rule.get("remote_preflight_commands"),
+                    f"{context}.remote_preflight_commands",
+                    min_len=1 if cargo_required else 0,
+                )
+            ]
+            remote_commands = [
+                expand_path_placeholders(command, path)
+                for command in string_list(
+                    rule.get("remote_cargo_commands"),
+                    f"{context}.remote_cargo_commands",
+                    min_len=1 if cargo_required else 0,
+                )
+            ]
             for idx, command in enumerate(preflights):
                 local_errors.extend(
                     validate_command(
@@ -206,6 +252,7 @@ def build_matrix(paths, contract, lane_surfaces, *, label, record_global=True):
                     "static_checks": static_checks,
                     "remote_preflight_commands": preflights,
                     "remote_cargo_commands": remote_commands,
+                    "cargo_required": cargo_required,
                     "notes": rule.get("notes"),
                 }
             )
@@ -268,7 +315,13 @@ ignore_globs = policy.get("current_diff_ignored_globs", [])
 if not isinstance(ignore_globs, list) or not all(isinstance(item, str) and item for item in ignore_globs):
     errors.append("policy.current_diff_ignored_globs must be a list of non-empty strings")
     ignore_globs = []
-current_paths = tracked_diff_paths(ignore_globs)
+if policy.get("include_untracked_current_diff") is not True:
+    errors.append("policy.include_untracked_current_diff must be true")
+allowed_statuses = policy.get("current_diff_statuses", [])
+if sorted(allowed_statuses) != ["tracked_modified", "untracked"]:
+    errors.append("policy.current_diff_statuses must be tracked_modified/untracked")
+current_entries = current_diff_entries(ignore_globs, include_untracked=True)
+current_paths = [entry["path"] for entry in current_entries]
 current_matrix, current_errors = build_matrix(current_paths, contract, lane_surfaces, label="current_diff")
 if current_errors and not contract.get("policy", {}).get("current_diff_is_informational"):
     errors.extend(current_errors)
@@ -283,6 +336,10 @@ for control in contract.get("negative_controls", []):
     mutated = copy.deepcopy(contract)
     if control_id == "unknown_path_fails":
         mutated.setdefault("sample_paths", []).append("src/unknown_surface.rs")
+    elif control_id == "untracked_unknown_path_fails":
+        mutated.setdefault("sample_paths", []).append(
+            "crates/frankenlibc-harness/tests/new_unmapped_contract_test.rs"
+        )
     elif control_id == "bare_cargo_command_fails":
         mutated["path_rules"][0]["remote_cargo_commands"][0] = "cargo check -p frankenlibc-abi"
     elif control_id == "workspace_command_fails":
@@ -315,17 +372,26 @@ for control in contract.get("negative_controls", []):
 sample_static = collect_commands(sample_matrix, "static_checks")
 sample_preflights = collect_commands(sample_matrix, "remote_preflight_commands")
 sample_remote = collect_commands(sample_matrix, "remote_cargo_commands")
+current_static = collect_commands(current_matrix, "static_checks")
+current_preflights = collect_commands(current_matrix, "remote_preflight_commands")
+current_remote = collect_commands(current_matrix, "remote_cargo_commands")
 report = {
     "schema_version": "rch_diff_validation_matrix.report.v1",
     "bead": "bd-5ci21",
+    "follow_up_bead": contract.get("follow_up_bead"),
     "status": "pass" if not errors else "fail",
     "source_commit": source_commit,
     "current_head": head,
     "sample_paths": sample_paths,
     "sample_matrix": sample_matrix,
+    "current_diff_entries": current_entries,
     "current_diff_paths": current_paths,
     "current_diff_matrix": current_matrix,
     "current_diff_errors": current_errors,
+    "current_diff_untracked_count": sum(1 for entry in current_entries if entry.get("status") == "untracked"),
+    "current_static_checks": current_static,
+    "current_remote_preflight_commands": current_preflights,
+    "current_remote_cargo_commands": current_remote,
     "static_checks": sample_static,
     "remote_preflight_commands": sample_preflights,
     "remote_cargo_commands": sample_remote,

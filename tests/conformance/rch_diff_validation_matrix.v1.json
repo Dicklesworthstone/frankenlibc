@@ -2,9 +2,10 @@
   "schema_version": "v1",
   "manifest_id": "rch_diff_validation_matrix",
   "bead": "bd-5ci21",
-  "generated_utc": "2026-05-17T23:31:00Z",
+  "follow_up_bead": "bd-3wmqw",
+  "generated_utc": "2026-05-18T00:23:00Z",
   "source_commit": "current",
-  "purpose": "Map changed source/artifact paths to focused RCH validation lanes without running cargo. This is a planning contract for pending slices when RCH worker selection is blocked: it emits the exact static checks and remote-only cargo commands agents should run once RCH is admissible.",
+  "purpose": "Map changed source/artifact paths, including non-ignored untracked files, to focused RCH validation lanes without running cargo. This is a planning contract for pending slices when RCH worker selection is blocked: it emits the exact static checks and remote-only cargo commands agents should run once RCH is admissible.",
   "inputs": {
     "rch_validation_lane_plan": "tests/conformance/rch_validation_lane_plan.v1.json",
     "rch_remote_admissibility_preflight": "scripts/check_rch_remote_admissibility.sh",
@@ -25,12 +26,18 @@
     "current_diff_ignored_globs": [
       ".beads/issues.jsonl"
     ],
+    "include_untracked_current_diff": true,
+    "current_diff_statuses": [
+      "tracked_modified",
+      "untracked"
+    ],
     "sample_paths_must_all_map": true
   },
   "sample_paths": [
     "crates/frankenlibc-abi/src/resolv_abi.rs",
     "crates/frankenlibc-harness/tests/standalone_tls_removal_experiment_test.rs",
-    "tests/conformance/standalone_tls_removal_experiment.v1.json"
+    "tests/conformance/standalone_tls_removal_experiment.v1.json",
+    "crates/frankenlibc-harness/tests/cli_contract_future_untracked_test.rs"
   ],
   "path_rules": [
     {
@@ -101,12 +108,59 @@
         "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test standalone_tls_removal_experiment_test -- -D warnings"
       ],
       "notes": "Manifest changes need JSON plus standalone/TLS rollup checkers and the focused harness test lane once RCH is admissible."
+    },
+    {
+      "rule_id": "harness-cli-contract-test",
+      "path_globs": [
+        "crates/frankenlibc-harness/tests/cli_contract_*_test.rs"
+      ],
+      "surface_ids": [
+        "harness-conformance-gates"
+      ],
+      "static_checks": [
+        "rustfmt --edition 2024 --check {path}",
+        "git diff --check -- {path}"
+      ],
+      "remote_preflight_commands": [
+        "RCH_REQUIRE_REMOTE=1 bash scripts/check_rch_remote_admissibility.sh \"cargo test -p frankenlibc-harness --test {test_name} -- --nocapture\""
+      ],
+      "remote_cargo_commands": [
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness --test {test_name} -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo check -p frankenlibc-harness --test {test_name}",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p frankenlibc-harness --test {test_name} -- -D warnings"
+      ],
+      "notes": "CLI contract harness tests may appear as new untracked files before commit; plan focused remote proof from the path stem and never count local cargo."
+    },
+    {
+      "rule_id": "rch-diff-validation-matrix-tooling",
+      "path_globs": [
+        "scripts/check_rch_diff_validation_matrix.sh",
+        "tests/conformance/rch_diff_validation_matrix.v1.json"
+      ],
+      "surface_ids": [
+        "harness-conformance-gates"
+      ],
+      "cargo_required": false,
+      "static_checks": [
+        "bash -n scripts/check_rch_diff_validation_matrix.sh",
+        "jq empty tests/conformance/rch_diff_validation_matrix.v1.json",
+        "bash scripts/check_rch_diff_validation_matrix.sh",
+        "git diff --check -- scripts/check_rch_diff_validation_matrix.sh tests/conformance/rch_diff_validation_matrix.v1.json"
+      ],
+      "remote_preflight_commands": [],
+      "remote_cargo_commands": [],
+      "notes": "The diff-matrix checker and manifest are no-cargo tooling; validate with shell/JSON/self-check gates and do not invent a local cargo proof."
     }
   ],
   "negative_controls": [
     {
       "control_id": "unknown_path_fails",
       "mutation": "append src/unknown_surface.rs to sample paths",
+      "expected_error": "unmapped_path"
+    },
+    {
+      "control_id": "untracked_unknown_path_fails",
+      "mutation": "append an untracked-style harness test path that has no validation rule",
       "expected_error": "unmapped_path"
     },
     {
@@ -124,7 +178,12 @@
     "output_path": "target/conformance/rch_diff_validation_matrix.report.json",
     "must_materialize": [
       "sample_matrix",
+      "current_diff_entries",
       "current_diff_matrix",
+      "current_diff_untracked_count",
+      "current_static_checks",
+      "current_remote_preflight_commands",
+      "current_remote_cargo_commands",
       "static_checks",
       "remote_preflight_commands",
       "remote_cargo_commands",
