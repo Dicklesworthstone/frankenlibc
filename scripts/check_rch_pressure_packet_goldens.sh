@@ -732,7 +732,41 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     for field in required_approval_fields:
         if field not in approval:
             add_error(source, "missing_approval_field", f"approval_request missing {field}")
+    approval_worker_ids = approval.get("exact_worker_ids")
+    expected_worker_ids = sorted(worker_id for worker_id in candidates_by_worker if worker_id)
+    if not isinstance(approval_worker_ids, list) or not all(isinstance(worker_id, str) for worker_id in approval_worker_ids):
+        add_error(source, "invalid_exact_worker_ids", "approval_request.exact_worker_ids must be a string list")
+    elif approval_worker_ids != expected_worker_ids:
+        add_error(
+            source,
+            "exact_worker_ids_mismatch",
+            f"exact_worker_ids={approval_worker_ids} expected={expected_worker_ids}",
+        )
     approval_candidate_paths = approval.get("exact_candidate_paths")
+    expected_candidate_paths = [str(candidate.get("path", "")) for candidate in candidates if isinstance(candidate, dict)]
+    if not isinstance(approval_candidate_paths, list) or not all(isinstance(path, str) for path in approval_candidate_paths):
+        add_error(source, "invalid_exact_candidate_paths", "approval_request.exact_candidate_paths must be a string list")
+        approval_candidate_paths = []
+    elif approval_candidate_paths != expected_candidate_paths:
+        add_error(
+            source,
+            "exact_candidate_paths_mismatch",
+            f"exact_candidate_paths={approval_candidate_paths} expected={expected_candidate_paths}",
+        )
+    smallest_paths = approval.get("smallest_sufficient_candidate_paths")
+    expected_smallest_paths = [str(candidate.get("path", "")) for candidate in recommended if isinstance(candidate, dict)]
+    if not isinstance(smallest_paths, list) or not all(isinstance(path, str) for path in smallest_paths):
+        add_error(
+            source,
+            "invalid_smallest_candidate_paths",
+            "approval_request.smallest_sufficient_candidate_paths must be a string list",
+        )
+    elif smallest_paths != expected_smallest_paths:
+        add_error(
+            source,
+            "smallest_sufficient_candidate_paths_mismatch",
+            f"smallest_sufficient_candidate_paths={smallest_paths} expected={expected_smallest_paths}",
+        )
     ballast_snapshots = [
         worker.get("ballast_snapshot")
         for worker in workers
@@ -1114,6 +1148,49 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
         )
     else:
         add_error(source, "negative_control_no_approval_request", "golden packet has no approval_request for mutation")
+
+    exact_worker_summary_packet = deepcopy(packet)
+    approval = exact_worker_summary_packet.get("approval_request")
+    if isinstance(approval, dict) and isinstance(approval.get("exact_worker_ids"), list) and approval["exact_worker_ids"]:
+        approval["exact_worker_ids"] = approval["exact_worker_ids"][1:]
+        expect_validation_failure(
+            exact_worker_summary_packet,
+            f"{source}::exact_worker_ids_mismatch",
+            "exact_worker_ids_mismatch",
+            "remove the first approval-request worker id summary row",
+        )
+    else:
+        add_error(source, "negative_control_no_exact_worker_ids", "golden packet has no exact worker ids for mutation")
+
+    exact_path_summary_packet = deepcopy(packet)
+    approval = exact_path_summary_packet.get("approval_request")
+    if isinstance(approval, dict) and isinstance(approval.get("exact_candidate_paths"), list) and approval["exact_candidate_paths"]:
+        approval["exact_candidate_paths"] = approval["exact_candidate_paths"][1:]
+        expect_validation_failure(
+            exact_path_summary_packet,
+            f"{source}::exact_candidate_paths_mismatch",
+            "exact_candidate_paths_mismatch",
+            "remove the first approval-request candidate path summary row",
+        )
+    else:
+        add_error(source, "negative_control_no_exact_candidate_paths", "golden packet has no exact candidate paths for mutation")
+
+    smallest_summary_packet = deepcopy(packet)
+    approval = smallest_summary_packet.get("approval_request")
+    if isinstance(approval, dict) and isinstance(approval.get("smallest_sufficient_candidate_paths"), list) and approval["smallest_sufficient_candidate_paths"]:
+        approval["smallest_sufficient_candidate_paths"] = approval["smallest_sufficient_candidate_paths"][1:]
+        expect_validation_failure(
+            smallest_summary_packet,
+            f"{source}::smallest_sufficient_candidate_paths_mismatch",
+            "smallest_sufficient_candidate_paths_mismatch",
+            "remove the first smallest-sufficient candidate path summary row",
+        )
+    else:
+        add_error(
+            source,
+            "negative_control_no_smallest_candidate_paths",
+            "golden packet has no smallest-sufficient candidate paths for mutation",
+        )
 
     stale_mirror_packet = deepcopy(packet)
     repo_state = stale_mirror_packet.get("repo_state")

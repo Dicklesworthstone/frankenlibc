@@ -336,8 +336,8 @@
         "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9"
       ],
       "smallest_sufficient_candidate_paths": [
-        "/data/projects/franken_engine/target_PearlTower_focused",
-        "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9"
+        "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
+        "/data/projects/franken_engine/target_PearlTower_focused"
       ],
       "minimum_margin_surplus_gb": 0.25,
       "margin_sufficient_candidate_paths": [
