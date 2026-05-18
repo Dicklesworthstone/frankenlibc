@@ -2,7 +2,7 @@
   "schema_version": "v1",
   "manifest_id": "blocked_validation_work_guard",
   "bead": "bd-bqh1f",
-  "generated_utc": "2026-05-18T00:32:00Z",
+  "generated_utc": "2026-05-18T00:35:00Z",
   "source_commit": "current",
   "purpose": "No-cargo swarm guard for the state where RCH cargo validation is blocked and validation-dependent beads are already waiting. The guard prevents agents from starting new cargo-backed Rust work when the useful next action is either no-cargo evidence or operator-approved RCH unblock work.",
   "inputs": {
@@ -57,6 +57,7 @@
       "blocked_validation_issue_ids",
       "allowed_next_actions",
       "forbidden_next_actions",
+      "report_contract_fields",
       "negative_controls"
     ],
     "status_on_current_blocked_state": "pass"
@@ -66,6 +67,11 @@
       "control_id": "rch_admissible_changes_decision",
       "mutation": "set rch status to admissible and clear failure signatures",
       "expected_decision": "resume_cargo_validation_queue"
+    },
+    {
+      "control_id": "missing_report_field_fails",
+      "mutation": "validate a synthetic report missing most must_materialize fields",
+      "expected_decision": "missing_report_field"
     },
     {
       "control_id": "safe_ready_changes_decision",

@@ -129,6 +129,20 @@ def string_list(value, context, *, min_len=1):
     return result
 
 
+def configured_report_fields(contract):
+    report_contract = contract.get("report_contract", {})
+    if not isinstance(report_contract, dict):
+        return []
+    fields = report_contract.get("must_materialize", [])
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, str) and field]
+
+
+def missing_report_fields(contract, report):
+    return [field for field in configured_report_fields(contract) if field not in report]
+
+
 def active_bd716_dependents(rows, guard):
     blocker_id = guard.get("blocking_issue_id")
     dep_type = guard.get("blocked_issue_dependency_type")
@@ -231,6 +245,10 @@ decision = decide(readiness, rch, dependents, guard)
 expected_current = guard.get("decision_when_rch_blocked_and_dependents_waiting")
 if decision != expected_current:
     errors.append(f"current guard decision {decision!r} did not match expected blocked decision {expected_current!r}")
+must_materialize = string_list(
+    contract.get("report_contract", {}).get("must_materialize"),
+    "report_contract.must_materialize",
+)
 
 negative_results = []
 for control in contract.get("negative_controls", []):
@@ -246,6 +264,24 @@ for control in contract.get("negative_controls", []):
     if control_id == "rch_admissible_changes_decision":
         mutated_rch["status"] = "admissible"
         mutated_rch["failure_signatures"] = []
+    elif control_id == "missing_report_field_fails":
+        observed = (
+            "missing_report_field"
+            if missing_report_fields(contract, {"decision": decision})
+            else "no_missing_report_field"
+        )
+        passed = observed == expected_decision
+        if not passed:
+            errors.append(f"negative_control_failed:{control_id}: expected {expected_decision}, got {observed}")
+        negative_results.append(
+            {
+                "control_id": control_id,
+                "expected_decision": expected_decision,
+                "observed_decision": observed,
+                "status": "pass" if passed else "fail",
+            }
+        )
+        continue
     elif control_id == "safe_ready_changes_decision":
         mutated_readiness["safe_ready"] = [
             {
@@ -309,9 +345,15 @@ report = {
     "blocked_validation_issues": dependents,
     "allowed_next_actions": guard.get("allowed_next_actions_when_blocked", []),
     "forbidden_next_actions": guard.get("forbidden_next_actions_when_blocked", []),
+    "report_contract_fields": must_materialize,
     "negative_controls": negative_results,
     "errors": errors,
 }
+missing_fields = missing_report_fields(contract, report)
+if missing_fields:
+    errors.append(f"missing_report_field:{','.join(missing_fields)}")
+report["status"] = "pass" if not errors else "fail"
+report["errors"] = errors
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 print(json.dumps(report, indent=2, sort_keys=True))
 if errors:
