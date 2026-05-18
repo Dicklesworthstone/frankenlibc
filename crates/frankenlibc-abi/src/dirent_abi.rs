@@ -80,6 +80,37 @@ fn write_dirent(dst: *mut libc::dirent, entry: &dirent_core::DirEntry, d_reclen:
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+fn empty_readdir_entry() -> libc::dirent {
+    // SAFETY: `libc::dirent` is a plain C record; zero initialization matches
+    // the previous TLS buffer initialization before each entry is populated.
+    unsafe { std::mem::zeroed() }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static READDIR_ENTRY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<libc::dirent> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_readdir_entry);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static READDIR_ENTRY_BUF: std::cell::UnsafeCell<libc::dirent> = const {
+        // SAFETY: `libc::dirent` is a plain C record and callers only observe
+        // it after `write_dirent` fully populates the fields for one entry.
+        std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() })
+    };
+}
+
+fn with_readdir_entry<R>(callback: impl FnOnce(*mut libc::dirent) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        READDIR_ENTRY_OWNED_TLS.with(|entry| callback(entry as *mut libc::dirent))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        READDIR_ENTRY_BUF.with(|cell| callback(cell.get()))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // opendir
 // ---------------------------------------------------------------------------
@@ -145,12 +176,6 @@ pub unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
 /// We use a thread-local buffer for the returned `dirent` to avoid lifetime issues.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
-    thread_local! {
-        static ENTRY_BUF: std::cell::UnsafeCell<libc::dirent> = const {
-            std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() })
-        };
-    }
-
     let (_mode, decision) =
         runtime_policy::decide(ApiFamily::IoFd, dirp as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -183,8 +208,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
         let d_reclen = (next_off - state.offset) as libc::c_ushort;
         state.last_d_off = entry.d_off;
         state.offset = next_off;
-        return ENTRY_BUF.with(|cell| {
-            let ptr = cell.get();
+        return with_readdir_entry(|ptr| {
             write_dirent(ptr, &entry, d_reclen);
             ptr
         });
@@ -222,8 +246,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
         state.last_d_off = entry.d_off;
         state.offset = next_off;
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-        return ENTRY_BUF.with(|cell| {
-            let ptr = cell.get();
+        return with_readdir_entry(|ptr| {
             write_dirent(ptr, &entry, d_reclen);
             ptr
         });
