@@ -25,6 +25,30 @@
     "dossier_markdown": "target/conformance/workload_compatibility_dossier.md",
     "jsonl_log": "target/conformance/workload_compatibility_dossier.log.jsonl"
   },
+  "report_contract": {
+    "output_path": "target/conformance/workload_compatibility_dossier.report.json",
+    "markdown_path": "target/conformance/workload_compatibility_dossier.md",
+    "log_path": "target/conformance/workload_compatibility_dossier.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "bead",
+      "status",
+      "generated_at_utc",
+      "source_commit",
+      "contract",
+      "summary",
+      "dossier_rows",
+      "failure_signatures",
+      "errors",
+      "artifact_refs",
+      "report_path",
+      "markdown_path",
+      "log_path",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ]
+  },
   "required_dossier_fields": [
     "trace_id",
     "bead_id",
