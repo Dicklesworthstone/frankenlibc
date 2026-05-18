@@ -27,7 +27,7 @@ const LOCAL_EXEC_LANE: &str = "local-exec-tls-model-probe";
 const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
-const EXPECTED_OWNER_SURFACE_COUNT: usize = 5;
+const EXPECTED_OWNER_SURFACE_COUNT: usize = 6;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -83,6 +83,13 @@ fn abi_glibc_internal_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("glibc_internal_abi.rs")
+}
+
+fn abi_errno_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("errno_abi.rs")
 }
 
 fn load_manifest() -> TestResult<Value> {
@@ -375,7 +382,7 @@ fn tls_symbol_row_pins_glibc_2_3_version_requirement() -> TestResult {
 }
 
 #[test]
-fn five_owner_surface_clusters_are_tracked_with_total_thread_local_count() -> TestResult {
+fn owner_surface_clusters_are_tracked_with_total_thread_local_count() -> TestResult {
     let m = load_manifest()?;
     let rows = json_array(&m, "owner_surface_disposition_rows")?;
     require(
@@ -609,8 +616,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 56,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, and glibc-internal cleanup/resolver/shadow state",
+        substituted == 57,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, and the core errno slot",
     )?;
     require(
         substituted + remaining == total,
@@ -723,5 +730,13 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && glibc_internal.contains("RESOLV_CONTEXT_HEAD_OWNED_TLS")
             && glibc_internal.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "glibc-internal ABI must route pthread cleanup head, resolver state, rcmd errstr, sgetspent scratch, h_errno, and resolver context head through owned TLS cache",
+    )?;
+
+    let errno = std::fs::read_to_string(abi_errno_path(&root))
+        .map_err(|err| format!("read errno_abi.rs: {err}"))?;
+    require(
+        errno.contains("ERRNO_OWNED_TLS")
+            && errno.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "errno ABI must route __errno_location through owned TLS cache",
     )
 }
