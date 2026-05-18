@@ -795,6 +795,11 @@ event = {
     "contract_status": report["contract_status"],
     "failure_signatures": report["failure_signatures"],
     "validation_command": VALIDATION_COMMAND,
+    "operator_next_action": approval_summary.get("operator_next_action"),
+    "approval_packet_status": approval_summary.get("status"),
+    "approval_ready_candidates": approval_summary.get("current_ready_for_explicit_user_approval_count", 0),
+    "approval_ready_worker_ids": approval_summary.get("current_ready_worker_ids", []),
+    "approval_ready_paths_present": bool(approval_summary.get("current_ready_candidate_paths")),
 }
 
 REPORT.parent.mkdir(parents=True, exist_ok=True)
