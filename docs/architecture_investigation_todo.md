@@ -78,9 +78,11 @@ Status keys:
 - [x] `TODO-0301` Fix fixture schema heterogeneity causing skip in verify flow.
 - [x] `TODO-0302` `elf_loader.json` missing `expected_errno` for cases expected by `FixtureCase`.
 - [x] `TODO-0303` `resolver.json` has non-string `expected_output` while harness expects string.
-- [ ] `TODO-0304` Decide canonical schema for `expected_output` (string-only vs tagged value).
+- [x] `TODO-0304` Decide canonical schema for `expected_output` (string-only vs tagged value).
+  - Closed by `bd-0agsk.5`: canonical boundary is tagged expected-value records normalized by harness adapters into the internal string comparison form. Evidence: `tests/conformance/fixture_expected_output_schema_policy.v1.json`, `scripts/check_fixture_expected_output_schema_policy.sh`, and `crates/frankenlibc-harness/tests/fixture_expected_output_schema_policy_test.rs`.
 - [x] `TODO-0305` Implement schema adapter in loader if mixed typing remains necessary.
-- [ ] `TODO-0306` Add schema validation script for all fixture files.
+- [x] `TODO-0306` Add schema validation script for all fixture files.
+  - Closed by `bd-0agsk.6` and completion-debt closeout `bd-0agsk.6.1`: whole-tree fixture schema gate validates every `tests/conformance/fixtures/*.json` file and emits structured report/log telemetry. Evidence: `tests/conformance/fixture_schema_validation.v1.json`, `scripts/check_fixture_schema_validation.sh`, `crates/frankenlibc-harness/tests/fixture_schema_validation_test.rs`, and `tests/conformance/fixture_schema_validation_telemetry_index.v1.json`.
 - [x] `TODO-0307` Add integration test to ensure `harness verify` processes all fixture files (no silent skips).
 
 ## 4) P0 Harness/Conformance Migration (Phase B+)

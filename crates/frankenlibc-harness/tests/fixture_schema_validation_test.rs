@@ -104,11 +104,11 @@ fn contract_declares_full_fixture_schema_gate() {
     );
     assert_eq!(
         contract["expected_inventory"]["fixture_file_count"].as_u64(),
-        Some(123)
+        Some(126)
     );
     assert_eq!(
         contract["expected_inventory"]["standard_case_count"].as_u64(),
-        Some(2702)
+        Some(2774)
     );
     assert_eq!(
         contract["expected_inventory"]["expected_errno_optional_cases"].as_u64(),
@@ -135,14 +135,14 @@ fn checker_passes_for_current_fixture_corpus() {
     );
     assert_eq!(report["bead"].as_str(), Some("bd-0agsk.6"));
     assert_eq!(report["outcome"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["fixture_file_count"].as_u64(), Some(123));
+    assert_eq!(report["summary"]["fixture_file_count"].as_u64(), Some(126));
     assert_eq!(
         report["summary"]["standard_case_count"].as_u64(),
-        Some(2702)
+        Some(2774)
     );
     assert_eq!(
         report["summary"]["primary_expectation_tags"]["expected_output"].as_u64(),
-        Some(2585)
+        Some(2657)
     );
     assert_eq!(
         report["summary"]["primary_expectation_tags"]["expected_return+expected_values"].as_u64(),
