@@ -6,6 +6,28 @@
   "canonical_checker": "scripts/check_rch_validation_lane_plan.sh --validate-only",
   "report_path": "target/conformance/rch_validation_lane_plan.report.json",
   "log_path": "target/conformance/rch_validation_lane_plan.log.jsonl",
+  "report_contract": {
+    "output_path": "target/conformance/rch_validation_lane_plan.report.json",
+    "log_path": "target/conformance/rch_validation_lane_plan.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "bead",
+      "trace_id",
+      "mode",
+      "source_commit",
+      "outcome",
+      "failure_signature",
+      "message",
+      "manifest",
+      "duration_ms",
+      "summary",
+      "report_path",
+      "log_path",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ]
+  },
   "purpose": "Machine-readable validation-lane plan for FrankenLibC. Maps each common surface (harness tests, runtime_math, ABI subsystems, fuzz build smokes, bench build smokes, standalone forge gates, workload replays) to the minimal `rch` command and CARGO_TARGET_DIR isolation rule that an agent in a 64+ core swarm must use. Reduces overlap (two agents on the same target dir thrash incremental compilation) and prevents agents from running unscoped workspace gates when a focused crate gate would suffice.",
   "rules": {
     "all_cargo_through_rch": true,
