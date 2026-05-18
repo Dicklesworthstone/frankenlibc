@@ -33,6 +33,52 @@ def rel(path):
         return path.name
 
 
+def normalize_rel(value):
+    if not isinstance(value, str) or not value:
+        return ""
+    path = Path(value)
+    if path.is_absolute():
+        return rel(path)
+    return path.as_posix()
+
+
+def configured_report_fields(contract):
+    report_contract = contract.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return []
+    fields = report_contract.get("must_materialize")
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, str) and field]
+
+
+def validate_report_contract(contract, report):
+    report_contract = contract.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return ["missing_report_contract"]
+    errors = []
+    fields = report_contract.get("must_materialize")
+    if not isinstance(fields, list) or not all(isinstance(field, str) and field for field in fields):
+        errors.append("report_contract.must_materialize must be a non-empty string list")
+        fields = []
+    outputs = contract.get("outputs", {})
+    if not isinstance(outputs, dict):
+        outputs = {}
+    expected_report = normalize_rel(report_contract.get("output_path"))
+    expected_markdown = normalize_rel(report_contract.get("markdown_path"))
+    expected_log = normalize_rel(report_contract.get("log_path"))
+    if expected_report != normalize_rel(outputs.get("json_report")):
+        errors.append("report_contract.output_path must match outputs.json_report")
+    if expected_markdown != normalize_rel(outputs.get("markdown_report")):
+        errors.append("report_contract.markdown_path must match outputs.markdown_report")
+    if expected_log != normalize_rel(outputs.get("event_log")):
+        errors.append("report_contract.log_path must match outputs.event_log")
+    missing = [field for field in fields if field not in report]
+    if missing:
+        errors.append("report_contract missing materialized fields: " + ", ".join(missing))
+    return errors
+
+
 def load_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -264,7 +310,18 @@ report = {
     "skipped_units": skipped_units,
     "stale_artifact_warnings": stale_artifact_warnings,
     "rch_rerun_commands": rerun_commands,
+    "report_path": normalize_rel(contract.get("outputs", {}).get("json_report")),
+    "markdown_path": normalize_rel(contract.get("outputs", {}).get("markdown_report")),
+    "log_path": normalize_rel(contract.get("outputs", {}).get("event_log")),
+    "report_contract_fields": configured_report_fields(contract),
+    "contract_status": "pending",
+    "contract_errors": [],
 }
+contract_errors = validate_report_contract(contract, report)
+report["contract_errors"] = contract_errors
+report["contract_status"] = "pass" if not contract_errors else "fail"
+if contract_errors and status == "passed":
+    report["status"] = "failed"
 
 json_path.parent.mkdir(parents=True, exist_ok=True)
 markdown_path.parent.mkdir(parents=True, exist_ok=True)

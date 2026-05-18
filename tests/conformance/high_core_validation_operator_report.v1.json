@@ -12,6 +12,32 @@
     "markdown_report": "target/conformance/high_core_validation/operator.report.md",
     "event_log": "target/conformance/high_core_validation/operator.events.log.jsonl"
   },
+  "report_contract": {
+    "output_path": "target/conformance/high_core_validation/operator.report.json",
+    "markdown_path": "target/conformance/high_core_validation/operator.report.md",
+    "log_path": "target/conformance/high_core_validation/operator.events.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "bead",
+      "status",
+      "source_merge_report",
+      "source_cost_report",
+      "sections",
+      "summary",
+      "lane_health",
+      "recent_p95_cost",
+      "failed_units",
+      "skipped_units",
+      "stale_artifact_warnings",
+      "rch_rerun_commands",
+      "report_path",
+      "markdown_path",
+      "log_path",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ]
+  },
   "required_sections": [
     "lane_health",
     "recent_p95_cost",
