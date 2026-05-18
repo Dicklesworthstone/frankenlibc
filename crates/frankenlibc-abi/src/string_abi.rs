@@ -5,7 +5,6 @@
 //! 2. In hardened mode, applies healing (bounds clamping, null truncation)
 //! 3. Delegates to `frankenlibc-core` safe implementations or inline unsafe primitives
 
-use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 use std::fmt::Write as _;
 use std::sync::{
@@ -25,8 +24,13 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use frankenlibc_core::syscall as raw_syscall;
 
+#[cfg(feature = "owned-tls-cache")]
+static STRING_MEMBRANE_DEPTH_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<u32> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static STRING_MEMBRANE_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static STRING_MEMBRANE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 const MEMCPY_HTM_MAX_BYTES: usize = 256;
@@ -70,6 +74,13 @@ struct StringMembraneGuard;
 
 impl Drop for StringMembraneGuard {
     fn drop(&mut self) {
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            STRING_MEMBRANE_DEPTH_OWNED_TLS.with(|depth| {
+                *depth = depth.saturating_sub(1);
+            });
+        }
+        #[cfg(not(feature = "owned-tls-cache"))]
         let _ = STRING_MEMBRANE_DEPTH.try_with(|depth| {
             let current = depth.get();
             depth.set(current.saturating_sub(1));
@@ -85,17 +96,31 @@ fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
     {
         return None;
     }
-    STRING_MEMBRANE_DEPTH
-        .try_with(|depth| {
-            let current = depth.get();
-            if current > 0 {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRING_MEMBRANE_DEPTH_OWNED_TLS.with(|depth| {
+            if *depth > 0 {
                 None
             } else {
-                depth.set(current + 1);
+                *depth += 1;
                 Some(StringMembraneGuard)
             }
         })
-        .unwrap_or(None)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRING_MEMBRANE_DEPTH
+            .try_with(|depth| {
+                let current = depth.get();
+                if current > 0 {
+                    None
+                } else {
+                    depth.set(current + 1);
+                    Some(StringMembraneGuard)
+                }
+            })
+            .unwrap_or(None)
+    }
 }
 
 fn active_string_simd_feature_mask() -> u32 {
@@ -2755,9 +2780,35 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
 // strtok
 // ---------------------------------------------------------------------------
 
-// Thread-local save pointer for strtok state.
+#[cfg(feature = "owned-tls-cache")]
+static STRTOK_SAVE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static STRTOK_SAVE: std::cell::Cell<*mut c_char> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+fn strtok_saved_ptr() -> *mut c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRTOK_SAVE_OWNED_TLS.with(|saved| *saved as *mut c_char)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRTOK_SAVE.get()
+    }
+}
+
+fn set_strtok_saved_ptr(ptr: *mut c_char) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRTOK_SAVE_OWNED_TLS.with(|saved| *saved = ptr as usize);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRTOK_SAVE.set(ptr);
+    }
 }
 
 /// POSIX `strtok` -- splits string into tokens delimited by characters in `delim`.
@@ -2807,12 +2858,12 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
 
     // SAFETY: Thread-local access; strtok is specified as non-reentrant per POSIX.
     let (token, adverse, work) = unsafe {
-        let saved = STRTOK_SAVE.get();
+        let saved = strtok_saved_ptr();
         let current = if s.is_null() { saved } else { s };
         let mut work = 0usize;
 
         if current.is_null() {
-            STRTOK_SAVE.set(std::ptr::null_mut());
+            set_strtok_saved_ptr(std::ptr::null_mut());
             (std::ptr::null_mut(), false, work)
         } else {
             let bound = if repair {
@@ -2844,7 +2895,7 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
             let delim_bound = known_remaining(delim as usize);
             let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
             if !delim_terminated {
-                STRTOK_SAVE.set(std::ptr::null_mut());
+                set_strtok_saved_ptr(std::ptr::null_mut());
                 work = scan_limit.saturating_add(delim_len);
                 (std::ptr::null_mut(), true, work)
             } else {
@@ -2871,12 +2922,12 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
                         };
 
                         // Update save pointer
-                        STRTOK_SAVE.set(current.add(next_pos));
+                        set_strtok_saved_ptr(current.add(next_pos));
                         work = next_pos; // Approximate work
                         (token_start, false, work)
                     }
                     None => {
-                        STRTOK_SAVE.set(std::ptr::null_mut());
+                        set_strtok_saved_ptr(std::ptr::null_mut());
                         work = scan_limit;
                         (std::ptr::null_mut(), false, work)
                     }
@@ -4002,7 +4053,11 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
 // strerror
 // ---------------------------------------------------------------------------
 
-// Thread-local buffer for strerror return values.
+#[cfg(feature = "owned-tls-cache")]
+static STRERROR_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 256]);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static STRERROR_BUF: std::cell::RefCell<[u8; 256]> = const { std::cell::RefCell::new([0u8; 256]) };
 }
@@ -4026,16 +4081,52 @@ pub(crate) fn rendered_strerror_message(errnum: c_int) -> (String, bool) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strerror(errnum: c_int) -> *mut c_char {
     let (msg, _) = rendered_strerror_message(errnum);
-    STRERROR_BUF
-        .try_with(|buf_cell| {
-            let mut buf = buf_cell.borrow_mut();
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRERROR_BUF_OWNED_TLS.with(|buf| {
             let msg_bytes = msg.as_bytes();
             let copy_len = msg_bytes.len().min(buf.len() - 1);
             buf[..copy_len].copy_from_slice(&msg_bytes[..copy_len]);
             buf[copy_len] = 0;
-            buf.as_ptr() as *mut c_char
+            buf.as_mut_ptr() as *mut c_char
         })
-        .unwrap_or(std::ptr::null_mut())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRERROR_BUF
+            .try_with(|buf_cell| {
+                let mut buf = buf_cell.borrow_mut();
+                let msg_bytes = msg.as_bytes();
+                let copy_len = msg_bytes.len().min(buf.len() - 1);
+                buf[..copy_len].copy_from_slice(&msg_bytes[..copy_len]);
+                buf[copy_len] = 0;
+                buf.as_ptr() as *mut c_char
+            })
+            .unwrap_or(std::ptr::null_mut())
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static STRSIGNAL_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 64]);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static STRSIGNAL_BUF: std::cell::RefCell<[u8; 64]> = const { std::cell::RefCell::new([0u8; 64]) };
+}
+
+fn with_strsignal_buffer<R>(callback: impl FnOnce(&mut [u8; 64]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRSIGNAL_BUF_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRSIGNAL_BUF.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            callback(&mut buf)
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5537,10 +5628,6 @@ fn signal_name(sig: c_int) -> &'static [u8] {
     }
 }
 
-std::thread_local! {
-    static STRSIGNAL_BUF: std::cell::RefCell<[u8; 64]> = const { std::cell::RefCell::new([0u8; 64]) };
-}
-
 const GLIBC_SIGRTMIN: c_int = 34;
 const GLIBC_SIGRTMAX: c_int = 64;
 
@@ -5572,8 +5659,7 @@ pub fn signal_description_into(sig: c_int, dst: &mut Vec<u8>) {
 /// Returns a thread-local buffer with the signal description.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strsignal(sig: c_int) -> *mut c_char {
-    STRSIGNAL_BUF.with(|cell| {
-        let mut buf = cell.borrow_mut();
+    with_strsignal_buffer(|buf| {
         let mut name = Vec::with_capacity(buf.len());
         signal_description_into(sig, &mut name);
         let len = name.len().min(buf.len() - 1);

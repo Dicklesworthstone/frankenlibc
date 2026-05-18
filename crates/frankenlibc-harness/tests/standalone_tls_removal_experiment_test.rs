@@ -64,6 +64,13 @@ fn abi_resolv_path(root: &Path) -> PathBuf {
         .join("resolv_abi.rs")
 }
 
+fn abi_string_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("string_abi.rs")
+}
+
 fn load_manifest() -> TestResult<Value> {
     let root = workspace_root()?;
     let path = manifest_path(&root);
@@ -588,8 +595,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 31,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state",
+        substituted == 35,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, and string ABI recursion/scratch state",
     )?;
     require(
         substituted + remaining == total,
@@ -656,5 +663,16 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && resolv.contains("H_ERRNO_OWNED_TLS")
             && resolv.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "resolver ABI must route backend caches and h_errno state through owned TLS cache",
+    )?;
+
+    let string = std::fs::read_to_string(abi_string_path(&root))
+        .map_err(|err| format!("read string_abi.rs: {err}"))?;
+    require(
+        string.contains("STRING_MEMBRANE_DEPTH_OWNED_TLS")
+            && string.contains("STRTOK_SAVE_OWNED_TLS")
+            && string.contains("STRERROR_BUF_OWNED_TLS")
+            && string.contains("STRSIGNAL_BUF_OWNED_TLS")
+            && string.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "string ABI must route membrane recursion depth, strtok save pointer, strerror buffer, and strsignal buffer through owned TLS cache",
     )
 }
