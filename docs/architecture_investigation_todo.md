@@ -47,8 +47,10 @@ Status keys:
 ## 2) P0 Replacement Readiness
 
 - [x] `TODO-0201` Triage replacement guard report and enumerate all `GlibcCallThrough` blockers by module.
-- [~] `TODO-0202` Prioritize blockers by workload impact (`tests/conformance/workload_matrix.json` mapping).
-- [~] `TODO-0203` Eliminate highest-impact call-throughs first: allocator/threading/string families.
+- [x] `TODO-0202` Prioritize blockers by workload impact (`tests/conformance/workload_matrix.json` mapping).
+  - `scripts/check_workload_matrix.sh` reports `Replace: 10/10 ready, 0 blocked`.
+- [x] `TODO-0203` Eliminate highest-impact call-throughs first: allocator/threading/string families.
+  - `scripts/check_replacement_guard.sh replacement` reports zero call-throughs, so no workload-prioritized replacement call-through blockers remain.
   - [x] `TODO-0203a` Remove `termios_abi` host-libc call-throughs:
     - `tcgetattr/tcsetattr/tcdrain/tcflush/tcflow/tcsendbreak` now routed through `sys_ioctl`.
     - `cfgetispeed/cfgetospeed/cfsetispeed/cfsetospeed` now use direct `termios` flag math + validation.
