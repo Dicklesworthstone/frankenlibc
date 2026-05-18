@@ -103,6 +103,27 @@ def parse_time(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def format_time(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def latest_activity(issue: dict[str, Any]) -> tuple[datetime | None, str]:
+    best = parse_time(issue.get("updated_at"))
+    source = "updated_at" if best is not None else "missing"
+    comments = issue.get("comments")
+    if isinstance(comments, list):
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
+            created = parse_time(comment.get("created_at"))
+            if created is not None and (best is None or created > best):
+                best = created
+                source = "comment.created_at"
+    return best, source
+
+
 def issue_text(issue: dict[str, Any]) -> str:
     fields: list[str] = []
     for key in ("id", "title", "description", "acceptance_criteria", "notes"):
@@ -223,11 +244,19 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
                 else:
                     safe_ready.append(ready_row)
         elif status == "in_progress":
-            updated = parse_time(issue.get("updated_at"))
+            updated, activity_source = latest_activity(issue)
             age_hours = None
             if updated is not None:
                 age_hours = round((now - updated).total_seconds() / 3600, 3)
-            row = project_issue(issue, extra={"age_hours": age_hours, "blockers": blockers})
+            row = project_issue(
+                issue,
+                extra={
+                    "age_hours": age_hours,
+                    "latest_activity_at": format_time(updated),
+                    "latest_activity_source": activity_source,
+                    "blockers": blockers,
+                },
+            )
             in_progress.append(row)
             if age_hours is None or age_hours >= stale_hours:
                 stale_in_progress.append(row)
@@ -274,6 +303,13 @@ def validate_contract(contract: dict[str, Any]) -> list[dict[str, str]]:
         errors.append({"failure_signature": "required_report_fields", "message": "required_report_fields missing"})
     if float(contract.get("stale_in_progress_after_hours", 0)) <= 0:
         errors.append({"failure_signature": "stale_threshold", "message": "stale threshold must be positive"})
+    if contract.get("stale_activity_sources") != ["updated_at", "comments[].created_at"]:
+        errors.append(
+            {
+                "failure_signature": "stale_activity_sources",
+                "message": "stale activity sources must include updated_at and comments[].created_at",
+            }
+        )
     markers = contract.get("permission_required_markers")
     if not isinstance(markers, list) or len(markers) < 5:
         errors.append({"failure_signature": "permission_markers", "message": "permission marker list too small"})
@@ -353,6 +389,43 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
             "name": "old_in_progress_is_stale",
             "expected_signature": "stale_in_progress_detected",
             "status": "pass" if "bd-jsonl-negative-stale" in stale_ids else "fail",
+        }
+    )
+
+    recent_comment = deepcopy(rows)
+    recent_comment.append(
+        {
+            "id": "bd-jsonl-negative-recent-comment",
+            "title": "negative old updated_at but recent comment",
+            "status": "in_progress",
+            "updated_at": "2000-01-01T00:00:00Z",
+            "comments": [
+                {
+                    "id": 1,
+                    "author": "negative",
+                    "text": "recent work evidence should prevent stale classification",
+                    "created_at": utc_now(),
+                }
+            ],
+        }
+    )
+    recent_analysis = analyze(recent_comment, contract)
+    recent_stale_ids = {row["id"] for row in recent_analysis["stale_in_progress"]}
+    recent_rows = {
+        row["id"]: row
+        for row in recent_analysis["in_progress"]
+        if isinstance(row.get("id"), str)
+    }
+    recent_row = recent_rows.get("bd-jsonl-negative-recent-comment", {})
+    ok = (
+        "bd-jsonl-negative-recent-comment" not in recent_stale_ids
+        and recent_row.get("latest_activity_source") == "comment.created_at"
+    )
+    controls.append(
+        {
+            "name": "recent_comment_prevents_stale",
+            "expected_signature": "comment_activity_not_stale",
+            "status": "pass" if ok else "fail",
         }
     )
 
@@ -489,6 +562,7 @@ report = {
     "blocked_open": analysis["blocked_open"],
     "container_open": analysis["container_open"],
     "stale_in_progress": analysis["stale_in_progress"],
+    "in_progress": analysis["in_progress"],
     "negative_controls": negative_controls,
     "failures": errors,
 }

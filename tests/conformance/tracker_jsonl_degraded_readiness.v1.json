@@ -1,6 +1,6 @@
 {
   "schema_version": "tracker_jsonl_degraded_readiness.v1",
-  "purpose": "Provide a degraded-mode readiness and stale-in-progress report from .beads/issues.jsonl without touching SQLite, br, or bv when tracker DB paths are locked or slow.",
+  "purpose": "Provide a degraded-mode readiness and stale-in-progress report from .beads/issues.jsonl without touching SQLite, br, or bv when tracker DB paths are locked or slow. Stale in-progress detection is based on latest visible issue activity, including issue comments, so recent work evidence is not misclassified as dead.",
   "issues_source": ".beads/issues.jsonl",
   "forbidden_sources": [
     ".beads/beads.db",
@@ -21,6 +21,10 @@
     "permissioned_ready_is_not_safe_ready": true
   },
   "stale_in_progress_after_hours": 72,
+  "stale_activity_sources": [
+    "updated_at",
+    "comments[].created_at"
+  ],
   "permission_required_markers": [
     "explicit approval",
     "explicit operator permission",
@@ -47,6 +51,7 @@
     "permissioned_ready",
     "blocked_open",
     "container_open",
+    "in_progress",
     "stale_in_progress",
     "negative_controls",
     "failures"
@@ -55,6 +60,7 @@
     "missing_forbidden_source_fails_contract",
     "blocks_dependency_excludes_ready",
     "old_in_progress_is_stale",
+    "recent_comment_prevents_stale",
     "permissioned_ready_is_separated",
     "closed_dependency_allows_ready",
     "parent_with_active_child_excluded_ready"
