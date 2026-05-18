@@ -64,7 +64,32 @@ fi
 
 if [[ "${SSH_ENABLED}" == "1" && -s "${RAW_DIR}/rch_status.out" && -r "${SSH_KEY}" ]] && command -v jq >/dev/null 2>&1; then
   mapfile -t worker_rows < <(
-    jq -r '.data.daemon.workers[]? | select(.status == "healthy" and .pressure_state == "critical") | [.id, .host] | @tsv' \
+    jq -r '
+      def total_gb:
+        .pressure_disk_total_gb
+        // (
+          if (.pressure_disk_free_gb != null and .pressure_disk_free_ratio != null and .pressure_disk_free_ratio > 0)
+          then (.pressure_disk_free_gb / .pressure_disk_free_ratio)
+          else null
+          end
+        );
+      def pressure_gap:
+        (total_gb as $total
+        | .pressure_disk_free_gb as $free
+        | if ($total != null and $free != null)
+          then (($total * 0.05) - $free)
+          else 999999
+          end);
+      [
+        .data.daemon.workers[]?
+        | select(.status == "healthy" and .pressure_state == "critical")
+        | {id, host, pressure_gap: pressure_gap}
+      ]
+      | sort_by(.pressure_gap, .id)
+      | .[]
+      | [.id, .host]
+      | @tsv
+    ' \
       "${RAW_DIR}/rch_status.out"
   )
   for worker_row in "${worker_rows[@]:0:${MAX_WORKERS}}"; do
@@ -91,7 +116,12 @@ if [[ "${SSH_ENABLED}" == "1" && -s "${RAW_DIR}/rch_status.out" && -r "${SSH_KEY
             du -sh /tmp/rch-* /tmp/rch_target_* 2>/dev/null | sort -h | tail -40 || true
             find /data/projects -maxdepth 2 -type d \\( -name target -o -name \"target_*\" -o -name \"target-*\" \\) -prune -exec du -sh {} + 2>/dev/null | sort -h | tail -40 || true
             find /data/projects -maxdepth 2 -type d -name \".rch-target-*\" -prune -exec du -sh {} + 2>/dev/null | sort -h | tail -5 || true
-            find /data/projects -maxdepth 5 -type d -path \"*/.rch-target-*/debug/incremental/*\" -prune -exec du -sh {} + 2>/dev/null | sort -h | tail -5 || true
+            find /data/projects -maxdepth 8 -type d -path \"*/.rch-target-*/debug/incremental/*\" -prune -exec du -sh {} + 2>/dev/null | sort -h | tail -5 || true
+            find /data/projects -maxdepth 8 -type d -path \"*/.rch-target-*/debug/incremental/*\" -prune -exec du -s -B1 {} + 2>/dev/null | sort -n | while read -r bytes path; do
+              if [ \"\${bytes}\" -ge 250000000 ]; then
+                printf \"%sB %s\\n\" \"\${bytes}\" \"\${path}\"
+              fi
+            done | head -40 || true
           '" >"${RAW_DIR}/worker_${safe_id}.out" 2>"${RAW_DIR}/worker_${safe_id}.err"
         status=$?
         set -e
@@ -188,8 +218,23 @@ def estimated_total_gb(worker: dict[str, Any]) -> float | None:
     return total_gb
 
 
-def human_size_to_gb(size: str) -> float | None:
-    match = re.match(r"^(?P<value>[0-9]+(?:\.[0-9]+)?)(?P<unit>[KMGT])$", size.strip(), re.IGNORECASE)
+def size_to_bytes(size: str) -> int | None:
+    stripped = size.strip()
+    byte_match = re.match(r"^(?P<bytes>[0-9]+)B$", stripped, re.IGNORECASE)
+    if byte_match:
+        return int(byte_match.group("bytes"))
+    size_gb = size_to_gb(stripped)
+    if size_gb is None:
+        return None
+    return int(size_gb * 1024 * 1024 * 1024)
+
+
+def size_to_gb(size: str) -> float | None:
+    stripped = size.strip()
+    byte_match = re.match(r"^(?P<bytes>[0-9]+)B$", stripped, re.IGNORECASE)
+    if byte_match:
+        return round(int(byte_match.group("bytes")) / (1024 * 1024 * 1024), 3)
+    match = re.match(r"^(?P<value>[0-9]+(?:\.[0-9]+)?)(?P<unit>[KMGT])$", stripped, re.IGNORECASE)
     if not match:
         return None
     value = float(match.group("value"))
@@ -265,7 +310,13 @@ def cleanup_candidates(worker_id: str, worker_host: Any, worker_out: str) -> lis
         is_rch_artifact = "/.rch-target-" in path
         if not (is_target_artifact or is_rch_artifact):
             continue
-        if not re.search(r"[0-9](G|T)$", size) and not (is_rch_artifact and re.search(r"[0-9](M|G|T)$", size)):
+        size_gb = size_to_gb(size)
+        size_bytes = size_to_bytes(size)
+        if size_gb is None:
+            continue
+        if not is_rch_artifact and not re.search(r"[0-9](G|T)$", size):
+            continue
+        if is_rch_artifact and size_gb < 0.1:
             continue
         candidate_kind = "build_incremental_dir" if "/debug/incremental/" in path else "build_target_dir"
         if candidate_kind == "build_incremental_dir" and any(
@@ -280,10 +331,10 @@ def cleanup_candidates(worker_id: str, worker_host: Any, worker_out: str) -> lis
                 "host": host,
                 "path": path,
                 "size_human": size,
-                "size_bytes": None,
-                "estimated_size_gb": human_size_to_gb(size),
+                "size_bytes": size_bytes,
+                "estimated_size_gb": size_gb,
                 "pre_cleanup_read_only_checks": read_only_pre_cleanup_checks(host, path),
-                "source_command": "bounded read-only du/find over target, .rch-target, and .rch-target debug/incremental directories",
+                "source_command": "bounded read-only du/find over target, .rch-target, human-sized incremental dirs, and byte-exact near-threshold .rch-target incremental dirs",
                 "candidate_kind": candidate_kind,
                 "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
                 "risk_notes": "Deletion-level cleanup requires explicit written approval for this exact path.",
