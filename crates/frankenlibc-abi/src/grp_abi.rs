@@ -6,6 +6,7 @@
 //! Returns pointers to thread-local static storage, matching glibc behavior
 //! where each call overwrites the previous result.
 
+#[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int};
 use std::path::{Path, PathBuf};
@@ -106,6 +107,13 @@ struct GrpStorage {
     /// Most recent backend I/O error encountered while refreshing the cache.
     last_io_error: Option<c_int>,
 }
+
+#[cfg(feature = "owned-tls-cache")]
+// SAFETY: GrpStorage is accessed through OwnedTlsCache, which serializes access
+// and keeps each per-thread value boxed. The raw pointers stored in `gr` and
+// `mem_ptrs` only point into the same boxed GrpStorage buffers and are refreshed
+// before they are returned to callers.
+unsafe impl Send for GrpStorage {}
 
 impl GrpStorage {
     fn new() -> Self {
@@ -296,39 +304,55 @@ impl GrpStorage {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static GRP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GrpStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(GrpStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static GRP_TLS: RefCell<GrpStorage> = RefCell::new(GrpStorage::new());
+}
+
+fn with_grp_storage<R>(callback: impl FnOnce(&mut GrpStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GRP_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GRP_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
 }
 
 /// Fill thread-local group struct from a parsed entry.
 /// Used by `fgetgrent` in `unistd_abi` to avoid duplicating TLS storage.
 pub(crate) fn fill_group_from_entry(entry: &frankenlibc_core::grp::Group) -> *mut libc::group {
-    GRP_TLS.with(|cell| cell.borrow_mut().fill_from(entry))
+    with_grp_storage(|storage| storage.fill_from(entry))
 }
 
 fn lookup_group_by_name(name: &[u8]) -> Option<frankenlibc_core::grp::Group> {
-    GRP_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_grp_storage(|storage| {
         storage.refresh_cache();
         frankenlibc_core::grp::lookup_by_name(storage.current_content(), name)
     })
 }
 
 fn lookup_group_by_gid(gid: u32) -> Option<frankenlibc_core::grp::Group> {
-    GRP_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_grp_storage(|storage| {
         storage.refresh_cache();
         frankenlibc_core::grp::lookup_by_gid(storage.current_content(), gid)
     })
 }
 
 fn group_backend_io_error() -> Option<c_int> {
-    GRP_TLS.with(|cell| cell.borrow().backend_io_error())
+    with_grp_storage(|storage| storage.backend_io_error())
 }
 
 fn do_getgrnam(name: &[u8]) -> *mut libc::group {
-    GRP_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_grp_storage(|storage| {
         storage.refresh_cache();
         match frankenlibc_core::grp::lookup_by_name(storage.current_content(), name) {
             Some(entry) => storage.fill_from(&entry),
@@ -338,8 +362,7 @@ fn do_getgrnam(name: &[u8]) -> *mut libc::group {
 }
 
 fn do_getgrgid(gid: u32) -> *mut libc::group {
-    GRP_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_grp_storage(|storage| {
         storage.refresh_cache();
         match frankenlibc_core::grp::lookup_by_gid(storage.current_content(), gid) {
             Some(entry) => storage.fill_from(&entry),
@@ -400,8 +423,7 @@ pub unsafe extern "C" fn getgrgid(gid: libc::gid_t) -> *mut libc::group {
 /// POSIX `setgrent` — rewind the group iteration cursor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setgrent() {
-    GRP_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_grp_storage(|storage| {
         storage.refresh_cache();
         storage.rebuild_entries();
     });
@@ -410,8 +432,7 @@ pub unsafe extern "C" fn setgrent() {
 /// POSIX `endgrent` — close group enumeration and free cached data.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endgrent() {
-    GRP_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_grp_storage(|storage| {
         if storage.file_cache.is_some() || !storage.entries.is_empty() {
             storage.cache_metrics.invalidations += 1;
         }
@@ -427,8 +448,7 @@ pub unsafe extern "C" fn endgrent() {
 /// POSIX `getgrent` — return the next group entry in iteration order.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getgrent() -> *mut libc::group {
-    GRP_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_grp_storage(|storage| {
         storage.refresh_cache();
 
         if (storage.entries.is_empty() && storage.iter_idx == 0)
@@ -662,8 +682,7 @@ pub unsafe extern "C" fn getgrent_r(
         return libc::EINVAL;
     }
 
-    GRP_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_grp_storage(|storage| {
         storage.refresh_cache();
 
         if (storage.entries.is_empty() && storage.iter_idx == 0)

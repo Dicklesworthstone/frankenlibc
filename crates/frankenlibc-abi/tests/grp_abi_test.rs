@@ -712,6 +712,49 @@ fn getgrnam_getgrgid_consistent() {
 }
 
 #[test]
+fn non_reentrant_group_storage_is_thread_local() {
+    with_group_file(GROUP_FIXTURE, || {
+        unsafe { endgrent() };
+        let name = CString::new("root").unwrap();
+        let main_entry = unsafe { getgrnam(name.as_ptr()) };
+        assert!(
+            !main_entry.is_null(),
+            "main thread getgrnam(root) should succeed"
+        );
+        let main_ptr = main_entry as usize;
+
+        let worker_ptr = std::thread::spawn(|| {
+            let name = CString::new("users").unwrap();
+            let entry = unsafe { getgrnam(name.as_ptr()) };
+            assert!(
+                !entry.is_null(),
+                "worker thread getgrnam(users) should succeed"
+            );
+            let group = unsafe { &*entry };
+            let name = unsafe { CStr::from_ptr(group.gr_name) };
+            assert_eq!(name.to_bytes(), b"users");
+            entry as usize
+        })
+        .join()
+        .expect("worker thread should complete");
+
+        assert_ne!(
+            main_ptr, worker_ptr,
+            "non-reentrant group storage must be isolated per thread"
+        );
+        let main_after = unsafe { &*main_entry };
+        let main_name = unsafe { CStr::from_ptr(main_after.gr_name) };
+        assert_eq!(
+            main_name.to_bytes(),
+            b"root",
+            "worker lookup must not overwrite main thread group storage"
+        );
+
+        unsafe { endgrent() };
+    });
+}
+
+#[test]
 fn getgrnam_r_getgrgid_r_consistent() {
     with_group_lock(|| {
         let name_str = CString::new("root").unwrap();

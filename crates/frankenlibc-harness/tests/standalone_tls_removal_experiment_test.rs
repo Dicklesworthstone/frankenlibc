@@ -27,7 +27,7 @@ const LOCAL_EXEC_LANE: &str = "local-exec-tls-model-probe";
 const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
-const EXPECTED_OWNER_SURFACE_COUNT: usize = 15;
+const EXPECTED_OWNER_SURFACE_COUNT: usize = 16;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -153,6 +153,13 @@ fn abi_stdlib_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("stdlib_abi.rs")
+}
+
+fn abi_grp_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("grp_abi.rs")
 }
 
 fn load_manifest() -> TestResult<Value> {
@@ -679,8 +686,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 71,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar c16 surrogate/fgetwln buffers, and stdlib getusershell/qecvt/qfcvt scratch state",
+        substituted == 72,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar c16 surrogate/fgetwln buffers, stdlib getusershell/qecvt/qfcvt scratch state, and group ABI reentrant storage",
     )?;
     require(
         substituted + remaining == total,
@@ -892,5 +899,15 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && stdlib.contains("with_qfcvt_buf")
             && stdlib.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "stdlib ABI must route getusershell iterator/cache and qecvt/qfcvt buffers through owned TLS cache",
+    )?;
+
+    let grp = std::fs::read_to_string(abi_grp_path(&root))
+        .map_err(|err| format!("read grp_abi.rs: {err}"))?;
+    require(
+        grp.contains("GRP_OWNED_TLS")
+            && grp.contains("with_grp_storage")
+            && grp.contains("unsafe impl Send for GrpStorage")
+            && grp.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "group ABI must route non-reentrant group storage through owned TLS cache",
     )
 }
