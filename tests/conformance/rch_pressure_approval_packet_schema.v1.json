@@ -158,7 +158,7 @@
         "worktree_list": [
           "/data/projects/frankenlibc  3b4960ef [main]"
         ],
-        "dirty_summary": "no tracked code changes in packet collection scope",
+        "dirty_summary": [],
         "untracked_summary": [
           "=",
           "crates/frankenlibc-harness/tests/cli_contract_manifest_paired_gate_file_test.rs",

@@ -167,9 +167,42 @@ def validate_pre_cleanup_checks(source: str, path: Any, checks: Any, missing_sig
         add_error(source, "missing_pre_cleanup_check_kind", f"{path} missing checks {sorted(missing)}")
 
 
+def validate_repo_state(packet: dict[str, Any], source: str) -> None:
+    repo_state = packet.get("repo_state")
+    if not isinstance(repo_state, dict):
+        add_error(source, "missing_repo_state", "packet must include repo_state")
+        return
+    if repo_state.get("branch") != "main":
+        add_error(source, "repo_state_branch_not_main", "packet repo_state.branch must be main")
+    for field in ("head_commit", "origin_main_commit", "origin_master_commit"):
+        if not isinstance(repo_state.get(field), str) or not repo_state.get(field):
+            add_error(source, "missing_repo_state_commit", f"repo_state.{field} must resolve to a commit")
+    origin_main = repo_state.get("origin_main_commit")
+    origin_master = repo_state.get("origin_master_commit")
+    if (
+        isinstance(origin_main, str)
+        and origin_main
+        and isinstance(origin_master, str)
+        and origin_master
+        and origin_main != origin_master
+    ):
+        add_error(
+            source,
+            "legacy_mirror_not_synced",
+            f"repo_state.origin_master_commit must match origin_main_commit: {origin_master} != {origin_main}",
+        )
+    if not isinstance(repo_state.get("worktree_list"), list):
+        add_error(source, "missing_repo_state_worktrees", "repo_state.worktree_list must be a list")
+    if not isinstance(repo_state.get("dirty_summary"), list):
+        add_error(source, "missing_repo_state_dirty_summary", "repo_state.dirty_summary must be a list")
+    if not isinstance(repo_state.get("untracked_summary"), list):
+        add_error(source, "missing_repo_state_untracked_summary", "repo_state.untracked_summary must be a list")
+
+
 def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool) -> None:
     if packet.get("schema_version") != "rch_pressure_approval_packet_schema.v1":
         add_error(source, "schema_version", "packet schema_version mismatch")
+    validate_repo_state(packet, source)
     gate = packet.get("rch_gate", {})
     if gate.get("required_remote_env") != "RCH_REQUIRE_REMOTE=1":
         add_error(source, "missing_remote_env", "packet must require RCH_REQUIRE_REMOTE=1")
@@ -559,6 +592,19 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
         else:
             add_error(source, "negative_control_no_pre_cleanup_check", "golden packet has no pre-cleanup check for mutation")
 
+    stale_mirror_packet = deepcopy(packet)
+    repo_state = stale_mirror_packet.get("repo_state")
+    if isinstance(repo_state, dict) and isinstance(repo_state.get("origin_main_commit"), str):
+        repo_state["origin_master_commit"] = "f" * 40
+        expect_validation_failure(
+            stale_mirror_packet,
+            f"{source}::legacy_mirror_not_synced",
+            "legacy_mirror_not_synced",
+            "make packet repo_state.origin_master_commit differ from origin_main_commit",
+        )
+    else:
+        add_error(source, "negative_control_no_repo_state", "golden packet has no repo_state for mutation")
+
 
 def require_list_contains(schema: dict[str, Any], source: str, field: str, required: set[str]) -> None:
     value = schema.get(field)
@@ -595,6 +641,20 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "direct_rch_probe_command",
             "direct_rch_probe_exit_status",
             "direct_rch_probe_raw_output_path",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "repo_state_fields",
+        {
+            "branch",
+            "head_commit",
+            "origin_main_commit",
+            "origin_master_commit",
+            "worktree_list",
+            "dirty_summary",
+            "untracked_summary",
         },
     )
     require_list_contains(
