@@ -371,12 +371,17 @@
       }
     ],
     "validation_commands": [
-      "bash -n scripts/generate_rch_pressure_approval_packet.sh",
-      "jq empty target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json"
+      "bash -n scripts/generate_rch_pressure_approval_packet.sh scripts/check_rch_pressure_packet_goldens.sh",
+      "jq empty tests/conformance/rch_pressure_approval_packet_schema.v1.json tests/conformance/rch_pressure_approval_packet_golden.v1.json",
+      "jq empty target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json",
+      "bash scripts/check_rch_pressure_packet_goldens.sh",
+      "git diff --check -- scripts/generate_rch_pressure_approval_packet.sh scripts/check_rch_pressure_packet_goldens.sh tests/conformance/rch_pressure_approval_packet_schema.v1.json tests/conformance/rch_pressure_approval_packet_golden.v1.json .beads/issues.jsonl",
+      "AGENT_NAME=<registered-agent> br dep cycles --json"
     ],
     "artifact_paths": [
       "target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json",
-      "target/rch-pressure-approval-packet/rch_pressure_approval_packet.approval.md"
+      "target/rch-pressure-approval-packet/rch_pressure_approval_packet.approval.md",
+      "target/rch-pressure-approval-packet/raw/golden-critical-pressure-6"
     ]
   },
   "golden_markdown_required_lines": [

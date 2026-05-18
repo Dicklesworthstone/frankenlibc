@@ -521,9 +521,45 @@ def validate_approval_ready_summary(packet: dict[str, Any], source: str, readine
             add_error(source, "approval_ready_summary_missing_field", f"approval_ready_summary missing {field}")
 
 
+def validate_validation_metadata(packet: dict[str, Any], source: str) -> None:
+    commands = packet.get("validation_commands")
+    if not isinstance(commands, list) or not all(isinstance(command, str) for command in commands):
+        add_error(source, "invalid_validation_commands", "validation_commands must be a string list")
+        commands = []
+    command_text = "\n".join(commands)
+    required_commands = {
+        "bash -n scripts/generate_rch_pressure_approval_packet.sh scripts/check_rch_pressure_packet_goldens.sh": "missing_validation_syntax_command",
+        "jq empty tests/conformance/rch_pressure_approval_packet_schema.v1.json tests/conformance/rch_pressure_approval_packet_golden.v1.json": "missing_validation_fixture_jq_command",
+        "jq empty target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json": "missing_validation_live_report_jq_command",
+        "bash scripts/check_rch_pressure_packet_goldens.sh": "missing_validation_packet_checker_command",
+        "git diff --check": "missing_validation_diff_check_command",
+        "br dep cycles --json": "missing_validation_dependency_cycle_command",
+    }
+    for snippet, signature in required_commands.items():
+        if snippet not in command_text:
+            add_error(source, signature, f"validation_commands must include {snippet}")
+    if "AGENT_NAME=SunnyHeron" in command_text:
+        add_error(source, "validation_command_hardcoded_agent", "validation_commands must not hardcode another agent name")
+
+    artifact_paths = packet.get("artifact_paths")
+    if not isinstance(artifact_paths, list) or not all(isinstance(path, str) for path in artifact_paths):
+        add_error(source, "invalid_artifact_paths", "artifact_paths must be a string list")
+        artifact_paths = []
+    required_artifact_paths = {
+        "target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json",
+        "target/rch-pressure-approval-packet/rch_pressure_approval_packet.approval.md",
+    }
+    missing_artifact_paths = sorted(required_artifact_paths - set(artifact_paths))
+    if missing_artifact_paths:
+        add_error(source, "missing_artifact_paths", f"artifact_paths missing {missing_artifact_paths}")
+    if not any(path.startswith("target/rch-pressure-approval-packet/raw/") for path in artifact_paths):
+        add_error(source, "missing_raw_artifact_path", "artifact_paths must include the raw evidence directory")
+
+
 def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool) -> None:
     if packet.get("schema_version") != "rch_pressure_approval_packet_schema.v1":
         add_error(source, "schema_version", "packet schema_version mismatch")
+    validate_validation_metadata(packet, source)
     validate_repo_state(packet, source)
     gate = packet.get("rch_gate", {})
     dry_run_command = gate.get("dry_run_command")
@@ -1122,6 +1158,40 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
         )
     else:
         add_error(source, "negative_control_no_rch_dry_run_command", "golden packet has no rch dry-run command for mutation")
+
+    missing_validation_command_packet = deepcopy(packet)
+    commands = missing_validation_command_packet.get("validation_commands")
+    if isinstance(commands, list):
+        missing_validation_command_packet["validation_commands"] = [
+            command
+            for command in commands
+            if not (isinstance(command, str) and "scripts/check_rch_pressure_packet_goldens.sh" in command)
+        ]
+        expect_validation_failure(
+            missing_validation_command_packet,
+            f"{source}::missing_validation_packet_checker_command",
+            "missing_validation_packet_checker_command",
+            "remove packet checker command from validation_commands",
+        )
+    else:
+        add_error(source, "negative_control_no_validation_commands", "golden packet has no validation_commands list")
+
+    missing_raw_artifact_packet = deepcopy(packet)
+    artifact_paths = missing_raw_artifact_packet.get("artifact_paths")
+    if isinstance(artifact_paths, list):
+        missing_raw_artifact_packet["artifact_paths"] = [
+            path
+            for path in artifact_paths
+            if not (isinstance(path, str) and path.startswith("target/rch-pressure-approval-packet/raw/"))
+        ]
+        expect_validation_failure(
+            missing_raw_artifact_packet,
+            f"{source}::missing_raw_artifact_path",
+            "missing_raw_artifact_path",
+            "remove raw evidence directory from artifact_paths",
+        )
+    else:
+        add_error(source, "negative_control_no_artifact_paths", "golden packet has no artifact_paths list")
 
     missing_pressure_skip_packet = deepcopy(packet)
     gate = missing_pressure_skip_packet.get("rch_gate")
