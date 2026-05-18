@@ -1612,18 +1612,51 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
         add_error(source, "schema_contract_missing_approval_contract", "approval_request_contract must be an object")
     else:
         approval_required = approval_contract.get("must_include")
-        if not isinstance(approval_required, list) or "smallest_sufficient_candidate_paths" not in approval_required:
+        required_approval_contract_fields = {
+            "operator_summary",
+            "exact_worker_ids",
+            "exact_candidate_paths",
+            "smallest_sufficient_candidate_paths",
+            "minimum_margin_surplus_gb",
+            "margin_sufficient_candidate_paths",
+            "why_read_only_collection_is_insufficient",
+            "explicit_user_text_required_before_cleanup",
+            "commands_not_executed",
+        }
+        if not isinstance(approval_required, list):
             add_error(
                 source,
-                "schema_contract_missing_smallest_paths",
-                "approval_request_contract.must_include must name smallest_sufficient_candidate_paths",
+                "schema_contract_invalid_approval_must_include",
+                "approval_request_contract.must_include must be a list",
             )
-        if not isinstance(approval_required, list) or "margin_sufficient_candidate_paths" not in approval_required:
+        else:
+            missing_required = sorted(required_approval_contract_fields - set(approval_required))
+            if missing_required:
+                add_error(
+                    source,
+                    "schema_contract_missing_approval_fields",
+                    f"approval_request_contract.must_include missing {missing_required}",
+                )
+        approval_forbidden = approval_contract.get("must_not_include")
+        forbidden_approval_contract_fields = {
+            "claim_that_cleanup_already_happened",
+            "cargo_validation_success_when_worker_selection_skipped",
+            "implicit_permission_to_delete",
+        }
+        if not isinstance(approval_forbidden, list):
             add_error(
                 source,
-                "schema_contract_missing_margin_paths",
-                "approval_request_contract.must_include must name margin_sufficient_candidate_paths",
+                "schema_contract_invalid_approval_must_not_include",
+                "approval_request_contract.must_not_include must be a list",
             )
+        else:
+            missing_forbidden = sorted(forbidden_approval_contract_fields - set(approval_forbidden))
+            if missing_forbidden:
+                add_error(
+                    source,
+                    "schema_contract_missing_forbidden_approval_claims",
+                    f"approval_request_contract.must_not_include missing {missing_forbidden}",
+                )
     examples = schema.get("example_packets")
     if not isinstance(examples, list) or not examples:
         add_error(source, "schema_contract_missing_examples", "schema contract must include example packets")
