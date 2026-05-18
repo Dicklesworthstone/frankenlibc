@@ -180,6 +180,31 @@ def projected_ids(rows: list[dict[str, Any]]) -> list[str]:
     return [str(row["id"]) for row in rows if isinstance(row.get("id"), str)]
 
 
+def in_progress_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for row in rows:
+        issue_id = row.get("id")
+        if not isinstance(issue_id, str):
+            continue
+        summary.append(
+            {
+                "id": issue_id,
+                "assignee": row.get("assignee"),
+                "age_hours": row.get("age_hours"),
+                "latest_activity_at": row.get("latest_activity_at"),
+                "latest_activity_source": row.get("latest_activity_source"),
+            }
+        )
+    return sorted(
+        summary,
+        key=lambda item: (
+            float(item.get("age_hours")) if isinstance(item.get("age_hours"), (int, float)) else -1.0,
+            str(item.get("id", "")),
+        ),
+        reverse=True,
+    )
+
+
 def blocker_chokepoints(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counts: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -579,6 +604,10 @@ stdout_summary = {
     "blocked_open_ids": projected_ids(analysis["blocked_open"]),
     "blocked_by_counts": blocked_chokepoints,
     "top_blocker_ids": [str(row["id"]) for row in blocked_chokepoints[:5]],
+    "in_progress": analysis["summary"]["in_progress_total"],
+    "in_progress_ids": projected_ids(analysis["in_progress"]),
+    "in_progress_age_summary": in_progress_summary(analysis["in_progress"]),
+    "stale_threshold_hours": analysis["summary"]["stale_in_progress_after_hours"],
 }
 negative_controls = run_negative_controls(rows, contract)
 required_controls = {str(name) for name in contract.get("required_negative_controls", [])}
