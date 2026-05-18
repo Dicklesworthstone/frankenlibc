@@ -734,6 +734,36 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     for field in required_approval_fields:
         if field not in approval:
             add_error(source, "missing_approval_field", f"approval_request missing {field}")
+    approval_text = approval.get("explicit_user_text_required_before_cleanup")
+    if not isinstance(approval_text, str):
+        add_error(source, "invalid_explicit_approval_text", "approval_request explicit approval text must be a string")
+    else:
+        lowered_approval_text = approval_text.lower()
+        if (
+            "written approval" not in lowered_approval_text
+            or "exact" not in lowered_approval_text
+            or "path" not in lowered_approval_text
+            or "command" not in lowered_approval_text
+            or "before cleanup" not in lowered_approval_text
+        ):
+            add_error(
+                source,
+                "explicit_approval_text_too_weak",
+                "approval_request must require written approval naming exact paths and commands before cleanup",
+            )
+    commands_not_executed = approval.get("commands_not_executed")
+    if not isinstance(commands_not_executed, list) or not all(isinstance(item, str) for item in commands_not_executed):
+        add_error(source, "invalid_commands_not_executed", "approval_request.commands_not_executed must be a string list")
+        commands_not_executed = []
+    lowered_commands = [item.lower() for item in commands_not_executed]
+    required_unexecuted_commands = {
+        "deletion": "missing_unexecuted_deletion_command",
+        "ballast release": "missing_unexecuted_ballast_release_command",
+        "repository cleanup": "missing_unexecuted_repository_cleanup_command",
+    }
+    for phrase, signature in required_unexecuted_commands.items():
+        if not any(phrase in item and "no " in item and "executed" in item for item in lowered_commands):
+            add_error(source, signature, f"commands_not_executed must record that no {phrase} command executed")
     approval_worker_ids = approval.get("exact_worker_ids")
     expected_worker_ids = sorted(worker_id for worker_id in candidates_by_worker if worker_id)
     if not isinstance(approval_worker_ids, list) or not all(isinstance(worker_id, str) for worker_id in approval_worker_ids):
@@ -1226,6 +1256,36 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             "negative_control_no_smallest_candidate_paths",
             "golden packet has no smallest-sufficient candidate paths for mutation",
         )
+
+    weak_approval_text_packet = deepcopy(packet)
+    approval = weak_approval_text_packet.get("approval_request")
+    if isinstance(approval, dict):
+        approval["explicit_user_text_required_before_cleanup"] = "Operator approval is needed before cleanup."
+        expect_validation_failure(
+            weak_approval_text_packet,
+            f"{source}::explicit_approval_text_too_weak",
+            "explicit_approval_text_too_weak",
+            "replace exact written approval text with generic approval wording",
+        )
+    else:
+        add_error(source, "negative_control_no_approval_request", "golden packet has no approval_request for mutation")
+
+    missing_command_log_packet = deepcopy(packet)
+    approval = missing_command_log_packet.get("approval_request")
+    if isinstance(approval, dict) and isinstance(approval.get("commands_not_executed"), list):
+        approval["commands_not_executed"] = [
+            item
+            for item in approval["commands_not_executed"]
+            if not (isinstance(item, str) and "ballast release" in item.lower())
+        ]
+        expect_validation_failure(
+            missing_command_log_packet,
+            f"{source}::missing_unexecuted_ballast_release_command",
+            "missing_unexecuted_ballast_release_command",
+            "remove the no-ballast-release command log entry",
+        )
+    else:
+        add_error(source, "negative_control_no_commands_not_executed", "golden packet has no commands_not_executed list")
 
     stale_mirror_packet = deepcopy(packet)
     repo_state = stale_mirror_packet.get("repo_state")
