@@ -4401,6 +4401,16 @@ pub unsafe extern "C" fn __fp_resstat(_statp: *const c_void, _file: *mut c_void)
 // variants parse enough DNS wire data to return the next cursor while
 // intentionally not rendering to FILE* streams.
 
+#[cfg(feature = "owned-tls-cache")]
+fn empty_p_fallback_buf() -> [u8; 16] {
+    [0u8; 16]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static P_FALLBACK_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 16]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_p_fallback_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     /// Per-thread fallback buffer for `__p_class` / `__p_type` decimal
     /// fallbacks (matches glibc which uses a static buffer).
@@ -4408,11 +4418,23 @@ thread_local! {
         const { core::cell::UnsafeCell::new([0u8; 16]) };
 }
 
+fn with_p_fallback_buf<R>(f: impl FnOnce(&mut [u8; 16]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        P_FALLBACK_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        P_FALLBACK_BUF.with(|cell| {
+            let buf_ptr = cell.get();
+            // SAFETY: thread-local; no aliasing across threads.
+            f(unsafe { &mut *buf_ptr })
+        })
+    }
+}
+
 unsafe fn write_decimal_fallback(value: c_int) -> *const c_char {
-    P_FALLBACK_BUF.with(|cell| {
-        let buf_ptr = cell.get();
-        // SAFETY: thread-local; no aliasing across threads.
-        let buf = unsafe { &mut *buf_ptr };
+    with_p_fallback_buf(|buf| {
         let s = format!("{value}");
         let bytes = s.as_bytes();
         let n = bytes.len().min(buf.len() - 1);
@@ -4420,6 +4442,36 @@ unsafe fn write_decimal_fallback(value: c_int) -> *const c_char {
         buf[n] = 0;
         buf.as_ptr() as *const c_char
     })
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_p_option_buf() -> [u8; 24] {
+    [0u8; 24]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static P_OPTION_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 24]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_p_option_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static P_OPTION_BUF: core::cell::UnsafeCell<[u8; 24]> =
+        const { core::cell::UnsafeCell::new([0u8; 24]) };
+}
+
+fn with_p_option_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        P_OPTION_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        P_OPTION_BUF.with(|cell| {
+            let buf_ptr = cell.get();
+            // SAFETY: thread-local; no aliasing across threads.
+            f(unsafe { &mut *buf_ptr })
+        })
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4507,23 +4559,14 @@ pub unsafe extern "C" fn __p_option(option: c_int) -> *const c_char {
         0x0200 => c"dnsrch".as_ptr(),
         0x1000 => c"noaliases".as_ptr(),
         0x4000 => c"rotate".as_ptr(),
-        _ => {
-            thread_local! {
-                static P_OPTION_BUF: core::cell::UnsafeCell<[u8; 24]> =
-                    const { core::cell::UnsafeCell::new([0u8; 24]) };
-            }
-            P_OPTION_BUF.with(|cell| {
-                let buf_ptr = cell.get();
-                // SAFETY: thread-local; no aliasing across threads.
-                let buf = unsafe { &mut *buf_ptr };
-                let s = format!("?0x{:x}?", option as u32);
-                let bytes = s.as_bytes();
-                let n = bytes.len().min(buf.len() - 1);
-                buf[..n].copy_from_slice(&bytes[..n]);
-                buf[n] = 0;
-                buf.as_ptr() as *const c_char
-            })
-        }
+        _ => with_p_option_buf(|buf| {
+            let s = format!("?0x{:x}?", option as u32);
+            let bytes = s.as_bytes();
+            let n = bytes.len().min(buf.len() - 1);
+            buf[..n].copy_from_slice(&bytes[..n]);
+            buf[n] = 0;
+            buf.as_ptr() as *const c_char
+        }),
     }
 }
 
@@ -4549,20 +4592,73 @@ pub unsafe extern "C" fn __p_rcode(rcode: c_int) -> *const c_char {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+fn empty_secstodate_buf() -> [u8; 24] {
+    [0u8; 24]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static SECSTODATE_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 24]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_secstodate_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static SECSTODATE_BUF: core::cell::UnsafeCell<[u8; 24]> =
+        const { core::cell::UnsafeCell::new([0u8; 24]) };
+}
+
+fn with_secstodate_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SECSTODATE_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SECSTODATE_BUF.with(|cell| {
+            let buf_ptr = cell.get();
+            // SAFETY: thread-local; no aliasing across threads.
+            f(unsafe { &mut *buf_ptr })
+        })
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_p_time_buf() -> [u8; 32] {
+    [0u8; 32]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static P_TIME_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 32]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_p_time_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static P_TIME_BUF: core::cell::UnsafeCell<[u8; 32]> =
+        const { core::cell::UnsafeCell::new([0u8; 32]) };
+}
+
+fn with_p_time_buf<R>(f: impl FnOnce(&mut [u8; 32]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        P_TIME_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        P_TIME_BUF.with(|cell| {
+            let buf_ptr = cell.get();
+            // SAFETY: thread-local; no aliasing across threads.
+            f(unsafe { &mut *buf_ptr })
+        })
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __p_secstodate(secs: u32) -> *const c_char {
     // glibc renders the SOA SERIAL / RRSIG signature time as
     // YYYYMMDDHHMMSS in UTC. fl uses the same closed-form date
     // conversion that powers gmtime_r (no syscalls).
     use frankenlibc_core::time as time_core;
-    thread_local! {
-        static SECSTODATE_BUF: core::cell::UnsafeCell<[u8; 24]> =
-            const { core::cell::UnsafeCell::new([0u8; 24]) };
-    }
-    SECSTODATE_BUF.with(|cell| {
-        let buf_ptr = cell.get();
-        // SAFETY: thread-local; no aliasing across threads.
-        let buf = unsafe { &mut *buf_ptr };
+    with_secstodate_buf(|buf| {
         let bd = time_core::epoch_to_broken_down(secs as i64);
         let year = (bd.tm_year as i64 + 1900).clamp(0, 9999) as u32;
         let s = format!(
@@ -4588,14 +4684,7 @@ pub unsafe extern "C" fn __p_time(value: u32) -> *const c_char {
     // ns_format_ttl. We share the same thread-local buffer to avoid
     // duplicating the formatter; the output format ("1D", "2w6h56m7s")
     // is identical.
-    thread_local! {
-        static P_TIME_BUF: core::cell::UnsafeCell<[u8; 32]> =
-            const { core::cell::UnsafeCell::new([0u8; 32]) };
-    }
-    P_TIME_BUF.with(|cell| {
-        let buf_ptr = cell.get();
-        // SAFETY: thread-local; no aliasing across threads.
-        let buf = unsafe { &mut *buf_ptr };
+    with_p_time_buf(|buf| {
         let n = unsafe {
             ns_format_ttl(
                 value as libc::c_ulong,
