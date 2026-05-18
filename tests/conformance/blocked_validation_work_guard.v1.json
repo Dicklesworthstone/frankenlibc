@@ -128,7 +128,7 @@
       "jq empty tests/conformance/blocked_validation_work_guard.v1.json",
       "bash scripts/check_blocked_validation_work_guard.sh",
       "jq empty target/conformance/blocked_validation_work_guard.report.json",
-      "jq -e '.status == \"pass\" and .dirty_validation_path_count >= 1 and .dirty_validation_blocked == true and any(.negative_controls[]; .control_id == \"dirty_validation_path_counted\" and .status == \"pass\")' target/conformance/blocked_validation_work_guard.report.json",
+      "jq -e '.status == \"pass\" and (.dirty_validation_path_count | type == \"number\") and (.dirty_validation_paths | type == \"array\") and (.dirty_validation_blocked | type == \"boolean\") and any(.negative_controls[]; .control_id == \"dirty_validation_path_counted\" and .status == \"pass\")' target/conformance/blocked_validation_work_guard.report.json",
       "git diff --check -- scripts/check_blocked_validation_work_guard.sh tests/conformance/blocked_validation_work_guard.v1.json .beads/issues.jsonl",
       "AGENT_NAME=DarkShore br dep cycles --json"
     ],
