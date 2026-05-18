@@ -233,7 +233,6 @@ fn cli_writes_structured_log_and_report_to_requested_paths() -> TestResult {
         .arg(&log_path)
         .arg("--report")
         .arg(&report_path)
-        .current_dir(&root)
         .output()
         .map_err(|err| format!("spawn: {err}"))?;
     require(

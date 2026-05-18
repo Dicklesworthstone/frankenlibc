@@ -137,10 +137,8 @@ fn run_conformance_matrix(
     campaign: &str,
     fail_on_mismatch: bool,
 ) -> TestResult<Output> {
-    let root = workspace_root()?;
     let mut cmd = Command::new(bin);
-    cmd.current_dir(root)
-        .arg("conformance-matrix")
+    cmd.arg("conformance-matrix")
         .arg("--fixture")
         .arg(fixture_dir)
         .arg("--output")

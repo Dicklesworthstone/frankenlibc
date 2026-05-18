@@ -116,7 +116,6 @@ fn unique_tmp_dir(stem: &str) -> TestResult<PathBuf> {
 fn run_fault_inject_cli(bin: &Path, dir: &Path) -> TestResult<std::process::Output> {
     let root = workspace_root()?;
     Command::new(bin)
-        .current_dir(&root)
         .arg("fault-inject")
         .arg("--manifest")
         .arg(catalog_path(&root))
@@ -364,7 +363,6 @@ fn cli_unknown_scenario_fails_closed() -> TestResult {
     let root = workspace_root()?;
     let dir = unique_tmp_dir("bad_scenario")?;
     let out = Command::new(&bin)
-        .current_dir(&root)
         .arg("fault-inject")
         .arg("--manifest")
         .arg(catalog_path(&root))

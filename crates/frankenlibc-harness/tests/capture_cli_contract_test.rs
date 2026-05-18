@@ -189,9 +189,7 @@ fn run_capture(
     output: &Path,
     family: &str,
 ) -> TestResult<std::process::Output> {
-    let root = workspace_root()?;
     Command::new(bin)
-        .current_dir(&root)
         .arg("capture")
         .arg("--input")
         .arg(input)

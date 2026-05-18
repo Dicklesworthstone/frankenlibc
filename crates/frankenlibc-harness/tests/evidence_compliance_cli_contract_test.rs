@@ -187,8 +187,7 @@ fn run_evidence_compliance(
     output_path: Option<&Path>,
 ) -> TestResult<Output> {
     let mut cmd = Command::new(bin);
-    cmd.current_dir(workspace_root()?)
-        .arg("evidence-compliance")
+    cmd.arg("evidence-compliance")
         .arg("--workspace-root")
         .arg(workspace_root_arg)
         .arg("--log")

@@ -108,7 +108,6 @@ fn run_traceability_cli(
 ) -> TestResult<std::process::Output> {
     let root = workspace_root()?;
     Command::new(bin)
-        .current_dir(&root)
         .arg("traceability")
         .arg("--support-matrix")
         .arg(root.join("support_matrix.json"))
@@ -134,7 +133,6 @@ fn run_traceability_cli_with_support_matrix(
 ) -> TestResult<std::process::Output> {
     let root = workspace_root()?;
     Command::new(bin)
-        .current_dir(&root)
         .arg("traceability")
         .arg("--support-matrix")
         .arg(support_matrix)

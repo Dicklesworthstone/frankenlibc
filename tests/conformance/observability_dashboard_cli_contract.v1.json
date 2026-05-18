@@ -7,6 +7,7 @@
   "purpose": "Pin the harness binary 'observability-dashboard' subcommand which exposes frankenlibc_harness::observability_dashboard::write_bundle as a CLI: reads one or more JSONL metric/evidence input files, writes 5 bundle artifacts (JSON summary, prometheus exposition, statsd line protocol, grafana dashboard template, prometheus alert-rules YAML). Companion downstream of bd-wn47r (observability-capture) which seeds JSONL inputs.",
   "subcommand_name": "observability-dashboard",
   "binary_target": "harness",
+  "execution_lane": "integration",
   "required_flags": [
     "--input"
   ],
@@ -37,6 +38,7 @@
     "summary_records_total_rows_count": true,
     "summary_records_invalid_rows_count": true,
     "accepts_multiple_input_files_via_repeated_flag": true,
+    "allow_current_dir_mutation": true,
     "default_output_paths_when_overrides_omitted": true,
     "nonexistent_input_path_rejected_with_nonzero_exit": true,
     "missing_required_input_flag_rejected_with_nonzero_exit": true

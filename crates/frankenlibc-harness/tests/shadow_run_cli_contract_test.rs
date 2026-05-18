@@ -206,8 +206,7 @@ fn run_shadow_run(
     fail_on_mismatch: bool,
 ) -> TestResult<Output> {
     let mut cmd = Command::new(bin);
-    cmd.current_dir(workspace)
-        .arg("shadow-run")
+    cmd.arg("shadow-run")
         .arg("--manifest")
         .arg(&paths.manifest)
         .arg("--workspace-root")

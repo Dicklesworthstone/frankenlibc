@@ -104,7 +104,6 @@ fn unique_tmp_dir(stem: &str) -> TestResult<PathBuf> {
 fn run_errno_edge_report_cli(bin: &Path, output: &Path) -> TestResult<std::process::Output> {
     let root = workspace_root()?;
     Command::new(bin)
-        .current_dir(&root)
         .arg("errno-edge-report")
         .arg("--support-matrix")
         .arg(root.join("support_matrix.json"))
@@ -301,7 +300,6 @@ fn cli_missing_support_matrix_fails_closed() -> TestResult {
     let dir = unique_tmp_dir("bad_input")?;
     let missing = dir.join("missing-support-matrix.json");
     let out = Command::new(&bin)
-        .current_dir(&root)
         .arg("errno-edge-report")
         .arg("--support-matrix")
         .arg(&missing)

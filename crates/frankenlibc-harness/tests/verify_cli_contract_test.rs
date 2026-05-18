@@ -144,10 +144,8 @@ fn run_verify(
     fixture_dir: &Path,
     report: Option<&Path>,
 ) -> TestResult<std::process::Output> {
-    let root = workspace_root()?;
     let mut cmd = Command::new(bin);
-    cmd.current_dir(&root)
-        .arg("verify")
+    cmd.arg("verify")
         .arg("--fixture")
         .arg(fixture_dir)
         .arg("--timestamp")

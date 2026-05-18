@@ -183,8 +183,9 @@ fn cli_passes_on_canonical_artifact() -> TestResult {
     let output = unique_tmp("ok")?;
     let root = workspace_root()?;
     let out = Command::new(&bin)
-        .current_dir(&root)
         .arg("validate-setjmp-contract")
+        .arg("--contract")
+        .arg(root.join("tests/conformance/setjmp_semantics_contract.v1.json"))
         .arg("--output")
         .arg(&output)
         .output()

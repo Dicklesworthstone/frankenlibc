@@ -325,13 +325,11 @@ fn cli_writes_json_report_with_joined_artifact_links() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    let root = workspace_root()?;
     let tmp = unique_tmp_dir("json")?;
     let (log_path, index_path) = write_sample_inputs(&tmp)?;
     let output_path = tmp.join("workbench.report.json");
 
     let run = Command::new(&bin)
-        .current_dir(&root)
         .arg("explainability-workbench")
         .arg("--log")
         .arg(&log_path)
@@ -409,13 +407,11 @@ fn cli_unknown_format_fails_closed_without_panic() -> TestResult {
         eprintln!("skip: harness binary not built in this profile");
         return Ok(());
     };
-    let root = workspace_root()?;
     let tmp = unique_tmp_dir("unknown_format")?;
     let (log_path, _) = write_sample_inputs(&tmp)?;
     let output_path = tmp.join("workbench.report.txt");
 
     let run = Command::new(&bin)
-        .current_dir(&root)
         .arg("explainability-workbench")
         .arg("--log")
         .arg(&log_path)

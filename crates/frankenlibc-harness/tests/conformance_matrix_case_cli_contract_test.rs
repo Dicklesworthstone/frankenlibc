@@ -93,10 +93,8 @@ fn run_case(
     stdin_body: &[u8],
     env_mode: Option<&str>,
 ) -> TestResult<Output> {
-    let root = workspace_root()?;
     let mut cmd = Command::new(bin);
-    cmd.current_dir(root)
-        .arg("conformance-matrix-case")
+    cmd.arg("conformance-matrix-case")
         .arg("--function")
         .arg(function)
         .arg("--mode")
