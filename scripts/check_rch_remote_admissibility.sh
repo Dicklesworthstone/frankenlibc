@@ -799,6 +799,7 @@ event = {
     "approval_packet_status": approval_summary.get("status"),
     "approval_ready_candidates": approval_summary.get("current_ready_for_explicit_user_approval_count", 0),
     "approval_ready_worker_ids": approval_summary.get("current_ready_worker_ids", []),
+    "approval_ready_candidate_count_by_worker": approval_summary.get("current_ready_candidate_count_by_worker", {}),
     "approval_ready_paths_present": bool(approval_summary.get("current_ready_candidate_paths")),
 }
 
