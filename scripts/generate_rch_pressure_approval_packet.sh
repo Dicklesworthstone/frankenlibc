@@ -449,27 +449,48 @@ def worker_probe_signature(worker_id: str, worker_status: str) -> str:
     return "unknown"
 
 
+def classify_bounded_du_finding(worker_id: str, worker_host: Any, line: str) -> dict[str, Any] | None:
+    host = str(worker_host or worker_id)
+    match = re.match(r"^(?P<size>\S+)\s+(?P<path>/(tmp|data)/\S+)$", line.strip())
+    if not match:
+        return None
+    path = match.group("path")
+    size = match.group("size")
+    size_gb = size_to_gb(size)
+    size_bytes = size_to_bytes(size)
+    is_project_path = path.startswith("/data/projects/")
+    is_target_artifact = "/target" in path
+    is_rch_artifact = "/.rch-target-" in path
+    rejection_reason = None
+    if not is_project_path:
+        rejection_reason = "outside_project_scope"
+    elif not (is_target_artifact or is_rch_artifact):
+        rejection_reason = "not_target_or_rch_artifact"
+    elif size_gb is None:
+        rejection_reason = "unparseable_size"
+    elif not is_rch_artifact and not re.search(r"[0-9](G|T)$", size):
+        rejection_reason = "target_artifact_below_human_gib_threshold"
+    elif is_rch_artifact and size_gb < 0.1:
+        rejection_reason = "rch_artifact_below_0_1_gb_threshold"
+    return {
+        "worker_id": worker_id,
+        "host": host,
+        "path": path,
+        "size_human": size,
+        "size_bytes": size_bytes,
+        "estimated_size_gb": size_gb,
+        "candidate_eligible": rejection_reason is None,
+        "candidate_rejection_reason": rejection_reason,
+    }
+
+
 def cleanup_candidates(worker_id: str, worker_host: Any, worker_out: str) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    host = str(worker_host or worker_id)
     for line in worker_out.splitlines():
-        match = re.match(r"^(?P<size>\S+)\s+(?P<path>/data/projects/\S+)$", line.strip())
-        if not match:
+        finding = classify_bounded_du_finding(worker_id, worker_host, line)
+        if not finding or not finding["candidate_eligible"]:
             continue
-        path = match.group("path")
-        size = match.group("size")
-        is_target_artifact = "/target" in path
-        is_rch_artifact = "/.rch-target-" in path
-        if not (is_target_artifact or is_rch_artifact):
-            continue
-        size_gb = size_to_gb(size)
-        size_bytes = size_to_bytes(size)
-        if size_gb is None:
-            continue
-        if not is_rch_artifact and not re.search(r"[0-9](G|T)$", size):
-            continue
-        if is_rch_artifact and size_gb < 0.1:
-            continue
+        path = str(finding["path"])
         candidate_kind = "build_incremental_dir" if "/debug/incremental/" in path else "build_target_dir"
         if candidate_kind == "build_incremental_dir" and any(
             path.startswith(f"{candidate['path'].rstrip('/')}/")
@@ -480,12 +501,12 @@ def cleanup_candidates(worker_id: str, worker_host: Any, worker_out: str) -> lis
         candidates.append(
             {
                 "worker_id": worker_id,
-                "host": host,
+                "host": finding["host"],
                 "path": path,
-                "size_human": size,
-                "size_bytes": size_bytes,
-                "estimated_size_gb": size_gb,
-                "pre_cleanup_read_only_checks": read_only_pre_cleanup_checks(host, path),
+                "size_human": finding["size_human"],
+                "size_bytes": finding["size_bytes"],
+                "estimated_size_gb": finding["estimated_size_gb"],
+                "pre_cleanup_read_only_checks": read_only_pre_cleanup_checks(str(finding["host"]), path),
                 "source_command": "bounded read-only du/find over target, .rch-target, human-sized incremental dirs, and byte-exact near-threshold .rch-target incremental dirs",
                 "candidate_kind": candidate_kind,
                 "reason_it_might_help": "Build-output artifact on a worker excluded by rch pressure policy; even sub-GiB .rch-target artifacts can unblock near-threshold workers.",
@@ -495,6 +516,14 @@ def cleanup_candidates(worker_id: str, worker_host: Any, worker_out: str) -> lis
             }
         )
     return candidates
+
+
+def bounded_du_finding_lines(worker_out: str) -> list[str]:
+    return [
+        line
+        for line in worker_out.splitlines()
+        if re.match(r"^\S+\s+/(tmp|data)/", line.strip())
+    ]
 
 
 def parse_workers(status_json: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -542,11 +571,7 @@ def parse_workers(status_json: dict[str, Any]) -> tuple[list[dict[str, Any]], li
                 or None,
                 "sbh_snapshot": "present in raw worker output" if "sbh" in worker_out.lower() else None,
                 "ballast_snapshot": "present in raw worker output" if "ballast" in worker_out.lower() else None,
-                "bounded_du_findings": [
-                    line
-                    for line in worker_out.splitlines()
-                    if re.match(r"^\S+\s+/(tmp|data)/", line.strip())
-                ],
+                "bounded_du_findings": bounded_du_finding_lines(worker_out),
                 "collection_errors": line_list(worker_err),
             }
         )
@@ -850,6 +875,52 @@ def approval_ready_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def candidate_rejection_summary() -> dict[str, Any]:
+    rejected: list[dict[str, Any]] = []
+    finding_count = 0
+    for worker in workers:
+        if not isinstance(worker, dict):
+            continue
+        worker_id = str(worker.get("worker_id") or "unknown")
+        worker_host = worker.get("host")
+        for line in worker.get("bounded_du_findings", []):
+            finding = classify_bounded_du_finding(worker_id, worker_host, str(line))
+            if finding is None:
+                continue
+            finding_count += 1
+            if finding["candidate_eligible"]:
+                continue
+            rejected.append(
+                {
+                    "worker_id": finding["worker_id"],
+                    "host": finding["host"],
+                    "path": finding["path"],
+                    "size_human": finding["size_human"],
+                    "estimated_size_gb": finding["estimated_size_gb"],
+                    "rejection_reason": finding["candidate_rejection_reason"],
+                }
+            )
+    counts: dict[str, int] = {}
+    for finding in rejected:
+        reason = str(finding.get("rejection_reason") or "unknown")
+        counts[reason] = counts.get(reason, 0) + 1
+    largest_rejected = sorted(
+        rejected,
+        key=lambda finding: (
+            float_or_none(finding.get("estimated_size_gb")) or -1.0,
+            str(finding.get("worker_id") or ""),
+            str(finding.get("path") or ""),
+        ),
+        reverse=True,
+    )[:8]
+    return {
+        "bounded_du_finding_count": finding_count,
+        "rejected_finding_count": len(rejected),
+        "rejection_count_by_reason": {reason: counts[reason] for reason in sorted(counts)},
+        "largest_rejected_findings": largest_rejected,
+    }
+
+
 def no_candidate_diagnostics() -> dict[str, Any]:
     candidate_counts_by_worker: dict[str, int] = {}
     for candidate in candidates:
@@ -902,6 +973,7 @@ def no_candidate_diagnostics() -> dict[str, Any]:
         "critical_workers_without_candidates": critical_without_candidates,
         "probe_failure_workers": probe_failure_workers,
         "collection_error_workers": collection_error_workers,
+        "candidate_rejection_summary": candidate_rejection_summary(),
         "diagnostic_summary": summary,
         "next_action": next_action,
     }
@@ -1149,6 +1221,19 @@ lines.extend(
         f"- Next action: `{report['no_candidate_diagnostics']['next_action']}`",
     ]
 )
+rejection_summary = report["no_candidate_diagnostics"]["candidate_rejection_summary"]
+if rejection_summary["rejected_finding_count"]:
+    lines.append(
+        f"- Rejected bounded findings: `{rejection_summary['rejected_finding_count']}` "
+        f"of `{rejection_summary['bounded_du_finding_count']}`"
+    )
+    for reason, count in rejection_summary["rejection_count_by_reason"].items():
+        lines.append(f"  - `{reason}`: `{count}`")
+    for finding in rejection_summary["largest_rejected_findings"]:
+        lines.append(
+            f"  - `{finding['worker_id']}` `{finding['size_human']}` `{finding['path']}` "
+            f"rejected `{finding['rejection_reason']}`"
+        )
 lines.extend(
     [
         "",

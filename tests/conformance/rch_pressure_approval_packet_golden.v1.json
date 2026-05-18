@@ -316,6 +316,12 @@
       "collection_error_workers": [
         "vmi1152480"
       ],
+      "candidate_rejection_summary": {
+        "bounded_du_finding_count": 3,
+        "rejected_finding_count": 0,
+        "rejection_count_by_reason": {},
+        "largest_rejected_findings": []
+      },
       "diagnostic_summary": "Bounded read-only probes identified approval-gated cleanup candidates.",
       "next_action": "review_approval_readiness"
     },

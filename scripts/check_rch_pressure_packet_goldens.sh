@@ -134,6 +134,103 @@ NO_CANDIDATE_ALLOWED_STATUSES = {
 }
 
 
+def size_to_gb(size: str) -> float | None:
+    stripped = size.strip()
+    byte_match = re.match(r"^(?P<bytes>[0-9]+)B$", stripped, re.IGNORECASE)
+    if byte_match:
+        return round(int(byte_match.group("bytes")) / (1024 * 1024 * 1024), 3)
+    match = re.match(r"^(?P<num>\d+(?:\.\d+)?)(?P<unit>[KMGT])$", stripped, re.IGNORECASE)
+    if not match:
+        return None
+    value = float(match.group("num"))
+    unit = match.group("unit").upper()
+    if unit == "K":
+        return round(value / (1024 * 1024), 3)
+    if unit == "M":
+        return round(value / 1024, 3)
+    if unit == "G":
+        return round(value, 3)
+    if unit == "T":
+        return round(value * 1024, 3)
+    return None
+
+
+def classify_bounded_du_finding(worker: dict[str, Any], line: str) -> dict[str, Any] | None:
+    match = re.match(r"^(?P<size>\S+)\s+(?P<path>/(tmp|data)/\S+)$", line.strip())
+    if not match:
+        return None
+    path = match.group("path")
+    size = match.group("size")
+    size_gb = size_to_gb(size)
+    is_project_path = path.startswith("/data/projects/")
+    is_target_artifact = "/target" in path
+    is_rch_artifact = "/.rch-target-" in path
+    rejection_reason = None
+    if not is_project_path:
+        rejection_reason = "outside_project_scope"
+    elif not (is_target_artifact or is_rch_artifact):
+        rejection_reason = "not_target_or_rch_artifact"
+    elif size_gb is None:
+        rejection_reason = "unparseable_size"
+    elif not is_rch_artifact and not re.search(r"[0-9](G|T)$", size):
+        rejection_reason = "target_artifact_below_human_gib_threshold"
+    elif is_rch_artifact and size_gb < 0.1:
+        rejection_reason = "rch_artifact_below_0_1_gb_threshold"
+    return {
+        "worker_id": str(worker.get("worker_id") or "unknown"),
+        "host": str(worker.get("host") or worker.get("worker_id") or "unknown"),
+        "path": path,
+        "size_human": size,
+        "estimated_size_gb": size_gb,
+        "candidate_eligible": rejection_reason is None,
+        "candidate_rejection_reason": rejection_reason,
+    }
+
+
+def expected_candidate_rejection_summary(workers: list[Any]) -> dict[str, Any]:
+    rejected: list[dict[str, Any]] = []
+    finding_count = 0
+    for worker in workers:
+        if not isinstance(worker, dict):
+            continue
+        for line in worker.get("bounded_du_findings", []):
+            finding = classify_bounded_du_finding(worker, str(line))
+            if finding is None:
+                continue
+            finding_count += 1
+            if finding["candidate_eligible"]:
+                continue
+            rejected.append(
+                {
+                    "worker_id": finding["worker_id"],
+                    "host": finding["host"],
+                    "path": finding["path"],
+                    "size_human": finding["size_human"],
+                    "estimated_size_gb": finding["estimated_size_gb"],
+                    "rejection_reason": finding["candidate_rejection_reason"],
+                }
+            )
+    counts: dict[str, int] = {}
+    for finding in rejected:
+        reason = str(finding.get("rejection_reason") or "unknown")
+        counts[reason] = counts.get(reason, 0) + 1
+    largest_rejected = sorted(
+        rejected,
+        key=lambda finding: (
+            float_or_none(finding.get("estimated_size_gb")) or -1.0,
+            str(finding.get("worker_id") or ""),
+            str(finding.get("path") or ""),
+        ),
+        reverse=True,
+    )[:8]
+    return {
+        "bounded_du_finding_count": finding_count,
+        "rejected_finding_count": len(rejected),
+        "rejection_count_by_reason": {reason: counts[reason] for reason in sorted(counts)},
+        "largest_rejected_findings": largest_rejected,
+    }
+
+
 def validate_pre_cleanup_checks(source: str, path: Any, checks: Any, missing_signature: str) -> None:
     if not isinstance(checks, list) or not checks:
         add_error(source, missing_signature, f"{path} must include read-only pre-cleanup checks")
@@ -336,6 +433,13 @@ def validate_no_candidate_diagnostics(
         add_error(source, "missing_no_candidate_summary", "no_candidate_diagnostics must include diagnostic_summary")
     if not isinstance(diagnostics.get("next_action"), str) or not diagnostics.get("next_action"):
         add_error(source, "missing_no_candidate_next_action", "no_candidate_diagnostics must include next_action")
+    expected_rejection_summary = expected_candidate_rejection_summary(workers)
+    if diagnostics.get("candidate_rejection_summary") != expected_rejection_summary:
+        add_error(
+            source,
+            "candidate_rejection_summary_mismatch",
+            f"candidate_rejection_summary={diagnostics.get('candidate_rejection_summary')} expected={expected_rejection_summary}",
+        )
     if candidates and status != "candidates_identified":
         add_error(source, "candidate_status_mismatch", "packets with cleanup candidates must report candidates_identified")
     if not candidates and status != "no_candidates_identified":
@@ -985,6 +1089,24 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
     else:
         add_error(source, "negative_control_no_approval_ready_summary", "golden packet has no approval_ready_summary for mutation")
 
+    forged_rejection_packet = deepcopy(packet)
+    diagnostics = forged_rejection_packet.get("no_candidate_diagnostics")
+    rejection_summary = (
+        diagnostics.get("candidate_rejection_summary") if isinstance(diagnostics, dict) else None
+    )
+    if isinstance(rejection_summary, dict):
+        rejection_summary["rejected_finding_count"] = int(
+            rejection_summary.get("rejected_finding_count", 0)
+        ) + 1
+        expect_validation_failure(
+            forged_rejection_packet,
+            f"{source}::candidate_rejection_summary_mismatch",
+            "candidate_rejection_summary_mismatch",
+            "make candidate_rejection_summary count disagree with bounded du findings",
+        )
+    else:
+        add_error(source, "negative_control_no_candidate_rejection_summary", "golden packet has no candidate_rejection_summary for mutation")
+
     missing_no_candidate_diagnostics_packet = deepcopy(packet)
     missing_no_candidate_diagnostics_packet["cleanup_candidates"] = []
     missing_no_candidate_diagnostics_packet["recommended_cleanup_candidates"] = []
@@ -1045,6 +1167,7 @@ def validate_no_candidate_positive_control(packet: dict[str, Any], source: str) 
             for worker in workers
             if isinstance(worker, dict) and worker.get("collection_errors")
         ],
+        "candidate_rejection_summary": expected_candidate_rejection_summary(workers),
         "diagnostic_summary": "Synthetic no-candidate packet preserves pressure evidence without approval-ready paths.",
         "next_action": "inspect_worker_probe_outputs_or_restore_worker_capacity",
     }
@@ -1204,8 +1327,20 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "critical_workers_without_candidates",
             "probe_failure_workers",
             "collection_error_workers",
+            "candidate_rejection_summary",
             "diagnostic_summary",
             "next_action",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "candidate_rejection_summary_fields",
+        {
+            "bounded_du_finding_count",
+            "rejected_finding_count",
+            "rejection_count_by_reason",
+            "largest_rejected_findings",
         },
     )
     require_list_contains(
