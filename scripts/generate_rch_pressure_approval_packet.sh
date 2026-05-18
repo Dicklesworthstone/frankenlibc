@@ -1032,6 +1032,19 @@ def no_candidate_diagnostics() -> dict[str, Any]:
     }
 
 
+def approval_insufficient_reason() -> str:
+    ballast_snapshots = [
+        worker.get("ballast_snapshot")
+        for worker in workers
+        if isinstance(worker, dict)
+        and isinstance(worker.get("ballast_snapshot"), str)
+        and worker.get("ballast_snapshot")
+    ]
+    if ballast_snapshots and all("releasable_bytes=0" in snapshot for snapshot in ballast_snapshots):
+        return "No releasable SBH ballast was found; remaining cleanup candidates require explicit deletion-level approval."
+    return "Read-only collection can identify pressure and candidates, but cannot free space under repo rules."
+
+
 approval_readiness = approval_readiness_rows()
 
 report = {
@@ -1067,7 +1080,7 @@ report = {
         "smallest_sufficient_candidate_paths": [candidate["path"] for candidate in recommended_candidates],
         "minimum_margin_surplus_gb": MARGIN_RECOMMENDATION_SURPLUS_GB,
         "margin_sufficient_candidate_paths": [candidate["path"] for candidate in margin_recommended_candidates],
-        "why_read_only_collection_is_insufficient": "Read-only collection can identify pressure and candidates, but cannot free space under repo rules.",
+        "why_read_only_collection_is_insufficient": approval_insufficient_reason(),
         "explicit_user_text_required_before_cleanup": "The user must provide written approval naming exact paths and commands before cleanup can run.",
         "commands_not_executed": [
             "no deletion command executed",
