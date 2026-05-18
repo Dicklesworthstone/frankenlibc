@@ -721,7 +721,7 @@ fn aligned_buffer_offset(base: *const c_char, min_offset: usize, align: usize) -
 
 #[inline]
 unsafe fn set_h_errnop(h_errnop: *mut c_int, value: c_int) {
-    H_ERRNO_TLS.with(|cell| cell.set(value));
+    set_h_errno_tls(value);
     if !h_errnop.is_null() {
         // SAFETY: caller-provided out-parameter pointer.
         unsafe { *h_errnop = value };
@@ -2612,15 +2612,44 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
 // h_errno — thread-local resolver error variable
 // ===========================================================================
 
+#[cfg(feature = "owned-tls-cache")]
+static H_ERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static H_ERRNO_TLS: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
+}
+
+fn set_h_errno_tls(value: c_int) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        H_ERRNO_OWNED_TLS.with(|slot| *slot = value);
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        H_ERRNO_TLS.with(|cell| cell.set(value));
+    }
+}
+
+fn h_errno_location_ptr() -> *mut c_int {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        H_ERRNO_OWNED_TLS.with(|slot| slot as *mut c_int)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        H_ERRNO_TLS.with(|cell| cell.as_ptr())
+    }
 }
 
 /// `__h_errno_location` — return thread-local h_errno pointer.
 /// glibc's h_errno macro expands to `(*__h_errno_location())`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __h_errno_location() -> *mut c_int {
-    H_ERRNO_TLS.with(|cell| cell.as_ptr())
+    h_errno_location_ptr()
 }
 
 // gai_cancel/gai_error/gai_suspend are defined in unistd_abi.rs
