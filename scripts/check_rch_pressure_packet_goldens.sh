@@ -134,6 +134,20 @@ NO_CANDIDATE_ALLOWED_STATUSES = {
     "candidates_identified",
     "no_candidates_identified",
 }
+ALLOWED_WORKER_STATUSES = {
+    "healthy",
+    "degraded",
+    "disabled",
+    "unreachable",
+    "unknown",
+}
+ALLOWED_PRESSURE_STATES = {
+    "green",
+    "warning",
+    "critical",
+    "telemetry_gap",
+    "unknown",
+}
 ALLOWED_PROBE_FAILURE_SIGNATURES = {
     "ok",
     "RCH-E100",
@@ -546,9 +560,15 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     if not any(worker.get("bounded_du_findings") for worker in workers if isinstance(worker, dict)):
         add_error(source, "missing_du_findings", "packet must preserve bounded du findings")
     for worker in workers:
-        if not isinstance(worker, dict) or worker.get("pressure_state") != "critical":
+        if not isinstance(worker, dict):
             continue
         worker_id = worker.get("worker_id", "<unknown>")
+        worker_status = worker.get("status")
+        if not isinstance(worker_status, str) or worker_status not in ALLOWED_WORKER_STATUSES:
+            add_error(source, "invalid_worker_status", f"{worker_id} has invalid status={worker_status}")
+        pressure_state = worker.get("pressure_state")
+        if not isinstance(pressure_state, str) or pressure_state not in ALLOWED_PRESSURE_STATES:
+            add_error(source, "invalid_pressure_state", f"{worker_id} has invalid pressure_state={pressure_state}")
         probe_signature = worker.get("probe_failure_signature")
         if not isinstance(probe_signature, str) or probe_signature not in ALLOWED_PROBE_FAILURE_SIGNATURES:
             add_error(
@@ -556,6 +576,8 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
                 "invalid_probe_failure_signature",
                 f"{worker_id} has invalid probe_failure_signature={probe_signature}",
             )
+        if pressure_state != "critical":
+            continue
         target = worker.get("estimated_free_ratio_target")
         if not is_number(target):
             add_error(source, "missing_pressure_gap_target", f"{worker_id} missing numeric estimated_free_ratio_target")
@@ -1140,6 +1162,21 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             "replace first critical worker probe failure signature with an unknown value",
         )
 
+    invalid_worker_state_packet = deepcopy(packet)
+    workers = invalid_worker_state_packet.get("workers")
+    worker = workers[0] if isinstance(workers, list) and workers and isinstance(workers[0], dict) else None
+    if worker is None:
+        add_error(source, "negative_control_no_worker", "golden packet has no worker for mutation")
+    else:
+        worker["status"] = "mystery_status"
+        worker["pressure_state"] = "mystery_pressure"
+        expect_validation_failure(
+            invalid_worker_state_packet,
+            f"{source}::invalid_worker_status",
+            "invalid_worker_status",
+            "replace first worker status and pressure_state with unknown values",
+        )
+
     invalid_gap_packet = deepcopy(packet)
     worker = first_critical_worker(invalid_gap_packet)
     if worker is None:
@@ -1670,13 +1707,13 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
         schema,
         source,
         "allowed_worker_statuses",
-        {
-            "healthy",
-            "degraded",
-            "disabled",
-            "unreachable",
-            "unknown",
-        },
+        ALLOWED_WORKER_STATUSES,
+    )
+    require_list_contains(
+        schema,
+        source,
+        "allowed_pressure_states",
+        ALLOWED_PRESSURE_STATES,
     )
     require_list_contains(
         schema,
