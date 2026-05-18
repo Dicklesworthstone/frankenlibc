@@ -59,12 +59,33 @@
     "report": "target/conformance/main_only_worktree_guard.report.json",
     "log": "target/conformance/main_only_worktree_guard.log.jsonl"
   },
+  "report_contract": {
+    "output_path": "target/conformance/main_only_worktree_guard.report.json",
+    "log_path": "target/conformance/main_only_worktree_guard.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "manifest",
+      "bead",
+      "status",
+      "source_commit",
+      "current_state",
+      "negative_controls",
+      "errors",
+      "generated_at",
+      "report_path",
+      "log_path",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ]
+  },
   "required_validation_commands": [
     "jq empty tests/conformance/main_only_worktree_guard.v1.json",
     "bash -n scripts/check_main_only_worktree_guard.sh",
     "bash scripts/check_main_only_worktree_guard.sh --validate-only",
     "jq empty target/conformance/main_only_worktree_guard.report.json",
     "jq empty target/conformance/main_only_worktree_guard.log.jsonl",
+    "jq -e '.contract_status == \"pass\" and .status == \"pass\" and .report_path == \"target/conformance/main_only_worktree_guard.report.json\"' target/conformance/main_only_worktree_guard.report.json",
     "rg -n \"bash scripts/check_main_only_worktree_guard.sh --validate-only\" scripts/ci.sh",
     "git diff --check -- scripts/check_main_only_worktree_guard.sh tests/conformance/main_only_worktree_guard.v1.json .beads/issues.jsonl",
     "br dep cycles --json"

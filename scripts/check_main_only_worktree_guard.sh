@@ -30,6 +30,24 @@ ARGS = sys.argv[5:]
 EXPECTED_SCHEMA = "main_only_worktree_guard.v1"
 REPORT_SCHEMA = "main_only_worktree_guard.report.v1"
 EXPECTED_BEAD = "bd-kt64l"
+EXPECTED_REPORT = "target/conformance/main_only_worktree_guard.report.json"
+EXPECTED_LOG = "target/conformance/main_only_worktree_guard.log.jsonl"
+REQUIRED_REPORT_FIELDS = {
+    "schema_version",
+    "manifest",
+    "bead",
+    "status",
+    "source_commit",
+    "current_state",
+    "negative_controls",
+    "errors",
+    "generated_at",
+    "report_path",
+    "log_path",
+    "report_contract_fields",
+    "contract_status",
+    "contract_errors",
+}
 
 errors: list[dict[str, str]] = []
 events: list[dict[str, Any]] = []
@@ -143,6 +161,31 @@ def string_list(value: Any, source: str, field: str, *, non_empty: bool = True) 
     return result
 
 
+def configured_report_fields(manifest: dict[str, Any]) -> list[str]:
+    report_contract = manifest.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return []
+    fields = report_contract.get("must_materialize")
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, str) and field]
+
+
+def validate_report_contract(manifest: dict[str, Any], source: str) -> None:
+    report_contract = manifest.get("report_contract")
+    if not isinstance(report_contract, dict):
+        add_error(source, "report_contract_missing", "report_contract must be an object")
+        return
+    if report_contract.get("output_path") != EXPECTED_REPORT:
+        add_error(source, "report_contract_output_path_mismatch", f"output_path must be {EXPECTED_REPORT}")
+    if report_contract.get("log_path") != EXPECTED_LOG:
+        add_error(source, "report_contract_log_path_mismatch", f"log_path must be {EXPECTED_LOG}")
+    fields = set(string_list(report_contract.get("must_materialize"), source, "report_contract.must_materialize"))
+    missing = sorted(REQUIRED_REPORT_FIELDS - fields)
+    if missing:
+        add_error(source, "report_contract_missing_required_field", f"must_materialize missing {missing}")
+
+
 def validate_manifest(manifest: dict[str, Any]) -> None:
     source = rel(MANIFEST)
     if manifest.get("schema_version") != EXPECTED_SCHEMA:
@@ -166,6 +209,7 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         add_error(source, "malformed_manifest", "policy.forbid_linked_worktrees must be true")
     if policy.get("forbid_local_non_main_branches") is not True:
         add_error(source, "malformed_manifest", "policy.forbid_local_non_main_branches must be true")
+    validate_report_contract(manifest, source)
 
     commands = string_list(
         manifest.get("required_validation_commands"),
@@ -326,6 +370,8 @@ state_errors = validate_state(state, policy, "current_git_state")
 errors.extend(state_errors)
 
 negative_rows = run_negative_controls(manifest, state)
+report_contract_fields = configured_report_fields(manifest)
+contract_signature_prefixes = ("report_contract_", "missing_report_field")
 status = "pass" if not errors else "fail"
 events.append(
     {
@@ -346,13 +392,29 @@ report = {
     "schema_version": REPORT_SCHEMA,
     "manifest": rel(MANIFEST),
     "bead": EXPECTED_BEAD,
-    "status": status,
+    "status": "pending",
     "source_commit": state.get("head"),
     "current_state": state,
     "negative_controls": negative_rows,
     "errors": errors,
     "generated_at": utc_now(),
+    "report_path": rel(REPORT),
+    "log_path": rel(LOG),
+    "report_contract_fields": report_contract_fields,
+    "contract_status": "pending",
+    "contract_errors": [],
 }
+for field in report_contract_fields:
+    if field not in report:
+        add_error("report_contract", "missing_report_field", f"report omitted required field: {field}")
+status = "pass" if not errors else "fail"
+contract_errors = [
+    row for row in errors if row["failure_signature"].startswith(contract_signature_prefixes)
+]
+report["status"] = status
+report["errors"] = errors
+report["contract_status"] = "pass" if not contract_errors else "fail"
+report["contract_errors"] = contract_errors
 
 write_json(REPORT, report)
 write_jsonl(LOG, events)
