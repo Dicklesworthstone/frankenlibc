@@ -16,6 +16,30 @@
       "remote required; refusing local fallback"
     ]
   },
+  "report_contract": {
+    "output_path": "target/conformance/rch_validation_debt_ledger.report.json",
+    "log_path": "target/conformance/rch_validation_debt_ledger.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "source",
+      "status",
+      "entry_count",
+      "failure_count",
+      "failures",
+      "events",
+      "report_path",
+      "log_path",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ],
+    "negative_controls": [
+      "negative_report_output_path_mismatch",
+      "negative_report_log_path_mismatch",
+      "negative_report_contract_missing_required_field",
+      "negative_missing_report_field"
+    ]
+  },
   "expected_pending_beads": [
     "bd-gsw2h",
     "bd-7xjbo",
