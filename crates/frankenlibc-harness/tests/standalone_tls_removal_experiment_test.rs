@@ -588,8 +588,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 27,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver nsaddr, resolver h_errno state, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state",
+        substituted == 31,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state",
     )?;
     require(
         substituted + remaining == total,
@@ -649,8 +649,12 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
     let resolv = std::fs::read_to_string(abi_resolv_path(&root))
         .map_err(|err| format!("read resolv_abi.rs: {err}"))?;
     require(
-        resolv.contains("H_ERRNO_OWNED_TLS")
+        resolv.contains("HOSTS_BACKEND_OWNED_TLS")
+            && resolv.contains("SERVICES_BACKEND_OWNED_TLS")
+            && resolv.contains("PROC_NET_ROUTE_OWNED_TLS")
+            && resolv.contains("PROC_NET_IF_INET6_OWNED_TLS")
+            && resolv.contains("H_ERRNO_OWNED_TLS")
             && resolv.contains("crate::owned_tls_cache::OwnedTlsCache"),
-        "resolver ABI must route h_errno state through owned TLS cache",
+        "resolver ABI must route backend caches and h_errno state through owned TLS cache",
     )
 }

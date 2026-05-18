@@ -275,6 +275,40 @@ impl BackendFileCache {
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
+fn new_hosts_backend_cache() -> BackendFileCache {
+    BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_services_backend_cache() -> BackendFileCache {
+    BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_proc_net_route_cache() -> BackendFileCache {
+    BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_proc_net_if_inet6_cache() -> BackendFileCache {
+    BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static HOSTS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_hosts_backend_cache);
+#[cfg(feature = "owned-tls-cache")]
+static SERVICES_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_services_backend_cache);
+#[cfg(feature = "owned-tls-cache")]
+static PROC_NET_ROUTE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_route_cache);
+#[cfg(feature = "owned-tls-cache")]
+static PROC_NET_IF_INET6_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_if_inet6_cache);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static HOSTS_BACKEND_TLS: RefCell<BackendFileCache> =
         RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV));
@@ -294,16 +328,38 @@ fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
 }
 
 fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
-    HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+    }
 }
 
 fn read_services_backend() -> std::io::Result<Vec<u8>> {
-    SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERVICES_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+    }
 }
 
 fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConfigState> {
+    #[cfg(feature = "owned-tls-cache")]
+    let route = PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
+    #[cfg(not(feature = "owned-tls-cache"))]
     let route = PROC_NET_ROUTE_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+
+    #[cfg(feature = "owned-tls-cache")]
+    let if_inet6 = PROC_NET_IF_INET6_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
+    #[cfg(not(feature = "owned-tls-cache"))]
     let if_inet6 = PROC_NET_IF_INET6_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+
     Some(frankenlibc_core::resolv::addrconfig_state_from_procfs(
         &route, &if_inet6,
     ))
