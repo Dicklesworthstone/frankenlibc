@@ -101,6 +101,11 @@ def candidate_rows(contract: dict[str, Any], errors: list[dict[str, str]]) -> li
             string_list(candidate.get(key), f"{candidate_id}.{key}", errors)
         if not isinstance(candidate.get("recommendation_title"), str) or not candidate["recommendation_title"]:
             errors.append({"failure_signature": "missing_recommendation_title", "message": f"{candidate_id} title missing"})
+        tracker_bead_id = candidate.get("tracker_bead_id")
+        if tracker_bead_id is not None and (
+            not isinstance(tracker_bead_id, str) or not tracker_bead_id.startswith("bd-")
+        ):
+            errors.append({"failure_signature": "invalid_tracker_bead_id", "message": f"{candidate_id} tracker_bead_id is invalid"})
         rows.append(candidate)
     return rows
 
@@ -161,6 +166,7 @@ def analyze_candidates(
         row = {
             "id": candidate["id"],
             "priority": candidate["priority"],
+            "tracker_bead_id": candidate.get("tracker_bead_id"),
             "status": status,
             "tracked_match_count": len(tracked_matches),
             "tracked_matches": tracked_matches[:8],
@@ -175,6 +181,7 @@ def analyze_candidates(
                 {
                     "candidate_id": candidate["id"],
                     "priority": candidate["priority"],
+                    "tracker_bead_id": candidate.get("tracker_bead_id"),
                     "title": candidate["recommendation_title"],
                     "rationale": candidate.get("rationale"),
                 }

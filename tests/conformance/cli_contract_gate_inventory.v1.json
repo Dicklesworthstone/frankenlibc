@@ -37,6 +37,7 @@
     {
       "id": "no_current_dir_mutation",
       "priority": 2,
+      "tracker_bead_id": "bd-92g0t",
       "filename_markers": [
         "no_current_dir"
       ],
@@ -49,6 +50,7 @@
     {
       "id": "no_network_socket",
       "priority": 3,
+      "tracker_bead_id": "bd-e8xvs",
       "filename_markers": [
         "no_network_socket",
         "no_std_net"
@@ -63,6 +65,7 @@
     {
       "id": "no_process_kill",
       "priority": 3,
+      "tracker_bead_id": "bd-gt20s",
       "filename_markers": [
         "no_process_kill"
       ],
@@ -102,6 +105,7 @@
     "jq -e '.status == \"pass\" and (.negative_controls | all(.status == \"pass\"))' target/conformance/cli_contract_gate_inventory.report.json",
     "jq -e '.report_path == \"target/conformance/cli_contract_gate_inventory.report.json\" and .log_path == \"target/conformance/cli_contract_gate_inventory.log.jsonl\"' target/conformance/cli_contract_gate_inventory.report.json",
     "jq -e '(.tracked_gate_count >= 200) and ([.dirty_pending_candidates[].candidate_id] | index(\"no_env_set_var\")) and ([.dirty_pending_candidates[].candidate_id] | index(\"paired_gate_file_contract\")) and ([.recommendations[].candidate_id] | index(\"no_current_dir_mutation\"))' target/conformance/cli_contract_gate_inventory.report.json",
+    "jq -e '(.recommendations[] | select(.candidate_id == \"no_current_dir_mutation\").tracker_bead_id) == \"bd-92g0t\" and (.recommendations[] | select(.candidate_id == \"no_network_socket\").tracker_bead_id) == \"bd-e8xvs\" and (.recommendations[] | select(.candidate_id == \"no_process_kill\").tracker_bead_id) == \"bd-gt20s\"' target/conformance/cli_contract_gate_inventory.report.json",
     "git diff --check -- scripts/check_cli_contract_gate_inventory.sh tests/conformance/cli_contract_gate_inventory.v1.json .beads/issues.jsonl",
     "AGENT_NAME=DarkShore br dep cycles --json"
   ],
