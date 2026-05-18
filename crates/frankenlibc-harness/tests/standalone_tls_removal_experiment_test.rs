@@ -27,7 +27,7 @@ const LOCAL_EXEC_LANE: &str = "local-exec-tls-model-probe";
 const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
-const EXPECTED_OWNER_SURFACE_COUNT: usize = 6;
+const EXPECTED_OWNER_SURFACE_COUNT: usize = 7;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -90,6 +90,13 @@ fn abi_errno_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("errno_abi.rs")
+}
+
+fn abi_dlfcn_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("dlfcn_abi.rs")
 }
 
 fn load_manifest() -> TestResult<Value> {
@@ -616,8 +623,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 57,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, and the core errno slot",
+        substituted == 58,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, and dlfcn dlerror state",
     )?;
     require(
         substituted + remaining == total,
@@ -738,5 +745,14 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         errno.contains("ERRNO_OWNED_TLS")
             && errno.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "errno ABI must route __errno_location through owned TLS cache",
+    )?;
+
+    let dlfcn = std::fs::read_to_string(abi_dlfcn_path(&root))
+        .map_err(|err| format!("read dlfcn_abi.rs: {err}"))?;
+    require(
+        dlfcn.contains("DLERROR_OWNED_TLS")
+            && dlfcn.contains("DlErrorState")
+            && dlfcn.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "dlfcn ABI must route dlerror pending/stable state through owned TLS cache",
     )
 }

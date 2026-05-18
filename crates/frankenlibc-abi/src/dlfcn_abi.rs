@@ -16,7 +16,19 @@ use crate::runtime_policy;
 // Thread-local dlerror state
 // ---------------------------------------------------------------------------
 
+#[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::Cell;
+
+#[cfg(feature = "owned-tls-cache")]
+#[derive(Clone, Copy, Default)]
+struct DlErrorState {
+    pending: usize,
+    stable: usize,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static DLERROR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<DlErrorState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(DlErrorState::default);
 
 // Thread-local dlerror state using `Cell` with static pointers.
 //
@@ -25,6 +37,7 @@ use std::cell::Cell;
 // creates a reentrant access.  `Cell` with simple pointer `get`/`set` is
 // reentry-safe and avoids heap allocation entirely since all error messages
 // are `&'static [u8]`.
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     /// Pending error: pointer to static NUL-terminated error message, or null.
     static PENDING_PTR: Cell<*const u8> = const { Cell::new(std::ptr::null()) };
@@ -34,12 +47,26 @@ std::thread_local! {
 
 /// Set the thread-local dlerror message from a static byte slice.
 fn set_dlerror(msg: &'static [u8]) {
-    let _ = PENDING_PTR.try_with(|cell| cell.set(msg.as_ptr()));
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        DLERROR_OWNED_TLS.with(|state| state.pending = msg.as_ptr() as usize);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let _ = PENDING_PTR.try_with(|cell| cell.set(msg.as_ptr()));
+    }
 }
 
 /// Clear the thread-local dlerror message.
 fn clear_dlerror() {
-    let _ = PENDING_PTR.try_with(|cell| cell.set(std::ptr::null()));
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        DLERROR_OWNED_TLS.with(|state| state.pending = 0);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let _ = PENDING_PTR.try_with(|cell| cell.set(std::ptr::null()));
+    }
 }
 
 #[inline]
@@ -696,6 +723,18 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
 /// last call to `dlerror`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlerror() -> *const c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    let ptr = DLERROR_OWNED_TLS.with(|state| {
+        let ptr = state.pending as *const u8;
+        state.pending = 0;
+        if !ptr.is_null() {
+            state.stable = ptr as usize;
+            return state.stable as *const u8;
+        }
+        ptr
+    });
+
+    #[cfg(not(feature = "owned-tls-cache"))]
     let ptr = PENDING_PTR
         .try_with(|cell| {
             let p = cell.get();
@@ -707,6 +746,7 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
         return std::ptr::null();
     }
     // Move to stable slot so the pointer remains valid until next dlfcn call.
+    #[cfg(not(feature = "owned-tls-cache"))]
     let _ = STABLE_PTR.try_with(|cell| cell.set(ptr));
     ptr as *const c_char
 }
