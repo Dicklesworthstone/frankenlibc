@@ -4804,9 +4804,30 @@ pub unsafe extern "C" fn __p_fqnname(
 
 const HOSTALIAS_BUF_LEN: usize = 1025;
 
+#[cfg(feature = "owned-tls-cache")]
+fn empty_hostalias_buf() -> [u8; HOSTALIAS_BUF_LEN] {
+    [0u8; HOSTALIAS_BUF_LEN]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static HOSTALIAS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; HOSTALIAS_BUF_LEN]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_hostalias_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static HOSTALIAS_BUF: RefCell<[u8; HOSTALIAS_BUF_LEN]> =
         const { RefCell::new([0u8; HOSTALIAS_BUF_LEN]) };
+}
+
+fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTALIAS_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTALIAS_BUF.with(|cell| f(&mut cell.borrow_mut()))
+    }
 }
 
 fn hostalias_lookup(name: &[u8], hosts_file: &str) -> Option<Vec<u8>> {
@@ -4864,8 +4885,7 @@ pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
     };
     // Cap to buffer size minus the NUL terminator.
     let copy_len = dns.len().min(HOSTALIAS_BUF_LEN - 1);
-    HOSTALIAS_BUF.with(|cell| {
-        let mut buf = cell.borrow_mut();
+    with_hostalias_buf(|buf| {
         buf[..copy_len].copy_from_slice(&dns[..copy_len]);
         buf[copy_len] = 0;
         // Return pointer to the thread-local buffer. Casting through
@@ -4921,9 +4941,30 @@ pub unsafe extern "C" fn __res_hostalias(
 
 const LOC_NTOA_BUF_LEN: usize = 96;
 
+#[cfg(feature = "owned-tls-cache")]
+fn empty_loc_ntoa_buf() -> [u8; LOC_NTOA_BUF_LEN] {
+    [0u8; LOC_NTOA_BUF_LEN]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static LOC_NTOA_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; LOC_NTOA_BUF_LEN]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_loc_ntoa_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static LOC_NTOA_BUF: RefCell<[u8; LOC_NTOA_BUF_LEN]> =
         const { RefCell::new([0u8; LOC_NTOA_BUF_LEN]) };
+}
+
+fn with_loc_ntoa_buf<R>(f: impl FnOnce(&mut [u8; LOC_NTOA_BUF_LEN]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        LOC_NTOA_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        LOC_NTOA_BUF.with(|cell| f(&mut cell.borrow_mut()))
+    }
 }
 
 const POWERS_OF_TEN: [u64; 10] = [
@@ -5305,8 +5346,7 @@ pub unsafe extern "C" fn __loc_ntoa(binary: *const u8, ascii: *mut c_char) -> *c
 
     if ascii.is_null() {
         // Write into thread-local static buffer.
-        return LOC_NTOA_BUF.with(|cell| {
-            let mut buf = cell.borrow_mut();
+        return with_loc_ntoa_buf(|buf| {
             let n = formatted_bytes.len().min(LOC_NTOA_BUF_LEN - 1);
             buf[..n].copy_from_slice(&formatted_bytes[..n]);
             buf[n] = 0;
@@ -5418,6 +5458,19 @@ struct ResSym {
 
 const SYM_UNKNOWN_BUF_LEN: usize = 24;
 
+#[cfg(feature = "owned-tls-cache")]
+fn empty_sym_unknown_buf() -> [u8; SYM_UNKNOWN_BUF_LEN] {
+    [0u8; SYM_UNKNOWN_BUF_LEN]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static SYM_NTOP_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; SYM_UNKNOWN_BUF_LEN]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_sym_unknown_buf);
+#[cfg(feature = "owned-tls-cache")]
+static SYM_NTOS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; SYM_UNKNOWN_BUF_LEN]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_sym_unknown_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static SYM_NTOP_BUF: RefCell<[u8; SYM_UNKNOWN_BUF_LEN]> =
         const { RefCell::new([0u8; SYM_UNKNOWN_BUF_LEN]) };
@@ -5425,19 +5478,35 @@ thread_local! {
         const { RefCell::new([0u8; SYM_UNKNOWN_BUF_LEN]) };
 }
 
-fn write_decimal_to_tls(
-    cell: &'static std::thread::LocalKey<RefCell<[u8; SYM_UNKNOWN_BUF_LEN]>>,
-    value: c_int,
-) -> *const c_char {
-    cell.with(|c| {
-        let mut buf = c.borrow_mut();
-        let s = format!("{value}");
-        let bytes = s.as_bytes();
-        let n = bytes.len().min(SYM_UNKNOWN_BUF_LEN - 1);
-        buf[..n].copy_from_slice(&bytes[..n]);
-        buf[n] = 0;
-        buf.as_ptr() as *const c_char
-    })
+fn write_decimal_to_sym_buf(buf: &mut [u8; SYM_UNKNOWN_BUF_LEN], value: c_int) -> *const c_char {
+    let s = format!("{value}");
+    let bytes = s.as_bytes();
+    let n = bytes.len().min(SYM_UNKNOWN_BUF_LEN - 1);
+    buf[..n].copy_from_slice(&bytes[..n]);
+    buf[n] = 0;
+    buf.as_ptr() as *const c_char
+}
+
+fn write_decimal_to_sym_ntop_buf(value: c_int) -> *const c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SYM_NTOP_BUF_OWNED_TLS.with(|buf| write_decimal_to_sym_buf(buf, value))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SYM_NTOP_BUF.with(|cell| write_decimal_to_sym_buf(&mut cell.borrow_mut(), value))
+    }
+}
+
+fn write_decimal_to_sym_ntos_buf(value: c_int) -> *const c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SYM_NTOS_BUF_OWNED_TLS.with(|buf| write_decimal_to_sym_buf(buf, value))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SYM_NTOS_BUF.with(|cell| write_decimal_to_sym_buf(&mut cell.borrow_mut(), value))
+    }
 }
 
 /// `__sym_ntop(*tab, value, *success) -> *const c_char` — find the
@@ -5475,7 +5544,7 @@ pub unsafe extern "C" fn __sym_ntop(
     if !success.is_null() {
         unsafe { *success = 0 };
     }
-    write_decimal_to_tls(&SYM_NTOP_BUF, value)
+    write_decimal_to_sym_ntop_buf(value)
 }
 
 /// `__sym_ntos(*tab, value, *success) -> *const c_char` — like
@@ -5510,7 +5579,7 @@ pub unsafe extern "C" fn __sym_ntos(
     if !success.is_null() {
         unsafe { *success = 0 };
     }
-    write_decimal_to_tls(&SYM_NTOS_BUF, value)
+    write_decimal_to_sym_ntos_buf(value)
 }
 
 /// `__sym_ston(*tab, *str, *success) -> int` — case-insensitive text

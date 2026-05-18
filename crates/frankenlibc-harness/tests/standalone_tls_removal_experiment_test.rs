@@ -609,8 +609,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 52,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, and glibc-internal cleanup/resolver/shadow state",
+        substituted == 56,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, and glibc-internal cleanup/resolver/shadow state",
     )?;
     require(
         substituted + remaining == total,
@@ -679,8 +679,12 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && resolv.contains("P_OPTION_BUF_OWNED_TLS")
             && resolv.contains("SECSTODATE_BUF_OWNED_TLS")
             && resolv.contains("P_TIME_BUF_OWNED_TLS")
+            && resolv.contains("HOSTALIAS_BUF_OWNED_TLS")
+            && resolv.contains("LOC_NTOA_BUF_OWNED_TLS")
+            && resolv.contains("SYM_NTOP_BUF_OWNED_TLS")
+            && resolv.contains("SYM_NTOS_BUF_OWNED_TLS")
             && resolv.contains("crate::owned_tls_cache::OwnedTlsCache"),
-        "resolver ABI must route backend caches, h_errno state, and printable-DNS helper buffers through owned TLS cache",
+        "resolver ABI must route backend caches, h_errno state, printable-DNS helper buffers, and fixed fallback return buffers through owned TLS cache",
     )?;
 
     let string = std::fs::read_to_string(abi_string_path(&root))
