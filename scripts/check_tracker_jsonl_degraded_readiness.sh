@@ -456,6 +456,16 @@ def validate_contract(contract: dict[str, Any]) -> list[dict[str, str]]:
 def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) -> list[dict[str, Any]]:
     controls: list[dict[str, Any]] = []
 
+    def decision_for(test_rows: list[dict[str, Any]]) -> dict[str, Any]:
+        test_analysis = analyze(test_rows, contract)
+        test_blockers = blocker_chokepoints(test_analysis["blocked_open"])
+        return recommended_next_action(
+            projected_ids(test_analysis["safe_ready"]),
+            projected_ids(test_analysis["permissioned_ready"]),
+            projected_ids(test_analysis["stale_in_progress"]),
+            [str(row["id"]) for row in test_blockers[:5]],
+        )
+
     missing_forbidden = deepcopy(contract)
     missing_forbidden["forbidden_sources"] = [".beads/beads.db", ".beads/issues.db", "br"]
     signatures = {err["failure_signature"] for err in validate_contract(missing_forbidden)}
@@ -647,6 +657,128 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
             "name": "parent_with_active_child_excluded_ready",
             "expected_signature": "active_parent_container_not_ready",
             "status": "pass" if ok else "fail",
+        }
+    )
+
+    action = decision_for(
+        [
+            {
+                "id": "bd-jsonl-action-stale",
+                "title": "action stale",
+                "status": "in_progress",
+                "updated_at": "2000-01-01T00:00:00Z",
+            },
+            {
+                "id": "bd-jsonl-action-safe",
+                "title": "action safe ready",
+                "status": "open",
+                "updated_at": "2026-05-17T00:00:00Z",
+            },
+        ]
+    )
+    controls.append(
+        {
+            "name": "action_prioritizes_stale_in_progress",
+            "expected_signature": "review_stale_in_progress",
+            "status": "pass"
+            if action.get("decision") == "review_stale_in_progress"
+            and action.get("candidate_ids") == ["bd-jsonl-action-stale"]
+            else "fail",
+        }
+    )
+
+    action = decision_for(
+        [
+            {
+                "id": "bd-jsonl-action-safe",
+                "title": "action safe ready",
+                "status": "open",
+                "updated_at": "2026-05-17T00:00:00Z",
+            },
+            {
+                "id": "bd-jsonl-action-permissioned",
+                "title": "action permissioned ready",
+                "description": "requires explicit approval before execution",
+                "status": "open",
+                "updated_at": "2026-05-17T00:00:00Z",
+            },
+        ]
+    )
+    controls.append(
+        {
+            "name": "action_claims_safe_ready_before_permissioned",
+            "expected_signature": "claim_safe_ready",
+            "status": "pass"
+            if action.get("decision") == "claim_safe_ready"
+            and action.get("safe_to_claim_without_permission") is True
+            and action.get("candidate_ids") == ["bd-jsonl-action-safe"]
+            else "fail",
+        }
+    )
+
+    action = decision_for(
+        [
+            {
+                "id": "bd-jsonl-action-permissioned",
+                "title": "action permissioned ready",
+                "description": "requires explicit approval before execution",
+                "status": "open",
+                "updated_at": "2026-05-17T00:00:00Z",
+            }
+        ]
+    )
+    controls.append(
+        {
+            "name": "action_requests_permission_for_permissioned_only",
+            "expected_signature": "request_explicit_permission",
+            "status": "pass"
+            if action.get("decision") == "request_explicit_permission"
+            and action.get("requires_user_permission") is True
+            and action.get("candidate_ids") == ["bd-jsonl-action-permissioned"]
+            else "fail",
+        }
+    )
+
+    action = decision_for(
+        [
+            {
+                "id": "bd-jsonl-action-blocker",
+                "title": "action in-progress blocker",
+                "status": "in_progress",
+                "updated_at": utc_now(),
+            },
+            {
+                "id": "bd-jsonl-action-blocked",
+                "title": "action blocked",
+                "status": "open",
+                "updated_at": "2026-05-17T00:00:00Z",
+                "dependencies": [
+                    {
+                        "issue_id": "bd-jsonl-action-blocked",
+                        "depends_on_id": "bd-jsonl-action-blocker",
+                        "type": "blocks",
+                    }
+                ],
+            },
+        ]
+    )
+    controls.append(
+        {
+            "name": "action_points_to_blockers_when_no_ready",
+            "expected_signature": "work_blockers_or_wait",
+            "status": "pass"
+            if action.get("decision") == "work_blockers_or_wait"
+            and action.get("candidate_ids") == ["bd-jsonl-action-blocker"]
+            else "fail",
+        }
+    )
+
+    action = decision_for([])
+    controls.append(
+        {
+            "name": "action_reports_no_claimable_work_for_empty_queue",
+            "expected_signature": "no_claimable_work",
+            "status": "pass" if action.get("decision") == "no_claimable_work" else "fail",
         }
     )
     return controls

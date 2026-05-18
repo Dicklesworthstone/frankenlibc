@@ -84,7 +84,12 @@
     "recent_comment_prevents_stale",
     "permissioned_ready_is_separated",
     "closed_dependency_allows_ready",
-    "parent_with_active_child_excluded_ready"
+    "parent_with_active_child_excluded_ready",
+    "action_prioritizes_stale_in_progress",
+    "action_claims_safe_ready_before_permissioned",
+    "action_requests_permission_for_permissioned_only",
+    "action_points_to_blockers_when_no_ready",
+    "action_reports_no_claimable_work_for_empty_queue"
   ],
   "validation_commands": [
     "jq empty tests/conformance/tracker_jsonl_degraded_readiness.v1.json",
