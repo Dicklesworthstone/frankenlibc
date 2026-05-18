@@ -255,6 +255,53 @@ def blocker_chokepoints(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def recommended_next_action(
+    safe_ready_ids: list[str],
+    permissioned_ready_ids: list[str],
+    stale_in_progress_ids: list[str],
+    top_blocker_ids: list[str],
+) -> dict[str, Any]:
+    if stale_in_progress_ids:
+        return {
+            "decision": "review_stale_in_progress",
+            "reason": "stale in-progress beads are present and should be reviewed before starting new work",
+            "candidate_ids": stale_in_progress_ids,
+            "safe_to_claim_without_permission": False,
+            "requires_user_permission": False,
+        }
+    if safe_ready_ids:
+        return {
+            "decision": "claim_safe_ready",
+            "reason": "safe ready beads are available without special permission markers",
+            "candidate_ids": safe_ready_ids,
+            "safe_to_claim_without_permission": True,
+            "requires_user_permission": False,
+        }
+    if permissioned_ready_ids:
+        return {
+            "decision": "request_explicit_permission",
+            "reason": "only permissioned ready beads are available; do not claim them without the named acknowledgements or operator permission",
+            "candidate_ids": permissioned_ready_ids,
+            "safe_to_claim_without_permission": False,
+            "requires_user_permission": True,
+        }
+    if top_blocker_ids:
+        return {
+            "decision": "work_blockers_or_wait",
+            "reason": "no ready beads are available; inspect blocker chokepoints before creating new work",
+            "candidate_ids": top_blocker_ids,
+            "safe_to_claim_without_permission": False,
+            "requires_user_permission": False,
+        }
+    return {
+        "decision": "no_claimable_work",
+        "reason": "no safe ready, permissioned ready, stale in-progress, or blocked-open work was found",
+        "candidate_ids": [],
+        "safe_to_claim_without_permission": False,
+        "requires_user_permission": False,
+    }
+
+
 def is_container_parent(issue: dict[str, Any]) -> bool:
     return issue.get("issue_type") == "epic"
 
@@ -610,23 +657,33 @@ rows = load_jsonl(ISSUES)
 errors = validate_contract(contract)
 analysis = analyze(rows, contract)
 blocked_chokepoints = blocker_chokepoints(analysis["blocked_open"])
+safe_ready_ids = projected_ids(analysis["safe_ready"])
+permissioned_ready_ids = projected_ids(analysis["permissioned_ready"])
+stale_in_progress_ids = projected_ids(analysis["stale_in_progress"])
+top_blocker_ids = [str(row["id"]) for row in blocked_chokepoints[:5]]
 stdout_summary = {
     "safe_ready": analysis["summary"]["safe_ready_total"],
-    "safe_ready_ids": projected_ids(analysis["safe_ready"]),
+    "safe_ready_ids": safe_ready_ids,
     "permissioned_ready": analysis["summary"]["permissioned_ready_total"],
-    "permissioned_ready_ids": projected_ids(analysis["permissioned_ready"]),
+    "permissioned_ready_ids": permissioned_ready_ids,
     "permissioned_ready_summary": permissioned_ready_summary(analysis["permissioned_ready"]),
     "stale_in_progress": analysis["summary"]["stale_in_progress_total"],
-    "stale_in_progress_ids": projected_ids(analysis["stale_in_progress"]),
+    "stale_in_progress_ids": stale_in_progress_ids,
     "blocked_open": analysis["summary"]["blocked_open_total"],
     "blocked_open_ids": projected_ids(analysis["blocked_open"]),
     "blocked_by_counts": blocked_chokepoints,
-    "top_blocker_ids": [str(row["id"]) for row in blocked_chokepoints[:5]],
+    "top_blocker_ids": top_blocker_ids,
     "in_progress": analysis["summary"]["in_progress_total"],
     "in_progress_ids": projected_ids(analysis["in_progress"]),
     "in_progress_age_summary": in_progress_summary(analysis["in_progress"]),
     "stale_threshold_hours": analysis["summary"]["stale_in_progress_after_hours"],
 }
+stdout_summary["recommended_next_action"] = recommended_next_action(
+    safe_ready_ids,
+    permissioned_ready_ids,
+    stale_in_progress_ids,
+    top_blocker_ids,
+)
 negative_controls = run_negative_controls(rows, contract)
 required_controls = {str(name) for name in contract.get("required_negative_controls", [])}
 observed_controls = {str(control.get("name")) for control in negative_controls}
