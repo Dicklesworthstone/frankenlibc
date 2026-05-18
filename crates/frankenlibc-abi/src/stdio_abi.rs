@@ -5659,6 +5659,40 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
 /// Thread-local counter for tmpnam uniqueness.
 static TMPNAM_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+#[cfg(feature = "owned-tls-cache")]
+static TMPNAM_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 64]);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static TMPNAM_BUF: std::cell::UnsafeCell<[u8; 64]> = const { std::cell::UnsafeCell::new([0u8; 64]) };
+}
+
+fn tmpnam_static_buffer(name: &[u8], total: usize) -> *mut c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        TMPNAM_BUF_OWNED_TLS.with(|buf| {
+            // SAFETY: `buf` is the per-thread static tmpnam buffer and `total`
+            // is bounded by the fixed local formatter buffer.
+            unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), buf.as_mut_ptr(), total) };
+            buf.as_ptr() as *mut c_char
+        })
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TMPNAM_BUF.with(|cell| {
+            let buf = cell.get();
+            // SAFETY: `buf` is the per-thread static tmpnam buffer and `total`
+            // is bounded by the fixed local formatter buffer.
+            unsafe {
+                std::ptr::copy_nonoverlapping(name.as_ptr(), (*buf).as_mut_ptr(), total);
+                (*buf).as_ptr() as *mut c_char
+            }
+        })
+    }
+}
+
 /// POSIX `tmpnam` — generate a unique temporary file name.
 ///
 /// If `s` is not NULL, the name is written to the buffer pointed to by `s`
@@ -5666,10 +5700,6 @@ static TMPNAM_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 /// buffer is used (NOT thread-safe in that case).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
-    thread_local! {
-        static BUF: std::cell::UnsafeCell<[u8; 64]> = const { std::cell::UnsafeCell::new([0u8; 64]) };
-    }
-
     let counter = TMPNAM_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let pid = raw_syscall::sys_getpid() as u32;
 
@@ -5694,13 +5724,7 @@ pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
         unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), s as *mut u8, total) };
         s
     } else {
-        BUF.with(|cell| {
-            let buf = cell.get();
-            unsafe {
-                std::ptr::copy_nonoverlapping(name.as_ptr(), (*buf).as_mut_ptr(), total);
-                (*buf).as_ptr() as *mut c_char
-            }
-        })
+        tmpnam_static_buffer(&name, total)
     }
 }
 
@@ -7178,10 +7202,55 @@ pub use _io_internal::*;
 // fpurge is a thin wrapper over our existing __fpurge that returns int
 // (the BSD signature) instead of void (the GNU signature).
 
+#[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
 
+#[cfg(feature = "owned-tls-cache")]
+static FGETLN_BUFFER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static FGETLN_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+fn fgetln_read_into_buffer(stream: *mut c_void, buf: &mut Vec<u8>) -> Option<(*mut c_char, usize)> {
+    buf.clear();
+    loop {
+        // SAFETY: callers pass a non-NULL FILE* validated by the public ABI entrypoint.
+        let c = unsafe { fgetc(stream) };
+        if c == -1 {
+            // EOF or error. If we already have bytes, return them
+            // (last line without trailing newline). Otherwise
+            // signal end-of-input.
+            if buf.is_empty() {
+                return None;
+            }
+            break;
+        }
+        buf.push(c as u8);
+        if c as u8 == b'\n' {
+            break;
+        }
+    }
+    // The buffer pointer is `buf.as_mut_ptr()`, but the buffer itself stays
+    // owned by the per-thread storage between calls.
+    let ptr = buf.as_mut_ptr() as *mut c_char;
+    let n = buf.len();
+    Some((ptr, n))
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
+    FGETLN_BUFFER_OWNED_TLS.with(|buf| fgetln_read_into_buffer(stream, buf))
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
+    FGETLN_BUFFER.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        fgetln_read_into_buffer(stream, &mut buf)
+    })
 }
 
 /// BSD `fgetln(stream, *len)` — read a line from `stream` (up to and
@@ -7206,35 +7275,7 @@ pub unsafe extern "C" fn fgetln(stream: *mut c_void, len: *mut usize) -> *mut c_
         return std::ptr::null_mut();
     }
 
-    let result = FGETLN_BUFFER.with(|cell| -> Option<(*mut c_char, usize)> {
-        let mut buf = cell.borrow_mut();
-        buf.clear();
-        loop {
-            // SAFETY: stream is a valid FILE* per caller.
-            let c = unsafe { fgetc(stream) };
-            if c == -1 {
-                // EOF or error. If we already have bytes, return them
-                // (last line without trailing newline). Otherwise
-                // signal end-of-input.
-                if buf.is_empty() {
-                    return None;
-                }
-                break;
-            }
-            buf.push(c as u8);
-            if c as u8 == b'\n' {
-                break;
-            }
-        }
-        // The buffer pointer is `buf.as_mut_ptr()`, but `buf` is
-        // borrowed inside this closure. Stash the pointer + length
-        // and return; Rust's borrow checker is satisfied because
-        // we don't outlive the closure body — the thread-local
-        // RefCell keeps the Vec alive between calls.
-        let ptr = buf.as_mut_ptr() as *mut c_char;
-        let n = buf.len();
-        Some((ptr, n))
-    });
+    let result = fgetln_current_buffer(stream);
 
     match result {
         Some((ptr, n)) => {
