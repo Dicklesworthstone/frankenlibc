@@ -88,11 +88,16 @@ Status keys:
 ## 4) P0 Harness/Conformance Migration (Phase B+)
 
 - [x] `TODO-0401` Introduce execution adapter seam crate (`frankenlibc-fixture-exec`).
-- [ ] `TODO-0402` Define target-state ownership for fixture execution logic (legacy crate vs new shared crate).
-- [ ] `TODO-0403` Extract `execute_fixture_case` implementation from `frankenlibc_conformance` into owned shared crate/module.
-- [ ] `TODO-0404` Keep output format bit-for-bit stable during extraction (golden hash invariant).
-- [ ] `TODO-0405` Decommission redundant glue in `frankenlibc_conformance` once extraction completes.
-- [ ] `TODO-0406` Add migration note documenting why harness forbids `unsafe` and where host-libc unsafe calls live.
+- [x] `TODO-0402` Define target-state ownership for fixture execution logic (legacy crate vs new shared crate).
+  - Closed by `bd-0agsk.7`: `tests/conformance/fixture_executor_ownership_and_golden.v1.json` defines `frankenlibc-fixture-exec` as the stable public boundary, keeps `frankenlibc_conformance` as a compatibility package path, and forbids direct harness dependency on legacy internals.
+- [x] `TODO-0403` Extract `execute_fixture_case` implementation from `frankenlibc_conformance` into owned shared crate/module.
+  - Closed by `bd-0agsk.8`: `crates/frankenlibc-fixture-exec/src/lib.rs` owns the public executor boundary, while `crates/frankenlibc_conformance/Cargo.toml` now points its library target at the fixture-exec entrypoint for compatibility.
+- [x] `TODO-0404` Keep output format bit-for-bit stable during extraction (golden hash invariant).
+  - Closed by `bd-0agsk.7`/`bd-0agsk.8`: the fixture executor golden manifest and `crates/frankenlibc-harness/tests/fixture_executor_ownership_and_golden_test.rs` pin seven representative `execute_fixture_case` payload hashes.
+- [x] `TODO-0405` Decommission redundant glue in `frankenlibc_conformance` once extraction completes.
+  - Closed by `bd-0agsk.8`: the legacy crate is retained only as a compatibility package path because file deletion is forbidden; the Cargo library target reuses `../frankenlibc-fixture-exec/src/lib.rs`.
+- [x] `TODO-0406` Add migration note documenting why harness forbids `unsafe` and where host-libc unsafe calls live.
+  - Closed by `bd-0agsk.8`: `tests/conformance/fixture_executor_ownership_and_golden.v1.json` records that the ownership inversion introduces no new unsafe boundary and keeps host-oracle unsafe calls behind the fixture-exec public boundary.
 
 ## 5) P1 Fixture Depth + Mode Coverage
 
