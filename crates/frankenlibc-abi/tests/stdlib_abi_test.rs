@@ -9,14 +9,15 @@ use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atof, atoll, bsearch_r, clearenv, confstr, dehumanize_number, drand48,
-    drand48_r, ecvt, ecvt_r, erand48, erand48_r, error_at_line, expand_number, fcvt, fcvt_r,
-    fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages,
-    getbsize, getenv, getenv_r, getsubopt, humanize_number, initstate, initstate_r, jrand48, l64a,
-    lcong48, lcong48_r, lrand48, lrand48_r, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
-    on_exit, putenv, qgcvt, qsort_r, rand, random, random_r, reallocarray, reallocf, recallocarray,
-    seed48, seed48_r, setenv, setstate, setstate_r, srand, srand48, srand48_r, srandom, srandom_r,
-    strpct, strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull,
-    strtouq, system, unsetenv,
+    drand48_r, ecvt, ecvt_r, endusershell, erand48, erand48_r, error_at_line, expand_number, fcvt,
+    fcvt_r, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
+    get_phys_pages, getbsize, getenv, getenv_r, getsubopt, getusershell, humanize_number,
+    initstate, initstate_r, jrand48, l64a, lcong48, lcong48_r, lrand48, lrand48_r, mkostemp,
+    mkostemps, mkstemps, mrand48, nrand48, on_exit, putenv, qecvt, qfcvt, qgcvt, qsort_r, rand,
+    random, random_r, reallocarray, reallocf, recallocarray, seed48, seed48_r, setenv, setstate,
+    setstate_r, setusershell, srand, srand48, srand48_r, srandom, srandom_r, strpct, strspct,
+    strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq, system,
+    unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -4197,6 +4198,32 @@ fn l64a_a64l_roundtrip() {
 }
 
 #[test]
+fn getusershell_rewinds_and_clears_iterator_state() {
+    setusershell();
+    let first = getusershell();
+    assert!(!first.is_null());
+    let first_text = unsafe { CStr::from_ptr(first).to_bytes().to_vec() };
+
+    let _ = getusershell();
+    setusershell();
+    let rewound = getusershell();
+    assert!(!rewound.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr(rewound).to_bytes() },
+        first_text.as_slice()
+    );
+
+    endusershell();
+    let after_end = getusershell();
+    assert!(!after_end.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr(after_end).to_bytes() },
+        first_text.as_slice()
+    );
+    endusershell();
+}
+
+#[test]
 fn error_at_line_ignores_tracked_unterminated_filename_in_child()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = b"TRACKED_UNTERMINATED_ERROR_FILENAME";
@@ -4372,6 +4399,24 @@ fn qgcvt_basic_conversion() {
     assert!(!result.is_null());
     let s = unsafe { std::ffi::CStr::from_ptr(result) };
     assert!(s.to_str().unwrap().contains("3.25"));
+}
+
+#[test]
+fn qecvt_and_qfcvt_keep_separate_reused_static_buffers() {
+    let _guard = ecvt_fcvt_lock();
+    let mut decpt: libc::c_int = 0;
+    let mut sign: libc::c_int = 0;
+
+    let qecvt_first = unsafe { qecvt(123.456, 6, &mut decpt, &mut sign) };
+    assert!(!qecvt_first.is_null());
+    let qecvt_second = unsafe { qecvt(7.5, 3, &mut decpt, &mut sign) };
+    assert_eq!(qecvt_first, qecvt_second);
+
+    let qfcvt_first = unsafe { qfcvt(123.456, 3, &mut decpt, &mut sign) };
+    assert!(!qfcvt_first.is_null());
+    let qfcvt_second = unsafe { qfcvt(7.5, 1, &mut decpt, &mut sign) };
+    assert_eq!(qfcvt_first, qfcvt_second);
+    assert_ne!(qecvt_first, qfcvt_first);
 }
 
 #[test]

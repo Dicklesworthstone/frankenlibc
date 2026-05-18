@@ -5,7 +5,7 @@
 //! process control (`exit`, `atexit`), and sorting/searching (`qsort`, `bsearch`)
 //! with membrane validation.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{
     c_char, c_double, c_int, c_long, c_longlong, c_uchar, c_uint, c_ulong, c_ulonglong, c_void,
 };
@@ -21,6 +21,28 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
 
 const MAX_LEGACY_CVT_DIGITS: usize = 512;
+
+#[cfg(feature = "owned-tls-cache")]
+struct StdlibTls {
+    shell_idx: Cell<usize>,
+    shell_cache: RefCell<Vec<String>>,
+    qecvt_buf: RefCell<[u8; 128]>,
+    qfcvt_buf: RefCell<[u8; 128]>,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_stdlib_tls() -> StdlibTls {
+    StdlibTls {
+        shell_idx: Cell::new(0),
+        shell_cache: RefCell::new(Vec::new()),
+        qecvt_buf: RefCell::new([0u8; 128]),
+        qfcvt_buf: RefCell::new([0u8; 128]),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static STDLIB_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<StdlibTls> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_stdlib_tls);
 
 #[inline]
 fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
@@ -3975,15 +3997,27 @@ static VALID_SHELLS: &[&str] = &[
     "/usr/sbin/nologin",
 ];
 
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static SHELL_IDX: Cell<usize> = const { Cell::new(0) };
-    static SHELL_CACHE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SHELL_CACHE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+fn with_shell_state<R>(f: impl FnOnce(&Cell<usize>, &RefCell<Vec<String>>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STDLIB_OWNED_TLS.with(|tls| f(&tls.shell_idx, &tls.shell_cache))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SHELL_CACHE.with(|cache| SHELL_IDX.with(|idx| f(idx, cache)))
+    }
 }
 
 /// `getusershell` — get valid login shell from /etc/shells.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn getusershell() -> *mut c_char {
-    SHELL_CACHE.with(|cache| {
+    with_shell_state(|idx, cache| {
         let mut cache = cache.borrow_mut();
         if cache.is_empty() {
             // Load from /etc/shells
@@ -4003,29 +4037,29 @@ pub extern "C" fn getusershell() -> *mut c_char {
             }
         }
 
-        SHELL_IDX.with(|idx| {
-            let i = idx.get();
-            if i < cache.len() {
-                idx.set(i + 1);
-                cache[i].as_ptr() as *mut c_char
-            } else {
-                ptr::null_mut()
-            }
-        })
+        let i = idx.get();
+        if i < cache.len() {
+            idx.set(i + 1);
+            cache[i].as_ptr() as *mut c_char
+        } else {
+            ptr::null_mut()
+        }
     })
 }
 
 /// `setusershell` — rewind the shell list iterator.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn setusershell() {
-    SHELL_IDX.with(|idx| idx.set(0));
+    with_shell_state(|idx, _cache| idx.set(0));
 }
 
 /// `endusershell` — close the shell list and free resources.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn endusershell() {
-    SHELL_IDX.with(|idx| idx.set(0));
-    SHELL_CACHE.with(|cache| cache.borrow_mut().clear());
+    with_shell_state(|idx, cache| {
+        idx.set(0);
+        cache.borrow_mut().clear();
+    });
 }
 
 // ===========================================================================
@@ -4784,6 +4818,34 @@ unsafe fn copy_legacy_cvt_digits(buf: *mut c_char, effective_buflen: usize, digi
     }
 }
 
+fn with_qecvt_buf<R>(f: impl FnOnce(&RefCell<[u8; 128]>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STDLIB_OWNED_TLS.with(|tls| f(&tls.qecvt_buf))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        thread_local! {
+            static BUF: RefCell<[u8; 128]> = const { RefCell::new([0u8; 128]) };
+        }
+        BUF.with(f)
+    }
+}
+
+fn with_qfcvt_buf<R>(f: impl FnOnce(&RefCell<[u8; 128]>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STDLIB_OWNED_TLS.with(|tls| f(&tls.qfcvt_buf))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        thread_local! {
+            static BUF: RefCell<[u8; 128]> = const { RefCell::new([0u8; 128]) };
+        }
+        BUF.with(f)
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ecvt_r(
     value: c_double,
@@ -4874,10 +4936,7 @@ pub unsafe extern "C" fn qecvt(
     sign: *mut c_int,
 ) -> *mut c_char {
     // Reuse ecvt for quad precision (f64 approximation)
-    thread_local! {
-        static BUF: std::cell::RefCell<[u8; 128]> = const { std::cell::RefCell::new([0u8; 128]) };
-    }
-    BUF.with(|b| {
+    with_qecvt_buf(|b| {
         let mut buf = b.borrow_mut();
         unsafe {
             ecvt_r(
@@ -4900,10 +4959,7 @@ pub unsafe extern "C" fn qfcvt(
     decpt: *mut c_int,
     sign: *mut c_int,
 ) -> *mut c_char {
-    thread_local! {
-        static BUF: std::cell::RefCell<[u8; 128]> = const { std::cell::RefCell::new([0u8; 128]) };
-    }
-    BUF.with(|b| {
+    with_qfcvt_buf(|b| {
         let mut buf = b.borrow_mut();
         unsafe {
             fcvt_r(
