@@ -992,6 +992,39 @@ def expect_validation_failure(packet: dict[str, Any], source: str, signature: st
     )
 
 
+def validate_markdown_text(source: str, markdown_text: str, required_lines: list[str]) -> None:
+    if FORBIDDEN_TEXT.search(markdown_text):
+        add_error(source, "forbidden_live_markdown_primitive", "live markdown includes forbidden cleanup primitive")
+    for line in required_lines:
+        if line not in markdown_text:
+            add_error(source, "missing_markdown_line", f"live markdown missing required text: {line}")
+
+
+def expect_markdown_validation_failure(markdown_text: str, source: str, required_lines: list[str], signature: str, mutation: str) -> None:
+    before_errors = len(errors)
+    before_events = len(events)
+    validate_markdown_text(source, markdown_text, required_lines)
+    observed_errors = errors[before_errors:]
+    del errors[before_errors:]
+    del events[before_events:]
+    if any(error.get("failure_signature") == signature for error in observed_errors):
+        events.append(
+            {
+                "source": source,
+                "expected_failure_signature": signature,
+                "mutation": mutation,
+                "status": "negative_checked",
+            }
+        )
+        return
+    observed = sorted({str(error.get("failure_signature")) for error in observed_errors})
+    add_error(
+        source,
+        "negative_markdown_control_missed",
+        f"{mutation} did not trigger {signature}; observed={observed}",
+    )
+
+
 def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
     missing_target_packet = deepcopy(packet)
     worker = first_critical_worker(missing_target_packet)
@@ -1572,16 +1605,19 @@ else:
     markdown_text = "\n".join(required_lines)
     if FORBIDDEN_TEXT.search(markdown_text):
         add_error(rel(GOLDEN), "forbidden_markdown_primitive", "required markdown lines include forbidden cleanup primitive")
+    expect_markdown_validation_failure(
+        markdown_text + "\nsbh clean /data/projects",
+        f"{rel(GOLDEN)}::forbidden_live_markdown_primitive",
+        required_lines,
+        "forbidden_live_markdown_primitive",
+        "append a destructive sbh cleanup primitive to markdown",
+    )
 
 if LIVE_REPORT.exists():
     validate_packet(load_json(LIVE_REPORT), rel(LIVE_REPORT), require_rch_e100=False)
 if LIVE_MARKDOWN.exists() and isinstance(required_lines, list):
     live_markdown = LIVE_MARKDOWN.read_text(encoding="utf-8", errors="replace")
-    if FORBIDDEN_TEXT.search(live_markdown):
-        add_error(rel(LIVE_MARKDOWN), "forbidden_live_markdown_primitive", "live markdown includes forbidden cleanup primitive")
-    for line in required_lines:
-        if line not in live_markdown:
-            add_error(rel(LIVE_MARKDOWN), "missing_markdown_line", f"live markdown missing required text: {line}")
+    validate_markdown_text(rel(LIVE_MARKDOWN), live_markdown, required_lines)
 
 report = {
     "schema_version": "rch_pressure_packet_goldens.report.v1",
