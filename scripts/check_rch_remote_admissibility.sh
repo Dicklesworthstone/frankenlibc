@@ -8,6 +8,8 @@ OUT_DIR="${FRANKENLIBC_RCH_PREFLIGHT_OUT_DIR:-${ROOT}/target/rch-remote-admissib
 REPORT="${FRANKENLIBC_RCH_PREFLIGHT_REPORT:-${OUT_DIR}/rch_remote_admissibility.report.json}"
 LOG="${FRANKENLIBC_RCH_PREFLIGHT_LOG:-${OUT_DIR}/rch_remote_admissibility.log.jsonl}"
 APPROVAL_PACKET_SCRIPT="${ROOT}/scripts/generate_rch_pressure_approval_packet.sh"
+APPROVAL_PACKET_REPORT="${FRANKENLIBC_RCH_PACKET_REPORT:-${ROOT}/target/rch-pressure-approval-packet/rch_pressure_approval_packet.report.json}"
+APPROVAL_PACKET_MARKDOWN="${FRANKENLIBC_RCH_PACKET_MARKDOWN:-${ROOT}/target/rch-pressure-approval-packet/rch_pressure_approval_packet.approval.md}"
 DEFAULT_COMMAND="cargo test -p frankenlibc-harness --test standalone_owned_unwind_experiment_test -- --nocapture"
 
 mkdir -p "${OUT_DIR}"
@@ -40,7 +42,7 @@ else
   printf '%s\n' "${status}" >"${DRY_RUN_STATUS}"
 fi
 
-python3 - "${ROOT}" "${CONTRACT}" "${VALIDATION_COMMAND}" "${DRY_RUN_STDOUT}" "${DRY_RUN_STDERR}" "${DRY_RUN_STATUS}" "${REPORT}" "${LOG}" "${APPROVAL_PACKET_SCRIPT}" <<'PY'
+python3 - "${ROOT}" "${CONTRACT}" "${VALIDATION_COMMAND}" "${DRY_RUN_STDOUT}" "${DRY_RUN_STDERR}" "${DRY_RUN_STATUS}" "${REPORT}" "${LOG}" "${APPROVAL_PACKET_SCRIPT}" "${APPROVAL_PACKET_REPORT}" "${APPROVAL_PACKET_MARKDOWN}" <<'PY'
 from __future__ import annotations
 
 import copy
@@ -60,6 +62,8 @@ DRY_RUN_STATUS = pathlib.Path(sys.argv[6])
 REPORT = pathlib.Path(sys.argv[7])
 LOG = pathlib.Path(sys.argv[8])
 APPROVAL_PACKET_SCRIPT = pathlib.Path(sys.argv[9])
+APPROVAL_PACKET_REPORT = pathlib.Path(sys.argv[10])
+APPROVAL_PACKET_MARKDOWN = pathlib.Path(sys.argv[11])
 
 contract_errors: list[str] = []
 
@@ -89,6 +93,16 @@ def load_json(path: pathlib.Path) -> dict[str, Any]:
         contract_errors.append(f"{path}: contract must be a JSON object")
         return {}
     return loaded
+
+
+def load_optional_json(path: pathlib.Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return loaded if isinstance(loaded, dict) else None
 
 
 def current_commit() -> str:
@@ -246,6 +260,70 @@ def current_blocked_errors(contract: dict[str, Any], report: dict[str, Any]) -> 
     return local_errors
 
 
+def approval_readiness_errors(rows: Any) -> list[str]:
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        return ["approval_readiness_not_list"]
+    errors: list[str] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            errors.append(f"approval_readiness_{index}_not_object")
+            continue
+        if row.get("safe_to_run_without_user_approval") is not False:
+            errors.append(f"approval_readiness_{index}_claims_safe_without_user_approval")
+        if row.get("exact_user_approval_required") is not True:
+            errors.append(f"approval_readiness_{index}_missing_explicit_user_approval_gate")
+        if row.get("cleanup_executed") is not False:
+            errors.append(f"approval_readiness_{index}_claims_cleanup_executed")
+    return errors
+
+
+def approval_packet_summary(packet: dict[str, Any] | None) -> dict[str, Any]:
+    if packet is None:
+        return {
+            "status": "not_generated",
+            "report_path": rel(APPROVAL_PACKET_REPORT),
+            "markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
+            "selected_candidate_count": 0,
+            "ready_for_explicit_user_approval_count": 0,
+            "ready_candidate_paths": [],
+            "safe_to_run_without_user_approval": False,
+            "cleanup_executed": False,
+            "contract_errors": [],
+        }
+    rows = packet.get("approval_readiness")
+    readiness_rows = rows if isinstance(rows, list) else []
+    ready_paths = [
+        str(row.get("path"))
+        for row in readiness_rows
+        if isinstance(row, dict)
+        and row.get("approval_state") == "ready_for_explicit_user_approval"
+        and isinstance(row.get("path"), str)
+    ]
+    any_safe_without_approval = any(
+        isinstance(row, dict) and row.get("safe_to_run_without_user_approval") is not False
+        for row in readiness_rows
+    )
+    any_cleanup_executed = any(
+        isinstance(row, dict) and row.get("cleanup_executed") is not False
+        for row in readiness_rows
+    )
+    return {
+        "status": "available",
+        "packet_id": packet.get("packet_id"),
+        "generated_at_utc": packet.get("generated_at_utc"),
+        "report_path": rel(APPROVAL_PACKET_REPORT),
+        "markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
+        "selected_candidate_count": len(readiness_rows),
+        "ready_for_explicit_user_approval_count": len(ready_paths),
+        "ready_candidate_paths": ready_paths,
+        "safe_to_run_without_user_approval": any_safe_without_approval,
+        "cleanup_executed": any_cleanup_executed,
+        "contract_errors": approval_readiness_errors(rows),
+    }
+
+
 def validate_contract(contract: dict[str, Any], head: str) -> None:
     if contract.get("schema_version") != "v1":
         contract_errors.append("contract schema_version must be v1")
@@ -382,6 +460,21 @@ for control in contract.get("negative_controls", []):
             if "current_blocked_required_signature_missing" in observed_errors
             else ",".join(observed_errors)
         )
+    elif control_id == "approval_readiness_claims_safe_without_permission_fails":
+        observed_errors = approval_readiness_errors(
+            [
+                {
+                    "safe_to_run_without_user_approval": True,
+                    "exact_user_approval_required": True,
+                    "cleanup_executed": False,
+                }
+            ]
+        )
+        observed = (
+            "approval_readiness_claims_safe_without_user_approval"
+            if any("claims_safe_without_user_approval" in item for item in observed_errors)
+            else ",".join(observed_errors)
+        )
     else:
         contract_errors.append(f"unknown negative control {control_id}")
     passed = observed == expected
@@ -395,6 +488,9 @@ for control in contract.get("negative_controls", []):
             "status": "pass" if passed else "fail",
         }
     )
+
+approval_packet = load_optional_json(APPROVAL_PACKET_REPORT)
+approval_summary = approval_packet_summary(approval_packet)
 
 report: dict[str, Any] = {
     "schema_version": "rch_remote_admissibility_preflight.v1",
@@ -417,8 +513,11 @@ report: dict[str, Any] = {
     "status": status,
     "failure_signatures": sorted(set(failure_signatures)),
     "approval_packet_command": str(APPROVAL_PACKET_SCRIPT),
+    "approval_packet_report_path": rel(APPROVAL_PACKET_REPORT),
+    "approval_packet_markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
+    "approval_readiness_summary": approval_summary,
     "operator_message": (
-        "Remote rch admissibility is blocked. Generate an approval packet before attempting cargo validation."
+        "Remote rch admissibility is blocked. Review the existing approval packet readiness summary or regenerate the approval packet before attempting cargo validation."
         if status != "admissible"
         else "Remote rch admissibility preflight passed."
     ),
@@ -433,6 +532,7 @@ report: dict[str, Any] = {
     "contract_errors": [],
 }
 contract_errors.extend(current_blocked_errors(contract, report))
+contract_errors.extend(f"approval_packet:{item}" for item in approval_summary.get("contract_errors", []))
 missing_fields = missing_report_fields(contract, report)
 if missing_fields:
     contract_errors.append(f"missing_report_field:{','.join(missing_fields)}")
@@ -467,9 +567,11 @@ LOG.write_text(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n", 
 if status == "admissible":
     print(f"rch remote admissibility preflight passed for: {VALIDATION_COMMAND}")
 else:
+    ready_count = approval_summary.get("ready_for_explicit_user_approval_count", 0)
     print(
         "rch remote admissibility preflight blocked; run "
         f"{APPROVAL_PACKET_SCRIPT} for an approval packet. "
+        f"approval_ready_candidates={ready_count}. "
         f"failure_signatures={','.join(report['failure_signatures'])}",
         file=sys.stderr,
     )

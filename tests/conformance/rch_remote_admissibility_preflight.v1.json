@@ -53,6 +53,9 @@
       "status",
       "failure_signatures",
       "approval_packet_command",
+      "approval_packet_report_path",
+      "approval_packet_markdown_path",
+      "approval_readiness_summary",
       "operator_message",
       "local_fallback_policy",
       "status_on_current_blocked_state",
@@ -97,6 +100,11 @@
       "control_id": "missing_required_signature_current_state_fails",
       "mutation": "claim current blocked state while omitting one required blocked-state signature",
       "expected_decision": "current_blocked_required_signature_missing"
+    },
+    {
+      "control_id": "approval_readiness_claims_safe_without_permission_fails",
+      "mutation": "synthetic approval readiness row claims cleanup is safe without explicit user approval",
+      "expected_decision": "approval_readiness_claims_safe_without_user_approval"
     }
   ],
   "validation": {
@@ -107,6 +115,7 @@
       "jq empty target/rch-remote-admissibility/rch_remote_admissibility.report.json",
       "jq empty target/rch-remote-admissibility/rch_remote_admissibility.log.jsonl",
       "jq -e '.contract_status == \"pass\" and .status == \"blocked\" and .status_on_current_blocked_state == \"blocked\"' target/rch-remote-admissibility/rch_remote_admissibility.report.json",
+      "jq -e '(.approval_readiness_summary.ready_for_explicit_user_approval_count | type == \"number\") and .approval_readiness_summary.safe_to_run_without_user_approval == false and .approval_readiness_summary.cleanup_executed == false' target/rch-remote-admissibility/rch_remote_admissibility.report.json",
       "git diff --check -- scripts/check_rch_remote_admissibility.sh tests/conformance/rch_remote_admissibility_preflight.v1.json .beads/issues.jsonl",
       "AGENT_NAME=DarkShore br dep cycles --json"
     ],
