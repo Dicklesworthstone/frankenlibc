@@ -136,11 +136,16 @@ Status keys:
 
 ## 8) P1 Runtime Math Kernel Contract Tracking
 
-- [ ] `TODO-0801` Reconcile mandatory live runtime_math module list in docs with actual source tree inventory.
-- [ ] `TODO-0802` Add machine-checked linkage report for all required kernels under `runtime_math/mod.rs`.
-- [ ] `TODO-0803` Ensure production-monitor classification policy remains consistent with governance artifacts.
-- [ ] `TODO-0804` Ensure retired/experimental kernel sets cannot leak into production-monitor set.
-- [ ] `TODO-0805` Add CI gate: required modules present + linked + classified.
+- [x] `TODO-0801` Reconcile mandatory live runtime_math module list in docs with actual source tree inventory.
+  - Closed by `bd-0agsk.12`: `tests/runtime_math/runtime_math_required_module_gate.v1.json` reconciles the AGENTS.md runtime-math requirements against the live `crates/frankenlibc-membrane/src/runtime_math/` source inventory, `runtime_math/mod.rs`, linkage ledger, classification matrix, production manifest, and governance artifact.
+- [x] `TODO-0802` Add machine-checked linkage report for all required kernels under `runtime_math/mod.rs`.
+  - Closed by `bd-0agsk.12` plus prior linkage proof: `tests/runtime_math/runtime_math_linkage.v1.json` and `scripts/check_runtime_math_linkage.sh` machine-check the runtime-math module linkage ledger, while `tests/conformance/runtime_math_linkage_proofs_completion_contract.v1.json` binds the existing linkage proof gate to completion evidence.
+- [x] `TODO-0803` Ensure production-monitor classification policy remains consistent with governance artifacts.
+  - Closed by `bd-0agsk.12` / `bd-2k6b`: `tests/runtime_math/runtime_math_classification_matrix.v1.json` and `scripts/check_runtime_math_classification_matrix.sh` compare module classifications against `tests/conformance/math_governance.json`, the linkage ledger, and `tests/runtime_math/production_kernel_manifest.v1.json`.
+- [x] `TODO-0804` Ensure retired/experimental kernel sets cannot leak into production-monitor set.
+  - Closed by `bd-0agsk.12` / `bd-2k6b`: `tests/runtime_math/production_kernel_manifest.v1.json` separates production and research-only modules, and the classification matrix summary requires zero research modules in the production manifest.
+- [x] `TODO-0805` Add CI gate: required modules present + linked + classified.
+  - Closed by `bd-0agsk.12`: `scripts/check_runtime_math_required_module_gate.sh --validate-only` is the combined fail-closed gate over required modules, live source files, `runtime_math/mod.rs`, linkage, classification, production admission, and governance consistency.
 
 ## 9) P1 Tooling Requirements (/dp/asupersync + /dp/frankentui)
 
