@@ -336,6 +336,11 @@ impl RuntimeDecision {
     }
 }
 
+pub const RUNTIME_DECISION_TELEMETRY_MODE_COUNT: usize = 3;
+pub const RUNTIME_DECISION_TELEMETRY_ACTION_COUNT: usize = 4;
+pub const RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT: usize = 2;
+pub const RUNTIME_DECISION_TELEMETRY_REPAIR_ACTION_COUNT: usize = 8;
+
 /// Stable, explicit evidence-export counters exposed by the runtime kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeEvidenceContractSnapshot {
@@ -345,6 +350,72 @@ pub struct RuntimeEvidenceContractSnapshot {
     pub evidence_loss_count: u64,
     /// Highest observed evidence epoch across all streams.
     pub evidence_max_epoch: u64,
+}
+
+/// Low-overhead decision telemetry for correlating hot-path overhead runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeDecisionTelemetrySnapshot {
+    pub decisions: u64,
+    pub mode_decision_counts: [u64; RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+    pub action_counts: [u64; RUNTIME_DECISION_TELEMETRY_ACTION_COUNT],
+    pub mode_action_counts:
+        [[u64; RUNTIME_DECISION_TELEMETRY_ACTION_COUNT]; RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+    pub family_action_counts: [[u64; RUNTIME_DECISION_TELEMETRY_ACTION_COUNT]; ApiFamily::COUNT],
+    pub profile_counts: [u64; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT],
+    pub mode_profile_counts:
+        [[u64; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT]; RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+    pub family_profile_counts: [[u64; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT]; ApiFamily::COUNT],
+    pub repair_action_counts: [u64; RUNTIME_DECISION_TELEMETRY_REPAIR_ACTION_COUNT],
+    pub tls_cache_hits: u64,
+    pub tls_cache_misses: u64,
+    pub tls_cache_hit_delta: u64,
+    pub tls_cache_miss_delta: u64,
+}
+
+impl RuntimeDecisionTelemetrySnapshot {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            decisions: 0,
+            mode_decision_counts: [0; RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+            action_counts: [0; RUNTIME_DECISION_TELEMETRY_ACTION_COUNT],
+            mode_action_counts: [[0; RUNTIME_DECISION_TELEMETRY_ACTION_COUNT];
+                RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+            family_action_counts: [[0; RUNTIME_DECISION_TELEMETRY_ACTION_COUNT]; ApiFamily::COUNT],
+            profile_counts: [0; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT],
+            mode_profile_counts: [[0; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT];
+                RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+            family_profile_counts: [[0; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT];
+                ApiFamily::COUNT],
+            repair_action_counts: [0; RUNTIME_DECISION_TELEMETRY_REPAIR_ACTION_COUNT],
+            tls_cache_hits: 0,
+            tls_cache_misses: 0,
+            tls_cache_hit_delta: 0,
+            tls_cache_miss_delta: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn missing_decision_telemetry(self) -> bool {
+        let action_total = sum_u64_array(&self.action_counts);
+        let profile_total = sum_u64_array(&self.profile_counts);
+        let mode_total = sum_u64_array(&self.mode_decision_counts);
+        let mode_action_total = sum_u64_matrix(&self.mode_action_counts);
+        let mode_profile_total = sum_u64_matrix(&self.mode_profile_counts);
+        let family_action_total = sum_u64_matrix(&self.family_action_counts);
+        let family_profile_total = sum_u64_matrix(&self.family_profile_counts);
+        let repair_action_total = sum_u64_array(&self.repair_action_counts);
+        let repair_decisions = self.action_counts[2];
+
+        self.decisions != action_total
+            || self.decisions != profile_total
+            || self.decisions != mode_total
+            || self.decisions != mode_action_total
+            || self.decisions != mode_profile_total
+            || self.decisions != family_action_total
+            || self.decisions != family_profile_total
+            || repair_decisions != repair_action_total
+    }
 }
 
 /// Reverse-round branch-diversity state derived from decision-card exports.
@@ -405,6 +476,9 @@ pub trait RuntimeKernelFramework {
 
     /// Capture evidence-export counters for traceability and audit checks.
     fn evidence_contract_snapshot(&self) -> RuntimeEvidenceContractSnapshot;
+
+    /// Capture decision telemetry counters for hot-path overhead correlation.
+    fn decision_telemetry_snapshot(&self) -> RuntimeDecisionTelemetrySnapshot;
 
     /// Capture reverse-round branch-diversity state for runtime enforcement checks.
     fn reverse_round_diversity_snapshot(&self) -> RuntimeReverseRoundDiversitySnapshot;
@@ -907,6 +981,18 @@ pub struct RuntimeMathKernel {
     cached_policy_hash: AtomicU64,
     cached_policy_load_state: AtomicU8,
     cached_policy_action_dist: [AtomicU64; 4], // Allow, FullValidate, Repair, Deny
+    cached_mode_decision_counts: [AtomicU64; RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+    cached_mode_action_counts: [[AtomicU64; RUNTIME_DECISION_TELEMETRY_ACTION_COUNT];
+        RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+    cached_family_action_counts:
+        [[AtomicU64; RUNTIME_DECISION_TELEMETRY_ACTION_COUNT]; ApiFamily::COUNT],
+    cached_mode_profile_counts: [[AtomicU64; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT];
+        RUNTIME_DECISION_TELEMETRY_MODE_COUNT],
+    cached_family_profile_counts:
+        [[AtomicU64; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT]; ApiFamily::COUNT],
+    cached_repair_action_counts: [AtomicU64; RUNTIME_DECISION_TELEMETRY_REPAIR_ACTION_COUNT],
+    last_telemetry_tls_cache_hits: AtomicU64,
+    last_telemetry_tls_cache_misses: AtomicU64,
     cached_pressure_regime: AtomicU8,
     cached_pressure_score_milli: AtomicU64,
     cached_pressure_raw_score_milli: AtomicU64,
@@ -1119,6 +1205,22 @@ impl RuntimeMathKernel {
             cached_policy_hash: AtomicU64::new(0),
             cached_policy_load_state: AtomicU8::new(POLICY_LOAD_STATE_NONE),
             cached_policy_action_dist: std::array::from_fn(|_| AtomicU64::new(0)),
+            cached_mode_decision_counts: std::array::from_fn(|_| AtomicU64::new(0)),
+            cached_mode_action_counts: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            cached_family_action_counts: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            cached_mode_profile_counts: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            cached_family_profile_counts: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            cached_repair_action_counts: std::array::from_fn(|_| AtomicU64::new(0)),
+            last_telemetry_tls_cache_hits: AtomicU64::new(0),
+            last_telemetry_tls_cache_misses: AtomicU64::new(0),
             cached_pressure_regime: AtomicU8::new(PRESSURE_REGIME_NOMINAL),
             cached_pressure_score_milli: AtomicU64::new(0),
             cached_pressure_raw_score_milli: AtomicU64::new(0),
@@ -1249,6 +1351,30 @@ impl RuntimeMathKernel {
                 self.policy_lookup = None;
                 Err(err)
             }
+        }
+    }
+
+    fn record_decision_telemetry(
+        &self,
+        mode: SafetyLevel,
+        family: ApiFamily,
+        profile: ValidationProfile,
+        action: MembraneAction,
+    ) {
+        let mode_idx = mode_telemetry_index(mode);
+        let family_idx = family as usize;
+        let profile_idx = profile_telemetry_index(profile);
+        let action_idx = action_telemetry_index(action);
+
+        self.cached_mode_decision_counts[mode_idx].fetch_add(1, Ordering::Relaxed);
+        self.cached_mode_action_counts[mode_idx][action_idx].fetch_add(1, Ordering::Relaxed);
+        self.cached_family_action_counts[family_idx][action_idx].fetch_add(1, Ordering::Relaxed);
+        self.cached_mode_profile_counts[mode_idx][profile_idx].fetch_add(1, Ordering::Relaxed);
+        self.cached_family_profile_counts[family_idx][profile_idx].fetch_add(1, Ordering::Relaxed);
+
+        if let MembraneAction::Repair(healing_action) = action {
+            let repair_idx = repair_action_telemetry_index(healing_action);
+            self.cached_repair_action_counts[repair_idx].fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -2123,6 +2249,7 @@ impl RuntimeMathKernel {
             MembraneAction::Deny => 3,
         };
         self.cached_policy_action_dist[action_idx].fetch_add(1, Ordering::Relaxed);
+        self.record_decision_telemetry(mode, ctx.family, profile, action);
 
         let mut decision = RuntimeDecision {
             profile,
@@ -2246,6 +2373,12 @@ impl RuntimeMathKernel {
         self.cached_overload_policy_tag
             .store(OVERLOAD_POLICY_NONE, Ordering::Relaxed);
         self.cached_policy_action_dist[1].fetch_add(1, Ordering::Relaxed);
+        self.record_decision_telemetry(
+            mode,
+            ctx.family,
+            ValidationProfile::Full,
+            MembraneAction::FullValidate,
+        );
         Some(RuntimeDecision {
             profile: ValidationProfile::Full,
             action: MembraneAction::FullValidate,
@@ -4557,6 +4690,46 @@ impl RuntimeMathKernel {
         }
     }
 
+    /// Snapshot hot-path decision telemetry for overhead-run correlation.
+    #[must_use]
+    pub fn decision_telemetry_snapshot(&self) -> RuntimeDecisionTelemetrySnapshot {
+        let metrics_snapshot = crate::metrics::global_metrics().snapshot();
+        let tls_cache_hits = metrics_snapshot.tls_cache_hits;
+        let tls_cache_misses = metrics_snapshot.tls_cache_misses;
+        let previous_hits = self
+            .last_telemetry_tls_cache_hits
+            .swap(tls_cache_hits, Ordering::Relaxed);
+        let previous_misses = self
+            .last_telemetry_tls_cache_misses
+            .swap(tls_cache_misses, Ordering::Relaxed);
+
+        let mode_action_counts = load_atomic_u64_matrix(&self.cached_mode_action_counts);
+        let family_action_counts = load_atomic_u64_matrix(&self.cached_family_action_counts);
+        let mode_profile_counts = load_atomic_u64_matrix(&self.cached_mode_profile_counts);
+        let family_profile_counts = load_atomic_u64_matrix(&self.cached_family_profile_counts);
+
+        RuntimeDecisionTelemetrySnapshot {
+            decisions: self.decisions.load(Ordering::Relaxed),
+            mode_decision_counts: load_atomic_u64_array(&self.cached_mode_decision_counts),
+            action_counts: [
+                self.cached_policy_action_dist[0].load(Ordering::Relaxed),
+                self.cached_policy_action_dist[1].load(Ordering::Relaxed),
+                self.cached_policy_action_dist[2].load(Ordering::Relaxed),
+                self.cached_policy_action_dist[3].load(Ordering::Relaxed),
+            ],
+            mode_action_counts,
+            family_action_counts,
+            profile_counts: profile_counts_from_family_counts(&family_profile_counts),
+            mode_profile_counts,
+            family_profile_counts,
+            repair_action_counts: load_atomic_u64_array(&self.cached_repair_action_counts),
+            tls_cache_hits,
+            tls_cache_misses,
+            tls_cache_hit_delta: tls_cache_hits.saturating_sub(previous_hits),
+            tls_cache_miss_delta: tls_cache_misses.saturating_sub(previous_misses),
+        }
+    }
+
     /// Snapshot reverse-round branch-diversity state for runtime enforcement.
     #[must_use]
     pub fn reverse_round_diversity_snapshot(&self) -> RuntimeReverseRoundDiversitySnapshot {
@@ -4588,6 +4761,7 @@ impl RuntimeMathKernel {
         let cards = self.evidence_log.decision_cards_snapshot_sorted();
         let snapshot_capture_started = std::time::Instant::now();
         let snapshot = self.snapshot(mode);
+        let decision_telemetry = self.decision_telemetry_snapshot();
         let snapshot_capture_latency_ns =
             u64::try_from(snapshot_capture_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let snapshot_violations = snapshot_range_violations(&snapshot);
@@ -4751,6 +4925,32 @@ impl RuntimeMathKernel {
             snapshot.evidence_seqno,
         );
 
+        let telemetry_trace_id = runtime_scope_trace_id(
+            "runtime_math::snapshot::decision_telemetry",
+            bead_id,
+            run_id,
+        );
+        let _ = writeln!(
+            &mut out,
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{}\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"decision_id\":0,\"schema_version\":\"{}\",\"level\":\"info\",\"event\":\"runtime_decision_telemetry_snapshot\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::decision_telemetry\",\"decision_path\":\"snapshot::decision_telemetry\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"decisions\":{},\"mode_decision_counts\":{},\"action_counts\":{},\"mode_action_counts\":{},\"family_action_counts\":{},\"profile_counts\":{},\"mode_profile_counts\":{},\"family_profile_counts\":{},\"repair_action_counts\":{},\"tls_cache_hits\":{},\"tls_cache_misses\":{},\"tls_cache_hit_delta\":{},\"tls_cache_miss_delta\":{},\"missing_telemetry\":{},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+            telemetry_trace_id.as_str(),
+            MEMBRANE_SCHEMA_VERSION,
+            decision_telemetry.decisions,
+            u64_array_json(&decision_telemetry.mode_decision_counts),
+            u64_array_json(&decision_telemetry.action_counts),
+            u64_matrix_json(&decision_telemetry.mode_action_counts),
+            u64_matrix_json(&decision_telemetry.family_action_counts),
+            u64_array_json(&decision_telemetry.profile_counts),
+            u64_matrix_json(&decision_telemetry.mode_profile_counts),
+            u64_matrix_json(&decision_telemetry.family_profile_counts),
+            u64_array_json(&decision_telemetry.repair_action_counts),
+            decision_telemetry.tls_cache_hits,
+            decision_telemetry.tls_cache_misses,
+            decision_telemetry.tls_cache_hit_delta,
+            decision_telemetry.tls_cache_miss_delta,
+            decision_telemetry.missing_decision_telemetry(),
+        );
+
         let snapshot_range_trace_id =
             runtime_scope_trace_id("runtime_math::snapshot::range", bead_id, run_id);
         for (field, observed, min_allowed, max_allowed) in snapshot_violations {
@@ -4896,6 +5096,10 @@ impl RuntimeKernelFramework for RuntimeMathKernel {
         RuntimeMathKernel::evidence_contract_snapshot(self)
     }
 
+    fn decision_telemetry_snapshot(&self) -> RuntimeDecisionTelemetrySnapshot {
+        RuntimeMathKernel::decision_telemetry_snapshot(self)
+    }
+
     fn reverse_round_diversity_snapshot(&self) -> RuntimeReverseRoundDiversitySnapshot {
         RuntimeMathKernel::reverse_round_diversity_snapshot(self)
     }
@@ -5018,6 +5222,97 @@ fn decision_path(action: MembraneAction) -> &'static str {
 
 fn runtime_scope_trace_id(scope: &'static str, bead_id: &str, run_id: &str) -> TraceId {
     TraceId::new(format!("{scope}::{bead_id}::{run_id}"))
+}
+
+fn mode_telemetry_index(mode: SafetyLevel) -> usize {
+    match mode {
+        SafetyLevel::Strict => 0,
+        SafetyLevel::Hardened => 1,
+        SafetyLevel::Off => 2,
+    }
+}
+
+fn profile_telemetry_index(profile: ValidationProfile) -> usize {
+    match profile {
+        ValidationProfile::Fast => 0,
+        ValidationProfile::Full => 1,
+    }
+}
+
+fn action_telemetry_index(action: MembraneAction) -> usize {
+    match action {
+        MembraneAction::Allow => 0,
+        MembraneAction::FullValidate => 1,
+        MembraneAction::Repair(_) => 2,
+        MembraneAction::Deny => 3,
+    }
+}
+
+fn repair_action_telemetry_index(action: HealingAction) -> usize {
+    match action {
+        HealingAction::ClampSize { .. } => 0,
+        HealingAction::TruncateWithNull { .. } => 1,
+        HealingAction::IgnoreDoubleFree => 2,
+        HealingAction::IgnoreForeignFree => 3,
+        HealingAction::ReallocAsMalloc { .. } => 4,
+        HealingAction::ReturnSafeDefault => 5,
+        HealingAction::UpgradeToSafeVariant => 6,
+        HealingAction::None => 7,
+    }
+}
+
+fn load_atomic_u64_array<const N: usize>(values: &[AtomicU64; N]) -> [u64; N] {
+    std::array::from_fn(|idx| values[idx].load(Ordering::Relaxed))
+}
+
+fn load_atomic_u64_matrix<const ROWS: usize, const COLS: usize>(
+    values: &[[AtomicU64; COLS]; ROWS],
+) -> [[u64; COLS]; ROWS] {
+    std::array::from_fn(|row| std::array::from_fn(|col| values[row][col].load(Ordering::Relaxed)))
+}
+
+fn profile_counts_from_family_counts(
+    family_profile_counts: &[[u64; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT]; ApiFamily::COUNT],
+) -> [u64; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT] {
+    let mut counts = [0; RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT];
+    for family_counts in family_profile_counts {
+        for (idx, value) in family_counts.iter().enumerate() {
+            counts[idx] += value;
+        }
+    }
+    counts
+}
+
+fn sum_u64_array<const N: usize>(values: &[u64; N]) -> u64 {
+    values.iter().copied().sum()
+}
+
+fn sum_u64_matrix<const ROWS: usize, const COLS: usize>(values: &[[u64; COLS]; ROWS]) -> u64 {
+    values.iter().map(sum_u64_array).sum()
+}
+
+fn u64_array_json<const N: usize>(values: &[u64; N]) -> String {
+    let mut out = String::from("[");
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        let _ = write!(&mut out, "{value}");
+    }
+    out.push(']');
+    out
+}
+
+fn u64_matrix_json<const ROWS: usize, const COLS: usize>(values: &[[u64; COLS]; ROWS]) -> String {
+    let mut out = String::from("[");
+    for (idx, row) in values.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(&u64_array_json(row));
+    }
+    out.push(']');
+    out
 }
 
 fn healing_action_json(action: MembraneAction) -> &'static str {
@@ -7256,6 +7551,163 @@ mod tests {
         assert!(snap1.evidence_seqno >= snap0.evidence_seqno);
         assert!(snap2.evidence_seqno >= snap1.evidence_seqno);
         assert!(snap2.evidence_max_epoch >= snap1.evidence_max_epoch);
+    }
+
+    #[test]
+    fn decision_telemetry_snapshot_empty_has_consistent_zero_counts() {
+        let kernel = RuntimeMathKernel::new();
+        let telemetry = kernel.decision_telemetry_snapshot();
+
+        assert_eq!(telemetry.decisions, 0);
+        assert_eq!(sum_u64_array(&telemetry.mode_decision_counts), 0);
+        assert_eq!(sum_u64_array(&telemetry.action_counts), 0);
+        assert_eq!(sum_u64_array(&telemetry.profile_counts), 0);
+        assert_eq!(sum_u64_matrix(&telemetry.mode_action_counts), 0);
+        assert_eq!(sum_u64_matrix(&telemetry.family_action_counts), 0);
+        assert_eq!(sum_u64_matrix(&telemetry.mode_profile_counts), 0);
+        assert_eq!(sum_u64_matrix(&telemetry.family_profile_counts), 0);
+        assert_eq!(sum_u64_array(&telemetry.repair_action_counts), 0);
+        assert!(!telemetry.missing_decision_telemetry());
+
+        let mut missing = RuntimeDecisionTelemetrySnapshot::empty();
+        missing.decisions = 1;
+        assert!(missing.missing_decision_telemetry());
+    }
+
+    #[test]
+    fn decision_telemetry_tracks_mode_family_profile_action_and_repair() {
+        let kernel = RuntimeMathKernel::new();
+        let strict_ctx = RuntimeContext::pointer_validation(0x1000, false);
+        let strict_decision = kernel.decide(SafetyLevel::Strict, strict_ctx);
+        assert_eq!(strict_decision.action, MembraneAction::Allow);
+
+        drive_pressure_sensor_to(&kernel, SystemRegime::Overloaded);
+        kernel.cached_localization_arm.store(2, Ordering::Relaxed);
+        let hardened_ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x3300,
+            requested_bytes: 256,
+            is_write: false,
+            contention_hint: 80,
+            bloom_negative: false,
+        };
+        let hardened_decision = kernel.decide(SafetyLevel::Hardened, hardened_ctx);
+        assert_eq!(
+            hardened_decision.action,
+            MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        );
+
+        let telemetry = kernel.decision_telemetry_snapshot();
+        let strict_idx = mode_telemetry_index(SafetyLevel::Strict);
+        let hardened_idx = mode_telemetry_index(SafetyLevel::Hardened);
+        let strict_action_idx = action_telemetry_index(strict_decision.action);
+        let hardened_action_idx = action_telemetry_index(hardened_decision.action);
+        let strict_profile_idx = profile_telemetry_index(strict_decision.profile);
+        let hardened_profile_idx = profile_telemetry_index(hardened_decision.profile);
+        let repair_idx = repair_action_telemetry_index(HealingAction::ReturnSafeDefault);
+
+        assert_eq!(telemetry.decisions, 2);
+        assert_eq!(telemetry.mode_decision_counts[strict_idx], 1);
+        assert_eq!(telemetry.mode_decision_counts[hardened_idx], 1);
+        assert_eq!(telemetry.action_counts[strict_action_idx], 1);
+        assert_eq!(telemetry.action_counts[hardened_action_idx], 1);
+        assert_eq!(
+            telemetry.family_action_counts[ApiFamily::PointerValidation as usize]
+                [strict_action_idx],
+            1
+        );
+        assert_eq!(
+            telemetry.family_action_counts[ApiFamily::Allocator as usize][hardened_action_idx],
+            1
+        );
+        assert_eq!(
+            telemetry.mode_profile_counts[strict_idx][strict_profile_idx],
+            1
+        );
+        assert_eq!(
+            telemetry.mode_profile_counts[hardened_idx][hardened_profile_idx],
+            1
+        );
+        assert_eq!(
+            sum_u64_array(&telemetry.profile_counts),
+            telemetry.decisions
+        );
+        assert_eq!(
+            telemetry.profile_counts[strict_profile_idx],
+            u64::from(strict_profile_idx == hardened_profile_idx) + 1
+        );
+        assert_eq!(telemetry.repair_action_counts[repair_idx], 1);
+        assert!(!telemetry.missing_decision_telemetry());
+    }
+
+    #[test]
+    fn decision_telemetry_reports_tls_cache_deltas_without_decisions() {
+        let kernel = RuntimeMathKernel::new();
+        let _ = kernel.decision_telemetry_snapshot();
+        crate::metrics::MembraneMetrics::inc(&crate::metrics::global_metrics().tls_cache_hits);
+        crate::metrics::MembraneMetrics::inc(&crate::metrics::global_metrics().tls_cache_misses);
+
+        let telemetry = kernel.decision_telemetry_snapshot();
+
+        assert_eq!(telemetry.decisions, 0);
+        assert!(telemetry.tls_cache_hit_delta >= 1);
+        assert!(telemetry.tls_cache_miss_delta >= 1);
+        assert!(!telemetry.missing_decision_telemetry());
+    }
+
+    #[test]
+    fn runtime_math_log_jsonl_exports_decision_telemetry_snapshot() {
+        let kernel = RuntimeMathKernel::new();
+        let _ = kernel.decide(
+            SafetyLevel::Strict,
+            RuntimeContext::pointer_validation(0x1000, false),
+        );
+
+        let jsonl =
+            kernel.export_runtime_math_log_jsonl(SafetyLevel::Strict, "bd-pplfu", "telemetry");
+        let rows: Vec<Value> = jsonl
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<Value>(line).expect("runtime log line must parse"))
+            .filter(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_decision_telemetry_snapshot")
+            })
+            .collect();
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row["bead_id"].as_str(), Some("bd-pplfu"));
+        assert_eq!(row["scenario_id"].as_str(), Some("telemetry"));
+        assert_eq!(
+            row["decision_path"].as_str(),
+            Some("snapshot::decision_telemetry")
+        );
+        assert_eq!(row["missing_telemetry"].as_bool(), Some(false));
+        assert_eq!(row["decisions"].as_u64(), Some(1));
+        assert_eq!(
+            row["mode_decision_counts"]
+                .as_array()
+                .map(std::vec::Vec::len),
+            Some(RUNTIME_DECISION_TELEMETRY_MODE_COUNT)
+        );
+        assert_eq!(
+            row["action_counts"].as_array().map(std::vec::Vec::len),
+            Some(RUNTIME_DECISION_TELEMETRY_ACTION_COUNT)
+        );
+        assert_eq!(
+            row["family_action_counts"]
+                .as_array()
+                .map(std::vec::Vec::len),
+            Some(ApiFamily::COUNT)
+        );
+        assert_eq!(
+            row["profile_counts"].as_array().map(std::vec::Vec::len),
+            Some(RUNTIME_DECISION_TELEMETRY_PROFILE_COUNT)
+        );
+        assert!(row.get("tls_cache_hit_delta").is_some());
+        assert!(row.get("tls_cache_miss_delta").is_some());
     }
 
     #[test]
