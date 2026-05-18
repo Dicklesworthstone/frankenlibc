@@ -2,7 +2,7 @@
   "schema_version": "v1",
   "manifest_id": "blocked_validation_work_guard",
   "bead": "bd-bqh1f",
-  "generated_utc": "2026-05-18T00:35:00Z",
+  "generated_utc": "2026-05-18T00:38:00Z",
   "source_commit": "current",
   "purpose": "No-cargo swarm guard for the state where RCH cargo validation is blocked and validation-dependent beads are already waiting. The guard prevents agents from starting new cargo-backed Rust work when the useful next action is either no-cargo evidence or operator-approved RCH unblock work.",
   "inputs": {
@@ -48,6 +48,8 @@
     "output_path": "target/conformance/blocked_validation_work_guard.report.json",
     "must_materialize": [
       "decision",
+      "report_path",
+      "status_on_current_blocked_state",
       "stale_in_progress_count",
       "stale_in_progress_ids",
       "safe_ready_count",
@@ -72,6 +74,16 @@
       "control_id": "missing_report_field_fails",
       "mutation": "validate a synthetic report missing most must_materialize fields",
       "expected_decision": "missing_report_field"
+    },
+    {
+      "control_id": "output_path_mismatch_fails",
+      "mutation": "change report_contract.output_path away from the actual emitted report",
+      "expected_decision": "report_contract_output_path_mismatch"
+    },
+    {
+      "control_id": "bad_current_status_fails",
+      "mutation": "set status_on_current_blocked_state to fail for a current passing blocked report",
+      "expected_decision": "status_on_current_blocked_state_mismatch"
     },
     {
       "control_id": "safe_ready_changes_decision",

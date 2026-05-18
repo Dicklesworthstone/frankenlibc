@@ -116,6 +116,13 @@ def repo_path(value, context):
         errors.append(f"{context}: missing path {value}")
 
 
+def repo_relative(path):
+    try:
+        return path.resolve().relative_to(root).as_posix()
+    except Exception:
+        return str(path)
+
+
 def string_list(value, context, *, min_len=1):
     if not isinstance(value, list) or len(value) < min_len:
         errors.append(f"{context}: must be a list with at least {min_len} entries")
@@ -141,6 +148,26 @@ def configured_report_fields(contract):
 
 def missing_report_fields(contract, report):
     return [field for field in configured_report_fields(contract) if field not in report]
+
+
+def report_contract_errors(contract, actual_report_path, expected_status):
+    local_errors = []
+    report_contract = contract.get("report_contract", {})
+    if not isinstance(report_contract, dict):
+        return ["report_contract_not_object"]
+    expected_output = report_contract.get("output_path")
+    if not isinstance(expected_output, str) or not expected_output:
+        local_errors.append("report_contract_output_path_missing")
+    else:
+        path = Path(expected_output)
+        if path.is_absolute() or ".." in path.parts:
+            local_errors.append("report_contract_output_path_not_repo_relative")
+        elif repo_relative(actual_report_path) != expected_output:
+            local_errors.append("report_contract_output_path_mismatch")
+    expected_current = report_contract.get("status_on_current_blocked_state")
+    if expected_current != expected_status:
+        local_errors.append("status_on_current_blocked_state_mismatch")
+    return local_errors
 
 
 def active_bd716_dependents(rows, guard):
@@ -245,6 +272,8 @@ decision = decide(readiness, rch, dependents, guard)
 expected_current = guard.get("decision_when_rch_blocked_and_dependents_waiting")
 if decision != expected_current:
     errors.append(f"current guard decision {decision!r} did not match expected blocked decision {expected_current!r}")
+contract_report_errors = report_contract_errors(contract, report_path, "pass")
+errors.extend(contract_report_errors)
 must_materialize = string_list(
     contract.get("report_contract", {}).get("must_materialize"),
     "report_contract.must_materialize",
@@ -260,10 +289,51 @@ for control in contract.get("negative_controls", []):
     mutated_readiness = copy.deepcopy(readiness)
     mutated_rch = copy.deepcopy(rch)
     mutated_dependents = copy.deepcopy(dependents)
+    mutated_contract = copy.deepcopy(contract)
 
     if control_id == "rch_admissible_changes_decision":
         mutated_rch["status"] = "admissible"
         mutated_rch["failure_signatures"] = []
+    elif control_id == "output_path_mismatch_fails":
+        mutated_contract.setdefault("report_contract", {})["output_path"] = "target/conformance/wrong_guard_path.json"
+        observed_errors = report_contract_errors(mutated_contract, report_path, "pass")
+        observed = (
+            "report_contract_output_path_mismatch"
+            if "report_contract_output_path_mismatch" in observed_errors
+            else ",".join(observed_errors)
+        )
+        passed = observed == expected_decision
+        if not passed:
+            errors.append(f"negative_control_failed:{control_id}: expected {expected_decision}, got {observed}")
+        negative_results.append(
+            {
+                "control_id": control_id,
+                "expected_decision": expected_decision,
+                "observed_decision": observed,
+                "status": "pass" if passed else "fail",
+            }
+        )
+        continue
+    elif control_id == "bad_current_status_fails":
+        mutated_contract.setdefault("report_contract", {})["status_on_current_blocked_state"] = "fail"
+        observed_errors = report_contract_errors(mutated_contract, report_path, "pass")
+        observed = (
+            "status_on_current_blocked_state_mismatch"
+            if "status_on_current_blocked_state_mismatch" in observed_errors
+            else ",".join(observed_errors)
+        )
+        passed = observed == expected_decision
+        if not passed:
+            errors.append(f"negative_control_failed:{control_id}: expected {expected_decision}, got {observed}")
+        negative_results.append(
+            {
+                "control_id": control_id,
+                "expected_decision": expected_decision,
+                "observed_decision": observed,
+                "status": "pass" if passed else "fail",
+            }
+        )
+        continue
     elif control_id == "missing_report_field_fails":
         observed = (
             "missing_report_field"
@@ -332,6 +402,8 @@ report = {
     "status": "pass" if not errors else "fail",
     "source_commit": source_commit,
     "current_head": head,
+    "report_path": repo_relative(report_path),
+    "status_on_current_blocked_state": contract.get("report_contract", {}).get("status_on_current_blocked_state"),
     "decision": decision,
     "safe_ready_count": len(safe_ready),
     "safe_ready_ids": [row.get("id") for row in safe_ready if isinstance(row, dict)],
