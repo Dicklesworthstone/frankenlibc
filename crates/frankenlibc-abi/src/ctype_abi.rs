@@ -156,7 +156,33 @@ pub(crate) unsafe fn toupper_table_ptr() -> *const i32 {
     unsafe { TOUPPER_TABLE.as_ptr().add(128) }
 }
 
-// Thread-local pointers (glibc returns **const, pointing into the table at offset 128)
+#[cfg(feature = "owned-tls-cache")]
+struct CtypeLocPtrs {
+    ctype_b: *const u16,
+    toupper: *const i32,
+    tolower: *const i32,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+// SAFETY: the stored pointers are immutable references into static ctype
+// tables. The mutable per-thread pointer cells are protected by OwnedTlsCache.
+unsafe impl Send for CtypeLocPtrs {}
+
+#[cfg(feature = "owned-tls-cache")]
+const fn empty_ctype_loc_ptrs() -> CtypeLocPtrs {
+    CtypeLocPtrs {
+        ctype_b: std::ptr::null(),
+        toupper: std::ptr::null(),
+        tolower: std::ptr::null(),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static CTYPE_LOC_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<CtypeLocPtrs> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_ctype_loc_ptrs);
+
+// Thread-local pointers (glibc returns **const, pointing into the table at offset 128).
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static CTYPE_B_PTR: std::cell::Cell<*const u16> = const {
         std::cell::Cell::new(std::ptr::null())
@@ -169,6 +195,84 @@ std::thread_local! {
     };
 }
 
+fn with_ctype_b_slot<R>(callback: impl FnOnce(*const *const u16) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        CTYPE_LOC_OWNED_TLS.with(|state| {
+            if state.ctype_b.is_null() {
+                // SAFETY: the ctype table has 384 entries and index 128 is the
+                // glibc-compatible zero point for signed-char/EOF indexing.
+                state.ctype_b = unsafe { CTYPE_B_TABLE.as_ptr().add(128) };
+            }
+            callback(&state.ctype_b as *const *const u16)
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        CTYPE_B_PTR.with(|cell| {
+            if cell.get().is_null() {
+                // SAFETY: the ctype table has 384 entries and index 128 is the
+                // glibc-compatible zero point for signed-char/EOF indexing.
+                let p = unsafe { CTYPE_B_TABLE.as_ptr().add(128) };
+                cell.set(p);
+            }
+            callback(cell.as_ptr() as *const *const u16)
+        })
+    }
+}
+
+fn with_ctype_toupper_slot<R>(callback: impl FnOnce(*const *const i32) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        CTYPE_LOC_OWNED_TLS.with(|state| {
+            if state.toupper.is_null() {
+                // SAFETY: the conversion table has 384 entries and index 128 is
+                // the glibc-compatible zero point for signed-char/EOF indexing.
+                state.toupper = unsafe { TOUPPER_TABLE.as_ptr().add(128) };
+            }
+            callback(&state.toupper as *const *const i32)
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TOUPPER_PTR.with(|cell| {
+            if cell.get().is_null() {
+                // SAFETY: the conversion table has 384 entries and index 128 is
+                // the glibc-compatible zero point for signed-char/EOF indexing.
+                let p = unsafe { TOUPPER_TABLE.as_ptr().add(128) };
+                cell.set(p);
+            }
+            callback(cell.as_ptr() as *const *const i32)
+        })
+    }
+}
+
+fn with_ctype_tolower_slot<R>(callback: impl FnOnce(*const *const i32) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        CTYPE_LOC_OWNED_TLS.with(|state| {
+            if state.tolower.is_null() {
+                // SAFETY: the conversion table has 384 entries and index 128 is
+                // the glibc-compatible zero point for signed-char/EOF indexing.
+                state.tolower = unsafe { TOLOWER_TABLE.as_ptr().add(128) };
+            }
+            callback(&state.tolower as *const *const i32)
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TOLOWER_PTR.with(|cell| {
+            if cell.get().is_null() {
+                // SAFETY: the conversion table has 384 entries and index 128 is
+                // the glibc-compatible zero point for signed-char/EOF indexing.
+                let p = unsafe { TOLOWER_TABLE.as_ptr().add(128) };
+                cell.set(p);
+            }
+            callback(cell.as_ptr() as *const *const i32)
+        })
+    }
+}
+
 /// Returns a pointer to a pointer to the ctype classification table.
 /// The returned `*const u16` points to `table[128]`, so indexing with
 /// values in -128..255 (including EOF = -1) is valid.
@@ -176,40 +280,19 @@ std::thread_local! {
 pub unsafe extern "C" fn __ctype_b_loc() -> *const *const u16 {
     // SAFETY: CTYPE_B_TABLE is 'static and we return a pointer to TLS
     // that points into it at offset 128.
-    CTYPE_B_PTR.with(|cell| {
-        let ptr = cell.get();
-        if ptr.is_null() {
-            let p = unsafe { CTYPE_B_TABLE.as_ptr().add(128) };
-            cell.set(p);
-        }
-        cell.as_ptr() as *const *const u16
-    })
+    with_ctype_b_slot(|slot| slot)
 }
 
 /// Returns a pointer to a pointer to the toupper conversion table.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ctype_toupper_loc() -> *const *const i32 {
-    TOUPPER_PTR.with(|cell| {
-        let ptr = cell.get();
-        if ptr.is_null() {
-            let p = unsafe { TOUPPER_TABLE.as_ptr().add(128) };
-            cell.set(p);
-        }
-        cell.as_ptr() as *const *const i32
-    })
+    with_ctype_toupper_slot(|slot| slot)
 }
 
 /// Returns a pointer to a pointer to the tolower conversion table.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ctype_tolower_loc() -> *const *const i32 {
-    TOLOWER_PTR.with(|cell| {
-        let ptr = cell.get();
-        if ptr.is_null() {
-            let p = unsafe { TOLOWER_TABLE.as_ptr().add(128) };
-            cell.set(p);
-        }
-        cell.as_ptr() as *const *const i32
-    })
+    with_ctype_tolower_slot(|slot| slot)
 }
 
 #[inline]

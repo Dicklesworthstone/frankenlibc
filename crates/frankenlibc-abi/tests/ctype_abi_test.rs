@@ -232,6 +232,24 @@ fn ctype_tolower_loc_returns_valid_table() {
     assert_eq!(unsafe { *p.offset(b'a' as isize) }, b'a' as i32);
 }
 
+#[test]
+fn ctype_table_location_slots_are_stable() {
+    let b1 = unsafe { __ctype_b_loc() };
+    let b2 = unsafe { __ctype_b_loc() };
+    assert_eq!(b1, b2);
+    assert_eq!(unsafe { *b1 }, unsafe { *b2 });
+
+    let upper1 = unsafe { __ctype_toupper_loc() };
+    let upper2 = unsafe { __ctype_toupper_loc() };
+    assert_eq!(upper1, upper2);
+    assert_eq!(unsafe { *upper1 }, unsafe { *upper2 });
+
+    let lower1 = unsafe { __ctype_tolower_loc() };
+    let lower2 = unsafe { __ctype_tolower_loc() };
+    assert_eq!(lower1, lower2);
+    assert_eq!(unsafe { *lower1 }, unsafe { *lower2 });
+}
+
 // ===========================================================================
 // Locale-aware _l variants (C locale passthrough)
 // ===========================================================================
