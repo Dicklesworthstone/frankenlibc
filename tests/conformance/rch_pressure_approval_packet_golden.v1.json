@@ -344,7 +344,7 @@
         "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
         "/data/projects/franken_engine/target_PearlTower_focused"
       ],
-      "why_read_only_collection_is_insufficient": "Read-only collection can identify pressure and candidates, but cannot free space under repo rules.",
+      "why_read_only_collection_is_insufficient": "No releasable SBH ballast was found; remaining cleanup candidates require explicit deletion-level approval.",
       "explicit_user_text_required_before_cleanup": "The user must provide written approval naming exact paths and commands before cleanup can run.",
       "commands_not_executed": [
         "no deletion command executed",

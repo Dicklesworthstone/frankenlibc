@@ -732,6 +732,32 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     for field in required_approval_fields:
         if field not in approval:
             add_error(source, "missing_approval_field", f"approval_request missing {field}")
+    approval_candidate_paths = approval.get("exact_candidate_paths")
+    ballast_snapshots = [
+        worker.get("ballast_snapshot")
+        for worker in workers
+        if isinstance(worker, dict)
+        and isinstance(worker.get("ballast_snapshot"), str)
+        and worker.get("ballast_snapshot")
+    ]
+    has_approval_candidates = isinstance(approval_candidate_paths, list) and bool(approval_candidate_paths)
+    if (
+        has_approval_candidates
+        and ballast_snapshots
+        and all("releasable_bytes=0" in snapshot for snapshot in ballast_snapshots)
+    ):
+        insufficient_reason = approval.get("why_read_only_collection_is_insufficient")
+        if (
+            not isinstance(insufficient_reason, str)
+            or "No releasable SBH ballast" not in insufficient_reason
+            or "deletion-level" not in insufficient_reason
+            or ("approval" not in insufficient_reason and "cleanup" not in insufficient_reason)
+        ):
+            add_error(
+                source,
+                "approval_reason_omits_non_releasable_ballast",
+                "approval_request must explain that sampled SBH ballast is not releasable",
+            )
     margin_surplus = approval.get("minimum_margin_surplus_gb")
     if not is_number(margin_surplus) or float(margin_surplus) < 0:
         add_error(source, "invalid_margin_surplus", "approval_request.minimum_margin_surplus_gb must be a non-negative number")
@@ -1073,6 +1099,21 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
             "coarse_ballast_snapshot",
             "replace parsed SBH and ballast summaries with coarse raw-output markers",
         )
+
+    generic_ballast_reason_packet = deepcopy(packet)
+    approval = generic_ballast_reason_packet.get("approval_request")
+    if isinstance(approval, dict):
+        approval["why_read_only_collection_is_insufficient"] = (
+            "Read-only collection can identify pressure and candidates, but cannot free space under repo rules."
+        )
+        expect_validation_failure(
+            generic_ballast_reason_packet,
+            f"{source}::approval_reason_omits_non_releasable_ballast",
+            "approval_reason_omits_non_releasable_ballast",
+            "replace non-releasable ballast approval reason with generic read-only wording",
+        )
+    else:
+        add_error(source, "negative_control_no_approval_request", "golden packet has no approval_request for mutation")
 
     stale_mirror_packet = deepcopy(packet)
     repo_state = stale_mirror_packet.get("repo_state")
