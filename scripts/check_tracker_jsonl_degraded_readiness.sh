@@ -205,6 +205,23 @@ def in_progress_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def permissioned_ready_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for row in rows:
+        issue_id = row.get("id")
+        if not isinstance(issue_id, str):
+            continue
+        summary.append(
+            {
+                "id": issue_id,
+                "title": row.get("title"),
+                "priority": row.get("priority"),
+                "permission_markers": row.get("permission_markers") if isinstance(row.get("permission_markers"), list) else [],
+            }
+        )
+    return sorted(summary, key=lambda item: (str(item.get("id", ""))))
+
+
 def blocker_chokepoints(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counts: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -598,6 +615,7 @@ stdout_summary = {
     "safe_ready_ids": projected_ids(analysis["safe_ready"]),
     "permissioned_ready": analysis["summary"]["permissioned_ready_total"],
     "permissioned_ready_ids": projected_ids(analysis["permissioned_ready"]),
+    "permissioned_ready_summary": permissioned_ready_summary(analysis["permissioned_ready"]),
     "stale_in_progress": analysis["summary"]["stale_in_progress_total"],
     "stale_in_progress_ids": projected_ids(analysis["stale_in_progress"]),
     "blocked_open": analysis["summary"]["blocked_open_total"],

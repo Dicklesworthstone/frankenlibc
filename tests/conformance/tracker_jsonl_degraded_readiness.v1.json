@@ -64,6 +64,7 @@
     "safe_ready_ids",
     "permissioned_ready",
     "permissioned_ready_ids",
+    "permissioned_ready_summary",
     "stale_in_progress",
     "stale_in_progress_ids",
     "blocked_open",
@@ -88,9 +89,9 @@
     "jq empty tests/conformance/tracker_jsonl_degraded_readiness.v1.json",
     "bash -n scripts/check_tracker_jsonl_degraded_readiness.sh",
     "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only",
-    "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only | jq -e '.safe_ready_ids == [] and (.permissioned_ready_ids | type == \"array\") and (.blocked_open_ids | type == \"array\") and (.blocked_by_counts | type == \"array\") and (.top_blocker_ids | type == \"array\") and (.in_progress_ids | type == \"array\") and (.in_progress_age_summary | type == \"array\")'",
+    "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only | jq -e '.safe_ready_ids == [] and (.permissioned_ready_ids | type == \"array\") and (.permissioned_ready_summary | type == \"array\") and (.blocked_open_ids | type == \"array\") and (.blocked_by_counts | type == \"array\") and (.top_blocker_ids | type == \"array\") and (.in_progress_ids | type == \"array\") and (.in_progress_age_summary | type == \"array\")'",
     "jq '.status == \"pass\" and (.negative_controls | all(.status == \"pass\"))' target/conformance/tracker_jsonl_degraded_readiness.report.json",
-    "jq -e '.stdout_summary.safe_ready_ids == [] and (.stdout_summary.permissioned_ready_ids | type == \"array\") and (.stdout_summary.blocked_open_ids | type == \"array\") and (.stdout_summary.blocked_by_counts | type == \"array\") and (.stdout_summary.top_blocker_ids | type == \"array\") and (.stdout_summary.in_progress_ids | type == \"array\") and (.stdout_summary.in_progress_age_summary | type == \"array\")' target/conformance/tracker_jsonl_degraded_readiness.report.json",
+    "jq -e '.stdout_summary.safe_ready_ids == [] and (.stdout_summary.permissioned_ready_ids | type == \"array\") and (.stdout_summary.permissioned_ready_summary | type == \"array\") and (.stdout_summary.blocked_open_ids | type == \"array\") and (.stdout_summary.blocked_by_counts | type == \"array\") and (.stdout_summary.top_blocker_ids | type == \"array\") and (.stdout_summary.in_progress_ids | type == \"array\") and (.stdout_summary.in_progress_age_summary | type == \"array\")' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "jq -e '.report_path == \"target/conformance/tracker_jsonl_degraded_readiness.report.json\" and .log_path == \"target/conformance/tracker_jsonl_degraded_readiness.log.jsonl\"' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "git diff --check -- scripts/check_tracker_jsonl_degraded_readiness.sh tests/conformance/tracker_jsonl_degraded_readiness.v1.json .beads/issues.jsonl"
   ]
