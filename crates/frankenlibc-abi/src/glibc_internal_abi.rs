@@ -183,8 +183,35 @@ fn native_ldexp(x: f64, exp: c_int) -> f64 {
 // Layout (glibc): { void (*routine)(void*); void *arg; int canceltype; __pthread_cleanup_buffer *prev; }
 // We use the caller-provided buffer as a linked list node, storing routine+arg+prev.
 // TLS head pointer tracks the current thread's cleanup stack.
+#[cfg(feature = "owned-tls-cache")]
+static PTHREAD_CLEANUP_HEAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
+
+#[cfg(feature = "owned-tls-cache")]
+fn zero_usize() -> usize {
+    0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static PTHREAD_CLEANUP_HEAD: std::cell::Cell<*mut c_void> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+#[inline]
+fn with_pthread_cleanup_head<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PTHREAD_CLEANUP_HEAD_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PTHREAD_CLEANUP_HEAD.with(|head| {
+            let mut value = head.get() as usize;
+            let result = callback(&mut value);
+            head.set(value as *mut c_void);
+            result
+        })
+    }
 }
 
 // __pthread_cleanup_buffer layout offsets (x86_64):
@@ -219,11 +246,11 @@ pub unsafe extern "C" fn _pthread_cleanup_push(
         // Store routine and arg
         (buf_ptr.add(CLEANUP_OFF_ROUTINE) as *mut *mut c_void).write(routine);
         (buf_ptr.add(CLEANUP_OFF_ARG) as *mut *mut c_void).write(arg);
-        // Link to previous head
-        let prev = PTHREAD_CLEANUP_HEAD.get();
-        (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).write(prev);
-        // Set as new head
-        PTHREAD_CLEANUP_HEAD.set(buf);
+        with_pthread_cleanup_head(|head| {
+            // Link to previous head and set this buffer as the new head.
+            (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).write(*head as *mut c_void);
+            *head = buf as usize;
+        });
     }
     crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
@@ -242,9 +269,11 @@ pub unsafe extern "C" fn _pthread_cleanup_pop(buf: *mut c_void, execute: c_int) 
 
     unsafe {
         let buf_ptr = buf as *mut u8;
-        // Restore previous head
         let prev = (buf_ptr.add(CLEANUP_OFF_PREV) as *mut *mut c_void).read();
-        PTHREAD_CLEANUP_HEAD.set(prev);
+        with_pthread_cleanup_head(|head| {
+            // Restore previous head.
+            *head = prev as usize;
+        });
         // Execute the handler if requested
         if execute != 0 {
             let routine: unsafe extern "C" fn(*mut c_void) =
@@ -1231,17 +1260,40 @@ pub unsafe extern "C" fn __res_send(
 // We provide a minimal opaque struct in TLS. Callers that only check for
 // non-null or pass it to __res_n* will work correctly since our __res_n*
 // implementations ignore the state pointer.
+#[cfg(feature = "owned-tls-cache")]
+static RES_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 640]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_res_state);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_res_state() -> [u8; 640] {
+    [0u8; 640]
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static RES_STATE: std::cell::UnsafeCell<[u8; 640]> =
+        const { std::cell::UnsafeCell::new([0u8; 640]) };
+}
+
+#[inline]
+fn res_state_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_STATE_OWNED_TLS.with(|state| state.as_mut_ptr().cast::<c_void>())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_STATE.with(|state| state.get().cast::<c_void>())
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_state() -> *mut c_void {
     // Minimal thread-local state: just enough to be a valid non-null pointer.
     // glibc's struct __res_state is ~600 bytes; callers that read fields
     // directly would need a full layout, but the common path is to pass
     // this to __res_n* functions which we handle natively.
-    thread_local! {
-        static RES_STATE: std::cell::UnsafeCell<[u8; 640]> =
-            const { std::cell::UnsafeCell::new([0u8; 640]) };
-    }
-    RES_STATE.with(|s| s.get().cast::<c_void>())
+    res_state_ptr()
 }
 
 // ==========================================================================
@@ -3508,12 +3560,31 @@ pub unsafe extern "C" fn __pwrite64(
     }
 }
 // __rcmd_errstr: pointer to rcmd error string (thread-local for reentrancy)
+#[cfg(feature = "owned-tls-cache")]
+static RCMD_ERRSTR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static RCMD_ERRSTR: std::cell::Cell<*mut c_char> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+#[inline]
+fn rcmd_errstr_ptr() -> *mut *mut c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RCMD_ERRSTR_OWNED_TLS.with(|slot| (slot as *mut usize).cast::<*mut c_char>())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RCMD_ERRSTR.with(|slot| slot.as_ptr())
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __rcmd_errstr() -> *mut *mut c_char {
-    thread_local! {
-        static ERRSTR: std::cell::Cell<*mut c_char> = const { std::cell::Cell::new(std::ptr::null_mut()) };
-    }
-    ERRSTR.with(|c| c.as_ptr())
+    rcmd_errstr_ptr()
 }
 // __read/__write: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6445,37 +6516,73 @@ pub unsafe extern "C" fn settimeofday(tv: *const c_void, tz: *const c_void) -> c
     }
 }
 // sgetspent: native — parse shadow password entry from string
+#[cfg(feature = "owned-tls-cache")]
+struct SgetspentState {
+    buf: Vec<u8>,
+    sp: libc::spwd,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for SgetspentState {}
+
+#[cfg(feature = "owned-tls-cache")]
+static SGETSPENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<SgetspentState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_sgetspent_state);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_sgetspent_state() -> SgetspentState {
+    SgetspentState {
+        buf: Vec::new(),
+        sp: unsafe { std::mem::zeroed() },
+    }
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static SGETSPENT_BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SGETSPENT_SP: std::cell::RefCell<libc::spwd> = const { std::cell::RefCell::new(unsafe { std::mem::zeroed() }) };
+}
+
+#[inline]
+fn with_sgetspent_state<R>(callback: impl FnOnce(&mut Vec<u8>, &mut libc::spwd) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SGETSPENT_OWNED_TLS.with(|state| callback(&mut state.buf, &mut state.sp))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SGETSPENT_BUF.with(|buf| {
+            let mut buf = buf.borrow_mut();
+            SGETSPENT_SP.with(|sp| {
+                let mut sp = sp.borrow_mut();
+                callback(&mut buf, &mut sp)
+            })
+        })
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sgetspent(s: *const c_char) -> *mut c_void {
     if s.is_null() {
         return std::ptr::null_mut();
     }
-    // Thread-local static buffer for non-reentrant version
-    thread_local! {
-        static BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
-        static SP: std::cell::RefCell<libc::spwd> = const { std::cell::RefCell::new(unsafe { std::mem::zeroed() }) };
-    }
-    BUF.with(|buf| {
-        let mut buf = buf.borrow_mut();
+    with_sgetspent_state(|buf, sp| {
         buf.resize(1024, 0);
-        SP.with(|sp| {
-            let mut sp = sp.borrow_mut();
-            let mut result: *mut libc::spwd = std::ptr::null_mut();
-            let rc = unsafe {
-                sgetspent_r(
-                    s,
-                    &mut *sp as *mut _ as *mut c_void,
-                    buf.as_mut_ptr() as *mut c_char,
-                    buf.len(),
-                    &mut result as *mut _ as *mut *mut c_void,
-                )
-            };
-            if rc == 0 && !result.is_null() {
-                result as *mut c_void
-            } else {
-                std::ptr::null_mut()
-            }
-        })
+        let mut result: *mut libc::spwd = std::ptr::null_mut();
+        let rc = unsafe {
+            sgetspent_r(
+                s,
+                sp as *mut _ as *mut c_void,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                &mut result as *mut _ as *mut *mut c_void,
+            )
+        };
+        if rc == 0 && !result.is_null() {
+            result as *mut c_void
+        } else {
+            std::ptr::null_mut()
+        }
     })
 }
 // sgetspent_r: native — reentrant shadow password parser
@@ -6869,14 +6976,37 @@ pub static mut _nl_msg_cat_cntr: c_int = 0;
 // Programs will resolve this from glibc's data segment directly.
 
 // __h_errno: native — thread-local h_errno via libc
+#[cfg(feature = "owned-tls-cache")]
+static GLIBC_INTERNAL_H_ERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_c_int);
+
+#[cfg(feature = "owned-tls-cache")]
+fn zero_c_int() -> c_int {
+    0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static GLIBC_INTERNAL_H_ERRNO: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+fn glibc_internal_h_errno_ptr() -> *mut c_int {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GLIBC_INTERNAL_H_ERRNO_OWNED_TLS.with(|slot| slot as *mut c_int)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GLIBC_INTERNAL_H_ERRNO.with(|slot| slot.as_ptr())
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __h_errno() -> *mut c_int {
     // glibc's __h_errno_location is the canonical way, but libc crate may not expose it.
     // Use a thread-local instead.
-    thread_local! {
-        static H_ERRNO: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
-    }
-    H_ERRNO.with(|cell| cell.as_ptr())
+    glibc_internal_h_errno_ptr()
 }
 
 // in6addr globals
@@ -7782,9 +7912,31 @@ struct NativeResolvContext {
     __next: *mut NativeResolvContext,
 }
 
+#[cfg(feature = "owned-tls-cache")]
+static RESOLV_CONTEXT_HEAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static RESOLV_CONTEXT_HEAD: std::cell::Cell<*mut NativeResolvContext> =
         const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+#[inline]
+fn with_resolv_context_head<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RESOLV_CONTEXT_HEAD_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RESOLV_CONTEXT_HEAD.with(|head| {
+            let mut value = head.get() as usize;
+            let result = callback(&mut value);
+            head.set(value as *mut NativeResolvContext);
+            result
+        })
+    }
 }
 
 unsafe fn alloc_native_resolv_context(
@@ -7814,8 +7966,8 @@ unsafe fn alloc_native_resolv_context(
 /// `__resolv_context_get` — get resolver context.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __resolv_context_get() -> *mut c_void {
-    RESOLV_CONTEXT_HEAD.with(|head| {
-        let current = head.get();
+    with_resolv_context_head(|head| {
+        let current = *head as *mut NativeResolvContext;
         if !current.is_null() && unsafe { (*current).__from_res } {
             unsafe {
                 (*current).__refcount += 1;
@@ -7826,7 +7978,7 @@ pub unsafe extern "C" fn __resolv_context_get() -> *mut c_void {
         let resp = unsafe { __res_state() };
         let ctx = unsafe { alloc_native_resolv_context(resp, true, current) };
         if !ctx.is_null() {
-            head.set(ctx);
+            *head = ctx as usize;
         }
         ctx.cast::<c_void>()
     })
@@ -7840,10 +7992,11 @@ pub unsafe extern "C" fn __resolv_context_get_override(statp: *mut c_void) -> *m
         return std::ptr::null_mut();
     }
 
-    RESOLV_CONTEXT_HEAD.with(|head| {
-        let ctx = unsafe { alloc_native_resolv_context(statp, false, head.get()) };
+    with_resolv_context_head(|head| {
+        let ctx =
+            unsafe { alloc_native_resolv_context(statp, false, *head as *mut NativeResolvContext) };
         if !ctx.is_null() {
-            head.set(ctx);
+            *head = ctx as usize;
         }
         ctx.cast::<c_void>()
     })
@@ -7866,9 +8019,9 @@ pub unsafe extern "C" fn __resolv_context_put(ctx: *mut c_void) {
     let saved_h_errno = unsafe { *crate::resolv_abi::__h_errno_location() };
     let target = ctx.cast::<NativeResolvContext>();
 
-    RESOLV_CONTEXT_HEAD.with(|head| {
+    with_resolv_context_head(|head| {
         let mut prev = std::ptr::null_mut::<NativeResolvContext>();
-        let mut current = head.get();
+        let mut current = *head as *mut NativeResolvContext;
         while !current.is_null() {
             if current == target {
                 let should_free = unsafe {
@@ -7883,7 +8036,7 @@ pub unsafe extern "C" fn __resolv_context_put(ctx: *mut c_void) {
                 if should_free {
                     let next = unsafe { (*current).__next };
                     if prev.is_null() {
-                        head.set(next);
+                        *head = next as usize;
                     } else {
                         unsafe {
                             (*prev).__next = next;
@@ -7911,8 +8064,8 @@ pub unsafe extern "C" fn __resolv_context_freeres() {
     let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
     let saved_h_errno = unsafe { *crate::resolv_abi::__h_errno_location() };
 
-    RESOLV_CONTEXT_HEAD.with(|head| {
-        let mut current = head.replace(std::ptr::null_mut());
+    with_resolv_context_head(|head| {
+        let mut current = std::mem::replace(head, 0) as *mut NativeResolvContext;
         while !current.is_null() {
             let next = unsafe { (*current).__next };
             unsafe { crate::malloc_abi::raw_free(current.cast()) };

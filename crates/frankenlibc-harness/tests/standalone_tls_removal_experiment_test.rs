@@ -78,6 +78,13 @@ fn abi_rpc_path(root: &Path) -> PathBuf {
         .join("rpc_abi.rs")
 }
 
+fn abi_glibc_internal_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("glibc_internal_abi.rs")
+}
+
 fn load_manifest() -> TestResult<Value> {
     let root = workspace_root()?;
     let path = manifest_path(&root);
@@ -602,8 +609,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 42,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, and RPC ABI scratch/state slots",
+        substituted == 48,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, and glibc-internal cleanup/resolver/shadow state",
     )?;
     require(
         substituted + remaining == total,
@@ -695,5 +702,18 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && rpc.contains("RPC_SVC_POLLFD_OWNED_TLS")
             && rpc.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "RPC ABI must route xdr recursion depth, clnt scratch buffers, rpc_createerr, svc_fdset, svc_max_pollfd, and svc_pollfd through owned TLS cache",
+    )?;
+
+    let glibc_internal = std::fs::read_to_string(abi_glibc_internal_path(&root))
+        .map_err(|err| format!("read glibc_internal_abi.rs: {err}"))?;
+    require(
+        glibc_internal.contains("PTHREAD_CLEANUP_HEAD_OWNED_TLS")
+            && glibc_internal.contains("RES_STATE_OWNED_TLS")
+            && glibc_internal.contains("RCMD_ERRSTR_OWNED_TLS")
+            && glibc_internal.contains("SGETSPENT_OWNED_TLS")
+            && glibc_internal.contains("GLIBC_INTERNAL_H_ERRNO_OWNED_TLS")
+            && glibc_internal.contains("RESOLV_CONTEXT_HEAD_OWNED_TLS")
+            && glibc_internal.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "glibc-internal ABI must route pthread cleanup head, resolver state, rcmd errstr, sgetspent scratch, h_errno, and resolver context head through owned TLS cache",
     )
 }
