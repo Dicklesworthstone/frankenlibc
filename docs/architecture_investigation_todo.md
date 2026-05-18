@@ -149,9 +149,12 @@ Status keys:
 
 ## 9) P1 Tooling Requirements (/dp/asupersync + /dp/frankentui)
 
-- [ ] `TODO-0901` Verify deterministic orchestration path always uses `/dp/asupersync` when feature-enabled.
-- [ ] `TODO-0902` Verify diff/snapshot UI path uses `/dp/frankentui` when feature-enabled.
-- [ ] `TODO-0903` Add explicit “tooling only, not runtime dependency” audit assertions in CI.
+- [x] `TODO-0901` Verify deterministic orchestration path always uses `/dp/asupersync` when feature-enabled.
+  - Closed by `bd-0agsk.13`: `tests/conformance/tooling_dependency_boundary.v1.json` includes `asupersync-tooling` feature-path proofs for `frankenlibc-harness` and legacy conformance, and `scripts/check_tooling_dependency_boundary.sh --validate-only` verifies the feature-gated orchestration tokens and companion dependency versions.
+- [x] `TODO-0902` Verify diff/snapshot UI path uses `/dp/frankentui` when feature-enabled.
+  - Closed by `bd-0agsk.13`: the tooling boundary contract includes `frankentui-ui` feature-path proofs for diff rendering, snapshot rendering, CLI `ftui` output notes, and legacy conformance rendering, with the checker failing closed when any proof is missing.
+- [x] `TODO-0903` Add explicit “tooling only, not runtime dependency” audit assertions in CI.
+  - Closed by `bd-0agsk.13` / `bd-38wu3`: `scripts/check_tooling_dependency_boundary.sh --validate-only` audits runtime crate manifests for forbidden tooling dependency leakage, and `tests/conformance/tooling_contract_cli_contract.v1.json` pins the report-only `tooling-contract` CLI surface for deployed-binary feature checks.
 
 ## 10) P2 Architecture Documentation Hygiene
 
