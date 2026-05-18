@@ -1,0 +1,75 @@
+{
+  "schema_version": "tsm_overhead_evidence_report.v1",
+  "bead": "bd-hdflr",
+  "purpose": "Reviewer-facing TSM overhead evidence report contract. This report summarizes strict/hardened overhead rows and the contention lane in a compact checklist. It is a review aid and must not upgrade schema-golden or smoke evidence into public performance claims.",
+  "source_artifacts": {
+    "overhead_budget_evidence": {
+      "path": "tests/conformance/strict_hardened_membrane_overhead_budget_golden.v1.json",
+      "schema_version": "v1",
+      "source_bead": "bd-wpr1n",
+      "checker_bead": "bd-e1eko",
+      "expected_source_commit": "bd-e1eko-current",
+      "schema_golden_allowed": true,
+      "live_claim_requires_current_head": true
+    },
+    "contention_lane_contract": {
+      "path": "tests/conformance/tsm_contention_e2e_lane.v1.json",
+      "schema_version": "tsm_contention_e2e_lane.v1",
+      "source_bead": "bd-rakj1",
+      "smoke_lane": "smoke_small_host",
+      "permissioned_release_lane": "permissioned_large_host",
+      "smoke_must_not_upgrade_public_claims": true,
+      "permissioned_lane_required_for_public_readiness": true
+    }
+  },
+  "report_contract": {
+    "json_report_schema": "tsm_overhead_evidence_report.output.v1",
+    "markdown_report_filename": "tsm_overhead_evidence_report.md",
+    "required_sections": [
+      "Source Evidence",
+      "Budget Matrix",
+      "Worst Offenders",
+      "Runtime Math Telemetry",
+      "Contention Lane Evidence",
+      "Reviewer Checklist",
+      "Failure Details"
+    ],
+    "required_checklist_items": [
+      "strict_hardened_matrix_complete",
+      "no_budget_regressions",
+      "rch_remote_evidence_only",
+      "current_source_for_public_claims",
+      "runtime_math_telemetry_present",
+      "smoke_and_permissioned_lanes_separated",
+      "permissioned_large_host_evidence_present"
+    ],
+    "structured_log_events": [
+      "tsm_overhead_report_sources_loaded",
+      "tsm_overhead_budget_matrix_rendered",
+      "tsm_overhead_worst_offenders_ranked",
+      "tsm_overhead_contention_lanes_rendered",
+      "tsm_overhead_reviewer_checklist_rendered"
+    ]
+  },
+  "fail_closed_signatures": [
+    "invalid_manifest",
+    "missing_evidence",
+    "invalid_json",
+    "missing_budget_row",
+    "budget_regression",
+    "missing_rch_remote",
+    "local_fallback_seen",
+    "stale_source_commit",
+    "missing_runtime_math_telemetry",
+    "smoke_claim_upgrade",
+    "invalid_contention_lane"
+  ],
+  "validation_commands": [
+    "jq empty tests/conformance/tsm_overhead_evidence_report.v1.json",
+    "bash -n scripts/check_tsm_overhead_evidence_report.sh",
+    "bash scripts/check_tsm_overhead_evidence_report.sh",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-hdflr-test rch exec -- cargo test -p frankenlibc-harness --test tsm_overhead_evidence_report_test -- --nocapture",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-hdflr-check rch exec -- cargo check -p frankenlibc-harness --test tsm_overhead_evidence_report_test",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-hdflr-clippy rch exec -- cargo clippy -p frankenlibc-harness --test tsm_overhead_evidence_report_test -- -D warnings"
+  ]
+}
