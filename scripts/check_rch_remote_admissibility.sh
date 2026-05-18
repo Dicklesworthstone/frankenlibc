@@ -283,6 +283,8 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
     if packet is None:
         return {
             "status": "not_generated",
+            "operator_next_action": "generate_approval_packet",
+            "operator_next_command": str(APPROVAL_PACKET_SCRIPT),
             "report_path": rel(APPROVAL_PACKET_REPORT),
             "markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
             "current_head": head,
@@ -292,6 +294,7 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
             "ready_for_explicit_user_approval_count": 0,
             "current_ready_for_explicit_user_approval_count": 0,
             "ready_candidate_paths": [],
+            "current_ready_candidate_paths": [],
             "safe_to_run_without_user_approval": False,
             "cleanup_executed": False,
             "contract_errors": [],
@@ -317,8 +320,22 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         isinstance(row, dict) and row.get("cleanup_executed") is not False
         for row in readiness_rows
     )
+    if fresh_for_current_head and ready_paths:
+        operator_next_action = "request_explicit_cleanup_approval_for_current_ready_paths"
+        operator_next_command = None
+        current_ready_paths = ready_paths
+    elif fresh_for_current_head:
+        operator_next_action = "inspect_approval_packet_blockers"
+        operator_next_command = str(APPROVAL_PACKET_MARKDOWN)
+        current_ready_paths = []
+    else:
+        operator_next_action = "regenerate_approval_packet_for_current_head"
+        operator_next_command = str(APPROVAL_PACKET_SCRIPT)
+        current_ready_paths = []
     return {
         "status": "available_current" if fresh_for_current_head else "stale_for_current_head",
+        "operator_next_action": operator_next_action,
+        "operator_next_command": operator_next_command,
         "packet_id": packet.get("packet_id"),
         "generated_at_utc": packet.get("generated_at_utc"),
         "report_path": rel(APPROVAL_PACKET_REPORT),
@@ -333,6 +350,7 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         "ready_for_explicit_user_approval_count": len(ready_paths),
         "current_ready_for_explicit_user_approval_count": len(ready_paths) if fresh_for_current_head else 0,
         "ready_candidate_paths": ready_paths,
+        "current_ready_candidate_paths": current_ready_paths,
         "safe_to_run_without_user_approval": any_safe_without_approval,
         "cleanup_executed": any_cleanup_executed,
         "contract_errors": approval_readiness_errors(rows),
@@ -510,6 +528,8 @@ for control in contract.get("negative_controls", []):
             "stale_for_current_head"
             if summary.get("status") == "stale_for_current_head"
             and summary.get("current_ready_for_explicit_user_approval_count") == 0
+            and summary.get("current_ready_candidate_paths") == []
+            and summary.get("operator_next_action") == "regenerate_approval_packet_for_current_head"
             else str(summary)
         )
     else:
@@ -554,7 +574,7 @@ report: dict[str, Any] = {
     "approval_packet_markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
     "approval_readiness_summary": approval_summary,
     "operator_message": (
-        "Remote rch admissibility is blocked. Review the existing approval packet readiness summary or regenerate the approval packet before attempting cargo validation."
+        "Remote rch admissibility is blocked. Follow approval_readiness_summary.operator_next_action before attempting cargo validation."
         if status != "admissible"
         else "Remote rch admissibility preflight passed."
     ),
