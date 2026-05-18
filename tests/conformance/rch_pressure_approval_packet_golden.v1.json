@@ -242,6 +242,54 @@
         "recommendation_reason": "smallest ranked candidate for this worker with estimated_size_gb >= estimated_gb_needed_to_reach_target_ratio"
       }
     ],
+    "approval_readiness": [
+      {
+        "worker_id": "vmi1149989",
+        "host": "212.90.121.76",
+        "path": "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
+        "candidate_rank": 1,
+        "recommendation_kinds": [
+          "smallest_listed_candidate_meeting_estimated_gap",
+          "smallest_listed_candidate_meeting_estimated_gap_plus_margin"
+        ],
+        "read_only_check_count": 2,
+        "read_only_check_results_collected": 0,
+        "read_only_check_results_passed": 0,
+        "read_only_checks_passed": false,
+        "approval_state": "needs_read_only_precheck_results",
+        "blocked_by": [
+          "read_only_precheck_results_missing",
+          "explicit_user_approval_required"
+        ],
+        "safe_to_run_without_user_approval": false,
+        "exact_user_approval_required": true,
+        "cleanup_executed": false,
+        "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
+      },
+      {
+        "worker_id": "vmi1264463",
+        "host": "38.242.209.154",
+        "path": "/data/projects/franken_engine/target_PearlTower_focused",
+        "candidate_rank": 1,
+        "recommendation_kinds": [
+          "smallest_listed_candidate_meeting_estimated_gap",
+          "smallest_listed_candidate_meeting_estimated_gap_plus_margin"
+        ],
+        "read_only_check_count": 2,
+        "read_only_check_results_collected": 0,
+        "read_only_check_results_passed": 0,
+        "read_only_checks_passed": false,
+        "approval_state": "needs_read_only_precheck_results",
+        "blocked_by": [
+          "read_only_precheck_results_missing",
+          "explicit_user_approval_required"
+        ],
+        "safe_to_run_without_user_approval": false,
+        "exact_user_approval_required": true,
+        "cleanup_executed": false,
+        "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
+      }
+    ],
     "approval_request": {
       "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
       "exact_worker_ids": [
@@ -302,6 +350,8 @@
     "Smallest Sufficient Listed Candidates",
     "Margin Sufficient Listed Candidates",
     "Read-Only Pre-Cleanup Checks",
+    "Approval Readiness",
+    "safe without user approval `false`",
     "sbh_protect_marker_absence",
     "open_file_absence",
     "Cleanup Candidates",

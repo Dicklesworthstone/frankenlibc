@@ -23,6 +23,7 @@
     "workers",
     "cleanup_candidates",
     "recommended_cleanup_candidates",
+    "approval_readiness",
     "approval_request",
     "executed_actions",
     "validation_commands",
@@ -106,6 +107,29 @@
     "estimated_surplus_gb_after_cleanup",
     "recommendation_kind",
     "recommendation_reason"
+  ],
+  "approval_readiness_fields": [
+    "worker_id",
+    "host",
+    "path",
+    "candidate_rank",
+    "recommendation_kinds",
+    "read_only_check_count",
+    "read_only_check_results_collected",
+    "read_only_check_results_passed",
+    "read_only_checks_passed",
+    "approval_state",
+    "blocked_by",
+    "safe_to_run_without_user_approval",
+    "exact_user_approval_required",
+    "cleanup_executed",
+    "next_action"
+  ],
+  "approval_readiness_allowed_states": [
+    "ready_for_explicit_user_approval",
+    "needs_read_only_precheck_results",
+    "blocked_by_read_only_precheck_result",
+    "blocked_by_missing_read_only_checks"
   ],
   "allowed_worker_statuses": [
     "healthy",
@@ -390,6 +414,31 @@
           "risk_notes": "Repository work may be embedded in target-adjacent state; deletion requires exact written approval.",
           "requires_explicit_approval": true,
           "executed": false
+        }
+      ],
+      "approval_readiness": [
+        {
+          "worker_id": "vmi1264463",
+          "host": "38.242.209.154",
+          "path": "/data/projects/franken_engine/target_PearlTower_focused",
+          "candidate_rank": 1,
+          "recommendation_kinds": [
+            "smallest_listed_candidate_meeting_estimated_gap",
+            "smallest_listed_candidate_meeting_estimated_gap_plus_margin"
+          ],
+          "read_only_check_count": 2,
+          "read_only_check_results_collected": 0,
+          "read_only_check_results_passed": 0,
+          "read_only_checks_passed": false,
+          "approval_state": "needs_read_only_precheck_results",
+          "blocked_by": [
+            "read_only_precheck_results_missing",
+            "explicit_user_approval_required"
+          ],
+          "safe_to_run_without_user_approval": false,
+          "exact_user_approval_required": true,
+          "cleanup_executed": false,
+          "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
         }
       ],
       "approval_request": {

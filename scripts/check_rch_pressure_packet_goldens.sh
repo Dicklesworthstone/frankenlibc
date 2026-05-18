@@ -122,6 +122,12 @@ REQUIRED_PRE_CLEANUP_CHECK_KINDS = {"sbh_protect_marker_absence", "open_file_abs
 FORBIDDEN_PRE_CLEANUP_COMMAND = re.compile(
     r"\brm\b|\brmdir\b|\bunlink\b|-delete|git reset|git clean|sbh clean|sbh ballast release|sbh emergency"
 )
+APPROVAL_READINESS_ALLOWED_STATES = {
+    "ready_for_explicit_user_approval",
+    "needs_read_only_precheck_results",
+    "blocked_by_read_only_precheck_result",
+    "blocked_by_missing_read_only_checks",
+}
 
 
 def validate_pre_cleanup_checks(source: str, path: Any, checks: Any, missing_signature: str) -> None:
@@ -204,6 +210,48 @@ def validate_pre_cleanup_result(source: str, path: Any, kind: Any, result: Any) 
     )
     if result.get("passed") is not expected_passed:
         add_error(source, "pre_cleanup_result_pass_mismatch", f"{path} {kind} passed flag does not match result output")
+
+
+def pre_cleanup_result_counts(checks: Any) -> tuple[int, int, int]:
+    if not isinstance(checks, list):
+        return (0, 0, 0)
+    check_count = 0
+    collected_count = 0
+    passed_count = 0
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        check_count += 1
+        result = check.get("last_result")
+        if not isinstance(result, dict):
+            continue
+        collected_count += 1
+        if result.get("passed") is True:
+            passed_count += 1
+    return (check_count, collected_count, passed_count)
+
+
+def expected_approval_state(checks: Any) -> tuple[str, list[str], bool]:
+    check_count, collected_count, passed_count = pre_cleanup_result_counts(checks)
+    if check_count == 0:
+        return (
+            "blocked_by_missing_read_only_checks",
+            ["read_only_checks_missing", "explicit_user_approval_required"],
+            False,
+        )
+    if collected_count < check_count:
+        return (
+            "needs_read_only_precheck_results",
+            ["read_only_precheck_results_missing", "explicit_user_approval_required"],
+            False,
+        )
+    if passed_count == check_count:
+        return ("ready_for_explicit_user_approval", ["explicit_user_approval_required"], True)
+    return (
+        "blocked_by_read_only_precheck_result",
+        ["read_only_precheck_failed", "explicit_user_approval_required"],
+        False,
+    )
 
 
 def validate_repo_state(packet: dict[str, Any], source: str) -> None:
@@ -523,6 +571,94 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
                 "margin_candidate_paths_mismatch",
                 f"margin_sufficient_candidate_paths={margin_paths} expected={expected_margin_paths}",
             )
+    selected_readiness: dict[tuple[str, str], dict[str, Any]] = {}
+    expected_kinds: dict[tuple[str, str], set[str]] = {}
+    for candidate in recommended:
+        if not isinstance(candidate, dict):
+            continue
+        key = (str(candidate.get("worker_id", "")), str(candidate.get("path", "")))
+        selected_readiness[key] = candidate
+        expected_kinds.setdefault(key, set()).add("smallest_listed_candidate_meeting_estimated_gap")
+    for path in margin_paths:
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or str(candidate.get("path", "")) != str(path):
+                continue
+            key = (str(candidate.get("worker_id", "")), str(candidate.get("path", "")))
+            selected_readiness.setdefault(key, candidate)
+            expected_kinds.setdefault(key, set()).add("smallest_listed_candidate_meeting_estimated_gap_plus_margin")
+    readiness = packet.get("approval_readiness")
+    if not isinstance(readiness, list):
+        add_error(source, "malformed_approval_readiness", "approval_readiness must be a list")
+        readiness = []
+    expected_readiness_order = sorted(
+        selected_readiness,
+        key=lambda key: (
+            key[0],
+            int(selected_readiness[key].get("candidate_rank", 999999))
+            if isinstance(selected_readiness[key].get("candidate_rank"), int)
+            else 999999,
+            key[1],
+        ),
+    )
+    actual_readiness_order = [
+        (str(item.get("worker_id", "")), str(item.get("path", "")))
+        for item in readiness
+        if isinstance(item, dict)
+    ]
+    if actual_readiness_order != expected_readiness_order:
+        add_error(
+            source,
+            "approval_readiness_order_mismatch",
+            f"approval_readiness order={actual_readiness_order} expected={expected_readiness_order}",
+        )
+    for item in readiness:
+        if not isinstance(item, dict):
+            add_error(source, "malformed_approval_readiness_item", "approval_readiness entries must be objects")
+            continue
+        key = (str(item.get("worker_id", "")), str(item.get("path", "")))
+        candidate = selected_readiness.get(key)
+        if candidate is None:
+            add_error(source, "approval_readiness_unknown_candidate", f"{key[1]} is not a selected recommendation")
+            continue
+        if item.get("safe_to_run_without_user_approval") is not False:
+            add_error(source, "approval_readiness_claims_safe_without_user_approval", f"{key[1]} must remain user-approval gated")
+        if item.get("exact_user_approval_required") is not True:
+            add_error(source, "approval_readiness_missing_user_approval_gate", f"{key[1]} must require explicit user approval")
+        if item.get("cleanup_executed") is not False:
+            add_error(source, "approval_readiness_claims_execution", f"{key[1]} must not claim execution")
+        if item.get("host") != candidate.get("host"):
+            add_error(source, "approval_readiness_host_mismatch", f"{key[1]} host does not match selected candidate")
+        if item.get("candidate_rank") != candidate.get("candidate_rank"):
+            add_error(source, "approval_readiness_rank_mismatch", f"{key[1]} rank does not match selected candidate")
+        kinds = item.get("recommendation_kinds")
+        if not isinstance(kinds, list) or {str(kind) for kind in kinds} != expected_kinds.get(key, set()):
+            add_error(source, "approval_readiness_kind_mismatch", f"{key[1]} recommendation kinds are incorrect")
+        check_count, collected_count, passed_count = pre_cleanup_result_counts(
+            candidate.get("pre_cleanup_read_only_checks")
+        )
+        if item.get("read_only_check_count") != check_count:
+            add_error(source, "approval_readiness_check_count_mismatch", f"{key[1]} check_count mismatch")
+        if item.get("read_only_check_results_collected") != collected_count:
+            add_error(source, "approval_readiness_collected_count_mismatch", f"{key[1]} collected_count mismatch")
+        if item.get("read_only_check_results_passed") != passed_count:
+            add_error(source, "approval_readiness_passed_count_mismatch", f"{key[1]} passed_count mismatch")
+        expected_state, expected_blockers, expected_passed = expected_approval_state(
+            candidate.get("pre_cleanup_read_only_checks")
+        )
+        if item.get("approval_state") not in APPROVAL_READINESS_ALLOWED_STATES:
+            add_error(source, "approval_readiness_invalid_state", f"{key[1]} has invalid approval_state")
+        elif item.get("approval_state") != expected_state:
+            add_error(source, "approval_readiness_state_mismatch", f"{key[1]} approval_state mismatch")
+        if item.get("blocked_by") != expected_blockers:
+            add_error(source, "approval_readiness_blockers_mismatch", f"{key[1]} blocked_by mismatch")
+        if item.get("read_only_checks_passed") is not expected_passed:
+            add_error(source, "approval_readiness_pass_flag_mismatch", f"{key[1]} read_only_checks_passed mismatch")
+        next_action = item.get("next_action")
+        if expected_state == "ready_for_explicit_user_approval":
+            if next_action != "request_explicit_user_approval_for_exact_path":
+                add_error(source, "approval_readiness_next_action_mismatch", f"{key[1]} next_action mismatch")
+        elif next_action != "collect_passing_read_only_precheck_results_before_requesting_user_approval":
+            add_error(source, "approval_readiness_next_action_mismatch", f"{key[1]} next_action mismatch")
     if not all(item.get("executed") is True for item in packet.get("executed_actions", []) if isinstance(item, dict)):
         add_error(source, "missing_execution_log", "executed_actions must log completed read-only actions")
 
@@ -722,6 +858,19 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
     else:
         add_error(source, "negative_control_no_worktree_list", "golden packet has no worktree_list for mutation")
 
+    unsafe_readiness_packet = deepcopy(packet)
+    readiness = unsafe_readiness_packet.get("approval_readiness")
+    if isinstance(readiness, list) and readiness and isinstance(readiness[0], dict):
+        readiness[0]["safe_to_run_without_user_approval"] = True
+        expect_validation_failure(
+            unsafe_readiness_packet,
+            f"{source}::approval_readiness_claims_safe_without_user_approval",
+            "approval_readiness_claims_safe_without_user_approval",
+            "make first approval readiness row claim it is safe without user approval",
+        )
+    else:
+        add_error(source, "negative_control_no_approval_readiness", "golden packet has no approval_readiness for mutation")
+
 
 def require_list_contains(schema: dict[str, Any], source: str, field: str, required: set[str]) -> None:
     value = schema.get(field)
@@ -743,6 +892,7 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
         "required_top_level_fields",
         {
             "recommended_cleanup_candidates",
+            "approval_readiness",
             "validation_commands",
             "artifact_paths",
         },
@@ -809,6 +959,21 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "estimated_post_cleanup_free_ratio",
             "estimated_surplus_gb_after_cleanup",
             "recommendation_reason",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "approval_readiness_fields",
+        {
+            "worker_id",
+            "path",
+            "approval_state",
+            "blocked_by",
+            "safe_to_run_without_user_approval",
+            "exact_user_approval_required",
+            "cleanup_executed",
+            "next_action",
         },
     )
     require_list_contains(

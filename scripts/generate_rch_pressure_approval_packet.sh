@@ -737,6 +737,84 @@ pre_cleanup_result_count = attach_pre_cleanup_results(
     margin_recommended_candidates,
 )
 
+
+def selected_recommendation_entries() -> list[dict[str, Any]]:
+    entries: dict[tuple[str, str], dict[str, Any]] = {}
+    for candidate in recommended_candidates + margin_recommended_candidates:
+        key = (str(candidate.get("worker_id", "")), str(candidate.get("path", "")))
+        if key not in entries:
+            entries[key] = {"candidate": candidate, "recommendation_kinds": []}
+        kind = str(candidate.get("recommendation_kind") or "")
+        if kind and kind not in entries[key]["recommendation_kinds"]:
+            entries[key]["recommendation_kinds"].append(kind)
+    return [
+        entries[key]
+        for key in sorted(
+            entries,
+            key=lambda item: (
+                item[0],
+                int(entries[item]["candidate"].get("candidate_rank", 999999)),
+                item[1],
+            ),
+        )
+    ]
+
+
+def approval_readiness_rows() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for entry in selected_recommendation_entries():
+        candidate = entry["candidate"]
+        checks = candidate.get("pre_cleanup_read_only_checks")
+        check_count = len(checks) if isinstance(checks, list) else 0
+        collected_count = 0
+        passed_count = 0
+        if isinstance(checks, list):
+            for check in checks:
+                if not isinstance(check, dict):
+                    continue
+                result = check.get("last_result")
+                if not isinstance(result, dict):
+                    continue
+                collected_count += 1
+                if result.get("passed") is True:
+                    passed_count += 1
+
+        if check_count == 0:
+            approval_state = "blocked_by_missing_read_only_checks"
+            blocked_by = ["read_only_checks_missing", "explicit_user_approval_required"]
+        elif collected_count < check_count:
+            approval_state = "needs_read_only_precheck_results"
+            blocked_by = ["read_only_precheck_results_missing", "explicit_user_approval_required"]
+        elif passed_count == check_count:
+            approval_state = "ready_for_explicit_user_approval"
+            blocked_by = ["explicit_user_approval_required"]
+        else:
+            approval_state = "blocked_by_read_only_precheck_result"
+            blocked_by = ["read_only_precheck_failed", "explicit_user_approval_required"]
+
+        rows.append(
+            {
+                "worker_id": candidate.get("worker_id"),
+                "host": candidate.get("host"),
+                "path": candidate.get("path"),
+                "candidate_rank": candidate.get("candidate_rank"),
+                "recommendation_kinds": entry["recommendation_kinds"],
+                "read_only_check_count": check_count,
+                "read_only_check_results_collected": collected_count,
+                "read_only_check_results_passed": passed_count,
+                "read_only_checks_passed": check_count > 0 and passed_count == check_count,
+                "approval_state": approval_state,
+                "blocked_by": blocked_by,
+                "safe_to_run_without_user_approval": False,
+                "exact_user_approval_required": True,
+                "cleanup_executed": False,
+                "next_action": "request_explicit_user_approval_for_exact_path"
+                if approval_state == "ready_for_explicit_user_approval"
+                else "collect_passing_read_only_precheck_results_before_requesting_user_approval",
+            }
+        )
+    return rows
+
 report = {
     "schema_version": "rch_pressure_approval_packet_schema.v1",
     "packet_id": PACKET_ID,
@@ -760,6 +838,7 @@ report = {
     "workers": workers,
     "cleanup_candidates": candidates,
     "recommended_cleanup_candidates": recommended_candidates,
+    "approval_readiness": approval_readiness_rows(),
     "approval_request": {
         "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
         "exact_worker_ids": candidate_worker_ids,
@@ -923,6 +1002,22 @@ if display_precheck_candidates:
             lines.append(f"    - {markdown_check_result(check)}")
 else:
     lines.append("- No selected cleanup candidate requires pre-cleanup checks.")
+lines.extend(
+    [
+        "",
+        "## Approval Readiness",
+    ]
+)
+if report["approval_readiness"]:
+    for readiness in report["approval_readiness"]:
+        lines.append(
+            f"- `{readiness['worker_id']}` state `{readiness['approval_state']}`; "
+            f"checks `{readiness['read_only_check_results_passed']}/{readiness['read_only_check_count']}`; "
+            f"safe without user approval `{str(readiness['safe_to_run_without_user_approval']).lower()}`; "
+            f"`{readiness['path']}`"
+        )
+else:
+    lines.append("- No selected candidate has reached the approval-readiness stage.")
 lines.extend(
     [
         "",
