@@ -68,12 +68,14 @@ Status keys:
     - metadata/navigation/identity/link path now route through raw `SYS_*` syscall entrypoints.
     - `stat/lstat` use `newfstatat`, `access` uses `faccessat`, link ops use `*at` variants.
     - `sleep/usleep` now route through `SYS_nanosleep`.
-  - [ ] `TODO-0203f` Remove remaining `signal_abi` call-throughs:
+  - [x] `TODO-0203f` Remove remaining `signal_abi` call-throughs:
     - `signal`
     - `sigaction`
-- [ ] `TODO-0204` Eliminate remaining call-throughs in loader/resolver/locale families.
-- [ ] `TODO-0205` Re-run `scripts/check_replacement_guard.sh replacement` until zero forbidden call-throughs.
-- [ ] `TODO-0206` Add regression test to prevent reintroduction of replacement-mode call-throughs.
+- [x] `TODO-0204` Eliminate remaining call-throughs in loader/resolver/locale families.
+- [x] `TODO-0205` Re-run `scripts/check_replacement_guard.sh replacement` until zero forbidden call-throughs.
+  - Current `scripts/check_replacement_guard.sh replacement` output: `total_call_throughs=0`, `violations=0`, `ok=true`.
+- [x] `TODO-0206` Add regression test to prevent reintroduction of replacement-mode call-throughs.
+  - `crates/frankenlibc-harness/tests/replacement_guard_test.rs` exercises replacement mode and the standalone build outcome against the replacement guard.
 
 ## 3) P0 Fixture Schema Stability
 
@@ -173,15 +175,11 @@ Status keys:
 
 - [x] `NEXT-0001` Regenerate/normalize fixture schemas so verify path stops skipping `elf_loader.json` and `resolver.json`.
 - [x] `NEXT-0002` Close support-matrix vs reality-report drift with a single canonical generation pass.
-- [~] `NEXT-0003` Burn down highest-impact replacement call-through blockers and re-run replacement guard.
+- [x] `NEXT-0003` Burn down highest-impact replacement call-through blockers and re-run replacement guard.
   - Progress note (pass 1): replacement guard reduced from 80 -> 70 forbidden call-throughs by removing host-libc calls in `time_abi`, `resource_abi`, `process_abi`, and `stdlib_abi`.
   - Progress note (pass 2): replacement guard reduced from 70 -> 56 forbidden call-throughs by removing host-libc calls in `termios_abi`, `dirent_abi`, and `signal_abi` (`raise`/`kill`).
   - Progress note (pass 3): replacement guard reduced from 56 -> 22 forbidden call-throughs by removing host-libc calls in `socket_abi` and `unistd_abi`.
-  - Current blocker distribution (`replacement_guard.report.json`):
-    - `pthread_abi`: 15
-    - `dlfcn_abi`: 4
-    - `signal_abi`: 2
-    - `startup_abi`: 1
+  - Current blocker distribution (`replacement_guard.report.json`): none; replacement guard reports zero call-throughs.
   - Previously resolved distributions:
     - resolved in this pass:
       - `socket_abi`: 14 -> 0
