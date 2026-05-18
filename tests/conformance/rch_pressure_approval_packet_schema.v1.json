@@ -132,6 +132,8 @@
       "exact_worker_ids",
       "exact_candidate_paths",
       "smallest_sufficient_candidate_paths",
+      "minimum_margin_surplus_gb",
+      "margin_sufficient_candidate_paths",
       "why_read_only_collection_is_insufficient",
       "explicit_user_text_required_before_cleanup",
       "commands_not_executed"
@@ -390,6 +392,10 @@
           "/data/projects/franken_engine/target_PearlTower_focused"
         ],
         "smallest_sufficient_candidate_paths": [
+          "/data/projects/franken_engine/target_PearlTower_focused"
+        ],
+        "minimum_margin_surplus_gb": 0.25,
+        "margin_sufficient_candidate_paths": [
           "/data/projects/franken_engine/target_PearlTower_focused"
         ],
         "why_read_only_collection_is_insufficient": "No releasable SBH ballast was found and the remaining candidates require deletion-level cleanup.",

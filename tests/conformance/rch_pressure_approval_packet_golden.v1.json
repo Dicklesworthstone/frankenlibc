@@ -256,6 +256,11 @@
         "/data/projects/franken_engine/target_PearlTower_focused",
         "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9"
       ],
+      "minimum_margin_surplus_gb": 0.25,
+      "margin_sufficient_candidate_paths": [
+        "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9",
+        "/data/projects/franken_engine/target_PearlTower_focused"
+      ],
       "why_read_only_collection_is_insufficient": "Read-only collection can identify pressure and candidates, but cannot free space under repo rules.",
       "explicit_user_text_required_before_cleanup": "The user must provide written approval naming exact paths and commands before cleanup can run.",
       "commands_not_executed": [
@@ -295,6 +300,7 @@
     "# rch Pressure Approval Packet",
     "Worker Pressure Gaps",
     "Smallest Sufficient Listed Candidates",
+    "Margin Sufficient Listed Candidates",
     "Read-Only Pre-Cleanup Checks",
     "sbh_protect_marker_absence",
     "open_file_absence",

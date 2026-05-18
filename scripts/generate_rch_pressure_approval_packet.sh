@@ -191,6 +191,7 @@ def load_status_json() -> dict[str, Any]:
 
 
 CRITICAL_FREE_RATIO_TARGET = 0.05
+MARGIN_RECOMMENDATION_SURPLUS_GB = 0.25
 
 
 def float_or_none(value: Any) -> float | None:
@@ -522,6 +523,64 @@ def smallest_sufficient_candidates(workers: list[dict[str, Any]], candidates: li
 
 recommended_candidates = smallest_sufficient_candidates(workers, candidates)
 
+
+def margin_sufficient_candidates(
+    workers: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    minimum_surplus_gb: float,
+) -> list[dict[str, Any]]:
+    recommended: list[dict[str, Any]] = []
+    for worker in workers:
+        if worker.get("pressure_state") != "critical":
+            continue
+        gap_gb = float_or_none(worker.get("estimated_gb_needed_to_reach_target_ratio"))
+        if gap_gb is None or gap_gb <= 0:
+            continue
+        required_size_gb = gap_gb + minimum_surplus_gb
+        worker_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.get("worker_id") == worker.get("worker_id")
+            and float_or_none(candidate.get("estimated_size_gb")) is not None
+            and float(candidate["estimated_size_gb"]) >= required_size_gb
+        ]
+        if not worker_candidates:
+            continue
+        selected = min(
+            worker_candidates,
+            key=lambda candidate: (
+                float(candidate["estimated_size_gb"]),
+                int(candidate.get("candidate_rank", 999999)),
+                str(candidate.get("path", "")),
+            ),
+        )
+        recommendation = dict(selected)
+        recommendation["estimated_gap_gb"] = gap_gb
+        recommendation["minimum_margin_surplus_gb"] = minimum_surplus_gb
+        recommendation["estimated_post_cleanup_free_ratio"] = estimated_post_cleanup_free_ratio(worker, selected)
+        recommendation["estimated_surplus_gb_after_cleanup"] = estimated_surplus_gb_after_cleanup(worker, selected)
+        recommendation["recommendation_kind"] = "smallest_listed_candidate_meeting_estimated_gap_plus_margin"
+        recommendation["recommendation_reason"] = (
+            "smallest ranked candidate for this worker with estimated_size_gb >= "
+            "estimated_gb_needed_to_reach_target_ratio plus the configured margin surplus"
+        )
+        recommended.append(recommendation)
+    return sorted(
+        recommended,
+        key=lambda candidate: (
+            str(candidate.get("worker_id", "")),
+            int(candidate.get("candidate_rank", 999999)),
+            str(candidate.get("path", "")),
+        ),
+    )
+
+
+margin_recommended_candidates = margin_sufficient_candidates(
+    workers,
+    candidates,
+    MARGIN_RECOMMENDATION_SURPLUS_GB,
+)
+
 report = {
     "schema_version": "rch_pressure_approval_packet_schema.v1",
     "packet_id": PACKET_ID,
@@ -550,6 +609,8 @@ report = {
         "exact_worker_ids": candidate_worker_ids,
         "exact_candidate_paths": candidate_paths,
         "smallest_sufficient_candidate_paths": [candidate["path"] for candidate in recommended_candidates],
+        "minimum_margin_surplus_gb": MARGIN_RECOMMENDATION_SURPLUS_GB,
+        "margin_sufficient_candidate_paths": [candidate["path"] for candidate in margin_recommended_candidates],
         "why_read_only_collection_is_insufficient": "Read-only collection can identify pressure and candidates, but cannot free space under repo rules.",
         "explicit_user_text_required_before_cleanup": "The user must provide written approval naming exact paths and commands before cleanup can run.",
         "commands_not_executed": [
@@ -635,6 +696,24 @@ if recommended_candidates:
         )
 else:
     lines.append("- No listed cleanup candidate was large enough to clear a worker's estimated pressure gap.")
+lines.extend(
+    [
+        "",
+        "## Margin Sufficient Listed Candidates",
+    ]
+)
+if margin_recommended_candidates:
+    for candidate in margin_recommended_candidates:
+        lines.append(
+            f"- `{candidate['worker_id']}` rank `{candidate.get('candidate_rank')}` "
+            f"gap `{markdown_value(candidate.get('estimated_gap_gb'), 'G')}`; "
+            f"minimum surplus `{markdown_value(candidate.get('minimum_margin_surplus_gb'), 'G')}`; "
+            f"estimated surplus `{markdown_value(candidate.get('estimated_surplus_gb_after_cleanup'), 'G')}`; "
+            f"margin listed candidate `{candidate['size_human']}` `{candidate['path']}` "
+            "(requires explicit written approval; not executed)"
+        )
+else:
+    lines.append("- No listed cleanup candidate clears a worker's estimated pressure gap plus margin.")
 lines.extend(
     [
         "",

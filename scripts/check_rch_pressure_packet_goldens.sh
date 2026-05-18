@@ -422,6 +422,8 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
         "exact_worker_ids",
         "exact_candidate_paths",
         "smallest_sufficient_candidate_paths",
+        "minimum_margin_surplus_gb",
+        "margin_sufficient_candidate_paths",
         "why_read_only_collection_is_insufficient",
         "explicit_user_text_required_before_cleanup",
         "commands_not_executed",
@@ -429,6 +431,59 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     for field in required_approval_fields:
         if field not in approval:
             add_error(source, "missing_approval_field", f"approval_request missing {field}")
+    margin_surplus = approval.get("minimum_margin_surplus_gb")
+    if not is_number(margin_surplus) or float(margin_surplus) < 0:
+        add_error(source, "invalid_margin_surplus", "approval_request.minimum_margin_surplus_gb must be a non-negative number")
+        margin_surplus = None
+    margin_paths = approval.get("margin_sufficient_candidate_paths")
+    if not isinstance(margin_paths, list) or not all(isinstance(path, str) for path in margin_paths):
+        add_error(source, "invalid_margin_candidate_paths", "approval_request.margin_sufficient_candidate_paths must be a string list")
+        margin_paths = []
+    else:
+        for path in margin_paths:
+            if path not in candidate_paths:
+                add_error(source, "margin_candidate_not_listed", f"{path} is not present in cleanup_candidates")
+    if is_number(margin_surplus):
+        expected_margin_items: list[tuple[str, int, str]] = []
+        for worker in workers:
+            if not isinstance(worker, dict) or worker.get("pressure_state") != "critical":
+                continue
+            worker_id = str(worker.get("worker_id", ""))
+            worker_gap = float_or_none(worker.get("estimated_gb_needed_to_reach_target_ratio"))
+            if worker_gap is None:
+                continue
+            sufficient = [
+                item
+                for item in candidates_by_worker.get(worker_id, [])
+                if float_or_none(item.get("estimated_size_gb")) is not None
+                and float(item["estimated_size_gb"]) >= worker_gap + float(margin_surplus)
+            ]
+            if not sufficient:
+                continue
+            expected = min(
+                sufficient,
+                key=lambda item: (
+                    float(item["estimated_size_gb"]),
+                    int(item.get("candidate_rank", 999999)),
+                    str(item.get("path", "")),
+                ),
+            )
+            expected_margin_items.append(
+                (
+                    worker_id,
+                    int(expected.get("candidate_rank", 999999))
+                    if isinstance(expected.get("candidate_rank"), int)
+                    else 999999,
+                    str(expected.get("path")),
+                )
+            )
+        expected_margin_paths = [path for _, _, path in sorted(expected_margin_items)]
+        if isinstance(margin_paths, list) and margin_paths != expected_margin_paths:
+            add_error(
+                source,
+                "margin_candidate_paths_mismatch",
+                f"margin_sufficient_candidate_paths={margin_paths} expected={expected_margin_paths}",
+            )
     if not all(item.get("executed") is True for item in packet.get("executed_actions", []) if isinstance(item, dict)):
         add_error(source, "missing_execution_log", "executed_actions must log completed read-only actions")
 
@@ -724,6 +779,12 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
                 source,
                 "schema_contract_missing_smallest_paths",
                 "approval_request_contract.must_include must name smallest_sufficient_candidate_paths",
+            )
+        if not isinstance(approval_required, list) or "margin_sufficient_candidate_paths" not in approval_required:
+            add_error(
+                source,
+                "schema_contract_missing_margin_paths",
+                "approval_request_contract.must_include must name margin_sufficient_candidate_paths",
             )
     examples = schema.get("example_packets")
     if not isinstance(examples, list) or not examples:
