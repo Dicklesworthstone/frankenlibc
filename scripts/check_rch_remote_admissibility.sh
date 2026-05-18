@@ -378,6 +378,11 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
                 "read_only_check_count": row.get("read_only_check_count"),
                 "read_only_check_results_collected": row.get("read_only_check_results_collected"),
                 "read_only_check_results_passed": row.get("read_only_check_results_passed"),
+                "read_only_checks_passed": row.get("read_only_checks_passed"),
+                "blocked_by": row.get("blocked_by") if isinstance(row.get("blocked_by"), list) else [],
+                "exact_user_approval_required": row.get("exact_user_approval_required"),
+                "safe_to_run_without_user_approval": row.get("safe_to_run_without_user_approval"),
+                "cleanup_executed": row.get("cleanup_executed"),
                 "next_action": row.get("next_action"),
             }
             for row in ready_rows
