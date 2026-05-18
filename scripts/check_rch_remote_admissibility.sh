@@ -309,6 +309,8 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
             "ready_candidate_paths": [],
             "current_ready_candidate_paths": [],
             "current_ready_candidate_summaries": [],
+            "current_ready_worker_ids": [],
+            "current_ready_candidate_count_by_worker": {},
             "safe_to_run_without_user_approval": False,
             "cleanup_executed": False,
             "contract_errors": [],
@@ -397,6 +399,12 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         operator_next_command = str(APPROVAL_PACKET_SCRIPT)
         current_ready_paths = []
         current_ready_summaries = []
+    current_ready_worker_counts: dict[str, int] = {}
+    for summary in current_ready_summaries:
+        worker_id = summary.get("worker_id")
+        if not isinstance(worker_id, str) or not worker_id:
+            continue
+        current_ready_worker_counts[worker_id] = current_ready_worker_counts.get(worker_id, 0) + 1
     return {
         "status": "available_current" if fresh_for_current_head else "stale_for_current_head",
         "operator_next_action": operator_next_action,
@@ -419,6 +427,8 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
         "ready_candidate_paths": ready_paths,
         "current_ready_candidate_paths": current_ready_paths,
         "current_ready_candidate_summaries": current_ready_summaries,
+        "current_ready_worker_ids": sorted(current_ready_worker_counts),
+        "current_ready_candidate_count_by_worker": current_ready_worker_counts,
         "safe_to_run_without_user_approval": any_safe_without_approval,
         "cleanup_executed": any_cleanup_executed,
         "contract_errors": approval_readiness_errors(rows),
@@ -598,6 +608,8 @@ for control in contract.get("negative_controls", []):
             and summary.get("current_ready_for_explicit_user_approval_count") == 0
             and summary.get("current_ready_candidate_paths") == []
             and summary.get("current_ready_candidate_summaries") == []
+            and summary.get("current_ready_worker_ids") == []
+            and summary.get("current_ready_candidate_count_by_worker") == {}
             and summary.get("operator_next_action") == "regenerate_approval_packet_for_current_head"
             else str(summary)
         )
