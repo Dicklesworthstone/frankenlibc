@@ -6,6 +6,31 @@
   "fixture_output_dir": "target/conformance/counterexample_fixture_loop/replay_fixtures",
   "report_path": "target/conformance/counterexample_fixture_loop.report.json",
   "log_path": "target/conformance/counterexample_fixture_loop.log.jsonl",
+  "report_contract": {
+    "output_path": "target/conformance/counterexample_fixture_loop.report.json",
+    "log_path": "target/conformance/counterexample_fixture_loop.log.jsonl",
+    "must_materialize": [
+      "schema_version",
+      "bead",
+      "status",
+      "checks",
+      "errors",
+      "source_commit",
+      "counterexample_count",
+      "generated_fixture_count",
+      "materialized_fixtures",
+      "source_counts",
+      "replay_results",
+      "negative_test_count",
+      "artifact_refs",
+      "report_path",
+      "log_path",
+      "fixture_output_dir",
+      "report_contract_fields",
+      "contract_status",
+      "contract_errors"
+    ]
+  },
   "required_sources": [
     "proof_failure",
     "differential_mismatch",

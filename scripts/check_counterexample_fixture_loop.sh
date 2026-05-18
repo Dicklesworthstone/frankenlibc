@@ -94,6 +94,43 @@ def rel(path):
     return str(path.relative_to(root))
 
 
+def normalize_rel(path):
+    if not isinstance(path, str) or not path:
+        return ""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        try:
+            return rel(candidate)
+        except ValueError:
+            return str(candidate)
+    return str(candidate)
+
+
+def validate_report_contract(artifact, report):
+    contract = artifact.get("report_contract")
+    if not isinstance(contract, dict):
+        return [], ["missing_report_contract"]
+
+    errors = []
+    must_materialize = contract.get("must_materialize")
+    if not isinstance(must_materialize, list) or not all(isinstance(field, str) for field in must_materialize):
+        errors.append("report_contract.must_materialize must be a string list")
+        must_materialize = []
+
+    expected_report = normalize_rel(contract.get("output_path"))
+    expected_log = normalize_rel(contract.get("log_path"))
+    if expected_report != rel(report_path):
+        errors.append(f"report_contract.output_path expected {rel(report_path)} got {expected_report or '<missing>'}")
+    if expected_log != rel(log_path):
+        errors.append(f"report_contract.log_path expected {rel(log_path)} got {expected_log or '<missing>'}")
+
+    missing_fields = [field for field in must_materialize if field not in report]
+    if missing_fields:
+        errors.append("report_contract missing materialized fields: " + ", ".join(missing_fields))
+
+    return must_materialize, errors
+
+
 def counterexample_map(artifact):
     return {row.get("id"): row for row in artifact.get("counterexamples", [])}
 
@@ -311,7 +348,7 @@ def validate(artifact, commit):
     report = {
         "schema_version": "v1",
         "bead": "bd-bp8fl.9.1",
-        "status": "pass" if not errors else "fail",
+        "status": "pending",
         "checks": checks,
         "errors": errors,
         "source_commit": commit,
@@ -321,13 +358,27 @@ def validate(artifact, commit):
         "source_counts": dict(source_counts),
         "replay_results": replay_results,
         "negative_test_count": len(negative_tests),
+        "report_path": rel(report_path),
+        "log_path": rel(log_path),
+        "fixture_output_dir": rel(fixture_dir),
         "artifact_refs": [
             "tests/conformance/counterexample_fixture_loop.v1.json",
             rel(report_path),
             rel(log_path),
             rel(fixture_dir),
         ],
+        "report_contract_fields": [],
+        "contract_status": "pending",
+        "contract_errors": [],
     }
+    contract_fields, contract_errors = validate_report_contract(artifact, report)
+    report["report_contract_fields"] = contract_fields
+    report["contract_errors"] = contract_errors
+    report["contract_status"] = "pass" if not contract_errors else "fail"
+    checks["report_contract"] = report["contract_status"]
+    if contract_errors:
+        errors.extend(f"report_contract: {error}" for error in contract_errors)
+    report["status"] = "pass" if not errors else "fail"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
 
