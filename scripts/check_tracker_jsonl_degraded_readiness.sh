@@ -136,6 +136,17 @@ def issue_text(issue: dict[str, Any]) -> str:
     return "\n".join(fields).lower()
 
 
+def dependency_metadata(dep: dict[str, Any]) -> dict[str, Any]:
+    metadata = dep.get("metadata")
+    if not isinstance(metadata, str) or not metadata.strip():
+        return {}
+    try:
+        parsed = json.loads(metadata)
+    except json.JSONDecodeError:
+        return {"raw": metadata}
+    return parsed if isinstance(parsed, dict) else {"raw": metadata}
+
+
 def is_permissioned(issue: dict[str, Any], markers: list[str]) -> tuple[bool, list[str]]:
     text = issue_text(issue)
     hits = [marker for marker in markers if marker.lower() in text]
@@ -157,7 +168,21 @@ def dependency_blockers(issue: dict[str, Any], issue_by_id: dict[str, dict[str, 
         blocker = issue_by_id.get(blocker_id)
         blocker_status = blocker.get("status") if isinstance(blocker, dict) else "missing"
         if blocker_status not in PASS_STATUSES:
-            blockers.append({"id": blocker_id, "status": blocker_status, "reason": "unclosed_blocks_dependency"})
+            metadata = dependency_metadata(dep)
+            blocker_row = {
+                "id": blocker_id,
+                "status": blocker_status,
+                "reason": "unclosed_blocks_dependency",
+                "title": blocker.get("title") if isinstance(blocker, dict) else None,
+                "priority": blocker.get("priority") if isinstance(blocker, dict) else None,
+                "assignee": blocker.get("assignee") if isinstance(blocker, dict) else None,
+                "updated_at": blocker.get("updated_at") if isinstance(blocker, dict) else None,
+                "dependency_metadata": metadata,
+            }
+            why = metadata.get("why")
+            if isinstance(why, str) and why:
+                blocker_row["why"] = why
+            blockers.append(blocker_row)
     return blockers
 
 
@@ -239,9 +264,16 @@ def blocker_chokepoints(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "blocked_open_count": 0,
                     "status": blocker.get("status"),
                     "reason": blocker.get("reason"),
+                    "title": blocker.get("title"),
+                    "priority": blocker.get("priority"),
+                    "assignee": blocker.get("assignee"),
+                    "blocked_issue_ids": [],
                 },
             )
             entry["blocked_open_count"] += 1
+            blocked_id = row.get("id")
+            if isinstance(blocked_id, str) and blocked_id not in entry["blocked_issue_ids"]:
+                entry["blocked_issue_ids"].append(blocked_id)
             if entry.get("status") is None:
                 entry["status"] = blocker.get("status")
             if entry.get("reason") is None:
@@ -253,6 +285,31 @@ def blocker_chokepoints(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             str(item.get("id", "")),
         ),
     )
+
+
+def blocked_open_explanations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    explanations: list[dict[str, Any]] = []
+    for row in rows:
+        issue_id = row.get("id")
+        if not isinstance(issue_id, str):
+            continue
+        blockers = row.get("blockers")
+        if not isinstance(blockers, list):
+            blockers = []
+        explanations.append(
+            {
+                "id": issue_id,
+                "title": row.get("title"),
+                "priority": row.get("priority"),
+                "blocker_ids": [
+                    str(blocker.get("id"))
+                    for blocker in blockers
+                    if isinstance(blocker, dict) and isinstance(blocker.get("id"), str)
+                ],
+                "blockers": blockers,
+            }
+        )
+    return sorted(explanations, key=lambda item: (str(item.get("id", ""))))
 
 
 def recommended_next_action(
@@ -623,6 +680,59 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
         }
     )
 
+    metadata = deepcopy(rows)
+    metadata.append(
+        {
+            "id": "bd-jsonl-negative-metadata-blocker",
+            "title": "negative metadata blocker",
+            "status": "in_progress",
+            "priority": 0,
+            "assignee": "negative-agent",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
+    metadata.append(
+        {
+            "id": "bd-jsonl-negative-metadata-blocked",
+            "title": "negative metadata blocked",
+            "status": "open",
+            "priority": 1,
+            "updated_at": "2026-05-17T00:00:00Z",
+            "dependencies": [
+                {
+                    "issue_id": "bd-jsonl-negative-metadata-blocked",
+                    "depends_on_id": "bd-jsonl-negative-metadata-blocker",
+                    "type": "blocks",
+                    "metadata": "{\"why\":\"negative blocker explanation\"}",
+                }
+            ],
+        }
+    )
+    metadata_analysis = analyze(metadata, contract)
+    metadata_explanations = {
+        row["id"]: row
+        for row in blocked_open_explanations(metadata_analysis["blocked_open"])
+        if isinstance(row.get("id"), str)
+    }
+    explanation = metadata_explanations.get("bd-jsonl-negative-metadata-blocked", {})
+    blocker = {}
+    blockers = explanation.get("blockers")
+    if isinstance(blockers, list) and blockers:
+        blocker = blockers[0] if isinstance(blockers[0], dict) else {}
+    ok = (
+        blocker.get("id") == "bd-jsonl-negative-metadata-blocker"
+        and blocker.get("title") == "negative metadata blocker"
+        and blocker.get("assignee") == "negative-agent"
+        and blocker.get("why") == "negative blocker explanation"
+    )
+    controls.append(
+        {
+            "name": "blocker_explanation_preserves_metadata",
+            "expected_signature": "blocker_metadata_preserved",
+            "status": "pass" if ok else "fail",
+        }
+    )
+
     parent = deepcopy(rows)
     parent.append(
         {
@@ -803,6 +913,7 @@ stdout_summary = {
     "stale_in_progress_ids": stale_in_progress_ids,
     "blocked_open": analysis["summary"]["blocked_open_total"],
     "blocked_open_ids": projected_ids(analysis["blocked_open"]),
+    "blocker_explanations": blocked_open_explanations(analysis["blocked_open"]),
     "blocked_by_counts": blocked_chokepoints,
     "top_blocker_ids": top_blocker_ids,
     "in_progress": analysis["summary"]["in_progress_total"],
@@ -852,6 +963,7 @@ report = {
     "safe_ready": analysis["safe_ready"],
     "permissioned_ready": analysis["permissioned_ready"],
     "blocked_open": analysis["blocked_open"],
+    "blocker_explanations": stdout_summary["blocker_explanations"],
     "container_open": analysis["container_open"],
     "stale_in_progress": analysis["stale_in_progress"],
     "in_progress": analysis["in_progress"],
