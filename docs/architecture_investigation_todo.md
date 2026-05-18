@@ -127,9 +127,12 @@ Status keys:
 
 ## 7) P1 Runtime-Mode Governance
 
-- [ ] `TODO-0701` Verify process-immutable mode selection (`FRANKENLIBC_MODE`) across all entrypoints.
-- [ ] `TODO-0702` Add explicit startup-mode evidence line in structured logs for every harness campaign.
-- [ ] `TODO-0703` Add test coverage for mode mismatch handling in subprocess-orchestrated flows.
+- [x] `TODO-0701` Verify process-immutable mode selection (`FRANKENLIBC_MODE`) across all entrypoints.
+  - Closed by `bd-0agsk.11` / `bd-0agsk.11.1`: `tests/conformance/runtime_mode_evidence_logging_coverage.v1.json` and `tests/conformance/runtime_mode_startup_selection_completion_contract.v1.json` bind strict/hardened allowed modes, process-immutable startup selection, and subprocess override requirements for runtime-mode harness campaigns.
+- [x] `TODO-0702` Add explicit startup-mode evidence line in structured logs for every harness campaign.
+  - Closed by `bd-0agsk.11` / `bd-0agsk.11.1`: `scripts/check_runtime_mode_evidence_logging_coverage.sh` requires `logs_startup_mode=true`, `startup_evidence_event`, and a startup evidence row count for every covered campaign; the completion contract requires `conformance.runtime_mode_startup` evidence and seven startup rows.
+- [x] `TODO-0703` Add test coverage for mode mismatch handling in subprocess-orchestrated flows.
+  - Closed by `bd-0agsk.11` / `bd-0agsk.11.1`: `crates/frankenlibc-harness/tests/runtime_mode_evidence_logging_coverage_test.rs` covers missing startup evidence and inherited-mode override behavior, while `crates/frankenlibc-harness/tests/runtime_mode_startup_selection_completion_contract_test.rs` locks the startup-selection contract and mismatch bindings.
 
 ## 8) P1 Runtime Math Kernel Contract Tracking
 
