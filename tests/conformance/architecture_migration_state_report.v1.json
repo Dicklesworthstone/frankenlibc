@@ -91,14 +91,14 @@
     "taxonomy_source": "support_matrix.json"
   },
   "claim_summary": {
-    "current_level": "L0",
-    "current_release_level": "L0",
+    "current_level": "L1",
+    "current_release_level": "L1",
     "interpose_claim": "evidence_backed_for_checked_smoke_and_classified_surface",
     "replacement_claim": "not_promoted",
     "replacement_blockers": [
-      "claim control still advertises L0",
-      "L1 CRT/startup/TLS proof matrix remains blocked",
-      "standalone dependency policy and broader replacement deployment evidence remain incomplete"
+      "standalone artifact packaging/deployment proof remains pending after standalone policy enforcement completion",
+      "C fixture suite and performance benchmark enforcement remain required before L2 partial-replacement claims",
+      "full-replacement claims still require owned CRT/rtld/NSS/resolver/system-libc deployment evidence"
     ],
     "ld_preload_smoke_summary": {
       "total_cases": 64,

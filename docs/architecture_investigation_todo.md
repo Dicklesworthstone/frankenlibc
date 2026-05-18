@@ -158,10 +158,14 @@ Status keys:
 
 ## 10) P2 Architecture Documentation Hygiene
 
-- [ ] `TODO-1001` Add architecture diagram from workspace crates to major artifact flows.
-- [ ] `TODO-1002` Add migration-state section (interpose-ready vs replacement-ready by module family).
-- [ ] `TODO-1003` Add glossary for strict/hardened semantics in fixture and report context.
-- [ ] `TODO-1004` Add contributor quickstart for reproducing all gates locally in deterministic order.
+- [x] `TODO-1001` Add architecture diagram from workspace crates to major artifact flows.
+  - Closed by `bd-0agsk.16`: `tests/conformance/architecture_migration_state_report.v1.json` includes `crate_to_artifact_flow` rows from workspace crates to evidence artifacts, scripts, and expected outputs; `scripts/check_architecture_migration_state_report.sh --validate-only` fails closed on missing crate paths, source artifacts, scripts, or expected output paths.
+- [x] `TODO-1002` Add migration-state section (interpose-ready vs replacement-ready by module family).
+  - Closed by `bd-0agsk.16`: the same report includes `module_family_status` rows covering every support-matrix module exactly once, with per-family interpose and replacement-readiness classifications computed against live `support_matrix.json` counts.
+- [x] `TODO-1003` Add glossary for strict/hardened semantics in fixture and report context.
+  - Closed by `bd-0agsk.16`: `strict_hardened_glossary` in `tests/conformance/architecture_migration_state_report.v1.json` is checked for the required term set and evidence artifacts by `scripts/check_architecture_migration_state_report.sh --validate-only`.
+- [x] `TODO-1004` Add contributor quickstart for reproducing all gates locally in deterministic order.
+  - Closed by `bd-0agsk.15`: `tests/conformance/contributor_gate_quickstart.v1.json` defines the deterministic gate order, runner policy, commands, and expected outputs; `scripts/check_contributor_gate_quickstart.sh --validate-only` verifies the quickstart shape and command paths.
 
 ## 11) Immediate Next Execution Queue
 
