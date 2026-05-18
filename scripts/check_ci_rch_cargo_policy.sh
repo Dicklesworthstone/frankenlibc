@@ -39,6 +39,23 @@ LOG = pathlib.Path(sys.argv[5])
 EXPECTED_SCHEMA = "ci_rch_cargo_policy.v1"
 REPORT_SCHEMA = "ci_rch_cargo_policy.report.v1"
 EXPECTED_BEAD = "bd-dgxsh"
+EXPECTED_REPORT = "target/conformance/ci_rch_cargo_policy.report.json"
+EXPECTED_LOG = "target/conformance/ci_rch_cargo_policy.log.jsonl"
+REQUIRED_REPORT_FIELDS = {
+    "schema_version",
+    "manifest",
+    "ci_script",
+    "bead",
+    "status",
+    "errors",
+    "negative_controls",
+    "generated_at",
+    "report_path",
+    "log_path",
+    "report_contract_fields",
+    "contract_status",
+    "contract_errors",
+}
 
 errors: list[dict[str, str]] = []
 events: list[dict[str, Any]] = []
@@ -98,6 +115,31 @@ def string_list(value: Any, source: str, field: str, *, non_empty: bool = True) 
     return result
 
 
+def configured_report_fields(manifest: dict[str, Any]) -> list[str]:
+    report_contract = manifest.get("report_contract")
+    if not isinstance(report_contract, dict):
+        return []
+    fields = report_contract.get("must_materialize")
+    if not isinstance(fields, list):
+        return []
+    return [field for field in fields if isinstance(field, str) and field]
+
+
+def validate_report_contract(manifest: dict[str, Any], source: str) -> None:
+    report_contract = manifest.get("report_contract")
+    if not isinstance(report_contract, dict):
+        add_error(source, "report_contract_missing", "report_contract must be an object")
+        return
+    if report_contract.get("output_path") != EXPECTED_REPORT:
+        add_error(source, "report_contract_output_path_mismatch", f"output_path must be {EXPECTED_REPORT}")
+    if report_contract.get("log_path") != EXPECTED_LOG:
+        add_error(source, "report_contract_log_path_mismatch", f"log_path must be {EXPECTED_LOG}")
+    fields = set(string_list(report_contract.get("must_materialize"), source, "report_contract.must_materialize"))
+    missing = sorted(REQUIRED_REPORT_FIELDS - fields)
+    if missing:
+        add_error(source, "report_contract_missing_required_field", f"must_materialize missing {missing}")
+
+
 def non_comment_lines(text: str) -> list[tuple[int, str]]:
     rows: list[tuple[int, str]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
@@ -140,6 +182,7 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     controls = manifest.get("negative_controls")
     if not isinstance(controls, list) or len(controls) < 4:
         add_error(source, "missing_negative_controls", "negative_controls must include at least four cases")
+    validate_report_contract(manifest, source)
     return policy
 
 
@@ -245,8 +288,35 @@ except Exception as exc:
 
 errors.extend(validate_script(script_text, policy, rel(CI_SCRIPT)))
 negative_rows = run_negative_controls(manifest, script_text, policy)
-status = "pass" if not errors else "fail"
+report_contract_fields = configured_report_fields(manifest)
+contract_signature_prefixes = ("report_contract_", "missing_report_field")
 
+report = {
+    "schema_version": REPORT_SCHEMA,
+    "manifest": rel(MANIFEST),
+    "ci_script": rel(CI_SCRIPT),
+    "bead": EXPECTED_BEAD,
+    "status": "pending",
+    "errors": errors,
+    "negative_controls": negative_rows,
+    "generated_at": utc_now(),
+    "report_path": rel(REPORT),
+    "log_path": rel(LOG),
+    "report_contract_fields": report_contract_fields,
+    "contract_status": "pending",
+    "contract_errors": [],
+}
+for field in report_contract_fields:
+    if field not in report:
+        add_error("report_contract", "missing_report_field", f"report omitted required field: {field}")
+status = "pass" if not errors else "fail"
+contract_errors = [
+    row for row in errors if row["failure_signature"].startswith(contract_signature_prefixes)
+]
+report["status"] = status
+report["errors"] = errors
+report["contract_status"] = "pass" if not contract_errors else "fail"
+report["contract_errors"] = contract_errors
 events.append(
     {
         "event": "ci_rch_cargo_policy_validated" if status == "pass" else "ci_rch_cargo_policy_failed",
@@ -255,21 +325,11 @@ events.append(
         "status": status,
         "failure_count": len(errors),
         "negative_control_count": len(negative_rows),
+        "contract_status": report["contract_status"],
         "timestamp": utc_now(),
     }
 )
 events.extend(negative_rows)
-
-report = {
-    "schema_version": REPORT_SCHEMA,
-    "manifest": rel(MANIFEST),
-    "ci_script": rel(CI_SCRIPT),
-    "bead": EXPECTED_BEAD,
-    "status": status,
-    "errors": errors,
-    "negative_controls": negative_rows,
-    "generated_at": utc_now(),
-}
 write_json(REPORT, report)
 write_jsonl(LOG, events)
 
