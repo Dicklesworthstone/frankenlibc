@@ -24,6 +24,7 @@
     "cleanup_candidates",
     "recommended_cleanup_candidates",
     "approval_readiness",
+    "no_candidate_diagnostics",
     "approval_request",
     "executed_actions",
     "validation_commands",
@@ -130,6 +131,17 @@
     "needs_read_only_precheck_results",
     "blocked_by_read_only_precheck_result",
     "blocked_by_missing_read_only_checks"
+  ],
+  "no_candidate_diagnostics_fields": [
+    "status",
+    "candidate_count",
+    "critical_worker_count",
+    "workers_with_bounded_du_findings",
+    "critical_workers_without_candidates",
+    "probe_failure_workers",
+    "collection_error_workers",
+    "diagnostic_summary",
+    "next_action"
   ],
   "allowed_worker_statuses": [
     "healthy",
@@ -441,6 +453,28 @@
           "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
         }
       ],
+      "no_candidate_diagnostics": {
+        "status": "candidates_identified",
+        "candidate_count": 2,
+        "critical_worker_count": 3,
+        "workers_with_bounded_du_findings": [
+          "vmi1149989",
+          "vmi1227854",
+          "vmi1264463"
+        ],
+        "critical_workers_without_candidates": [
+          "vmi1149989",
+          "vmi1227854"
+        ],
+        "probe_failure_workers": [
+          "vmi1152480"
+        ],
+        "collection_error_workers": [
+          "vmi1152480"
+        ],
+        "diagnostic_summary": "Bounded read-only probes identified approval-gated cleanup candidates.",
+        "next_action": "review_approval_readiness"
+      },
       "approval_request": {
         "operator_summary": "rch cannot run FrankenLibC cargo validation because all healthy workers are excluded by critical storage pressure and disabled workers fail SSH probes.",
         "exact_worker_ids": [

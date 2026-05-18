@@ -290,6 +290,24 @@
         "next_action": "collect_passing_read_only_precheck_results_before_requesting_user_approval"
       }
     ],
+    "no_candidate_diagnostics": {
+      "status": "candidates_identified",
+      "candidate_count": 2,
+      "critical_worker_count": 2,
+      "workers_with_bounded_du_findings": [
+        "vmi1264463",
+        "vmi1149989"
+      ],
+      "critical_workers_without_candidates": [],
+      "probe_failure_workers": [
+        "vmi1152480"
+      ],
+      "collection_error_workers": [
+        "vmi1152480"
+      ],
+      "diagnostic_summary": "Bounded read-only probes identified approval-gated cleanup candidates.",
+      "next_action": "review_approval_readiness"
+    },
     "approval_request": {
       "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
       "exact_worker_ids": [

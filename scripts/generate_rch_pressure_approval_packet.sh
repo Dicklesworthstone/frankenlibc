@@ -815,6 +815,64 @@ def approval_readiness_rows() -> list[dict[str, Any]]:
         )
     return rows
 
+
+def no_candidate_diagnostics() -> dict[str, Any]:
+    candidate_counts_by_worker: dict[str, int] = {}
+    for candidate in candidates:
+        candidate_counts_by_worker[str(candidate.get("worker_id", ""))] = (
+            candidate_counts_by_worker.get(str(candidate.get("worker_id", "")), 0) + 1
+        )
+    critical_workers = [
+        worker
+        for worker in workers
+        if isinstance(worker, dict) and worker.get("pressure_state") == "critical"
+    ]
+    critical_without_candidates = [
+        str(worker.get("worker_id"))
+        for worker in critical_workers
+        if candidate_counts_by_worker.get(str(worker.get("worker_id")), 0) == 0
+    ]
+    workers_with_du_findings = [
+        str(worker.get("worker_id"))
+        for worker in workers
+        if isinstance(worker, dict) and worker.get("bounded_du_findings")
+    ]
+    probe_failure_workers = [
+        str(worker.get("worker_id"))
+        for worker in workers
+        if isinstance(worker, dict)
+        and str(worker.get("probe_failure_signature") or "ok") != "ok"
+    ]
+    collection_error_workers = [
+        str(worker.get("worker_id"))
+        for worker in workers
+        if isinstance(worker, dict) and worker.get("collection_errors")
+    ]
+
+    if candidates:
+        status = "candidates_identified"
+        next_action = "review_approval_readiness"
+        summary = "Bounded read-only probes identified approval-gated cleanup candidates."
+    else:
+        status = "no_candidates_identified"
+        next_action = "inspect_worker_probe_outputs_or_restore_worker_capacity"
+        summary = (
+            "RCH remains pressure-blocked, but bounded read-only probes did not identify "
+            "deletion-level build-output candidates that can be elevated to approval readiness."
+        )
+    return {
+        "status": status,
+        "candidate_count": len(candidates),
+        "critical_worker_count": len(critical_workers),
+        "workers_with_bounded_du_findings": workers_with_du_findings,
+        "critical_workers_without_candidates": critical_without_candidates,
+        "probe_failure_workers": probe_failure_workers,
+        "collection_error_workers": collection_error_workers,
+        "diagnostic_summary": summary,
+        "next_action": next_action,
+    }
+
+
 report = {
     "schema_version": "rch_pressure_approval_packet_schema.v1",
     "packet_id": PACKET_ID,
@@ -839,6 +897,7 @@ report = {
     "cleanup_candidates": candidates,
     "recommended_cleanup_candidates": recommended_candidates,
     "approval_readiness": approval_readiness_rows(),
+    "no_candidate_diagnostics": no_candidate_diagnostics(),
     "approval_request": {
         "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
         "exact_worker_ids": candidate_worker_ids,
@@ -1001,7 +1060,10 @@ if display_precheck_candidates:
             lines.append(f"  - `{check['check_kind']}`: `{check['command']}`")
             lines.append(f"    - {markdown_check_result(check)}")
 else:
-    lines.append("- No selected cleanup candidate requires pre-cleanup checks.")
+    lines.append(
+        "- No selected cleanup candidate requires pre-cleanup checks. Future candidates still require "
+        "`sbh_protect_marker_absence` and `open_file_absence` before approval readiness."
+    )
 lines.extend(
     [
         "",
@@ -1017,7 +1079,7 @@ if report["approval_readiness"]:
             f"`{readiness['path']}`"
         )
 else:
-    lines.append("- No selected candidate has reached the approval-readiness stage.")
+    lines.append("- No selected candidate has reached the approval-readiness stage; safe without user approval `false`.")
 lines.extend(
     [
         "",
@@ -1031,7 +1093,17 @@ if candidates:
             "(requires explicit written approval; not executed)"
         )
 else:
-    lines.append("- No deletion-level cleanup candidates were identified by the bounded probes.")
+    lines.append("- No deletion-level cleanup candidates were identified by the bounded probes; any future cleanup candidate still requires explicit written approval; not executed.")
+lines.extend(
+    [
+        "",
+        "## No-Candidate Diagnostics",
+        "",
+        f"- Status: `{report['no_candidate_diagnostics']['status']}`",
+        f"- Summary: {report['no_candidate_diagnostics']['diagnostic_summary']}",
+        f"- Next action: `{report['no_candidate_diagnostics']['next_action']}`",
+    ]
+)
 lines.extend(
     [
         "",

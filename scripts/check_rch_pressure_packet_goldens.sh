@@ -128,6 +128,10 @@ APPROVAL_READINESS_ALLOWED_STATES = {
     "blocked_by_read_only_precheck_result",
     "blocked_by_missing_read_only_checks",
 }
+NO_CANDIDATE_ALLOWED_STATUSES = {
+    "candidates_identified",
+    "no_candidates_identified",
+}
 
 
 def validate_pre_cleanup_checks(source: str, path: Any, checks: Any, missing_signature: str) -> None:
@@ -296,6 +300,48 @@ def validate_repo_state(packet: dict[str, Any], source: str) -> None:
         add_error(source, "missing_repo_state_untracked_summary", "repo_state.untracked_summary must be a list")
 
 
+def validate_no_candidate_diagnostics(
+    packet: dict[str, Any],
+    source: str,
+    candidates: list[Any],
+    workers: list[Any],
+) -> None:
+    diagnostics = packet.get("no_candidate_diagnostics")
+    if not isinstance(diagnostics, dict):
+        add_error(source, "missing_no_candidate_diagnostics", "packet must explain candidate discovery status")
+        return
+    status = diagnostics.get("status")
+    if status not in NO_CANDIDATE_ALLOWED_STATUSES:
+        add_error(source, "invalid_no_candidate_status", f"invalid no_candidate_diagnostics.status={status}")
+    if diagnostics.get("candidate_count") != len(candidates):
+        add_error(source, "no_candidate_count_mismatch", "no_candidate_diagnostics.candidate_count must match cleanup_candidates")
+    critical_workers = [
+        worker
+        for worker in workers
+        if isinstance(worker, dict) and worker.get("pressure_state") == "critical"
+    ]
+    if diagnostics.get("critical_worker_count") != len(critical_workers):
+        add_error(source, "critical_worker_count_mismatch", "no_candidate_diagnostics.critical_worker_count must match workers")
+    for field in (
+        "workers_with_bounded_du_findings",
+        "critical_workers_without_candidates",
+        "probe_failure_workers",
+        "collection_error_workers",
+    ):
+        if not isinstance(diagnostics.get(field), list) or not all(
+            isinstance(item, str) for item in diagnostics.get(field, [])
+        ):
+            add_error(source, "invalid_no_candidate_diagnostic_list", f"no_candidate_diagnostics.{field} must be a string list")
+    if not isinstance(diagnostics.get("diagnostic_summary"), str) or not diagnostics.get("diagnostic_summary"):
+        add_error(source, "missing_no_candidate_summary", "no_candidate_diagnostics must include diagnostic_summary")
+    if not isinstance(diagnostics.get("next_action"), str) or not diagnostics.get("next_action"):
+        add_error(source, "missing_no_candidate_next_action", "no_candidate_diagnostics must include next_action")
+    if candidates and status != "candidates_identified":
+        add_error(source, "candidate_status_mismatch", "packets with cleanup candidates must report candidates_identified")
+    if not candidates and status != "no_candidates_identified":
+        add_error(source, "no_candidate_status_mismatch", "packets without cleanup candidates must report no_candidates_identified")
+
+
 def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool) -> None:
     if packet.get("schema_version") != "rch_pressure_approval_packet_schema.v1":
         add_error(source, "schema_version", "packet schema_version mismatch")
@@ -366,8 +412,10 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
                 add_error(source, "invalid_direct_rch_probe_raw_output", f"{worker_id} direct probe must preserve a raw output path")
 
     candidates = packet.get("cleanup_candidates", [])
-    if not candidates:
-        add_error(source, "missing_cleanup_candidates", "packet must include approval-only cleanup candidates")
+    if not isinstance(candidates, list):
+        add_error(source, "malformed_cleanup_candidates", "cleanup_candidates must be a list")
+        candidates = []
+    validate_no_candidate_diagnostics(packet, source, candidates, workers)
     candidate_paths = set()
     candidates_by_worker: dict[str, list[dict[str, Any]]] = {}
     candidate_by_worker_path: dict[tuple[str, str], dict[str, Any]] = {}
@@ -871,6 +919,89 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
     else:
         add_error(source, "negative_control_no_approval_readiness", "golden packet has no approval_readiness for mutation")
 
+    missing_no_candidate_diagnostics_packet = deepcopy(packet)
+    missing_no_candidate_diagnostics_packet["cleanup_candidates"] = []
+    missing_no_candidate_diagnostics_packet["recommended_cleanup_candidates"] = []
+    missing_no_candidate_diagnostics_packet["approval_readiness"] = []
+    approval = missing_no_candidate_diagnostics_packet.get("approval_request")
+    if isinstance(approval, dict):
+        approval["exact_worker_ids"] = []
+        approval["exact_candidate_paths"] = []
+        approval["smallest_sufficient_candidate_paths"] = []
+        approval["margin_sufficient_candidate_paths"] = []
+    missing_no_candidate_diagnostics_packet.pop("no_candidate_diagnostics", None)
+    expect_validation_failure(
+        missing_no_candidate_diagnostics_packet,
+        f"{source}::missing_no_candidate_diagnostics",
+        "missing_no_candidate_diagnostics",
+        "remove no-candidate diagnostics from a packet with no cleanup candidates",
+    )
+
+
+def validate_no_candidate_positive_control(packet: dict[str, Any], source: str) -> None:
+    synthetic = deepcopy(packet)
+    synthetic["cleanup_candidates"] = []
+    synthetic["recommended_cleanup_candidates"] = []
+    synthetic["approval_readiness"] = []
+    approval = synthetic.get("approval_request")
+    if isinstance(approval, dict):
+        approval["exact_worker_ids"] = []
+        approval["exact_candidate_paths"] = []
+        approval["smallest_sufficient_candidate_paths"] = []
+        approval["margin_sufficient_candidate_paths"] = []
+    workers = synthetic.get("workers", [])
+    critical_workers = [
+        worker
+        for worker in workers
+        if isinstance(worker, dict) and worker.get("pressure_state") == "critical"
+    ]
+    synthetic["no_candidate_diagnostics"] = {
+        "status": "no_candidates_identified",
+        "candidate_count": 0,
+        "critical_worker_count": len(critical_workers),
+        "workers_with_bounded_du_findings": [
+            str(worker.get("worker_id"))
+            for worker in workers
+            if isinstance(worker, dict) and worker.get("bounded_du_findings")
+        ],
+        "critical_workers_without_candidates": [
+            str(worker.get("worker_id")) for worker in critical_workers
+        ],
+        "probe_failure_workers": [
+            str(worker.get("worker_id"))
+            for worker in workers
+            if isinstance(worker, dict)
+            and str(worker.get("probe_failure_signature") or "ok") != "ok"
+        ],
+        "collection_error_workers": [
+            str(worker.get("worker_id"))
+            for worker in workers
+            if isinstance(worker, dict) and worker.get("collection_errors")
+        ],
+        "diagnostic_summary": "Synthetic no-candidate packet preserves pressure evidence without approval-ready paths.",
+        "next_action": "inspect_worker_probe_outputs_or_restore_worker_capacity",
+    }
+    before_errors = len(errors)
+    before_events = len(events)
+    validate_packet(synthetic, f"{source}::no_candidate_positive_control", require_rch_e100=True)
+    observed_errors = errors[before_errors:]
+    if observed_errors:
+        del errors[before_errors:]
+        del events[before_events:]
+        observed = sorted({str(error.get("failure_signature")) for error in observed_errors})
+        add_error(
+            source,
+            "no_candidate_positive_control_failed",
+            f"synthetic no-candidate packet should validate; observed={observed}",
+        )
+    else:
+        events.append(
+            {
+                "source": f"{source}::no_candidate_positive_control",
+                "status": "positive_checked",
+            }
+        )
+
 
 def require_list_contains(schema: dict[str, Any], source: str, field: str, required: set[str]) -> None:
     value = schema.get(field)
@@ -893,6 +1024,7 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
         {
             "recommended_cleanup_candidates",
             "approval_readiness",
+            "no_candidate_diagnostics",
             "validation_commands",
             "artifact_paths",
         },
@@ -979,6 +1111,22 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
     require_list_contains(
         schema,
         source,
+        "no_candidate_diagnostics_fields",
+        {
+            "status",
+            "candidate_count",
+            "critical_worker_count",
+            "workers_with_bounded_du_findings",
+            "critical_workers_without_candidates",
+            "probe_failure_workers",
+            "collection_error_workers",
+            "diagnostic_summary",
+            "next_action",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
         "allowed_worker_statuses",
         {
             "healthy",
@@ -1036,6 +1184,7 @@ if not isinstance(golden_report, dict):
     add_error(rel(GOLDEN), "missing_golden_report", "golden_report must be an object")
 else:
     validate_packet(golden_report, rel(GOLDEN), require_rch_e100=True)
+    validate_no_candidate_positive_control(golden_report, rel(GOLDEN))
     validate_negative_controls(golden_report, rel(GOLDEN))
 
 required_lines = golden.get("golden_markdown_required_lines", [])
