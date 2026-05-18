@@ -4359,9 +4359,38 @@ pub unsafe extern "C" fn putwchar_unlocked(wc: u32) -> u32 {
 // C11 uchar.h — char16_t / char32_t conversion
 // ===========================================================================
 
+#[cfg(feature = "owned-tls-cache")]
+static C16_SURROGATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<u32> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
 // Thread-local storage for UTF-16 surrogate pair state (mbrtoc16).
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static C16_SURROGATE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+fn c16_surrogate_get() -> u32 {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        C16_SURROGATE_OWNED_TLS.with(|pending| *pending)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        C16_SURROGATE.with(|cell| cell.get())
+    }
+}
+
+#[inline]
+fn c16_surrogate_set(value: u32) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        C16_SURROGATE_OWNED_TLS.with(|pending| *pending = value);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        C16_SURROGATE.with(|cell| cell.set(value));
+    }
 }
 
 /// `c32rtomb` — convert char32_t to multibyte (UTF-8).
@@ -4393,11 +4422,11 @@ pub unsafe extern "C" fn mbrtoc32(
 /// Handles UTF-16 surrogate pairs via thread-local state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn c16rtomb(s: *mut c_char, c16: u16, ps: *mut c_void) -> usize {
-    let pending = C16_SURROGATE.with(|cell| cell.get());
+    let pending = c16_surrogate_get();
 
     if pending != 0 {
         // We have a high surrogate pending; this should be the low surrogate.
-        C16_SURROGATE.with(|cell| cell.set(0));
+        c16_surrogate_set(0);
         if !(0xDC00..=0xDFFF).contains(&(c16 as u32)) {
             // Invalid: low surrogate expected but not found.
             unsafe { set_abi_errno(libc::EILSEQ) };
@@ -4410,7 +4439,7 @@ pub unsafe extern "C" fn c16rtomb(s: *mut c_char, c16: u16, ps: *mut c_void) -> 
 
     if (0xD800..=0xDBFF).contains(&(c16 as u32)) {
         // High surrogate — store and return 0 (no bytes yet).
-        C16_SURROGATE.with(|cell| cell.set(c16 as u32));
+        c16_surrogate_set(c16 as u32);
         return 0;
     }
 
@@ -4433,11 +4462,11 @@ pub unsafe extern "C" fn mbrtoc16(
     n: usize,
     ps: *mut c_void,
 ) -> usize {
-    let pending = C16_SURROGATE.with(|cell| cell.get());
+    let pending = c16_surrogate_get();
 
     if pending != 0 {
         // We have a pending low surrogate to deliver.
-        C16_SURROGATE.with(|cell| cell.set(0));
+        c16_surrogate_set(0);
         if !pc16.is_null() {
             unsafe { *pc16 = pending as u16 };
         }
@@ -4462,7 +4491,7 @@ pub unsafe extern "C" fn mbrtoc16(
             unsafe { *pc16 = high as u16 };
         }
         // Store low surrogate for next call.
-        C16_SURROGATE.with(|cell| cell.set(low));
+        c16_surrogate_set(low);
         return ret;
     }
 
@@ -4846,9 +4875,54 @@ pub unsafe extern "C" fn __wcsftime_l(
 // Built atop our own `fgetwc`, which already handles UTF-8 decoding and
 // pushback of incomplete sequences.
 
+#[cfg(feature = "owned-tls-cache")]
+static FGETWLN_BUFFER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<libc::wchar_t>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static FGETWLN_BUFFER: std::cell::RefCell<Vec<libc::wchar_t>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn fgetwln_read_into_buffer(
+    stream: *mut std::ffi::c_void,
+    buf: &mut Vec<libc::wchar_t>,
+) -> Option<(*mut libc::wchar_t, usize)> {
+    buf.clear();
+    loop {
+        // SAFETY: stream is a valid FILE* per caller; fgetwc handles UTF-8
+        // decode and pushback of incomplete sequences.
+        let wc = unsafe { fgetwc(stream) };
+        if wc == WEOF_VALUE {
+            // EOF or decode error. If we already have characters, return them
+            // (last line without trailing newline).
+            if buf.is_empty() {
+                return None;
+            }
+            break;
+        }
+        buf.push(wc as libc::wchar_t);
+        if wc == 0x0A {
+            break;
+        }
+    }
+    let ptr = buf.as_mut_ptr();
+    let n = buf.len();
+    Some((ptr, n))
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn fgetwln_current_buffer(stream: *mut std::ffi::c_void) -> Option<(*mut libc::wchar_t, usize)> {
+    FGETWLN_BUFFER_OWNED_TLS.with(|buf| fgetwln_read_into_buffer(stream, buf))
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+fn fgetwln_current_buffer(stream: *mut std::ffi::c_void) -> Option<(*mut libc::wchar_t, usize)> {
+    FGETWLN_BUFFER.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        fgetwln_read_into_buffer(stream, &mut buf)
+    })
 }
 
 /// NetBSD libutil `fgetwln(stream, *lenp)` — wide-character line
@@ -4871,30 +4945,7 @@ pub unsafe extern "C" fn fgetwln(
         return std::ptr::null_mut();
     }
 
-    let result = FGETWLN_BUFFER.with(|cell| -> Option<(*mut libc::wchar_t, usize)> {
-        let mut buf = cell.borrow_mut();
-        buf.clear();
-        loop {
-            // SAFETY: stream is a valid FILE* per caller; fgetwc handles
-            // UTF-8 decode and pushback of incomplete sequences.
-            let wc = unsafe { fgetwc(stream) };
-            if wc == WEOF_VALUE {
-                // EOF or decode error. If we already have characters,
-                // return them (last line without trailing newline).
-                if buf.is_empty() {
-                    return None;
-                }
-                break;
-            }
-            buf.push(wc as libc::wchar_t);
-            if wc == 0x0A {
-                break;
-            }
-        }
-        let ptr = buf.as_mut_ptr();
-        let n = buf.len();
-        Some((ptr, n))
-    });
+    let result = fgetwln_current_buffer(stream);
 
     match result {
         Some((ptr, n)) => {

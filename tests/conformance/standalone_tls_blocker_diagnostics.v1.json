@@ -3,7 +3,7 @@
   "manifest_id": "standalone-tls-blocker-diagnostics",
   "bead": "bd-zyck1.89",
   "source_commit": "current",
-  "source_commit_hint": "fb47251f0247",
+  "source_commit_hint": "6597698a8d52",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -11,7 +11,7 @@
     "diagnostic_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_standalone_tls_blocker_diagnostics"
   },
-  "generated_utc": "2026-05-18T06:37:18Z",
+  "generated_utc": "2026-05-18T06:58:28Z",
   "purpose": "Report-only diagnostic that traces the current standalone forge __tls_get_addr@GLIBC_2.3 blocker back to FrankenLibC TLS source surfaces. It preserves the current replacement claim boundary while giving follow-up work a machine-checkable source and artifact control gate.",
   "inputs": {
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
@@ -104,11 +104,11 @@
   },
   "owned_tls_cache_artifact_probe": {
     "source_commit": "current",
-    "probe_scope": "release standalone owned-tls-cache frankenlibc-abi cdylib after resolver, glibc-internal, errno, dlfcn, stdio tmpnam/fgetln, malloc thread-cache, and fixed-buffer OwnedTlsCache migrations",
-    "latest_probe_command": "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_stdio_artifact rch exec -- cargo build -p frankenlibc-abi --release --features=standalone,owned-tls-cache",
+    "probe_scope": "release standalone owned-tls-cache frankenlibc-abi cdylib after resolver, glibc-internal, errno, dlfcn, stdio tmpnam/fgetln, wchar C16/fgetwln, malloc thread-cache, and fixed-buffer OwnedTlsCache migrations",
+    "latest_probe_command": "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_wchar_artifact rch exec -- cargo build -p frankenlibc-abi --release --features=standalone,owned-tls-cache",
     "latest_probe_result": "pass_remote",
-    "latest_probe_artifact": "/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_stdio_artifact/release/libfrankenlibc_abi.so",
-    "latest_probe_artifact_sha256": "6ddf182799b7e34ee8af0a14aa97cf465f23780a46ca1159931a62ad68c28622",
+    "latest_probe_artifact": "/data/tmp/rch_target_frankenlibc_DarkShore_bd_c51oi_wchar_artifact/release/libfrankenlibc_abi.so",
+    "latest_probe_artifact_sha256": "b00d73891e59de2ae8cb832d368f84918e7c3301cd92f69f704b30764a0fa497",
     "observed_artifact_symbols": {
       "undefined_tls_symbols": [
         "__tls_get_addr@GLIBC_2.3"
@@ -135,7 +135,7 @@
     },
     "tls_descriptor_buckets": [
       {
-        "descriptor_offset": "3164c8",
+        "descriptor_offset": "317cc0",
         "owner_bucket": "local_abi_stdio_dlfcn_string_runtime_policy",
         "observed_call_site_examples": [
           "stdio_abi runtime call sites after tmpnam/fgetln owned-TLS migration",
@@ -144,38 +144,39 @@
         ]
       },
       {
-        "descriptor_offset": "317820",
+        "descriptor_offset": "319018",
         "owner_bucket": "local_abi_stdio_wchar_locale_dirent_registry",
         "observed_call_site_examples": [
           "stdio_abi::registry",
           "fmemopen/fopencookie/open_memstream",
+          "wchar_abi after C16/fgetwln migration",
           "wchar_abi::wide_memstream_registry",
           "locale_abi and dirent_abi registry call sites"
         ]
       },
       {
-        "descriptor_offset": "318b98",
+        "descriptor_offset": "31a3a0",
         "owner_bucket": "tracing_dispatcher_tls",
         "observed_call_site_examples": [
           "tracing_core::dispatcher::get_default"
         ]
       },
       {
-        "descriptor_offset": "319028",
+        "descriptor_offset": "31a830",
         "owner_bucket": "membrane_ptr_validator_tls",
         "observed_call_site_examples": [
           "frankenlibc_membrane::ptr_validator::ValidationPipeline::validate"
         ]
       },
       {
-        "descriptor_offset": "319200",
+        "descriptor_offset": "31aa08",
         "owner_bucket": "rust_library_internal_tls",
         "observed_call_site_examples": [
           "mangled Rust library internal call sites without direct FrankenLibC owner names"
         ]
       },
       {
-        "descriptor_offset": "319358",
+        "descriptor_offset": "31ab60",
         "owner_bucket": "rust_std_thread_current_panic_tls",
         "observed_call_site_examples": [
           "std::thread::current",
@@ -183,14 +184,14 @@
         ]
       },
       {
-        "descriptor_offset": "3193a0",
+        "descriptor_offset": "31aba8",
         "owner_bucket": "rust_std_thread_current_tls",
         "observed_call_site_examples": [
           "std::thread::current"
         ]
       },
       {
-        "descriptor_offset": "319450",
+        "descriptor_offset": "31ac58",
         "owner_bucket": "rust_std_panic_thread_tls",
         "observed_call_site_examples": [
           "std panic and stack-overflow thread metadata paths"
@@ -330,8 +331,8 @@
         "owner_surface": "abi_wchar_locale_and_scan_state",
         "thread_local_macro_count": 2,
         "line_numbers": [
-          4363,
-          4849
+          4368,
+          4883
         ]
       },
       {
