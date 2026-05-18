@@ -553,6 +553,8 @@ report = {
     "mode": MODE,
     "generated_at_utc": utc_now(),
     "source_commit": current_commit(),
+    "report_path": rel(REPORT),
+    "log_path": rel(LOG),
     "data_sources": [rel(ISSUES)],
     "forbidden_sources": contract.get("forbidden_sources", []),
     "db_accessed": False,
