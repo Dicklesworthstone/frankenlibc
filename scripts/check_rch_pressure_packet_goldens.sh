@@ -1047,6 +1047,33 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
         else:
             add_error(source, "negative_control_no_pre_cleanup_check", "golden packet has no pre-cleanup check for mutation")
 
+    coarse_ballast_packet = deepcopy(packet)
+    workers = coarse_ballast_packet.get("workers")
+    ballast_worker = None
+    if isinstance(workers, list):
+        ballast_worker = next(
+            (
+                worker
+                for worker in workers
+                if isinstance(worker, dict)
+                and worker.get("pressure_state") == "critical"
+                and isinstance(worker.get("ballast_snapshot"), str)
+                and worker.get("ballast_snapshot")
+            ),
+            None,
+        )
+    if ballast_worker is None:
+        add_error(source, "negative_control_no_ballast_worker", "golden packet has no parsed ballast worker for mutation")
+    else:
+        ballast_worker["sbh_snapshot"] = "present in raw worker output"
+        ballast_worker["ballast_snapshot"] = "present in raw worker output"
+        expect_validation_failure(
+            coarse_ballast_packet,
+            f"{source}::coarse_ballast_snapshot",
+            "coarse_ballast_snapshot",
+            "replace parsed SBH and ballast summaries with coarse raw-output markers",
+        )
+
     stale_mirror_packet = deepcopy(packet)
     repo_state = stale_mirror_packet.get("repo_state")
     if isinstance(repo_state, dict) and isinstance(repo_state.get("origin_main_commit"), str):
