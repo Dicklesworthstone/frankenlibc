@@ -643,6 +643,33 @@ for control in contract.get("negative_controls", []):
             and summary.get("operator_next_action") == "inspect_approval_packet_blockers"
             else str(summary)
         )
+    elif control_id == "packet_candidate_rejection_summary_missing_defaults":
+        synthetic = {
+            "packet_id": "synthetic-current-packet-without-rejection-summary",
+            "repo_state": {"head_commit": head, "branch": "main"},
+            "approval_readiness": [],
+            "no_candidate_diagnostics": {
+                "status": "candidates_identified",
+                "candidate_count": 1,
+                "critical_worker_count": 1,
+                "diagnostic_summary": "synthetic diagnostics",
+                "next_action": "review_approval_readiness",
+            },
+        }
+        summary = approval_packet_summary(synthetic, head)
+        diagnostics = summary.get("packet_candidate_diagnostics")
+        rejection_summary = (
+            diagnostics.get("candidate_rejection_summary") if isinstance(diagnostics, dict) else None
+        )
+        observed = (
+            "packet_candidate_rejection_summary_defaulted"
+            if isinstance(rejection_summary, dict)
+            and rejection_summary.get("bounded_du_finding_count") == 0
+            and rejection_summary.get("rejected_finding_count") == 0
+            and rejection_summary.get("rejection_count_by_reason") == {}
+            and rejection_summary.get("largest_rejected_findings") == []
+            else str(summary)
+        )
     elif control_id == "approval_boundary_never_claims_cleanup_execution":
         synthetic = {
             "packet_id": "synthetic-current-packet-with-boundary",
