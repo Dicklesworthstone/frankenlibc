@@ -31,7 +31,9 @@ LIVE_REPORT = pathlib.Path(sys.argv[4])
 LIVE_MARKDOWN = pathlib.Path(sys.argv[5])
 REPORT = pathlib.Path(sys.argv[6])
 LOG = pathlib.Path(sys.argv[7])
-FORBIDDEN_TEXT = re.compile(r"\brm\b|git reset|git clean|sbh ballast release|sbh emergency|apt(?:-get)?\s+.*clean")
+FORBIDDEN_TEXT = re.compile(
+    r"\brm\b|\brmdir\b|\bunlink\b|-delete|git reset|git clean|sbh clean|sbh ballast release|sbh emergency|apt(?:-get)?\s+.*clean"
+)
 
 
 def utc_now() -> str:
@@ -1575,6 +1577,8 @@ if LIVE_REPORT.exists():
     validate_packet(load_json(LIVE_REPORT), rel(LIVE_REPORT), require_rch_e100=False)
 if LIVE_MARKDOWN.exists() and isinstance(required_lines, list):
     live_markdown = LIVE_MARKDOWN.read_text(encoding="utf-8", errors="replace")
+    if FORBIDDEN_TEXT.search(live_markdown):
+        add_error(rel(LIVE_MARKDOWN), "forbidden_live_markdown_primitive", "live markdown includes forbidden cleanup primitive")
     for line in required_lines:
         if line not in live_markdown:
             add_error(rel(LIVE_MARKDOWN), "missing_markdown_line", f"live markdown missing required text: {line}")
