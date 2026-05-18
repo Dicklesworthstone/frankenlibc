@@ -279,14 +279,18 @@ def approval_readiness_errors(rows: Any) -> list[str]:
     return errors
 
 
-def approval_packet_summary(packet: dict[str, Any] | None) -> dict[str, Any]:
+def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[str, Any]:
     if packet is None:
         return {
             "status": "not_generated",
             "report_path": rel(APPROVAL_PACKET_REPORT),
             "markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
+            "current_head": head,
+            "packet_head_commit": None,
+            "fresh_for_current_head": False,
             "selected_candidate_count": 0,
             "ready_for_explicit_user_approval_count": 0,
+            "current_ready_for_explicit_user_approval_count": 0,
             "ready_candidate_paths": [],
             "safe_to_run_without_user_approval": False,
             "cleanup_executed": False,
@@ -301,6 +305,10 @@ def approval_packet_summary(packet: dict[str, Any] | None) -> dict[str, Any]:
         and row.get("approval_state") == "ready_for_explicit_user_approval"
         and isinstance(row.get("path"), str)
     ]
+    repo_state = packet.get("repo_state")
+    repo_state = repo_state if isinstance(repo_state, dict) else {}
+    packet_head = repo_state.get("head_commit")
+    fresh_for_current_head = isinstance(packet_head, str) and packet_head == head
     any_safe_without_approval = any(
         isinstance(row, dict) and row.get("safe_to_run_without_user_approval") is not False
         for row in readiness_rows
@@ -310,13 +318,20 @@ def approval_packet_summary(packet: dict[str, Any] | None) -> dict[str, Any]:
         for row in readiness_rows
     )
     return {
-        "status": "available",
+        "status": "available_current" if fresh_for_current_head else "stale_for_current_head",
         "packet_id": packet.get("packet_id"),
         "generated_at_utc": packet.get("generated_at_utc"),
         "report_path": rel(APPROVAL_PACKET_REPORT),
         "markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
+        "current_head": head,
+        "packet_head_commit": packet_head,
+        "packet_branch": repo_state.get("branch"),
+        "packet_dirty_summary": repo_state.get("dirty_summary") if isinstance(repo_state.get("dirty_summary"), list) else [],
+        "packet_untracked_summary": repo_state.get("untracked_summary") if isinstance(repo_state.get("untracked_summary"), list) else [],
+        "fresh_for_current_head": fresh_for_current_head,
         "selected_candidate_count": len(readiness_rows),
         "ready_for_explicit_user_approval_count": len(ready_paths),
+        "current_ready_for_explicit_user_approval_count": len(ready_paths) if fresh_for_current_head else 0,
         "ready_candidate_paths": ready_paths,
         "safe_to_run_without_user_approval": any_safe_without_approval,
         "cleanup_executed": any_cleanup_executed,
@@ -475,6 +490,28 @@ for control in contract.get("negative_controls", []):
             if any("claims_safe_without_user_approval" in item for item in observed_errors)
             else ",".join(observed_errors)
         )
+    elif control_id == "stale_approval_packet_has_no_current_ready_candidates":
+        synthetic = {
+            "packet_id": "synthetic-stale-packet",
+            "generated_at_utc": "2000-01-01T00:00:00Z",
+            "repo_state": {"head_commit": "0" * 40, "branch": "main"},
+            "approval_readiness": [
+                {
+                    "path": "/data/projects/example/target",
+                    "approval_state": "ready_for_explicit_user_approval",
+                    "safe_to_run_without_user_approval": False,
+                    "exact_user_approval_required": True,
+                    "cleanup_executed": False,
+                }
+            ],
+        }
+        summary = approval_packet_summary(synthetic, "1" * 40)
+        observed = (
+            "stale_for_current_head"
+            if summary.get("status") == "stale_for_current_head"
+            and summary.get("current_ready_for_explicit_user_approval_count") == 0
+            else str(summary)
+        )
     else:
         contract_errors.append(f"unknown negative control {control_id}")
     passed = observed == expected
@@ -490,7 +527,7 @@ for control in contract.get("negative_controls", []):
     )
 
 approval_packet = load_optional_json(APPROVAL_PACKET_REPORT)
-approval_summary = approval_packet_summary(approval_packet)
+approval_summary = approval_packet_summary(approval_packet, head)
 
 report: dict[str, Any] = {
     "schema_version": "rch_remote_admissibility_preflight.v1",
@@ -567,10 +604,12 @@ LOG.write_text(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n", 
 if status == "admissible":
     print(f"rch remote admissibility preflight passed for: {VALIDATION_COMMAND}")
 else:
-    ready_count = approval_summary.get("ready_for_explicit_user_approval_count", 0)
+    ready_count = approval_summary.get("current_ready_for_explicit_user_approval_count", 0)
+    approval_packet_status = approval_summary.get("status", "unknown")
     print(
         "rch remote admissibility preflight blocked; run "
         f"{APPROVAL_PACKET_SCRIPT} for an approval packet. "
+        f"approval_packet_status={approval_packet_status}. "
         f"approval_ready_candidates={ready_count}. "
         f"failure_signatures={','.join(report['failure_signatures'])}",
         file=sys.stderr,

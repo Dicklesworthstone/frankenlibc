@@ -105,6 +105,11 @@
       "control_id": "approval_readiness_claims_safe_without_permission_fails",
       "mutation": "synthetic approval readiness row claims cleanup is safe without explicit user approval",
       "expected_decision": "approval_readiness_claims_safe_without_user_approval"
+    },
+    {
+      "control_id": "stale_approval_packet_has_no_current_ready_candidates",
+      "mutation": "synthetic approval packet has a different repo_state.head_commit than current HEAD",
+      "expected_decision": "stale_for_current_head"
     }
   ],
   "validation": {
@@ -115,7 +120,7 @@
       "jq empty target/rch-remote-admissibility/rch_remote_admissibility.report.json",
       "jq empty target/rch-remote-admissibility/rch_remote_admissibility.log.jsonl",
       "jq -e '.contract_status == \"pass\" and .status == \"blocked\" and .status_on_current_blocked_state == \"blocked\"' target/rch-remote-admissibility/rch_remote_admissibility.report.json",
-      "jq -e '(.approval_readiness_summary.ready_for_explicit_user_approval_count | type == \"number\") and .approval_readiness_summary.safe_to_run_without_user_approval == false and .approval_readiness_summary.cleanup_executed == false' target/rch-remote-admissibility/rch_remote_admissibility.report.json",
+      "jq -e '(.approval_readiness_summary.ready_for_explicit_user_approval_count | type == \"number\") and (.approval_readiness_summary.current_ready_for_explicit_user_approval_count | type == \"number\") and (.approval_readiness_summary.fresh_for_current_head | type == \"boolean\") and (.approval_readiness_summary.status | type == \"string\") and .approval_readiness_summary.safe_to_run_without_user_approval == false and .approval_readiness_summary.cleanup_executed == false' target/rch-remote-admissibility/rch_remote_admissibility.report.json",
       "git diff --check -- scripts/check_rch_remote_admissibility.sh tests/conformance/rch_remote_admissibility_preflight.v1.json .beads/issues.jsonl",
       "AGENT_NAME=DarkShore br dep cycles --json"
     ],
