@@ -289,6 +289,12 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
                 "status": "not_generated",
                 "candidate_count": 0,
                 "critical_worker_count": 0,
+                "candidate_rejection_summary": {
+                    "bounded_du_finding_count": 0,
+                    "rejected_finding_count": 0,
+                    "rejection_count_by_reason": {},
+                    "largest_rejected_findings": [],
+                },
                 "diagnostic_summary": "No pressure approval packet has been generated for this checkout.",
                 "next_action": "generate_approval_packet",
             },
@@ -342,10 +348,19 @@ def approval_packet_summary(packet: dict[str, Any] | None, head: str) -> dict[st
     )
     diagnostics = packet.get("no_candidate_diagnostics")
     diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    candidate_rejection_summary = diagnostics.get("candidate_rejection_summary")
     packet_candidate_diagnostics = {
         "status": diagnostics.get("status", "missing"),
         "candidate_count": diagnostics.get("candidate_count"),
         "critical_worker_count": diagnostics.get("critical_worker_count"),
+        "candidate_rejection_summary": candidate_rejection_summary
+        if isinstance(candidate_rejection_summary, dict)
+        else {
+            "bounded_du_finding_count": 0,
+            "rejected_finding_count": 0,
+            "rejection_count_by_reason": {},
+            "largest_rejected_findings": [],
+        },
         "diagnostic_summary": diagnostics.get(
             "diagnostic_summary",
             "Pressure packet did not include candidate-discovery diagnostics.",
