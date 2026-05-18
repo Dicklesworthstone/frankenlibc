@@ -526,6 +526,59 @@ def bounded_du_finding_lines(worker_out: str) -> list[str]:
     ]
 
 
+def worker_json_rows(worker_out: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line in worker_out.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            rows.append(parsed)
+    return rows
+
+
+def sbh_snapshot(worker_out: str) -> str | None:
+    for row in worker_json_rows(worker_out):
+        if row.get("command") != "status":
+            continue
+        pressure = row.get("pressure")
+        if not isinstance(pressure, dict):
+            continue
+        overall = pressure.get("overall")
+        ballast = row.get("ballast")
+        if isinstance(ballast, dict):
+            file_count = ballast.get("file_count")
+            total_pool_bytes = ballast.get("total_pool_bytes")
+            return f"overall {overall}; ballast_file_count={file_count}, total_pool_bytes={total_pool_bytes}"
+        return f"overall {overall}"
+    return "present in raw worker output" if "sbh" in worker_out.lower() else None
+
+
+def ballast_snapshot(worker_out: str) -> str | None:
+    for row in worker_json_rows(worker_out):
+        if row.get("command") != "ballast status":
+            continue
+        keys = [
+            "available_count",
+            "releasable_bytes",
+            "missing_count",
+            "configured_count",
+            "configured_size_bytes",
+            "total_pool_bytes",
+        ]
+        parts = [f"{key}={row.get(key)}" for key in keys if key in row]
+        directory = row.get("directory")
+        if isinstance(directory, str) and directory:
+            parts.append(f"directory={directory}")
+        if parts:
+            return ", ".join(parts)
+    return "present in raw worker output" if "ballast" in worker_out.lower() else None
+
+
 def parse_workers(status_json: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     workers = status_json.get("data", {}).get("daemon", {}).get("workers", [])
     parsed: list[dict[str, Any]] = []
@@ -569,8 +622,8 @@ def parse_workers(status_json: dict[str, Any]) -> tuple[list[dict[str, Any]], li
                     line for line in worker_out.splitlines() if "Filesystem" in line or " /" in line
                 )
                 or None,
-                "sbh_snapshot": "present in raw worker output" if "sbh" in worker_out.lower() else None,
-                "ballast_snapshot": "present in raw worker output" if "ballast" in worker_out.lower() else None,
+                "sbh_snapshot": sbh_snapshot(worker_out),
+                "ballast_snapshot": ballast_snapshot(worker_out),
                 "bounded_du_findings": bounded_du_finding_lines(worker_out),
                 "collection_errors": line_list(worker_err),
             }
