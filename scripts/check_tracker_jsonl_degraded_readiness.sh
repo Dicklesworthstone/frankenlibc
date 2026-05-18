@@ -176,6 +176,10 @@ def project_issue(issue: dict[str, Any], *, extra: dict[str, Any] | None = None)
     return row
 
 
+def projected_ids(rows: list[dict[str, Any]]) -> list[str]:
+    return [str(row["id"]) for row in rows if isinstance(row.get("id"), str)]
+
+
 def is_container_parent(issue: dict[str, Any]) -> bool:
     return issue.get("issue_type") == "epic"
 
@@ -301,6 +305,9 @@ def validate_contract(contract: dict[str, Any]) -> list[dict[str, str]]:
             errors.append({"failure_signature": "forbidden_source_missing", "message": f"missing {required}"})
     if not isinstance(contract.get("required_report_fields"), list) or not contract["required_report_fields"]:
         errors.append({"failure_signature": "required_report_fields", "message": "required_report_fields missing"})
+    stdout_fields = contract.get("stdout_summary_fields")
+    if not isinstance(stdout_fields, list) or not stdout_fields:
+        errors.append({"failure_signature": "stdout_summary_fields", "message": "stdout_summary_fields missing"})
     if float(contract.get("stale_in_progress_after_hours", 0)) <= 0:
         errors.append({"failure_signature": "stale_threshold", "message": "stale threshold must be positive"})
     if contract.get("stale_activity_sources") != ["updated_at", "comments[].created_at"]:
@@ -527,6 +534,16 @@ contract = load_json(CONTRACT)
 rows = load_jsonl(ISSUES)
 errors = validate_contract(contract)
 analysis = analyze(rows, contract)
+stdout_summary = {
+    "safe_ready": analysis["summary"]["safe_ready_total"],
+    "safe_ready_ids": projected_ids(analysis["safe_ready"]),
+    "permissioned_ready": analysis["summary"]["permissioned_ready_total"],
+    "permissioned_ready_ids": projected_ids(analysis["permissioned_ready"]),
+    "stale_in_progress": analysis["summary"]["stale_in_progress_total"],
+    "stale_in_progress_ids": projected_ids(analysis["stale_in_progress"]),
+    "blocked_open": analysis["summary"]["blocked_open_total"],
+    "blocked_open_ids": projected_ids(analysis["blocked_open"]),
+}
 negative_controls = run_negative_controls(rows, contract)
 required_controls = {str(name) for name in contract.get("required_negative_controls", [])}
 observed_controls = {str(control.get("name")) for control in negative_controls}
@@ -558,6 +575,7 @@ report = {
     "data_sources": [rel(ISSUES)],
     "forbidden_sources": contract.get("forbidden_sources", []),
     "db_accessed": False,
+    "stdout_summary": stdout_summary,
     "summary": analysis["summary"],
     "safe_ready": analysis["safe_ready"],
     "permissioned_ready": analysis["permissioned_ready"],
@@ -573,6 +591,11 @@ required_fields = contract.get("required_report_fields", [])
 for field in required_fields:
     if field not in report:
         errors.append({"failure_signature": "missing_report_field", "message": f"missing report field {field}"})
+stdout_fields = contract.get("stdout_summary_fields", [])
+if isinstance(stdout_fields, list):
+    for field in stdout_fields:
+        if field not in stdout_summary:
+            errors.append({"failure_signature": "missing_stdout_summary_field", "message": f"missing stdout summary field {field}"})
 report["status"] = "fail" if errors else "pass"
 report["failures"] = errors
 
@@ -601,10 +624,8 @@ print(
     json.dumps(
         {
             "status": "pass",
-            "safe_ready": report["summary"]["safe_ready_total"],
-            "permissioned_ready": report["summary"]["permissioned_ready_total"],
-            "stale_in_progress": report["summary"]["stale_in_progress_total"],
             "report": rel(REPORT),
+            **stdout_summary,
         },
         sort_keys=True,
     )
