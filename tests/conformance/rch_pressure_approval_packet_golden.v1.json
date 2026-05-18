@@ -31,6 +31,50 @@
         "remote required; refusing local fallback"
       ]
     },
+    "non_deletion_recovery": {
+      "summary": "Read-only recovery checks ran before requesting deletion-level cleanup approval.",
+      "restored_worker_admission": false,
+      "cleanup_still_requires_explicit_approval": true,
+      "disabled_worker_probe_count": 1,
+      "attempts": [
+        {
+          "name": "rch_capabilities_refresh",
+          "command": "timeout 90 rch workers capabilities --refresh",
+          "executed": true,
+          "exit_status": 0,
+          "raw_output_path": "target/rch-pressure-approval-packet/raw/golden-critical-pressure-6/rch_capabilities_refresh.out",
+          "read_only": true,
+          "expected_result": "refresh worker runtime and pressure telemetry without deleting data"
+        },
+        {
+          "name": "rch_status",
+          "command": "rch --json status --workers",
+          "executed": true,
+          "exit_status": 0,
+          "raw_output_path": "target/rch-pressure-approval-packet/raw/golden-critical-pressure-6/rch_status.out",
+          "read_only": true,
+          "expected_result": "capture the post-refresh worker pressure state"
+        },
+        {
+          "name": "rch_focused_dry_run",
+          "command": "RCH_REQUIRE_REMOTE=1 rch diagnose --dry-run 'cargo check -p frankenlibc-harness'",
+          "executed": true,
+          "exit_status": 0,
+          "raw_output_path": "target/rch-pressure-approval-packet/raw/golden-critical-pressure-6/rch_dry_run.out",
+          "read_only": true,
+          "expected_result": "prove whether focused cargo validation can reach worker selection"
+        },
+        {
+          "name": "rch_doctor_fix_dry_run",
+          "command": "timeout 90 rch doctor --fix --dry-run",
+          "executed": true,
+          "exit_status": 0,
+          "raw_output_path": "target/rch-pressure-approval-packet/raw/golden-critical-pressure-6/rch_doctor_fix_dry_run.out",
+          "read_only": true,
+          "expected_result": "check for safe automatic daemon/config/telemetry repairs without applying changes"
+        }
+      ]
+    },
     "workers": [
       {
         "worker_id": "vmi1264463",
@@ -386,6 +430,10 @@
   },
   "golden_markdown_required_lines": [
     "# rch Pressure Approval Packet",
+    "Non-Deletion Recovery",
+    "Restored worker admission: `false`",
+    "Cleanup still requires explicit approval: `true`",
+    "rch_doctor_fix_dry_run",
     "Worker Pressure Gaps",
     "Smallest Sufficient Listed Candidates",
     "Margin Sufficient Listed Candidates",

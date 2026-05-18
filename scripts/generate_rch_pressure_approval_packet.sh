@@ -12,6 +12,7 @@ SSH_KEY="${FRANKENLIBC_RCH_PACKET_SSH_KEY:-${HOME}/.ssh/contabo_vps_ed25519}"
 SSH_TIMEOUT_SECS="${FRANKENLIBC_RCH_PACKET_SSH_TIMEOUT_SECS:-25}"
 MAX_WORKERS="${FRANKENLIBC_RCH_PACKET_MAX_WORKERS:-6}"
 MAX_DISABLED_PROBES="${FRANKENLIBC_RCH_PACKET_MAX_DISABLED_PROBES:-6}"
+RECOVERY_TIMEOUT_SECS="${FRANKENLIBC_RCH_PACKET_RECOVERY_TIMEOUT_SECS:-90}"
 PACKET_ID="${FRANKENLIBC_RCH_PACKET_ID:-frankenlibc-rch-pressure-$(date -u +%Y%m%dT%H%M%SZ)}"
 RAW_DIR="${OUT_DIR}/raw/${PACKET_ID}"
 
@@ -35,6 +36,7 @@ capture git_head git -C "${ROOT}" rev-parse HEAD
 capture git_origin_main git -C "${ROOT}" rev-parse origin/main
 capture git_origin_master git -C "${ROOT}" rev-parse origin/master
 capture git_worktrees git -C "${ROOT}" worktree list
+capture rch_capabilities_refresh timeout "${RECOVERY_TIMEOUT_SECS}" rch workers capabilities --refresh
 capture rch_status rch --json status --workers
 capture rch_dry_run env \
   RCH_REQUIRE_REMOTE=1 \
@@ -42,6 +44,7 @@ capture rch_dry_run env \
   RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS="${RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS:-30}" \
   RCH_PRIORITY="${RCH_PRIORITY:-high}" \
   rch diagnose --dry-run "${FOCUS_CMD}"
+capture rch_doctor_fix_dry_run timeout "${RECOVERY_TIMEOUT_SECS}" rch doctor --fix --dry-run
 
 if [[ -s "${RAW_DIR}/rch_status.out" ]] && command -v jq >/dev/null 2>&1; then
   mapfile -t disabled_probe_ids < <(
@@ -129,7 +132,7 @@ if [[ "${SSH_ENABLED}" == "1" && -s "${RAW_DIR}/rch_status.out" && -r "${SSH_KEY
   done
 fi
 
-python3 - "${ROOT}" "${RAW_DIR}" "${REPORT}" "${MARKDOWN}" "${PACKET_ID}" "${FOCUS_CMD}" "${SSH_KEY}" "${SSH_TIMEOUT_SECS}" <<'PY'
+python3 - "${ROOT}" "${RAW_DIR}" "${REPORT}" "${MARKDOWN}" "${PACKET_ID}" "${FOCUS_CMD}" "${SSH_KEY}" "${SSH_TIMEOUT_SECS}" "${RECOVERY_TIMEOUT_SECS}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -150,6 +153,7 @@ PACKET_ID = sys.argv[5]
 FOCUS_CMD = sys.argv[6]
 SSH_KEY = sys.argv[7]
 SSH_TIMEOUT_SECS = sys.argv[8]
+RECOVERY_TIMEOUT_SECS = sys.argv[9]
 PRECHECK_RESULTS_ENABLED = os.environ.get("FRANKENLIBC_RCH_PACKET_PRECHECK_RESULTS", "1") == "1"
 
 
@@ -175,6 +179,10 @@ def status(name: str) -> int | None:
         return int(path.read_text(encoding="utf-8").strip())
     except ValueError:
         return None
+
+
+def raw_output_path(name: str) -> str:
+    return str((RAW_DIR / f"{name}.out").relative_to(ROOT))
 
 
 def line_list(value: str) -> list[str]:
@@ -650,7 +658,67 @@ def dry_run_summary() -> dict[str, Any]:
         "skip_reason": skip_reason,
         "required_remote_env": "RCH_REQUIRE_REMOTE=1",
         "fallback_markers_rejected": ["[RCH] local", "remote required; refusing local fallback"],
-        "raw_output_path": str((RAW_DIR / "rch_dry_run.out").relative_to(ROOT)),
+        "raw_output_path": raw_output_path("rch_dry_run"),
+    }
+
+
+def recovery_attempt(
+    name: str,
+    command: str,
+    raw_name: str,
+    expected_result: str,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "command": command,
+        "executed": status(raw_name) is not None,
+        "exit_status": status(raw_name),
+        "raw_output_path": raw_output_path(raw_name),
+        "read_only": True,
+        "expected_result": expected_result,
+    }
+
+
+def non_deletion_recovery_summary() -> dict[str, Any]:
+    direct_probe_count = sum(
+        1
+        for worker in workers
+        if isinstance(worker.get("direct_rch_probe_command"), str)
+        and worker.get("direct_rch_probe_command")
+    )
+    gate = dry_run_summary()
+    restored_worker_admission = gate.get("worker_selection_status") != "skipped"
+    return {
+        "summary": "Read-only recovery checks ran before requesting deletion-level cleanup approval.",
+        "restored_worker_admission": restored_worker_admission,
+        "cleanup_still_requires_explicit_approval": not restored_worker_admission,
+        "disabled_worker_probe_count": direct_probe_count,
+        "attempts": [
+            recovery_attempt(
+                "rch_capabilities_refresh",
+                f"timeout {RECOVERY_TIMEOUT_SECS} rch workers capabilities --refresh",
+                "rch_capabilities_refresh",
+                "refresh worker runtime and pressure telemetry without deleting data",
+            ),
+            recovery_attempt(
+                "rch_status",
+                "rch --json status --workers",
+                "rch_status",
+                "capture the post-refresh worker pressure state",
+            ),
+            recovery_attempt(
+                "rch_focused_dry_run",
+                f"RCH_REQUIRE_REMOTE=1 rch diagnose --dry-run {FOCUS_CMD!r}",
+                "rch_dry_run",
+                "prove whether focused cargo validation can reach worker selection",
+            ),
+            recovery_attempt(
+                "rch_doctor_fix_dry_run",
+                f"timeout {RECOVERY_TIMEOUT_SECS} rch doctor --fix --dry-run",
+                "rch_doctor_fix_dry_run",
+                "check for safe automatic daemon/config/telemetry repairs without applying changes",
+            ),
+        ],
     }
 
 
@@ -1067,6 +1135,7 @@ report = {
         ],
     },
     "rch_gate": dry_run_summary(),
+    "non_deletion_recovery": non_deletion_recovery_summary(),
     "workers": workers,
     "cleanup_candidates": candidates,
     "recommended_cleanup_candidates": recommended_candidates,
@@ -1090,8 +1159,10 @@ report = {
     },
     "executed_actions": [
         {"action": "git repo-state inspection", "executed": True},
+        {"action": "rch capabilities refresh", "executed": status("rch_capabilities_refresh") is not None},
         {"action": "rch status", "executed": status("rch_status") is not None},
         {"action": "rch dry-run", "executed": status("rch_dry_run") is not None},
+        {"action": "rch doctor fix dry-run", "executed": status("rch_doctor_fix_dry_run") is not None},
         {"action": "bounded read-only worker probes", "executed": any(w["probe_exit_status"] is not None for w in workers)},
         {
             "action": "selected candidate read-only pre-cleanup result collection",
@@ -1171,8 +1242,24 @@ lines = [
     f"- Dry-run selection: `{report['rch_gate']['worker_selection_status']}`",
     f"- Skip reason: `{report['rch_gate']['skip_reason']}`",
     "",
-    "## Worker Pressure Gaps",
+    "## Non-Deletion Recovery",
+    "",
+    f"- Summary: {report['non_deletion_recovery']['summary']}",
+    f"- Restored worker admission: `{str(report['non_deletion_recovery']['restored_worker_admission']).lower()}`",
+    f"- Cleanup still requires explicit approval: `{str(report['non_deletion_recovery']['cleanup_still_requires_explicit_approval']).lower()}`",
+    f"- Disabled-worker direct probe count: `{report['non_deletion_recovery']['disabled_worker_probe_count']}`",
 ]
+for attempt in report["non_deletion_recovery"]["attempts"]:
+    lines.append(
+        f"- `{attempt['name']}` exit `{attempt['exit_status']}` read-only `{str(attempt['read_only']).lower()}`; "
+        f"`{attempt['command']}`"
+    )
+lines.extend(
+    [
+        "",
+        "## Worker Pressure Gaps",
+    ]
+)
 if critical_workers:
     for worker in critical_workers:
         ratio = float_or_none(worker.get("pressure_disk_free_ratio"))

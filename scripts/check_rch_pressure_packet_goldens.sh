@@ -556,6 +556,69 @@ def validate_validation_metadata(packet: dict[str, Any], source: str) -> None:
         add_error(source, "missing_raw_artifact_path", "artifact_paths must include the raw evidence directory")
 
 
+def validate_non_deletion_recovery(packet: dict[str, Any], source: str) -> None:
+    recovery = packet.get("non_deletion_recovery")
+    if not isinstance(recovery, dict):
+        add_error(source, "missing_non_deletion_recovery", "non_deletion_recovery must be an object")
+        return
+    if recovery.get("cleanup_still_requires_explicit_approval") is not True:
+        add_error(
+            source,
+            "non_deletion_recovery_cleanup_not_gated",
+            "non_deletion_recovery must preserve the explicit-approval cleanup gate",
+        )
+    if recovery.get("restored_worker_admission") is not False:
+        add_error(
+            source,
+            "non_deletion_recovery_claims_admission_restored",
+            "pressure packets must not claim worker admission was restored",
+        )
+    probe_count = recovery.get("disabled_worker_probe_count")
+    if not isinstance(probe_count, int) or isinstance(probe_count, bool) or probe_count < 0:
+        add_error(source, "invalid_disabled_worker_probe_count", "disabled_worker_probe_count must be a nonnegative integer")
+    attempts = recovery.get("attempts")
+    if not isinstance(attempts, list):
+        add_error(source, "missing_non_deletion_recovery_attempts", "non_deletion_recovery.attempts must be a list")
+        return
+    by_name: dict[str, dict[str, Any]] = {}
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            add_error(source, "malformed_non_deletion_recovery_attempt", "non-deletion recovery attempt must be an object")
+            continue
+        name = attempt.get("name")
+        if isinstance(name, str):
+            by_name[name] = attempt
+        command = attempt.get("command")
+        if not isinstance(command, str) or not command:
+            add_error(source, "invalid_non_deletion_recovery_command", f"{name} recovery command must be nonempty text")
+        elif FORBIDDEN_TEXT.search(command):
+            add_error(source, "non_deletion_recovery_forbidden_command", f"{name} command is not read-only: {command}")
+        if attempt.get("executed") is not True:
+            add_error(source, "non_deletion_recovery_not_executed", f"{name} recovery attempt was not executed")
+        if attempt.get("read_only") is not True:
+            add_error(source, "non_deletion_recovery_not_read_only", f"{name} recovery attempt must be read_only=true")
+        exit_status = attempt.get("exit_status")
+        if not isinstance(exit_status, int) or isinstance(exit_status, bool):
+            add_error(source, "invalid_non_deletion_recovery_exit_status", f"{name} exit_status must be an integer")
+        raw_path = attempt.get("raw_output_path")
+        if not isinstance(raw_path, str) or not raw_path.startswith("target/rch-pressure-approval-packet/raw/") or not raw_path.endswith(".out"):
+            add_error(source, "invalid_non_deletion_recovery_raw_output", f"{name} must preserve raw output path")
+        if not isinstance(attempt.get("expected_result"), str) or not attempt.get("expected_result"):
+            add_error(source, "missing_non_deletion_recovery_expected_result", f"{name} missing expected_result")
+    required_attempts = {
+        "rch_capabilities_refresh",
+        "rch_status",
+        "rch_focused_dry_run",
+        "rch_doctor_fix_dry_run",
+    }
+    missing = sorted(required_attempts - set(by_name))
+    if missing:
+        add_error(source, "missing_non_deletion_recovery_attempt", f"non_deletion_recovery missing attempts {missing}")
+    dry_run_attempt = by_name.get("rch_focused_dry_run")
+    if dry_run_attempt and "RCH_REQUIRE_REMOTE=1" not in str(dry_run_attempt.get("command", "")):
+        add_error(source, "non_deletion_recovery_missing_remote_env", "focused dry-run recovery attempt must require remote execution")
+
+
 def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool) -> None:
     if packet.get("schema_version") != "rch_pressure_approval_packet_schema.v1":
         add_error(source, "schema_version", "packet schema_version mismatch")
@@ -582,6 +645,7 @@ def validate_packet(packet: dict[str, Any], source: str, require_rch_e100: bool)
     skip_reason = gate.get("skip_reason")
     if not isinstance(skip_reason, str) or "critical_pressure" not in skip_reason:
         add_error(source, "rch_gate_missing_critical_pressure", "rch_gate.skip_reason must name critical_pressure")
+    validate_non_deletion_recovery(packet, source)
 
     workers = packet.get("workers", [])
     worker_by_id = {
@@ -1206,6 +1270,23 @@ def validate_negative_controls(packet: dict[str, Any], source: str) -> None:
     else:
         add_error(source, "negative_control_no_rch_gate", "golden packet has no rch_gate for mutation")
 
+    missing_recovery_attempt_packet = deepcopy(packet)
+    recovery = missing_recovery_attempt_packet.get("non_deletion_recovery")
+    if isinstance(recovery, dict) and isinstance(recovery.get("attempts"), list):
+        recovery["attempts"] = [
+            attempt
+            for attempt in recovery["attempts"]
+            if not (isinstance(attempt, dict) and attempt.get("name") == "rch_doctor_fix_dry_run")
+        ]
+        expect_validation_failure(
+            missing_recovery_attempt_packet,
+            f"{source}::missing_non_deletion_recovery_attempt",
+            "missing_non_deletion_recovery_attempt",
+            "remove rch doctor dry-run from non-deletion recovery attempts",
+        )
+    else:
+        add_error(source, "negative_control_no_non_deletion_recovery", "golden packet has no non_deletion_recovery attempts for mutation")
+
     missing_target_packet = deepcopy(packet)
     worker = first_critical_worker(missing_target_packet)
     if worker is None:
@@ -1646,6 +1727,7 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "approval_readiness",
             "approval_ready_summary",
             "no_candidate_diagnostics",
+            "non_deletion_recovery",
             "validation_commands",
             "artifact_paths",
         },
@@ -1771,6 +1853,32 @@ def validate_schema_contract(schema: dict[str, Any], source: str) -> None:
             "rejected_finding_count",
             "rejection_count_by_reason",
             "largest_rejected_findings",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "non_deletion_recovery_fields",
+        {
+            "summary",
+            "restored_worker_admission",
+            "cleanup_still_requires_explicit_approval",
+            "disabled_worker_probe_count",
+            "attempts",
+        },
+    )
+    require_list_contains(
+        schema,
+        source,
+        "non_deletion_recovery_attempt_fields",
+        {
+            "name",
+            "command",
+            "executed",
+            "exit_status",
+            "raw_output_path",
+            "read_only",
+            "expected_result",
         },
     )
     require_list_contains(

@@ -20,6 +20,7 @@
     "project",
     "repo_state",
     "rch_gate",
+    "non_deletion_recovery",
     "workers",
     "cleanup_candidates",
     "recommended_cleanup_candidates",
@@ -49,6 +50,22 @@
     "skip_reason",
     "required_remote_env",
     "fallback_markers_rejected"
+  ],
+  "non_deletion_recovery_fields": [
+    "summary",
+    "restored_worker_admission",
+    "cleanup_still_requires_explicit_approval",
+    "disabled_worker_probe_count",
+    "attempts"
+  ],
+  "non_deletion_recovery_attempt_fields": [
+    "name",
+    "command",
+    "executed",
+    "exit_status",
+    "raw_output_path",
+    "read_only",
+    "expected_result"
   ],
   "worker_fields": [
     "worker_id",
@@ -242,6 +259,50 @@
         "fallback_markers_rejected": [
           "[RCH] local",
           "remote required; refusing local fallback"
+        ]
+      },
+      "non_deletion_recovery": {
+        "summary": "Read-only recovery checks ran before requesting deletion-level cleanup approval.",
+        "restored_worker_admission": false,
+        "cleanup_still_requires_explicit_approval": true,
+        "disabled_worker_probe_count": 3,
+        "attempts": [
+          {
+            "name": "rch_capabilities_refresh",
+            "command": "timeout 90 rch workers capabilities --refresh",
+            "executed": true,
+            "exit_status": 0,
+            "raw_output_path": "target/rch-pressure-approval-packet/raw/bd-xvsum-example-critical-pressure-6/rch_capabilities_refresh.out",
+            "read_only": true,
+            "expected_result": "refresh worker runtime and pressure telemetry without deleting data"
+          },
+          {
+            "name": "rch_status",
+            "command": "rch --json status --workers",
+            "executed": true,
+            "exit_status": 0,
+            "raw_output_path": "target/rch-pressure-approval-packet/raw/bd-xvsum-example-critical-pressure-6/rch_status.out",
+            "read_only": true,
+            "expected_result": "capture the post-refresh worker pressure state"
+          },
+          {
+            "name": "rch_focused_dry_run",
+            "command": "RCH_REQUIRE_REMOTE=1 rch diagnose --dry-run 'cargo test -p frankenlibc-harness --test standalone_owned_unwind_experiment_test -- --nocapture'",
+            "executed": true,
+            "exit_status": 0,
+            "raw_output_path": "target/rch-pressure-approval-packet/raw/bd-xvsum-example-critical-pressure-6/rch_dry_run.out",
+            "read_only": true,
+            "expected_result": "prove whether focused cargo validation can reach worker selection"
+          },
+          {
+            "name": "rch_doctor_fix_dry_run",
+            "command": "timeout 90 rch doctor --fix --dry-run",
+            "executed": true,
+            "exit_status": 0,
+            "raw_output_path": "target/rch-pressure-approval-packet/raw/bd-xvsum-example-critical-pressure-6/rch_doctor_fix_dry_run.out",
+            "read_only": true,
+            "expected_result": "check for safe automatic daemon/config/telemetry repairs without applying changes"
+          }
         ]
       },
       "workers": [
