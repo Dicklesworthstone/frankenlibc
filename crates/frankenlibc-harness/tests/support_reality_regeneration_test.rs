@@ -120,6 +120,22 @@ fn contract_has_required_pair_shape() {
         Some("scripts/check_support_reality_regeneration.sh --validate-only")
     );
     assert_eq!(
+        contract["regeneration_command"].as_str(),
+        Some("scripts/check_support_reality_regeneration.sh --regenerate")
+    );
+    let modes: std::collections::HashSet<_> = contract["supported_modes"]
+        .as_array()
+        .expect("supported_modes array")
+        .iter()
+        .filter_map(|row| row.as_str())
+        .collect();
+    assert!(modes.contains("validate_only"));
+    assert!(modes.contains("regenerate"));
+    assert_eq!(
+        contract["generator_versions"]["support_matrix_source"].as_str(),
+        Some("bash scripts/abi_audit.sh --json-only --deterministic")
+    );
+    assert_eq!(
         contract["paired_update_policy"]["single_artifact_update"].as_str(),
         Some("forbidden")
     );
@@ -190,6 +206,10 @@ fn checker_passes_and_emits_hash_report() {
             .as_str()
             .is_some_and(|cmd| cmd.contains("reality-report")),
         "generator command should be recorded"
+    );
+    assert_eq!(
+        report["regeneration_command"].as_str(),
+        Some("scripts/check_support_reality_regeneration.sh --regenerate")
     );
 
     let rows = load_jsonl(&log_path);

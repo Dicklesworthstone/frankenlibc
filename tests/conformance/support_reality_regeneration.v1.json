@@ -3,6 +3,11 @@
   "generated_by_bead": "bd-0agsk.3",
   "mode": "validate_only",
   "canonical_command": "scripts/check_support_reality_regeneration.sh --validate-only",
+  "regeneration_command": "scripts/check_support_reality_regeneration.sh --regenerate",
+  "supported_modes": [
+    "validate_only",
+    "regenerate"
+  ],
   "source_commit": "current",
   "source_commit_policy": {
     "committed_contract_token": "current",
@@ -10,7 +15,7 @@
     "runtime_report_field": "source_commit"
   },
   "generator_versions": {
-    "support_matrix_source": "checked-in support_matrix.json",
+    "support_matrix_source": "bash scripts/abi_audit.sh --json-only --deterministic",
     "reality_report_generator": "cargo run --quiet -p frankenlibc-harness --bin harness -- reality-report --support-matrix support_matrix.json",
     "checker_contract": "bd-0agsk.3.support_reality_regeneration.v1"
   },
@@ -61,6 +66,7 @@
     "artifact_sha256s_current",
     "reality_report_matches_harness_generation",
     "support_reality_counts_match",
+    "regeneration_mode_refreshes_paired_hashes",
     "single_artifact_write_modes_rejected"
   ],
   "non_goals": [

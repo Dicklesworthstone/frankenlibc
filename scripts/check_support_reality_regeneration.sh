@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate the support_matrix.json and reality_report.v1.json paired contract.
+# Validate or regenerate the support_matrix.json and reality_report.v1.json paired contract.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,6 +18,10 @@ if [[ $# -gt 0 ]]; then
       MODE="validate-only"
       shift
       ;;
+    --regenerate)
+      MODE="regenerate"
+      shift
+      ;;
     --write-reality-only|--write-support-only|--regenerate-reality-only|--regenerate-support-only)
       MODE="${1#--}"
       shift
@@ -34,6 +38,14 @@ if [[ $# -gt 0 ]]; then
 fi
 
 mkdir -p "${OUT_DIR}"
+
+if [[ "${MODE}" == "regenerate" ]]; then
+  bash "${ROOT}/scripts/abi_audit.sh" --json-only --deterministic >/dev/null
+  cargo run --quiet -p frankenlibc-harness --bin harness -- \
+    reality-report \
+    --support-matrix "${SUPPORT_MATRIX}" \
+    --output "${REALITY_REPORT}"
+fi
 
 python3 - "${ROOT}" "${CONTRACT}" "${SUPPORT_MATRIX}" "${REALITY_REPORT}" "${REPORT}" "${LOG}" "${TRACE_ID}" "${MODE}" <<'PY'
 import hashlib
@@ -122,10 +134,10 @@ def fail(signature: str, message: str, **extra) -> None:
     raise SystemExit(f"FAIL[{signature}]: {message}")
 
 
-if mode != "validate-only":
+if mode not in {"validate-only", "regenerate"}:
     fail(
         "single_artifact_update_forbidden",
-        f"only --validate-only is supported by this paired-artifact gate; got {mode}",
+        f"only --validate-only or --regenerate is supported by this paired-artifact gate; got {mode}",
     )
 
 for path in [contract_path, support_path, reality_path]:
@@ -162,6 +174,14 @@ expected_hashes = {
     "support_matrix": support_sha,
     "reality_report": reality_sha,
 }
+if mode == "regenerate":
+    for artifact_id, current_sha in expected_hashes.items():
+        artifact_by_id[artifact_id]["sha256"] = current_sha
+    for row in contract.get("input_artifacts", []):
+        if isinstance(row, dict) and row.get("id") in expected_hashes:
+            row["sha256"] = expected_hashes[str(row["id"])]
+    contract_path.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
 for artifact_id, current_sha in expected_hashes.items():
     declared_sha = str(artifact_by_id[artifact_id].get("sha256", ""))
     if declared_sha != current_sha:
@@ -268,6 +288,7 @@ checks = {
     "artifact_sha256s_current": "pass",
     "reality_report_matches_harness_generation": "pass",
     "support_reality_counts_match": "pass",
+    "regeneration_mode_refreshes_paired_hashes": "pass" if mode == "regenerate" else "not_applicable",
     "single_artifact_write_modes_rejected": "pass",
 }
 summary = {
@@ -296,6 +317,7 @@ report = {
     "output_hashes": expected_hashes,
     "checks": checks,
     "summary": summary,
+    "regeneration_command": contract.get("regeneration_command"),
 }
 finish(report, "support_reality_regeneration_validated")
 print(f"PASS: support/reality regeneration contract validated trace_id={trace_id}")

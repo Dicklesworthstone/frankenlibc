@@ -35,11 +35,13 @@ Status keys:
 ## 1) P0 Correctness + Drift
 
 - [x] `TODO-0101` Resolve support-matrix drift source of truth mismatch.
-- [ ] `TODO-0102` Define one canonical generator path for `support_matrix.json`.
+- [x] `TODO-0102` Define one canonical generator path for `support_matrix.json`.
+  - `tests/conformance/support_reality_regeneration.v1.json` now names `bash scripts/abi_audit.sh --json-only --deterministic` as the support-matrix generator source.
 - [x] `TODO-0103` Define one canonical generator path for `tests/conformance/reality_report.v1.json`.
 - [x] `TODO-0104` Add CI assertion that matrix and reality report are regenerated together in one step.
   - `scripts/check_support_reality_regeneration.sh --validate-only` verifies the paired-artifact contract and rejects single-artifact write modes.
-- [ ] `TODO-0105` Add deterministic regeneration script wrapper (single command for both artifacts).
+- [x] `TODO-0105` Add deterministic regeneration script wrapper (single command for both artifacts).
+  - `scripts/check_support_reality_regeneration.sh --regenerate` is the single write-capable wrapper for the support matrix, reality report, and paired hash contract.
 - [x] `TODO-0106` Update docs to state authoritative artifact ownership and regeneration flow.
 - [x] `TODO-0107` Add a drift triage report artifact with per-symbol deltas.
   - `tests/conformance/support_reality_drift_triage.v1.json` classifies current support/reality/version-script deltas by symbol.
