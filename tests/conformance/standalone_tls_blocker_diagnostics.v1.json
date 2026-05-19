@@ -164,6 +164,45 @@
         ]
       }
     ],
+    "residual_tls_callsite_evidence": {
+      "artifact": ".rch-target-ts1-job-29848695897850382-1779209824027169071-0/release/libfrankenlibc_abi.so",
+      "artifact_sha256": "3835d533174f44c19066f03fc71162e52d61806259d8986f888f2935627ba3b1",
+      "objdump_command": "objdump -d -C libfrankenlibc_abi.so | rg -B6 -A2 \"__tls_get_addr@plt\"",
+      "readelf_relocation_command": "readelf -rW libfrankenlibc_abi.so | rg \"DTPMOD64|__tls_get_addr\"",
+      "tls_get_addr_callsite_count": 10,
+      "unique_std_callsite_symbols": [
+        "std::thread::current::with_current_name::<std::panicking::default_hook::{closure#0}::{closure#0}, ()>::{closure#0}",
+        "std::panicking::default_hook",
+        "std::io::stdio::try_set_output_capture",
+        "std::panicking::panic_count::is_zero_slow_path",
+        "std::panicking::panic_count::increase",
+        "std::sys::thread_local::guard::key::enable",
+        "std::sys::thread_local::guard::key::enable::run"
+      ],
+      "relocation_offsets": [
+        "0x3136b8",
+        "0x316388",
+        "0x3163d0",
+        "0x3167f8"
+      ],
+      "blocked_owner_surfaces": [
+        "panic local panic count",
+        "stdio output capture",
+        "thread local destructor list",
+        "current thread id",
+        "current thread handle"
+      ],
+      "classification": "All observed __tls_get_addr call sites in the current owned-TLS artifact are Rust std panic/io/current-thread/thread-local guard paths. First-party owned TLS macros no longer account for the artifact-level blocker."
+    },
+    "build_std_zero_tls_probe": {
+      "intent": "Test whether a build-std panic_immediate_abort lane can remove std panic/io/current-thread TLS before promotion claims change.",
+      "command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_PROFILE_RELEASE_PANIC AGENT_NAME=GoldBeaver CARGO_PROFILE_RELEASE_PANIC=abort rch exec -- cargo build -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort -p frankenlibc-abi --release --features standalone,owned-unwind-stub,owned-tls-cache",
+      "remote_worker": "ts1",
+      "result": "blocked_remote_toolchain_missing_rust_src",
+      "exit_code": 101,
+      "error_contains": "rustup component add rust-src --toolchain nightly-2026-04-28-x86_64-unknown-linux-gnu",
+      "classification": "This lane is not artifact proof yet: remote execution reached ts1, but build-std stopped before compilation because the worker lacks rust-src. Promotion still requires a successful remote artifact followed by nm/readelf proof of zero TLS symbols, zero DTPMOD64 relocations, and no __tls_get_addr."
+    },
     "residual_artifact_tls_emitters": [
       {
         "crate": "std",

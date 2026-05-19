@@ -377,6 +377,163 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
 }
 
 #[test]
+fn residual_std_tls_callsite_evidence_stays_fail_closed() -> TestResult {
+    let root = workspace_root()?;
+    let diagnostic = load_json(&root, DIAGNOSTIC_PATH)?;
+    let probe = &diagnostic["owned_tls_cache_artifact_probe"];
+    let evidence = &probe["residual_tls_callsite_evidence"];
+
+    ensure_eq(
+        as_str(
+            &evidence["artifact"],
+            "residual_tls_callsite_evidence.artifact",
+        )?,
+        as_str(&probe["latest_probe_artifact"], "latest_probe_artifact")?,
+        "callsite evidence artifact must match latest owned-TLS probe artifact",
+    )?;
+    ensure_eq(
+        as_str(
+            &evidence["artifact_sha256"],
+            "residual_tls_callsite_evidence.artifact_sha256",
+        )?,
+        as_str(
+            &probe["latest_probe_artifact_sha256"],
+            "latest_probe_artifact_sha256",
+        )?,
+        "callsite evidence artifact hash must match latest owned-TLS probe artifact",
+    )?;
+    ensure(
+        as_str(
+            &evidence["objdump_command"],
+            "residual_tls_callsite_evidence.objdump_command",
+        )?
+        .contains("__tls_get_addr@plt"),
+        "callsite evidence must inspect __tls_get_addr PLT call sites",
+    )?;
+    ensure(
+        as_str(
+            &evidence["readelf_relocation_command"],
+            "residual_tls_callsite_evidence.readelf_relocation_command",
+        )?
+        .contains("DTPMOD64"),
+        "callsite evidence must keep TLS relocation controls visible",
+    )?;
+    ensure_eq(
+        as_u64(
+            &evidence["tls_get_addr_callsite_count"],
+            "tls_get_addr_callsite_count",
+        )?,
+        10,
+        "observed __tls_get_addr callsite count",
+    )?;
+
+    let callsites = string_vec(
+        &evidence["unique_std_callsite_symbols"],
+        "unique_std_callsite_symbols",
+    )?;
+    for required in [
+        "std::panicking::default_hook",
+        "std::io::stdio::try_set_output_capture",
+        "std::panicking::panic_count::increase",
+        "std::sys::thread_local::guard::key::enable",
+    ] {
+        ensure(
+            callsites.iter().any(|symbol| symbol.contains(required)),
+            format!("missing residual std TLS callsite {required}"),
+        )?;
+    }
+    ensure(
+        callsites
+            .iter()
+            .all(|symbol| symbol.starts_with("std::") && !symbol.contains("frankenlibc")),
+        "residual TLS callsites must remain isolated to Rust std in this report",
+    )?;
+    ensure(
+        callsites
+            .iter()
+            .all(|symbol| !symbol.contains("RandomState") && !symbol.contains("SPAWN_HOOKS")),
+        "callsite evidence must not reintroduce retired RandomState or spawn-hook TLS",
+    )?;
+
+    let surfaces = string_set(
+        &evidence["blocked_owner_surfaces"],
+        "residual_tls_callsite_evidence.blocked_owner_surfaces",
+    )?;
+    let residual_surfaces = as_array(
+        &probe["residual_artifact_tls_emitters"],
+        "residual_artifact_tls_emitters",
+    )?
+    .iter()
+    .map(|row| as_str(&row["source_surface"], "source_surface").map(str::to_owned))
+    .collect::<TestResult<BTreeSet<_>>>()?;
+    ensure_eq(
+        surfaces,
+        residual_surfaces,
+        "callsite evidence must name exactly the residual artifact TLS surfaces",
+    )?;
+    ensure(
+        as_str(
+            &evidence["classification"],
+            "residual_tls_callsite_evidence.classification",
+        )?
+        .contains("First-party owned TLS macros no longer account"),
+        "classification must prevent first-party source-inventory overclaiming",
+    )
+}
+
+#[test]
+fn build_std_zero_tls_probe_remains_toolchain_blocked() -> TestResult {
+    let root = workspace_root()?;
+    let diagnostic = load_json(&root, DIAGNOSTIC_PATH)?;
+    let probe = &diagnostic["owned_tls_cache_artifact_probe"]["build_std_zero_tls_probe"];
+
+    let command = as_str(&probe["command"], "build_std_zero_tls_probe.command")?;
+    ensure(
+        command.contains("RCH_REQUIRE_REMOTE=1"),
+        "build-std probe must require remote execution",
+    )?;
+    ensure(
+        command.contains("-Z build-std=std,panic_abort")
+            && command.contains("-Z build-std-features=panic_immediate_abort"),
+        "build-std probe must exercise the panic_immediate_abort lane",
+    )?;
+    ensure_eq(
+        as_str(
+            &probe["remote_worker"],
+            "build_std_zero_tls_probe.remote_worker",
+        )?,
+        "ts1",
+        "remote worker for current build-std probe",
+    )?;
+    ensure_eq(
+        as_str(&probe["result"], "build_std_zero_tls_probe.result")?,
+        "blocked_remote_toolchain_missing_rust_src",
+        "build-std probe result",
+    )?;
+    ensure_eq(
+        as_u64(&probe["exit_code"], "build_std_zero_tls_probe.exit_code")?,
+        101,
+        "build-std probe exit code",
+    )?;
+    ensure(
+        as_str(
+            &probe["error_contains"],
+            "build_std_zero_tls_probe.error_contains",
+        )?
+        .contains("rust-src"),
+        "build-std blocker must record the missing rust-src component",
+    )?;
+    ensure(
+        as_str(
+            &probe["classification"],
+            "build_std_zero_tls_probe.classification",
+        )?
+        .contains("not artifact proof yet"),
+        "build-std blocker must remain fail-closed until artifact proof exists",
+    )
+}
+
+#[test]
 fn source_inventory_matches_live_thread_local_macro_sites() -> TestResult {
     let root = workspace_root()?;
     let diagnostic = load_json(&root, DIAGNOSTIC_PATH)?;
