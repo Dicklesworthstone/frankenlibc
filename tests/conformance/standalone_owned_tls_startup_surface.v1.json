@@ -9,10 +9,12 @@
   "inputs": {
     "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
     "standalone_tls_model_startup_experiment": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
     "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
     "standalone_blocker_burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json"
   },
+  "source_action_row": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_tls_symbols",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",

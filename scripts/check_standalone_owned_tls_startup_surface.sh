@@ -9,6 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SURFACE="${FRANKENLIBC_STANDALONE_OWNED_TLS_SURFACE:-${ROOT}/tests/conformance/standalone_owned_tls_startup_surface.v1.json}"
 TLS_DIAGNOSTIC="${FRANKENLIBC_STANDALONE_TLS_DIAGNOSTIC:-${ROOT}/tests/conformance/standalone_tls_blocker_diagnostics.v1.json}"
 TLS_EXPERIMENT="${FRANKENLIBC_STANDALONE_TLS_MODEL_EXPERIMENT:-${ROOT}/tests/conformance/standalone_tls_model_startup_experiment.v1.json}"
+PLAN="${FRANKENLIBC_STANDALONE_HOST_DEPENDENCY_PROBE_PLAN:-${ROOT}/tests/conformance/standalone_host_dependency_probe_plan.v1.json}"
 VERSION_BURNDOWN="${FRANKENLIBC_STANDALONE_VERSION_BURNDOWN:-${ROOT}/tests/conformance/standalone_host_version_requirement_burndown.v1.json}"
 OWNER_LEDGER="${FRANKENLIBC_STANDALONE_BLOCKER_OWNER_LEDGER:-${ROOT}/tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json}"
 ROLLUP="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP:-${ROOT}/tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json}"
@@ -17,7 +18,7 @@ REPORT="${FRANKENLIBC_STANDALONE_OWNED_TLS_SURFACE_REPORT:-${OUT_DIR}/standalone
 
 mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")"
 
-python3 - "${ROOT}" "${SURFACE}" "${TLS_DIAGNOSTIC}" "${TLS_EXPERIMENT}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${ROLLUP}" "${REPORT}" <<'PY'
+python3 - "${ROOT}" "${SURFACE}" "${TLS_DIAGNOSTIC}" "${TLS_EXPERIMENT}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${ROLLUP}" "${REPORT}" <<'PY'
 import json
 import subprocess
 import sys
@@ -27,13 +28,14 @@ root = Path(sys.argv[1]).resolve()
 surface_path = Path(sys.argv[2])
 diagnostic_path = Path(sys.argv[3])
 experiment_path = Path(sys.argv[4])
-version_path = Path(sys.argv[5])
-owner_path = Path(sys.argv[6])
-rollup_path = Path(sys.argv[7])
-report_path = Path(sys.argv[8])
+plan_path = Path(sys.argv[5])
+version_path = Path(sys.argv[6])
+owner_path = Path(sys.argv[7])
+rollup_path = Path(sys.argv[8])
+report_path = Path(sys.argv[9])
 
-paths = [surface_path, diagnostic_path, experiment_path, version_path, owner_path, rollup_path, report_path]
-surface_path, diagnostic_path, experiment_path, version_path, owner_path, rollup_path, report_path = [
+paths = [surface_path, diagnostic_path, experiment_path, plan_path, version_path, owner_path, rollup_path, report_path]
+surface_path, diagnostic_path, experiment_path, plan_path, version_path, owner_path, rollup_path, report_path = [
     path if path.is_absolute() else root / path for path in paths
 ]
 
@@ -46,6 +48,7 @@ TLS_VERSION = "GLIBC_2.3"
 EXPECTED_INPUTS = {
     "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
     "standalone_tls_model_startup_experiment": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
     "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
     "standalone_blocker_burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json",
@@ -95,6 +98,10 @@ REQUIRED_ROW_FIELDS = {
 EXPECTED_SOURCE_DIAGNOSTIC = (
     "standalone_tls_blocker_diagnostics.current_forge_evidence."
     "observed_artifact_symbols.undefined_tls_symbols"
+)
+EXPECTED_SOURCE_ACTION_ROW = (
+    "standalone_host_dependency_probe_plan.current_forge_blocker_projection."
+    "blocker_action_required_rows.undefined_tls_symbols"
 )
 EXPECTED_SOURCE_VERSION_MATRIX = "standalone_host_version_requirement_burndown.version_requirement_matrix"
 EXPECTED_SOURCE_EXPERIMENT = "standalone_tls_model_startup_experiment.comparison.initial_exec_delta_classification"
@@ -191,10 +198,11 @@ head = current_commit()
 surface = load_json(surface_path)
 diagnostic = load_json(diagnostic_path)
 experiment = load_json(experiment_path)
+plan = load_json(plan_path)
 version_burndown = load_json(version_path)
 owner_ledger = load_json(owner_path)
 rollup = load_json(rollup_path)
-for name in ["surface", "diagnostic", "experiment", "version_burndown", "owner_ledger", "rollup"]:
+for name in ["surface", "diagnostic", "experiment", "plan", "version_burndown", "owner_ledger", "rollup"]:
     if not isinstance(locals()[name], dict):
         locals()[name] = {}
 
@@ -211,6 +219,8 @@ if surface.get("source_commit_freshness_policy") != EXPECTED_FRESHNESS_POLICY:
     errors.append("source_commit_freshness_policy must match owned TLS stale-source contract")
 if surface.get("report_policy") != EXPECTED_REPORT_POLICY:
     errors.append("report_policy must match owned TLS fail-closed contract")
+if surface.get("source_action_row") != EXPECTED_SOURCE_ACTION_ROW:
+    errors.append("source_action_row must point at live undefined_tls_symbols blocker action row")
 inputs = object_value(surface.get("inputs"), "inputs")
 if inputs != EXPECTED_INPUTS:
     errors.append("inputs must match owned TLS surface input contract")
@@ -257,6 +267,50 @@ version_needs = nested(
 if not isinstance(version_needs, dict) or version_needs.get(TLS_PROVIDER) != [TLS_VERSION]:
     errors.append("TLS diagnostic readelf version control must keep ld-linux-x86-64.so.2:GLIBC_2.3")
 
+projection = object_value(plan.get("current_forge_blocker_projection"), "plan.current_forge_blocker_projection")
+action_rows = object_value(
+    projection.get("blocker_action_required_rows"),
+    "plan.current_forge_blocker_projection.blocker_action_required_rows",
+)
+tls_action = object_value(
+    action_rows.get("undefined_tls_symbols"),
+    "plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_tls_symbols",
+)
+if tls_action:
+    expected_pairs = {
+        "blocking_reason": "undefined_tls_symbols",
+        "owner_surface": "tls_startup",
+        "primary_probe_id": "nm_dynamic_undefined_symbols",
+    }
+    for field, expected in expected_pairs.items():
+        if tls_action.get(field) != expected:
+            errors.append(
+                "plan.current_forge_blocker_projection.blocker_action_required_rows."
+                f"undefined_tls_symbols.{field} must be {expected}"
+            )
+    if tls_action.get("promotion_allowed") is not False:
+        errors.append(
+            "plan.current_forge_blocker_projection.blocker_action_required_rows."
+            "undefined_tls_symbols.promotion_allowed must be false"
+        )
+action_values = set(
+    string_list(
+        tls_action.get("current_blocker_values"),
+        "plan.current_forge_blocker_projection.blocker_action_required_rows."
+        "undefined_tls_symbols.current_blocker_values",
+    )
+)
+if action_values != {TLS_SYMBOL}:
+    errors.append(
+        "plan.current_forge_blocker_projection.blocker_action_required_rows."
+        "undefined_tls_symbols.current_blocker_values must match current TLS diagnostic"
+    )
+action_exit_criteria = string_list(
+    tls_action.get("exit_criteria"),
+    "plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_tls_symbols.exit_criteria",
+    min_len=2,
+)
+
 if experiment.get("manifest_id") != "standalone-tls-model-startup-experiment":
     errors.append("TLS model experiment input must be standalone-tls-model-startup-experiment")
 comparison = object_value(experiment.get("comparison"), "tls experiment comparison")
@@ -299,8 +353,6 @@ owner_tls = next(
 )
 if owner_tls.get("owner_surface") != "tls_startup":
     errors.append("owner ledger undefined_tls_symbols row must belong to tls_startup")
-if set(string_list(owner_tls.get("current_blocker_values"), "owner ledger current_blocker_values")) != {TLS_SYMBOL}:
-    errors.append("owner ledger current_blocker_values must match current TLS symbol")
 
 rollup_rows = rollup.get("progress_categories", [])
 if not isinstance(rollup_rows, list):
@@ -411,6 +463,8 @@ report = {
     "current_head": head,
     "claim_status": "claim_blocked",
     "owner_surface": "tls_startup",
+    "source_action_row": EXPECTED_SOURCE_ACTION_ROW,
+    "source_action_exit_criteria": action_exit_criteria,
     "provider_version_requirement_ids": [TLS_REQUIREMENT_ID],
     "symbol_rows": materialized_rows,
     "summary": {
