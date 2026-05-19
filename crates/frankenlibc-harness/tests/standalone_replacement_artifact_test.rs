@@ -42,6 +42,7 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "tool_evidence.*.path",
     "artifact_state.dependency_breakdown.host_direct_needed_libraries",
     "artifact_state.dependency_breakdown.host_resolved_libraries",
+    "artifact_state.dependency_breakdown.direct_host_needed_library_rows",
     "artifact_state.sampled_symbols_present",
     "artifact_state.symbol_samples",
     "claim_status",
@@ -2258,6 +2259,87 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert!(host_resolved.contains("libgcc_s.so.1"));
     assert!(host_resolved.contains("libc.so.6"));
     assert!(host_resolved.contains("/lib64/ld-linux-x86-64.so.2"));
+
+    let direct_rows = breakdown["direct_host_needed_library_rows"]
+        .as_array()
+        .expect("direct_host_needed_library_rows should be an array");
+    assert_eq!(
+        direct_rows.len(),
+        host_direct_needed.len(),
+        "every direct host DT_NEEDED library should have a provider row"
+    );
+    let direct_row_by_library: HashMap<_, _> = direct_rows
+        .iter()
+        .map(|row| {
+            (
+                row["library"].as_str().expect("library should be string"),
+                row,
+            )
+        })
+        .collect();
+    for library in &host_direct_needed {
+        let row = direct_row_by_library
+            .get(library.as_str())
+            .unwrap_or_else(|| panic!("missing direct provider row for {library}"));
+        assert_eq!(
+            row["owner_surface"].as_str(),
+            Some("direct_dynamic_dependencies")
+        );
+        assert_eq!(
+            row["primary_probe_id"].as_str(),
+            Some("readelf_dynamic_dependencies")
+        );
+        assert_eq!(row["direct_needed_present"].as_bool(), Some(true));
+        assert_eq!(row["promotion_allowed"].as_bool(), Some(false));
+        assert!(
+            row["evidence_fields"]
+                .as_array()
+                .is_some_and(|fields| fields
+                    .iter()
+                    .any(|field| { field.as_str() == Some("host_direct_needed_libraries") })),
+            "direct provider row should cite direct-needed evidence fields"
+        );
+        assert!(
+            row["next_action"]
+                .as_str()
+                .is_some_and(|action| !action.is_empty()),
+            "direct provider row should include a next action"
+        );
+        assert!(
+            string_set(&row["blocking_reasons"]).contains("host_direct_needed_libraries_present"),
+            "direct provider row should cite host_direct_needed_libraries_present"
+        );
+    }
+    let libgcc_row = direct_row_by_library
+        .get("libgcc_s.so.1")
+        .expect("missing libgcc direct provider row");
+    assert!(
+        string_set(&libgcc_row["resolved_paths"]).contains("/lib/x86_64-linux-gnu/libgcc_s.so.1"),
+        "libgcc row should preserve ldd-resolved path evidence"
+    );
+    assert!(
+        string_set(&libgcc_row["version_requirements"]).contains("libgcc_s.so.1:GCC_3.0"),
+        "libgcc row should preserve provider version requirements"
+    );
+    assert!(
+        string_set(&libgcc_row["blocking_reasons"]).contains("libgcc_runtime_dependency"),
+        "libgcc row should cite compiler-runtime blocker"
+    );
+    let loader_row = direct_row_by_library
+        .get("ld-linux-x86-64.so.2")
+        .expect("missing loader direct provider row");
+    assert!(
+        string_set(&loader_row["resolved_paths"]).contains("/lib64/ld-linux-x86-64.so.2"),
+        "loader row should preserve absolute loader path evidence"
+    );
+    assert!(
+        string_set(&loader_row["version_requirements"]).contains("ld-linux-x86-64.so.2:GLIBC_2.3"),
+        "loader row should preserve loader version requirements"
+    );
+    assert!(
+        string_set(&loader_row["blocking_reasons"]).contains("host_loader_dependency"),
+        "loader row should cite loader-startup blocker"
+    );
 
     let undefined = string_set(&breakdown["undefined_symbols"]);
     assert!(undefined.contains("_Unwind_Backtrace@GCC_3.3"));

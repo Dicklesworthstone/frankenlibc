@@ -115,6 +115,7 @@ REQUIRED_REPORT_FIELDS = [
     "tool_evidence.*.path",
     "artifact_state.dependency_breakdown.host_direct_needed_libraries",
     "artifact_state.dependency_breakdown.host_resolved_libraries",
+    "artifact_state.dependency_breakdown.direct_host_needed_library_rows",
     "artifact_state.sampled_symbols_present",
     "artifact_state.symbol_samples",
     "claim_status",
@@ -814,6 +815,7 @@ def empty_dependency_breakdown():
         "host_needed_libraries": [],
         "host_direct_needed_libraries": [],
         "host_resolved_libraries": [],
+        "direct_host_needed_library_rows": [],
         "undefined_symbols": [],
         "undefined_unwind_symbols": [],
         "undefined_glibc_symbols": [],
@@ -848,6 +850,28 @@ def parse_ldd_libraries(ldd_text):
         if name and name not in {"statically", "not"}:
             libraries.append(name)
     return unique_sorted(libraries)
+
+
+def parse_ldd_resolution_paths(ldd_text):
+    paths_by_library = {}
+    for line in ldd_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("linux-vdso.so"):
+            continue
+        if "=>" in stripped:
+            name, rest = stripped.split("=>", 1)
+            name = name.strip()
+            path = rest.strip().split()[0] if rest.strip() else ""
+        else:
+            parts = stripped.split()
+            name = parts[0] if parts else ""
+            path = name
+        if name and name not in {"statically", "not"} and path:
+            paths_by_library.setdefault(name, []).append(path)
+    return {
+        library: unique_sorted(paths)
+        for library, paths in sorted(paths_by_library.items())
+    }
 
 
 def parse_undefined_symbols(nm_text):
@@ -902,10 +926,74 @@ def is_host_runtime_library(name):
     )
 
 
+def ldd_paths_for_library(library, ldd_resolution_paths):
+    matches = []
+    for name, paths in ldd_resolution_paths.items():
+        name_base = Path(name).name
+        for path in paths:
+            path_base = Path(path).name
+            if name == library or name_base == library or path_base == library:
+                matches.append(path)
+    return unique_sorted(matches)
+
+
+def direct_needed_blocking_reasons(library, resolved_paths, version_needs, blocking_reasons):
+    reasons = []
+    if "host_needed_libraries_present" in blocking_reasons:
+        reasons.append("host_needed_libraries_present")
+    if "host_direct_needed_libraries_present" in blocking_reasons:
+        reasons.append("host_direct_needed_libraries_present")
+    if resolved_paths and "host_resolved_libraries_present" in blocking_reasons:
+        reasons.append("host_resolved_libraries_present")
+    if "ld-linux" in library and "host_loader_dependency" in blocking_reasons:
+        reasons.append("host_loader_dependency")
+    if library.startswith("libc.so") and "host_libc_dependency" in blocking_reasons:
+        reasons.append("host_libc_dependency")
+    if library.startswith("libgcc_s.so") and "libgcc_runtime_dependency" in blocking_reasons:
+        reasons.append("libgcc_runtime_dependency")
+    if version_needs.get(library) and "host_version_requirements" in blocking_reasons:
+        reasons.append("host_version_requirements")
+    return reasons
+
+
+def build_direct_host_needed_library_rows(
+    host_direct_needed_libraries,
+    ldd_resolution_paths,
+    version_needs,
+    blocking_reasons,
+):
+    direct_catalog = BLOCKER_CATALOG_DEFINITIONS["host_direct_needed_libraries_present"]
+    rows = []
+    for library in host_direct_needed_libraries:
+        resolved_paths = ldd_paths_for_library(library, ldd_resolution_paths)
+        versions = unique_sorted(version_needs.get(library, []))
+        rows.append(
+            {
+                "library": library,
+                "owner_surface": direct_catalog["owner_surface"],
+                "primary_probe_id": "readelf_dynamic_dependencies",
+                "direct_needed_present": True,
+                "resolved_paths": resolved_paths,
+                "version_requirements": [
+                    f"{library}:{version}" for version in versions
+                ],
+                "blocking_reasons": direct_needed_blocking_reasons(
+                    library, resolved_paths, version_needs, blocking_reasons
+                ),
+                "evidence_fields": direct_catalog["evidence_fields"],
+                "next_action": direct_catalog["next_action"],
+                "promotion_allowed": False,
+            }
+        )
+    return rows
+
+
 def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd):
     breakdown = empty_dependency_breakdown()
     needed_libraries = parse_needed_libraries(readelf_dynamic["stdout"])
-    ldd_libraries = parse_ldd_libraries(ldd["stdout"] + "\n" + ldd["stderr"])
+    ldd_text = ldd["stdout"] + "\n" + ldd["stderr"]
+    ldd_libraries = parse_ldd_libraries(ldd_text)
+    ldd_resolution_paths = parse_ldd_resolution_paths(ldd_text)
     all_libraries = unique_sorted([*needed_libraries, *ldd_libraries])
     undefined_symbols = parse_undefined_symbols(nm_dynamic["stdout"])
     version_needs = parse_version_needs(readelf_version["stdout"] + "\n" + readelf_version["stderr"])
@@ -971,6 +1059,12 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
             "host_needed_libraries": host_needed_libraries,
             "host_direct_needed_libraries": host_direct_needed_libraries,
             "host_resolved_libraries": host_resolved_libraries,
+            "direct_host_needed_library_rows": build_direct_host_needed_library_rows(
+                host_direct_needed_libraries,
+                ldd_resolution_paths,
+                version_needs,
+                blocking_reasons,
+            ),
             "undefined_symbols": undefined_symbols,
             "undefined_unwind_symbols": unique_sorted(undefined_unwind_symbols),
             "undefined_glibc_symbols": unique_sorted(undefined_glibc_symbols),
