@@ -1358,6 +1358,36 @@ fn wordexp_undef_respects_single_and_double_quote_context_like_host() {
 }
 
 #[test]
+fn wordexp_unquoted_parameter_expansion_field_splits_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    unsafe {
+        std::env::set_var("FRANKENLIBC_WORDEXP_SPLIT_42", "alpha beta");
+    }
+
+    for input in [
+        "$FRANKENLIBC_WORDEXP_SPLIT_42",
+        "\"$FRANKENLIBC_WORDEXP_SPLIT_42\"",
+        "pre${FRANKENLIBC_WORDEXP_SPLIT_42}post",
+    ] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, 0) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, 0) };
+        assert_eq!(
+            abi, host,
+            "wordexp field-splitting mismatch for input {:?}",
+            input
+        );
+    }
+
+    unsafe {
+        std::env::remove_var("FRANKENLIBC_WORDEXP_SPLIT_42");
+    }
+}
+
+#[test]
 fn fgetpwent_reads_multiple_entries() {
     let path = b"/etc/passwd\0";
     let mode = b"r\0";

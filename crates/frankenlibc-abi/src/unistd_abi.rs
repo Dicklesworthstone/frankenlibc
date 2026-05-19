@@ -6379,6 +6379,97 @@ fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
     })
 }
 
+fn has_unquoted_parameter_expansion(word: &str) -> bool {
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escaped = false;
+
+    for &b in word.as_bytes() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if b == b'\\' && !in_single_quote {
+            escaped = true;
+            continue;
+        }
+        if b == b'\'' && !in_double_quote {
+            in_single_quote = !in_single_quote;
+            continue;
+        }
+        if b == b'"' && !in_single_quote {
+            in_double_quote = !in_double_quote;
+            continue;
+        }
+        if b == b'$' && !in_single_quote && !in_double_quote {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn push_wordexp_word(final_words: &mut Vec<CString>, expanded: &str) {
+    if expanded.contains('*') || expanded.contains('?') || expanded.contains('[') {
+        // Use our glob infrastructure.
+        let pattern = std::path::Path::new(expanded);
+        match std::fs::read_dir(pattern.parent().unwrap_or(std::path::Path::new("."))) {
+            Ok(entries) => {
+                let pat_name = pattern
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let mut matched = false;
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if simple_glob_match(&pat_name, &name) {
+                        let full = if let Some(parent) = pattern.parent() {
+                            if parent == std::path::Path::new("") {
+                                name
+                            } else {
+                                format!("{}/{name}", parent.display())
+                            }
+                        } else {
+                            name
+                        };
+                        if let Ok(cs) = CString::new(full) {
+                            final_words.push(cs);
+                            matched = true;
+                        }
+                    }
+                }
+                if !matched && let Ok(cs) = CString::new(expanded) {
+                    final_words.push(cs);
+                }
+            }
+            Err(_) => {
+                if let Ok(cs) = CString::new(expanded) {
+                    final_words.push(cs);
+                }
+            }
+        }
+    } else if let Ok(cs) = CString::new(expanded) {
+        final_words.push(cs);
+    }
+}
+
+fn push_wordexp_expanded_fields(
+    final_words: &mut Vec<CString>,
+    expanded: &str,
+    ifs: &str,
+    split_fields: bool,
+) {
+    if split_fields && !ifs.is_empty() {
+        for field in expanded.split(|ch| ifs.contains(ch)) {
+            if !field.is_empty() {
+                push_wordexp_word(final_words, field);
+            }
+        }
+    } else {
+        push_wordexp_word(final_words, expanded);
+    }
+}
+
 /// POSIX `wordexp` — perform shell-like word expansion.
 ///
 /// Native implementation supporting tilde, variable, and pathname (glob) expansion.
@@ -6473,6 +6564,7 @@ pub unsafe extern "C" fn wordexp(
     let mut final_words: Vec<CString> = Vec::new();
 
     for word in &result_words {
+        let split_fields = has_unquoted_parameter_expansion(word);
         // Tilde expansion
         let expanded = expand_tilde(word);
         // Variable expansion
@@ -6480,51 +6572,7 @@ pub unsafe extern "C" fn wordexp(
             Ok(s) => s,
             Err(e) => return e,
         };
-        // Pathname expansion (glob)
-        if expanded.contains('*') || expanded.contains('?') || expanded.contains('[') {
-            // Use our glob infrastructure
-            let pattern = std::path::Path::new(&expanded);
-            match std::fs::read_dir(pattern.parent().unwrap_or(std::path::Path::new("."))) {
-                Ok(entries) => {
-                    let pat_name = pattern
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    let mut matched = false;
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if simple_glob_match(&pat_name, &name) {
-                            let full = if let Some(parent) = pattern.parent() {
-                                if parent == std::path::Path::new("") {
-                                    name
-                                } else {
-                                    format!("{}/{name}", parent.display())
-                                }
-                            } else {
-                                name
-                            };
-                            if let Ok(cs) = CString::new(full) {
-                                final_words.push(cs);
-                                matched = true;
-                            }
-                        }
-                    }
-                    if !matched {
-                        // No match: keep the pattern literally
-                        if let Ok(cs) = CString::new(expanded.clone()) {
-                            final_words.push(cs);
-                        }
-                    }
-                }
-                Err(_) => {
-                    if let Ok(cs) = CString::new(expanded.clone()) {
-                        final_words.push(cs);
-                    }
-                }
-            }
-        } else if let Ok(cs) = CString::new(expanded) {
-            final_words.push(cs);
-        }
+        push_wordexp_expanded_fields(&mut final_words, &expanded, &ifs, split_fields);
     }
 
     // Build the wordexp_t result
