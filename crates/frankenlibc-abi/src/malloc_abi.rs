@@ -1228,6 +1228,13 @@ unsafe fn bootstrap_calloc_passthrough(nmemb: usize, size: usize) -> *mut c_void
 
 #[inline]
 unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c_void {
+    if ptr.is_null() {
+        return unsafe { bootstrap_malloc_passthrough(size) };
+    }
+    if size == 0 {
+        unsafe { bootstrap_free_passthrough(ptr) };
+        return std::ptr::null_mut();
+    }
     // SAFETY: early loader/bootstrap reallocations must bypass runtime policy
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_realloc(ptr, size) };

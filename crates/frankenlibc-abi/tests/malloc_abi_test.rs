@@ -9,10 +9,10 @@ use frankenlibc_abi::htm_fast_path::{
 use frankenlibc_abi::malloc_abi::{
     __libc_freeres, aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc,
     malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests, malloc_info,
-    malloc_restore_reentry_depth_for_tests, malloc_stats, malloc_stats_init_for_tests,
-    malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
-    posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
-    take_last_decision_gate_for_tests, valloc,
+    malloc_known_remaining_for_tests, malloc_restore_reentry_depth_for_tests, malloc_stats,
+    malloc_stats_init_for_tests, malloc_swap_reentry_depth_for_tests, malloc_trim,
+    malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
+    signal_runtime_ready_for_tests, take_last_decision_gate_for_tests, valloc,
 };
 use frankenlibc_abi::unistd_abi::mprobe;
 use std::ffi::c_void;
@@ -593,6 +593,40 @@ fn test_realloc_null_zero_size() {
     if !p.is_null() {
         unsafe { free(p) };
     }
+}
+
+#[test]
+fn test_realloc_zero_in_reentrant_path_untracks_fallback_allocation() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    struct ReentryDepthGuard(u32);
+
+    impl Drop for ReentryDepthGuard {
+        fn drop(&mut self) {
+            malloc_restore_reentry_depth_for_tests(self.0);
+        }
+    }
+
+    let reentry_depth = ReentryDepthGuard(malloc_swap_reentry_depth_for_tests(1));
+    let p = unsafe { malloc(64) };
+    assert!(
+        !p.is_null(),
+        "reentrant malloc should produce a fallback allocation"
+    );
+    assert_eq!(
+        malloc_known_remaining_for_tests(p.cast_const()),
+        Some(64),
+        "fallback allocation should be tracked before realloc(ptr, 0)"
+    );
+
+    let out = unsafe { realloc(p, 0) };
+    drop(reentry_depth);
+
+    assert!(out.is_null(), "realloc(ptr, 0) should return NULL");
+    assert_eq!(
+        malloc_known_remaining_for_tests(p.cast_const()),
+        None,
+        "realloc(ptr, 0) must not leave stale fallback bounds for freed memory"
+    );
 }
 
 // ---------------------------------------------------------------------------
