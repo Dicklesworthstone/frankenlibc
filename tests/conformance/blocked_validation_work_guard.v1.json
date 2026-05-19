@@ -1,10 +1,10 @@
 {
   "schema_version": "v1",
   "manifest_id": "blocked_validation_work_guard",
-  "bead": "bd-bqh1f",
-  "generated_utc": "2026-05-18T00:38:00Z",
+  "bead": "bd-rchk0.94",
+  "generated_utc": "2026-05-19T21:54:00Z",
   "source_commit": "current",
-  "purpose": "No-cargo swarm guard for the state where RCH cargo validation is blocked and validation-dependent beads are already waiting. The guard prevents agents from starting new cargo-backed Rust work when the useful next action is either no-cargo evidence, existing dirty validation-slice closeout, or operator-approved RCH unblock work.",
+  "purpose": "No-cargo swarm guard for validation queues that may move between RCH-blocked and RCH-admissible states. The guard prevents agents from starting new cargo-backed Rust work when RCH is blocked and validation-dependent beads are already waiting, while allowing the current admissible/no-dependent state to pass without fabricating a blocker.",
   "inputs": {
     "tracker_jsonl": ".beads/issues.jsonl",
     "tracker_jsonl_degraded_readiness_checker": "scripts/check_tracker_jsonl_degraded_readiness.sh",
@@ -41,6 +41,13 @@
     "decision_when_safe_ready_exists": "claim_safe_ready_before_new_discovery",
     "decision_when_rch_admissible": "resume_cargo_validation_queue",
     "decision_when_rch_blocked_and_dependents_waiting": "avoid_new_cargo_backed_work",
+    "allowed_current_decisions": [
+      "recover_stale_in_progress_before_new_discovery",
+      "claim_safe_ready_before_new_discovery",
+      "resume_cargo_validation_queue",
+      "avoid_new_cargo_backed_work",
+      "no_guard_needed"
+    ],
     "allowed_next_actions_when_blocked": [
       "refresh read-only RCH evidence",
       "recover stale in-progress beads before new discovery",
@@ -60,11 +67,14 @@
   "report_contract": {
     "output_path": "target/conformance/blocked_validation_work_guard.report.json",
     "must_materialize": [
+      "bead",
       "decision",
       "report_path",
       "status_on_current_blocked_state",
       "stale_in_progress_count",
       "stale_in_progress_ids",
+      "allowed_current_decisions",
+      "current_decision_allowed",
       "safe_ready_count",
       "permissioned_ready_count",
       "rch_status",
@@ -113,8 +123,13 @@
     },
     {
       "control_id": "no_waiting_dependents_removes_guard",
-      "mutation": "remove all active issues that depend on bd-716tv",
+      "mutation": "force blocked RCH signatures and remove all active issues that depend on bd-716tv",
       "expected_decision": "no_guard_needed"
+    },
+    {
+      "control_id": "blocked_dependents_blocks_new_work",
+      "mutation": "force blocked RCH signatures and one active dependent issue waiting on bd-716tv",
+      "expected_decision": "avoid_new_cargo_backed_work"
     },
     {
       "control_id": "dirty_validation_path_counted",

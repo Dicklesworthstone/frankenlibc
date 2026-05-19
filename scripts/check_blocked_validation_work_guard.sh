@@ -195,6 +195,19 @@ def configured_report_fields(contract):
     return [field for field in fields if isinstance(field, str) and field]
 
 
+def allowed_current_decisions(guard):
+    configured = guard.get("allowed_current_decisions")
+    if isinstance(configured, list):
+        allowed = [item for item in configured if isinstance(item, str) and item]
+    else:
+        allowed = []
+    if not allowed:
+        fallback = guard.get("decision_when_rch_blocked_and_dependents_waiting")
+        if isinstance(fallback, str) and fallback:
+            allowed.append(fallback)
+    return allowed
+
+
 def missing_report_fields(contract, report):
     return [field for field in configured_report_fields(contract) if field not in report]
 
@@ -281,8 +294,8 @@ if contract.get("schema_version") != "v1":
     errors.append("contract schema_version must be v1")
 if contract.get("manifest_id") != "blocked_validation_work_guard":
     errors.append("contract manifest_id mismatch")
-if contract.get("bead") != "bd-bqh1f":
-    errors.append("contract bead must be bd-bqh1f")
+if contract.get("bead") != "bd-rchk0.94":
+    errors.append("contract bead must be bd-rchk0.94")
 source_commit = contract.get("source_commit")
 if not (source_commit == "current" or is_hex_commit(source_commit)):
     errors.append("contract source_commit must be 'current' or 40-hex")
@@ -308,6 +321,7 @@ if not isinstance(guard, dict):
 required = set(string_list(guard.get("required_blocked_failure_signatures"), "guard_contract.required_blocked_failure_signatures"))
 string_list(guard.get("dirty_validation_path_prefixes"), "guard_contract.dirty_validation_path_prefixes")
 string_list(guard.get("dirty_validation_path_files"), "guard_contract.dirty_validation_path_files")
+string_list(guard.get("allowed_current_decisions"), "guard_contract.allowed_current_decisions")
 signatures = set(rch.get("failure_signatures", []))
 if rch.get("status") == guard.get("blocked_rch_status") and not required.issubset(signatures):
     errors.append("blocked RCH report missing required failure signatures")
@@ -322,8 +336,10 @@ dependents = active_bd716_dependents(rows, guard)
 decision = decide(readiness, rch, dependents, guard)
 dirty_paths = dirty_validation_paths(git_status_short_lines(), guard)
 expected_current = guard.get("decision_when_rch_blocked_and_dependents_waiting")
-if decision != expected_current:
-    errors.append(f"current guard decision {decision!r} did not match expected blocked decision {expected_current!r}")
+allowed_current = allowed_current_decisions(guard)
+current_decision_allowed = decision in allowed_current
+if not current_decision_allowed:
+    errors.append(f"current guard decision {decision!r} was not in allowed current decisions {allowed_current!r}")
 contract_report_errors = report_contract_errors(contract, report_path, "pass")
 errors.extend(contract_report_errors)
 must_materialize = string_list(
@@ -344,6 +360,8 @@ for control in contract.get("negative_controls", []):
     mutated_contract = copy.deepcopy(contract)
 
     if control_id == "rch_admissible_changes_decision":
+        mutated_readiness["safe_ready"] = []
+        mutated_readiness["stale_in_progress"] = []
         mutated_rch["status"] = "admissible"
         mutated_rch["failure_signatures"] = []
     elif control_id == "output_path_mismatch_fails":
@@ -423,7 +441,25 @@ for control in contract.get("negative_controls", []):
             }
         ]
     elif control_id == "no_waiting_dependents_removes_guard":
+        mutated_readiness["safe_ready"] = []
+        mutated_readiness["stale_in_progress"] = []
+        mutated_rch["status"] = guard.get("blocked_rch_status")
+        mutated_rch["failure_signatures"] = list(guard.get("required_blocked_failure_signatures", []))
         mutated_dependents = []
+    elif control_id == "blocked_dependents_blocks_new_work":
+        mutated_readiness["safe_ready"] = []
+        mutated_readiness["stale_in_progress"] = []
+        mutated_rch["status"] = guard.get("blocked_rch_status")
+        mutated_rch["failure_signatures"] = list(guard.get("required_blocked_failure_signatures", []))
+        mutated_dependents = [
+            {
+                "id": "bd-example-blocked-dependent",
+                "title": "synthetic validation work waiting on blocked RCH",
+                "status": "open",
+                "priority": 1,
+                "assignee": None,
+            }
+        ]
     elif control_id == "dirty_validation_path_counted":
         synthetic_dirty = dirty_validation_paths(
             [
@@ -472,13 +508,15 @@ stale_in_progress = (
 )
 report = {
     "schema_version": "blocked_validation_work_guard.report.v1",
-    "bead": "bd-bqh1f",
+    "bead": "bd-rchk0.94",
     "status": "pass" if not errors else "fail",
     "source_commit": source_commit,
     "current_head": head,
     "report_path": repo_relative(report_path),
     "status_on_current_blocked_state": contract.get("report_contract", {}).get("status_on_current_blocked_state"),
     "decision": decision,
+    "allowed_current_decisions": allowed_current,
+    "current_decision_allowed": current_decision_allowed,
     "safe_ready_count": len(safe_ready),
     "safe_ready_ids": [row.get("id") for row in safe_ready if isinstance(row, dict)],
     "permissioned_ready_count": len(permissioned_ready),
