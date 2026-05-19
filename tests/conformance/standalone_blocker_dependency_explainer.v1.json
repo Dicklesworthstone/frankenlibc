@@ -2,9 +2,10 @@
   "schema_version": "v1",
   "manifest_id": "standalone_blocker_dependency_explainer",
   "bead": "bd-i1fwe",
-  "generated_utc": "2026-05-17T23:22:00Z",
+  "refresh_bead": "bd-kh0jc",
+  "generated_utc": "2026-05-19T03:31:12Z",
   "source_commit": "current",
-  "purpose": "Fail-closed explainer for why bd-c51oi remains open after report-only standalone burndown experiments. The checker ties tracker dependency state to the standalone blocker rollup so agents do not mistake partial experiment progress for default forge promotion.",
+  "purpose": "Fail-closed explainer for why bd-c51oi remains open after RCH recovered and report-only standalone burndown experiments landed. The checker ties tracker state to the standalone blocker rollup so agents do not mistake partial experiment progress or a retired RCH blocker for default forge promotion.",
   "inputs": {
     "tracker_jsonl": ".beads/issues.jsonl",
     "standalone_blocker_burndown_dag": "tests/conformance/standalone_blocker_burndown_dag.v1.json",
@@ -14,12 +15,12 @@
   "target_issue_contract": {
     "target_issue_id": "bd-c51oi",
     "target_issue_must_remain_status": "in_progress",
-    "required_blocker_issue_id": "bd-716tv",
-    "required_blocker_issue_status": "in_progress",
-    "required_dependency_type": "blocks",
-    "missing_dependency_result": "fail_closed",
+    "retired_blocker_issue_id": "bd-716tv",
+    "retired_blocker_issue_status": "closed",
+    "retired_dependency_type": "blocks",
+    "stale_dependency_result": "fail_closed",
     "target_closed_before_default_forge_exit_result": "fail_closed",
-    "blocker_closed_before_rch_admissible_result": "fail_closed"
+    "retired_blocker_reopened_result": "fail_closed"
   },
   "standalone_claim_contract": {
     "rollup_claim_status": "claim_blocked",
@@ -49,22 +50,27 @@
       "negative_controls"
     ],
     "closure_blocker_reasons": [
-      "bd-c51oi still depends on bd-716tv",
-      "RCH cargo validation is not admissible",
+      "default standalone forge still reports claim_blocked",
+      "host loader, libgcc, and TLS startup blockers remain in the default artifact",
       "standalone blocker rollup remains claim_blocked",
       "partial burndown experiments are report-only and non-promotable"
     ]
   },
   "negative_controls": [
     {
-      "control_id": "missing_required_dependency_fails",
-      "mutation": "drop bd-c51oi dependency on bd-716tv",
-      "expected_error": "target_missing_required_dependency"
+      "control_id": "retired_dependency_reintroduced_fails",
+      "mutation": "restore stale bd-c51oi dependency on retired bd-716tv blocker",
+      "expected_error": "target_has_retired_dependency"
     },
     {
       "control_id": "target_closed_before_claim_exit_fails",
       "mutation": "mark bd-c51oi closed while standalone rollup remains claim_blocked",
       "expected_error": "target_status_not_in_progress"
+    },
+    {
+      "control_id": "retired_blocker_reopened_fails",
+      "mutation": "mark bd-716tv in_progress after remote RCH validation recovered",
+      "expected_error": "retired_blocker_status_not_closed"
     },
     {
       "control_id": "report_only_experiment_promotion_fails",
@@ -78,7 +84,7 @@
       "jq empty tests/conformance/standalone_blocker_dependency_explainer.v1.json",
       "bash scripts/check_standalone_blocker_dependency_explainer.sh",
       "git diff --check -- scripts/check_standalone_blocker_dependency_explainer.sh tests/conformance/standalone_blocker_dependency_explainer.v1.json .beads/issues.jsonl",
-      "AGENT_NAME=DarkShore br dep cycles --json"
+      "AGENT_NAME=SwiftCreek br --allow-stale --lock-timeout 5000 dep cycles --json"
     ],
     "cargo_required": false,
     "cargo_reason": "This slice adds a shell/Python JSON contract checker only; it does not touch Rust code or compiled tests."

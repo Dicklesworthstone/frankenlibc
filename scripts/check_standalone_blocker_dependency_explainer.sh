@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Validate the standalone blocker dependency explainer for bd-i1fwe.
+# Refreshed by bd-kh0jc after the bd-716tv RCH blocker retired.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -144,8 +145,8 @@ def validate_state(contract, dag, rollup, rollup_report, tracker):
     target_contract = contract.get("target_issue_contract", {})
     claim_contract = contract.get("standalone_claim_contract", {})
     target_id = target_contract.get("target_issue_id")
-    blocker_id = target_contract.get("required_blocker_issue_id")
-    dep_type = target_contract.get("required_dependency_type")
+    blocker_id = target_contract.get("retired_blocker_issue_id")
+    dep_type = target_contract.get("retired_dependency_type")
 
     target_issue = tracker.get(target_id)
     blocker_issue = tracker.get(blocker_id)
@@ -159,11 +160,11 @@ def validate_state(contract, dag, rollup, rollup_report, tracker):
     expected_target_status = target_contract.get("target_issue_must_remain_status")
     if target_issue.get("status") != expected_target_status:
         local_errors.append("target_status_not_in_progress")
-    expected_blocker_status = target_contract.get("required_blocker_issue_status")
+    expected_blocker_status = target_contract.get("retired_blocker_issue_status")
     if blocker_issue.get("status") != expected_blocker_status:
-        local_errors.append("required_blocker_status_not_in_progress")
-    if not issue_depends_on(target_issue, blocker_id, dep_type):
-        local_errors.append("target_missing_required_dependency")
+        local_errors.append("retired_blocker_status_not_closed")
+    if issue_depends_on(target_issue, blocker_id, dep_type):
+        local_errors.append("target_has_retired_dependency")
 
     if rollup_report.get("status") != "pass":
         local_errors.append("rollup_report_not_pass")
@@ -248,6 +249,8 @@ if contract.get("manifest_id") != "standalone_blocker_dependency_explainer":
     errors.append("contract manifest_id mismatch")
 if contract.get("bead") != "bd-i1fwe":
     errors.append("contract bead must be bd-i1fwe")
+if contract.get("refresh_bead") != "bd-kh0jc":
+    errors.append("contract refresh_bead must be bd-kh0jc")
 source_commit = contract.get("source_commit")
 if not (source_commit == "current" or is_hex_commit(source_commit)):
     errors.append("contract source_commit must be 'current' or 40-hex")
@@ -295,21 +298,24 @@ for control in contract.get("negative_controls", []):
     mutated_report = copy.deepcopy(rollup_report)
     mutated_tracker = copy.deepcopy(tracker)
 
-    if control_id == "missing_required_dependency_fails":
+    if control_id == "retired_dependency_reintroduced_fails":
         target_id = contract["target_issue_contract"]["target_issue_id"]
-        target = mutated_tracker.get(target_id, {})
-        target["dependencies"] = [
-            dep
-            for dep in target.get("dependencies", [])
-            if not (
-                isinstance(dep, dict)
-                and (dep.get("depends_on_id") or dep.get("id"))
-                == contract["target_issue_contract"]["required_blocker_issue_id"]
-            )
-        ]
+        blocker_id = contract["target_issue_contract"]["retired_blocker_issue_id"]
+        dep_type = contract["target_issue_contract"]["retired_dependency_type"]
+        target = mutated_tracker.setdefault(target_id, {})
+        target.setdefault("dependencies", []).append(
+            {
+                "issue_id": target_id,
+                "depends_on_id": blocker_id,
+                "type": dep_type,
+            }
+        )
     elif control_id == "target_closed_before_claim_exit_fails":
         target_id = contract["target_issue_contract"]["target_issue_id"]
         mutated_tracker.setdefault(target_id, {})["status"] = "closed"
+    elif control_id == "retired_blocker_reopened_fails":
+        blocker_id = contract["target_issue_contract"]["retired_blocker_issue_id"]
+        mutated_tracker.setdefault(blocker_id, {})["status"] = "in_progress"
     elif control_id == "report_only_experiment_promotion_fails":
         if mutated_rollup.get("partial_burndown_experiments"):
             mutated_rollup["partial_burndown_experiments"][0]["promotion_allowed"] = True
@@ -338,8 +344,15 @@ for control in contract.get("negative_controls", []):
 
 target_id = contract.get("target_issue_contract", {}).get("target_issue_id")
 blocker_id = contract.get("target_issue_contract", {}).get("required_blocker_issue_id")
+if blocker_id is None:
+    blocker_id = contract.get("target_issue_contract", {}).get("retired_blocker_issue_id")
 target_issue = tracker.get(target_id, {})
 blocker_issue = tracker.get(blocker_id, {})
+retired_edge_present = issue_depends_on(
+    target_issue,
+    blocker_id,
+    contract.get("target_issue_contract", {}).get("retired_dependency_type"),
+)
 required_key = contract.get("standalone_claim_contract", {}).get("required_dag_dedupe_key")
 dag_node = next(
     (
@@ -354,6 +367,7 @@ status = "pass" if not errors else "fail"
 report = {
     "schema_version": "v1",
     "bead": contract.get("bead"),
+    "refresh_bead": contract.get("refresh_bead"),
     "status": status,
     "source_commit": source_commit,
     "current_head": head,
@@ -367,7 +381,9 @@ report = {
         "id": blocker_id,
         "title": blocker_issue.get("title"),
         "status": blocker_issue.get("status"),
-        "dependency_type": contract.get("target_issue_contract", {}).get("required_dependency_type"),
+        "dependency_type": contract.get("target_issue_contract", {}).get("retired_dependency_type"),
+        "relationship": "retired",
+        "edge_present": retired_edge_present,
     },
     "standalone_claim_state": {
         "rollup_report": str(rollup_report_path.relative_to(root)),
