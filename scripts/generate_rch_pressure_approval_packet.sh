@@ -85,7 +85,7 @@ if [[ "${SSH_ENABLED}" == "1" && -s "${RAW_DIR}/rch_status.out" && -r "${SSH_KEY
           end);
       [
         .data.daemon.workers[]?
-        | select(.status == "healthy" and .pressure_state == "critical")
+        | select((.status == "healthy" or .status == "degraded") and .pressure_state == "critical" and (.host != null))
         | {id, host, pressure_gap: pressure_gap}
       ]
       | sort_by(.pressure_gap, .id)
