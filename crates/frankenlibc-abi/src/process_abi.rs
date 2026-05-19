@@ -196,9 +196,9 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         }
     };
 
-    // Both parent and child release their copies of these guards. The
-    // parking_lot mutex state lives inline in the static; the guard's Drop
-    // releases the lock owned by the current thread on each side of fork.
+    // Both parent and child release their copies of these guards. The ABI lock
+    // state lives inline in the static; the guard's Drop releases the lock
+    // owned by the current thread on each side of fork.
     drop(_environ_guard);
     drop(_pipeline_guard);
 

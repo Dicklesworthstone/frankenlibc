@@ -1527,6 +1527,19 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         "ABI NativeFile locks must use gettid-based AbiReentrantMutex instead of parking_lot ReentrantMutex",
     )?;
 
+    let abi_cargo_toml = std::fs::read_to_string(abi_cargo_toml_path(&root))
+        .map_err(|err| format!("read frankenlibc-abi Cargo.toml: {err}"))?;
+    let runtime_policy = std::fs::read_to_string(abi_runtime_policy_path(&root))
+        .map_err(|err| format!("read runtime_policy.rs: {err}"))?;
+    require(
+        !abi_cargo_toml.contains("parking_lot =")
+            && runtime_policy.contains("RuntimePolicyTestGuard")
+            && runtime_policy.contains("crate::util::AbiReentrantMutex")
+            && !runtime_policy.contains("use parking_lot")
+            && !runtime_policy.contains("parking_lot::ReentrantMutex"),
+        "ABI runtime policy test serialization must use AbiReentrantMutex and must not keep a direct parking_lot dependency",
+    )?;
+
     let grp = std::fs::read_to_string(abi_grp_path(&root))
         .map_err(|err| format!("read grp_abi.rs: {err}"))?;
     require(

@@ -12,12 +12,8 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
-#[cfg(test)]
-use parking_lot::{ReentrantMutex, ReentrantMutexGuard};
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::{Cell, RefCell};
-#[cfg(test)]
-use std::sync::OnceLock;
 
 use frankenlibc_core::syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
@@ -89,9 +85,12 @@ static FFI_PCC_HASH_PREFIX: AtomicU64 = AtomicU64::new(0);
 static FFI_PCC_ROW_COUNT: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(test)]
-pub(crate) fn runtime_policy_test_lock() -> ReentrantMutexGuard<'static, ()> {
-    static LOCK: OnceLock<ReentrantMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| ReentrantMutex::new(())).lock()
+type RuntimePolicyTestGuard = crate::util::AbiReentrantMutexGuard<'static, ()>;
+
+#[cfg(test)]
+pub(crate) fn runtime_policy_test_lock() -> RuntimePolicyTestGuard {
+    static LOCK: crate::util::AbiReentrantMutex<()> = crate::util::AbiReentrantMutex::new(());
+    LOCK.lock()
 }
 
 unsafe extern "C" {
@@ -1829,7 +1828,6 @@ pub mod conformance_testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use parking_lot::ReentrantMutexGuard;
     use std::ffi::OsString;
     use std::hint::black_box;
     use std::time::Instant;
@@ -1868,7 +1866,7 @@ mod tests {
     }
 
     struct ModeStateGuard {
-        _lock: ReentrantMutexGuard<'static, ()>,
+        _lock: RuntimePolicyTestGuard,
         previous: u8,
         previous_tls: u8,
     }
@@ -1928,20 +1926,20 @@ mod tests {
         }
     }
 
-    fn runtime_policy_test_lock() -> ReentrantMutexGuard<'static, ()> {
+    fn runtime_policy_test_lock() -> RuntimePolicyTestGuard {
         super::runtime_policy_test_lock()
     }
 
-    fn env_lock() -> ReentrantMutexGuard<'static, ()> {
+    fn env_lock() -> RuntimePolicyTestGuard {
         runtime_policy_test_lock()
     }
 
-    fn ffi_pcc_lock() -> ReentrantMutexGuard<'static, ()> {
+    fn ffi_pcc_lock() -> RuntimePolicyTestGuard {
         runtime_policy_test_lock()
     }
 
     struct RuntimeReadyGuard {
-        _lock: ReentrantMutexGuard<'static, ()>,
+        _lock: RuntimePolicyTestGuard,
         previous_ready: u8,
         previous_mode_log_ready: u8,
     }
