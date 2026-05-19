@@ -77,13 +77,23 @@ impl ContentionSignal {
 
     /// Called when a free operation begins.
     pub fn free_begin(&self) {
-        let current = self.concurrent_frees.fetch_add(1, Ordering::Relaxed) + 1;
+        let previous = self
+            .concurrent_frees
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                Some(x.saturating_add(1))
+            })
+            .unwrap_or_else(|x| x);
+        let current = previous.saturating_add(1);
         self.peak_concurrent.fetch_max(current, Ordering::Relaxed);
     }
 
     /// Called when a free operation ends.
     pub fn free_end(&self) {
-        self.concurrent_frees.fetch_sub(1, Ordering::Relaxed);
+        let _ = self
+            .concurrent_frees
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                Some(x.saturating_sub(1))
+            });
     }
 
     /// Read and reset peak contention.
@@ -392,6 +402,20 @@ mod tests {
         assert_eq!(signal.concurrent_frees.load(Ordering::Relaxed), 1);
         let peak = signal.read_and_reset_peak();
         assert_eq!(peak, 2);
+    }
+
+    #[test]
+    fn test_contention_signal_end_saturates_at_zero() {
+        let signal = ContentionSignal::new();
+        signal.free_end();
+        assert_eq!(signal.concurrent_frees.load(Ordering::Relaxed), 0);
+
+        signal.free_begin();
+        assert_eq!(signal.concurrent_frees.load(Ordering::Relaxed), 1);
+        signal.free_end();
+        signal.free_end();
+        assert_eq!(signal.concurrent_frees.load(Ordering::Relaxed), 0);
+        assert_eq!(signal.read_and_reset_peak(), 1);
     }
 
     #[test]

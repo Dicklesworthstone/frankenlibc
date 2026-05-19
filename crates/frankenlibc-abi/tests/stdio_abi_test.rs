@@ -4662,6 +4662,16 @@ fn vis_handles_high_bit_via_meta_prefix() {
         .map(|&c| c as u8)
         .collect();
     assert_eq!(bytes, b"\\M-A");
+
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0x80, 0, 0) }; // \M^@
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\M^@");
 }
 
 // ---------------------------------------------------------------------------
@@ -4883,7 +4893,7 @@ fn unvis_decodes_meta_sequence() {
 
 #[test]
 fn unvis_decodes_meta_caret_sequence() {
-    let decoded = unvis_drain(b"\\M-\\^A").unwrap();
+    let decoded = unvis_drain(b"\\M^A").unwrap();
     assert_eq!(decoded, vec![0x81]);
 }
 
@@ -4934,7 +4944,7 @@ fn unvis_returns_synbad_on_malformed_meta() {
 }
 
 #[test]
-fn unvis_returns_synbad_on_malformed_octal() {
+fn unvis_returns_validpush_on_short_octal_non_octal_tail() {
     let mut state: c_int = 0;
     let mut cp: c_char = 0;
     assert_eq!(
@@ -4947,6 +4957,34 @@ fn unvis_returns_synbad_on_malformed_octal() {
     );
     assert_eq!(
         unsafe { unvis(&mut cp, b'8' as c_int, &mut state, 0) },
+        ABI_UNVIS_VALIDPUSH
+    );
+    assert_eq!(cp as u8, 0o1);
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'8' as c_int, &mut state, 0) },
+        ABI_UNVIS_VALID
+    );
+    assert_eq!(cp as u8, b'8');
+}
+
+#[test]
+fn unvis_returns_synbad_on_overflowing_octal() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'4' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'0' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'0' as c_int, &mut state, 0) },
         ABI_UNVIS_SYNBAD
     );
 }

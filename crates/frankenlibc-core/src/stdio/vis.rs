@@ -11,9 +11,8 @@
 //! - `\\` → `\\\\`.
 //! - Other non-printable c < 0x80 → `\\^X` where X = c XOR 0x40.
 //! - 0x7f (DEL) → `\\^?`.
-//! - High-bit bytes (c >= 0x80) → `\\M-X` followed by the encoded
-//!   form of c & 0x7f (recursive — but bounded since the next call
-//!   sees a 7-bit byte).
+//! - High-bit bytes (c >= 0x80) → `\\M-X` for printable low-half
+//!   bytes and `\\M^X` for low-half control bytes.
 //!
 //! ## Encoding ([`VIS_OCTAL`])
 //!
@@ -338,27 +337,37 @@ fn encode_standard_byte_with_next(c: u8, flags: u32, nextc: Option<u8>, out: &mu
         out.push(c);
         return;
     }
-    if c >= 0x80 && !octal_mode {
-        // High bit set: emit \M- prefix then recursively encode the
-        // low 7 bits. Recursion is bounded — the recursive call sees
-        // a 7-bit byte and never re-enters this branch.
-        if flags & VIS_NOSLASH == 0 {
-            out.push(b'\\');
-        }
-        out.push(b'M');
-        out.push(b'-');
-        encode_byte_with_next(c & 0x7f, flags, nextc, out);
-        return;
-    }
     if cstyle_mode && push_cstyle_escape(c, nextc, out) {
         return;
     }
-    if c == b' ' {
+    if c == b' ' || c & 0x7f == b' ' {
         push_octal(c, out);
         return;
     }
     if octal_mode {
         push_octal(c, out);
+        return;
+    }
+    if c >= 0x80 {
+        if flags & VIS_NOSLASH == 0 {
+            out.push(b'\\');
+        }
+        let low = c & 0x7f;
+        out.push(b'M');
+        if low == 0x7f {
+            out.push(b'^');
+            out.push(b'?');
+        } else if low < 0x20 {
+            out.push(b'^');
+            out.push(low ^ 0x40);
+        } else if low == b'\\' && flags & VIS_NOSLASH == 0 {
+            out.push(b'-');
+            out.push(b'\\');
+            out.push(b'\\');
+        } else {
+            out.push(b'-');
+            out.push(low);
+        }
         return;
     }
     if c == 0x7f {
@@ -515,6 +524,19 @@ pub fn decode_one(input: &[u8]) -> DecodeStep {
             }
         }
         b'M' => {
+            if input.get(2) == Some(&b'^') {
+                let Some(&third) = input.get(3) else {
+                    return DecodeStep::Invalid;
+                };
+                let low = if third == b'?' { 0x7f } else { third ^ 0x40 };
+                return DecodeStep::Byte {
+                    byte: low | 0x80,
+                    consumed: 4,
+                };
+            }
+            if input.get(2) != Some(&b'-') {
+                return DecodeStep::Invalid;
+            }
             // \M-X (high-bit set). Stacked `\M-` prefixes only ever set
             // the high bit, and `0x80 | 0x80 == 0x80`, so collapse every
             // leading `\M-` group iteratively before decoding the inner
@@ -523,14 +545,14 @@ pub fn decode_one(input: &[u8]) -> DecodeStep {
             // stack — `strunvis_to_vec` decodes untrusted input.
             let mut offset = 0usize;
             while input.get(offset) == Some(&b'\\') && input.get(offset + 1) == Some(&b'M') {
-                if input.get(offset + 2) != Some(&b'-') {
-                    return DecodeStep::Invalid;
+                if input.get(offset + 2) == Some(&b'-') {
+                    offset += 3;
+                } else {
+                    break;
                 }
-                offset += 3;
             }
-            // After the loop `input[offset..]` does not start with `\M`,
-            // so this single `decode_one` call cannot re-enter this arm:
-            // recursion depth is bounded to 1.
+            // After the loop any remaining `\M` can only be the `\M^X`
+            // control-byte form handled above, so recursion stays bounded.
             let rest = input.get(offset..).unwrap_or_default();
             match decode_one(rest) {
                 DecodeStep::Byte { byte, consumed } => DecodeStep::Byte {
@@ -615,10 +637,15 @@ mod tests {
     fn high_bit_uses_meta_prefix() {
         // 0xc1 = 0x80 | 0x41 ('A') → \M-A
         assert_eq!(enc(&[0xc1]), b"\\M-A".to_vec());
-        // 0xff = 0x80 | 0x7f → \M-\^?
-        assert_eq!(enc(&[0xff]), b"\\M-\\^?".to_vec());
-        // 0x80 = 0x80 | 0 → \M-\^@
-        assert_eq!(enc(&[0x80]), b"\\M-\\^@".to_vec());
+        // 0xff = 0x80 | 0x7f → \M^?
+        assert_eq!(enc(&[0xff]), b"\\M^?".to_vec());
+        // 0x80 = 0x80 | 0 → \M^@
+        assert_eq!(enc(&[0x80]), b"\\M^@".to_vec());
+        // 0xa0 = 0x80 | ' ' → octal, matching BSD's low-space rule.
+        assert_eq!(enc(&[0xa0]), b"\\240".to_vec());
+        // 0xdc = 0x80 | '\' keeps the low-half backslash doubled so
+        // it cannot merge with a following escape while decoding.
+        assert_eq!(enc(&[0xdc]), b"\\M-\\\\".to_vec());
     }
 
     #[test]
@@ -627,7 +654,7 @@ mod tests {
         assert_eq!(strvis_to_vec(b"\x01", VIS_NOSLASH), b"^A".to_vec());
         assert_eq!(strvis_to_vec(b"\x7f", VIS_NOSLASH), b"^?".to_vec());
         assert_eq!(strvis_to_vec(&[0xc1], VIS_NOSLASH), b"M-A".to_vec());
-        assert_eq!(strvis_to_vec(&[0x80], VIS_NOSLASH), b"M-^@".to_vec());
+        assert_eq!(strvis_to_vec(&[0x80], VIS_NOSLASH), b"M^@".to_vec());
     }
 
     #[test]
@@ -819,7 +846,8 @@ mod tests {
     #[test]
     fn decode_meta_prefix() {
         assert_eq!(dec(b"\\M-A"), Some(vec![0xc1]));
-        assert_eq!(dec(b"\\M-\\^?"), Some(vec![0xff]));
+        assert_eq!(dec(b"\\M^?"), Some(vec![0xff]));
+        assert_eq!(dec(b"\\M^@"), Some(vec![0x80]));
     }
 
     #[test]
@@ -827,7 +855,7 @@ mod tests {
         // Stacked `\M-` prefixes only set the high bit; `0x80|0x80`
         // is still `0x80`, so the result matches a single `\M-`.
         assert_eq!(dec(b"\\M-\\M-A"), Some(vec![0xc1]));
-        assert_eq!(dec(b"\\M-\\M-\\M-\\^?"), Some(vec![0xff]));
+        assert_eq!(dec(b"\\M-\\M-\\M^?"), Some(vec![0xff]));
     }
 
     #[test]
@@ -971,7 +999,7 @@ pub struct UnvisDecoder {
     state: UnvisState,
     /// Accumulator for octal triples.
     octal_value: u8,
-    /// Carry for `\M-` sequences (high bit pending).
+    /// Carry for `\M-` / `\M^X` sequences (high bit pending).
     pending_meta: bool,
 }
 
@@ -981,7 +1009,7 @@ enum UnvisState {
     Initial,
     AfterBackslash,
     AfterCaret,
-    AfterMeta1,       // saw "\M"; expecting "-"
+    AfterMeta1,       // saw "\M"; expecting "-" or "^"
     AfterMeta2,       // saw "\M-"; next byte is the encoded inner char
     ShortNulOrOctal2, // saw "\0"; may be short NUL or an octal triple
     Octal2,           // saw "\D"; expecting two more digits
@@ -1112,6 +1140,10 @@ impl UnvisDecoder {
             UnvisState::AfterMeta1 => {
                 if c == b'-' {
                     self.state = UnvisState::AfterMeta2;
+                    UnvisOutcome::NoChar
+                } else if c == b'^' {
+                    self.pending_meta = true;
+                    self.state = UnvisState::AfterCaret;
                     UnvisOutcome::NoChar
                 } else {
                     self.reset();
@@ -1317,8 +1349,8 @@ mod unvis_tests {
     #[test]
     fn meta_prefix() {
         assert_eq!(drain(b"\\M-A"), Ok(vec![0xc1]));
-        assert_eq!(drain(b"\\M-\\^?"), Ok(vec![0xff]));
-        assert_eq!(drain(b"\\M-\\^A"), Ok(vec![0x81]));
+        assert_eq!(drain(b"\\M^?"), Ok(vec![0xff]));
+        assert_eq!(drain(b"\\M^A"), Ok(vec![0x81]));
     }
 
     #[test]
@@ -1358,8 +1390,8 @@ mod unvis_tests {
     }
 
     #[test]
-    fn malformed_meta_without_dash_is_bad() {
-        // \M followed by something other than '-' is malformed.
+    fn malformed_meta_without_dash_or_caret_is_bad() {
+        // \M followed by something other than '-' or '^' is malformed.
         assert_eq!(drain(b"\\Mx"), Err(()));
     }
 
