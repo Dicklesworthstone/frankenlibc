@@ -5876,12 +5876,38 @@ pub unsafe extern "C" fn __dn_count_labels(name: *const c_char) -> c_int {
 // reuse the same files-backend parser as the non-iterator lookup hooks and
 // expose IPv4 entries through the shared thread-local hostent storage.
 
+#[cfg(feature = "owned-tls-cache")]
+static HOSTS_ITER_LINE_OFFSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static HOSTS_ITER_LINE_OFFSET: RefCell<usize> = const { RefCell::new(0) };
 }
 
 fn reset_hosts_iterator() {
-    HOSTS_ITER_LINE_OFFSET.with(|cell| *cell.borrow_mut() = 0);
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTS_ITER_LINE_OFFSET_OWNED_TLS.with(|offset| *offset = 0);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTS_ITER_LINE_OFFSET.with(|cell| *cell.borrow_mut() = 0);
+    }
+}
+
+fn with_hosts_iterator_offset<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTS_ITER_LINE_OFFSET_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTS_ITER_LINE_OFFSET.with(|cell| {
+            let mut offset = cell.borrow_mut();
+            callback(&mut offset)
+        })
+    }
 }
 
 struct HostsIterEntry {
@@ -5945,10 +5971,7 @@ pub unsafe extern "C" fn _gethtent() -> *mut c_void {
         unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
         return core::ptr::null_mut();
     };
-    let next = HOSTS_ITER_LINE_OFFSET.with(|cell| {
-        let mut offset = cell.borrow_mut();
-        next_hosts_ipv4_entry(&content, &mut offset)
-    });
+    let next = with_hosts_iterator_offset(|offset| next_hosts_ipv4_entry(&content, offset));
     let Some(entry) = next else {
         unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
         return core::ptr::null_mut();
