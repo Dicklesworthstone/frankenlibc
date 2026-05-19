@@ -31,7 +31,6 @@ use frankenlibc_membrane::evidence::{
     StdioResult, global_stdio_evidence_ring,
 };
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
-use parking_lot::ReentrantMutex;
 
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
@@ -444,7 +443,7 @@ pub(crate) enum NativeFileBacking {
 }
 
 // SAFETY: The raw pointers in NativeFileBacking are only accessed while
-// holding the NativeFile's ReentrantMutex lock, and the memory they point
+// holding the NativeFile's ABI reentrant lock, and the memory they point
 // to must remain valid for the stream's lifetime per POSIX contract.
 unsafe impl Send for NativeFileBacking {}
 
@@ -526,16 +525,16 @@ impl NativeFileLocked {
 }
 
 struct NativeFileState {
-    locked: Box<ReentrantMutex<RefCell<NativeFileLocked>>>,
+    locked: Box<crate::util::AbiReentrantMutex<RefCell<NativeFileLocked>>>,
     orientation: AtomicI8,
 }
 
 impl NativeFileState {
     fn new(fd: c_int, open_flags: u32, buf_mode: NativeFileBufMode) -> Self {
         Self {
-            locked: Box::new(ReentrantMutex::new(RefCell::new(NativeFileLocked::new(
-                fd, open_flags, buf_mode,
-            )))),
+            locked: Box::new(crate::util::AbiReentrantMutex::new(RefCell::new(
+                NativeFileLocked::new(fd, open_flags, buf_mode),
+            ))),
             orientation: AtomicI8::new(0),
         }
     }
@@ -546,7 +545,7 @@ impl NativeFileState {
         buf_mode: NativeFileBufMode,
     ) -> Self {
         Self {
-            locked: Box::new(ReentrantMutex::new(RefCell::new(
+            locked: Box::new(crate::util::AbiReentrantMutex::new(RefCell::new(
                 NativeFileLocked::new_with_backing(backing, open_flags, buf_mode),
             ))),
             orientation: AtomicI8::new(0),
@@ -554,8 +553,7 @@ impl NativeFileState {
     }
 
     fn lock_ptr(&self) -> *mut c_void {
-        (self.locked.as_ref() as *const ReentrantMutex<RefCell<NativeFileLocked>>).cast::<c_void>()
-            as *mut c_void
+        self.locked.opaque_ptr()
     }
 }
 
@@ -867,12 +865,8 @@ impl NativeFile {
     /// a successful `try_explicit_lock()` call.
     #[inline]
     pub unsafe fn explicit_unlock(&self) {
-        // Use parking_lot's lock_api trait to directly decrement the lock count.
-        // The caller is responsible for ensuring the lock was previously acquired.
-        use parking_lot::lock_api::RawMutex;
-        unsafe {
-            self._frankenlibc_state.locked.raw().unlock();
-        }
+        // SAFETY: the caller promises a matching explicit lock acquisition.
+        unsafe { self._frankenlibc_state.locked.unlock_forgotten_guard() };
     }
 
     /// Returns `true` if the stream is readable.

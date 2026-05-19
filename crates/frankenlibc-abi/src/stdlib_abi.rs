@@ -199,8 +199,8 @@ static ENVIRON_OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 /// while holding the lock can transitively re-enter our getenv during early
 /// glibc malloc initialization (MALLOC_PERTURB_/MALLOC_CHECK_ probes); a
 /// non-reentrant Mutex would self-deadlock in that window.
-pub(crate) static ENVIRON_LOCK: parking_lot::ReentrantMutex<()> =
-    parking_lot::ReentrantMutex::new(());
+pub(crate) static ENVIRON_LOCK: crate::util::AbiReentrantMutex<()> =
+    crate::util::AbiReentrantMutex::new(());
 
 /// Cross-module helper: run `f` with the environ array held stable. Other
 /// ABI modules (process_abi for PATH lookup, etc.) need to walk environ

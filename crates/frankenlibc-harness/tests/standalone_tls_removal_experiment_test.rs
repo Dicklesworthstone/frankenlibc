@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 9;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 8;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -169,6 +169,20 @@ fn abi_stdlib_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("stdlib_abi.rs")
+}
+
+fn abi_util_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("util.rs")
+}
+
+fn abi_io_internal_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("io_internal_abi.rs")
 }
 
 fn abi_grp_path(root: &Path) -> PathBuf {
@@ -924,8 +938,14 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
         "residual artifact TLS inventory must not retain __libc_dlerror_result in the standalone owned-TLS lane",
     )?;
 
+    let removed_parking_lot_raw_thread_id_symbol = "_RNvNCNKNvNvXNtCslNZwVMgd4Z0_11parking_lot7remutexNtBa_11RawThreadIdNtNtCsiGm4LOuQtSl_8lock_api7remutex11GetThreadId17nonzero_thread_id3KEY0s_023___RUST_STD_INTERNAL_VAL";
+    require(
+        !symbols.contains(removed_parking_lot_raw_thread_id_symbol),
+        "residual artifact TLS inventory must not retain parking_lot RawThreadId TLS after ABI reentrant locks move to gettid ownership",
+    )?;
+
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();
-    for required in ["parking_lot", "parking_lot_core", "std"] {
+    for required in ["parking_lot_core", "std"] {
         require(
             crates.contains(required),
             format!("residual artifact TLS inventory must include crate {required}"),
@@ -1487,6 +1507,24 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && stdlib.contains("with_qfcvt_buf")
             && stdlib.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "stdlib ABI must route getusershell iterator/cache and qecvt/qfcvt buffers through owned TLS cache",
+    )?;
+    require(
+        stdlib.contains("crate::util::AbiReentrantMutex")
+            && !stdlib.contains("parking_lot::ReentrantMutex"),
+        "stdlib environ lock must use the ABI reentrant lock instead of parking_lot ReentrantMutex",
+    )?;
+
+    let util = std::fs::read_to_string(abi_util_path(&root))
+        .map_err(|err| format!("read util.rs: {err}"))?;
+    let io_internal = std::fs::read_to_string(abi_io_internal_path(&root))
+        .map_err(|err| format!("read io_internal_abi.rs: {err}"))?;
+    require(
+        util.contains("struct AbiReentrantMutex")
+            && util.contains("frankenlibc_core::syscall::sys_gettid")
+            && util.contains("sys_sched_yield")
+            && io_internal.contains("crate::util::AbiReentrantMutex")
+            && !io_internal.contains("parking_lot::ReentrantMutex"),
+        "ABI NativeFile locks must use gettid-based AbiReentrantMutex instead of parking_lot ReentrantMutex",
     )?;
 
     let grp = std::fs::read_to_string(abi_grp_path(&root))
