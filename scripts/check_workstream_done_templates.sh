@@ -20,6 +20,7 @@ python3 - "${ROOT}" "${ARTIFACT}" "${REPORT}" "${LOG}" <<'PY'
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -175,6 +176,63 @@ def concrete_script_refs(text):
     return refs
 
 
+def iter_strings(value, path="$"):
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from iter_strings(item, f"{path}[{index}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from iter_strings(item, f"{path}.{key}")
+
+
+def is_rch_cargo_command(command):
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return "rch exec --" in command and "cargo" in command
+    for index in range(max(0, len(tokens) - 2)):
+        if tokens[index:index + 3] != ["rch", "exec", "--"]:
+            continue
+        if "cargo" in tokens[index + 3:]:
+            return True
+    return False
+
+
+def rch_cargo_contract_failures(command):
+    if "rch exec --" not in command or "cargo" not in command:
+        return []
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        return [f"unparseable_rch_cargo_command:{exc}"]
+
+    failures = []
+    for index in range(max(0, len(tokens) - 2)):
+        if tokens[index:index + 3] != ["rch", "exec", "--"]:
+            continue
+        payload = tokens[index + 3:]
+        if "cargo" not in payload:
+            continue
+        cargo_index = payload.index("cargo")
+        cargo_prefix = payload[:cargo_index]
+        has_target_dir = (
+            cargo_prefix
+            and cargo_prefix[0] == "env"
+            and any(
+                token.startswith("CARGO_TARGET_DIR=")
+                and token != "CARGO_TARGET_DIR="
+                for token in cargo_prefix[1:]
+            )
+        )
+        if "RCH_REQUIRE_REMOTE=1" not in tokens[:index]:
+            failures.append("missing_rch_require_remote")
+        if not has_target_dir:
+            failures.append("missing_isolated_cargo_target_dir")
+    return failures
+
+
 def record(condition, check_name, message):
     checks[check_name] = "pass" if condition else "fail"
     if not condition:
@@ -243,7 +301,10 @@ for workstream in required_workstreams:
         command_failures.append(f"{workstream}:missing_ubs")
     if "br --no-db close <bead-id>" not in commands:
         command_failures.append(f"{workstream}:missing_no_db_close")
-    if "rch exec -- cargo" not in commands and workstream not in {"tracker_repair"}:
+    if (
+        not any(is_rch_cargo_command(command) for command in template.get("closure_commands", []))
+        and workstream not in {"tracker_repair"}
+    ):
         command_failures.append(f"{workstream}:missing_rch_cargo")
     for section in [
         "expected_touched_files",
@@ -271,6 +332,17 @@ record(
     not script_ref_failures,
     "concrete_script_refs_exist",
     f"concrete script references are missing: {script_ref_failures}",
+)
+
+rch_cargo_failures = []
+for path, command in iter_strings(artifact):
+    for failure in rch_cargo_contract_failures(command):
+        rch_cargo_failures.append(f"{path}:{failure}:{command}")
+
+record(
+    not rch_cargo_failures,
+    "rch_cargo_target_dir_contract",
+    f"rch cargo commands must require remote execution and explicit CARGO_TARGET_DIR: {rch_cargo_failures}",
 )
 
 examples = artifact.get("dry_run_examples", [])

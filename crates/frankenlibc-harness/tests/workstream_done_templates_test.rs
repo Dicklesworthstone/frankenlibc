@@ -309,6 +309,15 @@ fn artifact_covers_every_workstream_with_required_sections() -> Result<(), Box<d
             commands.contains("br --no-db close <bead-id>"),
             "missing no-db close command",
         )?;
+        ensure(
+            commands
+                .contains("RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo"),
+            format!("{workstream}: missing isolated remote rch cargo command"),
+        )?;
+        ensure(
+            !commands.contains("rch exec -- cargo"),
+            format!("{workstream}: closure commands must not use bare rch cargo"),
+        )?;
     }
 
     let examples = artifact["dry_run_examples"]
@@ -602,6 +611,11 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
         "concrete_script_refs_exist",
     )?;
     ensure_eq(
+        report["checks"]["rch_cargo_target_dir_contract"].as_str(),
+        Some("pass"),
+        "rch_cargo_target_dir_contract",
+    )?;
+    ensure_eq(
         report["checks"]["handoff_transcripts_choose_next_safe_action"].as_str(),
         Some("pass"),
         "handoff_transcripts_choose_next_safe_action",
@@ -634,9 +648,13 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
                 format!("log row missing required field {field}: {row}"),
             )?;
         }
-        if row["event"].as_str() == Some("workstream_done_checklist_replay")
-            && row["failure_signature"].as_str() == Some("done_checklist_missing_evidence")
-        {
+        if matches!(
+            (row["event"].as_str(), row["failure_signature"].as_str()),
+            (
+                Some("workstream_done_checklist_replay"),
+                Some("done_checklist_missing_evidence")
+            )
+        ) {
             saw_blocked_replay = true;
         }
         if matches!(
@@ -674,6 +692,62 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
     ensure(
         saw_stale_handoff,
         "gate log must include stale-tracker next_safe_action evidence",
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn gate_script_rejects_bare_rch_cargo_without_target_dir() -> Result<(), Box<dyn Error>> {
+    let _guard = match SCRIPT_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let root = workspace_root()?;
+    let mut artifact =
+        load_json(&root.join("tests/conformance/workstream_done_templates.v1.json"))?;
+    let commands = artifact["templates"][0]["closure_commands"]
+        .as_array_mut()
+        .ok_or_else(|| test_error("first template closure_commands must be an array"))?;
+    commands.push(serde_json::Value::String(
+        "rch exec -- cargo test -p frankenlibc-harness --test workstream_done_templates_test"
+            .to_string(),
+    ));
+
+    let bad_path = unique_temp_path("workstream-template-bare-rch-cargo.json")?;
+    std::fs::write(&bad_path, serde_json::to_vec_pretty(&artifact)?)?;
+    let output = Command::new(root.join("scripts/check_workstream_done_templates.sh"))
+        .current_dir(&root)
+        .env("FLC_WORKSTREAM_DONE_TEMPLATES", &bad_path)
+        .output()?;
+    ensure(
+        !output.status.success(),
+        "gate should fail when rch cargo lacks remote and target-dir guards",
+    )?;
+    let report = parse_stdout_report(&output)?;
+    ensure_eq(
+        report["status"].as_str(),
+        Some("fail"),
+        "bare rch cargo status",
+    )?;
+    ensure_eq(
+        report["checks"]["rch_cargo_target_dir_contract"].as_str(),
+        Some("fail"),
+        "bare rch cargo check",
+    )?;
+    let errors = report["errors"]
+        .as_array()
+        .ok_or_else(|| test_error("errors must be an array"))?;
+    ensure(
+        errors
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|error| {
+                error.contains("missing_rch_require_remote")
+                    && error.contains("missing_isolated_cargo_target_dir")
+                    && error.contains("rch exec -- cargo test")
+            }),
+        "failure should name missing remote and target-dir guards",
     )?;
 
     Ok(())
