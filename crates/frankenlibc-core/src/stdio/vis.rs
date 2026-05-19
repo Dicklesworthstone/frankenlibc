@@ -506,15 +506,27 @@ pub fn decode_one(input: &[u8]) -> DecodeStep {
             }
         }
         b'M' => {
-            // \M-X (high-bit set) — recursively decode X with high bit set.
-            if input.get(2) != Some(&b'-') {
-                return DecodeStep::Invalid;
+            // \M-X (high-bit set). Stacked `\M-` prefixes only ever set
+            // the high bit, and `0x80 | 0x80 == 0x80`, so collapse every
+            // leading `\M-` group iteratively before decoding the inner
+            // element. Recursing once per group (as a naive `decode_one`
+            // would) lets a crafted `\M-\M-\M-...X` string overflow the
+            // stack — `strunvis_to_vec` decodes untrusted input.
+            let mut offset = 0usize;
+            while input.get(offset) == Some(&b'\\') && input.get(offset + 1) == Some(&b'M') {
+                if input.get(offset + 2) != Some(&b'-') {
+                    return DecodeStep::Invalid;
+                }
+                offset += 3;
             }
-            let rest = input.get(3..).unwrap_or_default();
+            // After the loop `input[offset..]` does not start with `\M`,
+            // so this single `decode_one` call cannot re-enter this arm:
+            // recursion depth is bounded to 1.
+            let rest = input.get(offset..).unwrap_or_default();
             match decode_one(rest) {
                 DecodeStep::Byte { byte, consumed } => DecodeStep::Byte {
                     byte: byte | 0x80,
-                    consumed: consumed + 3,
+                    consumed: consumed + offset,
                 },
                 _ => DecodeStep::Invalid,
             }
@@ -799,6 +811,43 @@ mod tests {
     fn decode_meta_prefix() {
         assert_eq!(dec(b"\\M-A"), Some(vec![0xc1]));
         assert_eq!(dec(b"\\M-\\^?"), Some(vec![0xff]));
+    }
+
+    #[test]
+    fn decode_stacked_meta_prefixes_collapse_high_bit() {
+        // Stacked `\M-` prefixes only set the high bit; `0x80|0x80`
+        // is still `0x80`, so the result matches a single `\M-`.
+        assert_eq!(dec(b"\\M-\\M-A"), Some(vec![0xc1]));
+        assert_eq!(dec(b"\\M-\\M-\\M-\\^?"), Some(vec![0xff]));
+    }
+
+    #[test]
+    fn decode_deeply_nested_meta_does_not_overflow_stack() {
+        // A crafted `\M-\M-...\M-A` string must not recurse once per
+        // `\M-` group — deep recursion would overflow the stack, and
+        // `strunvis` decodes untrusted input. With ~200k prefixes the
+        // old per-group recursion aborted the process here.
+        let mut input = Vec::new();
+        for _ in 0..200_000 {
+            input.extend_from_slice(b"\\M-");
+        }
+        input.push(b'A');
+        assert_eq!(strunvis_to_vec(&input), Some(vec![0xc1]));
+        assert_eq!(
+            decode_one(&input),
+            DecodeStep::Byte {
+                byte: 0xc1,
+                consumed: input.len(),
+            },
+        );
+    }
+
+    #[test]
+    fn decode_stacked_meta_with_truncated_tail_is_invalid() {
+        // A stacked-meta prefix that ends before a well-formed inner
+        // element is still rejected, exactly as the single case is.
+        assert_eq!(dec(b"\\M-\\M"), None);
+        assert_eq!(dec(b"\\M-\\M-\\"), None);
     }
 
     #[test]
