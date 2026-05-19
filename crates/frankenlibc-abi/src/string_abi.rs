@@ -89,12 +89,18 @@ impl Drop for StringMembraneGuard {
 }
 
 fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
-    if runtime_policy::in_policy_reentry_context()
-        || crate::malloc_abi::in_allocator_reentry_context()
-        || crate::pthread_abi::in_threading_policy_context()
-        || frankenlibc_membrane::ptr_validator::in_validation_context()
-    {
+    if string_raw_passthrough_active() {
         return None;
+    }
+    if runtime_policy::is_runtime_ready() {
+        if runtime_policy::in_policy_reentry_context() {
+            return None;
+        }
+        if !crate::pthread_abi::pthread_tls_access_active()
+            && crate::pthread_abi::in_threading_policy_context()
+        {
+            return None;
+        }
     }
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -121,6 +127,15 @@ fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
             })
             .unwrap_or(None)
     }
+}
+
+#[inline]
+fn string_raw_passthrough_active() -> bool {
+    runtime_policy::bootstrap_passthrough_active()
+        || runtime_policy::runtime_policy_tls_access_active()
+        || crate::pthread_abi::pthread_tls_access_active()
+        || crate::malloc_abi::in_allocator_reentry_context()
+        || frankenlibc_membrane::ptr_validator::in_validation_context()
 }
 
 fn active_string_simd_feature_mask() -> u32 {
@@ -817,17 +832,18 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
     if dst.is_null() || src.is_null() {
         return std::ptr::null_mut();
     }
-    let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
 
     // Fast path during early startup: skip membrane entirely.
-    if runtime_policy::bootstrap_passthrough_active() {
+    if string_raw_passthrough_active() {
         if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
             && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
         {
-            unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }
         return dst;
     }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
     if !runtime_policy::mode().heals_enabled() {
         if runtime_policy::proof_carried_fast_path_active(ApiFamily::StringMemory, n, true, true) {
             let (_, decision) =
@@ -944,7 +960,7 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
     }
 
     // Fast path during early startup: skip membrane entirely.
-    if runtime_policy::bootstrap_passthrough_active() {
+    if string_raw_passthrough_active() {
         unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         return dst;
     }
@@ -1042,7 +1058,7 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
     }
 
     // Fast path during early startup: skip membrane entirely.
-    if runtime_policy::bootstrap_passthrough_active() {
+    if string_raw_passthrough_active() {
         unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
         return dst;
     }
@@ -1133,12 +1149,14 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
 /// Caller must ensure `s1` and `s2` are valid for `n` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
-    let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
-    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if n == 0 {
         return 0;
     }
     if s1.is_null() || s2.is_null() {
+        if string_raw_passthrough_active() {
+            return 0;
+        }
+        let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
         // Membrane: null pointer in memcmp is UB in C. Return safe default.
         record_string_stage_outcome(
             &ordering,
@@ -1149,6 +1167,12 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         return 0;
     }
 
+    if string_raw_passthrough_active() {
+        return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
+    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
@@ -1450,12 +1474,11 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     if s.is_null() {
         return 0;
     }
-    let _trace_scope = runtime_policy::entrypoint_scope("strlen");
 
     // Fast path during early startup: skip membrane validation entirely.
     // The membrane's ValidationPipeline uses PageOracle (RwLock) and TLS,
     // which deadlock during init when called from dlvsym → strlen chains.
-    if runtime_policy::bootstrap_passthrough_active() {
+    if string_raw_passthrough_active() {
         unsafe {
             let mut len = 0usize;
             while *s.add(len) != 0 {
@@ -1465,6 +1488,7 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         }
     }
 
+    let _trace_scope = runtime_policy::entrypoint_scope("strlen");
     let rem = known_remaining(s as usize);
     if !runtime_policy::mode().heals_enabled() && rem.is_none() {
         let dispatch =
@@ -2672,7 +2696,7 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
 pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
     // Fast path: skip membrane during early startup or when called from
     // within the membrane/allocator (prevents re-entrant deadlock).
-    if runtime_policy::bootstrap_passthrough_active() {
+    if string_raw_passthrough_active() {
         return unsafe { raw_strstr(haystack, needle) };
     }
 

@@ -823,6 +823,36 @@ const fn runtime_policy_tls_init() -> RuntimePolicyTls {
 static RUNTIME_POLICY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RuntimePolicyTls> =
     crate::owned_tls_cache::OwnedTlsCache::new(runtime_policy_tls_init);
 
+#[cfg(feature = "owned-tls-cache")]
+static RUNTIME_POLICY_TLS_ACCESS_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(feature = "owned-tls-cache")]
+struct RuntimePolicyTlsAccessGuard;
+
+#[cfg(feature = "owned-tls-cache")]
+impl Drop for RuntimePolicyTlsAccessGuard {
+    fn drop(&mut self) {
+        RUNTIME_POLICY_TLS_ACCESS_DEPTH.fetch_sub(1, AtomicOrdering::Release);
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn with_runtime_policy_tls<R>(callback: impl FnOnce(&mut RuntimePolicyTls) -> R) -> R {
+    RUNTIME_POLICY_TLS_ACCESS_DEPTH.fetch_add(1, AtomicOrdering::Acquire);
+    let _guard = RuntimePolicyTlsAccessGuard;
+    RUNTIME_POLICY_OWNED_TLS.with(callback)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) fn runtime_policy_tls_access_active() -> bool {
+    RUNTIME_POLICY_TLS_ACCESS_DEPTH.load(AtomicOrdering::Acquire) != 0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) const fn runtime_policy_tls_access_active() -> bool {
+    false
+}
+
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static MODE_THREAD_LOCAL_CACHE: Cell<u8> = const { Cell::new(MODE_UNRESOLVED) };
@@ -839,7 +869,9 @@ thread_local! {
 fn with_mode_cache<R>(callback: impl FnOnce(&mut u8) -> R) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.mode_cache)))
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.mode_cache)
+        }))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -857,7 +889,9 @@ fn with_mode_cache<R>(callback: impl FnOnce(&mut u8) -> R) -> Option<R> {
 fn with_mode_switch_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.mode_switch_counter)))
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.mode_switch_counter)
+        }))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -875,7 +909,9 @@ fn with_mode_switch_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R
 fn with_trace_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.trace_counter)))
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.trace_counter)
+        }))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -893,7 +929,9 @@ fn with_trace_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
 fn with_decision_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.decision_counter)))
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.decision_counter)
+        }))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -911,7 +949,9 @@ fn with_decision_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
 fn with_trace_context<R>(callback: impl FnOnce(&mut Option<TraceContext>) -> R) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.trace_context)))
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.trace_context)
+        }))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -931,7 +971,9 @@ fn with_last_explainability<R>(
 ) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.last_explainability)))
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.last_explainability)
+        }))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -950,7 +992,9 @@ fn with_last_explainability<R>(
 fn with_policy_reentry_depth<R>(callback: impl FnOnce(&mut u32) -> R) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.policy_reentry_depth)))
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.policy_reentry_depth)
+        }))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -970,7 +1014,9 @@ fn with_decision_contract_machine<R>(
 ) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(RUNTIME_POLICY_OWNED_TLS.with(|state| callback(&mut state.decision_contract_machine)))
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.decision_contract_machine)
+        }))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {

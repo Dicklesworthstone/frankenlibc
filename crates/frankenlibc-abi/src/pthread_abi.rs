@@ -208,6 +208,36 @@ impl PthreadTlsState {
 static PTHREAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<PthreadTlsState> =
     crate::owned_tls_cache::OwnedTlsCache::new(PthreadTlsState::new);
 
+#[cfg(feature = "owned-tls-cache")]
+static PTHREAD_TLS_ACCESS_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(feature = "owned-tls-cache")]
+struct PthreadTlsAccessGuard;
+
+#[cfg(feature = "owned-tls-cache")]
+impl Drop for PthreadTlsAccessGuard {
+    fn drop(&mut self) {
+        PTHREAD_TLS_ACCESS_DEPTH.fetch_sub(1, Ordering::Release);
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn with_owned_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
+    PTHREAD_TLS_ACCESS_DEPTH.fetch_add(1, Ordering::Acquire);
+    let _guard = PthreadTlsAccessGuard;
+    PTHREAD_OWNED_TLS.with(f)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) fn pthread_tls_access_active() -> bool {
+    PTHREAD_TLS_ACCESS_DEPTH.load(Ordering::Acquire) != 0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) const fn pthread_tls_access_active() -> bool {
+    false
+}
+
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static PTHREAD_TLS: RefCell<PthreadTlsState> = RefCell::new(PthreadTlsState::new());
@@ -217,7 +247,7 @@ thread_local! {
 fn with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
-        PTHREAD_OWNED_TLS.with(f)
+        with_owned_pthread_tls(f)
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -232,7 +262,7 @@ fn with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
 fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        Some(PTHREAD_OWNED_TLS.with(f))
+        Some(with_owned_pthread_tls(f))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {

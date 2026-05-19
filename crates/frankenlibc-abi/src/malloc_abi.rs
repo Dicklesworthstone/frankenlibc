@@ -1084,17 +1084,24 @@ impl Drop for AllocatorReentryGuard {
 
 #[inline]
 fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
-    if runtime_policy::in_policy_reentry_context() {
-        return None;
-    }
-    if crate::pthread_abi::in_threading_policy_context() {
-        return None;
-    }
     let slot = current_allocator_reentry_slot()?;
-    slot.allocator_depth
+    let guard = slot
+        .allocator_depth
         .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
         .ok()
-        .map(|_| AllocatorReentryGuard { slot })
+        .map(|_| AllocatorReentryGuard { slot })?;
+
+    if runtime_policy::is_runtime_ready() {
+        if runtime_policy::in_policy_reentry_context() {
+            return None;
+        }
+        if !crate::pthread_abi::pthread_tls_access_active()
+            && crate::pthread_abi::in_threading_policy_context()
+        {
+            return None;
+        }
+    }
+    Some(guard)
 }
 
 /// Test hook: force allocator entrypoints down the reentrant fallback path and
@@ -1196,6 +1203,50 @@ fn strict_allocator_host_path_active() -> bool {
 }
 
 #[inline]
+fn allocator_bootstrap_passthrough_active() -> bool {
+    !runtime_policy::is_runtime_ready()
+}
+
+#[inline]
+unsafe fn bootstrap_malloc_passthrough(size: usize) -> *mut c_void {
+    let req = size.max(1);
+    // SAFETY: early loader/bootstrap allocations must bypass runtime policy
+    // and use the same native/bump fallback path as reentrant allocator calls.
+    let out = unsafe { native_libc_malloc(req) };
+    fallback_insert_sized(out, req);
+    out
+}
+
+#[inline]
+unsafe fn bootstrap_calloc_passthrough(nmemb: usize, size: usize) -> *mut c_void {
+    // SAFETY: early loader/bootstrap allocations must bypass runtime policy
+    // and use the same native/bump fallback path as reentrant allocator calls.
+    let out = unsafe { native_libc_calloc(nmemb, size) };
+    fallback_insert_sized(out, nmemb.saturating_mul(size).max(1));
+    out
+}
+
+#[inline]
+unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c_void {
+    // SAFETY: early loader/bootstrap reallocations must bypass runtime policy
+    // and use the same native/bump fallback path as reentrant allocator calls.
+    let out = unsafe { native_libc_realloc(ptr, size) };
+    if !out.is_null() {
+        let _ = fallback_remove(ptr);
+        fallback_insert_sized(out, size.max(1));
+    }
+    out
+}
+
+#[inline]
+unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
+    let _ = fallback_remove(ptr);
+    // SAFETY: early loader/bootstrap frees must bypass runtime policy and
+    // return host-owned allocations through the native fallback path.
+    unsafe { native_libc_free(ptr) };
+}
+
+#[inline]
 fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
     ordering.iter().position(|s| *s == stage).unwrap_or(0)
 }
@@ -1283,10 +1334,12 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        let out = unsafe { native_libc_malloc(size.max(1)) };
-        fallback_insert_sized(out, size.max(1));
-        return out;
+        return unsafe { bootstrap_malloc_passthrough(size) };
     };
+
+    if allocator_bootstrap_passthrough_active() {
+        return unsafe { bootstrap_malloc_passthrough(size) };
+    }
 
     let req = size.max(1);
     let _trace_scope = runtime_policy::entrypoint_scope("malloc");
@@ -1400,10 +1453,14 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        let _ = fallback_remove(ptr);
-        unsafe { native_libc_free(ptr) };
+        unsafe { bootstrap_free_passthrough(ptr) };
         return;
     };
+
+    if allocator_bootstrap_passthrough_active() {
+        unsafe { bootstrap_free_passthrough(ptr) };
+        return;
+    }
 
     if is_bump_ptr(ptr) {
         let _ = fallback_remove(ptr);
@@ -1536,10 +1593,12 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        let out = unsafe { native_libc_calloc(nmemb, size) };
-        fallback_insert_sized(out, nmemb.saturating_mul(size).max(1));
-        return out;
+        return unsafe { bootstrap_calloc_passthrough(nmemb, size) };
     };
+
+    if allocator_bootstrap_passthrough_active() {
+        return unsafe { bootstrap_calloc_passthrough(nmemb, size) };
+    }
 
     if strict_allocator_host_path_active() {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc.
@@ -1644,13 +1703,13 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        let out = unsafe { native_libc_realloc(ptr, size) };
-        if !out.is_null() {
-            let _ = fallback_remove(ptr);
-            fallback_insert_sized(out, size.max(1));
-        }
-        return out;
+        return unsafe { bootstrap_realloc_passthrough(ptr, size) };
     };
+
+    if allocator_bootstrap_passthrough_active() {
+        return unsafe { bootstrap_realloc_passthrough(ptr, size) };
+    }
+
     // realloc(NULL, size) == malloc(size)
     if ptr.is_null() {
         return unsafe { malloc(size) };
@@ -1920,6 +1979,18 @@ pub unsafe extern "C" fn posix_memalign(
         return unsafe { native_libc_posix_memalign(memptr, alignment, size) };
     };
 
+    if allocator_bootstrap_passthrough_active() {
+        // SAFETY: early loader/bootstrap aligned allocations must avoid
+        // runtime-policy trace state until the runtime-ready boundary.
+        let rc = unsafe { native_libc_posix_memalign(memptr, alignment, size) };
+        if rc == 0 {
+            // SAFETY: successful posix_memalign stores an allocation pointer.
+            let out = unsafe { *memptr };
+            fallback_insert_sized(out, size.max(1));
+        }
+        return rc;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("posix_memalign");
     let req = size.max(1);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
@@ -2010,6 +2081,14 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         return out;
     };
 
+    if allocator_bootstrap_passthrough_active() {
+        // SAFETY: early loader/bootstrap aligned allocations must avoid
+        // runtime-policy trace state until the runtime-ready boundary.
+        let out = unsafe { native_libc_memalign(alignment, size) };
+        fallback_insert_sized(out, size.max(1));
+        return out;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("memalign");
     let req = size.max(1);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
@@ -2095,6 +2174,14 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         fallback_insert_sized(out, size.max(1));
         return out;
     };
+
+    if allocator_bootstrap_passthrough_active() {
+        // SAFETY: early loader/bootstrap aligned allocations must avoid
+        // runtime-policy trace state until the runtime-ready boundary.
+        let out = unsafe { native_libc_aligned_alloc(alignment, size) };
+        fallback_insert_sized(out, size.max(1));
+        return out;
+    }
 
     let _trace_scope = runtime_policy::entrypoint_scope("aligned_alloc");
     let req = size.max(1);
