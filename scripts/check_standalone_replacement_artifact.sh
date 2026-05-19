@@ -106,6 +106,7 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
     "artifact_state.dependency_breakdown.version_needs",
     "artifact_state.dependency_breakdown.host_version_requirements",
+    "artifact_state.dependency_breakdown.host_version_requirement_rows",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
@@ -826,6 +827,7 @@ def empty_dependency_breakdown():
         "undefined_tls_symbols": [],
         "version_needs": {},
         "host_version_requirements": [],
+        "host_version_requirement_rows": [],
         "loader_needed": False,
         "libc_needed": False,
         "libgcc_needed": False,
@@ -1172,6 +1174,156 @@ def build_host_resolved_library_rows(
     return rows
 
 
+def related_undefined_symbols_for_version(provider, version, undefined_symbols):
+    return unique_sorted(
+        symbol
+        for symbol in undefined_symbols
+        if symbol_version_suffix(symbol) == version
+        and (
+            (provider.startswith("libgcc_s.so") and symbol_base(symbol).startswith("_Unwind_"))
+            or (provider.startswith("libgcc_s.so") and symbol_base(symbol) == "__gcc_personality_v0")
+            or ("ld-linux" in provider and symbol_base(symbol) == "__tls_get_addr")
+            or ("ld-linux" in provider and "@GLIBC_" in symbol)
+        )
+    )
+
+
+def related_host_libraries_for_version_provider(
+    provider,
+    host_needed_libraries,
+    host_direct_needed_libraries,
+    host_resolved_libraries,
+):
+    return unique_sorted(
+        library
+        for library in [
+            *host_needed_libraries,
+            *host_direct_needed_libraries,
+            *host_resolved_libraries,
+        ]
+        if library_matches(provider, library)
+    )
+
+
+def version_requirement_blocking_reasons(
+    provider,
+    related_symbols,
+    related_libraries,
+    blocking_reasons,
+):
+    reasons = []
+    if "host_version_requirements" in blocking_reasons:
+        reasons.append("host_version_requirements")
+    if related_libraries and "host_needed_libraries_present" in blocking_reasons:
+        reasons.append("host_needed_libraries_present")
+    if provider in related_libraries and "host_direct_needed_libraries_present" in blocking_reasons:
+        reasons.append("host_direct_needed_libraries_present")
+    if any(Path(library).name == provider for library in related_libraries) and "host_resolved_libraries_present" in blocking_reasons:
+        reasons.append("host_resolved_libraries_present")
+    if "ld-linux" in provider and "host_loader_dependency" in blocking_reasons:
+        reasons.append("host_loader_dependency")
+    if provider.startswith("libgcc_s.so") and "libgcc_runtime_dependency" in blocking_reasons:
+        reasons.append("libgcc_runtime_dependency")
+    if any(symbol_base(symbol).startswith("_Unwind_") for symbol in related_symbols) and "undefined_unwind_symbols" in blocking_reasons:
+        reasons.append("undefined_unwind_symbols")
+    if any(symbol_base(symbol) == "__tls_get_addr" for symbol in related_symbols) and "undefined_tls_symbols" in blocking_reasons:
+        reasons.append("undefined_tls_symbols")
+    if any("@GLIBC_" in symbol for symbol in related_symbols) and "undefined_glibc_symbols" in blocking_reasons:
+        reasons.append("undefined_glibc_symbols")
+    return reasons
+
+
+def version_requirement_owner_surface(provider, related_symbols):
+    if provider.startswith("libgcc_s.so"):
+        return "compiler_runtime_and_unwind_runtime"
+    if "ld-linux" in provider and any(symbol_base(symbol) == "__tls_get_addr" for symbol in related_symbols):
+        return "loader_tls_runtime"
+    if "ld-linux" in provider:
+        return "loader_startup"
+    return BLOCKER_CATALOG_DEFINITIONS["host_version_requirements"]["owner_surface"]
+
+
+def version_requirement_next_action(provider, related_symbols):
+    if provider.startswith("libgcc_s.so"):
+        return "Remove or own compiler-runtime and unwinder ABI edges until readelf reports no libgcc_s provider version needs."
+    if "ld-linux" in provider and any(symbol_base(symbol) == "__tls_get_addr" for symbol in related_symbols):
+        return "Provide owned TLS startup/access support or eliminate the dynamic TLS edge so readelf reports no host loader GLIBC version need."
+    if "ld-linux" in provider:
+        return "Replace host loader/startup dependency with owned CRT and loader evidence before clearing this version need."
+    return BLOCKER_CATALOG_DEFINITIONS["host_version_requirements"]["next_action"]
+
+
+def evidence_fields_for_blocking_reasons(reasons, fallback):
+    fields = []
+    for reason in reasons:
+        definition = BLOCKER_CATALOG_DEFINITIONS.get(reason)
+        if definition:
+            fields.extend(definition["evidence_fields"])
+    return unique_sorted(fields or fallback)
+
+
+def build_host_version_requirement_rows(
+    version_needs,
+    host_version_requirements,
+    undefined_symbols,
+    host_needed_libraries,
+    host_direct_needed_libraries,
+    host_resolved_libraries,
+    blocking_reasons,
+):
+    rows = []
+    host_requirement_set = set(host_version_requirements)
+    for provider, versions in version_needs.items():
+        if not is_host_runtime_library(provider):
+            continue
+        related_libraries = related_host_libraries_for_version_provider(
+            provider,
+            host_needed_libraries,
+            host_direct_needed_libraries,
+            host_resolved_libraries,
+        )
+        for version in versions:
+            requirement_id = f"{provider}:{version}"
+            if requirement_id not in host_requirement_set:
+                continue
+            related_symbols = related_undefined_symbols_for_version(
+                provider,
+                version,
+                undefined_symbols,
+            )
+            reasons = version_requirement_blocking_reasons(
+                provider,
+                related_symbols,
+                related_libraries,
+                blocking_reasons,
+            )
+            rows.append(
+                {
+                    "requirement_id": requirement_id,
+                    "provider_library": provider,
+                    "version_node": version,
+                    "owner_surface": version_requirement_owner_surface(
+                        provider,
+                        related_symbols,
+                    ),
+                    "primary_probe_id": "readelf_version_needs",
+                    "blocking_reasons": reasons,
+                    "evidence_fields": evidence_fields_for_blocking_reasons(
+                        reasons,
+                        ["host_version_requirements", "version_needs"],
+                    ),
+                    "related_undefined_symbols": related_symbols,
+                    "related_host_libraries": related_libraries,
+                    "next_action": version_requirement_next_action(
+                        provider,
+                        related_symbols,
+                    ),
+                    "promotion_allowed": False,
+                }
+            )
+    return rows
+
+
 def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd):
     breakdown = empty_dependency_breakdown()
     needed_libraries = parse_needed_libraries(readelf_dynamic["stdout"])
@@ -1269,6 +1421,15 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
             "undefined_tls_symbols": unique_sorted(undefined_tls_symbols),
             "version_needs": version_needs,
             "host_version_requirements": unique_sorted(host_version_requirements),
+            "host_version_requirement_rows": build_host_version_requirement_rows(
+                version_needs,
+                unique_sorted(host_version_requirements),
+                undefined_symbols,
+                host_needed_libraries,
+                host_direct_needed_libraries,
+                host_resolved_libraries,
+                blocking_reasons,
+            ),
             "loader_needed": loader_needed,
             "libc_needed": libc_needed,
             "libgcc_needed": libgcc_needed,

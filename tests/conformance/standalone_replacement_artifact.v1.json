@@ -113,6 +113,7 @@
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
     "artifact_state.dependency_breakdown.version_needs",
     "artifact_state.dependency_breakdown.host_version_requirements",
+    "artifact_state.dependency_breakdown.host_version_requirement_rows",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",

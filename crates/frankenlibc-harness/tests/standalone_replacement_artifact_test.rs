@@ -33,6 +33,7 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
     "artifact_state.dependency_breakdown.version_needs",
     "artifact_state.dependency_breakdown.host_version_requirements",
+    "artifact_state.dependency_breakdown.host_version_requirement_rows",
     "artifact_state.dependency_breakdown.loader_needed",
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
@@ -2542,7 +2543,138 @@ fn forge_mode_reports_host_dependency_breakdown() {
     let host_versions = string_set(&breakdown["host_version_requirements"]);
     assert!(host_versions.contains("libgcc_s.so.1:GCC_3.0"));
     assert!(host_versions.contains("libgcc_s.so.1:GCC_3.3"));
+    assert!(host_versions.contains("libgcc_s.so.1:GCC_4.2.0"));
     assert!(host_versions.contains("ld-linux-x86-64.so.2:GLIBC_2.3"));
+
+    let version_rows = breakdown["host_version_requirement_rows"]
+        .as_array()
+        .expect("host_version_requirement_rows should be an array");
+    assert_eq!(
+        version_rows.len(),
+        host_versions.len(),
+        "every host provider:version requirement should have a row"
+    );
+    let version_row_by_id: HashMap<_, _> = version_rows
+        .iter()
+        .map(|row| {
+            (
+                row["requirement_id"]
+                    .as_str()
+                    .expect("requirement_id should be string"),
+                row,
+            )
+        })
+        .collect();
+    for requirement in &host_versions {
+        let row = version_row_by_id
+            .get(requirement.as_str())
+            .unwrap_or_else(|| panic!("missing host version requirement row for {requirement}"));
+        assert_eq!(
+            row["primary_probe_id"].as_str(),
+            Some("readelf_version_needs")
+        );
+        assert_eq!(row["promotion_allowed"].as_bool(), Some(false));
+        assert!(
+            row["evidence_fields"]
+                .as_array()
+                .is_some_and(|fields| fields
+                    .iter()
+                    .any(|field| { field.as_str() == Some("host_version_requirements") })),
+            "host version row should cite host_version_requirements evidence"
+        );
+        assert!(
+            row["next_action"]
+                .as_str()
+                .is_some_and(|action| !action.is_empty()),
+            "host version row should include a next action"
+        );
+        assert!(
+            string_set(&row["blocking_reasons"]).contains("host_version_requirements"),
+            "host version row should cite host_version_requirements"
+        );
+    }
+    let loader_version_row = version_row_by_id
+        .get("ld-linux-x86-64.so.2:GLIBC_2.3")
+        .expect("missing loader GLIBC version row");
+    assert_eq!(
+        loader_version_row["provider_library"].as_str(),
+        Some("ld-linux-x86-64.so.2")
+    );
+    assert_eq!(
+        loader_version_row["version_node"].as_str(),
+        Some("GLIBC_2.3")
+    );
+    assert_eq!(
+        loader_version_row["owner_surface"].as_str(),
+        Some("loader_tls_runtime")
+    );
+    assert!(
+        string_set(&loader_version_row["related_undefined_symbols"])
+            .contains("__tls_get_addr@GLIBC_2.3"),
+        "loader version row should link the TLS startup symbol"
+    );
+    assert!(
+        string_set(&loader_version_row["related_host_libraries"])
+            .contains("/lib64/ld-linux-x86-64.so.2"),
+        "loader version row should link resolved host loader evidence"
+    );
+    assert!(
+        string_set(&loader_version_row["blocking_reasons"]).contains("host_loader_dependency"),
+        "loader version row should cite loader dependency"
+    );
+    assert!(
+        string_set(&loader_version_row["blocking_reasons"]).contains("undefined_tls_symbols"),
+        "loader version row should cite TLS startup blocker"
+    );
+    assert!(
+        string_set(&loader_version_row["blocking_reasons"]).contains("undefined_glibc_symbols"),
+        "loader version row should cite GLIBC-versioned symbol blocker"
+    );
+    let libgcc_30_row = version_row_by_id
+        .get("libgcc_s.so.1:GCC_3.0")
+        .expect("missing libgcc GCC_3.0 version row");
+    assert_eq!(
+        libgcc_30_row["provider_library"].as_str(),
+        Some("libgcc_s.so.1")
+    );
+    assert_eq!(libgcc_30_row["version_node"].as_str(), Some("GCC_3.0"));
+    assert_eq!(
+        libgcc_30_row["owner_surface"].as_str(),
+        Some("compiler_runtime_and_unwind_runtime")
+    );
+    assert!(
+        string_set(&libgcc_30_row["related_undefined_symbols"])
+            .contains("_Unwind_DeleteException@GCC_3.0"),
+        "libgcc GCC_3.0 row should link the GCC_3.0 unwind symbols"
+    );
+    assert!(
+        string_set(&libgcc_30_row["related_host_libraries"]).contains("libgcc_s.so.1"),
+        "libgcc version row should link host libgcc evidence"
+    );
+    assert!(
+        string_set(&libgcc_30_row["blocking_reasons"]).contains("libgcc_runtime_dependency"),
+        "libgcc version row should cite compiler-runtime blocker"
+    );
+    assert!(
+        string_set(&libgcc_30_row["blocking_reasons"]).contains("undefined_unwind_symbols"),
+        "libgcc version row should cite unwind blocker"
+    );
+    let libgcc_33_row = version_row_by_id
+        .get("libgcc_s.so.1:GCC_3.3")
+        .expect("missing libgcc GCC_3.3 version row");
+    assert!(
+        string_set(&libgcc_33_row["related_undefined_symbols"])
+            .contains("_Unwind_Backtrace@GCC_3.3"),
+        "GCC_3.3 row should link _Unwind_Backtrace"
+    );
+    let libgcc_420_row = version_row_by_id
+        .get("libgcc_s.so.1:GCC_4.2.0")
+        .expect("missing libgcc GCC_4.2.0 version row");
+    assert!(
+        string_set(&libgcc_420_row["related_undefined_symbols"])
+            .contains("_Unwind_GetIPInfo@GCC_4.2.0"),
+        "GCC_4.2.0 row should link _Unwind_GetIPInfo"
+    );
     assert_eq!(breakdown["loader_needed"].as_bool(), Some(true));
 
     let reasons = string_set(&breakdown["blocking_reasons"]);
