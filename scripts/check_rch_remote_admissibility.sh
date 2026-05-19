@@ -14,6 +14,10 @@ DEFAULT_COMMAND="cargo test -p frankenlibc-harness --test standalone_owned_unwin
 
 mkdir -p "${OUT_DIR}"
 
+if [[ $# -gt 0 && "${1}" == "--" ]]; then
+  shift
+fi
+
 if [[ $# -gt 0 ]]; then
   VALIDATION_COMMAND="$*"
 else
@@ -258,6 +262,13 @@ def current_blocked_errors(contract: dict[str, Any], report: dict[str, Any]) -> 
     if field == expected and not is_current_blocked:
         local_errors.append("current_blocked_required_signature_missing")
     return local_errors
+
+
+def normalized_command_args(args: list[str]) -> str:
+    command_args = list(args)
+    if command_args and command_args[0] == "--":
+        command_args = command_args[1:]
+    return " ".join(command_args)
 
 
 def approval_readiness_errors(rows: Any) -> list[str]:
@@ -715,6 +726,13 @@ for control in contract.get("negative_controls", []):
             and boundary.get("cleanup_executed") is False
             and boundary.get("commands_not_executed") == ["no deletion command executed"]
             else str(summary)
+        )
+    elif control_id == "leading_command_separator_not_forwarded":
+        observed = (
+            "leading_separator_removed"
+            if normalized_command_args(["--", "cargo", "check", "-p", "frankenlibc-abi"])
+            == "cargo check -p frankenlibc-abi"
+            else "leading_separator_forwarded"
         )
     else:
         contract_errors.append(f"unknown negative control {control_id}")

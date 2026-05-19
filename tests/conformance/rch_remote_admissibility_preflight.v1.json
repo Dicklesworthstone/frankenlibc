@@ -5,7 +5,7 @@
   "upstream_bead": "bd-xkykd",
   "generated_utc": "2026-05-18T00:48:00Z",
   "source_commit": "current",
-  "purpose": "Checked-in no-cargo contract for scripts/check_rch_remote_admissibility.sh. The preflight is allowed to run rch diagnose --dry-run only; it must fail closed on local fallback, missing offload classification, skipped worker selection, critical pressure, or missing admissible workers, and it must make the blocked/admissible report schema stable for other guards.",
+  "purpose": "Checked-in no-cargo contract for scripts/check_rch_remote_admissibility.sh. The preflight is allowed to run rch diagnose --dry-run only; it must fail closed on local fallback, missing offload classification, skipped worker selection, critical pressure, or missing admissible workers, and it must make the blocked/admissible report schema stable for other guards. A single leading -- command separator is accepted and normalized before rch diagnose receives the validation command.",
   "inputs": {
     "checker": "scripts/check_rch_remote_admissibility.sh",
     "approval_packet_generator": "scripts/generate_rch_pressure_approval_packet.sh"
@@ -72,6 +72,11 @@
       "expected_decision": "blocked"
     },
     {
+      "control_id": "leading_command_separator_not_forwarded",
+      "mutation": "synthetic command argv begins with conventional -- separator",
+      "expected_decision": "leading_separator_removed"
+    },
+    {
       "control_id": "diagnose_failure_blocks",
       "mutation": "synthetic rch diagnose exits nonzero without a recognized failure signature",
       "expected_decision": "diagnose_failed"
@@ -132,8 +137,10 @@
       "bash -n scripts/check_rch_remote_admissibility.sh",
       "jq empty tests/conformance/rch_remote_admissibility_preflight.v1.json",
       "bash -c 'mkdir -p target/rch-remote-admissibility; set +e; bash scripts/check_rch_remote_admissibility.sh \"cargo check -p frankenlibc-abi --features=standalone\" 2> target/rch-remote-admissibility/rch_remote_admissibility.stderr; rc=$?; test \"$rc\" -eq 2'",
+      "bash -c 'mkdir -p target/rch-remote-admissibility; set +e; bash scripts/check_rch_remote_admissibility.sh -- cargo check -p frankenlibc-abi --features=standalone 2> target/rch-remote-admissibility/rch_remote_admissibility.leading_separator.stderr; rc=$?; test \"$rc\" -eq 2'",
       "jq empty target/rch-remote-admissibility/rch_remote_admissibility.report.json",
       "jq empty target/rch-remote-admissibility/rch_remote_admissibility.log.jsonl",
+      "jq -e '.validation_command == \"cargo check -p frankenlibc-abi --features=standalone\" and (.failure_signatures | index(\"missing_offload_classification\") | not)' target/rch-remote-admissibility/rch_remote_admissibility.report.json",
       "jq -e '.operator_next_action == \"request_explicit_cleanup_approval_for_current_ready_paths\" and .approval_packet_status == \"available_current\" and (.approval_ready_candidates | type == \"number\") and .approval_ready_candidates > 0 and (.approval_ready_worker_ids | type == \"array\") and (.approval_ready_worker_ids | length) > 0 and (.approval_ready_candidate_count_by_worker | type == \"object\") and ((.approval_ready_candidate_count_by_worker | to_entries | map(.value) | add // 0) == .approval_ready_candidates) and .approval_ready_paths_present == true' target/rch-remote-admissibility/rch_remote_admissibility.log.jsonl",
       "jq -e '.contract_status == \"pass\" and .status == \"blocked\" and .status_on_current_blocked_state == \"blocked\"' target/rch-remote-admissibility/rch_remote_admissibility.report.json",
       "jq -e '(.operator_message | contains(\"operator_next_action=request_explicit_cleanup_approval_for_current_ready_paths\") and contains(\"approval_ready_paths=\") and contains(\"Do not run cleanup without explicit written approval\"))' target/rch-remote-admissibility/rch_remote_admissibility.report.json",
@@ -141,6 +148,9 @@
       "grep -q 'operator_next_action=' target/rch-remote-admissibility/rch_remote_admissibility.stderr",
       "grep -q 'approval_ready_workers=' target/rch-remote-admissibility/rch_remote_admissibility.stderr",
       "grep -q 'approval_ready_paths=' target/rch-remote-admissibility/rch_remote_admissibility.stderr",
+      "grep -q 'operator_next_action=' target/rch-remote-admissibility/rch_remote_admissibility.leading_separator.stderr",
+      "grep -q 'approval_ready_workers=' target/rch-remote-admissibility/rch_remote_admissibility.leading_separator.stderr",
+      "grep -q 'approval_ready_paths=' target/rch-remote-admissibility/rch_remote_admissibility.leading_separator.stderr",
       "git diff --check -- scripts/check_rch_remote_admissibility.sh tests/conformance/rch_remote_admissibility_preflight.v1.json .beads/issues.jsonl",
       "AGENT_NAME=DarkShore br dep cycles --json"
     ],
