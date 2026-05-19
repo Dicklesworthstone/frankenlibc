@@ -6,6 +6,7 @@
 //! Returns pointers to thread-local static storage, matching glibc behavior
 //! where each call overwrites the previous result.
 
+#[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
@@ -723,21 +724,68 @@ struct SpwdEntry {
     sp_flag: u64,         // reserved
 }
 
+impl SpwdEntry {
+    fn empty() -> Self {
+        Self {
+            sp_namp: ptr::null_mut(),
+            sp_pwdp: ptr::null_mut(),
+            sp_lstchg: -1,
+            sp_min: -1,
+            sp_max: -1,
+            sp_warn: -1,
+            sp_inact: -1,
+            sp_expire: -1,
+            sp_flag: 0,
+        }
+    }
+}
+
+struct ShadowTlsStorage {
+    buf: Vec<u8>,
+    entry: SpwdEntry,
+    iter_idx: usize,
+    cache: Vec<String>,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+// SAFETY: ShadowTlsStorage is accessed through OwnedTlsCache, which serializes
+// access to each per-thread boxed value. The raw pointers stored in `entry`
+// only point into the same boxed ShadowTlsStorage buffer and are refreshed
+// before returning static shadow entries to callers.
+unsafe impl Send for ShadowTlsStorage {}
+
+impl ShadowTlsStorage {
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            entry: SpwdEntry::empty(),
+            iter_idx: 0,
+            cache: Vec::new(),
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static SHADOW_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ShadowTlsStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(ShadowTlsStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static SHADOW_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    static SHADOW_ENTRY: RefCell<SpwdEntry> = const { RefCell::new(SpwdEntry {
-        sp_namp: ptr::null_mut(),
-        sp_pwdp: ptr::null_mut(),
-        sp_lstchg: -1,
-        sp_min: -1,
-        sp_max: -1,
-        sp_warn: -1,
-        sp_inact: -1,
-        sp_expire: -1,
-        sp_flag: 0,
-    }) };
-    static SHADOW_ITER_IDX: RefCell<usize> = const { RefCell::new(0) };
-    static SHADOW_CACHE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static SHADOW_TLS: RefCell<ShadowTlsStorage> = RefCell::new(ShadowTlsStorage::new());
+}
+
+fn with_shadow_storage<R>(callback: impl FnOnce(&mut ShadowTlsStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SHADOW_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SHADOW_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
 }
 
 /// Pack the name+passwd from a parsed [`ShadowEntry`] into the
@@ -766,6 +814,14 @@ fn fill_shadow_entry(line: &str, buf: &mut Vec<u8>, entry: &mut SpwdEntry) -> bo
     entry.sp_expire = parsed.expire;
     entry.sp_flag = parsed.flag;
     true
+}
+
+fn pack_shadow_into_static_storage(storage: &mut ShadowTlsStorage, line: &str) -> *mut c_void {
+    if fill_shadow_entry(line, &mut storage.buf, &mut storage.entry) {
+        &mut storage.entry as *mut SpwdEntry as *mut c_void
+    } else {
+        ptr::null_mut()
+    }
 }
 
 /// Pack the name+passwd from a parsed [`ShadowEntry`] into a
@@ -835,17 +891,7 @@ pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut c_void {
         if let Some(colon) = line.find(':')
             && &line[..colon] == name_str
         {
-            return SHADOW_BUF.with(|buf| {
-                SHADOW_ENTRY.with(|entry| {
-                    let mut buf = buf.borrow_mut();
-                    let mut entry = entry.borrow_mut();
-                    if fill_shadow_entry(line, &mut buf, &mut entry) {
-                        &mut *entry as *mut SpwdEntry as *mut c_void
-                    } else {
-                        ptr::null_mut()
-                    }
-                })
-            });
+            return with_shadow_storage(|storage| pack_shadow_into_static_storage(storage, line));
         }
     }
     ptr::null_mut()
@@ -912,14 +958,13 @@ pub unsafe extern "C" fn getspnam_r(
 /// `setspent` — rewind the shadow database iterator.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn setspent() {
-    SHADOW_ITER_IDX.with(|idx| *idx.borrow_mut() = 0);
-    SHADOW_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache.clear();
+    with_shadow_storage(|storage| {
+        storage.iter_idx = 0;
+        storage.cache.clear();
         if let Ok(content) = std::fs::read_to_string(SHADOW_PATH) {
             for line in content.lines() {
                 if !line.starts_with('#') && !line.trim().is_empty() && line.contains(':') {
-                    cache.push(line.to_string());
+                    storage.cache.push(line.to_string());
                 }
             }
         }
@@ -929,34 +974,22 @@ pub extern "C" fn setspent() {
 /// `endspent` — close the shadow database.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn endspent() {
-    SHADOW_ITER_IDX.with(|idx| *idx.borrow_mut() = 0);
-    SHADOW_CACHE.with(|cache| cache.borrow_mut().clear());
+    with_shadow_storage(|storage| {
+        storage.iter_idx = 0;
+        storage.cache.clear();
+    });
 }
 
 /// `getspent` — read the next shadow entry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getspent() -> *mut c_void {
-    SHADOW_CACHE.with(|cache| {
-        let cache = cache.borrow();
-        SHADOW_ITER_IDX.with(|idx| {
-            let mut idx = idx.borrow_mut();
-            if *idx >= cache.len() {
-                return ptr::null_mut();
-            }
-            let line = &cache[*idx];
-            *idx += 1;
-            SHADOW_BUF.with(|buf| {
-                SHADOW_ENTRY.with(|entry| {
-                    let mut buf = buf.borrow_mut();
-                    let mut entry = entry.borrow_mut();
-                    if fill_shadow_entry(line, &mut buf, &mut entry) {
-                        &mut *entry as *mut SpwdEntry as *mut c_void
-                    } else {
-                        ptr::null_mut()
-                    }
-                })
-            })
-        })
+    with_shadow_storage(|storage| {
+        if storage.iter_idx >= storage.cache.len() {
+            return ptr::null_mut();
+        }
+        let line = storage.cache[storage.iter_idx].clone();
+        storage.iter_idx += 1;
+        pack_shadow_into_static_storage(storage, &line)
     })
 }
 
@@ -980,32 +1013,28 @@ pub unsafe extern "C" fn getspent_r(
         return libc::EINVAL;
     }
 
-    SHADOW_CACHE.with(|cache| {
-        let cache = cache.borrow();
-        SHADOW_ITER_IDX.with(|idx| {
-            let mut idx = idx.borrow_mut();
-            if *idx >= cache.len() {
-                return libc::ENOENT;
-            }
-            let line = &cache[*idx];
-            *idx += 1;
+    with_shadow_storage(|storage| {
+        if storage.iter_idx >= storage.cache.len() {
+            return libc::ENOENT;
+        }
+        let line = storage.cache[storage.iter_idx].clone();
+        storage.iter_idx += 1;
 
-            let rc = unsafe {
-                fill_shadow_entry_caller(
-                    line,
-                    spbuf as *mut SpwdEntry,
-                    buf,
-                    effective_buffer_len(buf, buflen),
-                )
-            };
-            if rc == libc::ERANGE {
-                // Rewind so caller can retry with a larger buffer.
-                *idx -= 1;
-            } else if rc == 0 {
-                unsafe { *result = spbuf };
-            }
-            rc
-        })
+        let rc = unsafe {
+            fill_shadow_entry_caller(
+                &line,
+                spbuf as *mut SpwdEntry,
+                buf,
+                effective_buffer_len(buf, buflen),
+            )
+        };
+        if rc == libc::ERANGE {
+            // Rewind so caller can retry with a larger buffer.
+            storage.iter_idx -= 1;
+        } else if rc == 0 {
+            unsafe { *result = spbuf };
+        }
+        rc
     })
 }
 
