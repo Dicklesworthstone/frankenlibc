@@ -138,6 +138,21 @@ unsafe fn cstr_eq_ignore_ascii_case(ptr: *const c_char, expected: &[u8]) -> bool
     unsafe { *ptr.add(expected.len()) as u8 == 0 }
 }
 
+#[inline]
+unsafe fn cstr_has_byte_prefix(ptr: *const c_char, expected: &[u8]) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    for (idx, want) in expected.iter().enumerate() {
+        // SAFETY: caller guarantees a valid NUL-terminated C string pointer.
+        let got = unsafe { *ptr.add(idx) as u8 };
+        if got == 0 || got != *want {
+            return false;
+        }
+    }
+    true
+}
+
 fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()> {
     const KEY_EQ: &[u8] = b"FRANKENLIBC_MODE=";
     const MAX_SCAN: usize = 4096;
@@ -155,17 +170,8 @@ fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()> {
             return Ok(None);
         }
 
-        let mut matched = true;
-        for (idx, want) in KEY_EQ.iter().enumerate() {
-            // SAFETY: entry points to a NUL-terminated env string.
-            let got = unsafe { *entry.add(idx) as u8 };
-            if got != *want {
-                matched = false;
-                break;
-            }
-        }
-
-        if matched {
+        // SAFETY: entry points to a NUL-terminated env string.
+        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
             // SAFETY: KEY_EQ matched exactly; value pointer is in-bounds.
             let value = unsafe { entry.add(KEY_EQ.len()) };
             // Hardened aliases are accepted case-insensitively.
@@ -1901,7 +1907,7 @@ pub mod conformance_testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
+    use std::ffi::{CString, OsString};
     use std::hint::black_box;
     use std::time::Instant;
 
@@ -2223,6 +2229,31 @@ mod tests {
         let _lock = env_lock();
         let _env = EnvVarGuard::set(Some("strict"));
         assert_eq!(parse_mode_from_environ(), Ok(Some(SafetyLevel::Strict)));
+    }
+
+    #[test]
+    fn env_key_matcher_rejects_short_prefixes_without_reading_past_nul() {
+        let empty = CString::new("").expect("empty env row");
+        let partial = CString::new("FRANKENLIBC").expect("partial env row");
+        let wrong_suffix = CString::new("FRANKENLIBC_MOD").expect("short env row");
+        let exact_key = CString::new("FRANKENLIBC_MODE=").expect("exact key row");
+
+        // SAFETY: each CString is NUL-terminated and lives for the call.
+        unsafe {
+            assert!(!cstr_has_byte_prefix(empty.as_ptr(), b"FRANKENLIBC_MODE="));
+            assert!(!cstr_has_byte_prefix(
+                partial.as_ptr(),
+                b"FRANKENLIBC_MODE="
+            ));
+            assert!(!cstr_has_byte_prefix(
+                wrong_suffix.as_ptr(),
+                b"FRANKENLIBC_MODE="
+            ));
+            assert!(cstr_has_byte_prefix(
+                exact_key.as_ptr(),
+                b"FRANKENLIBC_MODE="
+            ));
+        }
     }
 
     #[test]
