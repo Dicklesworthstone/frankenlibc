@@ -28,6 +28,15 @@ const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 19;
+const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 12;
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ThreadLocalMacroSite {
+    path: String,
+    line: usize,
+    macro_invocation: String,
+    storage_symbols: Vec<String>,
+}
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -183,6 +192,10 @@ fn abi_time_path(root: &Path) -> PathBuf {
         .join("time_abi.rs")
 }
 
+fn abi_src_dir(root: &Path) -> PathBuf {
+    root.join("crates").join("frankenlibc-abi").join("src")
+}
+
 fn load_manifest() -> TestResult<Value> {
     let root = workspace_root()?;
     let path = manifest_path(&root);
@@ -222,11 +235,172 @@ fn json_bool(value: &Value, field: &str) -> TestResult<bool> {
         .ok_or_else(|| format!("`{field}` must be a bool"))
 }
 
+fn json_u64(value: &Value, field: &str) -> TestResult<u64> {
+    json_field(value, field)?
+        .as_u64()
+        .ok_or_else(|| format!("`{field}` must be a u64"))
+}
+
 fn lane<'a>(manifest: &'a Value, lane_id: &str) -> TestResult<&'a Value> {
     json_array(manifest, "experiment_lanes")?
         .iter()
         .find(|l| l.get("lane_id").and_then(Value::as_str) == Some(lane_id))
         .ok_or_else(|| format!("missing lane `{lane_id}`"))
+}
+
+fn thread_local_invocation(line: &str) -> Option<&'static str> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("std::thread_local!") {
+        Some("std::thread_local!")
+    } else if trimmed.starts_with("thread_local!") {
+        Some("thread_local!")
+    } else {
+        None
+    }
+}
+
+fn has_owned_tls_fallback_gate(lines: &[&str], idx: usize) -> bool {
+    let start = idx.saturating_sub(8);
+    lines[start..idx]
+        .iter()
+        .any(|line| line.contains("#[cfg(not(feature = \"owned-tls-cache\"))]"))
+}
+
+fn storage_symbols_in_thread_local_block(lines: &[&str], idx: usize) -> Vec<String> {
+    let mut symbols = Vec::new();
+    for line in lines.iter().skip(idx + 1) {
+        let trimmed = line.trim_start();
+        if trimmed == "}" {
+            break;
+        }
+        if let Some(rest) = trimmed.strip_prefix("static ")
+            && let Some(name) = rest
+                .split(|c: char| c == ':' || c.is_ascii_whitespace())
+                .next()
+        {
+            symbols.push(name.to_string());
+        }
+    }
+    symbols
+}
+
+fn ungated_thread_local_macro_sites(root: &Path) -> TestResult<Vec<ThreadLocalMacroSite>> {
+    let src_dir = abi_src_dir(root);
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&src_dir)
+        .map_err(|err| format!("read ABI source dir {src_dir:?}: {err}"))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect();
+    files.sort();
+
+    let mut sites = Vec::new();
+    for path in files {
+        let content =
+            std::fs::read_to_string(&path).map_err(|err| format!("read {path:?}: {err}"))?;
+        let lines: Vec<&str> = content.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            let Some(macro_invocation) = thread_local_invocation(line) else {
+                continue;
+            };
+            if has_owned_tls_fallback_gate(&lines, idx) {
+                continue;
+            }
+            let path = path
+                .strip_prefix(root)
+                .map_err(|err| format!("strip workspace prefix from ABI path: {err}"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            sites.push(ThreadLocalMacroSite {
+                path,
+                line: idx + 1,
+                macro_invocation: macro_invocation.to_string(),
+                storage_symbols: storage_symbols_in_thread_local_block(&lines, idx),
+            });
+        }
+    }
+
+    Ok(sites)
+}
+
+fn manifest_non_targeted_tls_sites(manifest: &Value) -> TestResult<Vec<ThreadLocalMacroSite>> {
+    let required_fields: BTreeSet<&str> =
+        json_array(manifest, "required_non_targeted_tls_emitter_fields")?
+            .iter()
+            .map(|v| {
+                v.as_str().ok_or_else(|| {
+                    "required_non_targeted_tls_emitter_fields entries must be strings".to_string()
+                })
+            })
+            .collect::<Result<_, _>>()?;
+    for required in [
+        "path",
+        "line",
+        "macro_invocation",
+        "storage_symbols",
+        "gate_disposition",
+        "baseline_disposition",
+        "claim_status_until_exit",
+        "remediation_plan",
+    ] {
+        require(
+            required_fields.contains(required),
+            format!("required_non_targeted_tls_emitter_fields must include {required}"),
+        )?;
+    }
+
+    let mut sites = Vec::new();
+    for row in json_array(manifest, "non_targeted_tls_emitters")? {
+        for field in &required_fields {
+            require(
+                row.get(*field).is_some(),
+                format!("non_targeted_tls_emitters row missing {field}"),
+            )?;
+        }
+        require(
+            json_string(row, "gate_disposition")? == "ungated",
+            "non-targeted TLS emitter gate_disposition",
+        )?;
+        require(
+            json_string(row, "baseline_disposition")? == "still_thread_local",
+            "non-targeted TLS emitter baseline_disposition",
+        )?;
+        require(
+            json_string(row, "claim_status_until_exit")? == "claim_blocked",
+            "non-targeted TLS emitter claim_status_until_exit",
+        )?;
+        let storage_symbols = json_array(row, "storage_symbols")?
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "storage_symbols entries must be strings".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        require(
+            !storage_symbols.is_empty(),
+            "non-targeted TLS emitter storage_symbols must be nonempty",
+        )?;
+        sites.push(ThreadLocalMacroSite {
+            path: json_string(row, "path")?.to_string(),
+            line: json_u64(row, "line")? as usize,
+            macro_invocation: json_string(row, "macro_invocation")?.to_string(),
+            storage_symbols,
+        });
+    }
+    Ok(sites)
+}
+
+fn format_thread_local_sites(sites: &[ThreadLocalMacroSite]) -> String {
+    sites
+        .iter()
+        .map(|site| {
+            format!(
+                "{}:{}:{}:{:?}",
+                site.path, site.line, site.macro_invocation, site.storage_symbols
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Pure validator. Returns the rejection codes that fire on this manifest.
@@ -309,6 +483,23 @@ fn evaluate(manifest: &Value) -> Vec<String> {
     };
     if surface_rows.len() != EXPECTED_OWNER_SURFACE_COUNT {
         rej.push("missing_owner_surface_row".to_string());
+    }
+
+    let Some(non_targeted_rows) = manifest
+        .get("non_targeted_tls_emitters")
+        .and_then(Value::as_array)
+    else {
+        rej.push("missing_non_targeted_tls_emitter_inventory".to_string());
+        return rej;
+    };
+    let summary = manifest.get("summary").unwrap_or(&Value::Null);
+    let summary_non_targeted_count = summary
+        .get("non_targeted_tls_emitter_count")
+        .and_then(Value::as_u64);
+    if non_targeted_rows.len() != EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT
+        || summary_non_targeted_count != Some(non_targeted_rows.len() as u64)
+    {
+        rej.push("missing_non_targeted_tls_emitter_inventory".to_string());
     }
 
     // Promotion guard: claim_status_until_exit may not be "ready" while
@@ -434,6 +625,8 @@ fn report_policy_locks_default_forge_replacement_and_tls_model() -> TestResult {
     for kind in [
         "missing_tls_symbol_row",
         "missing_owner_surface_row",
+        "missing_non_targeted_tls_emitter_inventory",
+        "untracked_non_targeted_tls_emitter",
         "hidden_glibc_version_need",
         "stale_source_commit",
         "illegal_promotion",
@@ -510,6 +703,54 @@ fn owner_surface_clusters_are_tracked_with_total_thread_local_count() -> TestRes
 }
 
 #[test]
+fn non_targeted_thread_local_emitters_are_inventory_locked() -> TestResult {
+    let root = workspace_root()?;
+    let m = load_manifest()?;
+    let expected = manifest_non_targeted_tls_sites(&m)?;
+    let actual = ungated_thread_local_macro_sites(&root)?;
+
+    require(
+        expected.len() == EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT,
+        format!(
+            "expected {EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT} non-targeted TLS emitters, got {}",
+            expected.len()
+        ),
+    )?;
+    require(
+        actual == expected,
+        format!(
+            "ungated ABI thread_local! inventory drifted; expected [{}], actual [{}]",
+            format_thread_local_sites(&expected),
+            format_thread_local_sites(&actual)
+        ),
+    )?;
+
+    let summary = json_field(&m, "summary")?;
+    require(
+        summary
+            .get("non_targeted_tls_emitter_count")
+            .and_then(Value::as_u64)
+            == Some(expected.len() as u64),
+        "summary non_targeted_tls_emitter_count",
+    )?;
+    require(
+        summary
+            .get("ungated_thread_local_macro_count_in_abi_src")
+            .and_then(Value::as_u64)
+            == Some(actual.len() as u64),
+        "summary ungated_thread_local_macro_count_in_abi_src",
+    )?;
+    require(
+        json_string(summary, "claim_status")? == "claim_blocked",
+        "inventory must not promote claim_status",
+    )?;
+    require(
+        !json_bool(summary, "promotion_allowed")?,
+        "inventory must not allow promotion",
+    )
+}
+
+#[test]
 fn fixture_stale_source_commit_is_rejected() -> TestResult {
     let mut m = load_manifest()?;
     m.as_object_mut().unwrap().insert(
@@ -552,6 +793,19 @@ fn fixture_missing_owner_surface_row_is_rejected() -> TestResult {
     require(
         r.contains(&"missing_owner_surface_row".to_string()),
         format!("must reject missing_owner_surface_row; got {r:?}"),
+    )
+}
+
+#[test]
+fn fixture_missing_non_targeted_tls_inventory_is_rejected() -> TestResult {
+    let mut m = load_manifest()?;
+    m.as_object_mut()
+        .unwrap()
+        .remove("non_targeted_tls_emitters");
+    let r = evaluate(&m);
+    require(
+        r.contains(&"missing_non_targeted_tls_emitter_inventory".to_string()),
+        format!("must reject missing_non_targeted_tls_emitter_inventory; got {r:?}"),
     )
 }
 
@@ -674,6 +928,13 @@ fn summary_anchors_to_lane_and_cluster_counts() -> TestResult {
             .and_then(Value::as_u64)
             == Some(EXPECTED_OWNER_SURFACE_COUNT as u64),
         "summary owner_surface_cluster_count",
+    )?;
+    require(
+        summary
+            .get("non_targeted_tls_emitter_count")
+            .and_then(Value::as_u64)
+            == Some(EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT as u64),
+        "summary non_targeted_tls_emitter_count",
     )?;
     require(
         json_string(summary, "claim_status")? == "claim_blocked",
