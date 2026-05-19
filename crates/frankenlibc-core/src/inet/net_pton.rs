@@ -27,7 +27,10 @@
 //! need fewer bytes.
 //!
 //! Octets must be decimal in `[0, 255]`. The `0x...` hex form that
-//! libresolv accepts is also supported here for byte-by-byte parity.
+//! libresolv accepts is also supported: hex nibbles are packed into
+//! bytes (an odd trailing nibble fills the high half) with no 4-byte
+//! cap, and the same classful prefix inference and supplied-byte
+//! copy rules apply as for the dotted-decimal form.
 
 /// Reasons [`parse`] rejects an input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -119,6 +122,14 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         implicit_prefix_bits(octets[0], octets.len())
     };
 
+    finalize(&octets, prefix_bits, dst)
+}
+
+/// Shared libresolv tail rule for both the decimal and hex grammars:
+/// `dst` must hold the larger of `⌈prefix_bits / 8⌉` and the supplied
+/// octet count, and is filled left-to-right with the octets followed
+/// by zero padding. Any unused tail of `dst` is left untouched.
+fn finalize(octets: &[u8], prefix_bits: u32, dst: &mut [u8]) -> Result<u32, NetPtonError> {
     let bytes_needed = prefix_bits.div_ceil(8) as usize;
     let required_capacity = bytes_needed.max(octets.len());
     if dst.len() < required_capacity {
@@ -190,7 +201,11 @@ pub fn format(bytes: &[u8], prefix_bits: u32) -> Result<Vec<u8>, NetPtonError> {
     Ok(out)
 }
 
-/// Hex form `0xHHHH...` — libresolv quirk preserved for byte parity.
+/// Hex form `0xHHHH...` — libresolv nibble grammar preserved for byte
+/// parity. libresolv places no 4-byte cap on this form, writes every
+/// parsed byte regardless of the prefix, and (when no `/N` is given)
+/// infers the prefix classfully from the first octet just like the
+/// dotted-decimal grammar.
 fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
     let mut i = 2usize; // skip "0x"
     let mut nibbles: Vec<u8> = Vec::with_capacity(8);
@@ -208,17 +223,15 @@ fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         return Err(NetPtonError::Invalid);
     }
     // Each pair of nibbles becomes a byte; an odd trailing nibble is
-    // padded with a low-half zero (libresolv parity).
-    let bytes_in: usize = nibbles.len().div_ceil(2);
-    if bytes_in > 4 {
-        return Err(NetPtonError::Invalid);
-    }
-    let mut octets = [0u8; 4];
-    for (idx, chunk) in nibbles.chunks(2).enumerate() {
-        let hi = chunk[0];
-        let lo = if chunk.len() == 2 { chunk[1] } else { 0 };
-        octets[idx] = (hi << 4) | lo;
-    }
+    // shifted into the high half (libresolv parity).
+    let octets: Vec<u8> = nibbles
+        .chunks(2)
+        .map(|chunk| {
+            let hi = chunk[0];
+            let lo = if chunk.len() == 2 { chunk[1] } else { 0 };
+            (hi << 4) | lo
+        })
+        .collect();
 
     // Optional /prefix.
     let prefix_bits: u32 = if i < input.len() && input[i] == b'/' {
@@ -239,16 +252,12 @@ fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
     } else if i != input.len() {
         return Err(NetPtonError::Invalid);
     } else {
-        (bytes_in as u32) * 8
+        // No `/N`: libresolv infers a classful prefix from the first
+        // octet, identically to the dotted-decimal form.
+        implicit_prefix_bits(octets[0], octets.len())
     };
 
-    let bytes_needed = prefix_bits.div_ceil(8) as usize;
-    let required_capacity = bytes_needed.max(bytes_in);
-    if dst.len() < required_capacity {
-        return Err(NetPtonError::BufferTooSmall);
-    }
-    dst[..bytes_needed].copy_from_slice(&octets[..bytes_needed]);
-    Ok(prefix_bits)
+    finalize(&octets, prefix_bits, dst)
 }
 
 fn write_decimal(out: &mut Vec<u8>, value: u32) {
@@ -494,10 +503,60 @@ mod tests {
 
     #[test]
     fn parse_hex_uppercase_x() {
+        // 0xAB: first octet 0xAB (171) is class B, so the implicit
+        // prefix is /16 and the address widens to two octets — host
+        // glibc `inet_net_pton` returns 16 here, not the nibble count.
         let mut dst = [0u8; 4];
         let p = parse(b"0XAB", &mut dst).unwrap();
+        assert_eq!(p, 16);
+        assert_eq!(&dst[..2], &[0xAB, 0x00]);
+    }
+
+    #[test]
+    fn parse_hex_implicit_prefix_is_classful() {
+        // Host glibc `inet_net_pton` infers the prefix from the first
+        // octet's class for the hex form, exactly as for dotted decimal.
+        let mut class_a = [0u8; 4];
+        assert_eq!(parse(b"0x0A", &mut class_a).unwrap(), 8);
+        assert_eq!(class_a[0], 0x0A);
+
+        let mut class_c = [0u8; 4];
+        assert_eq!(parse(b"0xC0A8", &mut class_c).unwrap(), 24);
+        assert_eq!(&class_c[..3], &[0xC0, 0xA8, 0x00]);
+
+        let mut class_e = [0u8; 4];
+        assert_eq!(parse(b"0xF0", &mut class_e).unwrap(), 32);
+        assert_eq!(class_e, [0xF0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn parse_hex_explicit_prefix_writes_every_supplied_byte() {
+        // A short `/N` must not discard hex octets beyond the prefix:
+        // host glibc writes every parsed byte; `/N` only sets the bits.
+        let mut dst = [0u8; 4];
+        let p = parse(b"0xC0A80001/8", &mut dst).unwrap();
         assert_eq!(p, 8);
-        assert_eq!(dst[0], 0xAB);
+        assert_eq!(dst, [0xC0, 0xA8, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn parse_hex_accepts_more_than_four_bytes() {
+        // libresolv places no 4-byte cap on the hex form.
+        let mut dst = [0u8; 8];
+        let p = parse(b"0x0102030405", &mut dst).unwrap();
+        assert_eq!(p, 40);
+        assert_eq!(&dst[..5], &[1, 2, 3, 4, 5]);
+
+        let mut explicit = [0u8; 8];
+        let p = parse(b"0x0102030405/8", &mut explicit).unwrap();
+        assert_eq!(p, 8);
+        assert_eq!(&explicit[..5], &[1, 2, 3, 4, 5]);
+
+        let mut too_small = [0u8; 4];
+        assert_eq!(
+            parse(b"0x0102030405", &mut too_small),
+            Err(NetPtonError::BufferTooSmall)
+        );
     }
 
     #[test]
