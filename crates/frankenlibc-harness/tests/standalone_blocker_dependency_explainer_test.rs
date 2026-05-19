@@ -397,7 +397,7 @@ fn checker_materializes_claim_blockers_and_report_only_experiments() -> TestResu
         "current blocking reason count",
     )?;
     require(
-        json_field(summary, "blocked_progress_category_count")?.as_u64() == Some(8),
+        json_field(summary, "blocked_progress_category_count")?.as_u64() == Some(10),
         "blocked progress category count",
     )?;
 

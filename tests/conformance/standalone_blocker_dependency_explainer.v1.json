@@ -28,7 +28,7 @@
     "rollup_claim_status": "claim_blocked",
     "promotion_allowed": false,
     "minimum_current_blocking_reason_count": 10,
-    "minimum_blocked_progress_category_count": 8,
+    "minimum_blocked_progress_category_count": 10,
     "required_dag_dedupe_key": "burn-runtime_linkage-host_needed_libraries_present",
     "required_validation_lane": "standalone-forge-scripts",
     "required_partial_experiments": [
