@@ -111,6 +111,7 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
+    "artifact_state.dependency_breakdown.blocker_action_rows",
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",
     "tool_evidence.*.timeout_secs",
@@ -498,6 +499,63 @@ BLOCKER_CATALOG_DEFINITIONS = {
         "next_action": "Remove host-provided version needs or bind them to owned version nodes in the replacement artifact.",
     },
 }
+
+BLOCKER_ACTION_PRIMARY_PROBE_IDS = {
+    "host_needed_libraries_present": "readelf_dynamic_dependencies",
+    "host_direct_needed_libraries_present": "readelf_dynamic_dependencies",
+    "host_resolved_libraries_present": "ldd_runtime_resolution",
+    "host_loader_dependency": "ldd_runtime_resolution",
+    "host_libc_dependency": "ldd_runtime_resolution",
+    "libgcc_runtime_dependency": "readelf_dynamic_dependencies",
+    "undefined_unwind_symbols": "nm_dynamic_undefined_symbols",
+    "undefined_glibc_symbols": "nm_dynamic_undefined_symbols",
+    "undefined_tls_symbols": "nm_dynamic_undefined_symbols",
+    "host_version_requirements": "readelf_version_needs",
+}
+
+BLOCKER_ACTION_EXIT_CRITERIA = {
+    "host_needed_libraries_present": [
+        "artifact_state.dependency_breakdown.host_needed_libraries is empty",
+        "blocking_reasons omits host_needed_libraries_present",
+    ],
+    "host_direct_needed_libraries_present": [
+        "artifact_state.dependency_breakdown.host_direct_needed_libraries is empty",
+        "blocking_reasons omits host_direct_needed_libraries_present",
+    ],
+    "host_resolved_libraries_present": [
+        "artifact_state.dependency_breakdown.host_resolved_libraries is empty",
+        "blocking_reasons omits host_resolved_libraries_present",
+    ],
+    "host_loader_dependency": [
+        "artifact_state.dependency_breakdown.host_needed_libraries contains no loader path",
+        "blocking_reasons omits host_loader_dependency",
+    ],
+    "host_libc_dependency": [
+        "artifact_state.dependency_breakdown.host_needed_libraries contains no libc.so entry",
+        "blocking_reasons omits host_libc_dependency",
+    ],
+    "libgcc_runtime_dependency": [
+        "artifact_state.dependency_breakdown.host_needed_libraries contains no libgcc_s entry",
+        "artifact_state.dependency_breakdown.host_version_requirements contains no libgcc_s entry",
+        "blocking_reasons omits libgcc_runtime_dependency",
+    ],
+    "undefined_unwind_symbols": [
+        "artifact_state.dependency_breakdown.undefined_unwind_symbols is empty",
+        "blocking_reasons omits undefined_unwind_symbols",
+    ],
+    "undefined_glibc_symbols": [
+        "artifact_state.dependency_breakdown.undefined_glibc_symbols is empty",
+        "blocking_reasons omits undefined_glibc_symbols",
+    ],
+    "undefined_tls_symbols": [
+        "artifact_state.dependency_breakdown.undefined_tls_symbols is empty",
+        "blocking_reasons omits undefined_tls_symbols",
+    ],
+    "host_version_requirements": [
+        "artifact_state.dependency_breakdown.host_version_requirements is empty",
+        "blocking_reasons omits host_version_requirements",
+    ],
+}
 EXPECTED_BLOCKER_CATALOG_CONTRACT = {
     "required_row_fields": [
         "owner_surface",
@@ -833,6 +891,7 @@ def empty_dependency_breakdown():
         "libgcc_needed": False,
         "blocking_reasons": [],
         "blocker_catalog": {},
+        "blocker_action_rows": [],
     }
 
 
@@ -1324,6 +1383,77 @@ def build_host_version_requirement_rows(
     return rows
 
 
+def host_values_with_name(libraries, needle):
+    return unique_sorted(
+        library
+        for library in libraries
+        if needle in Path(library).name or needle in library
+    )
+
+
+def build_blocker_action_rows(
+    blocking_reasons,
+    host_needed_libraries,
+    host_direct_needed_libraries,
+    host_resolved_libraries,
+    undefined_unwind_symbols,
+    undefined_glibc_symbols,
+    undefined_tls_symbols,
+    host_version_requirements,
+):
+    host_library_values = [
+        *host_needed_libraries,
+        *host_direct_needed_libraries,
+        *host_resolved_libraries,
+    ]
+    current_values_by_reason = {
+        "host_needed_libraries_present": host_needed_libraries,
+        "host_direct_needed_libraries_present": host_direct_needed_libraries,
+        "host_resolved_libraries_present": host_resolved_libraries,
+        "host_loader_dependency": host_values_with_name(host_library_values, "ld-linux"),
+        "host_libc_dependency": host_values_with_name(host_library_values, "libc.so"),
+        "libgcc_runtime_dependency": [
+            *host_values_with_name(host_library_values, "libgcc_s.so"),
+            *[
+                requirement
+                for requirement in host_version_requirements
+                if requirement.startswith("libgcc_s.so")
+            ],
+        ],
+        "undefined_unwind_symbols": undefined_unwind_symbols,
+        "undefined_glibc_symbols": undefined_glibc_symbols,
+        "undefined_tls_symbols": undefined_tls_symbols,
+        "host_version_requirements": host_version_requirements,
+    }
+    rows = []
+    for reason in blocking_reasons:
+        definition = BLOCKER_CATALOG_DEFINITIONS.get(reason, {})
+        rows.append(
+            {
+                "blocking_reason": reason,
+                "owner_surface": definition.get("owner_surface", "unknown"),
+                "primary_probe_id": BLOCKER_ACTION_PRIMARY_PROBE_IDS.get(
+                    reason,
+                    "unclassified_blocker_probe",
+                ),
+                "evidence_fields": definition.get("evidence_fields", []),
+                "next_action": definition.get(
+                    "next_action",
+                    "Classify this blocker before using it as replacement claim evidence.",
+                ),
+                "exit_criteria": BLOCKER_ACTION_EXIT_CRITERIA.get(
+                    reason,
+                    [f"blocking_reasons omits {reason}"],
+                ),
+                "current_blocker_values": unique_sorted(
+                    current_values_by_reason.get(reason, [])
+                ),
+                "promotion_allowed": False,
+            }
+        )
+    return rows
+
+
 def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd):
     breakdown = empty_dependency_breakdown()
     needed_libraries = parse_needed_libraries(readelf_dynamic["stdout"])
@@ -1435,6 +1565,16 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
             "libgcc_needed": libgcc_needed,
             "blocking_reasons": blocking_reasons,
             "blocker_catalog": build_blocker_catalog(blocking_reasons),
+            "blocker_action_rows": build_blocker_action_rows(
+                blocking_reasons,
+                host_needed_libraries,
+                host_direct_needed_libraries,
+                host_resolved_libraries,
+                unique_sorted(undefined_unwind_symbols),
+                unique_sorted(undefined_glibc_symbols),
+                unique_sorted(undefined_tls_symbols),
+                unique_sorted(host_version_requirements),
+            ),
         }
     )
     return breakdown

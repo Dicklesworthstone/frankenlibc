@@ -118,6 +118,7 @@
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
+    "artifact_state.dependency_breakdown.blocker_action_rows",
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",
     "tool_evidence.*.timeout_secs",

@@ -38,6 +38,7 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
+    "artifact_state.dependency_breakdown.blocker_action_rows",
     "tool_evidence.*.exit_code",
     "tool_evidence.*.timed_out",
     "tool_evidence.*.timeout_secs",
@@ -1873,6 +1874,11 @@ fn validate_only_writes_report_and_required_log_fields() {
         Some(false)
     );
     assert!(symbol_sample_map(&report["artifact_state"]["symbol_samples"]).is_empty());
+    assert!(
+        report["artifact_state"]["dependency_breakdown"]["blocker_action_rows"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
     assert!(report["source_commit"].as_str().is_some());
     assert!(report["artifact_state"]["host_glibc_dependency"].is_null());
     assert!(report["artifact_state"]["path"].is_null());
@@ -2742,6 +2748,109 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert_eq!(
         catalog["host_version_requirements"]["owner_surface"].as_str(),
         Some("symbol_versioning")
+    );
+    let action_rows = breakdown["blocker_action_rows"]
+        .as_array()
+        .expect("blocker_action_rows should be an array");
+    assert_eq!(
+        action_rows.len(),
+        reasons.len(),
+        "every active blocking reason should have a live action row"
+    );
+    let action_row_by_reason: HashMap<_, _> = action_rows
+        .iter()
+        .map(|row| {
+            (
+                row["blocking_reason"]
+                    .as_str()
+                    .expect("blocking_reason should be string"),
+                row,
+            )
+        })
+        .collect();
+    for reason in &reasons {
+        let row = action_row_by_reason
+            .get(reason.as_str())
+            .unwrap_or_else(|| panic!("missing blocker action row for {reason}"));
+        assert_eq!(row["promotion_allowed"].as_bool(), Some(false));
+        assert!(
+            row["owner_surface"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "action row {reason} should name an owner surface"
+        );
+        assert!(
+            row["primary_probe_id"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "action row {reason} should name a primary probe"
+        );
+        assert!(
+            row["evidence_fields"]
+                .as_array()
+                .is_some_and(|fields| !fields.is_empty()),
+            "action row {reason} should cite evidence fields"
+        );
+        assert!(
+            row["next_action"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "action row {reason} should include next action"
+        );
+        assert!(
+            row["exit_criteria"]
+                .as_array()
+                .is_some_and(|criteria| !criteria.is_empty()),
+            "action row {reason} should include exit criteria"
+        );
+        assert!(
+            row["current_blocker_values"]
+                .as_array()
+                .is_some_and(|values| !values.is_empty()),
+            "action row {reason} should bind current blocker values"
+        );
+    }
+    let direct_action = action_row_by_reason
+        .get("host_direct_needed_libraries_present")
+        .expect("missing direct needed action row");
+    assert_eq!(
+        direct_action["primary_probe_id"].as_str(),
+        Some("readelf_dynamic_dependencies")
+    );
+    assert!(
+        string_set(&direct_action["current_blocker_values"]).contains("libgcc_s.so.1"),
+        "direct needed action row should bind libgcc direct edge"
+    );
+    let loader_action = action_row_by_reason
+        .get("host_loader_dependency")
+        .expect("missing loader action row");
+    assert_eq!(
+        loader_action["owner_surface"].as_str(),
+        Some("loader_startup")
+    );
+    assert!(
+        string_set(&loader_action["current_blocker_values"])
+            .contains("/lib64/ld-linux-x86-64.so.2"),
+        "loader action row should bind resolved loader path"
+    );
+    let libgcc_action = action_row_by_reason
+        .get("libgcc_runtime_dependency")
+        .expect("missing libgcc action row");
+    assert!(
+        string_set(&libgcc_action["current_blocker_values"]).contains("libgcc_s.so.1:GCC_3.0"),
+        "libgcc action row should bind provider version requirements"
+    );
+    let version_action = action_row_by_reason
+        .get("host_version_requirements")
+        .expect("missing version requirement action row");
+    assert_eq!(
+        version_action["primary_probe_id"].as_str(),
+        Some("readelf_version_needs")
+    );
+    assert!(
+        string_set(&version_action["current_blocker_values"])
+            .contains("ld-linux-x86-64.so.2:GLIBC_2.3"),
+        "version action row should bind loader GLIBC version requirement"
     );
     let delta = report_json["blocker_delta"]
         .as_object()
