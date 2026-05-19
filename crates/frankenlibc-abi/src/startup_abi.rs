@@ -387,6 +387,52 @@ pub fn startup_policy_snapshot_for_tests() -> StartupPolicySnapshot {
     }
 }
 
+#[inline]
+unsafe fn cstr_has_byte_prefix(ptr: *const c_char, expected: &[u8]) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    for (idx, want) in expected.iter().enumerate() {
+        // SAFETY: caller guarantees a valid NUL-terminated C string pointer.
+        let got = unsafe { *ptr.add(idx) as u8 };
+        if got == 0 || got != *want {
+            return false;
+        }
+    }
+    true
+}
+
+#[inline]
+unsafe fn cstr_eq_bytes(ptr: *const c_char, expected: &[u8]) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    for (idx, want) in expected.iter().enumerate() {
+        // SAFETY: caller guarantees a valid NUL-terminated C string pointer.
+        let got = unsafe { *ptr.add(idx) as u8 };
+        if got == 0 || got != *want {
+            return false;
+        }
+    }
+    // SAFETY: caller guarantees a valid NUL-terminated C string pointer. This
+    // reads the terminator only after all expected bytes were present.
+    unsafe { *ptr.add(expected.len()) as u8 == 0 }
+}
+
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub unsafe fn __frankenlibc_startup_env_key_matches_for_tests(ptr: *const c_char) -> bool {
+    // SAFETY: test caller supplies a valid NUL-terminated C string pointer.
+    unsafe { cstr_has_byte_prefix(ptr, b"FRANKENLIBC_STARTUP_PHASE0=") }
+}
+
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub unsafe fn __frankenlibc_startup_phase0_value_enabled_for_tests(ptr: *const c_char) -> bool {
+    // SAFETY: test caller supplies a valid NUL-terminated C string pointer.
+    unsafe { cstr_eq_bytes(ptr, b"1") }
+}
+
 fn startup_phase0_env_enabled() -> bool {
     const KEY_EQ: &[u8] = b"FRANKENLIBC_STARTUP_PHASE0=";
     const MAX_SCAN: usize = 4096;
@@ -405,24 +451,13 @@ fn startup_phase0_env_enabled() -> bool {
             return false;
         }
 
-        let mut matched = true;
-        for (idx, want) in KEY_EQ.iter().enumerate() {
-            // SAFETY: `entry` points to a NUL-terminated string; reading prefix
-            // bytes is valid until mismatch or NUL.
-            let got = unsafe { *entry.add(idx) as u8 };
-            if got != *want {
-                matched = false;
-                break;
-            }
-        }
-
-        if matched {
+        // SAFETY: `entry` points to a NUL-terminated env string.
+        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
             // Accept only exact value `1`.
-            // SAFETY: KEY_EQ matched exactly; value bytes are in-bounds.
-            let value = unsafe { *entry.add(KEY_EQ.len()) as u8 };
-            // SAFETY: same as above.
-            let terminator = unsafe { *entry.add(KEY_EQ.len() + 1) as u8 };
-            return value == b'1' && terminator == 0;
+            // SAFETY: KEY_EQ matched exactly; value pointer is in-bounds.
+            let value = unsafe { entry.add(KEY_EQ.len()) };
+            // SAFETY: value is a valid C string tail of entry.
+            return unsafe { cstr_eq_bytes(value, b"1") };
         }
 
         // SAFETY: advance to next env pointer slot.

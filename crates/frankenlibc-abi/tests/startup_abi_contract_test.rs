@@ -10,7 +10,11 @@ use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use frankenlibc_abi::errno_abi::__errno_location;
 #[cfg(debug_assertions)]
-use frankenlibc_abi::startup_abi::__frankenlibc_set_startup_host_delegate_for_tests;
+use frankenlibc_abi::startup_abi::{
+    __frankenlibc_set_startup_host_delegate_for_tests,
+    __frankenlibc_startup_env_key_matches_for_tests,
+    __frankenlibc_startup_phase0_value_enabled_for_tests,
+};
 use frankenlibc_abi::startup_abi::{
     __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot, __libc_start_main,
     StartupFailureReason, StartupInvariantSnapshot, StartupInvariantStatus, StartupPolicyDecision,
@@ -159,6 +163,56 @@ fn with_startup_phase0_env<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
     }
 
     result
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn startup_env_key_matcher_rejects_short_prefixes_without_reading_past_nul() {
+    let empty = CString::new("").expect("empty env row");
+    let partial = CString::new("FRANKENLIBC").expect("partial env row");
+    let short_key = CString::new("FRANKENLIBC_STARTUP_PHASE0").expect("short env row");
+    let exact_key = CString::new("FRANKENLIBC_STARTUP_PHASE0=").expect("exact key row");
+
+    // SAFETY: each CString is NUL-terminated and lives for the call.
+    unsafe {
+        assert!(!__frankenlibc_startup_env_key_matches_for_tests(
+            empty.as_ptr()
+        ));
+        assert!(!__frankenlibc_startup_env_key_matches_for_tests(
+            partial.as_ptr()
+        ));
+        assert!(!__frankenlibc_startup_env_key_matches_for_tests(
+            short_key.as_ptr()
+        ));
+        assert!(__frankenlibc_startup_env_key_matches_for_tests(
+            exact_key.as_ptr()
+        ));
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn startup_env_value_matcher_accepts_only_exact_one_without_empty_value_overread() {
+    let empty = CString::new("").expect("empty env value");
+    let zero = CString::new("0").expect("zero env value");
+    let one = CString::new("1").expect("one env value");
+    let one_extra = CString::new("10").expect("non-exact env value");
+
+    // SAFETY: each CString is NUL-terminated and lives for the call.
+    unsafe {
+        assert!(!__frankenlibc_startup_phase0_value_enabled_for_tests(
+            empty.as_ptr()
+        ));
+        assert!(!__frankenlibc_startup_phase0_value_enabled_for_tests(
+            zero.as_ptr()
+        ));
+        assert!(__frankenlibc_startup_phase0_value_enabled_for_tests(
+            one.as_ptr()
+        ));
+        assert!(!__frankenlibc_startup_phase0_value_enabled_for_tests(
+            one_extra.as_ptr()
+        ));
+    }
 }
 
 fn startup_trace_log_path() -> PathBuf {
