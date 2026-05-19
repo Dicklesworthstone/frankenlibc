@@ -6975,39 +6975,16 @@ pub static mut _nl_msg_cat_cntr: c_int = 0;
 // Skipped: cannot export *const *const c_char as Rust static (not Sync).
 // Programs will resolve this from glibc's data segment directly.
 
-// __h_errno: native — thread-local h_errno via libc
-#[cfg(feature = "owned-tls-cache")]
-static GLIBC_INTERNAL_H_ERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
-    crate::owned_tls_cache::OwnedTlsCache::new(zero_c_int);
-
-#[cfg(feature = "owned-tls-cache")]
-fn zero_c_int() -> c_int {
-    0
-}
-
-#[cfg(not(feature = "owned-tls-cache"))]
-thread_local! {
-    static GLIBC_INTERNAL_H_ERRNO: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
-}
-
-#[inline]
-fn glibc_internal_h_errno_ptr() -> *mut c_int {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        GLIBC_INTERNAL_H_ERRNO_OWNED_TLS.with(|slot| slot as *mut c_int)
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        GLIBC_INTERNAL_H_ERRNO.with(|slot| slot.as_ptr())
-    }
-}
-
+/// `__h_errno` — compatibility TLS object for legacy resolver errors.
+///
+/// Normal C callers use `__h_errno_location()`, which stays backed by
+/// FrankenLibC's owned TLS cache in standalone mode. Rust code must not touch
+/// this exported object in that lane because direct access reintroduces a host
+/// `__tls_get_addr` dependency. The symbol exists so direct-link toolchains
+/// that compare libc symbol types see a TLS object rather than a function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __h_errno() -> *mut c_int {
-    // glibc's __h_errno_location is the canonical way, but libc crate may not expose it.
-    // Use a thread-local instead.
-    glibc_internal_h_errno_ptr()
-}
+#[thread_local]
+pub static mut __h_errno: c_int = 0;
 
 // in6addr globals
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8980,13 +8957,15 @@ pub unsafe extern "C" fn _IO_enable_locks() {
     // No-op: our FILE operations are always thread-safe.
 }
 
-/// `errno` — thread-local errno location (symbol, not function).
-/// Programs may reference `errno` as a global symbol. We point to the
-/// FrankenLibC thread-local errno via __errno_location().
+/// `errno` — compatibility TLS object.
+///
+/// Normal C callers use `__errno_location()`, which stays backed by
+/// FrankenLibC's owned TLS cache in standalone mode. The exported `errno`
+/// symbol exists so direct-link toolchains that compare libc symbol types see
+/// a TLS object rather than a function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn errno() -> *mut c_int {
-    unsafe { crate::errno_abi::__errno_location() }
-}
+#[thread_local]
+pub static mut errno: c_int = 0;
 
 // xprt_register: SVC transport registration — no-op (RPC transport handled by rpc_abi)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9646,15 +9625,12 @@ pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
 /// thread pointer, and a plain object export corrupts that offset under
 /// LD_PRELOAD interposition.
 ///
-/// The `standalone + owned-tls-cache` experiment lane has no host glibc
-/// dlerror-result consumer, so it deliberately exports a plain compatibility
-/// object instead. That lets the replacement artifact burn down this residual
-/// TLS emitter without weakening the default LD_PRELOAD ABI path.
+/// Direct-link replacement fixtures still link alongside host startup objects
+/// while the L2 artifact is being proven, so this must remain a TLS object
+/// there too. Rust code must not touch this symbol in the owned-TLS lane; the
+/// runtime `dlerror()` state stays backed by `DLERROR_OWNED_TLS`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-#[cfg_attr(
-    not(all(feature = "standalone", feature = "owned-tls-cache")),
-    thread_local
-)]
+#[thread_local]
 pub static mut __libc_dlerror_result: *mut c_void = std::ptr::null_mut();
 
 /// `_itoa_lower_digits` — 17-byte (16 hex chars + NUL) lookup table

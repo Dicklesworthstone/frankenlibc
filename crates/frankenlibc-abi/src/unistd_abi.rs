@@ -18222,7 +18222,7 @@ fn fts_build_children_list(
         .children_cache
         .first_mut()
         .map(FtsEntryOwned::as_mut_ptr)
-        .unwrap_or(std::ptr::null_mut())
+        .unwrap_or_default()
 }
 
 /// `fts_open` — open a file hierarchy for traversal.

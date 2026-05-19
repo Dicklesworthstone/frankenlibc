@@ -48,24 +48,12 @@ pub enum Action {
 use frankenlibc_core::search::LinearProbeTable;
 
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct HashKey(*mut c_char);
 
-impl Default for HashKey {
-    fn default() -> Self {
-        HashKey(std::ptr::null_mut())
-    }
-}
-
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct HashData(*mut c_void);
-
-impl Default for HashData {
-    fn default() -> Self {
-        HashData(std::ptr::null_mut())
-    }
-}
 
 // SAFETY: hash table is only accessed under Mutex; the wrapped raw
 // pointers are C-owned and the abi layer guarantees serialization.

@@ -1049,7 +1049,7 @@ unsafe fn build_addrinfo_v4(
                 ai_protocol: profile.protocol,
                 ai_addrlen: size_of::<libc::sockaddr_in>() as libc::socklen_t,
                 ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
-                ai_canonname: canonname_ptr.unwrap_or(ptr::null_mut()),
+                ai_canonname: canonname_ptr.unwrap_or_default(),
                 ai_next: ptr::null_mut(),
             },
         );
@@ -1134,7 +1134,7 @@ unsafe fn build_addrinfo_v6(
                 ai_protocol: profile.protocol,
                 ai_addrlen: size_of::<libc::sockaddr_in6>() as libc::socklen_t,
                 ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
-                ai_canonname: canonname_ptr.unwrap_or(ptr::null_mut()),
+                ai_canonname: canonname_ptr.unwrap_or_default(),
                 ai_next: ptr::null_mut(),
             },
         );

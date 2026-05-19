@@ -383,7 +383,7 @@ unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_voi
     }
     crate::host_resolve::resolve_host_symbol_raw(symbol)
         .map(|addr| addr as *mut c_void)
-        .unwrap_or(std::ptr::null_mut())
+        .unwrap_or_default()
 }
 
 unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_void {

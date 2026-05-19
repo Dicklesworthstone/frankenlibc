@@ -502,7 +502,7 @@ unsafe fn delegate_to_host_libc_start_main(
     // TLS/dlerror initialization can crash during loader startup.
     let ptr = crate::host_resolve::resolve_host_symbol_raw("__libc_start_main")
         .map(|addr| addr as *mut c_void)
-        .unwrap_or(std::ptr::null_mut());
+        .unwrap_or_default();
     if ptr.is_null() {
         return None;
     }

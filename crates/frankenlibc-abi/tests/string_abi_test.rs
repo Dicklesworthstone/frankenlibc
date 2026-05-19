@@ -1952,6 +1952,7 @@ fn argz_next_matches_glibc_for_interior_and_foreign_pointers() {
 }
 
 #[repr(C)]
+#[derive(Default)]
 struct PublicRegexBuffer {
     buffer: *mut c_void,
     allocated: libc::c_long,
@@ -1976,22 +1977,6 @@ struct PublicGlobT {
     gl_pathc: usize,
     gl_pathv: *mut *mut c_char,
     gl_offs: usize,
-}
-
-impl Default for PublicRegexBuffer {
-    fn default() -> Self {
-        Self {
-            buffer: std::ptr::null_mut(),
-            allocated: 0,
-            used: 0,
-            syntax: 0,
-            fastmap: std::ptr::null_mut(),
-            translate: std::ptr::null_mut(),
-            re_nsub: 0,
-            flags: 0,
-            reserved: [0; 7],
-        }
-    }
 }
 
 #[test]
