@@ -482,10 +482,37 @@ fn residual_std_tls_callsite_evidence_stays_fail_closed() -> TestResult {
 }
 
 #[test]
-fn build_std_zero_tls_probe_remains_toolchain_blocked() -> TestResult {
+fn build_std_zero_tls_probe_remains_immediate_abort_blocked() -> TestResult {
     let root = workspace_root()?;
     let diagnostic = load_json(&root, DIAGNOSTIC_PATH)?;
     let probe = &diagnostic["owned_tls_cache_artifact_probe"]["build_std_zero_tls_probe"];
+
+    let rust_src_repair = &probe["rust_src_repair"];
+    ensure(
+        as_str(&rust_src_repair["command"], "rust_src_repair.command")?.contains("rust-src"),
+        "build-std probe must record the rust-src repair command",
+    )?;
+    ensure_eq(
+        as_str(&rust_src_repair["result"], "rust_src_repair.result")?,
+        "installed_on_ts1",
+        "rust-src repair result",
+    )?;
+    ensure(
+        as_str(
+            &probe["legacy_feature_probe_command"],
+            "legacy_feature_probe_command",
+        )?
+        .contains("panic_immediate_abort"),
+        "legacy feature probe must preserve the removed panic_immediate_abort path",
+    )?;
+    ensure_eq(
+        as_str(
+            &probe["legacy_feature_probe_result"],
+            "legacy_feature_probe_result",
+        )?,
+        "blocked_panic_immediate_abort_feature_removed",
+        "legacy panic_immediate_abort feature result",
+    )?;
 
     let command = as_str(&probe["command"], "build_std_zero_tls_probe.command")?;
     ensure(
@@ -494,8 +521,8 @@ fn build_std_zero_tls_probe_remains_toolchain_blocked() -> TestResult {
     )?;
     ensure(
         command.contains("-Z build-std=std,panic_abort")
-            && command.contains("-Z build-std-features=panic_immediate_abort"),
-        "build-std probe must exercise the panic_immediate_abort lane",
+            && command.contains("-Cpanic=immediate-abort"),
+        "build-std probe must exercise the immediate-abort panic strategy lane",
     )?;
     ensure_eq(
         as_str(
@@ -507,7 +534,7 @@ fn build_std_zero_tls_probe_remains_toolchain_blocked() -> TestResult {
     )?;
     ensure_eq(
         as_str(&probe["result"], "build_std_zero_tls_probe.result")?,
-        "blocked_remote_toolchain_missing_rust_src",
+        "blocked_core_panic_strategy_mismatch_for_immediate_abort",
         "build-std probe result",
     )?;
     ensure_eq(
@@ -520,15 +547,15 @@ fn build_std_zero_tls_probe_remains_toolchain_blocked() -> TestResult {
             &probe["error_contains"],
             "build_std_zero_tls_probe.error_contains",
         )?
-        .contains("rust-src"),
-        "build-std blocker must record the missing rust-src component",
+        .contains("panic strategy"),
+        "build-std blocker must record the immediate-abort panic-strategy failure",
     )?;
     ensure(
         as_str(
             &probe["classification"],
             "build_std_zero_tls_probe.classification",
         )?
-        .contains("not artifact proof yet"),
+        .contains("still not artifact proof"),
         "build-std blocker must remain fail-closed until artifact proof exists",
     )
 }

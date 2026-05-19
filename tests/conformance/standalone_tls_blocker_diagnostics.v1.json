@@ -196,12 +196,19 @@
     },
     "build_std_zero_tls_probe": {
       "intent": "Test whether a build-std panic_immediate_abort lane can remove std panic/io/current-thread TLS before promotion claims change.",
-      "command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_PROFILE_RELEASE_PANIC AGENT_NAME=GoldBeaver CARGO_PROFILE_RELEASE_PANIC=abort rch exec -- cargo build -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort -p frankenlibc-abi --release --features standalone,owned-unwind-stub,owned-tls-cache",
+      "rust_src_repair": {
+        "command": "ssh ubuntu@192.168.1.107 'rustup component add rust-src --toolchain nightly-2026-04-28-x86_64-unknown-linux-gnu'",
+        "result": "installed_on_ts1"
+      },
+      "legacy_feature_probe_command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_PROFILE_RELEASE_PANIC AGENT_NAME=GoldBeaver CARGO_PROFILE_RELEASE_PANIC=abort rch exec -- cargo build -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort -p frankenlibc-abi --release --features standalone,owned-unwind-stub,owned-tls-cache",
+      "legacy_feature_probe_result": "blocked_panic_immediate_abort_feature_removed",
+      "legacy_feature_error_contains": "panic_immediate_abort is now a real panic strategy",
+      "command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=RUSTFLAGS AGENT_NAME=GoldBeaver RUSTFLAGS='-Zunstable-options -Cpanic=immediate-abort' rch exec -- cargo build -Z build-std=std,panic_abort -p frankenlibc-abi --release --features standalone,owned-unwind-stub,owned-tls-cache",
       "remote_worker": "ts1",
-      "result": "blocked_remote_toolchain_missing_rust_src",
+      "result": "blocked_core_panic_strategy_mismatch_for_immediate_abort",
       "exit_code": 101,
-      "error_contains": "rustup component add rust-src --toolchain nightly-2026-04-28-x86_64-unknown-linux-gnu",
-      "classification": "This lane is not artifact proof yet: remote execution reached ts1, but build-std stopped before compilation because the worker lacks rust-src. Promotion still requires a successful remote artifact followed by nm/readelf proof of zero TLS symbols, zero DTPMOD64 relocations, and no __tls_get_addr."
+      "error_contains": "the crate `core` was compiled with a panic strategy which is incompatible with `immediate-abort`",
+      "classification": "The rust-src environment blocker is cleared on ts1, but this lane is still not artifact proof: the current immediate-abort build-std invocation fails in core/std panic-strategy setup before producing a replacement cdylib. Promotion still requires a successful remote artifact followed by nm/readelf proof of zero TLS symbols, zero DTPMOD64 relocations, and no __tls_get_addr."
     },
     "residual_artifact_tls_emitters": [
       {
