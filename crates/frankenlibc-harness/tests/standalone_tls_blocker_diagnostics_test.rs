@@ -286,8 +286,10 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
     )?;
     let command = as_str(&probe["latest_probe_command"], "latest_probe_command")?;
     ensure(
-        command.contains("rch exec") && command.contains("--features=standalone,owned-tls-cache"),
-        "owned TLS probe command must record the remote build and feature gate",
+        command.contains("rch exec")
+            && command.contains("owned-tls-cache")
+            && command.contains("owned-unwind-stub"),
+        "owned TLS probe command must record the remote build and feature gates",
     )?;
     ensure_eq(
         string_vec(
@@ -297,23 +299,20 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
         vec![EXPECTED_TLS_SYMBOL.to_owned()],
         "owned TLS probe must keep the live TLS blocker",
     )?;
-    ensure(
+    ensure_eq(
         string_set(
             &probe["observed_artifact_symbols"]["needed_libraries"],
             "owned_tls_cache_artifact_probe.needed_libraries",
-        )?
-        .is_superset(&BTreeSet::from([
-            "libgcc_s.so.1".to_owned(),
-            "ld-linux-x86-64.so.2".to_owned(),
-        ])),
-        "owned TLS probe must record remaining host NEEDED libraries",
+        )?,
+        BTreeSet::from(["ld-linux-x86-64.so.2".to_owned()]),
+        "owned TLS probe must record only the remaining loader NEEDED library",
     )?;
     ensure_eq(
         as_u64(
             &probe["tls_relocation_summary"]["dtpmod64_relocation_count"],
             "dtpmod64_relocation_count",
         )?,
-        8,
+        4,
         "DTPMOD64 relocation count",
     )?;
     ensure_eq(
@@ -326,23 +325,46 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
     )?;
 
     let buckets = as_array(&probe["tls_descriptor_buckets"], "tls_descriptor_buckets")?;
-    ensure_eq(buckets.len(), 8, "TLS descriptor bucket count")?;
+    ensure_eq(buckets.len(), 6, "TLS descriptor bucket count")?;
     let owner_buckets = buckets
         .iter()
         .map(|bucket| as_str(&bucket["owner_bucket"], "owner_bucket").map(str::to_owned))
         .collect::<TestResult<BTreeSet<_>>>()?;
     for expected in [
-        "local_abi_startup_signal_pwd_grp_unistd_runtime_policy",
-        "local_abi_stdio_wchar_locale_dirent_registry",
-        "tracing_dispatcher_tls",
-        "membrane_ptr_validator_tls",
-        "rust_std_thread_current_panic_tls",
+        "rust_std_panic_local_panic_count",
+        "rust_std_io_output_capture",
+        "rust_std_thread_local_destructors",
+        "rust_std_thread_current_id",
+        "rust_std_thread_current_handle",
+        "rust_std_thread_spawnhook",
     ] {
         ensure(
             owner_buckets.contains(expected),
             format!("missing owned TLS descriptor bucket {expected}"),
         )?;
     }
+
+    let residual = as_array(
+        &probe["residual_artifact_tls_emitters"],
+        "residual_artifact_tls_emitters",
+    )?;
+    ensure_eq(residual.len(), 6, "residual artifact TLS emitter count")?;
+    let residual_symbols = residual
+        .iter()
+        .map(|row| as_str(&row["symbol"], "residual_artifact_tls_emitters.symbol"))
+        .collect::<TestResult<Vec<_>>>()?;
+    ensure(
+        residual
+            .iter()
+            .all(|row| row.get("crate").and_then(Value::as_str) == Some("std")),
+        "residual artifact TLS emitters must all be std-owned after first-party cleanup",
+    )?;
+    ensure(
+        residual_symbols
+            .iter()
+            .all(|symbol| !symbol.contains("RandomState") && !symbol.contains("KEYS")),
+        "residual artifact TLS emitters must not retain std RandomState KEYS",
+    )?;
     ensure(
         as_str(&probe["classification"], "classification")?.contains("claim-blocked"),
         "owned TLS probe classification must keep bd-c51oi claim-blocked",
