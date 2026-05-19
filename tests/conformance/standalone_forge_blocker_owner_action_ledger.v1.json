@@ -2,9 +2,9 @@
   "schema_version": "v1",
   "manifest_id": "standalone_forge_blocker_owner_action_ledger",
   "bead": "bd-zyck1.93",
-  "generated_utc": "2026-05-06T05:56:00Z",
+  "generated_utc": "2026-05-19T19:06:17Z",
   "source_commit": "current",
-  "description": "Source-owner action ledger for the current standalone forge blocking reasons. This artifact is planning evidence for parallel blocker burn-down and does not promote standalone replacement claims.",
+  "description": "Source-owner action ledger for standalone forge blocking reasons. Current blockers must have owner rows, resolved blockers remain as catalog history, and this artifact does not promote standalone replacement claims.",
   "inputs": {
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
@@ -22,10 +22,10 @@
   },
   "coverage_policy": {
     "source_snapshot": "tests/conformance/standalone_host_dependency_probe_plan.v1.json#current_forge_blocker_projection.current_forge_blocker_value_snapshot.blocking_reasons",
-    "expected_current_blocking_reason_count": 10,
+    "expected_current_blocking_reason_count": 0,
     "row_key": "blocking_reason",
     "missing_blocker_row_result": "fail_closed",
-    "extra_blocker_row_result": "fail_closed",
+    "extra_blocker_row_result": "allowed_when_cataloged_historical",
     "missing_owner_surface_result": "fail_closed",
     "missing_validation_path_result": "fail_closed",
     "missing_first_safe_action_result": "fail_closed",
@@ -188,12 +188,7 @@
         "blocking_reasons omits host_needed_libraries_present",
         "blocker_delta reports improvement with an explicit refresh note"
       ],
-      "current_blocker_values": [
-        "/lib64/ld-linux-x86-64.so.2",
-        "ld-linux-x86-64.so.2",
-        "libc.so.6",
-        "libgcc_s.so.1"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "host_direct_needed_libraries_present",
@@ -226,10 +221,7 @@
         "artifact_state.dependency_breakdown.needed_libraries contains only owned replacement dependencies",
         "blocking_reasons omits host_direct_needed_libraries_present"
       ],
-      "current_blocker_values": [
-        "ld-linux-x86-64.so.2",
-        "libgcc_s.so.1"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "host_resolved_libraries_present",
@@ -261,11 +253,7 @@
         "ldd scan resolves no host loader, libc, or compiler-runtime library",
         "blocking_reasons omits host_resolved_libraries_present"
       ],
-      "current_blocker_values": [
-        "/lib64/ld-linux-x86-64.so.2",
-        "libc.so.6",
-        "libgcc_s.so.1"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "host_loader_dependency",
@@ -297,10 +285,7 @@
         "artifact_state.dependency_breakdown.host_resolved_libraries contains no loader path",
         "blocking_reasons omits host_loader_dependency"
       ],
-      "current_blocker_values": [
-        "/lib64/ld-linux-x86-64.so.2",
-        "ld-linux-x86-64.so.2"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "host_libc_dependency",
@@ -333,9 +318,7 @@
         "artifact_state.dependency_breakdown.host_needed_libraries contains no libc.so.6",
         "blocking_reasons omits host_libc_dependency"
       ],
-      "current_blocker_values": [
-        "libc.so.6"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "libgcc_runtime_dependency",
@@ -369,12 +352,7 @@
         "artifact_state.dependency_breakdown.host_version_requirements contains no libgcc_s.so.1 entries",
         "blocking_reasons omits libgcc_runtime_dependency"
       ],
-      "current_blocker_values": [
-        "libgcc_s.so.1",
-        "libgcc_s.so.1:GCC_3.0",
-        "libgcc_s.so.1:GCC_3.3",
-        "libgcc_s.so.1:GCC_4.2.0"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "undefined_unwind_symbols",
@@ -409,20 +387,7 @@
         "nm --undefined-only reports no _Unwind_* entries",
         "blocking_reasons omits undefined_unwind_symbols"
       ],
-      "current_blocker_values": [
-        "_Unwind_Backtrace@GCC_3.3",
-        "_Unwind_DeleteException@GCC_3.0",
-        "_Unwind_GetDataRelBase@GCC_3.0",
-        "_Unwind_GetIP@GCC_3.0",
-        "_Unwind_GetIPInfo@GCC_4.2.0",
-        "_Unwind_GetLanguageSpecificData@GCC_3.0",
-        "_Unwind_GetRegionStart@GCC_3.0",
-        "_Unwind_GetTextRelBase@GCC_3.0",
-        "_Unwind_RaiseException@GCC_3.0",
-        "_Unwind_Resume@GCC_3.0",
-        "_Unwind_SetGR@GCC_3.0",
-        "_Unwind_SetIP@GCC_3.0"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "undefined_glibc_symbols",
@@ -457,9 +422,7 @@
         "nm --undefined-only reports no unresolved GLIBC-versioned symbols",
         "blocking_reasons omits undefined_glibc_symbols"
       ],
-      "current_blocker_values": [
-        "__tls_get_addr@GLIBC_2.3"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "undefined_tls_symbols",
@@ -493,9 +456,7 @@
         "l1_crt_startup_tls_matrix TLS rows remain present and passing",
         "blocking_reasons omits undefined_tls_symbols"
       ],
-      "current_blocker_values": [
-        "__tls_get_addr@GLIBC_2.3"
-      ]
+      "current_blocker_values": []
     },
     {
       "blocking_reason": "host_version_requirements",
@@ -528,16 +489,11 @@
         "artifact_state.dependency_breakdown.version_needs contains no host-provided provider entries",
         "blocking_reasons omits host_version_requirements"
       ],
-      "current_blocker_values": [
-        "ld-linux-x86-64.so.2:GLIBC_2.3",
-        "libgcc_s.so.1:GCC_3.0",
-        "libgcc_s.so.1:GCC_3.3",
-        "libgcc_s.so.1:GCC_4.2.0"
-      ]
+      "current_blocker_values": []
     }
   ],
   "summary": {
-    "current_blocking_reason_count": 10,
+    "current_blocking_reason_count": 0,
     "ledger_row_count": 10,
     "required_owner_surface_count": 10,
     "promotion_allowed": false,

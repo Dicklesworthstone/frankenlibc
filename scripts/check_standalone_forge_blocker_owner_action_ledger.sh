@@ -3,6 +3,8 @@
 #
 # Validates that every current standalone forge blocking reason has an owner,
 # source surface, evidence command, negative control, and first safe action.
+# Resolved reasons may remain as catalog history, but their current blocker
+# values must be empty so stale values cannot masquerade as live evidence.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -77,10 +79,10 @@ EXPECTED_COVERAGE_POLICY = {
         "tests/conformance/standalone_host_dependency_probe_plan.v1.json#"
         "current_forge_blocker_projection.current_forge_blocker_value_snapshot.blocking_reasons"
     ),
-    "expected_current_blocking_reason_count": 10,
+    "expected_current_blocking_reason_count": 0,
     "row_key": "blocking_reason",
     "missing_blocker_row_result": "fail_closed",
-    "extra_blocker_row_result": "fail_closed",
+    "extra_blocker_row_result": "allowed_when_cataloged_historical",
     "missing_owner_surface_result": "fail_closed",
     "missing_validation_path_result": "fail_closed",
     "missing_first_safe_action_result": "fail_closed",
@@ -202,7 +204,9 @@ current_reasons = string_list(
 )
 reason_set = set(current_reasons)
 if len(reason_set) != EXPECTED_COVERAGE_POLICY["expected_current_blocking_reason_count"]:
-    errors.append("current forge snapshot must contain exactly ten unique blocking reasons")
+    errors.append(
+        "current forge snapshot unique blocking reason count must match coverage_policy"
+    )
 
 reason_to_probe = object_value(projection.get("blocking_reason_to_probe_id"), "blocking_reason_to_probe_id")
 catalog = object_value(projection.get("blocker_catalog_required_rows"), "blocker_catalog_required_rows")
@@ -244,9 +248,6 @@ for index, row in enumerate(rows):
     if reason in row_by_reason:
         errors.append(f"ledger_rows: duplicate blocking_reason {reason}")
     row_by_reason[reason] = row
-    if reason not in reason_set:
-        errors.append(f"ledger_rows.{reason}: reason is not in current forge blocker snapshot")
-
     owner = row.get("owner_surface")
     if not isinstance(owner, str) or not owner:
         errors.append(f"{context}.owner_surface: must be a non-empty string")
@@ -257,6 +258,8 @@ for index, row in enumerate(rows):
 
     catalog_owner = row.get("catalog_owner_surface")
     expected_catalog = catalog.get(reason, {}) if isinstance(catalog, dict) else {}
+    if not expected_catalog:
+        errors.append(f"{context}: reason is neither current nor cataloged historical blocker")
     expected_catalog_owner = expected_catalog.get("owner_surface") if isinstance(expected_catalog, dict) else None
     if catalog_owner != expected_catalog_owner:
         errors.append(f"{context}.catalog_owner_surface must match blocker catalog owner {expected_catalog_owner}")
@@ -284,12 +287,16 @@ for index, row in enumerate(rows):
     if not isinstance(row.get("first_safe_action"), str) or not row.get("first_safe_action"):
         errors.append(f"{context}.first_safe_action must be a non-empty string")
     string_list(row.get("exit_criteria"), f"{context}.exit_criteria")
-    string_list(row.get("current_blocker_values"), f"{context}.current_blocker_values")
+    current_blocker_values = string_list(
+        row.get("current_blocker_values"),
+        f"{context}.current_blocker_values",
+        min_len=1 if reason in reason_set else 0,
+    )
+    if reason not in reason_set and current_blocker_values:
+        errors.append(f"{context}.current_blocker_values must be empty for resolved blockers")
 
 for reason in sorted(reason_set - set(row_by_reason)):
     errors.append(f"ledger_rows missing current forge blocker reason {reason}")
-for reason in sorted(set(row_by_reason) - reason_set):
-    errors.append(f"ledger_rows contains non-current forge blocker reason {reason}")
 for owner in sorted(REQUIRED_OWNER_SURFACES - set(owner_counts)):
     errors.append(f"required owner surface has no ledger row: {owner}")
 

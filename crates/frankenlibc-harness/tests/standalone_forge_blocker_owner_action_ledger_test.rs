@@ -1,9 +1,9 @@
 //! Integration test: standalone forge blocker owner/action ledger (bd-zyck1.93).
 //!
 //! The ledger is planning evidence for parallel standalone blocker burn-down.
-//! It must stay keyed to the current forge blocker snapshot and fail closed
-//! when a current blocking reason loses an owner, validation path, negative
-//! control, or first safe action.
+//! It must fail closed when a current blocking reason loses an owner,
+//! validation path, negative control, or first safe action. Resolved blockers
+//! remain as catalog history, but their current blocker values must be empty.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -106,13 +106,19 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
-fn run_checker(root: &Path, ledger: &Path, label: &str) -> TestResult<(Output, PathBuf)> {
+fn run_checker_with_plan(
+    root: &Path,
+    ledger: &Path,
+    plan: &Path,
+    label: &str,
+) -> TestResult<(Output, PathBuf)> {
     let report = root.join("target/conformance").join(format!(
         "standalone_forge_blocker_owner_action_ledger.{label}.report.json"
     ));
     let output = Command::new("bash")
         .arg(checker_path(root))
         .env("FRANKENLIBC_STANDALONE_BLOCKER_OWNER_LEDGER", ledger)
+        .env("FRANKENLIBC_STANDALONE_HOST_DEP_PLAN", plan)
         .env(
             "FRANKENLIBC_STANDALONE_BLOCKER_OWNER_LEDGER_REPORT",
             &report,
@@ -121,6 +127,10 @@ fn run_checker(root: &Path, ledger: &Path, label: &str) -> TestResult<(Output, P
         .output()
         .map_err(|err| format!("failed to run owner-action checker: {err}"))?;
     Ok((output, report))
+}
+
+fn run_checker(root: &Path, ledger: &Path, label: &str) -> TestResult<(Output, PathBuf)> {
+    run_checker_with_plan(root, ledger, &plan_path(root), label)
 }
 
 fn format_output(output: &Output) -> String {
@@ -134,7 +144,17 @@ fn format_output(output: &Output) -> String {
 
 fn expect_checker_failure(ledger: &Path, label: &str, expected_error: &str) -> TestResult {
     let root = workspace_root()?;
-    let (output, report) = run_checker(&root, ledger, label)?;
+    expect_checker_failure_with_plan(ledger, &plan_path(&root), label, expected_error)
+}
+
+fn expect_checker_failure_with_plan(
+    ledger: &Path,
+    plan: &Path,
+    label: &str,
+    expected_error: &str,
+) -> TestResult {
+    let root = workspace_root()?;
+    let (output, report) = run_checker_with_plan(&root, ledger, plan, label)?;
     require(
         !output.status.success(),
         format!("checker unexpectedly passed\n{}", format_output(&output)),
@@ -170,6 +190,23 @@ fn write_mutated_ledger(
     let path = dir.join(format!("{}.json", unique_label(label)?));
     let content = serde_json::to_string_pretty(&ledger)
         .map_err(|err| format!("failed to serialize mutated ledger: {err}"))?;
+    std::fs::write(&path, format!("{content}\n"))
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(path)
+}
+
+fn write_mutated_plan(
+    label: &str,
+    mutate: impl FnOnce(&mut Value) -> TestResult,
+) -> TestResult<PathBuf> {
+    let root = workspace_root()?;
+    let mut plan = load_json(&plan_path(&root))?;
+    mutate(&mut plan)?;
+    let dir = root.join("target/conformance/mutated-plans");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    let path = dir.join(format!("{}.json", unique_label(label)?));
+    let content = serde_json::to_string_pretty(&plan)
+        .map_err(|err| format!("failed to serialize mutated plan: {err}"))?;
     std::fs::write(&path, format!("{content}\n"))
         .map_err(|err| format!("{}: {err}", path.display()))?;
     Ok(path)
@@ -237,8 +274,8 @@ fn ledger_manifest_covers_current_forge_snapshot() -> TestResult {
     let snapshot = json_field(projection, "current_forge_blocker_value_snapshot")?;
     let current_reasons = string_set(snapshot, "blocking_reasons")?;
     require(
-        current_reasons.len() == 10,
-        "current forge blocker snapshot must keep ten blockers until refreshed",
+        current_reasons.is_empty(),
+        "current forge blocker snapshot must be empty after standalone blocker burn-down",
     )?;
     let reason_to_probe = json_field(projection, "blocking_reason_to_probe_id")?
         .as_object()
@@ -267,8 +304,8 @@ fn ledger_manifest_covers_current_forge_snapshot() -> TestResult {
         }
         let reason = json_string(row, "blocking_reason")?;
         require(
-            current_reasons.contains(reason),
-            format!("ledger row {reason} must map to current blocker snapshot"),
+            catalog.contains_key(reason),
+            format!("ledger row {reason} must map to current or historical blocker catalog"),
         )?;
         require(
             rows_by_reason.insert(reason.to_owned(), row).is_none(),
@@ -323,14 +360,20 @@ fn ledger_manifest_covers_current_forge_snapshot() -> TestResult {
             format!("{reason}: exit_criteria must be non-empty"),
         )?;
         require(
-            !json_array(row, "current_blocker_values")?.is_empty(),
-            format!("{reason}: current_blocker_values must be non-empty"),
+            json_array(row, "current_blocker_values")?.is_empty(),
+            format!("{reason}: current_blocker_values must be empty for resolved blockers"),
         )?;
     }
     require(
-        rows_by_reason.len() == current_reasons.len(),
-        "ledger must have exactly one row per current forge blocker reason",
+        rows_by_reason.len() == catalog.len(),
+        "ledger must retain exactly one row per cataloged forge blocker reason",
     )?;
+    for reason in &current_reasons {
+        require(
+            rows_by_reason.contains_key(reason),
+            format!("ledger must have a row for current forge blocker reason {reason}"),
+        )?;
+    }
     for owner in REQUIRED_OWNER_SURFACES {
         require(
             owner_surfaces.contains(*owner),
@@ -368,8 +411,8 @@ fn checker_accepts_canonical_ledger() -> TestResult {
         "canonical report status must pass",
     )?;
     require(
-        json_field(&report_json, "current_blocking_reason_count")?.as_u64() == Some(10),
-        "current_blocking_reason_count must be 10",
+        json_field(&report_json, "current_blocking_reason_count")?.as_u64() == Some(0),
+        "current_blocking_reason_count must be 0",
     )?;
     require(
         json_field(&report_json, "ledger_row_count")?.as_u64() == Some(10),
@@ -389,10 +432,40 @@ fn checker_rejects_missing_current_blocker_row() -> TestResult {
         });
         Ok(())
     })?;
-    expect_checker_failure(
+    let mutated_plan = write_mutated_plan("owner-plan-current-row", |plan| {
+        let reasons = plan
+            .pointer_mut(
+                "/current_forge_blocker_projection/current_forge_blocker_value_snapshot/blocking_reasons",
+            )
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "blocking_reasons must be an array".to_string())?;
+        reasons.push(Value::String("undefined_tls_symbols".to_string()));
+        Ok(())
+    })?;
+    expect_checker_failure_with_plan(
         &mutated,
+        &mutated_plan,
         "owner-ledger-missing-row",
         "ledger_rows missing current forge blocker reason undefined_tls_symbols",
+    )
+}
+
+#[test]
+fn checker_rejects_stale_values_on_resolved_blocker() -> TestResult {
+    let mutated = write_mutated_ledger("owner-ledger-stale-values", |ledger| {
+        let row = ledger_row_mut(ledger, "host_libc_dependency")?;
+        row.as_object_mut()
+            .ok_or_else(|| "row must be object".to_string())?
+            .insert(
+                "current_blocker_values".to_string(),
+                Value::Array(vec![Value::String("libc.so.6".to_string())]),
+            );
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "owner-ledger-stale-values",
+        "ledger_rows[host_libc_dependency].current_blocker_values must be empty for resolved blockers",
     )
 }
 

@@ -8081,6 +8081,7 @@ pub unsafe extern "C" fn __resolv_context_freeres() {
 
 /// `__resp` — pointer to per-thread resolver state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[thread_local]
 pub static mut __resp: *mut c_void = std::ptr::null_mut();
 
 // ---------------------------------------------------------------------------
