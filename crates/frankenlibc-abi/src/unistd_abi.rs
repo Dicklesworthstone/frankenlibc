@@ -6234,6 +6234,19 @@ struct WordexpT {
 struct WordexpSyntaxScan {
     has_bad_char: bool,
     has_command_substitution: bool,
+    has_syntax_error: bool,
+}
+
+fn scan_braced_parameter_end(s: &[u8], open_brace: usize) -> Option<usize> {
+    let name_start = open_brace + 1;
+    let mut i = name_start;
+    while i < s.len() {
+        if s[i] == b'}' {
+            return (i > name_start).then_some(i + 1);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Scan `wordexp` input while honoring shell quoting and escaping context.
@@ -6241,12 +6254,12 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
     let mut scan = WordexpSyntaxScan {
         has_bad_char: false,
         has_command_substitution: false,
+        has_syntax_error: false,
     };
     let mut i = 0;
     let mut in_single_quote = false;
     let mut in_double_quote = false;
     let mut escaped = false;
-    let mut parameter_brace_depth = 0usize;
 
     while i < s.len() {
         let byte = s[i];
@@ -6288,16 +6301,18 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
                         scan.has_command_substitution = true;
                         return scan;
                     }
-                    b'{' => {
-                        parameter_brace_depth += 1;
-                        i += 2;
-                        continue;
-                    }
+                    b'{' => match scan_braced_parameter_end(s, i + 1) {
+                        Some(next) => {
+                            i = next;
+                            continue;
+                        }
+                        None => {
+                            scan.has_syntax_error = true;
+                            return scan;
+                        }
+                    },
                     _ => {}
                 }
-            }
-            if parameter_brace_depth > 0 && byte == b'}' {
-                parameter_brace_depth -= 1;
             }
             i += 1;
             continue;
@@ -6317,18 +6332,18 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
                     scan.has_command_substitution = true;
                     return scan;
                 }
-                b'{' => {
-                    parameter_brace_depth += 1;
-                    i += 2;
-                    continue;
-                }
+                b'{' => match scan_braced_parameter_end(s, i + 1) {
+                    Some(next) => {
+                        i = next;
+                        continue;
+                    }
+                    None => {
+                        scan.has_syntax_error = true;
+                        return scan;
+                    }
+                },
                 _ => {}
             }
-        }
-        if parameter_brace_depth > 0 && byte == b'}' {
-            parameter_brace_depth -= 1;
-            i += 1;
-            continue;
         }
         if matches!(
             byte,
@@ -6377,6 +6392,115 @@ fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
     .map_err(|e| match e {
         frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => WRDE_BADVAL,
     })
+}
+
+fn push_masked_char(result: &mut String, split_mask: &mut Vec<bool>, ch: char, splittable: bool) {
+    result.push(ch);
+    split_mask.push(splittable);
+}
+
+fn expand_vars_with_split_mask(word: &str, flags: c_int) -> Result<(String, Vec<bool>), c_int> {
+    let undef_is_error = (flags & WRDE_UNDEF) != 0;
+    expand_vars_with_split_mask_dyn(word, undef_is_error, true)
+}
+
+fn expand_vars_with_split_mask_dyn(
+    word: &str,
+    undef_is_error: bool,
+    split_unquoted_expansions: bool,
+) -> Result<(String, Vec<bool>), c_int> {
+    let mut result = String::with_capacity(word.len());
+    let mut split_mask = Vec::with_capacity(word.len());
+    let bytes = word.as_bytes();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            push_masked_char(&mut result, &mut split_mask, bytes[i + 1] as char, false);
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'\'' {
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'\'' {
+                push_masked_char(&mut result, &mut split_mask, bytes[i] as char, false);
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if bytes[i] == b'$' {
+            i += 1;
+            if i >= bytes.len() {
+                push_masked_char(&mut result, &mut split_mask, '$', false);
+                continue;
+            }
+            let (var_name, end) = if bytes[i] == b'{' {
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                let name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
+                if i < bytes.len() {
+                    i += 1;
+                }
+                (name, i)
+            } else {
+                let start = i;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                let name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
+                (name, i)
+            };
+            i = end;
+            if var_name.is_empty() {
+                push_masked_char(&mut result, &mut split_mask, '$', false);
+                continue;
+            }
+            match std::env::var(var_name) {
+                Ok(value) => {
+                    for ch in value.chars() {
+                        push_masked_char(
+                            &mut result,
+                            &mut split_mask,
+                            ch,
+                            split_unquoted_expansions,
+                        );
+                    }
+                }
+                Err(_) => {
+                    if undef_is_error {
+                        return Err(WRDE_BADVAL);
+                    }
+                }
+            }
+            continue;
+        }
+        if bytes[i] == b'"' {
+            i += 1;
+            let mut inner = String::new();
+            while i < bytes.len() && bytes[i] != b'"' {
+                inner.push(bytes[i] as char);
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1;
+            }
+            let (expanded, inner_mask) =
+                expand_vars_with_split_mask_dyn(&inner, undef_is_error, false)?;
+            result.push_str(&expanded);
+            split_mask.extend(inner_mask);
+            continue;
+        }
+        push_masked_char(&mut result, &mut split_mask, bytes[i] as char, false);
+        i += 1;
+    }
+
+    Ok((result, split_mask))
 }
 
 fn has_unquoted_parameter_expansion(word: &str) -> bool {
@@ -6453,20 +6577,53 @@ fn push_wordexp_word(final_words: &mut Vec<CString>, expanded: &str) {
     }
 }
 
-fn push_wordexp_expanded_fields(
+fn push_wordexp_masked_fields(
     final_words: &mut Vec<CString>,
     expanded: &str,
+    split_mask: &[bool],
     ifs: &str,
-    split_fields: bool,
 ) {
-    if split_fields && !ifs.is_empty() {
-        for field in expanded.split(|ch| ifs.contains(ch)) {
-            if !field.is_empty() {
-                push_wordexp_word(final_words, field);
-            }
-        }
-    } else {
+    if ifs.is_empty() {
         push_wordexp_word(final_words, expanded);
+        return;
+    }
+
+    let mut current = String::new();
+    let mut emitted_any = false;
+    let mut last_separator_was_nonwhitespace = false;
+
+    for (ch, splittable) in expanded.chars().zip(split_mask.iter().copied()) {
+        let is_ifs = splittable && ifs.contains(ch);
+        let is_ifs_whitespace = is_ifs && matches!(ch, ' ' | '\t' | '\n');
+        if is_ifs_whitespace {
+            if !current.is_empty() {
+                push_wordexp_word(final_words, &current);
+                current.clear();
+                emitted_any = true;
+                last_separator_was_nonwhitespace = false;
+            }
+            continue;
+        }
+
+        if is_ifs {
+            if !current.is_empty() {
+                push_wordexp_word(final_words, &current);
+                current.clear();
+                emitted_any = true;
+            } else if !emitted_any || last_separator_was_nonwhitespace {
+                push_wordexp_word(final_words, "");
+                emitted_any = true;
+            }
+            last_separator_was_nonwhitespace = true;
+            continue;
+        }
+
+        current.push(ch);
+        last_separator_was_nonwhitespace = false;
+    }
+
+    if !current.is_empty() {
+        push_wordexp_word(final_words, &current);
     }
 }
 
@@ -6500,6 +6657,9 @@ pub unsafe extern "C" fn wordexp(
     if syntax_scan.has_bad_char {
         return WRDE_BADCHAR;
     }
+    if syntax_scan.has_syntax_error {
+        return WRDE_SYNTAX;
+    }
 
     // Check for command substitution
     if syntax_scan.has_command_substitution {
@@ -6517,7 +6677,8 @@ pub unsafe extern "C" fn wordexp(
     // Process each word
     let mut result_words: Vec<String> = Vec::new();
 
-    // Simple field splitting (respecting quotes)
+    // Tokenize on unquoted shell blanks. IFS is applied later during
+    // post-expansion field splitting, not while reading literal input.
     let mut current_word = String::new();
     let mut in_single_quote = false;
     let mut in_double_quote = false;
@@ -6543,7 +6704,7 @@ pub unsafe extern "C" fn wordexp(
             current_word.push(b as char);
             continue;
         }
-        if !in_single_quote && !in_double_quote && ifs.as_bytes().contains(&b) {
+        if !in_single_quote && !in_double_quote && matches!(b, b' ' | b'\t' | b'\n') {
             if !current_word.is_empty() {
                 result_words.push(std::mem::take(&mut current_word));
             }
@@ -6567,12 +6728,20 @@ pub unsafe extern "C" fn wordexp(
         let split_fields = has_unquoted_parameter_expansion(word);
         // Tilde expansion
         let expanded = expand_tilde(word);
-        // Variable expansion
-        let expanded = match expand_vars(&expanded, flags) {
-            Ok(s) => s,
-            Err(e) => return e,
-        };
-        push_wordexp_expanded_fields(&mut final_words, &expanded, &ifs, split_fields);
+        if split_fields {
+            let (expanded, split_mask) = match expand_vars_with_split_mask(&expanded, flags) {
+                Ok(s) => s,
+                Err(e) => return e,
+            };
+            push_wordexp_masked_fields(&mut final_words, &expanded, &split_mask, &ifs);
+        } else {
+            // Variable expansion
+            let expanded = match expand_vars(&expanded, flags) {
+                Ok(s) => s,
+                Err(e) => return e,
+            };
+            push_wordexp_word(&mut final_words, &expanded);
+        }
     }
 
     // Build the wordexp_t result

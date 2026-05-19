@@ -37,6 +37,9 @@ static CWD_TEST_LOCK: Mutex<()> = Mutex::new(());
 /// Serializes tests that mutate HOSTALIASES.
 static HOSTALIASES_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serializes wordexp host-vs-ABI tests that mutate process environment.
+static WORDEXP_ENV_LOCK: Mutex<()> = Mutex::new(());
+
 struct HostaliasesEnvGuard {
     previous: Option<std::ffi::OsString>,
 }
@@ -57,6 +60,32 @@ impl Drop for HostaliasesEnvGuard {
             match &self.previous {
                 Some(value) => std::env::set_var("HOSTALIASES", value),
                 None => std::env::remove_var("HOSTALIASES"),
+            }
+        }
+    }
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        // SAFETY: callers hold the relevant environment-mutation test lock.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        // SAFETY: callers hold the relevant environment-mutation test lock.
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
             }
         }
     }
@@ -1363,9 +1392,10 @@ fn wordexp_unquoted_parameter_expansion_field_splits_like_host() {
         return;
     };
 
-    unsafe {
-        std::env::set_var("FRANKENLIBC_WORDEXP_SPLIT_42", "alpha beta");
-    }
+    let _guard = WORDEXP_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let _var_guard = EnvVarGuard::set("FRANKENLIBC_WORDEXP_SPLIT_42", "alpha beta");
 
     for input in [
         "$FRANKENLIBC_WORDEXP_SPLIT_42",
@@ -1381,9 +1411,59 @@ fn wordexp_unquoted_parameter_expansion_field_splits_like_host() {
             input
         );
     }
+}
 
-    unsafe {
-        std::env::remove_var("FRANKENLIBC_WORDEXP_SPLIT_42");
+#[test]
+fn wordexp_non_whitespace_ifs_preserves_empty_fields_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    let _guard = WORDEXP_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let _ifs_guard = EnvVarGuard::set("IFS", ":");
+    let _var_guard = EnvVarGuard::set("FRANKENLIBC_WORDEXP_IFS_42", "a::b:");
+
+    for input in [
+        "$FRANKENLIBC_WORDEXP_IFS_42",
+        "x$FRANKENLIBC_WORDEXP_IFS_42",
+        "$FRANKENLIBC_WORDEXP_IFS_42:tail",
+        ":$FRANKENLIBC_WORDEXP_IFS_42",
+    ] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, 0) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, 0) };
+        assert_eq!(
+            abi, host,
+            "wordexp non-whitespace IFS mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn wordexp_malformed_braced_parameter_matches_host_quote_context() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for input in [
+        "${}",
+        "${FRANKENLIBC_WORDEXP_UNCLOSED_42",
+        "\"${}\"",
+        "\"${FRANKENLIBC_WORDEXP_UNCLOSED_42\"",
+        "'${}'",
+        "'${FRANKENLIBC_WORDEXP_UNCLOSED_42'",
+    ] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, 0) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, 0) };
+        assert_eq!(
+            abi, host,
+            "wordexp braced-parameter syntax mismatch for input {:?}",
+            input
+        );
     }
 }
 
