@@ -27,7 +27,7 @@ const LOCAL_EXEC_LANE: &str = "local-exec-tls-model-probe";
 const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
-const EXPECTED_OWNER_SURFACE_COUNT: usize = 18;
+const EXPECTED_OWNER_SURFACE_COUNT: usize = 19;
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -174,6 +174,13 @@ fn abi_inet_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("inet_abi.rs")
+}
+
+fn abi_time_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("time_abi.rs")
 }
 
 fn load_manifest() -> TestResult<Value> {
@@ -700,8 +707,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 74,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar c16 surrogate/fgetwln buffers, stdlib getusershell/qecvt/qfcvt scratch state, group ABI reentrant storage, passwd ABI non-reentrant storage, and inet_ntoa static buffer storage",
+        substituted == 78,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar c16 surrogate/fgetwln buffers, stdlib getusershell/qecvt/qfcvt scratch state, group ABI reentrant storage, passwd ABI non-reentrant storage, inet_ntoa static buffer storage, and time ABI non-reentrant static buffers",
     )?;
     require(
         substituted + remaining == total,
@@ -942,5 +949,18 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && inet.contains("with_inet_ntoa_buffer")
             && inet.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "inet ABI must route inet_ntoa static buffer storage through owned TLS cache",
+    )?;
+
+    let time = std::fs::read_to_string(abi_time_path(&root))
+        .map_err(|err| format!("read time_abi.rs: {err}"))?;
+    require(
+        time.contains("TIME_OWNED_TLS")
+            && time.contains("TimeTls")
+            && time.contains("with_gmtime_buf")
+            && time.contains("with_localtime_buf")
+            && time.contains("with_asctime_buf")
+            && time.contains("with_ctime_buf")
+            && time.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "time ABI must route gmtime/localtime/asctime/ctime static buffers through owned TLS cache",
     )
 }

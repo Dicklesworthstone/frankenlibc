@@ -753,14 +753,114 @@ pub unsafe extern "C" fn strftime(
 }
 
 // ---------------------------------------------------------------------------
-// Non-reentrant time wrappers (use thread-local static buffers)
+// Non-reentrant time wrappers (use per-thread static buffers)
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "owned-tls-cache")]
+struct TimeTls {
+    gmtime_buf: libc::tm,
+    localtime_buf: libc::tm,
+    asctime_buf: [u8; ASCTIME_R_BUF_BYTES],
+    ctime_buf: [u8; ASCTIME_R_BUF_BYTES],
+}
+
+// SAFETY: `TimeTls` is keyed by kernel thread id inside `OwnedTlsCache`. The
+// `libc::tm` timezone pointer is opaque ABI scratch and is never dereferenced
+// by the cache itself.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for TimeTls {}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_time_tls() -> TimeTls {
+    TimeTls {
+        // SAFETY: `libc::tm` is a C POD struct; zero initialization matches the
+        // static scratch-buffer initialization used by the default TLS path.
+        gmtime_buf: unsafe { std::mem::zeroed() },
+        // SAFETY: Same POD zero-initialization rationale as `gmtime_buf`.
+        localtime_buf: unsafe { std::mem::zeroed() },
+        asctime_buf: [0; ASCTIME_R_BUF_BYTES],
+        ctime_buf: [0; ASCTIME_R_BUF_BYTES],
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static TIME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<TimeTls> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_time_tls);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static GMTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
     static LOCALTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
-    static ASCTIME_BUF: std::cell::UnsafeCell<[u8; 26]> = const { std::cell::UnsafeCell::new([0u8; 26]) };
-    static CTIME_BUF: std::cell::UnsafeCell<[u8; 26]> = const { std::cell::UnsafeCell::new([0u8; 26]) };
+    static ASCTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_R_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_R_BUF_BYTES]) };
+    static CTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_R_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_R_BUF_BYTES]) };
+}
+
+#[inline]
+fn with_gmtime_buf<R>(f: impl FnOnce(&mut libc::tm) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        TIME_OWNED_TLS.with(|tls| f(&mut tls.gmtime_buf))
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GMTIME_BUF.with(|cell| {
+            // SAFETY: The default path uses Rust thread-local storage, so this
+            // mutable reference is scoped to the current thread's scratch slot.
+            f(unsafe { &mut *cell.get() })
+        })
+    }
+}
+
+#[inline]
+fn with_localtime_buf<R>(f: impl FnOnce(&mut libc::tm) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        TIME_OWNED_TLS.with(|tls| f(&mut tls.localtime_buf))
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        LOCALTIME_BUF.with(|cell| {
+            // SAFETY: The default path uses Rust thread-local storage, so this
+            // mutable reference is scoped to the current thread's scratch slot.
+            f(unsafe { &mut *cell.get() })
+        })
+    }
+}
+
+#[inline]
+fn with_asctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_R_BUF_BYTES]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        TIME_OWNED_TLS.with(|tls| f(&mut tls.asctime_buf))
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        ASCTIME_BUF.with(|cell| {
+            // SAFETY: The default path uses Rust thread-local storage, so this
+            // mutable reference is scoped to the current thread's scratch slot.
+            f(unsafe { &mut *cell.get() })
+        })
+    }
+}
+
+#[inline]
+fn with_ctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_R_BUF_BYTES]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        TIME_OWNED_TLS.with(|tls| f(&mut tls.ctime_buf))
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        CTIME_BUF.with(|cell| {
+            // SAFETY: The default path uses Rust thread-local storage, so this
+            // mutable reference is scoped to the current thread's scratch slot.
+            f(unsafe { &mut *cell.get() })
+        })
+    }
 }
 
 /// POSIX `gmtime` — convert time_t to broken-down UTC time (non-reentrant).
@@ -769,8 +869,8 @@ pub unsafe extern "C" fn gmtime(timer: *const i64) -> *mut libc::tm {
     if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
-    GMTIME_BUF.with(|cell| {
-        let ptr = cell.get();
+    with_gmtime_buf(|buf| {
+        let ptr = buf as *mut libc::tm;
         let result = unsafe { gmtime_r(timer, ptr) };
         if result.is_null() {
             std::ptr::null_mut()
@@ -786,8 +886,8 @@ pub unsafe extern "C" fn localtime(timer: *const i64) -> *mut libc::tm {
     if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
-    LOCALTIME_BUF.with(|cell| {
-        let ptr = cell.get();
+    with_localtime_buf(|buf| {
+        let ptr = buf as *mut libc::tm;
         let result = unsafe { localtime_r(timer, ptr) };
         if result.is_null() {
             std::ptr::null_mut()
@@ -803,13 +903,13 @@ pub unsafe extern "C" fn asctime(tm: *const libc::tm) -> *mut std::ffi::c_char {
     if tm.is_null() || !tracked_required_object_fits(tm) {
         return std::ptr::null_mut();
     }
-    ASCTIME_BUF.with(|cell| {
-        let ptr = cell.get();
-        let result = unsafe { asctime_r(tm, (*ptr).as_mut_ptr() as *mut std::ffi::c_char) };
+    with_asctime_buf(|buf| {
+        let ptr = buf.as_mut_ptr() as *mut std::ffi::c_char;
+        let result = unsafe { asctime_r(tm, ptr) };
         if result.is_null() {
             std::ptr::null_mut()
         } else {
-            unsafe { (*ptr).as_mut_ptr() as *mut std::ffi::c_char }
+            ptr
         }
     })
 }
@@ -820,13 +920,13 @@ pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
     if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
-    CTIME_BUF.with(|cell| {
-        let ptr = cell.get();
-        let result = unsafe { ctime_r(timer, (*ptr).as_mut_ptr() as *mut std::ffi::c_char) };
+    with_ctime_buf(|buf| {
+        let ptr = buf.as_mut_ptr() as *mut std::ffi::c_char;
+        let result = unsafe { ctime_r(timer, ptr) };
         if result.is_null() {
             std::ptr::null_mut()
         } else {
-            unsafe { (*ptr).as_mut_ptr() as *mut std::ffi::c_char }
+            ptr
         }
     })
 }
