@@ -28,7 +28,7 @@ const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 19;
-const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 4;
+const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 3;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -176,6 +176,13 @@ fn abi_pwd_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("pwd_abi.rs")
+}
+
+fn abi_pthread_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("pthread_abi.rs")
 }
 
 fn abi_inet_path(root: &Path) -> PathBuf {
@@ -968,8 +975,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 83,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver hostent/servent/protoent storage, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar c16 surrogate/fgetwln buffers, stdlib getusershell/qecvt/qfcvt scratch state, group ABI reentrant storage, passwd/gshadow/shadow ABI non-reentrant storage, inet_ntoa static buffer storage, and time ABI non-reentrant static buffers",
+        substituted == 84,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver hostent/servent/protoent storage, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar c16 surrogate/fgetwln buffers, stdlib getusershell/qecvt/qfcvt scratch state, group ABI reentrant storage, passwd/gshadow/shadow ABI non-reentrant storage, pthread control state, inet_ntoa static buffer storage, and time ABI non-reentrant static buffers",
     )?;
     require(
         substituted + remaining == total,
@@ -1208,6 +1215,17 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && pwd.contains("unsafe impl Send for ShadowTlsStorage")
             && pwd.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "passwd ABI must route non-reentrant passwd, gshadow, and shadow storage through owned TLS cache",
+    )?;
+
+    let pthread = std::fs::read_to_string(abi_pthread_path(&root))
+        .map_err(|err| format!("read pthread_abi.rs: {err}"))?;
+    require(
+        pthread.contains("PTHREAD_OWNED_TLS")
+            && pthread.contains("PthreadTlsState")
+            && pthread.contains("with_pthread_tls")
+            && pthread.contains("try_with_pthread_tls")
+            && pthread.contains("crate::owned_tls_cache::OwnedTlsCache"),
+        "pthread ABI must route policy, cancellation, backend, and self-cache state through owned TLS cache",
     )?;
 
     let inet = std::fs::read_to_string(abi_inet_path(&root))

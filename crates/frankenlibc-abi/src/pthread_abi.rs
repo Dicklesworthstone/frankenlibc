@@ -5,7 +5,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use std::cell::Cell;
+#[cfg(not(feature = "owned-tls-cache"))]
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_int, c_void};
 use std::fs::OpenOptions;
@@ -177,27 +178,80 @@ static RESOLVED_PTHREAD_ATTR_SETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new(
 static RESOLVED_PTHREAD_ATTR_SETAFFINITY_NP_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSIGMASK_NP_PTR: OnceLock<usize> = OnceLock::new();
 
+const THREAD_BACKEND_UNKNOWN: u8 = 0;
+const THREAD_BACKEND_MANAGED: u8 = 1;
+const THREAD_BACKEND_HOST: u8 = 2;
+
+struct PthreadTlsState {
+    force_native_threading_override: Option<bool>,
+    threading_policy_depth: u32,
+    thread_cancel_state: c_int,
+    thread_cancel_type: c_int,
+    current_threading_backend: u8,
+    current_pthread_self_cache: libc::pthread_t,
+}
+
+impl PthreadTlsState {
+    fn new() -> Self {
+        Self {
+            force_native_threading_override: None,
+            threading_policy_depth: 0,
+            thread_cancel_state: PTHREAD_CANCEL_ENABLE_STATE,
+            thread_cancel_type: PTHREAD_CANCEL_DEFERRED_TYPE,
+            current_threading_backend: THREAD_BACKEND_UNKNOWN,
+            current_pthread_self_cache: 0,
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static PTHREAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<PthreadTlsState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(PthreadTlsState::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static FORCE_NATIVE_THREADING_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
-    static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) };
-    static THREAD_CANCEL_STATE: Cell<c_int> = const { Cell::new(PTHREAD_CANCEL_ENABLE_STATE) };
-    static THREAD_CANCEL_TYPE: Cell<c_int> = const { Cell::new(PTHREAD_CANCEL_DEFERRED_TYPE) };
-    static CURRENT_THREADING_BACKEND: Cell<u8> = const { Cell::new(THREAD_BACKEND_UNKNOWN) };
-    static CURRENT_PTHREAD_SELF_CACHE: Cell<libc::pthread_t> = const { Cell::new(0) };
+    static PTHREAD_TLS: RefCell<PthreadTlsState> = RefCell::new(PthreadTlsState::new());
+}
+
+#[inline]
+fn with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PTHREAD_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PTHREAD_TLS.with(|tls| {
+            let mut tls = tls.borrow_mut();
+            f(&mut tls)
+        })
+    }
+}
+
+#[inline]
+fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(PTHREAD_OWNED_TLS.with(f))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PTHREAD_TLS
+            .try_with(|tls| {
+                let mut tls = tls.borrow_mut();
+                f(&mut tls)
+            })
+            .ok()
+    }
 }
 
 #[inline]
 fn force_native_threading_enabled() -> bool {
-    FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| {
-        override_cell
-            .get()
+    with_pthread_tls(|tls| {
+        tls.force_native_threading_override
             .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire))
     })
 }
-
-const THREAD_BACKEND_UNKNOWN: u8 = 0;
-const THREAD_BACKEND_MANAGED: u8 = 1;
-const THREAD_BACKEND_HOST: u8 = 2;
 
 #[inline]
 fn current_threading_backend() -> u8 {
@@ -205,23 +259,21 @@ fn current_threading_backend() -> u8 {
         return THREAD_BACKEND_MANAGED;
     }
 
-    CURRENT_THREADING_BACKEND
-        .try_with(|backend| {
-            let cached = backend.get();
-            if cached != THREAD_BACKEND_UNKNOWN {
-                return cached;
-            }
+    let Some(cached) = try_with_pthread_tls(|tls| tls.current_threading_backend) else {
+        return THREAD_BACKEND_MANAGED;
+    };
+    if cached != THREAD_BACKEND_UNKNOWN {
+        return cached;
+    }
 
-            let resolved = match core_self_tid() {
-                tid if tid > 0 && core_handle_for_tid(tid).is_some() => THREAD_BACKEND_MANAGED,
-                // Supported host targets always provide pthread_self, so any
-                // non-managed thread in non-forced mode is host-backed.
-                _ => THREAD_BACKEND_HOST,
-            };
-            backend.set(resolved);
-            resolved
-        })
-        .unwrap_or(THREAD_BACKEND_MANAGED)
+    let resolved = match core_self_tid() {
+        tid if tid > 0 && core_handle_for_tid(tid).is_some() => THREAD_BACKEND_MANAGED,
+        // Supported host targets always provide pthread_self, so any
+        // non-managed thread in non-forced mode is host-backed.
+        _ => THREAD_BACKEND_HOST,
+    };
+    let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = resolved);
+    resolved
 }
 
 fn loaded_libc_base_and_path() -> Option<(u64, String)> {
@@ -505,26 +557,23 @@ struct ThreadingPolicyGuard;
 
 impl Drop for ThreadingPolicyGuard {
     fn drop(&mut self) {
-        let _ = THREADING_POLICY_DEPTH.try_with(|depth| {
-            let current = depth.get();
-            depth.set(current.saturating_sub(1));
+        let _ = try_with_pthread_tls(|tls| {
+            tls.threading_policy_depth = tls.threading_policy_depth.saturating_sub(1);
         });
     }
 }
 
 #[allow(dead_code)]
 fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
-    THREADING_POLICY_DEPTH
-        .try_with(|depth| {
-            let current = depth.get();
-            if current > 0 {
-                None
-            } else {
-                depth.set(current + 1);
-                Some(ThreadingPolicyGuard)
-            }
-        })
-        .unwrap_or(None)
+    try_with_pthread_tls(|tls| {
+        if tls.threading_policy_depth > 0 {
+            None
+        } else {
+            tls.threading_policy_depth += 1;
+            Some(ThreadingPolicyGuard)
+        }
+    })
+    .unwrap_or(None)
 }
 
 #[allow(dead_code)]
@@ -542,9 +591,7 @@ where
 
 #[must_use]
 pub(crate) fn in_threading_policy_context() -> bool {
-    THREADING_POLICY_DEPTH
-        .try_with(|depth| depth.get() > 0)
-        .unwrap_or(true)
+    try_with_pthread_tls(|tls| tls.threading_policy_depth > 0).unwrap_or(true)
 }
 
 /// Treats the leading atomic word of `pthread_mutex_t` as our lock state.
@@ -774,13 +821,10 @@ fn is_managed_condvar(cond: *mut libc::pthread_cond_t) -> bool {
 #[inline]
 fn native_pthread_self() -> libc::pthread_t {
     if current_threading_backend() == THREAD_BACKEND_HOST
-        && let Some(cached_self) = CURRENT_PTHREAD_SELF_CACHE
-            .try_with(|cache| {
-                let value = cache.get();
-                (value != 0).then_some(value)
-            })
-            .ok()
-            .flatten()
+        && let Some(cached_self) = try_with_pthread_tls(|tls| {
+            (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
+        })
+        .flatten()
     {
         return cached_self;
     }
@@ -1561,12 +1605,12 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
 
 unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
     let start_ctx = unsafe { &*arg.cast::<HostThreadStartContext>() };
-    let _ = CURRENT_THREADING_BACKEND.try_with(|backend| backend.set(THREAD_BACKEND_HOST));
+    let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = THREAD_BACKEND_HOST);
     let host_thread = wait_for_host_thread_handoff(start_ctx);
     let start_routine = start_ctx.start_routine;
     let start_arg = start_ctx.arg;
     if host_thread != 0 {
-        let _ = CURRENT_PTHREAD_SELF_CACHE.try_with(|cache| cache.set(host_thread));
+        let _ = try_with_pthread_tls(|tls| tls.current_pthread_self_cache = host_thread);
         remember_host_thread_tid(host_thread, core_self_tid());
     }
     unsafe { start_routine(start_arg) }
@@ -2101,18 +2145,18 @@ pub fn pthread_mutex_htm_snapshot_for_tests() -> HtmSiteSnapshot {
 #[doc(hidden)]
 pub fn pthread_threading_force_native_for_tests() {
     FORCE_NATIVE_THREADING.store(true, Ordering::Release);
-    FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| override_cell.set(Some(true)));
+    with_pthread_tls(|tls| tls.force_native_threading_override = Some(true));
 }
 
 /// Test hook: force native threading and return the previous mode so callers
 /// can restore it afterwards.
 #[doc(hidden)]
 pub fn pthread_threading_swap_force_native_for_tests() -> bool {
-    FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| {
-        let previous = override_cell
-            .get()
+    with_pthread_tls(|tls| {
+        let previous = tls
+            .force_native_threading_override
             .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire));
-        override_cell.set(Some(true));
+        tls.force_native_threading_override = Some(true);
         previous
     })
 }
@@ -2121,7 +2165,7 @@ pub fn pthread_threading_swap_force_native_for_tests() -> bool {
 /// forcing native behavior in a test.
 #[doc(hidden)]
 pub fn pthread_threading_restore_for_tests(previous: bool) {
-    FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| override_cell.set(Some(previous)));
+    with_pthread_tls(|tls| tls.force_native_threading_override = Some(previous));
 }
 
 #[inline]
@@ -3927,11 +3971,11 @@ fn set_cancellation_pending(thread_key: usize, pending: bool) {
 }
 
 fn cancel_enabled_for_current_thread() -> bool {
-    THREAD_CANCEL_STATE.with(|state| state.get() == PTHREAD_CANCEL_ENABLE_STATE)
+    with_pthread_tls(|tls| tls.thread_cancel_state == PTHREAD_CANCEL_ENABLE_STATE)
 }
 
 fn cancel_async_for_current_thread() -> bool {
-    THREAD_CANCEL_TYPE.with(|typ| typ.get() == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE)
+    with_pthread_tls(|tls| tls.thread_cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE)
 }
 
 fn consume_pending_cancel_for_current_thread() -> bool {
@@ -3993,9 +4037,9 @@ pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_i
         return unsafe { host_setcancelstate(state, oldstate) };
     }
 
-    let previous = THREAD_CANCEL_STATE.with(|cell| {
-        let prev = cell.get();
-        cell.set(state);
+    let previous = with_pthread_tls(|tls| {
+        let prev = tls.thread_cancel_state;
+        tls.thread_cancel_state = state;
         prev
     });
     if !oldstate.is_null() {
@@ -4022,9 +4066,9 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
         return unsafe { host_setcanceltype(typ, oldtype) };
     }
 
-    let previous = THREAD_CANCEL_TYPE.with(|cell| {
-        let prev = cell.get();
-        cell.set(typ);
+    let previous = with_pthread_tls(|tls| {
+        let prev = tls.thread_cancel_type;
+        tls.thread_cancel_type = typ;
         prev
     });
     if !oldtype.is_null() {
@@ -6606,8 +6650,10 @@ mod tests {
     }
 
     fn reset_cancel_state_for_tests() {
-        THREAD_CANCEL_STATE.with(|cell| cell.set(PTHREAD_CANCEL_ENABLE_STATE));
-        THREAD_CANCEL_TYPE.with(|cell| cell.set(PTHREAD_CANCEL_DEFERRED_TYPE));
+        with_pthread_tls(|tls| {
+            tls.thread_cancel_state = PTHREAD_CANCEL_ENABLE_STATE;
+            tls.thread_cancel_type = PTHREAD_CANCEL_DEFERRED_TYPE;
+        });
         set_cancellation_pending(current_cancel_key(), false);
     }
 
