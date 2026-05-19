@@ -3,8 +3,8 @@
   "manifest_id": "standalone-blocker-burndown-dag",
   "bead": "bd-juvqm.14",
   "generated_utc": "2026-05-09T00:00:00Z",
-  "source_commit": "0a94eff028c3b1b976107eace6218c176befac76",
-  "purpose": "Report-only planner output: a directed acyclic graph of next-step blocker burn-down beads derived from the standalone forge owner-action ledger plus host-dependency probe plan. The planner does NOT auto-create beads — agents read this DAG, decide which entries are still needed (deduping against any open `br list`), and create those beads manually via `br create`. Keeping planning separate from tracker mutation prevents stale duplicates after a peer beat the planner to a fix.",
+  "source_commit": "current",
+  "purpose": "Report-only planner output: a directed acyclic graph of next-step blocker burn-down beads derived from the standalone forge owner-action ledger plus live host-dependency blocker action rows. The planner does NOT auto-create beads — agents read this DAG, decide which entries are still needed (deduping against any open `br list`), and create those beads manually via `br create`. Keeping planning separate from tracker mutation prevents stale duplicates after a peer beat the planner to a fix.",
   "inputs": {
     "owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
     "host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
@@ -15,8 +15,11 @@
     "dedupe_key_format": "burn-<owner_surface>-<blocking_reason>",
     "auto_create_beads": false,
     "ledger_coverage_required": true,
+    "live_action_row_coverage_required": true,
     "ledger_extra_blocker_result": "fail_closed",
     "ledger_missing_blocker_result": "fail_closed",
+    "live_action_row_extra_blocker_result": "fail_closed",
+    "live_action_row_missing_blocker_result": "fail_closed",
     "stale_source_commit_result": "block_dag_advancement",
     "duplicate_dedupe_key_result": "fail_closed",
     "missing_owner_surface_result": "fail_closed",
@@ -151,5 +154,5 @@
       "exit_criteria": "objdump -p shows zero GLIBC_x.y / GCC_x.y verneed entries pointing at host providers."
     }
   ],
-  "regeneration_note": "When `standalone_forge_blocker_owner_action_ledger.v1.json` adds, removes, or renames a `blocking_reason`, regenerate this manifest by re-deriving the DAG node set and updating `source_commit` to the current HEAD. The harness checker fails closed when the DAG node set drifts from the ledger blocker set, so atomic regeneration is enforced. Do not delete nodes — replace with `deprecated_at_commit` field if a blocker is permanently retired."
+  "regeneration_note": "When `standalone_forge_blocker_owner_action_ledger.v1.json` or `standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows` adds, removes, or renames a `blocking_reason`, regenerate this manifest by re-deriving the DAG node set and keeping `source_commit` current. The harness checker fails closed when the DAG node set drifts from either the static ledger blocker set or the live action-row set, so atomic regeneration is enforced. Do not delete nodes — replace with `deprecated_at_commit` field if a blocker is permanently retired."
 }

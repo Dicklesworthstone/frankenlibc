@@ -2,8 +2,8 @@
 //! (bd-juvqm.14).
 //!
 //! The DAG manifest is the report-only output of the standalone blocker
-//! burn-down planner: given the live owner-action ledger, host-dependency
-//! probe plan, and burn-down progress rollup, it proposes the next set
+//! burn-down planner: given the owner-action ledger, live host-dependency
+//! blocker action rows, and burn-down progress rollup, it proposes the next set
 //! of beads an agent should consider creating (deduped against any open
 //! tracker rows). The planner explicitly does not create beads — agents
 //! decide manually.
@@ -15,6 +15,8 @@
 //!   * `nodes[*].blocking_reason` exactly covers the ledger's
 //!     `ledger_rows[*].blocking_reason` set (no missing, no extra) —
 //!     the DAG cannot drift from the ledger silently.
+//!   * `nodes[*].blocking_reason` exactly covers the live
+//!     `blocker_action_required_rows` set from the host dependency probe plan.
 //!   * Dedupe keys are unique and follow the
 //!     `burn-<owner_surface>-<blocking_reason>` format.
 //!   * Every owner_surface lands on a `validation_lane` listed in the
@@ -66,6 +68,10 @@ fn ledger_path() -> PathBuf {
     workspace_root().join("tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json")
 }
 
+fn host_dependency_probe_plan_path() -> PathBuf {
+    workspace_root().join("tests/conformance/standalone_host_dependency_probe_plan.v1.json")
+}
+
 fn rch_plan_path() -> PathBuf {
     workspace_root().join("tests/conformance/rch_validation_lane_plan.v1.json")
 }
@@ -74,6 +80,13 @@ fn nodes(dag: &Value) -> Result<&Vec<Value>, Box<dyn Error>> {
     dag["nodes"]
         .as_array()
         .ok_or_else(|| test_error("dag.nodes must be an array"))
+}
+
+fn dag_blocking_reasons(dag: &Value) -> Result<BTreeSet<String>, Box<dyn Error>> {
+    Ok(nodes(dag)?
+        .iter()
+        .filter_map(|n| n["blocking_reason"].as_str().map(|s| s.to_string()))
+        .collect())
 }
 
 #[test]
@@ -91,9 +104,9 @@ fn dag_has_required_top_level_shape() -> TestResult {
     ensure(
         dag["source_commit"]
             .as_str()
-            .map(|s| s.len() == 40)
+            .map(|s| s == "current" || s.len() == 40)
             .unwrap_or(false),
-        "source_commit must be a 40-char SHA",
+        "source_commit must be \"current\" or a 40-char SHA",
     )?;
     let policy = dag["policy"]
         .as_object()
@@ -102,8 +115,11 @@ fn dag_has_required_top_level_shape() -> TestResult {
         "dedupe_key_format",
         "auto_create_beads",
         "ledger_coverage_required",
+        "live_action_row_coverage_required",
         "ledger_extra_blocker_result",
         "ledger_missing_blocker_result",
+        "live_action_row_extra_blocker_result",
+        "live_action_row_missing_blocker_result",
         "stale_source_commit_result",
         "duplicate_dedupe_key_result",
         "missing_owner_surface_result",
@@ -118,6 +134,22 @@ fn dag_has_required_top_level_shape() -> TestResult {
     ensure(
         policy["auto_create_beads"] == Value::Bool(false),
         "policy.auto_create_beads must be false (planner is report-only)",
+    )?;
+    ensure(
+        policy["ledger_coverage_required"] == Value::Bool(true),
+        "policy.ledger_coverage_required must be true",
+    )?;
+    ensure(
+        policy["live_action_row_coverage_required"] == Value::Bool(true),
+        "policy.live_action_row_coverage_required must be true",
+    )?;
+    ensure(
+        policy["live_action_row_extra_blocker_result"] == "fail_closed",
+        "policy.live_action_row_extra_blocker_result must be fail_closed",
+    )?;
+    ensure(
+        policy["live_action_row_missing_blocker_result"] == "fail_closed",
+        "policy.live_action_row_missing_blocker_result must be fail_closed",
     )?;
     ensure(
         dag["regeneration_note"]
@@ -151,10 +183,7 @@ fn dag_blocking_reasons_match_ledger_exactly() -> TestResult {
     let dag = load_json(&dag_path())?;
     let ledger = load_json(&ledger_path())?;
 
-    let dag_reasons: BTreeSet<String> = nodes(&dag)?
-        .iter()
-        .filter_map(|n| n["blocking_reason"].as_str().map(|s| s.to_string()))
-        .collect();
+    let dag_reasons = dag_blocking_reasons(&dag)?;
 
     let ledger_rows = ledger["ledger_rows"]
         .as_array()
@@ -180,6 +209,49 @@ fn dag_blocking_reasons_match_ledger_exactly() -> TestResult {
             "DAG has blocking_reasons not in ledger (stale planner output): {:?}",
             extra
         ),
+    )?;
+    Ok(())
+}
+
+#[test]
+fn dag_blocking_reasons_match_live_action_rows_exactly() -> TestResult {
+    let dag = load_json(&dag_path())?;
+    let plan = load_json(&host_dependency_probe_plan_path())?;
+
+    let dag_reasons = dag_blocking_reasons(&dag)?;
+    let action_rows = plan["current_forge_blocker_projection"]["blocker_action_required_rows"]
+        .as_object()
+        .ok_or_else(|| test_error("blocker_action_required_rows must be an object"))?;
+    let live_reasons: BTreeSet<String> = action_rows.keys().cloned().collect();
+
+    for (reason, row) in action_rows {
+        ensure(
+            row["blocking_reason"].as_str() == Some(reason),
+            format!("live action row key {reason} must match row.blocking_reason"),
+        )?;
+        ensure(
+            row["promotion_allowed"] == Value::Bool(false),
+            format!("live action row {reason} must not allow promotion"),
+        )?;
+        ensure(
+            row["current_blocker_values"]
+                .as_array()
+                .map(|values| !values.is_empty())
+                .unwrap_or(false),
+            format!("live action row {reason} must carry current_blocker_values"),
+        )?;
+    }
+
+    let missing: Vec<&String> = live_reasons.difference(&dag_reasons).collect();
+    let extra: Vec<&String> = dag_reasons.difference(&live_reasons).collect();
+
+    ensure(
+        missing.is_empty(),
+        format!("DAG missing blocking_reasons present in live action rows: {missing:?}"),
+    )?;
+    ensure(
+        extra.is_empty(),
+        format!("DAG has blocking_reasons not in live action rows: {extra:?}"),
     )?;
     Ok(())
 }
