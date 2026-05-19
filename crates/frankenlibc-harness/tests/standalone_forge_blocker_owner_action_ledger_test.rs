@@ -16,6 +16,8 @@ type TestResult<T = ()> = Result<T, String>;
 
 const REQUIRED_OWNER_SURFACES: &[&str] = &[
     "runtime_linkage",
+    "direct_dynamic_dependencies",
+    "loader_resolution",
     "loader_startup",
     "libc_surface",
     "compiler_runtime",
@@ -287,6 +289,10 @@ fn ledger_manifest_covers_current_forge_snapshot() -> TestResult {
             json_string(row, "catalog_owner_surface")? == catalog_owner,
             format!("{reason}: catalog_owner_surface must match host dependency probe plan"),
         )?;
+        require(
+            owner == catalog_owner,
+            format!("{reason}: owner_surface must match live action-row owner"),
+        )?;
         let probe_id = json_string(row, "primary_probe_id")?;
         require(
             reason_to_probe.get(reason).and_then(Value::as_str) == Some(probe_id),
@@ -425,6 +431,25 @@ fn checker_rejects_missing_required_owner_surface() -> TestResult {
         &mutated,
         "owner-ledger-owner-drift",
         "required owner surface has no ledger row: symbol_versioning",
+    )
+}
+
+#[test]
+fn checker_rejects_owner_surface_drift_from_live_action_row() -> TestResult {
+    let mutated = write_mutated_ledger("owner-ledger-live-owner-drift", |ledger| {
+        let row = ledger_row_mut(ledger, "host_direct_needed_libraries_present")?;
+        row.as_object_mut()
+            .ok_or_else(|| "row must be object".to_string())?
+            .insert(
+                "owner_surface".to_string(),
+                Value::String("runtime_linkage".to_string()),
+            );
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "owner-ledger-live-owner-drift",
+        "ledger_rows[host_direct_needed_libraries_present].owner_surface must match live action-row owner direct_dynamic_dependencies",
     )
 }
 

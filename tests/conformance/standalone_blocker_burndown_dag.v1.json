@@ -28,6 +28,8 @@
   },
   "owner_surface_to_validation_lane": {
     "runtime_linkage": "standalone-forge-scripts",
+    "direct_dynamic_dependencies": "standalone-forge-scripts",
+    "loader_resolution": "standalone-forge-scripts",
     "loader_startup": "standalone-forge-scripts",
     "libc_surface": "abi-stdio",
     "compiler_runtime": "standalone-forge-scripts",
@@ -49,10 +51,10 @@
       "exit_criteria": "scripts/check_standalone_replacement_artifact.sh shows no host libc.so / ld-linux entries under DT_NEEDED."
     },
     {
-      "dedupe_key": "burn-runtime_linkage-host_direct_needed_libraries_present",
+      "dedupe_key": "burn-direct_dynamic_dependencies-host_direct_needed_libraries_present",
       "suggested_title": "Eliminate direct host DT_NEEDED edges (separated from ldd resolution)",
-      "labels": ["standalone", "blocker", "needed-libs", "runtime_linkage"],
-      "owner_surface": "runtime_linkage",
+      "labels": ["standalone", "blocker", "needed-libs", "direct-dynamic-dependencies"],
+      "owner_surface": "direct_dynamic_dependencies",
       "blocking_reason": "host_direct_needed_libraries_present",
       "validation_lane": "standalone-forge-scripts",
       "depends_on": ["burn-runtime_linkage-host_needed_libraries_present"],
@@ -60,13 +62,13 @@
       "exit_criteria": "objdump -p artifact has no DIRECT host runtime entries; transitive resolution still tolerated until the next node closes."
     },
     {
-      "dedupe_key": "burn-runtime_linkage-host_resolved_libraries_present",
+      "dedupe_key": "burn-loader_resolution-host_resolved_libraries_present",
       "suggested_title": "Force ldd-resolution proof to remove transitive host edges",
-      "labels": ["standalone", "blocker", "needed-libs", "runtime_linkage"],
-      "owner_surface": "runtime_linkage",
+      "labels": ["standalone", "blocker", "needed-libs", "loader-resolution"],
+      "owner_surface": "loader_resolution",
       "blocking_reason": "host_resolved_libraries_present",
       "validation_lane": "standalone-forge-scripts",
-      "depends_on": ["burn-runtime_linkage-host_direct_needed_libraries_present"],
+      "depends_on": ["burn-direct_dynamic_dependencies-host_direct_needed_libraries_present"],
       "first_safe_action": "Force the ldd-resolution proof to distinguish direct dependencies from transitive load-time resolutions and remove every transitive host edge.",
       "exit_criteria": "ldd artifact reports zero host paths; only owned object paths resolve."
     },
@@ -77,7 +79,7 @@
       "owner_surface": "loader_startup",
       "blocking_reason": "host_loader_dependency",
       "validation_lane": "standalone-forge-scripts",
-      "depends_on": ["burn-runtime_linkage-host_direct_needed_libraries_present"],
+      "depends_on": ["burn-direct_dynamic_dependencies-host_direct_needed_libraries_present"],
       "first_safe_action": "Inventory the owned CRT, init/fini, and loader startup obligations that must replace ld-linux when the artifact is loaded standalone.",
       "exit_criteria": "Owned _start / _init / _fini bound to the artifact; no ld-linux PT_INTERP entry."
     },
@@ -88,7 +90,7 @@
       "owner_surface": "libc_surface",
       "blocking_reason": "host_libc_dependency",
       "validation_lane": "abi-stdio",
-      "depends_on": ["burn-runtime_linkage-host_resolved_libraries_present"],
+      "depends_on": ["burn-loader_resolution-host_resolved_libraries_present"],
       "first_safe_action": "Burn down replacement-forbidden host libc call-throughs and keep replacement_proofs evidence current per call site.",
       "exit_criteria": "Every libc-surface ABI symbol resolves inside the standalone artifact OR is documented as out-of-scope with a closure rationale."
     },
@@ -99,7 +101,7 @@
       "owner_surface": "compiler_runtime",
       "blocking_reason": "libgcc_runtime_dependency",
       "validation_lane": "standalone-forge-scripts",
-      "depends_on": ["burn-runtime_linkage-host_resolved_libraries_present"],
+      "depends_on": ["burn-loader_resolution-host_resolved_libraries_present"],
       "first_safe_action": "Separate libgcc_s NEEDED and GCC version-node blockers, then test an owned compiler runtime (or compiler-rt-equivalent) for the surface area FrankenLibC actually exercises.",
       "exit_criteria": "Standalone artifact links without libgcc_s.so.1 NEEDED edge AND no GCC_X.Y verneed."
     },

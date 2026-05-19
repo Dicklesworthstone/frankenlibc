@@ -47,6 +47,8 @@ REQUIRED_ROW_FIELDS = {
 }
 REQUIRED_OWNER_SURFACES = {
     "runtime_linkage",
+    "direct_dynamic_dependencies",
+    "loader_resolution",
     "loader_startup",
     "libc_surface",
     "compiler_runtime",
@@ -258,6 +260,8 @@ for index, row in enumerate(rows):
     expected_catalog_owner = expected_catalog.get("owner_surface") if isinstance(expected_catalog, dict) else None
     if catalog_owner != expected_catalog_owner:
         errors.append(f"{context}.catalog_owner_surface must match blocker catalog owner {expected_catalog_owner}")
+    if owner != expected_catalog_owner:
+        errors.append(f"{context}.owner_surface must match live action-row owner {expected_catalog_owner}")
 
     expected_probe = reason_to_probe.get(reason) if isinstance(reason_to_probe, dict) else None
     if row.get("primary_probe_id") != expected_probe:

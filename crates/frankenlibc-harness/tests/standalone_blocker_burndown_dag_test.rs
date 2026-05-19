@@ -17,6 +17,9 @@
 //!     the DAG cannot drift from the ledger silently.
 //!   * `nodes[*].blocking_reason` exactly covers the live
 //!     `blocker_action_required_rows` set from the host dependency probe plan.
+//!   * `nodes[*].owner_surface` exactly matches each live action row's
+//!     `owner_surface`, so direct DT_NEEDED and ldd-resolution work cannot
+//!     collapse back into the broader runtime-linkage bucket.
 //!   * Dedupe keys are unique and follow the
 //!     `burn-<owner_surface>-<blocking_reason>` format.
 //!   * Every owner_surface lands on a `validation_lane` listed in the
@@ -219,6 +222,14 @@ fn dag_blocking_reasons_match_live_action_rows_exactly() -> TestResult {
     let plan = load_json(&host_dependency_probe_plan_path())?;
 
     let dag_reasons = dag_blocking_reasons(&dag)?;
+    let nodes_by_reason: HashMap<String, &Value> = nodes(&dag)?
+        .iter()
+        .filter_map(|node| {
+            node["blocking_reason"]
+                .as_str()
+                .map(|reason| (reason.to_string(), node))
+        })
+        .collect();
     let action_rows = plan["current_forge_blocker_projection"]["blocker_action_required_rows"]
         .as_object()
         .ok_or_else(|| test_error("blocker_action_required_rows must be an object"))?;
@@ -232,6 +243,19 @@ fn dag_blocking_reasons_match_live_action_rows_exactly() -> TestResult {
         ensure(
             row["promotion_allowed"] == Value::Bool(false),
             format!("live action row {reason} must not allow promotion"),
+        )?;
+        let live_owner = row["owner_surface"]
+            .as_str()
+            .ok_or_else(|| test_error(format!("live action row {reason} missing owner_surface")))?;
+        let dag_owner = nodes_by_reason
+            .get(reason)
+            .and_then(|node| node["owner_surface"].as_str())
+            .ok_or_else(|| test_error(format!("DAG missing node for live action row {reason}")))?;
+        ensure(
+            dag_owner == live_owner,
+            format!(
+                "DAG node {reason} owner_surface={dag_owner} must match live action row owner_surface={live_owner}"
+            ),
         )?;
         ensure(
             row["current_blocker_values"]

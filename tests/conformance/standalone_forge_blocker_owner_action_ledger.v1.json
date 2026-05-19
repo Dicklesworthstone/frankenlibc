@@ -46,6 +46,8 @@
   ],
   "required_owner_surfaces": [
     "runtime_linkage",
+    "direct_dynamic_dependencies",
+    "loader_resolution",
     "loader_startup",
     "libc_surface",
     "compiler_runtime",
@@ -62,7 +64,28 @@
       ],
       "required_report_fields": [
         "artifact_state.dependency_breakdown.needed_libraries",
+        "artifact_state.dependency_breakdown.host_needed_libraries",
+        "blocker_delta.delta_classification"
+      ]
+    },
+    "direct_dynamic_dependencies": {
+      "primary_command": [
+        "scripts/check_standalone_replacement_artifact.sh",
+        "--forge"
+      ],
+      "required_report_fields": [
+        "artifact_state.dependency_breakdown.needed_libraries",
         "artifact_state.dependency_breakdown.host_direct_needed_libraries",
+        "blocker_delta.delta_classification"
+      ]
+    },
+    "loader_resolution": {
+      "primary_command": [
+        "scripts/check_standalone_replacement_artifact.sh",
+        "--forge"
+      ],
+      "required_report_fields": [
+        "artifact_state.dependency_breakdown.ldd_libraries",
         "artifact_state.dependency_breakdown.host_resolved_libraries",
         "blocker_delta.delta_classification"
       ]
@@ -174,7 +197,7 @@
     },
     {
       "blocking_reason": "host_direct_needed_libraries_present",
-      "owner_surface": "runtime_linkage",
+      "owner_surface": "direct_dynamic_dependencies",
       "catalog_owner_surface": "direct_dynamic_dependencies",
       "primary_probe_id": "readelf_dynamic_dependencies",
       "primary_evidence_command": [
@@ -210,7 +233,7 @@
     },
     {
       "blocking_reason": "host_resolved_libraries_present",
-      "owner_surface": "runtime_linkage",
+      "owner_surface": "loader_resolution",
       "catalog_owner_surface": "loader_resolution",
       "primary_probe_id": "ldd_host_glibc_scan",
       "primary_evidence_command": [
@@ -516,7 +539,7 @@
   "summary": {
     "current_blocking_reason_count": 10,
     "ledger_row_count": 10,
-    "required_owner_surface_count": 8,
+    "required_owner_surface_count": 10,
     "promotion_allowed": false,
     "next_consumer": "bd-zyck1.94"
   }
