@@ -9,6 +9,7 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::int_plus_one)]
 
+#[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::mem::{align_of, size_of};
@@ -814,16 +815,36 @@ impl HostentTlsStorage {
     }
 }
 
+// SAFETY: the owned-TLS experiment stores one boxed hostent result per thread
+// id. `hostent` and its alias/address lists only point into the same boxed
+// storage, so moving the box while the cache mutex is held does not transfer
+// ownership of pointees across threads.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for HostentTlsStorage {}
+
+#[cfg(feature = "owned-tls-cache")]
+static GETHOSTBYNAME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostentTlsStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(HostentTlsStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static GETHOSTBYNAME_TLS: RefCell<HostentTlsStorage> =
         RefCell::new(HostentTlsStorage::new());
 }
 
-fn with_tls_hostent<R>(f: impl FnOnce(&mut HostentTlsStorage) -> R) -> R {
-    GETHOSTBYNAME_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
-        f(&mut storage)
-    })
+fn with_tls_hostent<R>(callback: impl FnOnce(&mut HostentTlsStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GETHOSTBYNAME_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GETHOSTBYNAME_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
 }
 
 unsafe fn populate_tls_hostent(name_bytes: &[u8], ip: Ipv4Addr) -> *mut c_void {
