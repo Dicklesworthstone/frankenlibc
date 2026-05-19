@@ -156,8 +156,8 @@ fn implicit_prefix_bits(first_octet: u8, supplied_octets: usize) -> u32 {
 /// CIDR string. Mirrors libresolv `inet_net_ntop(3)` for AF_INET.
 ///
 /// Conforming to libresolv: always emit the `/prefix` suffix, mask the
-/// final partial-octet to the prefix boundary, and emit the full
-/// all-zero dotted quad for `prefix_bits == 0`.
+/// final partial-octet to the prefix boundary, and emit one zero octet
+/// for `prefix_bits == 0`.
 pub fn format(bytes: &[u8], prefix_bits: u32) -> Result<Vec<u8>, NetPtonError> {
     if prefix_bits > 32 {
         return Err(NetPtonError::Invalid);
@@ -168,13 +168,9 @@ pub fn format(bytes: &[u8], prefix_bits: u32) -> Result<Vec<u8>, NetPtonError> {
     }
 
     let mut out = Vec::with_capacity(20);
-    // libresolv renders a zero-width IPv4 network as the full
-    // all-zero dotted quad ("0.0.0.0/0"), not as a bare "0/0".
-    let emit_count = if prefix_bits == 0 {
-        4
-    } else {
-        bytes_needed.max(1)
-    };
+    // libresolv renders a zero-width IPv4 network as "0/0" rather
+    // than a bare "/0" or a full all-zero dotted quad.
+    let emit_count = bytes_needed.max(1);
 
     for i in 0..emit_count {
         if i > 0 {
@@ -609,7 +605,7 @@ mod tests {
     fn format_zero_prefix() {
         let bytes = [];
         let s = format(&bytes, 0).unwrap();
-        assert_eq!(s, b"0.0.0.0/0");
+        assert_eq!(s, b"0/0");
     }
 
     #[test]
@@ -643,7 +639,7 @@ mod tests {
         //   /20 masks partial octets to bit boundary
         let cases: &[(&[u8], &[u8])] = &[
             (b"10/8", b"10/8"),
-            (b"0/0", b"0.0.0.0/0"),
+            (b"0/0", b"0/0"),
             (b"10.0/16", b"10.0/16"),
             (b"192.168.0/24", b"192.168.0/24"),
             (b"10.1.2/20", b"10.1.0/20"),
