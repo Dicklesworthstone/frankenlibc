@@ -14,6 +14,8 @@ use crate::{ArtifactHashMap, artifact_hash_map};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+const MAX_FLOAT_PRECISION: usize = 65_535;
+
 // ---------------------------------------------------------------------------
 // Format spec types
 // ---------------------------------------------------------------------------
@@ -1044,7 +1046,7 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // 65535 to prevent a process abort from any adversarial `%.99999f`-style
     // format string. Formats above this already panic with today's code, so
     // capping loses no currently-working behavior. (bd-h7ede)
-    let precision = precision.min(65_535);
+    let precision = precision.min(MAX_FLOAT_PRECISION);
 
     // Handle special values.
     if value.is_nan() || value.is_infinite() {
@@ -1105,7 +1107,7 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         ),
         Some(RawValueRenderKind::Float(FloatFormatKind::Hex)) => format_a(
             abs,
-            precision,
+            hex_float_precision(spec),
             spec.conversion.is_ascii_uppercase(),
             spec.flags.alt_form,
         ),
@@ -1237,6 +1239,14 @@ fn parse_positional_index(fmt: &[u8]) -> Option<(usize, usize)> {
         return None;
     }
     Some((position, pos + 1))
+}
+
+fn hex_float_precision(spec: &FormatSpec) -> Option<usize> {
+    match spec.precision {
+        Precision::Fixed(p) => Some(p.min(MAX_FLOAT_PRECISION)),
+        Precision::None => None,
+        Precision::FromArg | Precision::FromArgPosition(_) => Some(6),
+    }
 }
 
 fn resolve_width(spec: &FormatSpec) -> usize {
@@ -1413,16 +1423,16 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
 ///
 /// Produces output of the form `0xh.hhhhp±d` where `h` are hex digits and
 /// `d` is the binary exponent in decimal.
-fn format_a(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> String {
+fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: bool) -> String {
     let p_char = if uppercase { 'P' } else { 'p' };
     let hex_alpha = if uppercase { b'A' } else { b'a' };
 
     if value == 0.0 {
         let prefix = if uppercase { "0X" } else { "0x" };
-        if precision == 0 && !alt_form {
+        let prec = precision.unwrap_or(0);
+        if prec == 0 && !alt_form {
             return alloc::format!("{prefix}0{p_char}+0");
         }
-        let prec = if precision == 0 { 0 } else { precision };
         if prec == 0 {
             return alloc::format!("{prefix}0.{p_char}+0");
         }
@@ -1444,24 +1454,7 @@ fn format_a(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
 
     // The 52-bit mantissa gives 13 hex digits of fractional part.
     let default_prec = 13;
-    let prec = if precision == 0 && !alt_form {
-        // When precision is unspecified (0 default), use enough digits to
-        // represent the value exactly.
-        if mantissa_bits == 0 {
-            0
-        } else {
-            // Strip trailing zero nibbles.
-            let mut trailing = 0;
-            let mut m = mantissa_bits;
-            while m & 0xF == 0 && trailing < default_prec {
-                m >>= 4;
-                trailing += 1;
-            }
-            default_prec - trailing
-        }
-    } else {
-        precision
-    };
+    let prec = precision.unwrap_or_else(|| exact_hex_fraction_digits(mantissa_bits, default_prec));
 
     let prefix = if uppercase { "0X" } else { "0x" };
     let sign = if bin_exp < 0 { '-' } else { '+' };
@@ -1493,6 +1486,19 @@ fn format_a(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
         }
         alloc::format!("{prefix}{lead_digit}.{frac}{p_char}{sign}{abs_exp}")
     }
+}
+
+fn exact_hex_fraction_digits(mantissa_bits: u64, default_prec: usize) -> usize {
+    if mantissa_bits == 0 {
+        return 0;
+    }
+    let mut trailing = 0;
+    let mut m = mantissa_bits;
+    while m & 0xF == 0 && trailing < default_prec {
+        m >>= 4;
+        trailing += 1;
+    }
+    default_prec - trailing
 }
 
 /// Remove trailing zeros after the decimal point.
@@ -2123,6 +2129,53 @@ mod tests {
         let mut buf = Vec::new();
         format_float(f64::INFINITY, &spec, &mut buf);
         assert_eq!(&buf, b"inf");
+    }
+
+    #[test]
+    fn test_hex_float_default_precision_is_exact() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'a',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_float(1.5, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1.8p+0");
+
+        buf.clear();
+        format_float(1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1p+0");
+
+        buf.clear();
+        format_float(0.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x0p+0");
+    }
+
+    #[test]
+    fn test_hex_float_alt_form_keeps_decimal_point() {
+        let spec = FormatSpec {
+            flags: FormatFlags {
+                alt_form: true,
+                ..FormatFlags::default()
+            },
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'a',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_float(1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1.p+0");
+
+        buf.clear();
+        format_float(0.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x0.p+0");
     }
 
     #[test]
