@@ -100,6 +100,7 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.ldd_libraries",
     "artifact_state.dependency_breakdown.host_needed_libraries",
     "artifact_state.dependency_breakdown.undefined_symbols",
+    "artifact_state.dependency_breakdown.undefined_symbol_rows",
     "artifact_state.dependency_breakdown.undefined_unwind_symbols",
     "artifact_state.dependency_breakdown.undefined_glibc_symbols",
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
@@ -819,6 +820,7 @@ def empty_dependency_breakdown():
         "direct_host_needed_library_rows": [],
         "host_resolved_library_rows": [],
         "undefined_symbols": [],
+        "undefined_symbol_rows": [],
         "undefined_unwind_symbols": [],
         "undefined_glibc_symbols": [],
         "undefined_tls_symbols": [],
@@ -914,6 +916,11 @@ def parse_version_needs(readelf_version_text):
 
 def symbol_base(symbol):
     return symbol.split("@", 1)[0]
+
+
+def symbol_version_suffix(symbol):
+    parts = symbol.split("@", 1)
+    return parts[1] if len(parts) == 2 else None
 
 
 def is_host_runtime_library(name):
@@ -1016,6 +1023,86 @@ def build_direct_host_needed_library_rows(
                 ),
                 "evidence_fields": direct_catalog["evidence_fields"],
                 "next_action": direct_catalog["next_action"],
+                "promotion_allowed": False,
+            }
+        )
+    return rows
+
+
+def symbol_blocking_reasons(
+    symbol,
+    undefined_unwind_symbols,
+    undefined_glibc_symbols,
+    undefined_tls_symbols,
+    blocking_reasons,
+):
+    reasons = []
+    if symbol in undefined_unwind_symbols and "undefined_unwind_symbols" in blocking_reasons:
+        reasons.append("undefined_unwind_symbols")
+    if symbol in undefined_glibc_symbols and "undefined_glibc_symbols" in blocking_reasons:
+        reasons.append("undefined_glibc_symbols")
+    if symbol in undefined_tls_symbols and "undefined_tls_symbols" in blocking_reasons:
+        reasons.append("undefined_tls_symbols")
+    return reasons
+
+
+def primary_undefined_symbol_reason(symbol, symbol_reasons):
+    base = symbol_base(symbol)
+    if "undefined_tls_symbols" in symbol_reasons:
+        return "undefined_tls_symbols"
+    if "undefined_unwind_symbols" in symbol_reasons:
+        return "undefined_unwind_symbols"
+    if "undefined_glibc_symbols" in symbol_reasons:
+        return "undefined_glibc_symbols"
+    if base.startswith("_Unwind_") or base == "__gcc_personality_v0":
+        return "undefined_unwind_symbols"
+    if base == "__tls_get_addr" or "tls" in base.lower():
+        return "undefined_tls_symbols"
+    if "@GLIBC_" in symbol or base.startswith("__libc_"):
+        return "undefined_glibc_symbols"
+    return "undefined_symbols"
+
+
+def undefined_symbol_evidence_fields(symbol_reasons):
+    fields = []
+    for reason in symbol_reasons:
+        definition = BLOCKER_CATALOG_DEFINITIONS.get(reason)
+        if definition:
+            fields.extend(definition["evidence_fields"])
+    return unique_sorted(fields or ["undefined_symbols"])
+
+
+def build_undefined_symbol_rows(
+    undefined_symbols,
+    undefined_unwind_symbols,
+    undefined_glibc_symbols,
+    undefined_tls_symbols,
+    blocking_reasons,
+):
+    rows = []
+    for symbol in undefined_symbols:
+        symbol_reasons = symbol_blocking_reasons(
+            symbol,
+            undefined_unwind_symbols,
+            undefined_glibc_symbols,
+            undefined_tls_symbols,
+            blocking_reasons,
+        )
+        primary_reason = primary_undefined_symbol_reason(symbol, symbol_reasons)
+        primary_catalog = BLOCKER_CATALOG_DEFINITIONS.get(primary_reason, {})
+        rows.append(
+            {
+                "symbol": symbol,
+                "symbol_base": symbol_base(symbol),
+                "version_suffix": symbol_version_suffix(symbol),
+                "owner_surface": primary_catalog.get("owner_surface", "unknown"),
+                "primary_probe_id": "nm_dynamic_undefined_symbols",
+                "blocking_reasons": symbol_reasons,
+                "evidence_fields": undefined_symbol_evidence_fields(symbol_reasons),
+                "next_action": primary_catalog.get(
+                    "next_action",
+                    "Classify this undefined symbol before using it as replacement claim evidence.",
+                ),
                 "promotion_allowed": False,
             }
         )
@@ -1170,6 +1257,13 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
                 blocking_reasons,
             ),
             "undefined_symbols": undefined_symbols,
+            "undefined_symbol_rows": build_undefined_symbol_rows(
+                undefined_symbols,
+                unique_sorted(undefined_unwind_symbols),
+                unique_sorted(undefined_glibc_symbols),
+                unique_sorted(undefined_tls_symbols),
+                blocking_reasons,
+            ),
             "undefined_unwind_symbols": unique_sorted(undefined_unwind_symbols),
             "undefined_glibc_symbols": unique_sorted(undefined_glibc_symbols),
             "undefined_tls_symbols": unique_sorted(undefined_tls_symbols),

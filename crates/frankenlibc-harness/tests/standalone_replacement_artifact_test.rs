@@ -27,6 +27,7 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.ldd_libraries",
     "artifact_state.dependency_breakdown.host_needed_libraries",
     "artifact_state.dependency_breakdown.undefined_symbols",
+    "artifact_state.dependency_breakdown.undefined_symbol_rows",
     "artifact_state.dependency_breakdown.undefined_unwind_symbols",
     "artifact_state.dependency_breakdown.undefined_glibc_symbols",
     "artifact_state.dependency_breakdown.undefined_tls_symbols",
@@ -2446,6 +2447,83 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert!(undefined.contains("_Unwind_DeleteException@GCC_3.0"));
     assert!(undefined.contains("_Unwind_Resume@GCC_3.0"));
     assert!(undefined.contains("__tls_get_addr@GLIBC_2.3"));
+
+    let symbol_rows = breakdown["undefined_symbol_rows"]
+        .as_array()
+        .expect("undefined_symbol_rows should be an array");
+    assert_eq!(
+        symbol_rows.len(),
+        undefined.len(),
+        "every undefined symbol should have a blocker row"
+    );
+    let symbol_row_by_symbol: HashMap<_, _> = symbol_rows
+        .iter()
+        .map(|row| {
+            (
+                row["symbol"].as_str().expect("symbol should be string"),
+                row,
+            )
+        })
+        .collect();
+    for symbol in &undefined {
+        let row = symbol_row_by_symbol
+            .get(symbol.as_str())
+            .unwrap_or_else(|| panic!("missing undefined symbol row for {symbol}"));
+        assert_eq!(
+            row["primary_probe_id"].as_str(),
+            Some("nm_dynamic_undefined_symbols")
+        );
+        assert_eq!(row["promotion_allowed"].as_bool(), Some(false));
+        assert_eq!(
+            row["symbol_base"].as_str(),
+            Some(symbol.split('@').next().expect("symbol base should exist"))
+        );
+        assert!(
+            row["evidence_fields"]
+                .as_array()
+                .is_some_and(|fields| fields
+                    .iter()
+                    .any(|field| { field.as_str() == Some("undefined_symbols") })),
+            "undefined symbol row should cite aggregate undefined-symbol evidence"
+        );
+        assert!(
+            row["next_action"]
+                .as_str()
+                .is_some_and(|action| !action.is_empty()),
+            "undefined symbol row should include a next action"
+        );
+        assert!(
+            !string_set(&row["blocking_reasons"]).is_empty(),
+            "undefined symbol row should cite at least one blocker reason"
+        );
+    }
+    let unwind_row = symbol_row_by_symbol
+        .get("_Unwind_Backtrace@GCC_3.3")
+        .expect("missing _Unwind_Backtrace row");
+    assert_eq!(unwind_row["owner_surface"].as_str(), Some("unwind_runtime"));
+    assert_eq!(
+        unwind_row["symbol_base"].as_str(),
+        Some("_Unwind_Backtrace")
+    );
+    assert_eq!(unwind_row["version_suffix"].as_str(), Some("GCC_3.3"));
+    assert!(
+        string_set(&unwind_row["blocking_reasons"]).contains("undefined_unwind_symbols"),
+        "unwind row should cite undefined_unwind_symbols"
+    );
+    let tls_row = symbol_row_by_symbol
+        .get("__tls_get_addr@GLIBC_2.3")
+        .expect("missing __tls_get_addr row");
+    assert_eq!(tls_row["owner_surface"].as_str(), Some("tls_startup"));
+    assert_eq!(tls_row["symbol_base"].as_str(), Some("__tls_get_addr"));
+    assert_eq!(tls_row["version_suffix"].as_str(), Some("GLIBC_2.3"));
+    assert!(
+        string_set(&tls_row["blocking_reasons"]).contains("undefined_tls_symbols"),
+        "TLS row should cite undefined_tls_symbols"
+    );
+    assert!(
+        string_set(&tls_row["blocking_reasons"]).contains("undefined_glibc_symbols"),
+        "TLS row should also cite undefined_glibc_symbols for GLIBC-versioned symbol"
+    );
 
     let unwind = string_set(&breakdown["undefined_unwind_symbols"]);
     assert!(unwind.contains("_Unwind_Backtrace@GCC_3.3"));
