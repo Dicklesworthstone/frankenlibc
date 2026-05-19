@@ -3,11 +3,12 @@
   "manifest_id": "standalone-owned-tls-startup-surface",
   "bead": "bd-w1c58",
   "source_commit": "current",
-  "source_commit_hint": "82b0f60978b3",
-  "generated_utc": "2026-05-06T07:25:05Z",
-  "purpose": "Report-only ownership contract for the current standalone forge __tls_get_addr@GLIBC_2.3 blocker. This ties the TLS startup symbol to its ld-linux provider version row, owner/action ledger entry, TLS model experiment limit, source-surface inventory, evidence commands, and exit criteria so future work must prove real artifact-level blocker removal before changing replacement claims.",
+  "source_commit_hint": "5f06d90d",
+  "generated_utc": "2026-05-19T15:33:18Z",
+  "purpose": "Report-only ownership contract for the current standalone forge __tls_get_addr@GLIBC_2.3 blocker. This ties the TLS startup symbol to its ld-linux provider version row, owner/action ledger entry, TLS model experiment limit, residual artifact std TLS inventory, evidence commands, and exit criteria so future work must prove real artifact-level blocker removal before changing replacement claims.",
   "inputs": {
     "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+    "standalone_tls_removal_experiment": "tests/conformance/standalone_tls_removal_experiment.v1.json",
     "standalone_tls_model_startup_experiment": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
@@ -72,19 +73,21 @@
       "source_version_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
       "source_tls_model_experiment": "standalone_tls_model_startup_experiment.comparison.initial_exec_delta_classification",
       "source_owner_ledger": "standalone_forge_blocker_owner_action_ledger.ledger_rows.undefined_tls_symbols",
-      "semantic_contract_class": "dynamic TLS resolver and startup relocation",
-      "owned_substitute_strategy": "Own or eliminate dynamic TLS access so the standalone replacement artifact no longer requires host ld-linux __tls_get_addr resolution.",
+      "semantic_contract_class": "dynamic TLS resolver and residual Rust std TLS runtime",
+      "owned_substitute_strategy": "Eliminate or own the residual Rust std panic, stdio, and thread TLS paths so the standalone replacement artifact no longer requires host ld-linux __tls_get_addr resolution.",
       "owned_surface_status": "unresolved",
       "source_surface_hotspots": [
-        "crates/frankenlibc-abi/src/startup_abi.rs",
-        "crates/frankenlibc-abi/src/startup_helpers.rs",
-        "crates/frankenlibc-core/src/pthread/tls.rs",
-        "crates/frankenlibc-abi/src/unistd_abi.rs",
-        "crates/frankenlibc-abi/src/resolv_abi.rs"
+        "std::panicking::panic_count::LOCAL_PANIC_COUNT",
+        "std::io::stdio::OUTPUT_CAPTURE",
+        "std::sys::thread_local::destructors::list::DTORS",
+        "std::thread::current::id::ID",
+        "std::thread::current::CURRENT",
+        "std::thread::spawnhook::SPAWN_HOOKS"
       ],
       "evidence_commands": [
         "nm -D libfrankenlibc_replace.so | rg \"__tls_get_addr(@GLIBC_2.3)?\"",
         "readelf -Ws libfrankenlibc_replace.so | rg \"UND __tls_get_addr(@GLIBC_2.3)?\"",
+        "readelf -Ws libfrankenlibc_replace.so | rg \"LOCAL_PANIC_COUNT|OUTPUT_CAPTURE|DTORS|thread7current|SPAWN_HOOKS\"",
         "readelf --version-info libfrankenlibc_replace.so | rg \"ld-linux-x86-64.so.2|GLIBC_2.3\"",
         "scripts/check_standalone_tls_model_startup_experiment.sh"
       ],
@@ -93,6 +96,8 @@
         "nm -D reports no undefined __tls_get_addr symbol",
         "readelf -Ws reports no undefined __tls_get_addr symbol",
         "readelf --version-info has no ld-linux-x86-64.so.2:GLIBC_2.3 need",
+        "readelf -Ws reports no residual std panic/io/thread TLS emitters",
+        "readelf -r reports zero R_X86_64_DTPMOD64 relocations and no __tls_get_addr jump slot",
         "standalone_tls_model_startup_experiment is refreshed with current artifact absence evidence before any claim changes"
       ],
       "status_until_exit": "claim_blocked"
@@ -102,11 +107,12 @@
     "current_tls_symbol_count": 1,
     "provider_library_count": 1,
     "provider_version_requirement_count": 1,
-    "source_surface_hotspot_count": 5,
+    "source_surface_hotspot_count": 6,
+    "residual_artifact_tls_emitter_count": 6,
     "unresolved_symbol_count": 1,
     "owned_surface_ready": false,
     "promotion_allowed": false,
     "claim_status_until_symbol_exit": "claim_blocked",
-    "next_safe_action": "Implement owned TLS startup/runtime support or eliminate dynamic TLS access, then refresh current nm/readelf absence controls before clearing __tls_get_addr."
+    "next_safe_action": "Replace or remove the residual Rust std panic/io/thread TLS runtime emitters, then refresh current nm/readelf absence controls before clearing __tls_get_addr."
   }
 }

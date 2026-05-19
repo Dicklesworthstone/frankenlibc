@@ -3017,8 +3017,8 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
       "field": "summary.source_surface_hotspot_count",
-      "expected_value": 5,
-      "rationale": "Dashboard consumers must see that the TLS surface points at concrete source hotspots for follow-up work."
+      "expected_value": 6,
+      "rationale": "Dashboard consumers must see that the TLS surface points at the live residual std artifact TLS hotspots for follow-up work."
     },
     {
       "row_id": "standalone-owned-tls-symbol-name",
@@ -3113,8 +3113,8 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
       "field": "symbol_rows.0.source_surface_hotspots.0",
-      "expected_value": "crates/frankenlibc-abi/src/startup_abi.rs",
-      "rationale": "Dashboard consumers must see a concrete first source hotspot for the owned TLS follow-up."
+      "expected_value": "std::panicking::panic_count::LOCAL_PANIC_COUNT",
+      "rationale": "Dashboard consumers must see the first residual std artifact TLS hotspot for the owned TLS follow-up."
     },
     {
       "row_id": "standalone-owned-tls-symbol-first-exit-criterion",

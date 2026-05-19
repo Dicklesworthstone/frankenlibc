@@ -1135,7 +1135,7 @@ fn standalone_owned_tls_surface_rows_are_explicit() -> TestResult {
         ),
         (
             "standalone-owned-tls-surface-hotspot-count",
-            ("summary.source_surface_hotspot_count", json!(5)),
+            ("summary.source_surface_hotspot_count", json!(6)),
         ),
     ]
     .into_iter()
@@ -1247,7 +1247,7 @@ fn standalone_owned_tls_symbol_rows_are_explicit() -> TestResult {
             "standalone-owned-tls-symbol-first-source-hotspot",
             (
                 "symbol_rows.0.source_surface_hotspots.0",
-                json!("crates/frankenlibc-abi/src/startup_abi.rs"),
+                json!("std::panicking::panic_count::LOCAL_PANIC_COUNT"),
             ),
         ),
         (

@@ -4,6 +4,7 @@
 //! current __tls_get_addr blocker, provider version row, owner ledger entry,
 //! and TLS model experiment while keeping replacement claims blocked.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,6 +15,7 @@ type TestResult<T = ()> = Result<T, String>;
 
 const SURFACE_PATH: &str = "tests/conformance/standalone_owned_tls_startup_surface.v1.json";
 const TLS_DIAGNOSTIC_PATH: &str = "tests/conformance/standalone_tls_blocker_diagnostics.v1.json";
+const TLS_REMOVAL_PATH: &str = "tests/conformance/standalone_tls_removal_experiment.v1.json";
 const TLS_EXPERIMENT_PATH: &str =
     "tests/conformance/standalone_tls_model_startup_experiment.v1.json";
 const PLAN_PATH: &str = "tests/conformance/standalone_host_dependency_probe_plan.v1.json";
@@ -46,6 +48,9 @@ fn load_json(root: &Path, rel: &str) -> TestResult<Value> {
         }
         value if value == TLS_DIAGNOSTIC_PATH => {
             root.join("tests/conformance/standalone_tls_blocker_diagnostics.v1.json")
+        }
+        value if value == TLS_REMOVAL_PATH => {
+            root.join("tests/conformance/standalone_tls_removal_experiment.v1.json")
         }
         value if value == TLS_EXPERIMENT_PATH => {
             root.join("tests/conformance/standalone_tls_model_startup_experiment.v1.json")
@@ -265,6 +270,7 @@ fn surface_manifest_covers_current_tls_diagnostics() -> TestResult {
     let root = workspace_root()?;
     let surface = load_json(&root, SURFACE_PATH)?;
     let diagnostic = load_json(&root, TLS_DIAGNOSTIC_PATH)?;
+    let tls_removal = load_json(&root, TLS_REMOVAL_PATH)?;
     let experiment = load_json(&root, TLS_EXPERIMENT_PATH)?;
     let plan = load_json(&root, PLAN_PATH)?;
     let burndown = load_json(&root, VERSION_BURNDOWN_PATH)?;
@@ -321,6 +327,29 @@ fn surface_manifest_covers_current_tls_diagnostics() -> TestResult {
     require(
         json_string(row, "provider_owner_surface")? == "loader_tls_runtime",
         "provider owner",
+    )?;
+    let artifact_probe = get_path(&diagnostic, "owned_tls_cache_artifact_probe")?;
+    let mut expected_hotspots = Vec::new();
+    for bucket in json_array(artifact_probe, "tls_descriptor_buckets")? {
+        expected_hotspots.extend(string_values(bucket, "observed_call_site_examples")?);
+    }
+    require(
+        expected_hotspots.len() == 6,
+        "diagnostic must expose six residual std TLS descriptor hotspots",
+    )?;
+    require(
+        string_values(row, "source_surface_hotspots")? == expected_hotspots,
+        "surface hotspots must track the live residual std TLS descriptor buckets",
+    )?;
+    let diagnostic_residual_symbols: BTreeSet<String> =
+        json_array(artifact_probe, "residual_artifact_tls_emitters")?
+            .iter()
+            .map(|entry| json_string(entry, "symbol").map(str::to_owned))
+            .collect::<TestResult<_>>()?;
+    let removal_residual_count = json_array(&tls_removal, "residual_artifact_tls_emitters")?.len();
+    require(
+        diagnostic_residual_symbols.len() == 6 && removal_residual_count == 6,
+        "diagnostic and TLS-removal residual std TLS inventories must both contain six rows",
     )?;
 
     let version_rows = json_array(&burndown, "version_requirement_matrix")?;
@@ -455,6 +484,26 @@ fn checker_rejects_provider_version_drift() -> TestResult {
         )
     })?;
     expect_checker_failure(&mutated, "provider-drift", "requirement_id")
+}
+
+#[test]
+fn checker_rejects_stale_residual_std_tls_hotspot() -> TestResult {
+    let mutated = write_mutated_surface("stale-residual-std-tls-hotspot", |surface| {
+        let hotspots = first_symbol_row_mut(surface)?
+            .get_mut("source_surface_hotspots")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "source_surface_hotspots must be an array".to_string())?;
+        let first = hotspots
+            .first_mut()
+            .ok_or_else(|| "source_surface_hotspots must have a first entry".to_string())?;
+        *first = Value::String("crates/frankenlibc-abi/src/startup_abi.rs".to_owned());
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "stale-residual-std-tls-hotspot",
+        "source_surface_hotspots must match live residual std TLS descriptor buckets",
+    )
 }
 
 #[test]

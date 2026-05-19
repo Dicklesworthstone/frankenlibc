@@ -8,6 +8,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SURFACE="${FRANKENLIBC_STANDALONE_OWNED_TLS_SURFACE:-${ROOT}/tests/conformance/standalone_owned_tls_startup_surface.v1.json}"
 TLS_DIAGNOSTIC="${FRANKENLIBC_STANDALONE_TLS_DIAGNOSTIC:-${ROOT}/tests/conformance/standalone_tls_blocker_diagnostics.v1.json}"
+TLS_REMOVAL_EXPERIMENT="${FRANKENLIBC_STANDALONE_TLS_REMOVAL_EXPERIMENT:-${ROOT}/tests/conformance/standalone_tls_removal_experiment.v1.json}"
 TLS_EXPERIMENT="${FRANKENLIBC_STANDALONE_TLS_MODEL_EXPERIMENT:-${ROOT}/tests/conformance/standalone_tls_model_startup_experiment.v1.json}"
 PLAN="${FRANKENLIBC_STANDALONE_HOST_DEPENDENCY_PROBE_PLAN:-${ROOT}/tests/conformance/standalone_host_dependency_probe_plan.v1.json}"
 VERSION_BURNDOWN="${FRANKENLIBC_STANDALONE_VERSION_BURNDOWN:-${ROOT}/tests/conformance/standalone_host_version_requirement_burndown.v1.json}"
@@ -18,7 +19,7 @@ REPORT="${FRANKENLIBC_STANDALONE_OWNED_TLS_SURFACE_REPORT:-${OUT_DIR}/standalone
 
 mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")"
 
-python3 - "${ROOT}" "${SURFACE}" "${TLS_DIAGNOSTIC}" "${TLS_EXPERIMENT}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${ROLLUP}" "${REPORT}" <<'PY'
+python3 - "${ROOT}" "${SURFACE}" "${TLS_DIAGNOSTIC}" "${TLS_REMOVAL_EXPERIMENT}" "${TLS_EXPERIMENT}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${ROLLUP}" "${REPORT}" <<'PY'
 import json
 import subprocess
 import sys
@@ -27,15 +28,16 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve()
 surface_path = Path(sys.argv[2])
 diagnostic_path = Path(sys.argv[3])
-experiment_path = Path(sys.argv[4])
-plan_path = Path(sys.argv[5])
-version_path = Path(sys.argv[6])
-owner_path = Path(sys.argv[7])
-rollup_path = Path(sys.argv[8])
-report_path = Path(sys.argv[9])
+tls_removal_path = Path(sys.argv[4])
+experiment_path = Path(sys.argv[5])
+plan_path = Path(sys.argv[6])
+version_path = Path(sys.argv[7])
+owner_path = Path(sys.argv[8])
+rollup_path = Path(sys.argv[9])
+report_path = Path(sys.argv[10])
 
-paths = [surface_path, diagnostic_path, experiment_path, plan_path, version_path, owner_path, rollup_path, report_path]
-surface_path, diagnostic_path, experiment_path, plan_path, version_path, owner_path, rollup_path, report_path = [
+paths = [surface_path, diagnostic_path, tls_removal_path, experiment_path, plan_path, version_path, owner_path, rollup_path, report_path]
+surface_path, diagnostic_path, tls_removal_path, experiment_path, plan_path, version_path, owner_path, rollup_path, report_path = [
     path if path.is_absolute() else root / path for path in paths
 ]
 
@@ -47,6 +49,7 @@ TLS_PROVIDER = "ld-linux-x86-64.so.2"
 TLS_VERSION = "GLIBC_2.3"
 EXPECTED_INPUTS = {
     "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
+    "standalone_tls_removal_experiment": "tests/conformance/standalone_tls_removal_experiment.v1.json",
     "standalone_tls_model_startup_experiment": "tests/conformance/standalone_tls_model_startup_experiment.v1.json",
     "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
@@ -197,12 +200,13 @@ def require_string(row, field, context):
 head = current_commit()
 surface = load_json(surface_path)
 diagnostic = load_json(diagnostic_path)
+tls_removal = load_json(tls_removal_path)
 experiment = load_json(experiment_path)
 plan = load_json(plan_path)
 version_burndown = load_json(version_path)
 owner_ledger = load_json(owner_path)
 rollup = load_json(rollup_path)
-for name in ["surface", "diagnostic", "experiment", "plan", "version_burndown", "owner_ledger", "rollup"]:
+for name in ["surface", "diagnostic", "tls_removal", "experiment", "plan", "version_burndown", "owner_ledger", "rollup"]:
     if not isinstance(locals()[name], dict):
         locals()[name] = {}
 
@@ -266,6 +270,48 @@ version_needs = nested(
 ).get("observed_tls_version_needs")
 if not isinstance(version_needs, dict) or version_needs.get(TLS_PROVIDER) != [TLS_VERSION]:
     errors.append("TLS diagnostic readelf version control must keep ld-linux-x86-64.so.2:GLIBC_2.3")
+
+artifact_probe = object_value(diagnostic.get("owned_tls_cache_artifact_probe"), "diagnostic.owned_tls_cache_artifact_probe")
+descriptor_buckets = artifact_probe.get("tls_descriptor_buckets")
+if not isinstance(descriptor_buckets, list):
+    errors.append("diagnostic.owned_tls_cache_artifact_probe.tls_descriptor_buckets must be an array")
+    descriptor_buckets = []
+expected_hotspots = []
+for index, bucket in enumerate(descriptor_buckets):
+    if not isinstance(bucket, dict):
+        errors.append(f"diagnostic tls_descriptor_buckets[{index}] must be an object")
+        continue
+    examples = string_list(
+        bucket.get("observed_call_site_examples"),
+        f"diagnostic.tls_descriptor_buckets[{index}].observed_call_site_examples",
+    )
+    expected_hotspots.extend(examples)
+if len(expected_hotspots) != 6:
+    errors.append("diagnostic residual std TLS descriptor buckets must expose exactly six call-site hotspots")
+
+diagnostic_emitters = artifact_probe.get("residual_artifact_tls_emitters")
+if not isinstance(diagnostic_emitters, list):
+    errors.append("diagnostic owned TLS probe residual_artifact_tls_emitters must be an array")
+    diagnostic_emitters = []
+removal_emitters = tls_removal.get("residual_artifact_tls_emitters")
+if not isinstance(removal_emitters, list):
+    errors.append("standalone_tls_removal_experiment residual_artifact_tls_emitters must be an array")
+    removal_emitters = []
+diagnostic_emitter_symbols = {
+    row.get("symbol")
+    for row in diagnostic_emitters
+    if isinstance(row, dict) and isinstance(row.get("symbol"), str)
+}
+removal_emitter_count = sum(1 for row in removal_emitters if isinstance(row, dict))
+if len(diagnostic_emitter_symbols) != 6 or removal_emitter_count != 6:
+    errors.append("diagnostic and TLS-removal residual artifact TLS emitter inventories must both contain six rows")
+if any(
+    not isinstance(row, dict)
+    or row.get("crate") != "std"
+    or row.get("claim_status_until_exit") != "claim_blocked"
+    for row in diagnostic_emitters
+):
+    errors.append("diagnostic residual artifact TLS emitters must remain std claim_blocked rows")
 
 projection = object_value(plan.get("current_forge_blocker_projection"), "plan.current_forge_blocker_projection")
 action_rows = object_value(
@@ -406,9 +452,13 @@ for row in rows:
             errors.append(f"{context}.{field} must be {expected}")
     for field in ["semantic_contract_class", "owned_substitute_strategy"]:
         require_string(row, field, context)
-    hotspots = string_list(row.get("source_surface_hotspots"), f"{context}.source_surface_hotspots", min_len=3)
-    if "crates/frankenlibc-abi/src/startup_abi.rs" not in hotspots:
-        errors.append(f"{context}.source_surface_hotspots must include startup_abi.rs")
+    hotspots = string_list(row.get("source_surface_hotspots"), f"{context}.source_surface_hotspots", min_len=6)
+    if hotspots != expected_hotspots:
+        errors.append(
+            f"{context}.source_surface_hotspots must match live residual std TLS descriptor buckets"
+        )
+    if not all(hotspot.startswith("std::") for hotspot in hotspots):
+        errors.append(f"{context}.source_surface_hotspots must now point at residual Rust std TLS surfaces")
     evidence = string_list(row.get("evidence_commands"), f"{context}.evidence_commands", min_len=4)
     if not any("nm -D" in command and TLS_BARE_SYMBOL in command for command in evidence):
         errors.append(f"{context}.evidence_commands must include nm -D TLS control")
@@ -442,6 +492,7 @@ summary_expectations = {
     "provider_library_count": 1,
     "provider_version_requirement_count": 1,
     "source_surface_hotspot_count": len(rows[0].get("source_surface_hotspots", [])) if rows and isinstance(rows[0], dict) else 0,
+    "residual_artifact_tls_emitter_count": len(diagnostic_emitter_symbols),
     "unresolved_symbol_count": 1,
 }
 for field, expected in summary_expectations.items():
