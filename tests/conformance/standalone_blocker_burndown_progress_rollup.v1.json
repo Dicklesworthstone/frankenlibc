@@ -30,6 +30,16 @@
     ],
     "duplicate_source_values_in_manifest": false,
     "checker_report_materializes_values": true,
+    "checker_report_materializes_action_rows": true,
+    "per_reason_action_row_report_fields": [
+      "blocking_reason",
+      "owner_surface",
+      "primary_probe_id",
+      "evidence_fields",
+      "current_blocker_values",
+      "exit_criteria",
+      "promotion_allowed"
+    ],
     "promotion_allowed": false,
     "claim_status_until_all_categories_exit": "claim_blocked",
     "missing_category_result": "fail_closed",

@@ -63,6 +63,16 @@ EXPECTED_ROLLUP_POLICY = {
     ],
     "duplicate_source_values_in_manifest": False,
     "checker_report_materializes_values": True,
+    "checker_report_materializes_action_rows": True,
+    "per_reason_action_row_report_fields": [
+        "blocking_reason",
+        "owner_surface",
+        "primary_probe_id",
+        "evidence_fields",
+        "current_blocker_values",
+        "exit_criteria",
+        "promotion_allowed",
+    ],
     "promotion_allowed": False,
     "claim_status_until_all_categories_exit": "claim_blocked",
     "missing_category_result": "fail_closed",
@@ -86,6 +96,9 @@ LIVE_ACTION_VALUE_SOURCE = (
 LIVE_ACTION_EXIT_CRITERIA_SOURCE = (
     "standalone_host_dependency_probe_plan.current_forge_blocker_projection."
     "blocker_action_required_rows.exit_criteria"
+)
+REQUIRED_ACTION_ROW_REPORT_FIELDS = set(
+    EXPECTED_ROLLUP_POLICY["per_reason_action_row_report_fields"]
 )
 errors = []
 
@@ -412,22 +425,40 @@ for row in progress_rows:
     if row.get("current_reason_count") != len(reasons):
         errors.append(f"{context}.current_reason_count mismatch")
     values = []
+    unique_values = []
+    seen_values = set()
     exit_criteria = []
+    materialized_action_rows = []
     for reason in reasons:
         rollup_reason_set.add(reason)
         action_row = live_action_by_reason.get(reason, {})
-        values.extend(
-            string_list(
-                action_row.get("current_blocker_values"),
-                f"blocker_action_required_rows.{reason}.current_blocker_values",
-            )
+        action_values = string_list(
+            action_row.get("current_blocker_values"),
+            f"blocker_action_required_rows.{reason}.current_blocker_values",
         )
-        exit_criteria.extend(
-            string_list(
-                action_row.get("exit_criteria"),
-                f"blocker_action_required_rows.{reason}.exit_criteria",
-            )
+        action_exit_criteria = string_list(
+            action_row.get("exit_criteria"),
+            f"blocker_action_required_rows.{reason}.exit_criteria",
         )
+        values.extend(action_values)
+        for value in action_values:
+            if value not in seen_values:
+                seen_values.add(value)
+                unique_values.append(value)
+        exit_criteria.extend(action_exit_criteria)
+        materialized_action_row = {
+            "blocking_reason": action_row.get("blocking_reason"),
+            "owner_surface": action_row.get("owner_surface"),
+            "primary_probe_id": action_row.get("primary_probe_id"),
+            "evidence_fields": action_row.get("evidence_fields"),
+            "current_blocker_values": action_values,
+            "exit_criteria": action_exit_criteria,
+            "promotion_allowed": action_row.get("promotion_allowed"),
+        }
+        missing_report_fields = REQUIRED_ACTION_ROW_REPORT_FIELDS - set(materialized_action_row)
+        if missing_report_fields:
+            errors.append(f"{context}.{reason}.materialized_action_row missing report fields")
+        materialized_action_rows.append(materialized_action_row)
     if row.get("last_known_value_count") != len(values):
         errors.append(f"{context}.last_known_value_count mismatch")
     if row.get("value_source") != LIVE_ACTION_VALUE_SOURCE:
@@ -444,6 +475,9 @@ for row in progress_rows:
             "current_reason_count": len(reasons),
             "last_known_values": values,
             "last_known_value_count": len(values),
+            "unique_current_values": unique_values,
+            "unique_current_value_count": len(unique_values),
+            "blocker_action_rows": materialized_action_rows,
             "target_exit_criteria": exit_criteria,
             "status_until_exit": "claim_blocked",
         }

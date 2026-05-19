@@ -667,11 +667,111 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
             !json_array(row, "last_known_values")?.is_empty(),
             format!("{category}: values must be materialized in report"),
         )?;
+        let action_rows = json_array(row, "blocker_action_rows")?;
+        require(
+            !action_rows.is_empty(),
+            format!("{category}: per-reason blocker action rows must be materialized"),
+        )?;
+        require(
+            action_rows.len() == json_array(row, "source_blocking_reasons")?.len(),
+            format!("{category}: action rows must match source blocking reasons"),
+        )?;
         require(
             !json_array(row, "target_exit_criteria")?.is_empty(),
             format!("{category}: exit criteria must be materialized in report"),
         )?;
     }
+    let category_by_id: BTreeMap<String, &Value> = categories
+        .iter()
+        .map(|row| json_string(row, "category_id").map(|id| (id.to_owned(), row)))
+        .collect::<TestResult<_>>()?;
+    let runtime_linkage = *category_by_id
+        .get("runtime_linkage")
+        .ok_or_else(|| "missing runtime_linkage category".to_string())?;
+    let runtime_unique_count = json_field(runtime_linkage, "unique_current_value_count")?
+        .as_u64()
+        .ok_or_else(|| "runtime_linkage unique_current_value_count must be u64".to_string())?;
+    let runtime_last_known_count = json_field(runtime_linkage, "last_known_value_count")?
+        .as_u64()
+        .ok_or_else(|| "runtime_linkage last_known_value_count must be u64".to_string())?;
+    require(
+        runtime_unique_count < runtime_last_known_count,
+        "runtime_linkage must expose de-duplicated current values separately from source-row values",
+    )?;
+    let runtime_action_by_reason: BTreeMap<String, &Value> =
+        json_array(runtime_linkage, "blocker_action_rows")?
+            .iter()
+            .map(|row| json_string(row, "blocking_reason").map(|reason| (reason.to_owned(), row)))
+            .collect::<TestResult<_>>()?;
+    for reason in [
+        "host_needed_libraries_present",
+        "host_direct_needed_libraries_present",
+        "host_resolved_libraries_present",
+    ] {
+        let row = *runtime_action_by_reason
+            .get(reason)
+            .ok_or_else(|| format!("runtime_linkage missing action row {reason}"))?;
+        let expected_owner = match reason {
+            "host_direct_needed_libraries_present" => "direct_dynamic_dependencies",
+            "host_resolved_libraries_present" => "loader_resolution",
+            _ => "runtime_linkage",
+        };
+        require(
+            json_string(row, "owner_surface")? == expected_owner,
+            format!("{reason}: owner surface"),
+        )?;
+        require(
+            json_string(row, "primary_probe_id")?
+                == if reason == "host_resolved_libraries_present" {
+                    "ldd_runtime_resolution"
+                } else {
+                    "readelf_dynamic_dependencies"
+                },
+            format!("{reason}: primary probe"),
+        )?;
+        require(
+            json_field(row, "promotion_allowed")?.as_bool() == Some(false),
+            format!("{reason}: promotion must be false"),
+        )?;
+        require(
+            !json_array(row, "current_blocker_values")?.is_empty(),
+            format!("{reason}: blocker values"),
+        )?;
+        require(
+            !json_array(row, "exit_criteria")?.is_empty(),
+            format!("{reason}: exit criteria"),
+        )?;
+    }
+    let direct_needed = *runtime_action_by_reason
+        .get("host_direct_needed_libraries_present")
+        .ok_or_else(|| "missing direct NEEDED row".to_string())?;
+    require(
+        array_contains(
+            direct_needed,
+            "current_blocker_values",
+            "ld-linux-x86-64.so.2",
+        )?,
+        "direct NEEDED row must include ld-linux DT_NEEDED value",
+    )?;
+    require(
+        !array_contains(direct_needed, "current_blocker_values", "libc.so.6")?,
+        "direct NEEDED row must not inherit transitive libc value",
+    )?;
+    let resolved = *runtime_action_by_reason
+        .get("host_resolved_libraries_present")
+        .ok_or_else(|| "missing resolved library row".to_string())?;
+    require(
+        array_contains(resolved, "current_blocker_values", "libc.so.6")?,
+        "resolved library row must include transitive libc value",
+    )?;
+    require(
+        array_contains(
+            resolved,
+            "current_blocker_values",
+            "/lib64/ld-linux-x86-64.so.2",
+        )?,
+        "resolved library row must include loader path value",
+    )?;
     require(
         json_field(
             json_field(&report_json, "summary")?,
