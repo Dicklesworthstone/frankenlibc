@@ -9,13 +9,15 @@ DAG="${FRANKENLIBC_STANDALONE_BLOCKER_DAG:-${ROOT}/tests/conformance/standalone_
 ROLLUP="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP:-${ROOT}/tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json}"
 ROLLUP_CHECKER="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP_CHECKER:-${ROOT}/scripts/check_standalone_blocker_burndown_progress_rollup.sh}"
 ROLLUP_REPORT="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP_REPORT:-${ROOT}/target/conformance/standalone_blocker_burndown_progress_rollup.report.json}"
+UNWINDER_SURFACE="${FRANKENLIBC_STANDALONE_OWNED_UNWINDER_SURFACE:-${ROOT}/tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json}"
+TLS_SURFACE="${FRANKENLIBC_STANDALONE_OWNED_TLS_SURFACE:-${ROOT}/tests/conformance/standalone_owned_tls_startup_surface.v1.json}"
 TRACKER="${FRANKENLIBC_TRACKER_JSONL:-${ROOT}/.beads/issues.jsonl}"
 OUT_DIR="${ROOT}/target/conformance"
 REPORT="${FRANKENLIBC_STANDALONE_BLOCKER_EXPLAINER_REPORT:-${OUT_DIR}/standalone_blocker_dependency_explainer.report.json}"
 
 mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")"
 
-python3 - "${ROOT}" "${CONTRACT}" "${DAG}" "${ROLLUP}" "${ROLLUP_CHECKER}" "${ROLLUP_REPORT}" "${TRACKER}" "${REPORT}" <<'PY'
+python3 - "${ROOT}" "${CONTRACT}" "${DAG}" "${ROLLUP}" "${ROLLUP_CHECKER}" "${ROLLUP_REPORT}" "${UNWINDER_SURFACE}" "${TLS_SURFACE}" "${TRACKER}" "${REPORT}" <<'PY'
 import copy
 import json
 import subprocess
@@ -28,8 +30,10 @@ dag_path = Path(sys.argv[3])
 rollup_path = Path(sys.argv[4])
 rollup_checker_path = Path(sys.argv[5])
 rollup_report_path = Path(sys.argv[6])
-tracker_path = Path(sys.argv[7])
-report_path = Path(sys.argv[8])
+unwinder_surface_path = Path(sys.argv[7])
+tls_surface_path = Path(sys.argv[8])
+tracker_path = Path(sys.argv[9])
+report_path = Path(sys.argv[10])
 
 for name in [
     "contract_path",
@@ -37,6 +41,8 @@ for name in [
     "rollup_path",
     "rollup_checker_path",
     "rollup_report_path",
+    "unwinder_surface_path",
+    "tls_surface_path",
     "tracker_path",
     "report_path",
 ]:
@@ -139,7 +145,94 @@ def issue_depends_on(issue, dependency_id, dep_type):
     return False
 
 
-def validate_state(contract, dag, rollup, rollup_report, tracker):
+def validate_live_action_row_sources(contract, rollup, surfaces):
+    local_errors = []
+    rows = []
+    source_contract = contract.get("live_action_row_source_contract", {})
+    required_sources = source_contract.get("required_sources", [])
+    if not isinstance(required_sources, list) or not required_sources:
+        local_errors.append("live_action_row_sources_missing")
+        return local_errors, rows
+
+    experiments = rollup.get("partial_burndown_experiments", [])
+    if not isinstance(experiments, list):
+        experiments = []
+
+    for spec in required_sources:
+        if not isinstance(spec, dict):
+            local_errors.append("live_action_row_source_not_object")
+            continue
+        category_id = spec.get("category_id")
+        experiment_id = spec.get("experiment_id")
+        surface_input = spec.get("surface_input")
+        expected_manifest = spec.get("surface_manifest_id")
+        expected_source_row = spec.get("source_action_row")
+        surface = surfaces.get(surface_input)
+        if not isinstance(surface, dict):
+            local_errors.append(f"surface_missing:{category_id}")
+            surface = {}
+        if surface.get("manifest_id") != expected_manifest:
+            local_errors.append(f"surface_manifest_mismatch:{category_id}")
+
+        observed_source_row = surface.get("source_action_row")
+        if not isinstance(observed_source_row, str) or not observed_source_row:
+            local_errors.append(f"source_action_row_missing:{category_id}")
+        elif observed_source_row != expected_source_row:
+            local_errors.append(f"source_action_row_drift:{category_id}")
+
+        policy = surface.get("report_policy", {})
+        if not isinstance(policy, dict):
+            local_errors.append(f"surface_report_policy_missing:{category_id}")
+            policy = {}
+        if policy.get("report_only") is not True:
+            local_errors.append(f"surface_not_report_only:{category_id}")
+        if policy.get("promotion_allowed") is not False:
+            local_errors.append(f"surface_allows_promotion:{category_id}")
+        if policy.get("default_forge_path_change_allowed") is not False:
+            local_errors.append(f"surface_allows_default_forge_change:{category_id}")
+
+        summary = surface.get("summary", {})
+        if not isinstance(summary, dict):
+            local_errors.append(f"surface_summary_missing:{category_id}")
+            summary = {}
+        if summary.get("owned_surface_ready") is not spec.get("owned_surface_ready"):
+            local_errors.append(f"surface_ready_state_mismatch:{category_id}")
+        if summary.get("promotion_allowed") is not spec.get("promotion_allowed"):
+            local_errors.append(f"surface_summary_promotion_mismatch:{category_id}")
+
+        experiment = next(
+            (
+                row
+                for row in experiments
+                if isinstance(row, dict)
+                and row.get("experiment_id") == experiment_id
+                and row.get("category_id") == category_id
+            ),
+            None,
+        )
+        if experiment is None:
+            local_errors.append(f"rollup_experiment_missing_live_source:{category_id}")
+            experiment = {}
+
+        rows.append(
+            {
+                "category_id": category_id,
+                "experiment_id": experiment_id,
+                "rollup_source_manifest": experiment.get("source_manifest"),
+                "surface_input": surface_input,
+                "surface_manifest_id": surface.get("manifest_id"),
+                "source_manifest": spec.get("source_manifest"),
+                "source_action_row": observed_source_row,
+                "report_only": policy.get("report_only"),
+                "promotion_allowed": policy.get("promotion_allowed"),
+                "owned_surface_ready": summary.get("owned_surface_ready"),
+            }
+        )
+
+    return local_errors, rows
+
+
+def validate_state(contract, dag, rollup, rollup_report, tracker, surfaces):
     local_errors = []
 
     target_contract = contract.get("target_issue_contract", {})
@@ -234,7 +327,10 @@ def validate_state(contract, dag, rollup, rollup_report, tracker):
         if row.get("status_until_default_forge_consumes_evidence") != "claim_blocked":
             local_errors.append(f"partial_experiment_not_claim_blocked:{experiment_id}")
 
-    return local_errors
+    live_errors, live_rows = validate_live_action_row_sources(contract, rollup, surfaces)
+    local_errors.extend(live_errors)
+
+    return local_errors, live_rows
 
 
 head = current_commit()
@@ -242,6 +338,10 @@ contract = load_json(contract_path)
 dag = load_json(dag_path)
 rollup = load_json(rollup_path)
 tracker = load_jsonl_by_id(tracker_path)
+surfaces = {
+    "standalone_owned_unwinder_symbol_surface": load_json(unwinder_surface_path),
+    "standalone_owned_tls_startup_surface": load_json(tls_surface_path),
+}
 
 if contract.get("schema_version") != "v1":
     errors.append("contract schema_version must be v1")
@@ -263,6 +363,8 @@ expected_inputs = {
     "standalone_blocker_burndown_dag": "tests/conformance/standalone_blocker_burndown_dag.v1.json",
     "standalone_blocker_burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json",
     "standalone_blocker_burndown_progress_rollup_checker": "scripts/check_standalone_blocker_burndown_progress_rollup.sh",
+    "standalone_owned_unwinder_symbol_surface": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+    "standalone_owned_tls_startup_surface": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
 }
 if inputs != expected_inputs:
     errors.append("contract inputs mismatch")
@@ -283,7 +385,15 @@ else:
     errors.append(f"rollup checker missing: {rollup_checker_path}")
 
 rollup_report = load_json(rollup_report_path)
-errors.extend(validate_state(contract, dag, rollup, rollup_report, tracker))
+state_errors, live_action_row_sources = validate_state(
+    contract,
+    dag,
+    rollup,
+    rollup_report,
+    tracker,
+    surfaces,
+)
+errors.extend(state_errors)
 
 negative_results = []
 for control in contract.get("negative_controls", []):
@@ -297,6 +407,7 @@ for control in contract.get("negative_controls", []):
     mutated_rollup = copy.deepcopy(rollup)
     mutated_report = copy.deepcopy(rollup_report)
     mutated_tracker = copy.deepcopy(tracker)
+    mutated_surfaces = copy.deepcopy(surfaces)
 
     if control_id == "retired_dependency_reintroduced_fails":
         target_id = contract["target_issue_contract"]["target_issue_id"]
@@ -319,16 +430,23 @@ for control in contract.get("negative_controls", []):
     elif control_id == "report_only_experiment_promotion_fails":
         if mutated_rollup.get("partial_burndown_experiments"):
             mutated_rollup["partial_burndown_experiments"][0]["promotion_allowed"] = True
+    elif control_id == "missing_live_action_row_source_fails":
+        mutated_surfaces["standalone_owned_unwinder_symbol_surface"].pop("source_action_row", None)
+    elif control_id == "drifted_live_action_row_source_fails":
+        mutated_surfaces["standalone_owned_tls_startup_surface"][
+            "source_action_row"
+        ] = "standalone_forge_blocker_owner_action_ledger.current_blocker_values.undefined_tls_symbols"
     else:
         errors.append(f"unknown negative control {control_id}")
         continue
 
-    control_errors = validate_state(
+    control_errors, _ = validate_state(
         mutated_contract,
         mutated_dag,
         mutated_rollup,
         mutated_report,
         mutated_tracker,
+        mutated_surfaces,
     )
     passed = expected_error in control_errors
     if not passed:
@@ -397,6 +515,7 @@ report = {
         "exit_criteria": dag_node.get("exit_criteria"),
     },
     "partial_burndown_experiments": rollup.get("partial_burndown_experiments", []),
+    "live_action_row_sources": live_action_row_sources,
     "closure_blockers": contract.get("report_contract", {}).get("closure_blocker_reasons", []),
     "negative_controls": negative_results,
     "errors": errors,

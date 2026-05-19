@@ -17,6 +17,9 @@ const CONTRACT_REL: &str = "tests/conformance/standalone_blocker_dependency_expl
 const CHECKER_REL: &str = "scripts/check_standalone_blocker_dependency_explainer.sh";
 const TRACKER_REL: &str = ".beads/issues.jsonl";
 const ROLLUP_REL: &str = "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json";
+const UNWINDER_SURFACE_REL: &str =
+    "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json";
+const TLS_SURFACE_REL: &str = "tests/conformance/standalone_owned_tls_startup_surface.v1.json";
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -91,6 +94,8 @@ fn format_output(output: &Output) -> String {
 struct CheckerInputs {
     tracker: Option<PathBuf>,
     rollup: Option<PathBuf>,
+    unwinder_surface: Option<PathBuf>,
+    tls_surface: Option<PathBuf>,
 }
 
 fn run_checker(root: &Path, label: &str, inputs: CheckerInputs) -> TestResult<(Output, PathBuf)> {
@@ -114,6 +119,15 @@ fn run_checker(root: &Path, label: &str, inputs: CheckerInputs) -> TestResult<(O
     }
     if let Some(rollup) = inputs.rollup {
         command.env("FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP", rollup);
+    }
+    if let Some(unwinder_surface) = inputs.unwinder_surface {
+        command.env(
+            "FRANKENLIBC_STANDALONE_OWNED_UNWINDER_SURFACE",
+            unwinder_surface,
+        );
+    }
+    if let Some(tls_surface) = inputs.tls_surface {
+        command.env("FRANKENLIBC_STANDALONE_OWNED_TLS_SURFACE", tls_surface);
     }
     let output = command
         .output()
@@ -222,6 +236,22 @@ fn write_mutated_rollup(
     Ok(path)
 }
 
+fn write_mutated_surface(
+    root: &Path,
+    source_rel: &str,
+    label: &str,
+    mutate: impl FnOnce(&mut Value) -> TestResult,
+) -> TestResult<PathBuf> {
+    let mut surface = load_json(&root.join(source_rel))?;
+    mutate(&mut surface)?;
+    let path = mutation_dir(root)?.join(format!("{}.surface.json", unique_label(label)?));
+    let content = serde_json::to_string_pretty(&surface)
+        .map_err(|err| format!("failed to serialize mutated surface: {err}"))?;
+    std::fs::write(&path, format!("{content}\n"))
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(path)
+}
+
 #[test]
 fn contract_names_the_claim_and_negative_controls() -> TestResult {
     let root = workspace_root()?;
@@ -234,6 +264,15 @@ fn contract_names_the_claim_and_negative_controls() -> TestResult {
     require(
         json_string(&contract, "refresh_bead")? == "bd-kh0jc",
         "refresh bead",
+    )?;
+    let inputs = json_field(&contract, "inputs")?;
+    require(
+        json_string(inputs, "standalone_owned_unwinder_symbol_surface")? == UNWINDER_SURFACE_REL,
+        "owned unwinder surface input",
+    )?;
+    require(
+        json_string(inputs, "standalone_owned_tls_startup_surface")? == TLS_SURFACE_REL,
+        "owned TLS surface input",
     )?;
     let target = json_field(&contract, "target_issue_contract")?;
     require(
@@ -268,6 +307,33 @@ fn contract_names_the_claim_and_negative_controls() -> TestResult {
         "owned-TLS report-only experiment must be required",
     )?;
 
+    let live_source_contract = json_field(&contract, "live_action_row_source_contract")?;
+    let required_sources = json_array(live_source_contract, "required_sources")?;
+    require(required_sources.len() == 2, "two live action-row sources")?;
+    let live_pairs: HashSet<_> = required_sources
+        .iter()
+        .map(|row| {
+            Ok((
+                json_string(row, "category_id")?.to_owned(),
+                json_string(row, "source_action_row")?.to_owned(),
+            ))
+        })
+        .collect::<TestResult<_>>()?;
+    require(
+        live_pairs.contains(&(
+            "unwind_runtime".to_owned(),
+            "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_unwind_symbols".to_owned(),
+        )),
+        "unwind source action row must come from host dependency probe plan",
+    )?;
+    require(
+        live_pairs.contains(&(
+            "tls_startup".to_owned(),
+            "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_tls_symbols".to_owned(),
+        )),
+        "TLS source action row must come from host dependency probe plan",
+    )?;
+
     let controls: HashSet<_> = json_array(&contract, "negative_controls")?
         .iter()
         .map(|row| json_string(row, "expected_error").map(str::to_owned))
@@ -277,6 +343,8 @@ fn contract_names_the_claim_and_negative_controls() -> TestResult {
         "target_status_not_in_progress",
         "retired_blocker_status_not_closed",
         "partial_experiment_allows_promotion",
+        "source_action_row_missing:unwind_runtime",
+        "source_action_row_drift:tls_startup",
     ] {
         require(
             controls.contains(expected),
@@ -350,8 +418,32 @@ fn checker_materializes_claim_blockers_and_report_only_experiments() -> TestResu
             format!("{experiment_id}: must not allow promotion"),
         )?;
     }
+    let live_sources = json_array(&report_json, "live_action_row_sources")?;
+    require(live_sources.len() == 2, "two live action-row sources")?;
+    for source in live_sources {
+        let category_id = json_string(source, "category_id")?;
+        let source_action_row = json_string(source, "source_action_row")?;
+        require(
+            source_action_row.starts_with(
+                "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.",
+            ),
+            format!("{category_id}: source action row must come from host dependency probe plan"),
+        )?;
+        require(
+            json_field(source, "report_only")?.as_bool() == Some(true),
+            format!("{category_id}: live source surface must remain report-only"),
+        )?;
+        require(
+            json_field(source, "promotion_allowed")?.as_bool() == Some(false),
+            format!("{category_id}: live source surface must forbid promotion"),
+        )?;
+        require(
+            json_field(source, "owned_surface_ready")?.as_bool() == Some(false),
+            format!("{category_id}: live source surface must remain unresolved"),
+        )?;
+    }
     let negative_controls = json_array(&report_json, "negative_controls")?;
-    require(negative_controls.len() == 4, "four negative controls")?;
+    require(negative_controls.len() == 6, "six negative controls")?;
     for control in negative_controls {
         require(
             json_string(control, "status")? == "pass",
@@ -386,6 +478,7 @@ fn checker_rejects_retired_dependency_reintroduction() -> TestResult {
         CheckerInputs {
             tracker: Some(tracker),
             rollup: None,
+            ..CheckerInputs::default()
         },
         "target_has_retired_dependency",
     )
@@ -406,6 +499,7 @@ fn checker_rejects_premature_parent_closure() -> TestResult {
         CheckerInputs {
             tracker: Some(tracker),
             rollup: None,
+            ..CheckerInputs::default()
         },
         "target_status_not_in_progress",
     )
@@ -426,6 +520,7 @@ fn checker_rejects_retired_blocker_reopening() -> TestResult {
         CheckerInputs {
             tracker: Some(tracker),
             rollup: None,
+            ..CheckerInputs::default()
         },
         "retired_blocker_status_not_closed",
     )
@@ -454,7 +549,66 @@ fn checker_rejects_report_only_experiment_promotion() -> TestResult {
         CheckerInputs {
             tracker: None,
             rollup: Some(rollup),
+            ..CheckerInputs::default()
         },
         "partial_experiment_allows_promotion",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_unwinder_source_action_row() -> TestResult {
+    let root = workspace_root()?;
+    let unwinder_surface = write_mutated_surface(
+        &root,
+        UNWINDER_SURFACE_REL,
+        "missing-unwinder-source-action-row",
+        |surface| {
+            surface
+                .as_object_mut()
+                .ok_or_else(|| "owned unwinder surface must be object".to_string())?
+                .remove("source_action_row");
+            Ok(())
+        },
+    )?;
+    expect_checker_failure(
+        &root,
+        "missing-unwinder-source-action-row",
+        CheckerInputs {
+            unwinder_surface: Some(unwinder_surface),
+            ..CheckerInputs::default()
+        },
+        "source_action_row_missing:unwind_runtime",
+    )
+}
+
+#[test]
+fn checker_rejects_drifted_tls_source_action_row() -> TestResult {
+    let root = workspace_root()?;
+    let tls_surface = write_mutated_surface(
+        &root,
+        TLS_SURFACE_REL,
+        "drifted-tls-source-action-row",
+        |surface| {
+            surface
+                .as_object_mut()
+                .ok_or_else(|| "owned TLS surface must be object".to_string())?
+                .insert(
+                    "source_action_row".to_owned(),
+                    Value::String(
+                        "standalone_forge_blocker_owner_action_ledger.current_blocker_values.undefined_tls_symbols"
+                            .to_owned(),
+                    ),
+                );
+            Ok(())
+        },
+    )?;
+    expect_checker_failure(
+        &root,
+        "drifted-tls-source-action-row",
+        CheckerInputs {
+            tls_surface: Some(tls_surface),
+            ..CheckerInputs::default()
+        },
+        "source_action_row_drift:tls_startup",
     )
 }

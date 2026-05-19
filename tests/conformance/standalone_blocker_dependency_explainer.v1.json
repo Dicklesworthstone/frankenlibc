@@ -10,7 +10,9 @@
     "tracker_jsonl": ".beads/issues.jsonl",
     "standalone_blocker_burndown_dag": "tests/conformance/standalone_blocker_burndown_dag.v1.json",
     "standalone_blocker_burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json",
-    "standalone_blocker_burndown_progress_rollup_checker": "scripts/check_standalone_blocker_burndown_progress_rollup.sh"
+    "standalone_blocker_burndown_progress_rollup_checker": "scripts/check_standalone_blocker_burndown_progress_rollup.sh",
+    "standalone_owned_unwinder_symbol_surface": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+    "standalone_owned_tls_startup_surface": "tests/conformance/standalone_owned_tls_startup_surface.v1.json"
   },
   "target_issue_contract": {
     "target_issue_id": "bd-c51oi",
@@ -38,6 +40,32 @@
     "partial_experiments_must_not_allow_promotion": true,
     "report_only_progress_result": "keep_bd_c51oi_claim_blocked"
   },
+  "live_action_row_source_contract": {
+    "missing_source_action_row_result": "fail_closed",
+    "source_action_row_drift_result": "fail_closed",
+    "required_sources": [
+      {
+        "category_id": "unwind_runtime",
+        "experiment_id": "owned-unwind-stub-experiment",
+        "surface_input": "standalone_owned_unwinder_symbol_surface",
+        "surface_manifest_id": "standalone-owned-unwinder-symbol-surface",
+        "source_manifest": "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json",
+        "source_action_row": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_unwind_symbols",
+        "owned_surface_ready": false,
+        "promotion_allowed": false
+      },
+      {
+        "category_id": "tls_startup",
+        "experiment_id": "owned-tls-cache-source-surface-experiment",
+        "surface_input": "standalone_owned_tls_startup_surface",
+        "surface_manifest_id": "standalone-owned-tls-startup-surface",
+        "source_manifest": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
+        "source_action_row": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_tls_symbols",
+        "owned_surface_ready": false,
+        "promotion_allowed": false
+      }
+    ]
+  },
   "report_contract": {
     "output_path": "target/conformance/standalone_blocker_dependency_explainer.report.json",
     "must_materialize": [
@@ -46,6 +74,7 @@
       "standalone_claim_state",
       "dag_node",
       "partial_burndown_experiments",
+      "live_action_row_sources",
       "closure_blockers",
       "negative_controls"
     ],
@@ -76,17 +105,31 @@
       "control_id": "report_only_experiment_promotion_fails",
       "mutation": "set a partial experiment promotion_allowed=true",
       "expected_error": "partial_experiment_allows_promotion"
+    },
+    {
+      "control_id": "missing_live_action_row_source_fails",
+      "mutation": "remove source_action_row from the owned unwinder surface",
+      "expected_error": "source_action_row_missing:unwind_runtime"
+    },
+    {
+      "control_id": "drifted_live_action_row_source_fails",
+      "mutation": "point the owned TLS surface source_action_row back to the retired owner ledger",
+      "expected_error": "source_action_row_drift:tls_startup"
     }
   ],
   "validation": {
     "commands": [
       "bash -n scripts/check_standalone_blocker_dependency_explainer.sh",
       "jq empty tests/conformance/standalone_blocker_dependency_explainer.v1.json",
+      "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/standalone_blocker_dependency_explainer_test.rs",
       "bash scripts/check_standalone_blocker_dependency_explainer.sh",
       "git diff --check -- scripts/check_standalone_blocker_dependency_explainer.sh tests/conformance/standalone_blocker_dependency_explainer.v1.json .beads/issues.jsonl",
-      "AGENT_NAME=SwiftCreek br --allow-stale --lock-timeout 5000 dep cycles --json"
+      "AGENT_NAME=SwiftCreek br --allow-stale --lock-timeout 5000 dep cycles --json",
+      "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_swiftcreek_c51oi26_test rch exec -- cargo test -p frankenlibc-harness --test standalone_blocker_dependency_explainer_test -- --nocapture",
+      "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_swiftcreek_c51oi26_check rch exec -- cargo check -p frankenlibc-harness --test standalone_blocker_dependency_explainer_test",
+      "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_swiftcreek_c51oi26_clippy rch exec -- cargo clippy -p frankenlibc-harness --test standalone_blocker_dependency_explainer_test -- -D warnings"
     ],
-    "cargo_required": false,
-    "cargo_reason": "This slice adds a shell/Python JSON contract checker only; it does not touch Rust code or compiled tests."
+    "cargo_required": true,
+    "cargo_reason": "This slice extends the focused frankenlibc-harness integration test for the dependency explainer."
   }
 }
