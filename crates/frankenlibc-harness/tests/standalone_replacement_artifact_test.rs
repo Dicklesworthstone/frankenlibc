@@ -43,6 +43,7 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.host_direct_needed_libraries",
     "artifact_state.dependency_breakdown.host_resolved_libraries",
     "artifact_state.dependency_breakdown.direct_host_needed_library_rows",
+    "artifact_state.dependency_breakdown.host_resolved_library_rows",
     "artifact_state.sampled_symbols_present",
     "artifact_state.symbol_samples",
     "claim_status",
@@ -2339,6 +2340,105 @@ fn forge_mode_reports_host_dependency_breakdown() {
     assert!(
         string_set(&loader_row["blocking_reasons"]).contains("host_loader_dependency"),
         "loader row should cite loader-startup blocker"
+    );
+
+    let resolved_rows = breakdown["host_resolved_library_rows"]
+        .as_array()
+        .expect("host_resolved_library_rows should be an array");
+    assert_eq!(
+        resolved_rows.len(),
+        host_resolved.len(),
+        "every ldd-resolved host library should have a provider row"
+    );
+    let resolved_row_by_library: HashMap<_, _> = resolved_rows
+        .iter()
+        .map(|row| {
+            (
+                row["library"].as_str().expect("library should be string"),
+                row,
+            )
+        })
+        .collect();
+    for library in &host_resolved {
+        let row = resolved_row_by_library
+            .get(library.as_str())
+            .unwrap_or_else(|| panic!("missing ldd-resolved provider row for {library}"));
+        assert_eq!(row["owner_surface"].as_str(), Some("loader_resolution"));
+        assert_eq!(
+            row["primary_probe_id"].as_str(),
+            Some("ldd_runtime_resolution")
+        );
+        assert_eq!(row["promotion_allowed"].as_bool(), Some(false));
+        assert!(
+            row["evidence_fields"]
+                .as_array()
+                .is_some_and(|fields| fields
+                    .iter()
+                    .any(|field| { field.as_str() == Some("host_resolved_libraries") })),
+            "resolved provider row should cite ldd-resolved evidence fields"
+        );
+        assert!(
+            row["next_action"]
+                .as_str()
+                .is_some_and(|action| !action.is_empty()),
+            "resolved provider row should include a next action"
+        );
+        assert!(
+            string_set(&row["blocking_reasons"]).contains("host_resolved_libraries_present"),
+            "resolved provider row should cite host_resolved_libraries_present"
+        );
+    }
+    let libc_row = resolved_row_by_library
+        .get("libc.so.6")
+        .expect("missing libc ldd-resolved provider row");
+    assert_eq!(libc_row["direct_needed_present"].as_bool(), Some(false));
+    assert_eq!(libc_row["resolution_kind"].as_str(), Some("transitive"));
+    assert!(
+        string_set(&libc_row["resolved_paths"]).contains("/lib/x86_64-linux-gnu/libc.so.6"),
+        "libc row should preserve ldd-resolved path evidence"
+    );
+    assert!(
+        string_set(&libc_row["blocking_reasons"]).contains("host_libc_dependency"),
+        "libc row should cite host-libc blocker"
+    );
+    let resolved_libgcc_row = resolved_row_by_library
+        .get("libgcc_s.so.1")
+        .expect("missing libgcc ldd-resolved provider row");
+    assert_eq!(
+        resolved_libgcc_row["direct_needed_present"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        resolved_libgcc_row["resolution_kind"].as_str(),
+        Some("direct")
+    );
+    assert!(
+        string_set(&resolved_libgcc_row["version_requirements"]).contains("libgcc_s.so.1:GCC_3.0"),
+        "resolved libgcc row should preserve provider version requirements"
+    );
+    assert!(
+        string_set(&resolved_libgcc_row["blocking_reasons"]).contains("libgcc_runtime_dependency"),
+        "resolved libgcc row should cite compiler-runtime blocker"
+    );
+    let resolved_loader_row = resolved_row_by_library
+        .get("/lib64/ld-linux-x86-64.so.2")
+        .expect("missing loader ldd-resolved provider row");
+    assert_eq!(
+        resolved_loader_row["direct_needed_present"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        resolved_loader_row["resolution_kind"].as_str(),
+        Some("direct")
+    );
+    assert!(
+        string_set(&resolved_loader_row["version_requirements"])
+            .contains("ld-linux-x86-64.so.2:GLIBC_2.3"),
+        "resolved loader row should preserve loader version requirements"
+    );
+    assert!(
+        string_set(&resolved_loader_row["blocking_reasons"]).contains("host_loader_dependency"),
+        "resolved loader row should cite loader-startup blocker"
     );
 
     let undefined = string_set(&breakdown["undefined_symbols"]);

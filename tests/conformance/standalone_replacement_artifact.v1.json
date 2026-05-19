@@ -123,6 +123,7 @@
     "artifact_state.dependency_breakdown.host_direct_needed_libraries",
     "artifact_state.dependency_breakdown.host_resolved_libraries",
     "artifact_state.dependency_breakdown.direct_host_needed_library_rows",
+    "artifact_state.dependency_breakdown.host_resolved_library_rows",
     "artifact_state.sampled_symbols_present",
     "artifact_state.symbol_samples",
     "claim_status",

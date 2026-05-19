@@ -116,6 +116,7 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.host_direct_needed_libraries",
     "artifact_state.dependency_breakdown.host_resolved_libraries",
     "artifact_state.dependency_breakdown.direct_host_needed_library_rows",
+    "artifact_state.dependency_breakdown.host_resolved_library_rows",
     "artifact_state.sampled_symbols_present",
     "artifact_state.symbol_samples",
     "claim_status",
@@ -816,6 +817,7 @@ def empty_dependency_breakdown():
         "host_direct_needed_libraries": [],
         "host_resolved_libraries": [],
         "direct_host_needed_library_rows": [],
+        "host_resolved_library_rows": [],
         "undefined_symbols": [],
         "undefined_unwind_symbols": [],
         "undefined_glibc_symbols": [],
@@ -937,6 +939,38 @@ def ldd_paths_for_library(library, ldd_resolution_paths):
     return unique_sorted(matches)
 
 
+def library_matches(left, right):
+    left_base = Path(left).name
+    right_base = Path(right).name
+    return left == right or left_base == right or left == right_base or left_base == right_base
+
+
+def matching_direct_needed_libraries(library, host_direct_needed_libraries):
+    return unique_sorted(
+        direct
+        for direct in host_direct_needed_libraries
+        if library_matches(library, direct)
+    )
+
+
+def version_requirements_for_library(library, version_needs):
+    requirements = []
+    for provider, versions in version_needs.items():
+        if library_matches(library, provider):
+            requirements.extend(f"{provider}:{version}" for version in versions)
+    return unique_sorted(requirements)
+
+
+def library_or_path_has_base(library, resolved_paths, base_prefix):
+    candidates = [library, *resolved_paths]
+    return any(Path(candidate).name.startswith(base_prefix) for candidate in candidates)
+
+
+def library_or_path_contains(library, resolved_paths, needle):
+    candidates = [library, *resolved_paths]
+    return any(needle in candidate for candidate in candidates)
+
+
 def direct_needed_blocking_reasons(library, resolved_paths, version_needs, blocking_reasons):
     reasons = []
     if "host_needed_libraries_present" in blocking_reasons:
@@ -982,6 +1016,69 @@ def build_direct_host_needed_library_rows(
                 ),
                 "evidence_fields": direct_catalog["evidence_fields"],
                 "next_action": direct_catalog["next_action"],
+                "promotion_allowed": False,
+            }
+        )
+    return rows
+
+
+def resolved_library_blocking_reasons(
+    library,
+    resolved_paths,
+    direct_needed_present,
+    version_requirements,
+    blocking_reasons,
+):
+    reasons = []
+    if "host_needed_libraries_present" in blocking_reasons:
+        reasons.append("host_needed_libraries_present")
+    if direct_needed_present and "host_direct_needed_libraries_present" in blocking_reasons:
+        reasons.append("host_direct_needed_libraries_present")
+    if "host_resolved_libraries_present" in blocking_reasons:
+        reasons.append("host_resolved_libraries_present")
+    if library_or_path_contains(library, resolved_paths, "ld-linux") and "host_loader_dependency" in blocking_reasons:
+        reasons.append("host_loader_dependency")
+    if library_or_path_has_base(library, resolved_paths, "libc.so") and "host_libc_dependency" in blocking_reasons:
+        reasons.append("host_libc_dependency")
+    if library_or_path_has_base(library, resolved_paths, "libgcc_s.so") and "libgcc_runtime_dependency" in blocking_reasons:
+        reasons.append("libgcc_runtime_dependency")
+    if version_requirements and "host_version_requirements" in blocking_reasons:
+        reasons.append("host_version_requirements")
+    return reasons
+
+
+def build_host_resolved_library_rows(
+    host_resolved_libraries,
+    host_direct_needed_libraries,
+    ldd_resolution_paths,
+    version_needs,
+    blocking_reasons,
+):
+    resolved_catalog = BLOCKER_CATALOG_DEFINITIONS["host_resolved_libraries_present"]
+    rows = []
+    for library in host_resolved_libraries:
+        resolved_paths = ldd_paths_for_library(library, ldd_resolution_paths)
+        direct_matches = matching_direct_needed_libraries(library, host_direct_needed_libraries)
+        direct_needed_present = bool(direct_matches)
+        version_requirements = version_requirements_for_library(library, version_needs)
+        rows.append(
+            {
+                "library": library,
+                "owner_surface": resolved_catalog["owner_surface"],
+                "primary_probe_id": "ldd_runtime_resolution",
+                "direct_needed_present": direct_needed_present,
+                "resolution_kind": "direct" if direct_needed_present else "transitive",
+                "resolved_paths": resolved_paths,
+                "version_requirements": version_requirements,
+                "blocking_reasons": resolved_library_blocking_reasons(
+                    library,
+                    resolved_paths,
+                    direct_needed_present,
+                    version_requirements,
+                    blocking_reasons,
+                ),
+                "evidence_fields": resolved_catalog["evidence_fields"],
+                "next_action": resolved_catalog["next_action"],
                 "promotion_allowed": False,
             }
         )
@@ -1060,6 +1157,13 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
             "host_direct_needed_libraries": host_direct_needed_libraries,
             "host_resolved_libraries": host_resolved_libraries,
             "direct_host_needed_library_rows": build_direct_host_needed_library_rows(
+                host_direct_needed_libraries,
+                ldd_resolution_paths,
+                version_needs,
+                blocking_reasons,
+            ),
+            "host_resolved_library_rows": build_host_resolved_library_rows(
+                host_resolved_libraries,
                 host_direct_needed_libraries,
                 ldd_resolution_paths,
                 version_needs,
