@@ -1038,9 +1038,41 @@ struct Sgrp {
 /// Stores the sgrp struct + all strings + pointer arrays.
 const GSHADOW_BUF_SIZE: usize = 4096;
 
+struct GshadowTlsStorage {
+    buf: Vec<u8>,
+    enum_offset: usize,
+}
+
+impl GshadowTlsStorage {
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            enum_offset: 0,
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static GSHADOW_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GshadowTlsStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(GshadowTlsStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static GSHADOW_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
-    static GSHADOW_ENUM_OFFSET: RefCell<usize> = const { RefCell::new(0) };
+    static GSHADOW_TLS: RefCell<GshadowTlsStorage> = RefCell::new(GshadowTlsStorage::new());
+}
+
+fn with_gshadow_storage<R>(callback: impl FnOnce(&mut GshadowTlsStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GSHADOW_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GSHADOW_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
 }
 
 /// Read /etc/gshadow content. Returns None if file doesn't exist.
@@ -1170,22 +1202,26 @@ unsafe fn pack_gshadow_into_buf(entry: &Gshadow, buf: *mut u8, buflen: usize) ->
 
 /// Pack into thread-local buffer and return pointer (for non-_r functions).
 fn gshadow_to_static_sgrp(entry: &Gshadow) -> *mut c_void {
-    GSHADOW_BUF.with(|buf| {
-        let mut buf = buf.borrow_mut();
-        buf.resize(GSHADOW_BUF_SIZE, 0);
-        let ptr = unsafe { pack_gshadow_into_buf(entry, buf.as_mut_ptr(), GSHADOW_BUF_SIZE) };
-        ptr as *mut c_void
-    })
+    with_gshadow_storage(|storage| pack_gshadow_into_static_storage(storage, entry))
+}
+
+fn pack_gshadow_into_static_storage(
+    storage: &mut GshadowTlsStorage,
+    entry: &Gshadow,
+) -> *mut c_void {
+    storage.buf.resize(GSHADOW_BUF_SIZE, 0);
+    let ptr = unsafe { pack_gshadow_into_buf(entry, storage.buf.as_mut_ptr(), GSHADOW_BUF_SIZE) };
+    ptr as *mut c_void
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setsgent() {
-    GSHADOW_ENUM_OFFSET.with(|off| *off.borrow_mut() = 0);
+    with_gshadow_storage(|storage| storage.enum_offset = 0);
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endsgent() {
-    GSHADOW_ENUM_OFFSET.with(|off| *off.borrow_mut() = 0);
+    with_gshadow_storage(|storage| storage.enum_offset = 0);
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1194,17 +1230,16 @@ pub unsafe extern "C" fn getsgent() -> *mut c_void {
         Some(c) => c,
         None => return ptr::null_mut(),
     };
-    GSHADOW_ENUM_OFFSET.with(|off| {
-        let mut offset = off.borrow_mut();
-        let remaining = if *offset < content.len() {
-            &content[*offset..]
+    with_gshadow_storage(|storage| {
+        let remaining = if storage.enum_offset < content.len() {
+            &content[storage.enum_offset..]
         } else {
             return ptr::null_mut();
         };
         for line in remaining.split(|&b| b == b'\n') {
-            *offset += line.len() + 1; // +1 for the newline
+            storage.enum_offset += line.len() + 1; // +1 for the newline
             if let Some(entry) = parse_gshadow_line(line) {
-                return gshadow_to_static_sgrp(&entry);
+                return pack_gshadow_into_static_storage(storage, &entry);
             }
         }
         ptr::null_mut()
@@ -1225,15 +1260,14 @@ pub unsafe extern "C" fn getsgent_r(
         Some(c) => c,
         None => return libc::ENOENT,
     };
-    GSHADOW_ENUM_OFFSET.with(|off| {
-        let mut offset = off.borrow_mut();
-        let remaining = if *offset < content.len() {
-            &content[*offset..]
+    with_gshadow_storage(|storage| {
+        let remaining = if storage.enum_offset < content.len() {
+            &content[storage.enum_offset..]
         } else {
             return libc::ENOENT;
         };
         for line in remaining.split(|&b| b == b'\n') {
-            *offset += line.len() + 1;
+            storage.enum_offset += line.len() + 1;
             if let Some(entry) = parse_gshadow_line(line) {
                 let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
                 if sgrp.is_null() {

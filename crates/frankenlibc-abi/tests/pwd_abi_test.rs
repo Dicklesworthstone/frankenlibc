@@ -1111,6 +1111,38 @@ fn sgetsgent_null_returns_null() {
     assert!(result.is_null(), "sgetsgent(null) should return null");
 }
 
+#[repr(C)]
+struct TestSgrp {
+    sg_namp: *mut c_char,
+    sg_passwd: *mut c_char,
+    sg_adm: *mut *mut c_char,
+    sg_mem: *mut *mut c_char,
+}
+
+#[test]
+fn sgetsgent_valid_line_returns_static_sgrp() {
+    use frankenlibc_abi::pwd_abi::sgetsgent;
+    let line = CString::new("wheel:!:root:root,daemon").unwrap();
+    let result = unsafe { sgetsgent(line.as_ptr()) };
+    assert!(!result.is_null(), "sgetsgent(valid) should return sgrp");
+
+    let sgrp = unsafe { &*(result.cast::<TestSgrp>()) };
+    assert_eq!(unsafe { CStr::from_ptr(sgrp.sg_namp) }.to_bytes(), b"wheel");
+    assert_eq!(unsafe { CStr::from_ptr(sgrp.sg_passwd) }.to_bytes(), b"!");
+
+    let adm0 = unsafe { *sgrp.sg_adm };
+    let adm1 = unsafe { *sgrp.sg_adm.add(1) };
+    assert_eq!(unsafe { CStr::from_ptr(adm0) }.to_bytes(), b"root");
+    assert!(adm1.is_null(), "admin list must be null-terminated");
+
+    let mem0 = unsafe { *sgrp.sg_mem };
+    let mem1 = unsafe { *sgrp.sg_mem.add(1) };
+    let mem2 = unsafe { *sgrp.sg_mem.add(2) };
+    assert_eq!(unsafe { CStr::from_ptr(mem0) }.to_bytes(), b"root");
+    assert_eq!(unsafe { CStr::from_ptr(mem1) }.to_bytes(), b"daemon");
+    assert!(mem2.is_null(), "member list must be null-terminated");
+}
+
 #[test]
 fn sgetsgent_r_null_returns_error() {
     use frankenlibc_abi::pwd_abi::sgetsgent_r;
