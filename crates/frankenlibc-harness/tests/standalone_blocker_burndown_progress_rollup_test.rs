@@ -81,6 +81,13 @@ fn string_set(value: &Value, field: &str) -> TestResult<BTreeSet<String>> {
         .collect()
 }
 
+fn array_contains(value: &Value, field: &str, expected: &str) -> TestResult<bool> {
+    Ok(json_array(value, field)?
+        .iter()
+        .filter_map(Value::as_str)
+        .any(|entry| entry == expected))
+}
+
 fn require(condition: bool, message: impl Into<String>) -> TestResult {
     if condition {
         Ok(())
@@ -103,6 +110,29 @@ fn run_checker(root: &Path, rollup: &Path, label: &str) -> TestResult<(Output, P
     Ok((output, report))
 }
 
+fn run_checker_with_owned_unwind(
+    root: &Path,
+    rollup: &Path,
+    owned_unwind: &Path,
+    label: &str,
+) -> TestResult<(Output, PathBuf)> {
+    let report = root.join("target/conformance").join(format!(
+        "standalone_blocker_burndown_progress_rollup.{label}.report.json"
+    ));
+    let output = Command::new("bash")
+        .arg(checker_path(root))
+        .env("FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP", rollup)
+        .env(
+            "FRANKENLIBC_STANDALONE_OWNED_UNWIND_EXPERIMENT",
+            owned_unwind,
+        )
+        .env("FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP_REPORT", &report)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("failed to run rollup checker: {err}"))?;
+    Ok((output, report))
+}
+
 fn format_output(output: &Output) -> String {
     format!(
         "status={}\nstdout={}\nstderr={}",
@@ -115,6 +145,29 @@ fn format_output(output: &Output) -> String {
 fn expect_checker_failure(rollup: &Path, label: &str, expected_error: &str) -> TestResult {
     let root = workspace_root()?;
     let (output, report) = run_checker(&root, rollup, label)?;
+    require(
+        !output.status.success(),
+        format!("checker unexpectedly passed\n{}", format_output(&output)),
+    )?;
+    let report_json = load_json_path(&report)?;
+    let errors = json_array(&report_json, "errors")?;
+    require(
+        errors
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|error| error.contains(expected_error)),
+        format!("expected error {expected_error:?}; report={report_json:?}"),
+    )
+}
+
+fn expect_checker_failure_with_owned_unwind(
+    owned_unwind: &Path,
+    label: &str,
+    expected_error: &str,
+) -> TestResult {
+    let root = workspace_root()?;
+    let (output, report) =
+        run_checker_with_owned_unwind(&root, &root.join(ROLLUP_PATH), owned_unwind, label)?;
     require(
         !output.status.success(),
         format!("checker unexpectedly passed\n{}", format_output(&output)),
@@ -150,6 +203,23 @@ fn write_mutated_rollup(
     let path = dir.join(format!("{}.json", unique_label(label)?));
     let content = serde_json::to_string_pretty(&rollup)
         .map_err(|err| format!("failed to serialize mutated rollup: {err}"))?;
+    std::fs::write(&path, format!("{content}\n"))
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(path)
+}
+
+fn write_mutated_owned_unwind(
+    label: &str,
+    mutate: impl FnOnce(&mut Value) -> TestResult,
+) -> TestResult<PathBuf> {
+    let root = workspace_root()?;
+    let mut owned_unwind = load_json(&root, OWNED_UNWIND_EXPERIMENT_PATH)?;
+    mutate(&mut owned_unwind)?;
+    let dir = root.join("target/conformance/mutated-rollup-sources");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    let path = dir.join(format!("{}.json", unique_label(label)?));
+    let content = serde_json::to_string_pretty(&owned_unwind)
+        .map_err(|err| format!("failed to serialize mutated owned unwind source: {err}"))?;
     std::fs::write(&path, format!("{content}\n"))
         .map_err(|err| format!("{}: {err}", path.display()))?;
     Ok(path)
@@ -326,6 +396,7 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
         json_field(owned_summary, "default_forge_path_unchanged")?.as_bool() == Some(true),
         "owned unwind summary leaves default forge unchanged",
     )?;
+    let live_contract = json_field(&owned_unwind, "live_dependency_evidence_contract")?;
     require(
         json_string(experiment, "experiment_id")? == "owned-unwind-stub-experiment",
         "partial experiment id",
@@ -346,6 +417,58 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
         json_string(experiment, "experiment_lane")?
             == json_string(owned_summary, "experiment_lane")?,
         "partial experiment lane",
+    )?;
+    require(
+        json_string(experiment, "live_dependency_contract_source")?
+            == "standalone_owned_unwind_experiment.live_dependency_evidence_contract",
+        "owned unwind partial experiment must reference live dependency contract",
+    )?;
+    require(
+        json_field(experiment, "live_dependency_contract_required")?.as_bool() == Some(true),
+        "owned unwind partial experiment must require live dependency contract",
+    )?;
+    require(
+        json_string(
+            experiment,
+            "live_dependency_contract_status_until_default_forge_consumes_evidence",
+        )? == "claim_blocked",
+        "owned unwind live contract remains claim-blocked until default forge consumes it",
+    )?;
+    require(
+        json_string(live_contract, "lane_id")? == json_string(experiment, "experiment_lane")?,
+        "owned unwind live dependency contract must target partial experiment lane",
+    )?;
+    require(
+        json_field(live_contract, "expected_undefined_unwind_symbol_count")?.as_u64() == Some(0),
+        "owned unwind live dependency contract must expect zero undefined unwind symbols",
+    )?;
+    require(
+        array_contains(live_contract, "forbidden_needed_libraries", "libgcc_s.so.1")?,
+        "owned unwind live dependency contract must forbid libgcc_s NEEDED",
+    )?;
+    require(
+        array_contains(
+            live_contract,
+            "forbidden_version_providers",
+            "libgcc_s.so.1",
+        )?,
+        "owned unwind live dependency contract must forbid libgcc_s version providers",
+    )?;
+    require(
+        array_contains(
+            live_contract,
+            "forbidden_undefined_symbol_prefixes",
+            "_Unwind_",
+        )?,
+        "owned unwind live dependency contract must forbid _Unwind_ undefined prefixes",
+    )?;
+    require(
+        json_string(live_contract, "status_on_violation")? == "fail_closed",
+        "owned unwind live dependency contract must fail closed",
+    )?;
+    require(
+        json_field(live_contract, "promotion_allowed_on_pass")?.as_bool() == Some(false),
+        "owned unwind live dependency contract must not permit promotion",
     )?;
     let baseline = json_field(owned_summary, "blocker_symbol_count_baseline")?
         .as_u64()
@@ -491,6 +614,52 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
     require(
         experiments.len() == 2,
         "report must materialize two partial burndown experiments",
+    )?;
+    let experiment_by_id: BTreeMap<String, &Value> = experiments
+        .iter()
+        .map(|experiment| {
+            json_string(experiment, "experiment_id").map(|id| (id.to_owned(), experiment))
+        })
+        .collect::<TestResult<_>>()?;
+    let owned_unwind = *experiment_by_id
+        .get("owned-unwind-stub-experiment")
+        .ok_or_else(|| "missing owned unwind report experiment".to_string())?;
+    let live_contract = json_field(owned_unwind, "live_dependency_contract")?;
+    require(
+        json_string(live_contract, "contract_validation_status")? == "pass",
+        "owned unwind live dependency contract must pass in report",
+    )?;
+    require(
+        json_string(live_contract, "source")?
+            == "standalone_owned_unwind_experiment.live_dependency_evidence_contract",
+        "owned unwind live dependency contract report source",
+    )?;
+    require(
+        array_contains(live_contract, "forbidden_needed_libraries", "libgcc_s.so.1")?,
+        "owned unwind report must materialize forbidden libgcc needed library",
+    )?;
+    require(
+        array_contains(
+            live_contract,
+            "forbidden_version_providers",
+            "libgcc_s.so.1",
+        )?,
+        "owned unwind report must materialize forbidden libgcc version provider",
+    )?;
+    require(
+        array_contains(
+            live_contract,
+            "forbidden_undefined_symbol_prefixes",
+            "_Unwind_",
+        )?,
+        "owned unwind report must materialize forbidden unwind prefix",
+    )?;
+    require(
+        json_string(
+            live_contract,
+            "status_until_default_forge_consumes_evidence",
+        )? == "claim_blocked",
+        "owned unwind live dependency evidence must stay claim-blocked",
     )
 }
 
@@ -557,6 +726,43 @@ fn checker_rejects_partial_experiment_overclaim() -> TestResult {
         &mutated,
         "rollup-partial-overclaim",
         "partial_burndown_experiments[owned-unwind-stub-experiment].promotion_allowed must be false",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_owned_unwind_live_dependency_contract_source() -> TestResult {
+    let mutated = write_mutated_owned_unwind("owned-unwind-missing-live-contract", |owned| {
+        owned
+            .as_object_mut()
+            .ok_or_else(|| "owned unwind source must be object".to_string())?
+            .remove("live_dependency_evidence_contract");
+        Ok(())
+    })?;
+    expect_checker_failure_with_owned_unwind(
+        &mutated,
+        "owned-unwind-missing-live-contract",
+        "owned_unwind.live_dependency_evidence_contract: must be an object",
+    )
+}
+
+#[test]
+fn checker_rejects_non_fail_closed_owned_unwind_live_dependency_contract() -> TestResult {
+    let mutated = write_mutated_owned_unwind("owned-unwind-live-contract-open", |owned| {
+        json_field(owned, "live_dependency_evidence_contract")?;
+        owned
+            .get_mut("live_dependency_evidence_contract")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "live dependency contract must be object".to_string())?
+            .insert(
+                "status_on_violation".to_string(),
+                Value::String("warn_only".to_string()),
+            );
+        Ok(())
+    })?;
+    expect_checker_failure_with_owned_unwind(
+        &mutated,
+        "owned-unwind-live-contract-open",
+        "owned_unwind.live_dependency_evidence_contract.status_on_violation must be fail_closed",
     )
 }
 

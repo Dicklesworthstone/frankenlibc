@@ -153,6 +153,74 @@ def matrix_requirement_id(row):
     return None
 
 
+def owned_unwind_live_dependency_contract_report(expected_lane):
+    local_errors = []
+
+    def add_error(message):
+        errors.append(message)
+        local_errors.append(message)
+
+    contract = owned_unwind.get("live_dependency_evidence_contract")
+    if not isinstance(contract, dict):
+        add_error("owned_unwind.live_dependency_evidence_contract: must be an object")
+        contract = {}
+
+    def contract_list(field, context):
+        value = contract.get(field)
+        if not isinstance(value, list) or not value:
+            add_error(f"{context}: must be a non-empty list")
+            return []
+        result = []
+        for idx, item in enumerate(value):
+            if not isinstance(item, str) or not item:
+                add_error(f"{context}[{idx}]: must be a non-empty string")
+            else:
+                result.append(item)
+        return result
+
+    forbidden_needed = contract_list(
+        "forbidden_needed_libraries",
+        "owned_unwind.live_dependency_evidence_contract.forbidden_needed_libraries",
+    )
+    forbidden_providers = contract_list(
+        "forbidden_version_providers",
+        "owned_unwind.live_dependency_evidence_contract.forbidden_version_providers",
+    )
+    forbidden_prefixes = contract_list(
+        "forbidden_undefined_symbol_prefixes",
+        "owned_unwind.live_dependency_evidence_contract.forbidden_undefined_symbol_prefixes",
+    )
+    lane_id = contract.get("lane_id")
+    if lane_id != expected_lane:
+        add_error("owned_unwind.live_dependency_evidence_contract.lane_id must match owned unwind experiment lane")
+    if contract.get("expected_undefined_unwind_symbol_count") != 0:
+        add_error("owned_unwind.live_dependency_evidence_contract.expected_undefined_unwind_symbol_count must be 0")
+    if "libgcc_s.so.1" not in forbidden_needed:
+        add_error("owned_unwind.live_dependency_evidence_contract must forbid libgcc_s.so.1 needed libraries")
+    if "libgcc_s.so.1" not in forbidden_providers:
+        add_error("owned_unwind.live_dependency_evidence_contract must forbid libgcc_s.so.1 version providers")
+    if "_Unwind_" not in forbidden_prefixes:
+        add_error("owned_unwind.live_dependency_evidence_contract must forbid _Unwind_ undefined symbol prefixes")
+    if contract.get("status_on_violation") != "fail_closed":
+        add_error("owned_unwind.live_dependency_evidence_contract.status_on_violation must be fail_closed")
+    if contract.get("promotion_allowed_on_pass") is not False:
+        add_error("owned_unwind.live_dependency_evidence_contract.promotion_allowed_on_pass must be false")
+
+    return {
+        "contract_validation_status": "pass" if not local_errors else "fail",
+        "source": "standalone_owned_unwind_experiment.live_dependency_evidence_contract",
+        "lane_id": lane_id,
+        "expected_undefined_unwind_symbol_count": contract.get("expected_undefined_unwind_symbol_count"),
+        "forbidden_needed_libraries": forbidden_needed,
+        "forbidden_version_providers": forbidden_providers,
+        "forbidden_undefined_symbol_prefixes": forbidden_prefixes,
+        "status_on_violation": contract.get("status_on_violation"),
+        "promotion_allowed_on_pass": contract.get("promotion_allowed_on_pass"),
+        "status_until_default_forge_consumes_evidence": "claim_blocked",
+        "errors": local_errors,
+    }
+
+
 head = current_commit()
 rollup = load_json(rollup_path)
 plan = load_json(plan_path)
@@ -394,6 +462,8 @@ partial_specs = {
         "baseline_count_field": "blocker_symbol_count_baseline",
         "experiment_count_field": "blocker_symbol_count_owned_unwind_when_complete",
         "evidence_source": "standalone_owned_unwind_experiment.summary.blocker_symbol_count_owned_unwind_when_complete",
+        "live_dependency_contract_source": "standalone_owned_unwind_experiment.live_dependency_evidence_contract",
+        "requires_live_dependency_contract": True,
         "label": "owned unwind",
     },
     "owned-tls-cache-source-surface-experiment": {
@@ -462,21 +532,33 @@ for row in partial_rows:
         errors.append(f"{context}.evidence_source mismatch")
     if row.get("status_until_default_forge_consumes_evidence") != "claim_blocked":
         errors.append(f"{context}.status_until_default_forge_consumes_evidence must be claim_blocked")
+    live_contract_report = None
+    if spec.get("requires_live_dependency_contract"):
+        if row.get("live_dependency_contract_source") != spec["live_dependency_contract_source"]:
+            errors.append(f"{context}.live_dependency_contract_source mismatch")
+        if row.get("live_dependency_contract_required") is not True:
+            errors.append(f"{context}.live_dependency_contract_required must be true")
+        if row.get("live_dependency_contract_status_until_default_forge_consumes_evidence") != "claim_blocked":
+            errors.append(
+                f"{context}.live_dependency_contract_status_until_default_forge_consumes_evidence must be claim_blocked"
+            )
+        live_contract_report = owned_unwind_live_dependency_contract_report(row.get("experiment_lane"))
     if isinstance(row.get("reduced_value_count"), int):
         partial_reduced_count += row["reduced_value_count"]
-    materialized_partial_experiments.append(
-        {
-            "experiment_id": experiment_id,
-            "category_id": category,
-            "baseline_lane": row.get("baseline_lane"),
-            "experiment_lane": row.get("experiment_lane"),
-            "baseline_value_count": row.get("baseline_value_count"),
-            "experiment_value_count": row.get("experiment_value_count"),
-            "reduced_value_count": row.get("reduced_value_count"),
-            "report_only": True,
-            "status_until_default_forge_consumes_evidence": "claim_blocked",
-        }
-    )
+    materialized = {
+        "experiment_id": experiment_id,
+        "category_id": category,
+        "baseline_lane": row.get("baseline_lane"),
+        "experiment_lane": row.get("experiment_lane"),
+        "baseline_value_count": row.get("baseline_value_count"),
+        "experiment_value_count": row.get("experiment_value_count"),
+        "reduced_value_count": row.get("reduced_value_count"),
+        "report_only": True,
+        "status_until_default_forge_consumes_evidence": "claim_blocked",
+    }
+    if live_contract_report is not None:
+        materialized["live_dependency_contract"] = live_contract_report
+    materialized_partial_experiments.append(materialized)
 if partial_seen != set(partial_specs):
     errors.append("partial_burndown_experiments must cover owned-unwind and TLS-removal experiments")
 

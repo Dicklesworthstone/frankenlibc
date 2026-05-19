@@ -210,6 +210,9 @@
       "experiment_value_count": 0,
       "reduced_value_count": 12,
       "evidence_source": "standalone_owned_unwind_experiment.summary.blocker_symbol_count_owned_unwind_when_complete",
+      "live_dependency_contract_source": "standalone_owned_unwind_experiment.live_dependency_evidence_contract",
+      "live_dependency_contract_required": true,
+      "live_dependency_contract_status_until_default_forge_consumes_evidence": "claim_blocked",
       "status_until_default_forge_consumes_evidence": "claim_blocked"
     },
     {
