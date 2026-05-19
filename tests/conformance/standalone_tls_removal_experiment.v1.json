@@ -31,6 +31,8 @@
       "missing_owner_surface_row",
       "missing_non_targeted_tls_emitter_inventory",
       "untracked_non_targeted_tls_emitter",
+      "missing_residual_artifact_tls_emitter_inventory",
+      "untracked_residual_artifact_tls_emitter",
       "hidden_glibc_version_need",
       "stale_source_commit",
       "illegal_promotion",
@@ -86,6 +88,18 @@
     "storage_symbols",
     "gate_disposition",
     "baseline_disposition",
+    "claim_status_until_exit",
+    "remediation_plan"
+  ],
+  "required_residual_artifact_tls_emitter_fields": [
+    "crate",
+    "source_surface",
+    "symbol",
+    "section",
+    "size_bytes",
+    "linkage",
+    "artifact_lane",
+    "observed_in_command",
     "claim_status_until_exit",
     "remediation_plan"
   ],
@@ -373,6 +387,17 @@
       "claim_status_until_exit": "claim_blocked"
     },
     {
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "owner_surface": "abi_pthread_control_state",
+      "thread_local_macro_count": 6,
+      "baseline_disposition": "still_thread_local",
+      "local_exec_disposition": "still_thread_local",
+      "owned_tls_cache_disposition": "pthread_key_substituted_when_complete",
+      "removal_plan": "Migrate pthread policy override, policy depth, cancel state, cancel type, backend cache, and pthread_self cache state to the PTHREAD_OWNED_TLS cache; preserve per-thread pthread control semantics.",
+      "expected_runtime_replacement_primitive": "pthread_setspecific",
+      "claim_status_until_exit": "claim_blocked"
+    },
+    {
       "path": "crates/frankenlibc-abi/src/inet_abi.rs",
       "owner_surface": "abi_inet_ntoa_static_buffer",
       "thread_local_macro_count": 1,
@@ -396,10 +421,204 @@
     }
   ],
   "non_targeted_tls_emitters": [],
+  "residual_artifact_tls_emitters": [
+    {
+      "crate": "frankenlibc-abi",
+      "source_surface": "exported glibc TLS compatibility symbol",
+      "symbol": "__libc_dlerror_result",
+      "section": ".tbss",
+      "size_bytes": 8,
+      "linkage": "GLOBAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Replace or explicitly own this exported TLS object so replacement-mode artifacts do not require general-dynamic TLS resolution."
+    },
+    {
+      "crate": "frankenlibc-core",
+      "source_surface": "pthread TLS fallback storage",
+      "symbol": "_RNvNCNKNvNtNtCs1Sj2G2GCKYL_16frankenlibc_core7pthread3tls19FALLBACK_TLS_VALUESs_0s_023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 16384,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Move pthread fallback TLS values behind owned replacement-mode storage or prove this core fallback is absent from the standalone artifact."
+    },
+    {
+      "crate": "tracing-core",
+      "source_surface": "dispatcher current-state TLS",
+      "symbol": "_RNvNCNKNvNtCs1pPgOkVrw7y_12tracing_core10dispatcher13CURRENT_STATE0023___RUST_STD_INTERNAL_VAL",
+      "section": ".tdata",
+      "size_bytes": 48,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Remove tracing dispatcher TLS from replacement-mode dependencies or route diagnostics through owned non-TLS storage."
+    },
+    {
+      "crate": "frankenlibc-membrane",
+      "source_surface": "ptr_validator validation depth",
+      "symbol": "_RNvNCNKNvNtCsbh84du9ocyq_20frankenlibc_membrane13ptr_validator16VALIDATION_DEPTH0s_023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 4,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Replace membrane validation-depth TLS with owned replacement-mode state before treating owned-tls-cache source cleanup as artifact-complete."
+    },
+    {
+      "crate": "frankenlibc-membrane",
+      "source_surface": "ptr_validator EBR handle",
+      "symbol": "_RNvNCNKNvNtCsbh84du9ocyq_20frankenlibc_membrane13ptr_validator10EBR_HANDLE0023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 48,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Replace or eliminate membrane EBR TLS in replacement mode so readelf reports no residual TLS section dependency."
+    },
+    {
+      "crate": "frankenlibc-membrane",
+      "source_surface": "validation TLS cache",
+      "symbol": "_RNvNCNKNvNtCsbh84du9ocyq_20frankenlibc_membrane9tls_cache9TLS_CACHE0023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 40,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Route the membrane validation cache through owned process-keyed replacement-mode state or remove it from the standalone artifact."
+    },
+    {
+      "crate": "frankenlibc-membrane",
+      "source_surface": "BRAVO thread token",
+      "symbol": "_RNvNCNKNvNtCsbh84du9ocyq_20frankenlibc_membrane5bravo12THREAD_TOKEN0s_023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 16,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Provide a non-TLS BRAVO thread-token strategy for standalone replacement mode."
+    },
+    {
+      "crate": "parking_lot",
+      "source_surface": "RawThreadId TLS key",
+      "symbol": "_RNvNCNKNvNvXNtCslNZwVMgd4Z0_11parking_lot7remutexNtBa_11RawThreadIdNtNtCsiGm4LOuQtSl_8lock_api7remutex11GetThreadId17nonzero_thread_id3KEY0s_023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 2,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Avoid parking_lot remutex TLS in replacement mode or provide an owned lock/thread-id primitive that does not emit TLS."
+    },
+    {
+      "crate": "parking_lot_core",
+      "source_surface": "parking lot thread data",
+      "symbol": "_RNvNCNKNvNvNtCsauQQugvlKcP_16parking_lot_core11parking_lot16with_thread_data11THREAD_DATA0023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 48,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Replace parking_lot_core thread-data TLS on replacement-mode paths or prove it is not linked into the final standalone artifact."
+    },
+    {
+      "crate": "std",
+      "source_surface": "panic count TLS",
+      "symbol": "_RNvNCNKNvNtNtCsjCoUzHIWc5R_3std9panicking11panic_count17LOCAL_PANIC_COUNT0s_023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 16,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Keep panic=abort insufficient by itself; remove or own std panic TLS before loader TLS dependency claims can promote."
+    },
+    {
+      "crate": "std",
+      "source_surface": "stdio output capture TLS",
+      "symbol": "_RNvNCNKNvNtNtCsjCoUzHIWc5R_3std2io5stdio14OUTPUT_CAPTURE0023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 16,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Remove std io output-capture TLS from replacement-mode linkage or replace the std dependency path that pulls it in."
+    },
+    {
+      "crate": "std",
+      "source_surface": "thread-local destructor list",
+      "symbol": "_RNvNtNtNtCsjCoUzHIWc5R_3std3sys12thread_local11destructors4list5DTORS",
+      "section": ".tdata",
+      "size_bytes": 32,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Remove std thread-local destructor machinery from replacement-mode linkage or provide owned startup/destructor handling."
+    },
+    {
+      "crate": "std",
+      "source_surface": "hash random-state TLS",
+      "symbol": "_RNvNCNKNvNvMNtNtCsjCoUzHIWc5R_3std4hash6randomNtBa_11RandomState3new4KEYS0s_023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 24,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Avoid std HashMap random-state TLS in replacement-mode hot paths or replace those collections/state initializers."
+    },
+    {
+      "crate": "std",
+      "source_surface": "current thread id TLS",
+      "symbol": "_RNvNtNtNtCsjCoUzHIWc5R_3std6thread7current2id2ID",
+      "section": ".tbss",
+      "size_bytes": 8,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Replace std::thread::current id usage or isolate it behind owned replacement-mode thread identity."
+    },
+    {
+      "crate": "std",
+      "source_surface": "current thread handle TLS",
+      "symbol": "_RNvNtNtCsjCoUzHIWc5R_3std6thread7current7CURRENT",
+      "section": ".tbss",
+      "size_bytes": 8,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Replace std::thread::current handle usage or isolate it behind owned replacement-mode thread identity."
+    },
+    {
+      "crate": "std",
+      "source_surface": "thread spawn hooks TLS",
+      "symbol": "_RNvNCNKNvNtNtCsjCoUzHIWc5R_3std6thread9spawnhook11SPAWN_HOOKS0023___RUST_STD_INTERNAL_VAL",
+      "section": ".tbss",
+      "size_bytes": 16,
+      "linkage": "LOCAL",
+      "artifact_lane": "standalone-owned-unwind-owned-tls-combined-probe",
+      "observed_in_command": "readelf -Ws target/standalone_replacement_artifact-combined-probe/cargo-target/release/libfrankenlibc_replace.so",
+      "claim_status_until_exit": "claim_blocked",
+      "remediation_plan": "Remove std thread-spawn hook TLS from replacement-mode linkage or provide an owned thread startup hook surface."
+    }
+  ],
   "live_experiment_environment_blockers": [
     {
-      "blocker": "owned-tls-cache feature gate plus the unistd crypt/crypt_gensalt, NIS helper, resolver backend-file cache, resolver nameserver, resolver h_errno, resolver hostent/servent/protoent non-reentrant storage, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp-state, pututxline return-buffer, NSS systemd block-flag, services/networks/protocols/hosts/aliases/netgroup iterators, fstab-state, ttyent-state, getdate-tm, string ABI recursion/scratch state, RPC ABI scratch/state slices, glibc-internal cleanup/resolver/shadow state slices, errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar C11 char16/fgetwln buffers, stdlib getusershell/qecvt/qfcvt scratch state, group ABI non-reentrant storage, passwd/gshadow/shadow ABI non-reentrant storage, pthread control state, inet_ntoa static buffer storage, and time ABI non-reentrant static buffers are wired, while malloc allocator reentry guards no longer emit ungated ABI TLS. Artifact-level nm/readelf proof still reports `__tls_get_addr@GLIBC_2.3`, and the manifest now inventory-locks 0 remaining ungated non-targeted ABI thread_local! emitters before any claim can promote.",
-      "remediation": "Run the owned-tls-cache experiment lane and require nm/readelf evidence that `__tls_get_addr` is absent before changing claim_status or promotion gates. Until artifact proof exists, the owned-tls-cache lane MUST stay report-only with build_status_until_owned_substitute_complete=report_only_blocked."
+      "blocker": "owned-tls-cache feature gate plus all targeted ABI source surfaces are wired and the ABI source inventory now reports 0 remaining ungated thread_local! macros, but artifact-level readelf on the combined standalone,owned-unwind-stub,owned-tls-cache probe still reports `__tls_get_addr@GLIBC_2.3`. The remaining TLS section emitters are outside the ABI macro inventory: frankenlibc-core pthread fallback TLS, frankenlibc-membrane validation/cache TLS, tracing-core dispatcher TLS, parking_lot thread data, std panic/io/thread/hash TLS, and the exported __libc_dlerror_result TLS compatibility object.",
+      "remediation": "Treat artifact-level residual TLS emitters as the next blocker surface. Promotion remains forbidden until nm/readelf output for the replacement artifact reports no TLS symbols, no DTPMOD64 relocations, no `__tls_get_addr`, and no ld-linux GLIBC_2.3 version need."
     }
   ],
   "summary": {
@@ -416,15 +635,18 @@
     "claim_status": "claim_blocked",
     "tls_blocker_symbol_count_baseline": 1,
     "tls_blocker_symbol_count_owned_tls_cache_when_complete": 0,
-    "owner_surface_cluster_count": 19,
+    "owner_surface_cluster_count": 20,
     "owned_tls_cache_feature_gate_status": "wired",
     "owned_tls_cache_substituted_macro_count": 84,
     "owned_tls_cache_remaining_macro_count": 0,
     "non_targeted_tls_emitter_count": 0,
     "ungated_thread_local_macro_count_in_abi_src": 0,
+    "residual_artifact_tls_emitter_count": 16,
+    "artifact_level_tls_claim_status": "claim_blocked",
+    "artifact_level_tls_probe": "combined standalone,owned-unwind-stub,owned-tls-cache remote forge probe at source_commit 4e9bfcc057a6eecc3face40a41ada06952bf602f",
     "owned_tls_cache_current_slice": "crates/frankenlibc-abi/src/unistd_abi.rs crypt/crypt_gensalt, NIS helper, resolver nameserver, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp-state, pututxline return buffers, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, and alias iterator state; crates/frankenlibc-abi/src/resolv_abi.rs resolver backend-file caches, resolver h_errno state, resolver hostent/servent/protoent non-reentrant storage, resolver printable-DNS helper buffers, and resolver hostalias/LOC/symbol fallback buffers; crates/frankenlibc-abi/src/string_abi.rs string membrane recursion depth, strtok save pointer, strerror buffer, and strsignal buffer; crates/frankenlibc-abi/src/rpc_abi.rs xdr_reference recursion depth, clnt_sperrno buffer, clnt_spcreateerror buffer, rpc_createerr, svc_fdset, svc_max_pollfd, and svc_pollfd state; crates/frankenlibc-abi/src/glibc_internal_abi.rs pthread cleanup head, resolver state scratch, rcmd errstr slot, sgetspent scratch state, glibc-internal h_errno, and resolver context head; crates/frankenlibc-abi/src/errno_abi.rs errno slot; crates/frankenlibc-abi/src/dlfcn_abi.rs dlerror pending/stable pointer state; crates/frankenlibc-abi/src/dirent_abi.rs readdir static entry buffer; crates/frankenlibc-abi/src/ctype_abi.rs ctype table-location slots; crates/frankenlibc-abi/src/runtime_policy.rs runtime-policy mode/trace/contract state; crates/frankenlibc-abi/src/startup_abi.rs thread-at-exit list/capture and reentry guards; crates/frankenlibc-abi/src/signal_abi.rs signal critical/deferred controller state; crates/frankenlibc-abi/src/stdio_abi.rs tmpnam static buffer and fgetln line buffer; crates/frankenlibc-abi/src/wchar_abi.rs C11 char16 surrogate state and fgetwln wide-line buffer; crates/frankenlibc-abi/src/stdlib_abi.rs getusershell iterator/cache state and qecvt/qfcvt static buffers; crates/frankenlibc-abi/src/grp_abi.rs non-reentrant group storage; crates/frankenlibc-abi/src/pwd_abi.rs non-reentrant passwd, gshadow, and shadow storage; crates/frankenlibc-abi/src/pthread_abi.rs pthread policy/cancel/backend/self cache; crates/frankenlibc-abi/src/inet_abi.rs inet_ntoa static buffer storage; crates/frankenlibc-abi/src/time_abi.rs gmtime/localtime/asctime/ctime static buffer storage",
     "thread_local_macro_count_in_targeted_clusters": 84,
     "non_targeted_tls_current_slice": "none",
-    "next_safe_action": "Rerun nm/readelf artifact evidence for the owned-tls-cache lane. Promotion remains forbidden until __tls_get_addr is absent from nm -D output AND every owner-surface cluster reports owned_tls_cache_disposition=pthread_key_substituted."
+    "next_safe_action": "Replace or remove the residual artifact TLS emitters outside the ABI source macro inventory. Promotion remains forbidden until nm/readelf report zero TLS symbols, zero DTPMOD64 relocations, no __tls_get_addr, and no ld-linux GLIBC_2.3 version need."
   }
 }

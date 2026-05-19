@@ -27,8 +27,9 @@ const LOCAL_EXEC_LANE: &str = "local-exec-tls-model-probe";
 const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
-const EXPECTED_OWNER_SURFACE_COUNT: usize = 19;
+const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 16;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -36,6 +37,12 @@ struct ThreadLocalMacroSite {
     line: usize,
     macro_invocation: String,
     storage_symbols: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ArtifactTlsEmitter {
+    crate_name: String,
+    symbol: String,
 }
 
 fn workspace_root() -> TestResult<PathBuf> {
@@ -404,6 +411,76 @@ fn manifest_non_targeted_tls_sites(manifest: &Value) -> TestResult<Vec<ThreadLoc
     Ok(sites)
 }
 
+fn manifest_residual_artifact_tls_emitters(
+    manifest: &Value,
+) -> TestResult<Vec<ArtifactTlsEmitter>> {
+    let required_fields: BTreeSet<&str> =
+        json_array(manifest, "required_residual_artifact_tls_emitter_fields")?
+            .iter()
+            .map(|v| {
+                v.as_str().ok_or_else(|| {
+                    "required_residual_artifact_tls_emitter_fields entries must be strings"
+                        .to_string()
+                })
+            })
+            .collect::<Result<_, _>>()?;
+    for required in [
+        "crate",
+        "source_surface",
+        "symbol",
+        "section",
+        "size_bytes",
+        "linkage",
+        "artifact_lane",
+        "observed_in_command",
+        "claim_status_until_exit",
+        "remediation_plan",
+    ] {
+        require(
+            required_fields.contains(required),
+            format!("required_residual_artifact_tls_emitter_fields must include {required}"),
+        )?;
+    }
+
+    let mut emitters = Vec::new();
+    let mut unique_symbols = BTreeSet::new();
+    for row in json_array(manifest, "residual_artifact_tls_emitters")? {
+        for field in &required_fields {
+            require(
+                row.get(*field).is_some(),
+                format!("residual_artifact_tls_emitters row missing {field}"),
+            )?;
+        }
+        require(
+            json_string(row, "claim_status_until_exit")? == "claim_blocked",
+            "residual artifact TLS emitter claim_status_until_exit",
+        )?;
+        require(
+            json_string(row, "artifact_lane")?
+                == "standalone-owned-unwind-owned-tls-combined-probe",
+            "residual artifact TLS emitter artifact_lane",
+        )?;
+        require(
+            json_string(row, "section")? == ".tdata" || json_string(row, "section")? == ".tbss",
+            "residual artifact TLS emitter section",
+        )?;
+        require(
+            json_u64(row, "size_bytes")? > 0,
+            "residual artifact TLS emitter size_bytes",
+        )?;
+        let symbol = json_string(row, "symbol")?.to_string();
+        require(
+            unique_symbols.insert(symbol.clone()),
+            format!("duplicate residual artifact TLS symbol {symbol}"),
+        )?;
+        emitters.push(ArtifactTlsEmitter {
+            crate_name: json_string(row, "crate")?.to_string(),
+            symbol,
+        });
+    }
+    Ok(emitters)
+}
+
 fn format_thread_local_sites(sites: &[ThreadLocalMacroSite]) -> String {
     sites
         .iter()
@@ -514,6 +591,22 @@ fn evaluate(manifest: &Value) -> Vec<String> {
         || summary_non_targeted_count != Some(non_targeted_rows.len() as u64)
     {
         rej.push("missing_non_targeted_tls_emitter_inventory".to_string());
+    }
+
+    let Some(residual_artifact_rows) = manifest
+        .get("residual_artifact_tls_emitters")
+        .and_then(Value::as_array)
+    else {
+        rej.push("missing_residual_artifact_tls_emitter_inventory".to_string());
+        return rej;
+    };
+    let summary_residual_artifact_count = summary
+        .get("residual_artifact_tls_emitter_count")
+        .and_then(Value::as_u64);
+    if residual_artifact_rows.len() != EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT
+        || summary_residual_artifact_count != Some(residual_artifact_rows.len() as u64)
+    {
+        rej.push("missing_residual_artifact_tls_emitter_inventory".to_string());
     }
 
     // Promotion guard: claim_status_until_exit may not be "ready" while
@@ -641,6 +734,8 @@ fn report_policy_locks_default_forge_replacement_and_tls_model() -> TestResult {
         "missing_owner_surface_row",
         "missing_non_targeted_tls_emitter_inventory",
         "untracked_non_targeted_tls_emitter",
+        "missing_residual_artifact_tls_emitter_inventory",
+        "untracked_residual_artifact_tls_emitter",
         "hidden_glibc_version_need",
         "stale_source_commit",
         "illegal_promotion",
@@ -765,6 +860,68 @@ fn non_targeted_thread_local_emitters_are_inventory_locked() -> TestResult {
 }
 
 #[test]
+fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
+    let m = load_manifest()?;
+    let rows = manifest_residual_artifact_tls_emitters(&m)?;
+    require(
+        rows.len() == EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT,
+        format!(
+            "expected {EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT} residual artifact TLS emitters, got {}",
+            rows.len()
+        ),
+    )?;
+
+    let symbols: BTreeSet<&str> = rows.iter().map(|row| row.symbol.as_str()).collect();
+    for required in [
+        "__libc_dlerror_result",
+        "_RNvNCNKNvNtNtCs1Sj2G2GCKYL_16frankenlibc_core7pthread3tls19FALLBACK_TLS_VALUESs_0s_023___RUST_STD_INTERNAL_VAL",
+        "_RNvNCNKNvNtCsbh84du9ocyq_20frankenlibc_membrane13ptr_validator16VALIDATION_DEPTH0s_023___RUST_STD_INTERNAL_VAL",
+        "_RNvNCNKNvNtCsbh84du9ocyq_20frankenlibc_membrane9tls_cache9TLS_CACHE0023___RUST_STD_INTERNAL_VAL",
+        "_RNvNCNKNvNvNtCsauQQugvlKcP_16parking_lot_core11parking_lot16with_thread_data11THREAD_DATA0023___RUST_STD_INTERNAL_VAL",
+        "_RNvNtNtNtCsjCoUzHIWc5R_3std3sys12thread_local11destructors4list5DTORS",
+        "_RNvNtNtCsjCoUzHIWc5R_3std6thread7current7CURRENT",
+    ] {
+        require(
+            symbols.contains(required),
+            format!("residual artifact TLS inventory must include {required}"),
+        )?;
+    }
+
+    let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();
+    for required in [
+        "frankenlibc-abi",
+        "frankenlibc-core",
+        "frankenlibc-membrane",
+        "tracing-core",
+        "parking_lot",
+        "parking_lot_core",
+        "std",
+    ] {
+        require(
+            crates.contains(required),
+            format!("residual artifact TLS inventory must include crate {required}"),
+        )?;
+    }
+
+    let summary = json_field(&m, "summary")?;
+    require(
+        summary
+            .get("residual_artifact_tls_emitter_count")
+            .and_then(Value::as_u64)
+            == Some(EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT as u64),
+        "summary residual_artifact_tls_emitter_count",
+    )?;
+    require(
+        json_string(summary, "artifact_level_tls_claim_status")? == "claim_blocked",
+        "artifact-level TLS claim status",
+    )?;
+    require(
+        json_string(summary, "next_safe_action")?.contains("residual artifact TLS emitters"),
+        "summary next_safe_action must name residual artifact TLS emitters",
+    )
+}
+
+#[test]
 fn fixture_stale_source_commit_is_rejected() -> TestResult {
     let mut m = load_manifest()?;
     m.as_object_mut().unwrap().insert(
@@ -820,6 +977,19 @@ fn fixture_missing_non_targeted_tls_inventory_is_rejected() -> TestResult {
     require(
         r.contains(&"missing_non_targeted_tls_emitter_inventory".to_string()),
         format!("must reject missing_non_targeted_tls_emitter_inventory; got {r:?}"),
+    )
+}
+
+#[test]
+fn fixture_missing_residual_artifact_tls_inventory_is_rejected() -> TestResult {
+    let mut m = load_manifest()?;
+    m.as_object_mut()
+        .unwrap()
+        .remove("residual_artifact_tls_emitters");
+    let r = evaluate(&m);
+    require(
+        r.contains(&"missing_residual_artifact_tls_emitter_inventory".to_string()),
+        format!("must reject missing_residual_artifact_tls_emitter_inventory; got {r:?}"),
     )
 }
 
@@ -949,6 +1119,13 @@ fn summary_anchors_to_lane_and_cluster_counts() -> TestResult {
             .and_then(Value::as_u64)
             == Some(EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT as u64),
         "summary non_targeted_tls_emitter_count",
+    )?;
+    require(
+        summary
+            .get("residual_artifact_tls_emitter_count")
+            .and_then(Value::as_u64)
+            == Some(EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT as u64),
+        "summary residual_artifact_tls_emitter_count",
     )?;
     require(
         json_string(summary, "claim_status")? == "claim_blocked",
