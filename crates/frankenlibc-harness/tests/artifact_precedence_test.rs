@@ -140,6 +140,21 @@ fn manifest_declares_artifacts_claims_and_log_contract() {
     for artifact in artifacts {
         let rel = artifact["path"].as_str().expect("artifact path");
         assert!(root.join(rel).exists(), "missing artifact path {rel}");
+
+        let command = artifact["regeneration_command"]
+            .as_str()
+            .expect("artifact regeneration command");
+        assert!(
+            command.split_whitespace().any(|token| {
+                let normalized = token.trim_start_matches("./");
+                normalized.starts_with("scripts/")
+                    && [".sh", ".py"]
+                        .iter()
+                        .any(|suffix| normalized.ends_with(suffix))
+                    && root.join(normalized).is_file()
+            }),
+            "regeneration_command should include an existing script path: {command}"
+        );
     }
 
     let claims = manifest["claims"].as_array().unwrap();
@@ -186,6 +201,14 @@ fn gate_passes_current_manifest_and_emits_report_and_log() {
     assert_eq!(
         report["summary"]["conflicting_claim_count"].as_u64(),
         Some(0)
+    );
+    assert_eq!(
+        report["summary"]["missing_regeneration_command_count"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(
+        report["checks"]["artifact_regeneration_command"].as_str(),
+        Some("pass")
     );
     assert_eq!(
         report["summary"]["readme_rpc_stub_claim_count"].as_u64(),
@@ -241,6 +264,31 @@ fn missing_authoritative_artifact_fails() {
     assert_eq!(report["checks"]["artifact_shape"].as_str(), Some("fail"));
     assert_eq!(
         report["summary"]["missing_artifact_count"].as_u64(),
+        Some(1)
+    );
+}
+
+#[test]
+fn missing_regeneration_command_fails() {
+    let root = workspace_root();
+    let mut manifest = load_json(&root.join("tests/conformance/artifact_precedence.v1.json"));
+    let index = artifact_index(&manifest, "ld_preload_smoke")
+        .expect("manifest should contain ld_preload_smoke artifact");
+    manifest["artifacts"][index]["regeneration_command"] =
+        serde_json::json!("scripts/not-a-real-regeneration-command.sh");
+    let fixture = write_json_fixture(
+        "artifact-precedence-missing-regeneration-command",
+        &manifest,
+    );
+
+    let output = run_gate_with_env(&[("FLC_ARTIFACT_PRECEDENCE_MANIFEST", &fixture)]);
+    let report = assert_gate_fails_with(&output, "missing_regeneration_command");
+    assert_eq!(
+        report["checks"]["artifact_regeneration_command"].as_str(),
+        Some("fail")
+    );
+    assert_eq!(
+        report["summary"]["missing_regeneration_command_count"].as_u64(),
         Some(1)
     );
 }
@@ -315,10 +363,7 @@ fn readme_rpc_stub_wording_fails_when_support_stub_count_is_zero() {
     let root = workspace_root();
     let readme =
         std::fs::read_to_string(root.join("README.md")).expect("README should be readable");
-    let bad_readme = readme.replace(
-        "| `rpc_abi.rs` | Native XDR plus deterministic legacy RPC safe defaults |",
-        "| `rpc_abi.rs` | RPC function stubs |",
-    );
+    let bad_readme = format!("{readme}\n\n| `rpc_abi.rs` | RPC function stubs |\n");
     let fixture = unique_temp_path("artifact-precedence-readme-rpc-stub", "md");
     std::fs::write(&fixture, bad_readme).expect("failed to write README fixture");
 

@@ -18,6 +18,7 @@ python3 - "${ROOT}" "${MANIFEST}" "${REPORT}" "${LOG}" "${README}" <<'PY'
 import datetime as dt
 import hashlib
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +38,7 @@ conflicting_claims = []
 prose_only_claims = []
 out_of_order_artifacts = []
 readme_rpc_stub_claims = []
+missing_regeneration_commands = []
 
 
 def rel(path):
@@ -52,6 +54,21 @@ def resolve_path(value):
     if path.is_absolute():
         return path
     return root / path
+
+
+def regeneration_command_paths(command):
+    try:
+        tokens = shlex.split(str(command))
+    except ValueError:
+        return []
+    paths = []
+    for token in tokens:
+        if not token or "=" in token and "/" not in token:
+            continue
+        normalized = token[2:] if token.startswith("./") else token
+        if normalized.startswith("scripts/") and Path(normalized).suffix in {".sh", ".py"}:
+            paths.append(normalized)
+    return paths
 
 
 def load_json(path, label):
@@ -317,6 +334,43 @@ for artifact in artifact_rows:
 
 checks["artifact_shape"] = "pass" if artifact_ok else "fail"
 
+regeneration_ok = True
+for artifact_id, artifact in artifact_by_id.items():
+    command = artifact.get("regeneration_command", "")
+    candidates = regeneration_command_paths(command)
+    existing = [path for path in candidates if resolve_path(path).is_file()]
+    if not existing:
+        regeneration_ok = False
+        missing_regeneration_commands.append(
+            {
+                "artifact_id": artifact_id,
+                "regeneration_command": str(command),
+                "candidate_paths": candidates,
+            }
+        )
+        fail(
+            "artifact_regeneration_command",
+            f"{artifact_id}: missing_regeneration_command: regeneration_command must reference an existing repo script path",
+            artifact=artifact,
+            expected="existing scripts/*.sh or scripts/*.py path",
+            actual=str(command),
+            failure_signature="missing_regeneration_command",
+        )
+        continue
+
+    event(
+        "artifact_regeneration_command",
+        artifact_id=artifact_id,
+        artifact_type=str(artifact.get("artifact_type")),
+        producer_bead=str(artifact.get("producer_bead")),
+        freshness_state="current",
+        precedence_decision="allow",
+        expected="existing repo script path",
+        actual=",".join(existing),
+    )
+
+checks["artifact_regeneration_command"] = "pass" if regeneration_ok else "fail"
+
 
 def mark_stale(artifact, reason, expected, actual):
     stale_artifacts.append({"artifact_id": artifact.get("id"), "reason": reason, "actual": actual})
@@ -572,6 +626,7 @@ summary = {
     "missing_artifact_count": len(missing_artifacts),
     "stale_artifact_count": len(stale_artifacts),
     "conflicting_claim_count": len(conflicting_claims),
+    "missing_regeneration_command_count": len(missing_regeneration_commands),
     "readme_rpc_stub_claim_count": len(readme_rpc_stub_claims),
     "prose_only_claim_count": len(prose_only_claims),
     "out_of_order_artifact_count": len(out_of_order_artifacts),
@@ -601,6 +656,7 @@ report = {
     "missing_artifacts": missing_artifacts,
     "stale_artifacts": stale_artifacts,
     "conflicting_claims": conflicting_claims,
+    "missing_regeneration_commands": missing_regeneration_commands,
     "readme_rpc_stub_claims": readme_rpc_stub_claims,
     "prose_only_claims": prose_only_claims,
     "out_of_order_artifacts": out_of_order_artifacts,

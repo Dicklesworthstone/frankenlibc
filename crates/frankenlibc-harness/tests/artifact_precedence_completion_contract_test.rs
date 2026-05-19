@@ -188,6 +188,10 @@ fn manifest_binds_artifact_precedence_completion_items() -> TestResult {
         Some(0)
     );
     assert_eq!(
+        expected_summary["missing_regeneration_command_count"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(
         expected_summary["readme_rpc_stub_claim_count"].as_u64(),
         Some(0)
     );

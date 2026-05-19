@@ -247,7 +247,7 @@
       "authority_rank": 100,
       "freshness_rule": "overall_failed_false",
       "source_commit_required": false,
-      "regeneration_command": "scripts/check_ld_preload_smoke_summary.sh",
+      "regeneration_command": "TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh",
       "conflict_resolution": "failed smoke evidence blocks workload-ready claims",
       "required_json_fields": [
         "schema_version",
@@ -293,7 +293,7 @@
       "authority_rank": 120,
       "freshness_rule": "schema_version_current",
       "source_commit_required": false,
-      "regeneration_command": "scripts/check_reality_report.sh",
+      "regeneration_command": "scripts/check_support_reality_regeneration.sh --regenerate",
       "conflict_resolution": "reality snapshot cannot override higher-priority semantic blockers",
       "required_json_fields": [
         "schema_version",
@@ -363,6 +363,7 @@
     "missing_artifact_count": 0,
     "stale_artifact_count": 0,
     "conflicting_claim_count": 0,
+    "missing_regeneration_command_count": 0,
     "readme_rpc_stub_claim_count": 0,
     "prose_only_claim_count": 0,
     "out_of_order_artifact_count": 0
