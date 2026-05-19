@@ -614,6 +614,151 @@ fn build_std_zero_tls_probe_records_zero_tls_artifact() -> TestResult {
         Vec::<String>::new(),
         "build-std probe must not retain .tdata/.tbss sections",
     )?;
+
+    let forge_probe = &probe["standalone_replacement_forge_probe"];
+    let forge_command = as_str(
+        &forge_probe["command"],
+        "standalone_replacement_forge_probe.command",
+    )?;
+    ensure(
+        forge_command.contains("check_standalone_replacement_artifact.sh --forge")
+            && forge_command.contains("STANDALONE_REPLACEMENT_BUILD_CMD")
+            && forge_command.contains("-Z build-std=std,panic_abort")
+            && forge_command.contains("CARGO_PROFILE_RELEASE_PANIC=immediate-abort"),
+        "replacement forge probe must exercise the build-std immediate-abort lane through the forge hook",
+    )?;
+    ensure(
+        forge_command.contains("STANDALONE_REPLACEMENT_BLOCKER_DELTA_REFRESH_NOTE"),
+        "replacement forge probe must keep blocker-delta refresh semantics explicit",
+    )?;
+    ensure_eq(
+        as_str(
+            &forge_probe["result"],
+            "standalone_replacement_forge_probe.result",
+        )?,
+        "pass",
+        "replacement forge probe result",
+    )?;
+    ensure_eq(
+        as_u64(
+            &forge_probe["exit_code"],
+            "standalone_replacement_forge_probe.exit_code",
+        )?,
+        0,
+        "replacement forge probe exit code",
+    )?;
+    ensure_eq(
+        as_str(
+            &forge_probe["source_commit"],
+            "standalone_replacement_forge_probe.source_commit",
+        )?,
+        "387ae0d598e56ce68598e1bc2b2b73d3876e4fa8",
+        "replacement forge probe source commit",
+    )?;
+    ensure(
+        as_str(
+            &forge_probe["artifact"],
+            "standalone_replacement_forge_probe.artifact",
+        )?
+        .ends_with("libfrankenlibc_replace.so"),
+        "replacement forge probe must record the canonical replacement artifact",
+    )?;
+    ensure_eq(
+        as_str(
+            &forge_probe["artifact_sha256"],
+            "standalone_replacement_forge_probe.artifact_sha256",
+        )?,
+        "10afed2a416888081023dbe1ff2fda844d18ed0be2a7f9a4617817b9ea3bd99d",
+        "replacement forge probe artifact hash",
+    )?;
+    ensure_eq(
+        as_str(
+            &forge_probe["claim_status"],
+            "standalone_replacement_forge_probe.claim_status",
+        )?,
+        "artifact_current",
+        "replacement forge probe claim status",
+    )?;
+    ensure_eq(
+        as_str(
+            &forge_probe["failure_signature"],
+            "standalone_replacement_forge_probe.failure_signature",
+        )?,
+        "none",
+        "replacement forge probe failure signature",
+    )?;
+    ensure_eq(
+        as_bool(
+            &forge_probe["host_glibc_dependency"],
+            "standalone_replacement_forge_probe.host_glibc_dependency",
+        )?,
+        false,
+        "replacement forge probe host dependency status",
+    )?;
+    ensure_eq(
+        as_bool(
+            &forge_probe["sampled_symbols_present"],
+            "standalone_replacement_forge_probe.sampled_symbols_present",
+        )?,
+        true,
+        "replacement forge probe sampled symbol status",
+    )?;
+    for field in [
+        "blocking_reasons",
+        "needed_libraries",
+        "host_needed_libraries",
+        "host_direct_needed_libraries",
+        "host_resolved_libraries",
+        "undefined_symbols",
+        "undefined_tls_symbols",
+        "undefined_unwind_symbols",
+        "host_version_requirements",
+    ] {
+        ensure_eq(
+            string_vec(&forge_probe[field], field)?,
+            Vec::<String>::new(),
+            format!("replacement forge probe {field} must be empty"),
+        )?;
+    }
+    ensure(
+        forge_probe["version_needs"]
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty),
+        "replacement forge probe version_needs must be empty",
+    )?;
+    let blocker_delta = &forge_probe["blocker_delta"];
+    ensure_eq(
+        as_str(
+            &blocker_delta["delta_classification"],
+            "standalone_replacement_forge_probe.blocker_delta.delta_classification",
+        )?,
+        "improvement",
+        "replacement forge probe blocker-delta classification",
+    )?;
+    ensure_eq(
+        as_bool(
+            &blocker_delta["refresh_note_present"],
+            "standalone_replacement_forge_probe.blocker_delta.refresh_note_present",
+        )?,
+        true,
+        "replacement forge probe blocker-delta refresh note",
+    )?;
+    ensure_eq(
+        as_bool(
+            &blocker_delta["refresh_required"],
+            "standalone_replacement_forge_probe.blocker_delta.refresh_required",
+        )?,
+        false,
+        "replacement forge probe blocker-delta refresh status",
+    )?;
+    ensure_eq(
+        as_bool(
+            &blocker_delta["promotion_allowed"],
+            "standalone_replacement_forge_probe.blocker_delta.promotion_allowed",
+        )?,
+        false,
+        "replacement forge probe blocker-delta promotion guard",
+    )?;
     ensure(
         as_str(
             &probe["classification"],

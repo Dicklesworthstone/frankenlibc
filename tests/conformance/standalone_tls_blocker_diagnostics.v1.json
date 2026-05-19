@@ -229,6 +229,45 @@
         "relocation_count_including_jump_slot": 0
       },
       "tls_section_names": [],
+      "standalone_replacement_forge_probe": {
+        "intent": "Prove the existing standalone replacement forge can materialize the build-std zero-TLS lane as libfrankenlibc_replace.so while keeping the committed default/snapshot policy explicit.",
+        "command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_PROFILE_RELEASE_PANIC CARGO_PROFILE_RELEASE_PANIC=immediate-abort STANDALONE_REPLACEMENT_BUILD_CMD='rch exec -- cargo build -Z build-std=std,panic_abort -p frankenlibc-abi --release --features=standalone,owned-unwind-stub,owned-tls-cache' STANDALONE_REPLACEMENT_BLOCKER_DELTA_REFRESH_NOTE='bd-c51oi zero TLS build-std replacement artifact lane 387ae0d5' bash scripts/check_standalone_replacement_artifact.sh --forge",
+        "result": "pass",
+        "exit_code": 0,
+        "source_commit": "387ae0d598e56ce68598e1bc2b2b73d3876e4fa8",
+        "report": "target/conformance/standalone_replacement_artifact.report.json",
+        "artifact": "target/standalone_replacement_artifact/cargo-target/release/libfrankenlibc_replace.so",
+        "artifact_sha256": "10afed2a416888081023dbe1ff2fda844d18ed0be2a7f9a4617817b9ea3bd99d",
+        "claim_status": "artifact_current",
+        "artifact_status": "current",
+        "failure_signature": "none",
+        "host_glibc_dependency": false,
+        "sampled_symbols_present": true,
+        "blocking_reasons": [],
+        "needed_libraries": [],
+        "host_needed_libraries": [],
+        "host_direct_needed_libraries": [],
+        "host_resolved_libraries": [],
+        "undefined_symbols": [],
+        "undefined_tls_symbols": [],
+        "undefined_unwind_symbols": [],
+        "version_needs": {},
+        "host_version_requirements": [],
+        "blocker_delta": {
+          "delta_classification": "improvement",
+          "refresh_note_present": true,
+          "refresh_required": false,
+          "removed_blocker_classes": [
+            "host_needed_libraries",
+            "host_direct_needed_libraries",
+            "host_resolved_libraries",
+            "undefined_symbols",
+            "version_needs"
+          ],
+          "promotion_allowed": false
+        },
+        "classification": "The build-std immediate-abort lane can pass the canonical standalone replacement forge when supplied through the existing build command and explicit blocker-delta refresh-note hooks: the forged libfrankenlibc_replace.so is current, has sampled replacement symbols, and has no host runtime dependencies, undefined host/TLS/unwind symbols, version needs, or blocking reasons. This row is still controlled evidence; the default forge command and committed host-dependency snapshot must be updated deliberately before this becomes the no-env canonical path."
+      },
       "classification": "With the workspace Cargo panic-immediate-abort opt-in and a profile-level CARGO_PROFILE_RELEASE_PANIC=immediate-abort build-std lane, ts1 produced a release cdylib with no DT_NEEDED entries, no undefined __tls_get_addr, no DTPMOD64 TLS relocations, and no .tdata/.tbss sections. This is report-only artifact evidence for the residual std panic/io/current-thread TLS blocker; promotion still requires wiring this lane into the canonical replacement contract."
     },
     "residual_artifact_tls_emitters": [
