@@ -11,7 +11,7 @@
     "diagnostic_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_standalone_tls_blocker_diagnostics"
   },
-  "generated_utc": "2026-05-19T15:54:06Z",
+  "generated_utc": "2026-05-19T16:58:17Z",
   "purpose": "Report-only diagnostic that traces the current standalone forge __tls_get_addr@GLIBC_2.3 blocker back to FrankenLibC TLS source surfaces. It preserves the current replacement claim boundary while giving follow-up work a machine-checkable source and artifact control gate.",
   "inputs": {
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
@@ -107,8 +107,8 @@
     "probe_scope": "release standalone owned-tls-cache owned-unwind-stub frankenlibc-abi cdylib after first-party owned TLS source cleanup, tracing runtime dehosting, dlerror compatibility de-TLS, ABI reentrant lock dehosting, parking_lot removal, artifact-linked deterministic hashing, and owned-lane synchronous AIO submission",
     "latest_probe_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo build -p frankenlibc-abi --features standalone,owned-tls-cache,owned-unwind-stub --release",
     "latest_probe_result": "pass_remote",
-    "latest_probe_artifact": ".rch-target-ts1-job-29848695897850353-1779206012353389921-0/release/libfrankenlibc_abi.so",
-    "latest_probe_artifact_sha256": "d9a41ec2d568af4411efcddb9e62f069df0433e0b6d7a5873ac5ce3578c21283",
+    "latest_probe_artifact": ".rch-target-ts1-job-29848695897850382-1779209824027169071-0/release/libfrankenlibc_abi.so",
+    "latest_probe_artifact_sha256": "3835d533174f44c19066f03fc71162e52d61806259d8986f888f2935627ba3b1",
     "observed_artifact_symbols": {
       "undefined_tls_symbols": [
         "__tls_get_addr@GLIBC_2.3"
@@ -380,7 +380,7 @@
         "owner_surface": "membrane_bravo_reader_bias_state",
         "thread_local_macro_count": 1,
         "line_numbers": [
-          40
+          41
         ]
       },
       {
@@ -436,7 +436,7 @@
         "owner_surface": "abi_runtime_policy_thread_local_depth",
         "thread_local_macro_count": 1,
         "line_numbers": [
-          826
+          827
         ]
       },
       {
