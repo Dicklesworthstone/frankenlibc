@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 13;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 12;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -903,11 +903,16 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
         "residual artifact TLS inventory must not retain the removed BRAVO thread-token TLS emitter",
     )?;
 
+    let removed_ebr_handle_symbol = "_RNvNCNKNvNtCsiOimjtHV038_20frankenlibc_membrane13ptr_validator10EBR_HANDLE0023___RUST_STD_INTERNAL_VAL";
+    require(
+        !symbols.contains(removed_ebr_handle_symbol),
+        "residual artifact TLS inventory must not retain the removed ptr_validator EBR_HANDLE TLS emitter",
+    )?;
+
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();
     for required in [
         "frankenlibc-abi",
         "frankenlibc-core",
-        "frankenlibc-membrane",
         "tracing-core",
         "parking_lot",
         "parking_lot_core",

@@ -256,6 +256,7 @@ pub struct ValidationPipeline {
     validation_logs: Mutex<VecDeque<String>>,
 }
 
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     /// Per-thread EBR handle for pinning epochs during validation.
     ///
@@ -276,6 +277,12 @@ thread_local! {
 
 #[cfg(feature = "owned-tls-cache")]
 static VALIDATION_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+struct PinnedEpochGuard<'a> {
+    _guard: crate::ebr::EbrGuard<'a>,
+    #[cfg(feature = "owned-tls-cache")]
+    _owned_handle: Option<crate::ebr::EbrHandle<'a>>,
+}
 
 struct ValidationExecutionGuard;
 
@@ -337,35 +344,49 @@ impl ValidationPipeline {
     }
 
     /// Pin the EBR epoch for the duration of validation.
-    fn pin_epoch(&self) -> crate::ebr::EbrGuard<'_> {
-        let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
-        EBR_HANDLE.with(|cell| {
-            let mut cached = cell.borrow_mut();
-            let needs_refresh = !matches!(
-                cached.as_ref(),
-                Some((cached_collector, _)) if std::sync::Arc::as_ptr(cached_collector) as usize == collector_id
-            );
-            if needs_refresh {
-                let handle = {
-                    // SAFETY: The returned handle is stored thread-locally alongside
-                    // a strong reference (Arc) to the collector. This ensures the
-                    // collector stays alive and at the same address as long as the
-                    // handle is cached. Swapping the cached tuple releases the
-                    // previous registration and Arc first.
-                    unsafe {
-                        std::mem::transmute::<crate::ebr::EbrHandle<'_>, crate::ebr::EbrHandle<'static>>(
-                            self.collector.register(),
-                        )
-                    }
-                };
-                *cached = Some((std::sync::Arc::clone(&self.collector), handle));
+    fn pin_epoch(&self) -> PinnedEpochGuard<'_> {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
+            EBR_HANDLE.with(|cell| {
+                let mut cached = cell.borrow_mut();
+                let needs_refresh = !matches!(
+                    cached.as_ref(),
+                    Some((cached_collector, _)) if std::sync::Arc::as_ptr(cached_collector) as usize == collector_id
+                );
+                if needs_refresh {
+                    let handle = {
+                        // SAFETY: The returned handle is stored thread-locally alongside
+                        // a strong reference (Arc) to the collector. This ensures the
+                        // collector stays alive and at the same address as long as the
+                        // handle is cached. Swapping the cached tuple releases the
+                        // previous registration and Arc first.
+                        unsafe {
+                            std::mem::transmute::<crate::ebr::EbrHandle<'_>, crate::ebr::EbrHandle<'static>>(
+                                self.collector.register(),
+                            )
+                        }
+                    };
+                    *cached = Some((std::sync::Arc::clone(&self.collector), handle));
+                }
+                PinnedEpochGuard {
+                    _guard: cached
+                        .as_ref()
+                        .expect("EBR handle cache initialized")
+                        .1
+                        .pin(),
+                }
+            })
+        }
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            let handle = self.collector.register();
+            let guard = handle.pin();
+            PinnedEpochGuard {
+                _guard: guard,
+                _owned_handle: Some(handle),
             }
-            cached
-                .as_ref()
-                .expect("EBR handle cache initialized")
-                .1
-                .pin()
-        })
+        }
     }
 
     /// Enable or disable structured validation logging.
@@ -890,7 +911,7 @@ impl ValidationPipeline {
         let mut bloom_negative = false;
         let mut saw_fingerprint = false;
         let mut saw_canary = false;
-        let mut epoch_guard: Option<crate::ebr::EbrGuard<'_>> = None;
+        let mut epoch_guard: Option<PinnedEpochGuard<'_>> = None;
         let mut validation_epoch = None;
 
         for (idx, stage) in ordering.iter().enumerate() {
@@ -2033,6 +2054,7 @@ mod tests {
         assert!(!outcome.can_write());
     }
 
+    #[cfg(not(feature = "owned-tls-cache"))]
     #[test]
     fn thread_local_ebr_handle_switches_collectors_between_pipelines() {
         let pipeline_a = ValidationPipeline::new();
@@ -2074,6 +2096,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "owned-tls-cache"))]
     #[test]
     fn owned_pointer_validation_registers_ebr_handle() {
         let pipeline = ValidationPipeline::new();
@@ -2086,6 +2109,23 @@ mod tests {
             pipeline.collector.diagnostics().active_threads,
             1,
             "owned metadata validation must pin through arena/fingerprint/canary reads"
+        );
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    #[test]
+    fn owned_tls_cache_lane_uses_ephemeral_ebr_handle_without_rust_tls() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(16).expect("alloc");
+
+        let outcome = pipeline.validate(ptr as usize);
+
+        assert!(outcome.can_read());
+        assert_eq!(
+            pipeline.collector.diagnostics().active_threads,
+            0,
+            "owned-tls-cache validation must drop its short-lived EBR handle after validation"
         );
         assert_eq!(pipeline.free(ptr), FreeResult::Freed);
     }
