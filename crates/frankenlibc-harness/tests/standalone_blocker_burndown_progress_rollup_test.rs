@@ -2,7 +2,8 @@
 //!
 //! The committed rollup stays compact and reference-based. The checker report
 //! must materialize current values and exit criteria from live blocker action
-//! rows while preserving compact owner/action-ledger category grouping.
+//! rows while keeping each progress category aligned with exactly one live
+//! owner-action surface.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -658,8 +659,8 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
     )?;
     let categories = json_array(&report_json, "progress_categories")?;
     require(
-        categories.len() == 8,
-        "report must materialize eight categories",
+        categories.len() == 10,
+        "report must materialize ten owner-surface categories",
     )?;
     for row in categories {
         let category = json_string(row, "category_id")?;
@@ -688,63 +689,51 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
     let runtime_linkage = *category_by_id
         .get("runtime_linkage")
         .ok_or_else(|| "missing runtime_linkage category".to_string())?;
-    let runtime_unique_count = json_field(runtime_linkage, "unique_current_value_count")?
-        .as_u64()
-        .ok_or_else(|| "runtime_linkage unique_current_value_count must be u64".to_string())?;
-    let runtime_last_known_count = json_field(runtime_linkage, "last_known_value_count")?
-        .as_u64()
-        .ok_or_else(|| "runtime_linkage last_known_value_count must be u64".to_string())?;
     require(
-        runtime_unique_count < runtime_last_known_count,
-        "runtime_linkage must expose de-duplicated current values separately from source-row values",
+        string_set(runtime_linkage, "source_blocking_reasons")?
+            == BTreeSet::from(["host_needed_libraries_present".to_string()]),
+        "runtime_linkage must only cover aggregate host-needed libraries",
     )?;
     let runtime_action_by_reason: BTreeMap<String, &Value> =
         json_array(runtime_linkage, "blocker_action_rows")?
             .iter()
             .map(|row| json_string(row, "blocking_reason").map(|reason| (reason.to_owned(), row)))
             .collect::<TestResult<_>>()?;
-    for reason in [
-        "host_needed_libraries_present",
-        "host_direct_needed_libraries_present",
-        "host_resolved_libraries_present",
-    ] {
-        let row = *runtime_action_by_reason
-            .get(reason)
-            .ok_or_else(|| format!("runtime_linkage missing action row {reason}"))?;
-        let expected_owner = match reason {
-            "host_direct_needed_libraries_present" => "direct_dynamic_dependencies",
-            "host_resolved_libraries_present" => "loader_resolution",
-            _ => "runtime_linkage",
-        };
-        require(
-            json_string(row, "owner_surface")? == expected_owner,
-            format!("{reason}: owner surface"),
-        )?;
-        require(
-            json_string(row, "primary_probe_id")?
-                == if reason == "host_resolved_libraries_present" {
-                    "ldd_runtime_resolution"
-                } else {
-                    "readelf_dynamic_dependencies"
-                },
-            format!("{reason}: primary probe"),
-        )?;
-        require(
-            json_field(row, "promotion_allowed")?.as_bool() == Some(false),
-            format!("{reason}: promotion must be false"),
-        )?;
-        require(
-            !json_array(row, "current_blocker_values")?.is_empty(),
-            format!("{reason}: blocker values"),
-        )?;
-        require(
-            !json_array(row, "exit_criteria")?.is_empty(),
-            format!("{reason}: exit criteria"),
-        )?;
-    }
-    let direct_needed = *runtime_action_by_reason
+    let host_needed = *runtime_action_by_reason
+        .get("host_needed_libraries_present")
+        .ok_or_else(|| "missing host-needed row".to_string())?;
+    require(
+        json_string(host_needed, "owner_surface")? == "runtime_linkage",
+        "host-needed row owner surface",
+    )?;
+    require(
+        json_string(host_needed, "primary_probe_id")? == "readelf_dynamic_dependencies",
+        "host-needed row primary probe",
+    )?;
+    let direct_category = *category_by_id
+        .get("direct_dynamic_dependencies")
+        .ok_or_else(|| "missing direct_dynamic_dependencies category".to_string())?;
+    require(
+        string_set(direct_category, "source_blocking_reasons")?
+            == BTreeSet::from(["host_direct_needed_libraries_present".to_string()]),
+        "direct_dynamic_dependencies must only cover direct DT_NEEDED blockers",
+    )?;
+    let direct_action_by_reason: BTreeMap<String, &Value> =
+        json_array(direct_category, "blocker_action_rows")?
+            .iter()
+            .map(|row| json_string(row, "blocking_reason").map(|reason| (reason.to_owned(), row)))
+            .collect::<TestResult<_>>()?;
+    let direct_needed = *direct_action_by_reason
         .get("host_direct_needed_libraries_present")
         .ok_or_else(|| "missing direct NEEDED row".to_string())?;
+    require(
+        json_string(direct_needed, "owner_surface")? == "direct_dynamic_dependencies",
+        "direct NEEDED row owner surface",
+    )?;
+    require(
+        json_string(direct_needed, "primary_probe_id")? == "readelf_dynamic_dependencies",
+        "direct NEEDED row primary probe",
+    )?;
     require(
         array_contains(
             direct_needed,
@@ -757,9 +746,30 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
         !array_contains(direct_needed, "current_blocker_values", "libc.so.6")?,
         "direct NEEDED row must not inherit transitive libc value",
     )?;
-    let resolved = *runtime_action_by_reason
+    let resolved_category = *category_by_id
+        .get("loader_resolution")
+        .ok_or_else(|| "missing loader_resolution category".to_string())?;
+    require(
+        string_set(resolved_category, "source_blocking_reasons")?
+            == BTreeSet::from(["host_resolved_libraries_present".to_string()]),
+        "loader_resolution must only cover ldd-resolution blockers",
+    )?;
+    let resolved_action_by_reason: BTreeMap<String, &Value> =
+        json_array(resolved_category, "blocker_action_rows")?
+            .iter()
+            .map(|row| json_string(row, "blocking_reason").map(|reason| (reason.to_owned(), row)))
+            .collect::<TestResult<_>>()?;
+    let resolved = *resolved_action_by_reason
         .get("host_resolved_libraries_present")
         .ok_or_else(|| "missing resolved library row".to_string())?;
+    require(
+        json_string(resolved, "owner_surface")? == "loader_resolution",
+        "resolved library row owner surface",
+    )?;
+    require(
+        json_string(resolved, "primary_probe_id")? == "ldd_runtime_resolution",
+        "resolved library row primary probe",
+    )?;
     require(
         array_contains(resolved, "current_blocker_values", "libc.so.6")?,
         "resolved library row must include transitive libc value",
@@ -855,7 +865,7 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
 #[test]
 fn checker_rejects_missing_current_blocker_reason_from_category() -> TestResult {
     let mutated = write_mutated_rollup("rollup-missing-reason", |rollup| {
-        let row = progress_row_mut(rollup, "runtime_linkage")?;
+        let row = progress_row_mut(rollup, "loader_resolution")?;
         row.get_mut("source_blocking_reasons")
             .and_then(Value::as_array_mut)
             .ok_or_else(|| "source_blocking_reasons must be array".to_string())?
@@ -865,7 +875,30 @@ fn checker_rejects_missing_current_blocker_reason_from_category() -> TestResult 
     expect_checker_failure(
         &mutated,
         "rollup-missing-reason",
-        "progress_categories[runtime_linkage].source_blocking_reasons must match owner ledger rows for runtime_linkage",
+        "progress_categories[loader_resolution].source_blocking_reasons must match owner ledger rows for loader_resolution",
+    )
+}
+
+#[test]
+fn checker_rejects_live_action_owner_surface_drift() -> TestResult {
+    let mutated = write_mutated_plan("plan-live-action-owner-drift", |plan| {
+        let rows = action_rows_mut(plan)?;
+        let row = rows
+            .get_mut("host_resolved_libraries_present")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| {
+                "host_resolved_libraries_present action row must be object".to_string()
+            })?;
+        row.insert(
+            "owner_surface".to_string(),
+            Value::String("runtime_linkage".to_string()),
+        );
+        Ok(())
+    })?;
+    expect_checker_failure_with_plan(
+        &mutated,
+        "plan-live-action-owner-drift",
+        "progress_categories[loader_resolution].host_resolved_libraries_present.owner_surface must match progress category loader_resolution",
     )
 }
 

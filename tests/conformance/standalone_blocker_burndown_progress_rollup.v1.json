@@ -63,12 +63,38 @@
         "runtime_linkage"
       ],
       "source_blocking_reasons": [
-        "host_needed_libraries_present",
-        "host_direct_needed_libraries_present",
+        "host_needed_libraries_present"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 4,
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "direct_dynamic_dependencies",
+      "owner_surfaces": [
+        "direct_dynamic_dependencies"
+      ],
+      "source_blocking_reasons": [
+        "host_direct_needed_libraries_present"
+      ],
+      "current_reason_count": 1,
+      "last_known_value_count": 2,
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
+      "status_until_exit": "claim_blocked"
+    },
+    {
+      "category_id": "loader_resolution",
+      "owner_surfaces": [
+        "loader_resolution"
+      ],
+      "source_blocking_reasons": [
         "host_resolved_libraries_present"
       ],
-      "current_reason_count": 3,
-      "last_known_value_count": 9,
+      "current_reason_count": 1,
+      "last_known_value_count": 3,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -181,6 +207,8 @@
       "requirement_count": 1,
       "source_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
       "mapped_progress_categories": [
+        "direct_dynamic_dependencies",
+        "loader_resolution",
         "loader_startup",
         "tls_startup",
         "glibc_symbol_surface",
@@ -198,6 +226,8 @@
       "requirement_count": 3,
       "source_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
       "mapped_progress_categories": [
+        "direct_dynamic_dependencies",
+        "loader_resolution",
         "compiler_runtime",
         "unwind_runtime",
         "symbol_versioning"
@@ -246,8 +276,8 @@
   ],
   "summary": {
     "current_blocking_reason_count": 10,
-    "progress_category_count": 8,
-    "blocked_progress_category_count": 8,
+    "progress_category_count": 10,
+    "blocked_progress_category_count": 10,
     "partial_burndown_experiment_count": 2,
     "report_only_reduced_value_count": 13,
     "last_known_value_count": 34,

@@ -432,6 +432,10 @@ for row in progress_rows:
     for reason in reasons:
         rollup_reason_set.add(reason)
         action_row = live_action_by_reason.get(reason, {})
+        if action_row.get("owner_surface") != category:
+            errors.append(
+                f"{context}.{reason}.owner_surface must match progress category {category}"
+            )
         action_values = string_list(
             action_row.get("current_blocker_values"),
             f"blocker_action_required_rows.{reason}.current_blocker_values",
