@@ -390,6 +390,15 @@ EXPECTED_OWNED_UNWIND_EXPERIMENT_SUMMARY = {
     "report_only": True,
     "default_forge_path_unchanged": True,
 }
+EXPECTED_OWNED_UNWIND_LIVE_DEPENDENCY_CONTRACT = {
+    "lane_id": "owned-unwind-stub-experiment",
+    "expected_undefined_unwind_symbol_count": 0,
+    "forbidden_needed_libraries": ["libgcc_s.so.1"],
+    "forbidden_version_providers": ["libgcc_s.so.1"],
+    "forbidden_undefined_symbol_prefixes": ["_Unwind_"],
+    "status_on_violation": "fail_closed",
+    "promotion_allowed_on_pass": False,
+}
 OWNED_UNWIND_SYMBOL_COUNT = 12
 
 EXPECTED_FAILURE_CLASSIFICATIONS = {
@@ -1352,6 +1361,12 @@ def validate_owned_unwind_experiment_manifest():
         errors.append("owned unwind experiment must mark all 12 symbols as owned substitutes")
     if owned_unwind_manifest.get("summary", {}).get("claim_status") not in {"claim_blocked", "report_only"}:
         errors.append("owned unwind experiment summary must remain claim_blocked or report_only")
+    contract = owned_unwind_manifest.get("live_dependency_evidence_contract", {})
+    for key, expected in EXPECTED_OWNED_UNWIND_LIVE_DEPENDENCY_CONTRACT.items():
+        if contract.get(key) != expected:
+            errors.append(
+                f"owned unwind experiment live_dependency_evidence_contract.{key} does not match script contract"
+            )
     checks["owned_unwind_experiment_manifest_contract"] = (
         "pass"
         if not any(error.startswith("owned unwind experiment") for error in errors)
@@ -1854,6 +1869,85 @@ def owned_unwind_symbol_rows(lanes):
     return rows
 
 
+def owned_unwind_live_dependency_contract(lanes):
+    contract = owned_unwind_manifest.get("live_dependency_evidence_contract", {})
+    lane_id = contract.get("lane_id")
+    by_id = {lane["lane_id"]: lane for lane in lanes if isinstance(lane, dict)}
+    lane = by_id.get(lane_id)
+    result = {
+        "lane_id": lane_id,
+        "status": "pass",
+        "checked": True,
+        "expected_undefined_unwind_symbol_count": contract.get("expected_undefined_unwind_symbol_count"),
+        "forbidden_needed_libraries": string_list(contract.get("forbidden_needed_libraries")),
+        "forbidden_version_providers": string_list(contract.get("forbidden_version_providers")),
+        "forbidden_undefined_symbol_prefixes": string_list(contract.get("forbidden_undefined_symbol_prefixes")),
+        "observed_needed_libraries": [],
+        "observed_version_providers": [],
+        "observed_undefined_unwind_symbols": [],
+        "observed_forbidden_undefined_symbols": [],
+        "violations": [],
+        "promotion_allowed_on_pass": contract.get("promotion_allowed_on_pass"),
+    }
+    if lane is None:
+        result["status"] = "fail"
+        result["checked"] = False
+        result["violations"].append(f"missing lane {lane_id}")
+        return result
+    if lane.get("status") != "pass":
+        result["status"] = "not_checked"
+        result["checked"] = False
+        result["reason"] = "owned unwind lane did not pass, so dependency contract is covered by lane failure"
+        return result
+
+    needed_libraries = string_list(lane.get("needed_libraries"))
+    version_needs = lane.get("version_needs")
+    if not isinstance(version_needs, dict):
+        version_needs = {}
+    version_providers = unique_sorted(str(provider) for provider in version_needs.keys())
+    undefined_unwind_symbols = string_list(lane.get("undefined_unwind_symbols"))
+    breakdown = lane.get("artifact_state", {}).get("dependency_breakdown", {})
+    if not isinstance(breakdown, dict):
+        breakdown = {}
+    undefined_symbols = string_list(breakdown.get("undefined_symbols"))
+    forbidden_prefixes = result["forbidden_undefined_symbol_prefixes"]
+    forbidden_undefined = unique_sorted(
+        symbol
+        for symbol in undefined_symbols
+        if any(symbol_base(symbol).startswith(prefix) for prefix in forbidden_prefixes)
+    )
+
+    result["observed_needed_libraries"] = needed_libraries
+    result["observed_version_providers"] = version_providers
+    result["observed_undefined_unwind_symbols"] = undefined_unwind_symbols
+    result["observed_forbidden_undefined_symbols"] = forbidden_undefined
+
+    forbidden_needed = set(result["forbidden_needed_libraries"])
+    forbidden_providers = set(result["forbidden_version_providers"])
+    needed_hits = sorted(forbidden_needed.intersection(needed_libraries))
+    provider_hits = sorted(forbidden_providers.intersection(version_providers))
+    expected_count = result["expected_undefined_unwind_symbol_count"]
+    if needed_hits:
+        result["violations"].append(
+            f"forbidden needed libraries present: {', '.join(needed_hits)}"
+        )
+    if provider_hits:
+        result["violations"].append(
+            f"forbidden version providers present: {', '.join(provider_hits)}"
+        )
+    if isinstance(expected_count, int) and len(undefined_unwind_symbols) != expected_count:
+        result["violations"].append(
+            f"undefined unwind symbol count {len(undefined_unwind_symbols)} != expected {expected_count}"
+        )
+    if forbidden_undefined:
+        result["violations"].append(
+            f"forbidden undefined symbols present: {', '.join(forbidden_undefined)}"
+        )
+    if result["violations"]:
+        result["status"] = "fail"
+    return result
+
+
 def write_owned_unwind_experiment_report():
     validate_owned_unwind_experiment_manifest()
     contract_failed = any(error.startswith("owned unwind experiment") for error in errors)
@@ -1871,6 +1965,9 @@ def write_owned_unwind_experiment_report():
             errors.append(f"owned unwind experiment lane failed: {lane['lane_id']}")
     comparison = owned_unwind_comparison(lanes)
     symbol_rows = owned_unwind_symbol_rows(lanes)
+    live_dependency_contract = owned_unwind_live_dependency_contract(lanes)
+    for violation in live_dependency_contract.get("violations", []):
+        errors.append(f"owned unwind live dependency contract violation: {violation}")
     owned_unresolved = [
         row["bare_symbol"]
         for row in symbol_rows
@@ -1889,6 +1986,7 @@ def write_owned_unwind_experiment_report():
         "cargo_target_root": str(owned_unwind_target_root),
         "lanes": lanes,
         "comparison": comparison,
+        "live_dependency_evidence_contract": live_dependency_contract,
         "symbol_disposition_rows": symbol_rows,
         "owned_unwind_unresolved_symbols": owned_unresolved,
         "checks": checks,

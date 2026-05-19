@@ -68,6 +68,22 @@
     "evidence_commands",
     "claim_status_until_exit"
   ],
+  "live_dependency_evidence_contract": {
+    "lane_id": "owned-unwind-stub-experiment",
+    "expected_undefined_unwind_symbol_count": 0,
+    "forbidden_needed_libraries": [
+      "libgcc_s.so.1"
+    ],
+    "forbidden_version_providers": [
+      "libgcc_s.so.1"
+    ],
+    "forbidden_undefined_symbol_prefixes": [
+      "_Unwind_"
+    ],
+    "status_on_violation": "fail_closed",
+    "promotion_allowed_on_pass": false,
+    "reason": "The owned-unwind lane is only useful as blocker-reduction evidence if live nm/readelf output proves libgcc_s and _Unwind_* edges stay absent."
+  },
   "experiment_lanes": [
     {
       "lane_id": "baseline-release-standalone",
@@ -380,6 +396,7 @@
     "blocker_symbol_count_baseline": 12,
     "blocker_symbol_count_panic_abort": 10,
     "blocker_symbol_count_owned_unwind_when_complete": 0,
+    "owned_unwind_live_dependency_contract": "owned-unwind-stub-experiment must keep libgcc_s.so.1 out of DT_NEEDED/version providers and must keep undefined _Unwind_* count at zero",
     "next_safe_action": "Keep the owned-unwind lane report-only and feed the nm/readelf evidence into the broader standalone host-dependency burndown. Promotion remains forbidden until the surrounding replacement-readiness gates consume current artifact evidence."
   }
 }

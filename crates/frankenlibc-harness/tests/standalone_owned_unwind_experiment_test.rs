@@ -29,6 +29,7 @@ const PANIC_ABORT_LANE: &str = "panic-abort-compiler-runtime-minimized";
 const OWNED_UNWIND_LANE: &str = "owned-unwind-stub-experiment";
 const EXPECTED_BASELINE_SYMBOL_COUNT: usize = 12;
 const EXPECTED_PANIC_ABORT_SYMBOL_COUNT: usize = 10;
+const LIVE_DEPENDENCY_CONTRACT: &str = "live_dependency_evidence_contract";
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -145,6 +146,13 @@ fn lane<'a>(manifest: &'a Value, lane_id: &str) -> TestResult<&'a Value> {
         .ok_or_else(|| format!("missing lane `{lane_id}`"))
 }
 
+fn array_contains(value: &Value, field: &str, expected: &str) -> TestResult<bool> {
+    Ok(json_array(value, field)?
+        .iter()
+        .filter_map(Value::as_str)
+        .any(|entry| entry == expected))
+}
+
 /// Pure validator. Returns the list of rejection codes (per
 /// report_policy.rejected_evidence_kinds) that fire on this manifest.
 fn evaluate(manifest: &Value) -> Vec<String> {
@@ -193,6 +201,41 @@ fn evaluate(manifest: &Value) -> Vec<String> {
         != Some("claim_blocked")
     {
         rejections.push("claim_status_until_all_symbols_exit_must_be_claim_blocked".to_string());
+    }
+    let live_contract_ok = manifest
+        .get(LIVE_DEPENDENCY_CONTRACT)
+        .and_then(Value::as_object)
+        .is_some_and(|contract| {
+            contract.get("lane_id").and_then(Value::as_str) == Some(OWNED_UNWIND_LANE)
+                && contract
+                    .get("expected_undefined_unwind_symbol_count")
+                    .and_then(Value::as_u64)
+                    == Some(0)
+                && contract
+                    .get("forbidden_needed_libraries")
+                    .and_then(Value::as_array)
+                    .is_some_and(|values| {
+                        values.iter().any(|v| v.as_str() == Some("libgcc_s.so.1"))
+                    })
+                && contract
+                    .get("forbidden_version_providers")
+                    .and_then(Value::as_array)
+                    .is_some_and(|values| {
+                        values.iter().any(|v| v.as_str() == Some("libgcc_s.so.1"))
+                    })
+                && contract
+                    .get("forbidden_undefined_symbol_prefixes")
+                    .and_then(Value::as_array)
+                    .is_some_and(|values| values.iter().any(|v| v.as_str() == Some("_Unwind_")))
+                && contract.get("status_on_violation").and_then(Value::as_str)
+                    == Some("fail_closed")
+                && contract
+                    .get("promotion_allowed_on_pass")
+                    .and_then(Value::as_bool)
+                    == Some(false)
+        });
+    if !live_contract_ok {
+        rejections.push("live_dependency_contract".to_string());
     }
 
     // Symbol disposition rows must cover every baseline-undefined symbol.
@@ -670,6 +713,56 @@ fn summary_blocker_counts_match_lane_expectations() -> TestResult {
     require(
         !json_bool(summary, "promotion_allowed")?,
         "summary promotion_allowed must be false",
+    )
+}
+
+#[test]
+fn live_dependency_contract_forbids_libgcc_and_unwind_regression() -> TestResult {
+    let m = load_manifest()?;
+    let contract = json_field(&m, LIVE_DEPENDENCY_CONTRACT)?;
+    require(
+        json_string(contract, "lane_id")? == OWNED_UNWIND_LANE,
+        "live dependency contract must target owned-unwind lane",
+    )?;
+    require(
+        json_u64(contract, "expected_undefined_unwind_symbol_count")? == 0,
+        "owned-unwind lane must expect zero undefined unwind symbols",
+    )?;
+    require(
+        array_contains(contract, "forbidden_needed_libraries", "libgcc_s.so.1")?,
+        "owned-unwind lane must forbid libgcc_s in DT_NEEDED",
+    )?;
+    require(
+        array_contains(contract, "forbidden_version_providers", "libgcc_s.so.1")?,
+        "owned-unwind lane must forbid libgcc_s version providers",
+    )?;
+    require(
+        array_contains(contract, "forbidden_undefined_symbol_prefixes", "_Unwind_")?,
+        "owned-unwind lane must forbid _Unwind_* undefined symbols",
+    )?;
+    require(
+        json_string(contract, "status_on_violation")? == "fail_closed",
+        "contract violations must fail closed",
+    )?;
+    require(
+        !json_bool(contract, "promotion_allowed_on_pass")?,
+        "passing the report-only lane must not permit promotion",
+    )?;
+    let summary = json_field(&m, "summary")?;
+    require(
+        json_string(summary, "owned_unwind_live_dependency_contract")?.contains("libgcc_s.so.1"),
+        "summary must surface the libgcc dependency expectation",
+    )
+}
+
+#[test]
+fn fixture_missing_live_dependency_contract_is_rejected() -> TestResult {
+    let mut m = load_manifest()?;
+    m.as_object_mut().unwrap().remove(LIVE_DEPENDENCY_CONTRACT);
+    let r = evaluate(&m);
+    require(
+        r.contains(&"live_dependency_contract".to_string()),
+        format!("must reject missing live dependency contract; got {r:?}"),
     )
 }
 
