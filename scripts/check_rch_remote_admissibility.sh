@@ -492,8 +492,8 @@ def validate_contract(contract: dict[str, Any], head: str) -> None:
         contract_errors.append("contract schema_version must be v1")
     if contract.get("manifest_id") != "rch_remote_admissibility_preflight":
         contract_errors.append("contract manifest_id mismatch")
-    if contract.get("bead") != "bd-fmnv9":
-        contract_errors.append("contract bead must be bd-fmnv9")
+    if contract.get("bead") != "bd-rchk0.95":
+        contract_errors.append("contract bead must be bd-rchk0.95")
     if contract.get("upstream_bead") != "bd-xkykd":
         contract_errors.append("contract upstream_bead must be bd-xkykd")
     source_commit = contract.get("source_commit")
@@ -622,6 +622,12 @@ for control in contract.get("negative_controls", []):
             "current_blocked_required_signature_missing"
             if "current_blocked_required_signature_missing" in observed_errors
             else ",".join(observed_errors)
+        )
+    elif control_id == "admissible_current_state_is_not_blocked":
+        observed = current_blocked_field(
+            contract,
+            preflight_contract.get("admissible_status", "admissible"),
+            [],
         )
     elif control_id == "approval_readiness_claims_safe_without_permission_fails":
         observed_errors = approval_readiness_errors(
@@ -754,7 +760,7 @@ approval_summary = approval_packet_summary(approval_packet, head)
 report: dict[str, Any] = {
     "schema_version": "rch_remote_admissibility_preflight.v1",
     "bead": "bd-xkykd",
-    "contract_bead": "bd-fmnv9",
+    "contract_bead": "bd-rchk0.95",
     "generated_at_utc": utc_now(),
     "source_commit": contract.get("source_commit"),
     "current_head": head,
