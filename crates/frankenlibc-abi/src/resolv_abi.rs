@@ -2130,9 +2130,36 @@ impl ProtoentTlsStorage {
     }
 }
 
+// SAFETY: the owned-TLS experiment stores one boxed protocol result per thread
+// id. `protoent` only points into the same boxed storage, so moving the box
+// while the cache mutex is held does not transfer ownership of pointees across
+// threads.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for ProtoentTlsStorage {}
+
+#[cfg(feature = "owned-tls-cache")]
+static PROTOENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoentTlsStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(ProtoentTlsStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static PROTOENT_TLS: RefCell<ProtoentTlsStorage> =
         RefCell::new(ProtoentTlsStorage::new());
+}
+
+fn with_tls_protoent<R>(callback: impl FnOnce(&mut ProtoentTlsStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PROTOENT_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PROTOENT_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
 }
 
 // Parse a single line from /etc/protocols.
@@ -2628,8 +2655,7 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
     // Success path: record protocol lookup completed
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
-    PROTOENT_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_tls_protoent(|storage| {
         copy_to_cchar_buf(&mut storage.name, &entry.name);
         storage.aliases[0] = ptr::null_mut();
         storage.protoent = libc::protoent {
@@ -2676,8 +2702,7 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
     // Success path: record protocol lookup completed
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
-    PROTOENT_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_tls_protoent(|storage| {
         copy_to_cchar_buf(&mut storage.name, &entry.name);
         storage.aliases[0] = ptr::null_mut();
         storage.protoent = libc::protoent {

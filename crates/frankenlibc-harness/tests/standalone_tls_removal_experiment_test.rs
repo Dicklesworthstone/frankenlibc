@@ -28,7 +28,7 @@ const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 19;
-const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 8;
+const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 7;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -968,8 +968,8 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         .and_then(Value::as_u64)
         .ok_or_else(|| "summary thread_local_macro_count_in_targeted_clusters".to_string())?;
     require(
-        substituted == 79,
-        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver servent storage, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar c16 surrogate/fgetwln buffers, stdlib getusershell/qecvt/qfcvt scratch state, group ABI reentrant storage, passwd ABI non-reentrant storage, inet_ntoa static buffer storage, and time ABI non-reentrant static buffers",
+        substituted == 80,
+        "owned-tls slices substitute crypt/gensalt, four NIS helper macros, resolver backend caches, resolver nsaddr, resolver h_errno state, resolver servent/protoent storage, resolver printable-DNS helper buffers, resolver hostalias/LOC/symbol fallback buffers, getmntent, getpass, cuserid, C++ EH globals, gethostbyname2 scratch state, fgetspent shadow entry state, RPC rpcent state, utmp state, pututxline return buffer, NSS systemd block flag, fstab state, ttyent state, getdate tm, services iterator state, networks iterator state, protocols iterator state, hosts iterator state, netgroup iterator state, alias iterator state, string ABI recursion/scratch state, RPC ABI scratch/state slots, glibc-internal cleanup/resolver/shadow state, the core errno slot, dlfcn dlerror state, dirent readdir entry buffer, ctype table-location slots, runtime-policy mode/trace/contract state, startup thread-at-exit/reentry state, signal critical/deferred controller state, stdio tmpnam/fgetln buffers, wchar c16 surrogate/fgetwln buffers, stdlib getusershell/qecvt/qfcvt scratch state, group ABI reentrant storage, passwd ABI non-reentrant storage, inet_ntoa static buffer storage, and time ABI non-reentrant static buffers",
     )?;
     require(
         substituted + remaining == total,
@@ -1035,6 +1035,7 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && resolv.contains("PROC_NET_IF_INET6_OWNED_TLS")
             && resolv.contains("H_ERRNO_OWNED_TLS")
             && resolv.contains("SERVENT_OWNED_TLS")
+            && resolv.contains("PROTOENT_OWNED_TLS")
             && resolv.contains("P_FALLBACK_BUF_OWNED_TLS")
             && resolv.contains("P_OPTION_BUF_OWNED_TLS")
             && resolv.contains("SECSTODATE_BUF_OWNED_TLS")
@@ -1044,7 +1045,7 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && resolv.contains("SYM_NTOP_BUF_OWNED_TLS")
             && resolv.contains("SYM_NTOS_BUF_OWNED_TLS")
             && resolv.contains("crate::owned_tls_cache::OwnedTlsCache"),
-        "resolver ABI must route backend caches, h_errno state, servent storage, printable-DNS helper buffers, and fixed fallback return buffers through owned TLS cache",
+        "resolver ABI must route backend caches, h_errno state, servent/protoent storage, printable-DNS helper buffers, and fixed fallback return buffers through owned TLS cache",
     )?;
 
     let string = std::fs::read_to_string(abi_string_path(&root))
