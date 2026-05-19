@@ -104,6 +104,7 @@ REQUIRED_FORGE_PROJECTION_FIELDS = {
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
+    "artifact_state.dependency_breakdown.blocker_action_rows",
 }
 REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE = {
     "host_needed_libraries_present": "readelf_dynamic_dependencies",
@@ -116,6 +117,18 @@ REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE = {
     "undefined_glibc_symbols": "nm_undefined_host_symbols",
     "undefined_tls_symbols": "nm_undefined_host_symbols",
     "host_version_requirements": "version_script_export_nodes",
+}
+REQUIRED_FORGE_BLOCKER_ACTION_TO_PROBE = {
+    "host_needed_libraries_present": "readelf_dynamic_dependencies",
+    "host_direct_needed_libraries_present": "readelf_dynamic_dependencies",
+    "host_resolved_libraries_present": "ldd_runtime_resolution",
+    "host_loader_dependency": "ldd_runtime_resolution",
+    "host_libc_dependency": "ldd_runtime_resolution",
+    "libgcc_runtime_dependency": "readelf_dynamic_dependencies",
+    "undefined_unwind_symbols": "nm_dynamic_undefined_symbols",
+    "undefined_glibc_symbols": "nm_dynamic_undefined_symbols",
+    "undefined_tls_symbols": "nm_dynamic_undefined_symbols",
+    "host_version_requirements": "readelf_version_needs",
 }
 REQUIRED_FORGE_FAILURE_SIGNATURE_TO_NEGATIVE_TEST = {
     "standalone_artifact_missing": "missing_replace_artifact",
@@ -221,6 +234,16 @@ REQUIRED_BLOCKER_CATALOG_ROW_FIELDS = {
     "severity",
     "evidence_fields",
     "next_action",
+}
+REQUIRED_BLOCKER_ACTION_ROW_FIELDS = {
+    "blocking_reason",
+    "owner_surface",
+    "primary_probe_id",
+    "evidence_fields",
+    "next_action",
+    "exit_criteria",
+    "current_blocker_values",
+    "promotion_allowed",
 }
 ALLOWED_LEVELS = {"L0", "L1", "L2", "L3"}
 errors = []
@@ -338,6 +361,44 @@ def validate_current_forge_blocker_snapshot(projection):
             errors.append("current_forge_blocker_value_snapshot.snapshot_policy.rejected_evidence_kind mismatch")
 
     return snapshot
+
+
+def expected_blocker_action_values(reason):
+    snapshot = EXPECTED_FORGE_BLOCKER_SNAPSHOT
+    if reason == "host_needed_libraries_present":
+        return snapshot["host_needed_libraries"]
+    if reason == "host_direct_needed_libraries_present":
+        return snapshot["host_direct_needed_libraries"]
+    if reason == "host_resolved_libraries_present":
+        return snapshot["host_resolved_libraries"]
+    if reason == "host_loader_dependency":
+        return [
+            value for value in snapshot["host_needed_libraries"] if "ld-linux" in value
+        ]
+    if reason == "host_libc_dependency":
+        return [value for value in snapshot["host_needed_libraries"] if "libc.so" in value]
+    if reason == "libgcc_runtime_dependency":
+        return [
+            *[
+                value
+                for value in snapshot["host_needed_libraries"]
+                if "libgcc_s.so" in value
+            ],
+            *[
+                value
+                for value in snapshot["host_version_requirements"]
+                if value.startswith("libgcc_s.so")
+            ],
+        ]
+    if reason == "undefined_unwind_symbols":
+        return snapshot["undefined_unwind_symbols"]
+    if reason == "undefined_glibc_symbols":
+        return snapshot["undefined_glibc_symbols"]
+    if reason == "undefined_tls_symbols":
+        return snapshot["undefined_tls_symbols"]
+    if reason == "host_version_requirements":
+        return snapshot["host_version_requirements"]
+    return []
 
 
 source_commit = current_commit()
@@ -578,6 +639,7 @@ projection = plan.get("current_forge_blocker_projection")
 forge_projection_field_count = 0
 forge_projection_blocking_reason_count = 0
 forge_projection_blocker_catalog_row_count = 0
+forge_projection_blocker_action_row_count = 0
 forge_projection_failure_signature_count = 0
 forge_blocker_snapshot_blocking_reason_count = 0
 forge_blocker_snapshot_needed_library_count = 0
@@ -695,6 +757,64 @@ else:
             )
     forge_projection_blocker_catalog_row_count = len(catalog_rows)
 
+    action_rows = projection.get("blocker_action_required_rows", {})
+    if not isinstance(action_rows, dict) or not action_rows:
+        errors.append("current_forge_blocker_projection.blocker_action_required_rows must be a non-empty object")
+        action_rows = {}
+    for reason in REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE:
+        row = action_rows.get(reason)
+        if row is None:
+            errors.append(f"current_forge_blocker_projection.blocker_action_required_rows missing {reason}")
+            continue
+        if not isinstance(row, dict):
+            errors.append(f"current_forge_blocker_projection.blocker_action_required_rows.{reason} must be an object")
+            continue
+        missing_fields = sorted(REQUIRED_BLOCKER_ACTION_ROW_FIELDS - set(row))
+        if missing_fields:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_action_required_rows.{reason} missing "
+                + ",".join(missing_fields)
+            )
+        if row.get("blocking_reason") != reason:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_action_required_rows.{reason}.blocking_reason mismatch"
+            )
+        if row.get("promotion_allowed") is not False:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_action_required_rows.{reason}.promotion_allowed must be false"
+            )
+        expected_probe_id = REQUIRED_FORGE_BLOCKER_ACTION_TO_PROBE.get(reason)
+        if row.get("primary_probe_id") != expected_probe_id:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_action_required_rows.{reason}.primary_probe_id must be {expected_probe_id}"
+            )
+        catalog_row = catalog_rows.get(reason, {})
+        for field in ["owner_surface", "evidence_fields", "next_action"]:
+            if row.get(field) != catalog_row.get(field):
+                errors.append(
+                    f"current_forge_blocker_projection.blocker_action_required_rows.{reason}.{field} must match blocker catalog"
+                )
+        exit_criteria = row.get("exit_criteria")
+        if (
+            not isinstance(exit_criteria, list)
+            or not exit_criteria
+            or not all(isinstance(item, str) and item for item in exit_criteria)
+        ):
+            errors.append(
+                f"current_forge_blocker_projection.blocker_action_required_rows.{reason}.exit_criteria must be non-empty strings"
+            )
+        current_values = row.get("current_blocker_values")
+        if current_values != expected_blocker_action_values(reason):
+            errors.append(
+                f"current_forge_blocker_projection.blocker_action_required_rows.{reason}.current_blocker_values must match current live forge blockers"
+            )
+    for reason in action_rows:
+        if reason not in reason_map:
+            errors.append(
+                f"current_forge_blocker_projection.blocker_action_required_rows has unexpected reason {reason}"
+            )
+    forge_projection_blocker_action_row_count = len(action_rows)
+
     failure_map = projection.get("failure_signature_to_negative_test", {})
     if not isinstance(failure_map, dict) or not failure_map:
         errors.append("current_forge_blocker_projection.failure_signature_to_negative_test must be a non-empty object")
@@ -744,6 +864,7 @@ summary = {
     "forge_projection_field_count": forge_projection_field_count,
     "forge_projection_blocking_reason_count": forge_projection_blocking_reason_count,
     "forge_projection_blocker_catalog_row_count": forge_projection_blocker_catalog_row_count,
+    "forge_projection_blocker_action_row_count": forge_projection_blocker_action_row_count,
     "forge_projection_failure_signature_count": forge_projection_failure_signature_count,
     "forge_blocker_snapshot_blocking_reason_count": forge_blocker_snapshot_blocking_reason_count,
     "forge_blocker_snapshot_needed_library_count": forge_blocker_snapshot_needed_library_count,
@@ -767,6 +888,7 @@ for key in [
     "forge_projection_field_count",
     "forge_projection_blocking_reason_count",
     "forge_projection_blocker_catalog_row_count",
+    "forge_projection_blocker_action_row_count",
     "forge_projection_failure_signature_count",
     "forge_blocker_snapshot_blocking_reason_count",
     "forge_blocker_snapshot_needed_library_count",

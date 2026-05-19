@@ -66,6 +66,7 @@ const FORGE_PROJECTION_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
+    "artifact_state.dependency_breakdown.blocker_action_rows",
 ];
 
 const FORGE_BLOCKING_REASON_MAPPINGS: &[(&str, &str)] = &[
@@ -85,6 +86,25 @@ const FORGE_BLOCKING_REASON_MAPPINGS: &[(&str, &str)] = &[
     ("undefined_glibc_symbols", "nm_undefined_host_symbols"),
     ("undefined_tls_symbols", "nm_undefined_host_symbols"),
     ("host_version_requirements", "version_script_export_nodes"),
+];
+
+const FORGE_BLOCKER_ACTION_PROBE_IDS: &[(&str, &str)] = &[
+    (
+        "host_needed_libraries_present",
+        "readelf_dynamic_dependencies",
+    ),
+    (
+        "host_direct_needed_libraries_present",
+        "readelf_dynamic_dependencies",
+    ),
+    ("host_resolved_libraries_present", "ldd_runtime_resolution"),
+    ("host_loader_dependency", "ldd_runtime_resolution"),
+    ("host_libc_dependency", "ldd_runtime_resolution"),
+    ("libgcc_runtime_dependency", "readelf_dynamic_dependencies"),
+    ("undefined_unwind_symbols", "nm_dynamic_undefined_symbols"),
+    ("undefined_glibc_symbols", "nm_dynamic_undefined_symbols"),
+    ("undefined_tls_symbols", "nm_dynamic_undefined_symbols"),
+    ("host_version_requirements", "readelf_version_needs"),
 ];
 
 const FORGE_FAILURE_SIGNATURE_MAPPINGS: &[(&str, &str)] = &[
@@ -526,6 +546,68 @@ fn require_blocker_catalog_row(
     )
 }
 
+fn expected_blocker_action_values(reason: &str) -> TestResult<HashSet<String>> {
+    let values: &[&str] = match reason {
+        "host_needed_libraries_present" => FORGE_BLOCKER_SNAPSHOT_HOST_NEEDED_LIBRARIES,
+        "host_direct_needed_libraries_present" => FORGE_BLOCKER_SNAPSHOT_NEEDED_LIBRARIES,
+        "host_resolved_libraries_present" => FORGE_BLOCKER_SNAPSHOT_HOST_RESOLVED_LIBRARIES,
+        "host_loader_dependency" => &["/lib64/ld-linux-x86-64.so.2", "ld-linux-x86-64.so.2"],
+        "host_libc_dependency" => &["libc.so.6"],
+        "libgcc_runtime_dependency" => &[
+            "libgcc_s.so.1",
+            "libgcc_s.so.1:GCC_3.0",
+            "libgcc_s.so.1:GCC_3.3",
+            "libgcc_s.so.1:GCC_4.2.0",
+        ],
+        "undefined_unwind_symbols" => FORGE_BLOCKER_SNAPSHOT_UNDEFINED_UNWIND_SYMBOLS,
+        "undefined_glibc_symbols" => &["__tls_get_addr@GLIBC_2.3"],
+        "undefined_tls_symbols" => &["__tls_get_addr@GLIBC_2.3"],
+        "host_version_requirements" => FORGE_BLOCKER_SNAPSHOT_HOST_VERSION_REQUIREMENTS,
+        _ => return Err(format!("unexpected blocker action reason {reason}")),
+    };
+    Ok(values.iter().map(|value| (*value).to_string()).collect())
+}
+
+fn require_blocker_action_row(
+    action_rows: &serde_json::Map<String, Value>,
+    catalog_rows: &serde_json::Map<String, Value>,
+    reason: &str,
+    primary_probe_id: &str,
+) -> TestResult {
+    let row = action_rows
+        .get(reason)
+        .ok_or_else(|| format!("blocker action rows missing {reason}"))?;
+    require(
+        json_string(row, "blocking_reason")? == reason,
+        format!("blocker action row key and blocking_reason mismatch for {reason}"),
+    )?;
+    require(
+        json_string(row, "primary_probe_id")? == primary_probe_id,
+        format!("blocker action row {reason} must use primary probe {primary_probe_id}"),
+    )?;
+    require(
+        json_field(row, "promotion_allowed")?.as_bool() == Some(false),
+        format!("blocker action row {reason} must not allow promotion"),
+    )?;
+    require(
+        !json_array(row, "exit_criteria")?.is_empty(),
+        format!("blocker action row {reason} must include exit criteria"),
+    )?;
+    let catalog_row = catalog_rows
+        .get(reason)
+        .ok_or_else(|| format!("catalog rows missing {reason}"))?;
+    for field in ["owner_surface", "evidence_fields", "next_action"] {
+        require(
+            json_field(row, field)? == json_field(catalog_row, field)?,
+            format!("blocker action row {reason}.{field} must match catalog row"),
+        )?;
+    }
+    require(
+        string_set(row, "current_blocker_values")? == expected_blocker_action_values(reason)?,
+        format!("blocker action row {reason} values must match current forge snapshot"),
+    )
+}
+
 fn require_failure_mapping(
     failure_map: &serde_json::Map<String, Value>,
     standalone_failure_signatures: &HashSet<String>,
@@ -782,6 +864,17 @@ fn plan_has_required_shape_and_probe_coverage() -> TestResult {
         require_blocker_catalog_row(catalog_rows, standalone_catalog_definitions, reason)?;
     }
 
+    let action_rows = json_field(projection, "blocker_action_required_rows")?
+        .as_object()
+        .ok_or_else(|| "blocker_action_required_rows must be object".to_string())?;
+    require(
+        action_rows.len() == FORGE_BLOCKING_REASON_MAPPINGS.len(),
+        "blocker action rows must have one row per projected blocking reason",
+    )?;
+    for (reason, primary_probe_id) in FORGE_BLOCKER_ACTION_PROBE_IDS {
+        require_blocker_action_row(action_rows, catalog_rows, reason, primary_probe_id)?;
+    }
+
     let failure_map = json_field(projection, "failure_signature_to_negative_test")?
         .as_object()
         .ok_or_else(|| "failure_signature_to_negative_test must be object".to_string())?;
@@ -929,8 +1022,8 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
         "l2_l3 blocker count must be 13",
     )?;
     require(
-        json_u64(summary, "forge_projection_field_count")? == 19,
-        "forge projection field count must be 19",
+        json_u64(summary, "forge_projection_field_count")? == 20,
+        "forge projection field count must be 20",
     )?;
     require(
         json_u64(summary, "forge_projection_blocking_reason_count")? == 10,
@@ -939,6 +1032,10 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
     require(
         json_u64(summary, "forge_projection_blocker_catalog_row_count")? == 10,
         "forge projection blocker catalog count must be 10",
+    )?;
+    require(
+        json_u64(summary, "forge_projection_blocker_action_row_count")? == 10,
+        "forge projection blocker action count must be 10",
     )?;
     match json_u64(summary, "forge_projection_failure_signature_count")? {
         6 => {}
@@ -1245,6 +1342,55 @@ fn checker_rejects_forge_blocker_catalog_contract_drift() -> TestResult {
         &mutated,
         "standalone-host-probe-plan-catalog-drift",
         "blocker_catalog_required_rows.undefined_tls_symbols does not match standalone manifest contract",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_forge_blocker_action_row() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-missing-action-row", |plan| {
+        let projection = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_projection".to_string())?;
+        let action_rows = projection
+            .get_mut("blocker_action_required_rows")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing blocker_action_required_rows".to_string())?;
+        action_rows.remove("undefined_tls_symbols");
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-missing-action-row",
+        "blocker_action_required_rows missing undefined_tls_symbols",
+    )
+}
+
+#[test]
+fn checker_rejects_forge_blocker_action_value_drift() -> TestResult {
+    let mutated = write_mutated_plan("standalone-host-probe-plan-action-drift", |plan| {
+        let projection = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing current_forge_blocker_projection".to_string())?;
+        let action_rows = projection
+            .get_mut("blocker_action_required_rows")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing blocker_action_required_rows".to_string())?;
+        let row = action_rows
+            .get_mut("host_version_requirements")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "missing host_version_requirements action row".to_string())?;
+        row.insert(
+            "current_blocker_values".to_string(),
+            Value::Array(vec![Value::String("libgcc_s.so.1:GCC_3.0".to_string())]),
+        );
+        Ok(())
+    })?;
+    expect_checker_failure(
+        &mutated,
+        "standalone-host-probe-plan-action-drift",
+        "blocker_action_required_rows.host_version_requirements.current_blocker_values must match current live forge blockers",
     )
 }
 

@@ -112,7 +112,8 @@
       "artifact_state.dependency_breakdown.host_version_requirements",
       "artifact_state.dependency_breakdown.blocking_reasons",
       "blocking_reasons",
-      "artifact_state.dependency_breakdown.blocker_catalog"
+      "artifact_state.dependency_breakdown.blocker_catalog",
+      "artifact_state.dependency_breakdown.blocker_action_rows"
     ],
     "current_forge_blocker_value_snapshot": {
       "source_artifact": "target/conformance/standalone_replacement_artifact.report.json",
@@ -301,6 +302,214 @@
           "version_needs"
         ],
         "next_action": "Remove host-provided version needs or bind them to owned version nodes in the replacement artifact."
+      }
+    },
+    "blocker_action_required_rows": {
+      "host_needed_libraries_present": {
+        "blocking_reason": "host_needed_libraries_present",
+        "owner_surface": "runtime_linkage",
+        "primary_probe_id": "readelf_dynamic_dependencies",
+        "evidence_fields": [
+          "host_needed_libraries"
+        ],
+        "next_action": "Remove every host runtime library from NEEDED and ldd evidence before treating the artifact as standalone.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.host_needed_libraries is empty",
+          "blocking_reasons omits host_needed_libraries_present"
+        ],
+        "current_blocker_values": [
+          "/lib64/ld-linux-x86-64.so.2",
+          "ld-linux-x86-64.so.2",
+          "libc.so.6",
+          "libgcc_s.so.1"
+        ],
+        "promotion_allowed": false
+      },
+      "host_direct_needed_libraries_present": {
+        "blocking_reason": "host_direct_needed_libraries_present",
+        "owner_surface": "direct_dynamic_dependencies",
+        "primary_probe_id": "readelf_dynamic_dependencies",
+        "evidence_fields": [
+          "host_direct_needed_libraries",
+          "needed_libraries"
+        ],
+        "next_action": "Eliminate direct NEEDED edges to host runtime libraries from the replacement cdylib link.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.host_direct_needed_libraries is empty",
+          "blocking_reasons omits host_direct_needed_libraries_present"
+        ],
+        "current_blocker_values": [
+          "ld-linux-x86-64.so.2",
+          "libgcc_s.so.1"
+        ],
+        "promotion_allowed": false
+      },
+      "host_resolved_libraries_present": {
+        "blocking_reason": "host_resolved_libraries_present",
+        "owner_surface": "loader_resolution",
+        "primary_probe_id": "ldd_runtime_resolution",
+        "evidence_fields": [
+          "host_resolved_libraries",
+          "ldd_libraries"
+        ],
+        "next_action": "Make the loader resolve no host runtime libraries for the candidate replacement artifact.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.host_resolved_libraries is empty",
+          "blocking_reasons omits host_resolved_libraries_present"
+        ],
+        "current_blocker_values": [
+          "/lib64/ld-linux-x86-64.so.2",
+          "libc.so.6",
+          "libgcc_s.so.1"
+        ],
+        "promotion_allowed": false
+      },
+      "host_loader_dependency": {
+        "blocking_reason": "host_loader_dependency",
+        "owner_surface": "loader_startup",
+        "primary_probe_id": "ldd_runtime_resolution",
+        "evidence_fields": [
+          "loader_needed",
+          "needed_libraries",
+          "ldd_libraries"
+        ],
+        "next_action": "Replace host loader/startup dependency with owned CRT, dynamic loader, and init/fini evidence.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.host_needed_libraries contains no loader path",
+          "blocking_reasons omits host_loader_dependency"
+        ],
+        "current_blocker_values": [
+          "/lib64/ld-linux-x86-64.so.2",
+          "ld-linux-x86-64.so.2"
+        ],
+        "promotion_allowed": false
+      },
+      "host_libc_dependency": {
+        "blocking_reason": "host_libc_dependency",
+        "owner_surface": "libc_surface",
+        "primary_probe_id": "ldd_runtime_resolution",
+        "evidence_fields": [
+          "host_needed_libraries",
+          "host_resolved_libraries"
+        ],
+        "next_action": "Remove host libc resolution from the replacement artifact and rerun direct-link smoke evidence.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.host_needed_libraries contains no libc.so entry",
+          "blocking_reasons omits host_libc_dependency"
+        ],
+        "current_blocker_values": [
+          "libc.so.6"
+        ],
+        "promotion_allowed": false
+      },
+      "libgcc_runtime_dependency": {
+        "blocking_reason": "libgcc_runtime_dependency",
+        "owner_surface": "compiler_runtime",
+        "primary_probe_id": "readelf_dynamic_dependencies",
+        "evidence_fields": [
+          "needed_libraries",
+          "host_needed_libraries",
+          "version_needs"
+        ],
+        "next_action": "Burn down libgcc runtime dependence or document an owned compiler-runtime substitute for replacement mode.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.host_needed_libraries contains no libgcc_s entry",
+          "artifact_state.dependency_breakdown.host_version_requirements contains no libgcc_s entry",
+          "blocking_reasons omits libgcc_runtime_dependency"
+        ],
+        "current_blocker_values": [
+          "libgcc_s.so.1",
+          "libgcc_s.so.1:GCC_3.0",
+          "libgcc_s.so.1:GCC_3.3",
+          "libgcc_s.so.1:GCC_4.2.0"
+        ],
+        "promotion_allowed": false
+      },
+      "undefined_unwind_symbols": {
+        "blocking_reason": "undefined_unwind_symbols",
+        "owner_surface": "unwind_runtime",
+        "primary_probe_id": "nm_dynamic_undefined_symbols",
+        "evidence_fields": [
+          "undefined_unwind_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Provide owned unwinder/personality symbols or prove the standalone artifact has no unresolved unwind edges.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.undefined_unwind_symbols is empty",
+          "blocking_reasons omits undefined_unwind_symbols"
+        ],
+        "current_blocker_values": [
+          "_Unwind_Backtrace@GCC_3.3",
+          "_Unwind_DeleteException@GCC_3.0",
+          "_Unwind_GetDataRelBase@GCC_3.0",
+          "_Unwind_GetIP@GCC_3.0",
+          "_Unwind_GetIPInfo@GCC_4.2.0",
+          "_Unwind_GetLanguageSpecificData@GCC_3.0",
+          "_Unwind_GetRegionStart@GCC_3.0",
+          "_Unwind_GetTextRelBase@GCC_3.0",
+          "_Unwind_RaiseException@GCC_3.0",
+          "_Unwind_Resume@GCC_3.0",
+          "_Unwind_SetGR@GCC_3.0",
+          "_Unwind_SetIP@GCC_3.0"
+        ],
+        "promotion_allowed": false
+      },
+      "undefined_glibc_symbols": {
+        "blocking_reason": "undefined_glibc_symbols",
+        "owner_surface": "glibc_symbol_surface",
+        "primary_probe_id": "nm_dynamic_undefined_symbols",
+        "evidence_fields": [
+          "undefined_glibc_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Implement or eliminate unresolved GLIBC-versioned symbols before accepting standalone replacement evidence.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.undefined_glibc_symbols is empty",
+          "blocking_reasons omits undefined_glibc_symbols"
+        ],
+        "current_blocker_values": [
+          "__tls_get_addr@GLIBC_2.3"
+        ],
+        "promotion_allowed": false
+      },
+      "undefined_tls_symbols": {
+        "blocking_reason": "undefined_tls_symbols",
+        "owner_surface": "tls_startup",
+        "primary_probe_id": "nm_dynamic_undefined_symbols",
+        "evidence_fields": [
+          "undefined_tls_symbols",
+          "undefined_symbols"
+        ],
+        "next_action": "Provide owned TLS access/startup support or prove no __tls_get_addr dependency remains.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.undefined_tls_symbols is empty",
+          "blocking_reasons omits undefined_tls_symbols"
+        ],
+        "current_blocker_values": [
+          "__tls_get_addr@GLIBC_2.3"
+        ],
+        "promotion_allowed": false
+      },
+      "host_version_requirements": {
+        "blocking_reason": "host_version_requirements",
+        "owner_surface": "symbol_versioning",
+        "primary_probe_id": "readelf_version_needs",
+        "evidence_fields": [
+          "host_version_requirements",
+          "version_needs"
+        ],
+        "next_action": "Remove host-provided version needs or bind them to owned version nodes in the replacement artifact.",
+        "exit_criteria": [
+          "artifact_state.dependency_breakdown.host_version_requirements is empty",
+          "blocking_reasons omits host_version_requirements"
+        ],
+        "current_blocker_values": [
+          "ld-linux-x86-64.so.2:GLIBC_2.3",
+          "libgcc_s.so.1:GCC_3.0",
+          "libgcc_s.so.1:GCC_3.3",
+          "libgcc_s.so.1:GCC_4.2.0"
+        ],
+        "promotion_allowed": false
       }
     },
     "failure_signature_to_negative_test": {
@@ -820,9 +1029,10 @@
     "claim_blocked_count": 13,
     "l2_l3_blocker_count": 13,
     "negative_claim_test_count": 8,
-    "forge_projection_field_count": 19,
+    "forge_projection_field_count": 20,
     "forge_projection_blocking_reason_count": 10,
     "forge_projection_blocker_catalog_row_count": 10,
+    "forge_projection_blocker_action_row_count": 10,
     "forge_projection_failure_signature_count": 6,
     "forge_blocker_snapshot_blocking_reason_count": 10,
     "forge_blocker_snapshot_needed_library_count": 2,
