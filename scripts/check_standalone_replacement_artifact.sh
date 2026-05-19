@@ -136,9 +136,13 @@ REQUIRED_REPORT_FIELDS = [
     "blocker_delta.baseline_source",
     "blocker_delta.delta_classification",
     "blocker_delta.added_host_needed_libraries",
+    "blocker_delta.added_host_direct_needed_libraries",
+    "blocker_delta.added_host_resolved_libraries",
     "blocker_delta.added_undefined_symbols",
     "blocker_delta.added_version_requirements",
     "blocker_delta.removed_host_needed_libraries",
+    "blocker_delta.removed_host_direct_needed_libraries",
+    "blocker_delta.removed_host_resolved_libraries",
     "blocker_delta.removed_undefined_symbols",
     "blocker_delta.removed_version_requirements",
     "blocker_delta.refresh_required",
@@ -225,6 +229,8 @@ EXPECTED_BLOCKER_DELTA_POLICY = {
     "baseline_source": BLOCKER_DELTA_BASELINE_SOURCE,
     "compared_fields": [
         "host_needed_libraries",
+        "host_direct_needed_libraries",
+        "host_resolved_libraries",
         "undefined_symbols",
         "version_needs",
     ],
@@ -646,6 +652,14 @@ def blocker_delta_not_checked(reason):
         "current_host_needed_libraries": [],
         "added_host_needed_libraries": [],
         "removed_host_needed_libraries": [],
+        "baseline_host_direct_needed_libraries": [],
+        "current_host_direct_needed_libraries": [],
+        "added_host_direct_needed_libraries": [],
+        "removed_host_direct_needed_libraries": [],
+        "baseline_host_resolved_libraries": [],
+        "current_host_resolved_libraries": [],
+        "added_host_resolved_libraries": [],
+        "removed_host_resolved_libraries": [],
         "baseline_undefined_symbols": [],
         "current_undefined_symbols": [],
         "added_undefined_symbols": [],
@@ -687,6 +701,14 @@ def build_blocker_delta(artifact_state):
     current_host = string_list(breakdown.get("host_needed_libraries"))
     removed_host, added_host = set_delta(baseline_host, current_host)
 
+    baseline_direct = string_list(snapshot.get("host_direct_needed_libraries"))
+    current_direct = string_list(breakdown.get("host_direct_needed_libraries"))
+    removed_direct, added_direct = set_delta(baseline_direct, current_direct)
+
+    baseline_resolved = string_list(snapshot.get("host_resolved_libraries"))
+    current_resolved = string_list(breakdown.get("host_resolved_libraries"))
+    removed_resolved, added_resolved = set_delta(baseline_resolved, current_resolved)
+
     baseline_undefined = snapshot_undefined_symbols(snapshot)
     current_undefined = string_list(breakdown.get("undefined_symbols"))
     removed_undefined, added_undefined = set_delta(baseline_undefined, current_undefined)
@@ -695,8 +717,20 @@ def build_blocker_delta(artifact_state):
     current_versions = flatten_version_needs(breakdown.get("version_needs"))
     removed_versions, added_versions = set_delta(baseline_versions, current_versions)
 
-    added_any = bool(added_host or added_undefined or added_versions)
-    removed_any = bool(removed_host or removed_undefined or removed_versions)
+    added_any = bool(
+        added_host
+        or added_direct
+        or added_resolved
+        or added_undefined
+        or added_versions
+    )
+    removed_any = bool(
+        removed_host
+        or removed_direct
+        or removed_resolved
+        or removed_undefined
+        or removed_versions
+    )
     refresh_note = os.environ.get(BLOCKER_DELTA_REFRESH_NOTE_ENV, "").strip()
     if added_any:
         classification = "regression"
@@ -727,6 +761,14 @@ def build_blocker_delta(artifact_state):
         "current_host_needed_libraries": current_host,
         "added_host_needed_libraries": added_host,
         "removed_host_needed_libraries": removed_host,
+        "baseline_host_direct_needed_libraries": baseline_direct,
+        "current_host_direct_needed_libraries": current_direct,
+        "added_host_direct_needed_libraries": added_direct,
+        "removed_host_direct_needed_libraries": removed_direct,
+        "baseline_host_resolved_libraries": baseline_resolved,
+        "current_host_resolved_libraries": current_resolved,
+        "added_host_resolved_libraries": added_resolved,
+        "removed_host_resolved_libraries": removed_resolved,
         "baseline_undefined_symbols": baseline_undefined,
         "current_undefined_symbols": current_undefined,
         "added_undefined_symbols": added_undefined,

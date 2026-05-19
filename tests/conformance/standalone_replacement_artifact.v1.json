@@ -73,6 +73,8 @@
     "baseline_source": "tests/conformance/standalone_host_dependency_probe_plan.v1.json#current_forge_blocker_projection.current_forge_blocker_value_snapshot",
     "compared_fields": [
       "host_needed_libraries",
+      "host_direct_needed_libraries",
+      "host_resolved_libraries",
       "undefined_symbols",
       "version_needs"
     ],
@@ -141,9 +143,13 @@
     "blocker_delta.baseline_source",
     "blocker_delta.delta_classification",
     "blocker_delta.added_host_needed_libraries",
+    "blocker_delta.added_host_direct_needed_libraries",
+    "blocker_delta.added_host_resolved_libraries",
     "blocker_delta.added_undefined_symbols",
     "blocker_delta.added_version_requirements",
     "blocker_delta.removed_host_needed_libraries",
+    "blocker_delta.removed_host_direct_needed_libraries",
+    "blocker_delta.removed_host_resolved_libraries",
     "blocker_delta.removed_undefined_symbols",
     "blocker_delta.removed_version_requirements",
     "blocker_delta.refresh_required",

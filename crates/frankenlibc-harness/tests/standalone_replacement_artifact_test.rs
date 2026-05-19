@@ -63,9 +63,13 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "blocker_delta.baseline_source",
     "blocker_delta.delta_classification",
     "blocker_delta.added_host_needed_libraries",
+    "blocker_delta.added_host_direct_needed_libraries",
+    "blocker_delta.added_host_resolved_libraries",
     "blocker_delta.added_undefined_symbols",
     "blocker_delta.added_version_requirements",
     "blocker_delta.removed_host_needed_libraries",
+    "blocker_delta.removed_host_direct_needed_libraries",
+    "blocker_delta.removed_host_resolved_libraries",
     "blocker_delta.removed_undefined_symbols",
     "blocker_delta.removed_version_requirements",
     "blocker_delta.refresh_required",
@@ -1102,6 +1106,8 @@ fn manifest_matches_forge_contract() {
             "baseline_source": "tests/conformance/standalone_host_dependency_probe_plan.v1.json#current_forge_blocker_projection.current_forge_blocker_value_snapshot",
             "compared_fields": [
                 "host_needed_libraries",
+                "host_direct_needed_libraries",
+                "host_resolved_libraries",
                 "undefined_symbols",
                 "version_needs",
             ],
@@ -2366,6 +2372,16 @@ fn forge_mode_reports_host_dependency_breakdown() {
             .is_some_and(Vec::is_empty)
     );
     assert!(
+        delta["added_host_direct_needed_libraries"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    assert!(
+        delta["added_host_resolved_libraries"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    assert!(
         delta["added_undefined_symbols"]
             .as_array()
             .is_some_and(Vec::is_empty)
@@ -2437,6 +2453,14 @@ fn forge_mode_fails_closed_on_new_blocker_delta() {
     assert!(
         string_set(&delta["added_host_needed_libraries"]).contains("libdl.so.2"),
         "new host library should be recorded"
+    );
+    assert!(
+        string_set(&delta["added_host_direct_needed_libraries"]).contains("libdl.so.2"),
+        "new direct DT_NEEDED host library should be recorded"
+    );
+    assert!(
+        string_set(&delta["added_host_resolved_libraries"]).contains("libdl.so.2"),
+        "new ldd-resolved host library should be recorded"
     );
     assert!(
         string_set(&delta["added_undefined_symbols"]).contains("dlopen@GLIBC_2.2.5"),
@@ -2526,6 +2550,14 @@ fn forge_mode_requires_refresh_note_for_removed_blockers() {
     assert!(
         !string_set(&first["blocker_delta"]["removed_undefined_symbols"]).is_empty(),
         "removed undefined blockers should be recorded"
+    );
+    assert!(
+        !string_set(&first["blocker_delta"]["removed_host_direct_needed_libraries"]).is_empty(),
+        "removed direct DT_NEEDED blockers should be recorded"
+    );
+    assert!(
+        !string_set(&first["blocker_delta"]["removed_host_resolved_libraries"]).is_empty(),
+        "removed ldd-resolved blockers should be recorded"
     );
     assert!(
         string_set(&first["blocker_delta"]["added_undefined_symbols"]).is_empty(),
