@@ -3,7 +3,7 @@
   "manifest_id": "standalone-tls-blocker-diagnostics",
   "bead": "bd-zyck1.89",
   "source_commit": "current",
-  "source_commit_hint": "35a12762b233",
+  "source_commit_hint": "55724938",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -11,7 +11,7 @@
     "diagnostic_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_standalone_tls_blocker_diagnostics"
   },
-  "generated_utc": "2026-05-19T14:47:30Z",
+  "generated_utc": "2026-05-19T15:54:06Z",
   "purpose": "Report-only diagnostic that traces the current standalone forge __tls_get_addr@GLIBC_2.3 blocker back to FrankenLibC TLS source surfaces. It preserves the current replacement claim boundary while giving follow-up work a machine-checkable source and artifact control gate.",
   "inputs": {
     "standalone_replacement_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
@@ -104,11 +104,11 @@
   },
   "owned_tls_cache_artifact_probe": {
     "source_commit": "current",
-    "probe_scope": "release standalone owned-tls-cache owned-unwind-stub frankenlibc-abi cdylib after first-party owned TLS source cleanup, tracing runtime dehosting, dlerror compatibility de-TLS, ABI reentrant lock dehosting, parking_lot removal, and artifact-linked deterministic hashing",
+    "probe_scope": "release standalone owned-tls-cache owned-unwind-stub frankenlibc-abi cdylib after first-party owned TLS source cleanup, tracing runtime dehosting, dlerror compatibility de-TLS, ABI reentrant lock dehosting, parking_lot removal, artifact-linked deterministic hashing, and owned-lane synchronous AIO submission",
     "latest_probe_command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo build -p frankenlibc-abi --features standalone,owned-tls-cache,owned-unwind-stub --release",
     "latest_probe_result": "pass_remote",
-    "latest_probe_artifact": ".rch-target-ts1-job-29848695897850325-1779201142421246057-0/release/libfrankenlibc_abi.so",
-    "latest_probe_artifact_sha256": "cfb2ab1667962fc4ae476817523ffb4bf3d204af5602eaf37fc021f4ef28e470",
+    "latest_probe_artifact": ".rch-target-ts1-job-29848695897850353-1779206012353389921-0/release/libfrankenlibc_abi.so",
+    "latest_probe_artifact_sha256": "d9a41ec2d568af4411efcddb9e62f069df0433e0b6d7a5873ac5ce3578c21283",
     "observed_artifact_symbols": {
       "undefined_tls_symbols": [
         "__tls_get_addr@GLIBC_2.3"
@@ -123,9 +123,9 @@
       }
     },
     "tls_relocation_summary": {
-      "dtpmod64_relocation_count": 4,
+      "dtpmod64_relocation_count": 3,
       "tls_get_addr_jump_slot_count": 1,
-      "relocation_count_including_jump_slot": 5
+      "relocation_count_including_jump_slot": 4
     },
     "tls_descriptor_buckets": [
       {
@@ -161,13 +161,6 @@
         "owner_bucket": "rust_std_thread_current_handle",
         "observed_call_site_examples": [
           "std::thread::current::CURRENT"
-        ]
-      },
-      {
-        "descriptor_offset": "symbol:std_thread_spawnhook",
-        "owner_bucket": "rust_std_thread_spawnhook",
-        "observed_call_site_examples": [
-          "std::thread::spawnhook::SPAWN_HOOKS"
         ]
       }
     ],
@@ -211,17 +204,9 @@
         "section": ".tbss",
         "size_bytes": 8,
         "claim_status_until_exit": "claim_blocked"
-      },
-      {
-        "crate": "std",
-        "source_surface": "thread spawn hook",
-        "symbol": "_RNvNCNKNvNtNtCsjCoUzHIWc5R_3std6thread9spawnhook11SPAWN_HOOKS0023___RUST_STD_INTERNAL_VAL",
-        "section": ".tbss",
-        "size_bytes": 16,
-        "claim_status_until_exit": "claim_blocked"
       }
     ],
-    "classification": "The combined owned-tls-cache plus owned-unwind-stub artifact removes first-party owned TLS descriptors, tracing-core dispatcher TLS, dlerror-result TLS, parking_lot RawThreadId TLS, parking_lot_core THREAD_DATA, std RandomState::new::KEYS, libgcc_s DT_NEEDED, and GCC version needs from this report lane. Artifact-level __tls_get_addr remains because std panic/io/thread TLS still emits six TLS symbols and four DTPMOD64 relocations, so bd-c51oi remains claim-blocked until artifact-level nm/readelf controls are empty."
+    "classification": "The combined owned-tls-cache plus owned-unwind-stub artifact removes first-party owned TLS descriptors, tracing-core dispatcher TLS, dlerror-result TLS, parking_lot RawThreadId TLS, parking_lot_core THREAD_DATA, std RandomState::new::KEYS, std thread spawn-hook TLS, libgcc_s DT_NEEDED, and GCC version needs from this report lane. Artifact-level __tls_get_addr remains because std panic/io/current-thread TLS still emits five TLS symbols and three DTPMOD64 relocations, so bd-c51oi remains claim-blocked until artifact-level nm/readelf controls are empty."
   },
   "source_surface_scan": {
     "source_scan_command": "rg -n \"^[[:space:]]*(std::)?thread_local!\" crates/frankenlibc-abi/src crates/frankenlibc-core/src crates/frankenlibc-membrane/src -g'*.rs'",
@@ -239,24 +224,24 @@
           8326,
           10212,
           10509,
-          12559,
-          13478,
-          14682,
-          16449,
-          16570,
-          16641,
-          16809,
-          17009,
-          17194,
-          19143,
-          19732,
-          20099,
-          20365,
-          20736,
-          22501,
-          22785,
-          22975,
-          25356
+          12580,
+          13499,
+          14703,
+          16470,
+          16591,
+          16662,
+          16830,
+          17030,
+          17215,
+          19164,
+          19753,
+          20120,
+          20386,
+          20757,
+          22522,
+          22806,
+          22996,
+          25377
         ]
       },
       {
@@ -587,8 +572,8 @@
     "abi_thread_local_macro_count": 77,
     "core_thread_local_macro_count": 4,
     "membrane_thread_local_macro_count": 5,
-    "residual_artifact_tls_emitter_count": 6,
-    "owned_tls_probe_dtpmod64_relocation_count": 4,
+    "residual_artifact_tls_emitter_count": 5,
+    "owned_tls_probe_dtpmod64_relocation_count": 3,
     "next_safe_action": "Treat residual std panic/io/thread TLS as the next blocker surface; require nm/readelf absence of TLS symbols, DTPMOD64 relocations, and __tls_get_addr before changing any replacement claim."
   }
 }

@@ -312,7 +312,7 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
             &probe["tls_relocation_summary"]["dtpmod64_relocation_count"],
             "dtpmod64_relocation_count",
         )?,
-        4,
+        3,
         "DTPMOD64 relocation count",
     )?;
     ensure_eq(
@@ -325,7 +325,7 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
     )?;
 
     let buckets = as_array(&probe["tls_descriptor_buckets"], "tls_descriptor_buckets")?;
-    ensure_eq(buckets.len(), 6, "TLS descriptor bucket count")?;
+    ensure_eq(buckets.len(), 5, "TLS descriptor bucket count")?;
     let owner_buckets = buckets
         .iter()
         .map(|bucket| as_str(&bucket["owner_bucket"], "owner_bucket").map(str::to_owned))
@@ -336,7 +336,6 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
         "rust_std_thread_local_destructors",
         "rust_std_thread_current_id",
         "rust_std_thread_current_handle",
-        "rust_std_thread_spawnhook",
     ] {
         ensure(
             owner_buckets.contains(expected),
@@ -348,7 +347,7 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
         &probe["residual_artifact_tls_emitters"],
         "residual_artifact_tls_emitters",
     )?;
-    ensure_eq(residual.len(), 6, "residual artifact TLS emitter count")?;
+    ensure_eq(residual.len(), 5, "residual artifact TLS emitter count")?;
     let residual_symbols = residual
         .iter()
         .map(|row| as_str(&row["symbol"], "residual_artifact_tls_emitters.symbol"))
@@ -364,6 +363,12 @@ fn owned_tls_cache_probe_records_current_artifact_tls_buckets() -> TestResult {
             .iter()
             .all(|symbol| !symbol.contains("RandomState") && !symbol.contains("KEYS")),
         "residual artifact TLS emitters must not retain std RandomState KEYS",
+    )?;
+    ensure(
+        residual_symbols
+            .iter()
+            .all(|symbol| !symbol.contains("SPAWN_HOOKS")),
+        "residual artifact TLS emitters must not retain std thread spawn-hook TLS",
     )?;
     ensure(
         as_str(&probe["classification"], "classification")?.contains("claim-blocked"),

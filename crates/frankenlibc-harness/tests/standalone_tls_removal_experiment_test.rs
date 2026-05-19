@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 6;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 5;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -982,6 +982,12 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
         "residual artifact TLS inventory must not retain std RandomState KEYS after artifact registries move to owned deterministic hashing",
     )?;
 
+    let removed_spawn_hooks_symbol = "_RNvNCNKNvNtNtCsjCoUzHIWc5R_3std6thread9spawnhook11SPAWN_HOOKS0023___RUST_STD_INTERNAL_VAL";
+    require(
+        !symbols.contains(removed_spawn_hooks_symbol),
+        "residual artifact TLS inventory must not retain std thread spawn-hook TLS after owned AIO avoids std thread spawning",
+    )?;
+
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();
     require(
         crates.contains("std"),
@@ -1012,6 +1018,10 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
         json_string(summary, "artifact_level_tls_probe")?
             .contains("tracing-core CURRENT_STATE TLS absent"),
         "summary artifact_level_tls_probe must record retired tracing-core TLS",
+    )?;
+    require(
+        json_string(summary, "artifact_level_tls_probe")?.contains("SPAWN_HOOKS TLS absent"),
+        "summary artifact_level_tls_probe must record retired std thread spawn-hook TLS",
     )
 }
 

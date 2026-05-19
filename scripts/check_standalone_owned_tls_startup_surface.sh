@@ -286,8 +286,8 @@ for index, bucket in enumerate(descriptor_buckets):
         f"diagnostic.tls_descriptor_buckets[{index}].observed_call_site_examples",
     )
     expected_hotspots.extend(examples)
-if len(expected_hotspots) != 6:
-    errors.append("diagnostic residual std TLS descriptor buckets must expose exactly six call-site hotspots")
+if len(expected_hotspots) != 5:
+    errors.append("diagnostic residual std TLS descriptor buckets must expose exactly five call-site hotspots")
 
 diagnostic_emitters = artifact_probe.get("residual_artifact_tls_emitters")
 if not isinstance(diagnostic_emitters, list):
@@ -303,8 +303,8 @@ diagnostic_emitter_symbols = {
     if isinstance(row, dict) and isinstance(row.get("symbol"), str)
 }
 removal_emitter_count = sum(1 for row in removal_emitters if isinstance(row, dict))
-if len(diagnostic_emitter_symbols) != 6 or removal_emitter_count != 6:
-    errors.append("diagnostic and TLS-removal residual artifact TLS emitter inventories must both contain six rows")
+if len(diagnostic_emitter_symbols) != 5 or removal_emitter_count != 5:
+    errors.append("diagnostic and TLS-removal residual artifact TLS emitter inventories must both contain five rows")
 if any(
     not isinstance(row, dict)
     or row.get("crate") != "std"
@@ -452,7 +452,7 @@ for row in rows:
             errors.append(f"{context}.{field} must be {expected}")
     for field in ["semantic_contract_class", "owned_substitute_strategy"]:
         require_string(row, field, context)
-    hotspots = string_list(row.get("source_surface_hotspots"), f"{context}.source_surface_hotspots", min_len=6)
+    hotspots = string_list(row.get("source_surface_hotspots"), f"{context}.source_surface_hotspots", min_len=5)
     if hotspots != expected_hotspots:
         errors.append(
             f"{context}.source_surface_hotspots must match live residual std TLS descriptor buckets"

@@ -12129,10 +12129,70 @@ enum AioOp {
     Fdatasync,
 }
 
+fn aio_execute(fd: c_int, buf_addr: usize, nbytes: usize, offset: i64, op: AioOp) -> i64 {
+    match op {
+        AioOp::Read => {
+            match unsafe { syscall::sys_pread64(fd, buf_addr as *mut u8, nbytes, offset) } {
+                Ok(n) => n as i64,
+                Err(e) => {
+                    unsafe { set_abi_errno(e) };
+                    -1
+                }
+            }
+        }
+        AioOp::Write => {
+            match unsafe { syscall::sys_pwrite64(fd, buf_addr as *const u8, nbytes, offset) } {
+                Ok(n) => n as i64,
+                Err(e) => {
+                    unsafe { set_abi_errno(e) };
+                    -1
+                }
+            }
+        }
+        AioOp::Fsync => match syscall::sys_fsync(fd) {
+            Ok(()) => 0,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        },
+        AioOp::Fdatasync => match syscall::sys_fdatasync(fd) {
+            Ok(()) => 0,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        },
+    }
+}
+
+unsafe fn aio_complete(aiocbp: *mut c_void, result: i64) {
+    if result < 0 {
+        let err = current_abi_errno();
+        unsafe { aiocb_set_return(aiocbp, -1) };
+        unsafe { aiocb_set_error_atomic(aiocbp, err) };
+    } else {
+        unsafe { aiocb_set_return(aiocbp, result as isize) };
+        // Write error_code = 0 last so aio_error sees completion only after
+        // __return_value is visible.
+        unsafe { aiocb_set_error_atomic(aiocbp, 0) };
+    }
+}
+
+fn aio_notify_waiters() {
+    let (lock, cvar) = &*AIO_NOTIFY;
+    if let Ok(mut generation) = lock.lock() {
+        *generation = generation.wrapping_add(1);
+        cvar.notify_all();
+    }
+}
+
 /// Submit an async I/O operation.
 ///
 /// Reads parameters from the aiocb struct, marks it EINPROGRESS, then
-/// spawns a worker thread to perform the syscall.
+/// schedules the operation. In the owned-TLS replacement lane, complete the
+/// syscall synchronously: POSIX permits immediate completion, and avoiding
+/// `std::thread` keeps Rust's thread-spawn TLS out of the standalone artifact.
 unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
     let fd = unsafe { aiocb_i32(aiocbp, aiocb_off::FILDES) };
     let buf = unsafe { aiocb_ptr(aiocbp, aiocb_off::BUF) };
@@ -12143,78 +12203,39 @@ unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
     unsafe { aiocb_set_return(aiocbp, 0) };
     unsafe { aiocb_set_error_atomic(aiocbp, errno::EINPROGRESS) };
 
-    // Transfer raw pointer addresses to the worker thread.
-    // POSIX guarantees the caller keeps the aiocb and buffer valid until
-    // aio_return is called, so these addresses remain valid.
-    let cb_addr = aiocbp as usize;
     let buf_addr = buf as usize;
 
-    let spawn_result = std::thread::Builder::new()
-        .name("aio-worker".into())
-        .spawn(move || {
-            let cb = cb_addr as *mut c_void;
-
-            let result: i64 = match op {
-                AioOp::Read => {
-                    match unsafe { syscall::sys_pread64(fd, buf_addr as *mut u8, nbytes, offset) } {
-                        Ok(n) => n as i64,
-                        Err(e) => {
-                            unsafe { set_abi_errno(e) };
-                            -1
-                        }
-                    }
-                }
-                AioOp::Write => match unsafe {
-                    syscall::sys_pwrite64(fd, buf_addr as *const u8, nbytes, offset)
-                } {
-                    Ok(n) => n as i64,
-                    Err(e) => {
-                        unsafe { set_abi_errno(e) };
-                        -1
-                    }
-                },
-                AioOp::Fsync => match syscall::sys_fsync(fd) {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        unsafe { set_abi_errno(e) };
-                        -1
-                    }
-                },
-                AioOp::Fdatasync => match syscall::sys_fdatasync(fd) {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        unsafe { set_abi_errno(e) };
-                        -1
-                    }
-                },
-            };
-
-            if result < 0 {
-                let err = current_abi_errno();
-                unsafe { aiocb_set_return(cb, -1) };
-                unsafe { aiocb_set_error_atomic(cb, err) };
-            } else {
-                unsafe { aiocb_set_return(cb, result as isize) };
-                // Write error_code = 0 last so aio_error sees completion
-                // only after __return_value is visible.
-                unsafe { aiocb_set_error_atomic(cb, 0) };
-            }
-
-            // Wake any aio_suspend waiters.
-            let (lock, cvar) = &*AIO_NOTIFY;
-            if let Ok(mut generation) = lock.lock() {
-                *generation = generation.wrapping_add(1);
-                cvar.notify_all();
-            }
-        });
-
-    if spawn_result.is_err() {
-        unsafe { aiocb_set_error_atomic(aiocbp, errno::EAGAIN) };
-        unsafe { set_abi_errno(errno::EAGAIN) };
-        return -1;
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        let result = aio_execute(fd, buf_addr, nbytes, offset, op);
+        unsafe { aio_complete(aiocbp, result) };
+        aio_notify_waiters();
+        0
     }
 
-    0
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        // Transfer raw pointer addresses to the worker thread.
+        // POSIX guarantees the caller keeps the aiocb and buffer valid until
+        // aio_return is called, so these addresses remain valid.
+        let cb_addr = aiocbp as usize;
+        let spawn_result = std::thread::Builder::new()
+            .name("aio-worker".into())
+            .spawn(move || {
+                let cb = cb_addr as *mut c_void;
+                let result = aio_execute(fd, buf_addr, nbytes, offset, op);
+                unsafe { aio_complete(cb, result) };
+                aio_notify_waiters();
+            });
+
+        if spawn_result.is_err() {
+            unsafe { aiocb_set_error_atomic(aiocbp, errno::EAGAIN) };
+            unsafe { set_abi_errno(errno::EAGAIN) };
+            -1
+        } else {
+            0
+        }
+    }
 }
 
 /// `aio_read` — initiate an asynchronous read operation.

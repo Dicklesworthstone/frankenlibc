@@ -1135,7 +1135,7 @@ fn standalone_owned_tls_surface_rows_are_explicit() -> TestResult {
         ),
         (
             "standalone-owned-tls-surface-hotspot-count",
-            ("summary.source_surface_hotspot_count", json!(6)),
+            ("summary.source_surface_hotspot_count", json!(5)),
         ),
     ]
     .into_iter()

@@ -334,8 +334,8 @@ fn surface_manifest_covers_current_tls_diagnostics() -> TestResult {
         expected_hotspots.extend(string_values(bucket, "observed_call_site_examples")?);
     }
     require(
-        expected_hotspots.len() == 6,
-        "diagnostic must expose six residual std TLS descriptor hotspots",
+        expected_hotspots.len() == 5,
+        "diagnostic must expose five residual std TLS descriptor hotspots",
     )?;
     require(
         string_values(row, "source_surface_hotspots")? == expected_hotspots,
@@ -348,8 +348,8 @@ fn surface_manifest_covers_current_tls_diagnostics() -> TestResult {
             .collect::<TestResult<_>>()?;
     let removal_residual_count = json_array(&tls_removal, "residual_artifact_tls_emitters")?.len();
     require(
-        diagnostic_residual_symbols.len() == 6 && removal_residual_count == 6,
-        "diagnostic and TLS-removal residual std TLS inventories must both contain six rows",
+        diagnostic_residual_symbols.len() == 5 && removal_residual_count == 5,
+        "diagnostic and TLS-removal residual std TLS inventories must both contain five rows",
     )?;
 
     let version_rows = json_array(&burndown, "version_requirement_matrix")?;

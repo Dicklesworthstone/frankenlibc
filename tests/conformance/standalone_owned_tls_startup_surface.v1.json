@@ -3,8 +3,8 @@
   "manifest_id": "standalone-owned-tls-startup-surface",
   "bead": "bd-w1c58",
   "source_commit": "current",
-  "source_commit_hint": "5f06d90d",
-  "generated_utc": "2026-05-19T15:33:18Z",
+  "source_commit_hint": "55724938",
+  "generated_utc": "2026-05-19T15:54:06Z",
   "purpose": "Report-only ownership contract for the current standalone forge __tls_get_addr@GLIBC_2.3 blocker. This ties the TLS startup symbol to its ld-linux provider version row, owner/action ledger entry, TLS model experiment limit, residual artifact std TLS inventory, evidence commands, and exit criteria so future work must prove real artifact-level blocker removal before changing replacement claims.",
   "inputs": {
     "standalone_tls_blocker_diagnostics": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
@@ -81,13 +81,12 @@
         "std::io::stdio::OUTPUT_CAPTURE",
         "std::sys::thread_local::destructors::list::DTORS",
         "std::thread::current::id::ID",
-        "std::thread::current::CURRENT",
-        "std::thread::spawnhook::SPAWN_HOOKS"
+        "std::thread::current::CURRENT"
       ],
       "evidence_commands": [
         "nm -D libfrankenlibc_replace.so | rg \"__tls_get_addr(@GLIBC_2.3)?\"",
         "readelf -Ws libfrankenlibc_replace.so | rg \"UND __tls_get_addr(@GLIBC_2.3)?\"",
-        "readelf -Ws libfrankenlibc_replace.so | rg \"LOCAL_PANIC_COUNT|OUTPUT_CAPTURE|DTORS|thread7current|SPAWN_HOOKS\"",
+        "readelf -Ws libfrankenlibc_replace.so | rg \"LOCAL_PANIC_COUNT|OUTPUT_CAPTURE|DTORS|thread7current\"",
         "readelf --version-info libfrankenlibc_replace.so | rg \"ld-linux-x86-64.so.2|GLIBC_2.3\"",
         "scripts/check_standalone_tls_model_startup_experiment.sh"
       ],
@@ -107,8 +106,8 @@
     "current_tls_symbol_count": 1,
     "provider_library_count": 1,
     "provider_version_requirement_count": 1,
-    "source_surface_hotspot_count": 6,
-    "residual_artifact_tls_emitter_count": 6,
+    "source_surface_hotspot_count": 5,
+    "residual_artifact_tls_emitter_count": 5,
     "unresolved_symbol_count": 1,
     "owned_surface_ready": false,
     "promotion_allowed": false,

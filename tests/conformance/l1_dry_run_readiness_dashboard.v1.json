@@ -3017,7 +3017,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_owned_tls_startup_surface.v1.json",
       "field": "summary.source_surface_hotspot_count",
-      "expected_value": 6,
+      "expected_value": 5,
       "rationale": "Dashboard consumers must see that the TLS surface points at the live residual std artifact TLS hotspots for follow-up work."
     },
     {
