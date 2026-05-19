@@ -107,7 +107,7 @@ impl PageOracle {
         }
 
         let start_page = base / PAGE_SIZE;
-        let end_page = (base + size - 1) / PAGE_SIZE;
+        let end_page = Self::end_page(base, size);
 
         let mut last_marked_l1 = None;
         for page in start_page..=end_page {
@@ -166,7 +166,7 @@ impl PageOracle {
         }
 
         let start_page = base / PAGE_SIZE;
-        let end_page = (base + size - 1) / PAGE_SIZE;
+        let end_page = Self::end_page(base, size);
 
         let maps = self.l2_maps.read();
         for page in start_page..=end_page {
@@ -184,6 +184,10 @@ impl PageOracle {
         let l1_idx = page / PAGES_PER_L2;
         let l2_page = page % PAGES_PER_L2;
         (l1_idx, l2_page)
+    }
+
+    fn end_page(base: usize, size: usize) -> usize {
+        base.saturating_add(size.saturating_sub(1)) / PAGE_SIZE
     }
 
     fn mark_l1_chunk_maybe_present(&self, l1_idx: usize) {
@@ -296,5 +300,21 @@ mod tests {
         oracle.remove(base, 4096);
         assert!(oracle.l1_chunk_may_be_present(l1_idx));
         assert!(!oracle.query(base));
+    }
+
+    #[test]
+    fn insert_and_remove_saturate_ranges_at_address_space_end() {
+        let oracle = PageOracle::new();
+        let base = usize::MAX - 7;
+        let size = 9;
+
+        oracle.insert(base, size);
+        assert!(oracle.query(base));
+        assert!(oracle.query(usize::MAX));
+
+        oracle.remove(base, size);
+        assert!(oracle.is_empty());
+        assert!(!oracle.query(base));
+        assert!(!oracle.query(usize::MAX));
     }
 }
