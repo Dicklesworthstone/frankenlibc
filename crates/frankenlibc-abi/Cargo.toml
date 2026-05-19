@@ -17,6 +17,7 @@ default = []
 standalone = []
 owned-unwind-stub = []
 owned-tls-cache = ["frankenlibc-core/owned-tls-cache", "frankenlibc-membrane/owned-tls-cache"]
+runtime-tracing = ["dep:tracing", "frankenlibc-core/runtime-tracing"]
 conformance-testing = []
 
 [dependencies]
@@ -26,7 +27,7 @@ libc = { workspace = true }
 parking_lot = { workspace = true }
 sha2 = { workspace = true }
 md-5 = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

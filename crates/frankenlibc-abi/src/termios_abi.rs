@@ -330,10 +330,12 @@ fn log_terminal_signature_observation(
     );
     push_terminal_signature_log(line);
 
-    let ptr_display = ptr_key
-        .map(|value| format!("0x{value:x}"))
-        .unwrap_or_default();
     if summary.is_legal {
+        #[cfg(feature = "runtime-tracing")]
+        let ptr_display = ptr_key
+            .map(|value| format!("0x{value:x}"))
+            .unwrap_or_default();
+        #[cfg(feature = "runtime-tracing")]
         tracing::debug!(
             target: "terminal_signature",
             trace_id = %trace_id,
@@ -358,6 +360,11 @@ fn log_terminal_signature_observation(
             "terminal signature observation"
         );
     } else {
+        #[cfg(feature = "runtime-tracing")]
+        let ptr_display = ptr_key
+            .map(|value| format!("0x{value:x}"))
+            .unwrap_or_default();
+        #[cfg(feature = "runtime-tracing")]
         tracing::warn!(
             target: "terminal_signature",
             trace_id = %trace_id,

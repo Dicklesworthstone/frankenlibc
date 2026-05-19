@@ -761,15 +761,23 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
         partner_thread: u64,
         wait_cycles: u64,
     ) {
+        #[cfg(not(feature = "runtime-tracing"))]
+        let _ = (op, outcome, slot_index, partner_thread, wait_cycles);
+        #[cfg(not(feature = "runtime-tracing"))]
+        return;
+
+        #[cfg(feature = "runtime-tracing")]
         if !tracing::enabled!(target: "elimination", tracing::Level::TRACE) {
             return;
         }
 
+        #[cfg(feature = "runtime-tracing")]
         let op_type = match op {
             EliminationOp::Publish => "publish",
             EliminationOp::Push => "push",
             EliminationOp::Pop => "pop",
         };
+        #[cfg(feature = "runtime-tracing")]
         let outcome = match outcome {
             EliminationOutcome::Matched => "matched",
             EliminationOutcome::Parked => "parked",
@@ -778,10 +786,12 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             EliminationOutcome::Collision => "collision",
             EliminationOutcome::Disabled => "disabled",
         };
+        #[cfg(feature = "runtime-tracing")]
         let trace_id = format!(
             "elimination::{op_type}::{slot_index}::{:016x}",
             current_thread_tag()
         );
+        #[cfg(feature = "runtime-tracing")]
         tracing::trace!(
             target: "elimination",
             trace_id = %trace_id,
@@ -802,11 +812,17 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
     }
 
     fn log_summary(&self) {
+        #[cfg(not(feature = "runtime-tracing"))]
+        return;
+
+        #[cfg(feature = "runtime-tracing")]
         if !tracing::enabled!(target: "elimination", tracing::Level::INFO) {
             return;
         }
 
+        #[cfg(feature = "runtime-tracing")]
         let stats = self.stats();
+        #[cfg(feature = "runtime-tracing")]
         let per_slot_utilization = stats
             .slots
             .iter()
@@ -814,6 +830,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             .collect::<Vec<_>>()
             .join(",");
 
+        #[cfg(feature = "runtime-tracing")]
         tracing::info!(
             target: "elimination",
             trace_id = "elimination::summary",

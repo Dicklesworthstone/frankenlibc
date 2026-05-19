@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 11;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 10;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -914,14 +914,14 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
         "residual artifact TLS inventory must not retain the removed core pthread fallback TLS emitter",
     )?;
 
+    let removed_tracing_core_current_state_symbol = "_RNvNCNKNvNtCs1pPgOkVrw7y_12tracing_core10dispatcher13CURRENT_STATE0023___RUST_STD_INTERNAL_VAL";
+    require(
+        !symbols.contains(removed_tracing_core_current_state_symbol),
+        "residual artifact TLS inventory must not retain tracing-core dispatcher TLS when runtime-tracing is disabled",
+    )?;
+
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();
-    for required in [
-        "frankenlibc-abi",
-        "tracing-core",
-        "parking_lot",
-        "parking_lot_core",
-        "std",
-    ] {
+    for required in ["frankenlibc-abi", "parking_lot", "parking_lot_core", "std"] {
         require(
             crates.contains(required),
             format!("residual artifact TLS inventory must include crate {required}"),
@@ -943,6 +943,11 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
     require(
         json_string(summary, "next_safe_action")?.contains("residual artifact TLS emitters"),
         "summary next_safe_action must name residual artifact TLS emitters",
+    )?;
+    require(
+        json_string(summary, "artifact_level_tls_probe")?
+            .contains("tracing-core CURRENT_STATE TLS absent"),
+        "summary artifact_level_tls_probe must record retired tracing-core TLS",
     )
 }
 
@@ -1225,6 +1230,23 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         owned_tls_feature_line.contains("frankenlibc-core/owned-tls-cache"),
         "frankenlibc-abi owned-tls-cache feature must forward into frankenlibc-core",
     )?;
+    require(
+        !owned_tls_feature_line.contains("runtime-tracing"),
+        "frankenlibc-abi owned-tls-cache feature must not re-enable runtime tracing",
+    )?;
+    require(
+        cargo_toml.lines().any(|line| {
+            line.trim()
+                == "runtime-tracing = [\"dep:tracing\", \"frankenlibc-core/runtime-tracing\"]"
+        }),
+        "frankenlibc-abi Cargo.toml must keep tracing behind the opt-in runtime-tracing feature",
+    )?;
+    require(
+        cargo_toml
+            .lines()
+            .any(|line| line.trim() == "tracing = { workspace = true, optional = true }"),
+        "frankenlibc-abi tracing dependency must be optional",
+    )?;
 
     let membrane_cargo_toml = std::fs::read_to_string(
         root.join("crates")
@@ -1250,6 +1272,18 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             .lines()
             .any(|line| line.trim() == "owned-tls-cache = []"),
         "frankenlibc-core Cargo.toml must define owned-tls-cache feature",
+    )?;
+    require(
+        core_cargo_toml
+            .lines()
+            .any(|line| line.trim() == "runtime-tracing = [\"dep:tracing\"]"),
+        "frankenlibc-core Cargo.toml must keep tracing behind the opt-in runtime-tracing feature",
+    )?;
+    require(
+        core_cargo_toml
+            .lines()
+            .any(|line| line.trim() == "tracing = { workspace = true, optional = true }"),
+        "frankenlibc-core tracing dependency must be optional",
     )?;
 
     let unistd = std::fs::read_to_string(abi_unistd_path(&root))

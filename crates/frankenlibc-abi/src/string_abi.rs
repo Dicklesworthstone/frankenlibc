@@ -148,6 +148,7 @@ fn active_string_simd_feature_mask() -> u32 {
     mask
 }
 
+#[cfg(feature = "runtime-tracing")]
 fn string_simd_feature_list(mask: u32) -> &'static str {
     match (
         mask & SIMD_FEATURE_AVX2 != 0,
@@ -173,6 +174,7 @@ fn log_string_simd_dispatch_once(function: &'static str, dispatch: StringSimdDis
         _ => return,
     };
     once.call_once(|| {
+        #[cfg(feature = "runtime-tracing")]
         tracing::info!(
             target: "simd_dispatch",
             function,
@@ -180,6 +182,8 @@ fn log_string_simd_dispatch_once(function: &'static str, dispatch: StringSimdDis
             cpu_features = string_simd_feature_list(mask),
             lane_bytes = dispatch.lane_bytes
         );
+        #[cfg(not(feature = "runtime-tracing"))]
+        let _ = (dispatch, mask);
     });
 }
 

@@ -335,6 +335,9 @@ impl HtmSite {
         abort_code: Option<u32>,
         fallback_reason: Option<&'static str>,
     ) {
+        #[cfg(not(feature = "runtime-tracing"))]
+        let _ = (outcome, attempt_number, abort_code, fallback_reason);
+        #[cfg(feature = "runtime-tracing")]
         tracing::trace!(
             target: "htm",
             call_site_id = self.site,
@@ -377,6 +380,9 @@ impl HtmSite {
             (aborts as f64 * 100.0) / attempts as f64
         };
 
+        #[cfg(not(feature = "runtime-tracing"))]
+        let _ = (snapshot, commit_rate_pct, abort_rate_pct);
+        #[cfg(feature = "runtime-tracing")]
         tracing::info!(
             target: "htm",
             call_site_id = self.site,

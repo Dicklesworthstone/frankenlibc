@@ -32,6 +32,7 @@ impl<const MAX: usize> BoundedIndex<MAX> {
         if value < MAX {
             Ok(Self(value))
         } else {
+            #[cfg(feature = "runtime-tracing")]
             tracing::warn!(
                 target: "liquid_types",
                 value,

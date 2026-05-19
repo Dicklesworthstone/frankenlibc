@@ -12,6 +12,7 @@ unsafe_code = "deny"
 [features]
 default = []
 owned-tls-cache = []
+runtime-tracing = ["dep:tracing"]
 
 [dependencies]
 frankenlibc-membrane = { workspace = true }
@@ -19,7 +20,7 @@ libm = "0.2.16"
 md-5 = { workspace = true }
 parking_lot = { workspace = true }
 sha2 = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = "1.11.0"
