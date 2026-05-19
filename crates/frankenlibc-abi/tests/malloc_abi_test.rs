@@ -717,6 +717,24 @@ fn test_calloc_overflow_returns_null_in_reentrant_path() {
 }
 
 #[test]
+fn test_allocator_reentry_depth_is_per_kernel_thread() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let previous_depth = malloc_swap_reentry_depth_for_tests(1);
+    let child_previous = std::thread::spawn(|| {
+        let previous = malloc_swap_reentry_depth_for_tests(0);
+        malloc_restore_reentry_depth_for_tests(previous);
+        previous
+    })
+    .join();
+    malloc_restore_reentry_depth_for_tests(previous_depth);
+    let child_previous = child_previous.expect("child thread should complete");
+    assert_eq!(
+        child_previous, 0,
+        "allocator reentry depth must not leak across kernel threads"
+    );
+}
+
+#[test]
 fn test_calloc_zero_returns_non_null_or_null() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     // POSIX: calloc(0, 0) may return NULL or a unique pointer.

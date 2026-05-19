@@ -28,7 +28,7 @@ const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 19;
-const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 3;
+const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -197,6 +197,13 @@ fn abi_time_path(root: &Path) -> PathBuf {
         .join("frankenlibc-abi")
         .join("src")
         .join("time_abi.rs")
+}
+
+fn abi_malloc_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-abi")
+        .join("src")
+        .join("malloc_abi.rs")
 }
 
 fn abi_src_dir(root: &Path) -> PathBuf {
@@ -989,6 +996,15 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
     require(
         !json_bool(summary, "promotion_allowed")?,
         "owned-tls slice must not promote replacement claims",
+    )?;
+
+    let malloc = std::fs::read_to_string(abi_malloc_path(&root))
+        .map_err(|err| format!("read malloc_abi.rs: {err}"))?;
+    require(
+        malloc.contains("ALLOCATOR_REENTRY_SLOTS")
+            && malloc.contains("enter_native_reentry_guard")
+            && !malloc.contains("thread_local!"),
+        "malloc ABI must route allocator reentry guards through the non-allocating tid slot table",
     )?;
 
     let cargo_toml = std::fs::read_to_string(abi_cargo_toml_path(&root))

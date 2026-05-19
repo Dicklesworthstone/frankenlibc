@@ -8,11 +8,13 @@
 //! In test mode, this module is suppressed to avoid shadowing the system allocator
 //! (which would cause infinite recursion in the test binary itself).
 
-use std::cell::{Cell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::ffi::{c_int, c_void};
 use std::fmt::Write as _;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering,
+};
 
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
 use frankenlibc_membrane::MEMBRANE_SCHEMA_VERSION;
@@ -66,48 +68,97 @@ pub struct HostAllocatorResolutionMetrics {
 // runtime init, format strings in mode/policy setup) before TLS becomes
 // available and the normal allocator path takes over.
 
-// Recursion guards for the host allocator trampolines. These are
-// thread-local so that two threads simultaneously calling our malloc do
-// NOT see each other's "in flight" state and spuriously fall through to
-// `bump_alloc`. A process-global AtomicBool here previously caused
-// cross-thread false positives that returned bump-arena pointers to
-// callers that expected real glibc allocations (bd-wbqeo, family of
-// bd-zgifl / bd-wkpcv).
-//
-// `Cell<bool>` has a trivial drop, so the thread_local does NOT
-// register through `__cxa_thread_atexit_impl` and cannot trigger the
-// init_array deadlock fixed in bd-yf86e.
-//
-// `try_with` returns Err during early bootstrap before TLS is set up
-// and during thread shutdown after TLS is torn down. We treat both as
-// "in reentry" so the bump fallback still rescues us in those windows.
-thread_local! {
-    static NATIVE_MALLOC_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
-    static NATIVE_CALLOC_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
-    static NATIVE_REALLOC_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
-    static NATIVE_FREE_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
+// Recursion guards for the host allocator trampolines. This path must not use
+// Rust TLS or OwnedTlsCache: both can touch allocator/bootstrap machinery before
+// malloc is safe. A process-global AtomicBool previously caused cross-thread
+// false positives (bd-wbqeo), so this table is keyed by raw kernel TID and uses
+// only atomics plus the gettid syscall. If a slot cannot be acquired, callers
+// keep the existing fail-closed behavior and use the bump fallback.
+const ALLOCATOR_REENTRY_SLOT_COUNT: usize = 4096;
+const ALLOCATOR_REENTRY_SLOT_MASK: usize = ALLOCATOR_REENTRY_SLOT_COUNT - 1;
+const ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT: usize = 64;
+const NATIVE_REENTRY_MALLOC: u8 = 1 << 0;
+const NATIVE_REENTRY_CALLOC: u8 = 1 << 1;
+const NATIVE_REENTRY_REALLOC: u8 = 1 << 2;
+const NATIVE_REENTRY_FREE: u8 = 1 << 3;
+const NATIVE_REENTRY_MEMALIGN: u8 = 1 << 4;
+
+struct AllocatorReentrySlot {
+    tid: AtomicI32,
+    native_guard_bits: AtomicU8,
+    allocator_depth: AtomicU32,
 }
 
-/// Try to enter a per-thread reentry-guarded section.
-/// Returns `true` if the thread was NOT already inside this section
-/// (caller must call `leave_reentry_guard` to clear); `false` if we
-/// are reentering or TLS is unavailable (caller should bump-fallback).
-#[inline]
-fn enter_reentry_guard(cell: &'static std::thread::LocalKey<Cell<bool>>) -> bool {
-    cell.try_with(|c| {
-        if c.get() {
-            false
-        } else {
-            c.set(true);
-            true
+impl AllocatorReentrySlot {
+    const fn new() -> Self {
+        Self {
+            tid: AtomicI32::new(0),
+            native_guard_bits: AtomicU8::new(0),
+            allocator_depth: AtomicU32::new(0),
         }
-    })
-    .unwrap_or(false)
+    }
+}
+
+static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_COUNT] =
+    [const { AllocatorReentrySlot::new() }; ALLOCATOR_REENTRY_SLOT_COUNT];
+
+#[inline]
+fn allocator_reentry_slot_start(tid: i32) -> usize {
+    (tid as usize).wrapping_mul(0x9e37_79b1_85eb_ca87) & ALLOCATOR_REENTRY_SLOT_MASK
+}
+
+fn allocator_reentry_slot_for_tid(tid: i32) -> Option<&'static AllocatorReentrySlot> {
+    if tid <= 0 {
+        return None;
+    }
+    let start = allocator_reentry_slot_start(tid);
+    for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
+        let slot = &ALLOCATOR_REENTRY_SLOTS[(start + offset) & ALLOCATOR_REENTRY_SLOT_MASK];
+        let observed = slot.tid.load(Ordering::Acquire);
+        if observed == tid {
+            return Some(slot);
+        }
+        if observed == 0 {
+            match slot
+                .tid
+                .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return Some(slot),
+                Err(actual) if actual == tid => return Some(slot),
+                Err(_) => {}
+            }
+        }
+    }
+    None
 }
 
 #[inline]
-fn leave_reentry_guard(cell: &'static std::thread::LocalKey<Cell<bool>>) {
-    let _ = cell.try_with(|c| c.set(false));
+fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
+    allocator_reentry_slot_for_tid(raw_syscall::sys_gettid())
+}
+
+struct NativeAllocatorReentryGuard {
+    slot: &'static AllocatorReentrySlot,
+    mask: u8,
+}
+
+impl Drop for NativeAllocatorReentryGuard {
+    fn drop(&mut self) {
+        self.slot
+            .native_guard_bits
+            .fetch_and(!self.mask, Ordering::AcqRel);
+    }
+}
+
+#[inline]
+fn enter_native_reentry_guard(mask: u8) -> Option<NativeAllocatorReentryGuard> {
+    let slot = current_allocator_reentry_slot()?;
+    let previous = slot.native_guard_bits.fetch_or(mask, Ordering::AcqRel);
+    if previous & mask == 0 {
+        Some(NativeAllocatorReentryGuard { slot, mask })
+    } else {
+        None
+    }
 }
 
 static BUMP_POS: AtomicUsize = AtomicUsize::new(0);
@@ -414,9 +465,9 @@ pub fn malloc_htm_snapshot_for_tests() -> crate::htm_fast_path::HtmSiteSnapshot 
 
 #[inline]
 unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
-    if !enter_reentry_guard(&NATIVE_MALLOC_REENTRY_TLS) {
+    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC) else {
         return unsafe { bump_alloc(size) };
-    }
+    };
     let ptr = if let Some(&ptr) = HOST_MALLOC_FN.get() {
         ptr
     } else if let Some(raw_host_malloc) = crate::host_resolve::host_malloc_raw() {
@@ -428,26 +479,24 @@ unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
         let _ = HOST_MALLOC_FN.set(resolved);
         resolved
     };
-    let result = if ptr != 0 {
+    if ptr != 0 {
         let f: HostMallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host malloc symbol is resolved as this exact ABI fn pointer.
         unsafe { f(size) }
     } else {
         unsafe { bump_alloc(size) }
-    };
-    leave_reentry_guard(&NATIVE_MALLOC_REENTRY_TLS);
-    result
+    }
 }
 
 #[inline]
 unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
-    if !enter_reentry_guard(&NATIVE_CALLOC_REENTRY_TLS) {
+    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_CALLOC) else {
         let Some(total) = nmemb.checked_mul(size) else {
             return std::ptr::null_mut();
         };
         let ptr = unsafe { bump_alloc(total) };
         // bump_alloc returns zeroed memory (static initializer).
         return ptr;
-    }
+    };
     let ptr = if let Some(&ptr) = HOST_CALLOC_FN.get() {
         ptr
     } else if let Some(raw_host_calloc) = crate::host_resolve::host_calloc_raw() {
@@ -459,7 +508,7 @@ unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
         let _ = HOST_CALLOC_FN.set(resolved);
         resolved
     };
-    let result = if ptr != 0 {
+    if ptr != 0 {
         let host_calloc: HostCallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host calloc symbol is resolved as this exact ABI fn pointer.
         unsafe { host_calloc(nmemb, size) }
     } else {
@@ -470,9 +519,7 @@ unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
         } else {
             unsafe { bump_alloc(total) }
         }
-    };
-    leave_reentry_guard(&NATIVE_CALLOC_REENTRY_TLS);
-    result
+    }
 }
 
 #[inline]
@@ -490,9 +537,9 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         }
         return out;
     }
-    if !enter_reentry_guard(&NATIVE_REALLOC_REENTRY_TLS) {
+    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_REALLOC) else {
         return unsafe { bump_alloc(size) };
-    }
+    };
     let host_ptr = if let Some(&host_ptr) = HOST_REALLOC_FN.get() {
         host_ptr
     } else if let Some(raw_host_realloc) = crate::host_resolve::host_realloc_raw() {
@@ -504,7 +551,7 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         let _ = HOST_REALLOC_FN.set(resolved);
         resolved
     };
-    let result = if host_ptr != 0 {
+    if host_ptr != 0 {
         let host_realloc: HostReallocFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host realloc symbol is resolved as this exact ABI fn pointer.
         unsafe { host_realloc(ptr, size) }
     } else if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
@@ -518,9 +565,7 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         out
     } else {
         unsafe { bump_alloc(size) }
-    };
-    leave_reentry_guard(&NATIVE_REALLOC_REENTRY_TLS);
-    result
+    }
 }
 
 #[inline]
@@ -528,9 +573,9 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
     if is_bump_ptr(ptr) {
         return; // Bump allocator: free is a no-op.
     }
-    if !enter_reentry_guard(&NATIVE_FREE_REENTRY_TLS) {
+    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_FREE) else {
         return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
-    }
+    };
     let host_ptr = if let Some(&host_ptr) = HOST_FREE_FN.get() {
         host_ptr
     } else if let Some(raw_host_free) = crate::host_resolve::host_free_raw() {
@@ -546,7 +591,6 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
         let host_free: HostFreeFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host free symbol is resolved as this exact ABI fn pointer.
         unsafe { host_free(ptr) };
     }
-    leave_reentry_guard(&NATIVE_FREE_REENTRY_TLS);
 }
 
 #[inline]
@@ -573,31 +617,21 @@ unsafe fn native_libc_posix_memalign(
     0
 }
 
-thread_local! {
-    static NATIVE_MEMALIGN_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
-}
-
 #[inline]
 unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
-    if !enter_reentry_guard(&NATIVE_MEMALIGN_REENTRY_TLS) {
+    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MEMALIGN) else {
         return unsafe { bump_alloc_aligned(size, alignment) };
-    }
-    let result = match unsafe { host_memalign_fn() } {
+    };
+    match unsafe { host_memalign_fn() } {
         Some(host_memalign) => unsafe { host_memalign(alignment, size) },
         None => unsafe { bump_alloc_aligned(size, alignment) },
-    };
-    leave_reentry_guard(&NATIVE_MEMALIGN_REENTRY_TLS);
-    result
+    }
 }
 
 #[inline]
 unsafe fn native_libc_aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
     // SAFETY: direct call to libc allocator symbol.
     unsafe { native_libc_memalign(alignment, size) }
-}
-
-thread_local! {
-    static ALLOCATOR_REENTRY_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 const MALLOC_STATS_BIN_COUNT: usize = frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES + 1;
@@ -1030,19 +1064,21 @@ fn fallback_remaining(addr: usize) -> Option<usize> {
 
 #[must_use]
 pub(crate) fn in_allocator_reentry_context() -> bool {
-    ALLOCATOR_REENTRY_DEPTH
-        .try_with(|depth| depth.get() > 0)
+    current_allocator_reentry_slot()
+        .map(|slot| slot.allocator_depth.load(Ordering::Acquire) > 0)
         .unwrap_or(true)
 }
 
-struct AllocatorReentryGuard;
+struct AllocatorReentryGuard {
+    slot: &'static AllocatorReentrySlot,
+}
 
 impl Drop for AllocatorReentryGuard {
     fn drop(&mut self) {
-        let _ = ALLOCATOR_REENTRY_DEPTH.try_with(|depth| {
-            let current = depth.get();
-            depth.set(current.saturating_sub(1));
-        });
+        let current = self.slot.allocator_depth.load(Ordering::Acquire);
+        self.slot
+            .allocator_depth
+            .store(current.saturating_sub(1), Ordering::Release);
     }
 }
 
@@ -1054,29 +1090,19 @@ fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
     if crate::pthread_abi::in_threading_policy_context() {
         return None;
     }
-    ALLOCATOR_REENTRY_DEPTH
-        .try_with(|depth| {
-            let current = depth.get();
-            if current > 0 {
-                None
-            } else {
-                depth.set(current + 1);
-                Some(AllocatorReentryGuard)
-            }
-        })
-        .unwrap_or(None)
+    let slot = current_allocator_reentry_slot()?;
+    slot.allocator_depth
+        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+        .ok()
+        .map(|_| AllocatorReentryGuard { slot })
 }
 
 /// Test hook: force allocator entrypoints down the reentrant fallback path and
 /// return the previous depth so callers can restore it afterwards.
 #[doc(hidden)]
 pub fn malloc_swap_reentry_depth_for_tests(depth: u32) -> u32 {
-    ALLOCATOR_REENTRY_DEPTH
-        .try_with(|current_depth| {
-            let previous = current_depth.get();
-            current_depth.set(depth);
-            previous
-        })
+    current_allocator_reentry_slot()
+        .map(|slot| slot.allocator_depth.swap(depth, Ordering::AcqRel))
         .unwrap_or(0)
 }
 
@@ -1084,7 +1110,9 @@ pub fn malloc_swap_reentry_depth_for_tests(depth: u32) -> u32 {
 /// [`malloc_swap_reentry_depth_for_tests`].
 #[doc(hidden)]
 pub fn malloc_restore_reentry_depth_for_tests(previous: u32) {
-    let _ = ALLOCATOR_REENTRY_DEPTH.try_with(|depth| depth.set(previous));
+    if let Some(slot) = current_allocator_reentry_slot() {
+        slot.allocator_depth.store(previous, Ordering::Release);
+    }
 }
 
 #[doc(hidden)]
