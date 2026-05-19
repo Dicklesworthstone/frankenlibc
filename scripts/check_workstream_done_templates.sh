@@ -19,6 +19,7 @@ mkdir -p "${OUT_DIR}"
 python3 - "${ROOT}" "${ARTIFACT}" "${REPORT}" "${LOG}" <<'PY'
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -164,6 +165,16 @@ def non_empty_list(value):
     return isinstance(value, list) and all(isinstance(item, str) and item for item in value)
 
 
+def concrete_script_refs(text):
+    refs = []
+    for match in re.finditer(r"scripts/[A-Za-z0-9_./-]+\.(?:sh|py)", text):
+        ref = match.group(0)
+        if "..." in ref:
+            continue
+        refs.append(ref)
+    return refs
+
+
 def record(condition, check_name, message):
     checks[check_name] = "pass" if condition else "fail"
     if not condition:
@@ -216,6 +227,7 @@ record(
 
 section_failures = []
 command_failures = []
+script_ref_failures = []
 for workstream in required_workstreams:
     template = templates_by_workstream.get(workstream)
     if not template:
@@ -233,6 +245,17 @@ for workstream in required_workstreams:
         command_failures.append(f"{workstream}:missing_no_db_close")
     if "rch exec -- cargo" not in commands and workstream not in {"tracker_repair"}:
         command_failures.append(f"{workstream}:missing_rch_cargo")
+    for section in [
+        "expected_touched_files",
+        "required_e2e_fixture_harness_scripts",
+        "closure_commands",
+    ]:
+        for item in template.get(section, []):
+            if not isinstance(item, str):
+                continue
+            for ref in concrete_script_refs(item):
+                if not (root / ref).is_file():
+                    script_ref_failures.append(f"{workstream}:{section}:{ref}")
 
 record(
     not section_failures,
@@ -243,6 +266,11 @@ record(
     not command_failures,
     "closure_commands_complete",
     f"closure command contract failures: {command_failures}",
+)
+record(
+    not script_ref_failures,
+    "concrete_script_refs_exist",
+    f"concrete script references are missing: {script_ref_failures}",
 )
 
 examples = artifact.get("dry_run_examples", [])

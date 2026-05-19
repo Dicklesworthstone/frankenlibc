@@ -201,7 +201,7 @@
       "expected_touched_files": [
         "tests/conformance/feature_parity_gap_ledger.v1.json",
         "tests/conformance/reality_check_bridge_backlog.v1.json",
-        "scripts/check_feature_parity_drift_gate.sh",
+        "scripts/check_feature_parity_drift.sh",
         "crates/frankenlibc-harness/tests/feature_parity_drift_gate_test.rs"
       ],
       "required_unit_test_classes": [
@@ -213,7 +213,7 @@
         "claim-blocking unresolved gap"
       ],
       "required_e2e_fixture_harness_scripts": [
-        "bash scripts/check_feature_parity_drift_gate.sh",
+        "bash scripts/check_feature_parity_drift.sh",
         "rch exec -- cargo test -p frankenlibc-harness --test feature_parity_drift_gate_test"
       ],
       "structured_log_fields": [
@@ -240,7 +240,7 @@
       ],
       "closure_commands": [
         "ubs <changed-files>",
-        "bash scripts/check_feature_parity_drift_gate.sh",
+        "bash scripts/check_feature_parity_drift.sh",
         "rch exec -- cargo test -p frankenlibc-harness --test feature_parity_drift_gate_test",
         "br --no-db close <bead-id> --reason \"...\""
       ],

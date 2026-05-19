@@ -597,6 +597,11 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
         "implementation_handoff_checklist_complete",
     )?;
     ensure_eq(
+        report["checks"]["concrete_script_refs_exist"].as_str(),
+        Some("pass"),
+        "concrete_script_refs_exist",
+    )?;
+    ensure_eq(
         report["checks"]["handoff_transcripts_choose_next_safe_action"].as_str(),
         Some("pass"),
         "handoff_transcripts_choose_next_safe_action",
@@ -669,6 +674,57 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> Result<(), Box<dy
     ensure(
         saw_stale_handoff,
         "gate log must include stale-tracker next_safe_action evidence",
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn gate_script_rejects_missing_concrete_script_refs() -> Result<(), Box<dyn Error>> {
+    let _guard = match SCRIPT_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let root = workspace_root()?;
+    let mut artifact =
+        load_json(&root.join("tests/conformance/workstream_done_templates.v1.json"))?;
+    let commands = artifact["templates"][0]["closure_commands"]
+        .as_array_mut()
+        .ok_or_else(|| test_error("first template closure_commands must be an array"))?;
+    commands.push(serde_json::Value::String(
+        "bash scripts/check_missing_workstream_gate.sh".to_string(),
+    ));
+
+    let bad_path = unique_temp_path("workstream-template-missing-script-ref.json")?;
+    std::fs::write(&bad_path, serde_json::to_vec_pretty(&artifact)?)?;
+    let output = Command::new(root.join("scripts/check_workstream_done_templates.sh"))
+        .current_dir(&root)
+        .env("FLC_WORKSTREAM_DONE_TEMPLATES", &bad_path)
+        .output()?;
+    ensure(
+        !output.status.success(),
+        "gate should fail when a concrete script reference is missing",
+    )?;
+    let report = parse_stdout_report(&output)?;
+    ensure_eq(
+        report["status"].as_str(),
+        Some("fail"),
+        "missing script status",
+    )?;
+    ensure_eq(
+        report["checks"]["concrete_script_refs_exist"].as_str(),
+        Some("fail"),
+        "missing script check",
+    )?;
+    let errors = report["errors"]
+        .as_array()
+        .ok_or_else(|| test_error("errors must be an array"))?;
+    ensure(
+        errors
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|error| error.contains("scripts/check_missing_workstream_gate.sh")),
+        "failure should name the missing concrete script path",
     )?;
 
     Ok(())
