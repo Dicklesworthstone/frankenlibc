@@ -28,7 +28,7 @@ const OWNED_TLS_LANE: &str = "owned-tls-cache-source-surface";
 const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 19;
-const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 12;
+const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 11;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {

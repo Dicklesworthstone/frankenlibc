@@ -11804,10 +11804,6 @@ pub unsafe extern "C" fn ether_ntoa_r(addr: *const c_void, buf: *mut c_char) -> 
 
 // H_ERR_* constants moved to frankenlibc_core::resolv::messages.
 
-std::thread_local! {
-    static H_ERRNO_TLS: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
-}
-
 #[inline]
 unsafe fn current_h_errno() -> c_int {
     let ptr = unsafe { crate::resolv_abi::__h_errno_location() };
