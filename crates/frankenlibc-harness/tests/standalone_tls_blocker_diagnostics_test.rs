@@ -482,10 +482,25 @@ fn residual_std_tls_callsite_evidence_stays_fail_closed() -> TestResult {
 }
 
 #[test]
-fn build_std_zero_tls_probe_remains_immediate_abort_blocked() -> TestResult {
+fn build_std_zero_tls_probe_records_zero_tls_artifact() -> TestResult {
     let root = workspace_root()?;
     let diagnostic = load_json(&root, DIAGNOSTIC_PATH)?;
     let probe = &diagnostic["owned_tls_cache_artifact_probe"]["build_std_zero_tls_probe"];
+
+    let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml"))
+        .map_err(|err| format!("read Cargo.toml: {err}"))?;
+    ensure(
+        cargo_toml.starts_with("cargo-features = [\"panic-immediate-abort\"]"),
+        "workspace manifest must opt into Cargo panic-immediate-abort before using the profile lane",
+    )?;
+    ensure_eq(
+        as_str(
+            &probe["cargo_manifest_opt_in"],
+            "build_std_zero_tls_probe.cargo_manifest_opt_in",
+        )?,
+        "cargo-features = [\"panic-immediate-abort\"]",
+        "build-std probe Cargo manifest opt-in",
+    )?;
 
     let rust_src_repair = &probe["rust_src_repair"];
     ensure(
@@ -513,6 +528,11 @@ fn build_std_zero_tls_probe_remains_immediate_abort_blocked() -> TestResult {
         "blocked_panic_immediate_abort_feature_removed",
         "legacy panic_immediate_abort feature result",
     )?;
+    ensure_eq(
+        as_str(&probe["rustflags_probe_result"], "rustflags_probe_result")?,
+        "blocked_core_panic_strategy_mismatch_for_immediate_abort",
+        "global RUSTFLAGS immediate-abort probe must remain recorded as a failed lane",
+    )?;
 
     let command = as_str(&probe["command"], "build_std_zero_tls_probe.command")?;
     ensure(
@@ -521,8 +541,8 @@ fn build_std_zero_tls_probe_remains_immediate_abort_blocked() -> TestResult {
     )?;
     ensure(
         command.contains("-Z build-std=std,panic_abort")
-            && command.contains("-Cpanic=immediate-abort"),
-        "build-std probe must exercise the immediate-abort panic strategy lane",
+            && command.contains("CARGO_PROFILE_RELEASE_PANIC=immediate-abort"),
+        "build-std probe must exercise the profile-level immediate-abort panic strategy lane",
     )?;
     ensure_eq(
         as_str(
@@ -534,29 +554,73 @@ fn build_std_zero_tls_probe_remains_immediate_abort_blocked() -> TestResult {
     )?;
     ensure_eq(
         as_str(&probe["result"], "build_std_zero_tls_probe.result")?,
-        "blocked_core_panic_strategy_mismatch_for_immediate_abort",
+        "pass_remote",
         "build-std probe result",
     )?;
     ensure_eq(
         as_u64(&probe["exit_code"], "build_std_zero_tls_probe.exit_code")?,
-        101,
+        0,
         "build-std probe exit code",
     )?;
     ensure(
+        as_str(&probe["artifact"], "build_std_zero_tls_probe.artifact")?
+            .contains("libfrankenlibc_abi.so"),
+        "passing build-std probe must record the replacement cdylib artifact",
+    )?;
+    ensure_eq(
         as_str(
-            &probe["error_contains"],
-            "build_std_zero_tls_probe.error_contains",
-        )?
-        .contains("panic strategy"),
-        "build-std blocker must record the immediate-abort panic-strategy failure",
+            &probe["artifact_sha256"],
+            "build_std_zero_tls_probe.artifact_sha256",
+        )?,
+        "1c3da272739c01add068dea5b2f587d21ad7edd8bc8856f1ebd0941b3a0f62d8",
+        "build-std probe artifact hash",
+    )?;
+
+    let symbols = &probe["observed_artifact_symbols"];
+    ensure_eq(
+        string_vec(&symbols["undefined_tls_symbols"], "undefined_tls_symbols")?,
+        Vec::<String>::new(),
+        "build-std probe must have no undefined TLS symbols",
+    )?;
+    ensure_eq(
+        string_vec(&symbols["needed_libraries"], "needed_libraries")?,
+        Vec::<String>::new(),
+        "build-std probe must have no DT_NEEDED libraries",
+    )?;
+    ensure(
+        symbols["version_needs"]
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty),
+        "build-std probe must have no version needs",
+    )?;
+    ensure_eq(
+        as_u64(
+            &probe["tls_relocation_summary"]["dtpmod64_relocation_count"],
+            "build_std_zero_tls_probe.dtpmod64_relocation_count",
+        )?,
+        0,
+        "build-std probe DTPMOD64 relocation count",
+    )?;
+    ensure_eq(
+        as_u64(
+            &probe["tls_relocation_summary"]["tls_get_addr_jump_slot_count"],
+            "build_std_zero_tls_probe.tls_get_addr_jump_slot_count",
+        )?,
+        0,
+        "build-std probe __tls_get_addr jump slot count",
+    )?;
+    ensure_eq(
+        string_vec(&probe["tls_section_names"], "tls_section_names")?,
+        Vec::<String>::new(),
+        "build-std probe must not retain .tdata/.tbss sections",
     )?;
     ensure(
         as_str(
             &probe["classification"],
             "build_std_zero_tls_probe.classification",
         )?
-        .contains("still not artifact proof"),
-        "build-std blocker must remain fail-closed until artifact proof exists",
+        .contains("report-only artifact evidence"),
+        "build-std probe must remain report-only until the canonical replacement contract is wired",
     )
 }
 

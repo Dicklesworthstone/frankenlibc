@@ -196,6 +196,7 @@
     },
     "build_std_zero_tls_probe": {
       "intent": "Test whether a build-std panic_immediate_abort lane can remove std panic/io/current-thread TLS before promotion claims change.",
+      "cargo_manifest_opt_in": "cargo-features = [\"panic-immediate-abort\"]",
       "rust_src_repair": {
         "command": "ssh ubuntu@192.168.1.107 'rustup component add rust-src --toolchain nightly-2026-04-28-x86_64-unknown-linux-gnu'",
         "result": "installed_on_ts1"
@@ -203,12 +204,32 @@
       "legacy_feature_probe_command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_PROFILE_RELEASE_PANIC AGENT_NAME=GoldBeaver CARGO_PROFILE_RELEASE_PANIC=abort rch exec -- cargo build -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort -p frankenlibc-abi --release --features standalone,owned-unwind-stub,owned-tls-cache",
       "legacy_feature_probe_result": "blocked_panic_immediate_abort_feature_removed",
       "legacy_feature_error_contains": "panic_immediate_abort is now a real panic strategy",
-      "command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=RUSTFLAGS AGENT_NAME=GoldBeaver RUSTFLAGS='-Zunstable-options -Cpanic=immediate-abort' rch exec -- cargo build -Z build-std=std,panic_abort -p frankenlibc-abi --release --features standalone,owned-unwind-stub,owned-tls-cache",
+      "rustflags_probe_command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=RUSTFLAGS AGENT_NAME=GoldBeaver RUSTFLAGS='-Zunstable-options -Cpanic=immediate-abort' rch exec -- cargo build -Z build-std=std,panic_abort -p frankenlibc-abi --release --features standalone,owned-unwind-stub,owned-tls-cache",
+      "rustflags_probe_result": "blocked_core_panic_strategy_mismatch_for_immediate_abort",
+      "rustflags_error_contains": "the crate `core` was compiled with a panic strategy which is incompatible with `immediate-abort`",
+      "command": "RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_PROFILE_RELEASE_PANIC AGENT_NAME=GoldBeaver CARGO_PROFILE_RELEASE_PANIC=immediate-abort rch exec -- cargo build -Z build-std=std,panic_abort -p frankenlibc-abi --release --features standalone,owned-unwind-stub,owned-tls-cache",
       "remote_worker": "ts1",
-      "result": "blocked_core_panic_strategy_mismatch_for_immediate_abort",
-      "exit_code": 101,
-      "error_contains": "the crate `core` was compiled with a panic strategy which is incompatible with `immediate-abort`",
-      "classification": "The rust-src environment blocker is cleared on ts1, but this lane is still not artifact proof: the current immediate-abort build-std invocation fails in core/std panic-strategy setup before producing a replacement cdylib. Promotion still requires a successful remote artifact followed by nm/readelf proof of zero TLS symbols, zero DTPMOD64 relocations, and no __tls_get_addr."
+      "result": "pass_remote",
+      "exit_code": 0,
+      "artifact": ".rch-target-ts1-job-29848695897850399-1779212488990902180-0/release/libfrankenlibc_abi.so",
+      "artifact_sha256": "1c3da272739c01add068dea5b2f587d21ad7edd8bc8856f1ebd0941b3a0f62d8",
+      "observed_artifact_symbols": {
+        "undefined_tls_symbols": [],
+        "needed_libraries": [],
+        "version_needs": {},
+        "undefined_dynamic_symbols": [
+          "_ITM_deregisterTMCloneTable",
+          "_ITM_registerTMCloneTable",
+          "__gmon_start__"
+        ]
+      },
+      "tls_relocation_summary": {
+        "dtpmod64_relocation_count": 0,
+        "tls_get_addr_jump_slot_count": 0,
+        "relocation_count_including_jump_slot": 0
+      },
+      "tls_section_names": [],
+      "classification": "With the workspace Cargo panic-immediate-abort opt-in and a profile-level CARGO_PROFILE_RELEASE_PANIC=immediate-abort build-std lane, ts1 produced a release cdylib with no DT_NEEDED entries, no undefined __tls_get_addr, no DTPMOD64 TLS relocations, and no .tdata/.tbss sections. This is report-only artifact evidence for the residual std panic/io/current-thread TLS blocker; promotion still requires wiring this lane into the canonical replacement contract."
     },
     "residual_artifact_tls_emitters": [
       {
