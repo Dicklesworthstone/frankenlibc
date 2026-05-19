@@ -214,12 +214,8 @@ pub struct CachedValidation {
     pub state: SafetyState,
 }
 
-thread_local! {
-    static TLS_CACHE: std::cell::RefCell<TlsValidationCache> =
-        std::cell::RefCell::new(TlsValidationCache::new());
-}
-
 /// Access the thread-local validation cache.
+#[cfg(not(feature = "owned-tls-cache"))]
 pub fn with_tls_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
@@ -249,6 +245,23 @@ where
             action(&mut fallback)
         }
     }
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static TLS_CACHE: std::cell::RefCell<TlsValidationCache> =
+        std::cell::RefCell::new(TlsValidationCache::new());
+}
+
+/// Access the validation cache without emitting Rust TLS in replacement-mode
+/// artifact experiments.
+#[cfg(feature = "owned-tls-cache")]
+pub fn with_tls_cache<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut TlsValidationCache) -> R,
+{
+    let mut fallback = TlsValidationCache::new();
+    f(&mut fallback)
 }
 
 #[cfg(test)]
@@ -516,6 +529,33 @@ mod tests {
         assert_eq!(result.user_size, 256);
         assert_eq!(result.state, SafetyState::Valid);
         assert_eq!(cache.hits(), 1);
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    #[test]
+    fn owned_tls_cache_lane_uses_ephemeral_storage() {
+        let addr = 0x1000;
+        let validation = CachedValidation {
+            user_base: 0x1000,
+            user_size: 64,
+            generation: 7,
+            state: SafetyState::Valid,
+        };
+        let epoch = current_epoch();
+
+        with_tls_cache(|cache| {
+            assert!(cache.lookup(addr).is_none());
+            cache.insert(addr, validation, epoch);
+            let observed = cache.lookup(addr).expect("inserted value should hit");
+            assert_eq!(observed.user_base, validation.user_base);
+            assert_eq!(observed.user_size, validation.user_size);
+            assert_eq!(observed.generation, validation.generation);
+            assert_eq!(observed.state, validation.state);
+        });
+
+        with_tls_cache(|cache| {
+            assert!(cache.lookup(addr).is_none());
+        });
     }
 
     #[test]
