@@ -10,7 +10,7 @@
 //! unboundedly from a single format specifier. Maximum expansion per
 //! specifier is `width + precision + 64` bytes (sign + prefix + digits).
 
-use std::collections::HashMap;
+use crate::{ArtifactHashMap, artifact_hash_map};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -620,9 +620,11 @@ fn stable_format_hash(fmt: &[u8]) -> u64 {
     hash
 }
 
-fn format_string_certificate_cache() -> &'static Mutex<HashMap<Vec<u8>, FormatStringCertificate>> {
-    static CACHE: OnceLock<Mutex<HashMap<Vec<u8>, FormatStringCertificate>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn format_string_certificate_cache()
+-> &'static Mutex<ArtifactHashMap<Vec<u8>, FormatStringCertificate>> {
+    static CACHE: OnceLock<Mutex<ArtifactHashMap<Vec<u8>, FormatStringCertificate>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(artifact_hash_map()))
 }
 
 fn format_string_cache_hits() -> &'static AtomicU64 {

@@ -4,7 +4,7 @@
 //! Pure-logic helpers (baud rate extraction, cfmakeraw) delegate
 //! to `frankenlibc_core::termios`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::ffi::c_int;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{LazyLock, Mutex};
@@ -21,6 +21,7 @@ use frankenlibc_membrane::util::now_utc_iso_like;
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::{ArtifactHashMap, artifact_hash_map};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum TerminalModeClass {
@@ -245,10 +246,10 @@ impl TerminalSignatureTracker {
     }
 }
 
-static FD_SIGNATURE_TRACKERS: LazyLock<Mutex<HashMap<c_int, TerminalSignatureTracker>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static PTR_SIGNATURE_TRACKERS: LazyLock<Mutex<HashMap<usize, TerminalSignatureTracker>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static FD_SIGNATURE_TRACKERS: LazyLock<Mutex<ArtifactHashMap<c_int, TerminalSignatureTracker>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static PTR_SIGNATURE_TRACKERS: LazyLock<Mutex<ArtifactHashMap<usize, TerminalSignatureTracker>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
 const TERMINAL_SIGNATURE_LOG_CAPACITY: usize = 256;
 const TERMINAL_SIGNATURE_LOG_ARTIFACT: &str = "crates/frankenlibc-abi/src/termios_abi.rs";
 const TERMINAL_SIGNATURE_DECISION_PATH: &str = "termios->rough_path_signature";

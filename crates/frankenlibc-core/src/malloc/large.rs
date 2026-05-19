@@ -5,7 +5,7 @@
 //! are tracked as metadata records. The actual system-level memory mapping
 //! happens at the ABI layer.
 
-use std::collections::HashMap;
+use crate::{ArtifactHashMap, artifact_hash_map};
 
 /// Metadata for a large allocation.
 #[derive(Debug, Clone)]
@@ -33,7 +33,7 @@ fn page_align(size: usize) -> Option<usize> {
 /// The ABI layer handles actual mmap/munmap.
 pub struct LargeAllocator {
     /// Map from base offset to allocation metadata.
-    allocations: HashMap<usize, LargeAllocation>,
+    allocations: ArtifactHashMap<usize, LargeAllocation>,
     /// Next base offset for simulated allocations.
     next_base: usize,
     /// Total bytes currently mapped.
@@ -44,7 +44,7 @@ impl LargeAllocator {
     /// Creates a new large allocator.
     pub fn new() -> Self {
         Self {
-            allocations: HashMap::new(),
+            allocations: artifact_hash_map(),
             next_base: 0x1_0000_0000, // Start at a high offset to avoid confusion
             total_mapped: 0,
         }

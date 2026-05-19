@@ -7,7 +7,6 @@
 
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::ffi::{c_int, c_void};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
@@ -59,6 +58,7 @@ use crate::host_resolve::{
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::{ArtifactHashMap, ArtifactHashSet, artifact_hash_map, artifact_hash_set};
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
 type ResolvedPthreadAttrInitFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
@@ -150,20 +150,20 @@ const HOST_THREAD_HANDOFF_PENDING: i32 = 0;
 const HOST_THREAD_HANDOFF_READY: i32 = 1;
 const HOST_THREAD_HANDOFF_SPIN_LIMIT: usize = 64;
 
-static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<HashMap<usize, ManagedThreadRecord>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static MANAGED_THREAD_TOMBSTONES: LazyLock<Mutex<HashSet<usize>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
-static DETACHED_THREAD_TOMBSTONES: LazyLock<Mutex<HashSet<usize>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
-static DETACHED_THREAD_TID_SNAPSHOTS: LazyLock<Mutex<HashMap<usize, i32>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static HOST_THREAD_TID_REGISTRY: LazyLock<Mutex<HashMap<usize, i32>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static CANCEL_PENDING_REGISTRY: LazyLock<Mutex<HashMap<usize, bool>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static str, usize>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, ManagedThreadRecord>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static MANAGED_THREAD_TOMBSTONES: LazyLock<Mutex<ArtifactHashSet<usize>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_set()));
+static DETACHED_THREAD_TOMBSTONES: LazyLock<Mutex<ArtifactHashSet<usize>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_set()));
+static DETACHED_THREAD_TID_SNAPSHOTS: LazyLock<Mutex<ArtifactHashMap<usize, i32>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static HOST_THREAD_TID_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, i32>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static CANCEL_PENDING_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, bool>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<ArtifactHashMap<&'static str, usize>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
 static RESOLVED_PTHREAD_ATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
@@ -3325,8 +3325,8 @@ struct ExtendedAttrData {
     sigmask: Option<[u8; 128]>,         // sigset_t is 128 bytes on x86_64
 }
 
-static EXTENDED_ATTR_REGISTRY: LazyLock<Mutex<HashMap<usize, ExtendedAttrData>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static EXTENDED_ATTR_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, ExtendedAttrData>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
 
 /// Default thread attributes (for `pthread_getattr_default_np` / `pthread_setattr_default_np`).
 static DEFAULT_THREAD_ATTR: LazyLock<Mutex<PthreadAttrDefaults>> =

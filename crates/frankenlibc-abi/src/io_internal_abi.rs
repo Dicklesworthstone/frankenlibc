@@ -12,7 +12,6 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicI8, Ordering};
@@ -21,6 +20,7 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::stdio_abi;
+use crate::util::{ArtifactHashMap, artifact_hash_map};
 use frankenlibc_core::errno;
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::bloom::PointerBloomFilter;
@@ -1447,8 +1447,8 @@ static NATIVE_FILE_BLOOM: std::sync::LazyLock<PointerBloomFilter> =
 /// When a foreign FILE* is adopted, we extract its fd, create a NativeFile,
 /// register it in NativeStreamRegistry, and record the mapping here so
 /// subsequent calls with the same foreign pointer find the adopted NativeFile.
-static FOREIGN_ADOPTION_MAP: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static FOREIGN_ADOPTION_MAP: std::sync::LazyLock<Mutex<ArtifactHashMap<usize, usize>>> =
+    std::sync::LazyLock::new(|| Mutex::new(artifact_hash_map()));
 
 /// Offset of `_fileno` field in glibc's `_IO_FILE` struct (glibc 2.34, x86_64).
 ///

@@ -3,7 +3,6 @@
 //! Manages stateful `DIR` streams backed by `SYS_getdents64` via `libc`.
 //! Parsing of raw kernel dirent buffers delegates to `frankenlibc_core::dirent`.
 
-use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void};
 use std::os::raw::c_long;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -15,6 +14,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
+use crate::util::{ArtifactHashMap, artifact_hash_map};
 
 /// Internal directory stream state.
 struct DirState {
@@ -30,9 +30,9 @@ struct DirState {
 /// Global registry of open directory streams, keyed by a unique handle.
 type SharedDirState = Arc<Mutex<DirState>>;
 
-static DIR_REGISTRY: Mutex<Option<HashMap<usize, SharedDirState>>> = Mutex::new(None);
+static DIR_REGISTRY: Mutex<Option<ArtifactHashMap<usize, SharedDirState>>> = Mutex::new(None);
 
-fn lock_registry() -> MutexGuard<'static, Option<HashMap<usize, SharedDirState>>> {
+fn lock_registry() -> MutexGuard<'static, Option<ArtifactHashMap<usize, SharedDirState>>> {
     DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -160,7 +160,7 @@ pub unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
     };
 
     let mut registry = lock_registry();
-    let map = registry.get_or_insert_with(HashMap::new);
+    let map = registry.get_or_insert_with(artifact_hash_map);
     map.insert(handle, Arc::new(Mutex::new(state)));
 
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
@@ -748,7 +748,7 @@ pub unsafe extern "C" fn fdopendir(fd: c_int) -> *mut libc::DIR {
     };
 
     let mut registry = lock_registry();
-    let map = registry.get_or_insert_with(HashMap::new);
+    let map = registry.get_or_insert_with(artifact_hash_map);
     map.insert(handle, Arc::new(Mutex::new(state)));
 
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, false);

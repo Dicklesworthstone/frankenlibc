@@ -1,9 +1,57 @@
 //! Shared utilities for the membrane crate.
 
+use std::collections::HashMap;
+#[cfg(feature = "owned-tls-cache")]
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{
     Mutex as StdMutex, MutexGuard as StdMutexGuard, RwLock as StdRwLock,
     RwLockReadGuard as StdRwLockReadGuard, RwLockWriteGuard as StdRwLockWriteGuard, TryLockError,
 };
+
+#[cfg(feature = "owned-tls-cache")]
+#[derive(Clone)]
+pub(crate) struct DeterministicHasher {
+    state: u64,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+impl Default for DeterministicHasher {
+    fn default() -> Self {
+        Self {
+            state: 0xcbf2_9ce4_8422_2325,
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+impl Hasher for DeterministicHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(PRIME);
+        }
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.state
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+type ArtifactBuildHasher = BuildHasherDefault<DeterministicHasher>;
+
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) type ArtifactHashMap<K, V> = HashMap<K, V, ArtifactBuildHasher>;
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) type ArtifactHashMap<K, V> = HashMap<K, V>;
+
+#[inline]
+pub(crate) fn artifact_hash_map<K, V>() -> ArtifactHashMap<K, V> {
+    ArtifactHashMap::default()
+}
 
 /// Mutex wrapper that recovers poisoned locks instead of panicking.
 #[derive(Debug)]

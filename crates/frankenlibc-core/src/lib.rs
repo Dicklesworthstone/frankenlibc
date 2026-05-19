@@ -7,6 +7,54 @@
 
 #![deny(unsafe_code)]
 
+#[cfg(feature = "owned-tls-cache")]
+use std::hash::{BuildHasherDefault, Hasher};
+
+#[cfg(feature = "owned-tls-cache")]
+#[derive(Clone)]
+pub(crate) struct DeterministicHasher {
+    state: u64,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+impl Default for DeterministicHasher {
+    fn default() -> Self {
+        Self {
+            state: 0xcbf2_9ce4_8422_2325,
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+impl Hasher for DeterministicHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(PRIME);
+        }
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.state
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+type ArtifactBuildHasher = BuildHasherDefault<DeterministicHasher>;
+
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) type ArtifactHashMap<K, V> = std::collections::HashMap<K, V, ArtifactBuildHasher>;
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) type ArtifactHashMap<K, V> = std::collections::HashMap<K, V>;
+
+#[inline]
+pub(crate) fn artifact_hash_map<K, V>() -> ArtifactHashMap<K, V> {
+    ArtifactHashMap::default()
+}
+
 // Architecture support (bd-10pq): the `syscall` module gates below
 // on x86_64 / aarch64 because each ISA needs its own validated
 // register layout. Fail fast on other ISAs with a pointer to the

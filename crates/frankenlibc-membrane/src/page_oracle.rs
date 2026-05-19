@@ -10,11 +10,11 @@
 //! This provides O(1) "is this page ours?" queries without scanning
 //! the full arena.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::bravo::BravoRwLock;
+use crate::util::{ArtifactHashMap, artifact_hash_map};
 
 /// Page size assumed for the oracle (4KB).
 const PAGE_SIZE: usize = 4096;
@@ -32,7 +32,7 @@ const L1_FILTER_BITS: usize = L1_FILTER_WORDS * u64::BITS as usize;
 /// Two-level page ownership bitmap.
 pub struct PageOracle {
     /// L2 bitmaps keyed by L1 index (chunk number).
-    l2_maps: BravoRwLock<HashMap<usize, Arc<L2Bitmap>>>,
+    l2_maps: BravoRwLock<ArtifactHashMap<usize, Arc<L2Bitmap>>>,
     /// Approximate lock-free L1 presence filter for fast negative queries.
     l1_presence_filter: Box<[AtomicU64; L1_FILTER_WORDS]>,
     /// Number of pages currently marked owned across all L2 bitmaps.
@@ -87,7 +87,7 @@ impl PageOracle {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            l2_maps: BravoRwLock::new(HashMap::new()),
+            l2_maps: BravoRwLock::new(artifact_hash_map()),
             l1_presence_filter: std::array::from_fn(|_| AtomicU64::new(0)).into(),
             owned_pages: AtomicUsize::new(0),
         }

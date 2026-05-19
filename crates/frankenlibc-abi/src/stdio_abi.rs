@@ -10,7 +10,6 @@
 //! `StdioStream` instances from frankenlibc-core. stdin/stdout/stderr are
 //! pre-registered at well-known sentinel addresses.
 
-use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -26,6 +25,7 @@ use crate::io_internal_abi::{self, NativeFileBufMode};
 use crate::malloc_abi::{free, known_remaining, malloc};
 use crate::runtime_policy;
 use crate::unistd_abi::{sys_read_fd, sys_write_fd};
+use crate::util::{ArtifactHashMap, artifact_hash_map};
 
 type HostFcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type HostFwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize;
@@ -266,12 +266,12 @@ const STDERR_SENTINEL: usize = 0x1000_0003;
 static NEXT_STREAM_ID: Mutex<usize> = Mutex::new(0x1000_0010);
 
 struct StreamRegistry {
-    streams: HashMap<usize, StdioStream>,
+    streams: ArtifactHashMap<usize, StdioStream>,
 }
 
 impl StreamRegistry {
     fn new() -> Self {
-        let mut streams = HashMap::new();
+        let mut streams = artifact_hash_map();
 
         // Pre-register stdin (fd 0).
         let stdin_flags = OpenFlags {
@@ -346,9 +346,9 @@ struct HostStreamState {
     io_started: bool,
 }
 
-fn host_stream_registry() -> &'static Mutex<HashMap<usize, HostStreamState>> {
-    static HOST_STREAMS: OnceLock<Mutex<HashMap<usize, HostStreamState>>> = OnceLock::new();
-    HOST_STREAMS.get_or_init(|| Mutex::new(HashMap::new()))
+fn host_stream_registry() -> &'static Mutex<ArtifactHashMap<usize, HostStreamState>> {
+    static HOST_STREAMS: OnceLock<Mutex<ArtifactHashMap<usize, HostStreamState>>> = OnceLock::new();
+    HOST_STREAMS.get_or_init(|| Mutex::new(artifact_hash_map()))
 }
 
 fn register_host_stream(stream: *mut c_void) {
@@ -5772,7 +5772,7 @@ fn write_u64_to_buf(buf: &mut [u8], start: usize, mut v: u64) -> usize {
 // ---------------------------------------------------------------------------
 
 /// Registry to map FILE* sentinels to child PIDs for pclose.
-static POPEN_PIDS: Mutex<Option<HashMap<usize, i32>>> = Mutex::new(None);
+static POPEN_PIDS: Mutex<Option<ArtifactHashMap<usize, i32>>> = Mutex::new(None);
 
 /// POSIX `popen` — open a process by creating a pipe.
 ///
@@ -5947,7 +5947,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
     let id = canonical_stream_id(fp);
     {
         let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-        let map = guard.get_or_insert_with(HashMap::new);
+        let map = guard.get_or_insert_with(artifact_hash_map);
         map.insert(id, pid);
     }
 
@@ -6082,9 +6082,9 @@ unsafe impl Send for CookieStreamInfo {}
 unsafe impl Sync for CookieStreamInfo {}
 
 /// Registry of cookie streams, keyed by stream sentinel ID.
-static COOKIE_REGISTRY: Mutex<Option<HashMap<usize, CookieStreamInfo>>> = Mutex::new(None);
+static COOKIE_REGISTRY: Mutex<Option<ArtifactHashMap<usize, CookieStreamInfo>>> = Mutex::new(None);
 
-fn cookie_registry() -> &'static Mutex<Option<HashMap<usize, CookieStreamInfo>>> {
+fn cookie_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, CookieStreamInfo>>> {
     &COOKIE_REGISTRY
 }
 
@@ -6178,9 +6178,9 @@ unsafe impl Send for MemStreamSync {}
 unsafe impl Sync for MemStreamSync {}
 
 /// Registry of open_memstream sync metadata, keyed by stream sentinel ID.
-static MEM_STREAM_SYNC: Mutex<Option<HashMap<usize, MemStreamSync>>> = Mutex::new(None);
+static MEM_STREAM_SYNC: Mutex<Option<ArtifactHashMap<usize, MemStreamSync>>> = Mutex::new(None);
 
-fn mem_sync_registry() -> &'static Mutex<Option<HashMap<usize, MemStreamSync>>> {
+fn mem_sync_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, MemStreamSync>>> {
     &MEM_STREAM_SYNC
 }
 
@@ -6196,9 +6196,9 @@ unsafe impl Send for MemFixedSync {}
 unsafe impl Sync for MemFixedSync {}
 
 /// Registry of fmemopen fixed-buffer metadata, keyed by stream sentinel ID.
-static MEM_FIXED_SYNC: Mutex<Option<HashMap<usize, MemFixedSync>>> = Mutex::new(None);
+static MEM_FIXED_SYNC: Mutex<Option<ArtifactHashMap<usize, MemFixedSync>>> = Mutex::new(None);
 
-fn mem_fixed_registry() -> &'static Mutex<Option<HashMap<usize, MemFixedSync>>> {
+fn mem_fixed_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, MemFixedSync>>> {
     &MEM_FIXED_SYNC
 }
 
@@ -6488,7 +6488,7 @@ pub unsafe extern "C" fn fmemopen(
         let mut guard = mem_fixed_registry()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let map = guard.get_or_insert_with(HashMap::new);
+        let map = guard.get_or_insert_with(artifact_hash_map);
         map.insert(
             id,
             MemFixedSync {
@@ -6548,7 +6548,7 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
     let mut sync_guard = mem_sync_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let map = sync_guard.get_or_insert_with(HashMap::new);
+    let map = sync_guard.get_or_insert_with(artifact_hash_map);
     map.insert(
         id,
         MemStreamSync {
@@ -6611,7 +6611,7 @@ pub unsafe extern "C" fn fopencookie(
 
     // Register the cookie info
     let mut cookie_guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
-    let map = cookie_guard.get_or_insert_with(HashMap::new);
+    let map = cookie_guard.get_or_insert_with(artifact_hash_map);
     map.insert(
         id,
         CookieStreamInfo {

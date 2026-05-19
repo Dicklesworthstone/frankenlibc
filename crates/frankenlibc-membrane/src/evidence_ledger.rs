@@ -403,8 +403,8 @@ impl EvidenceLedger {
     #[must_use]
     pub fn correlation_index(&self) -> Vec<(String, Vec<(u64, EvidenceCategory)>)> {
         let records = self.records.lock();
-        let mut index: std::collections::HashMap<String, Vec<(u64, EvidenceCategory)>> =
-            std::collections::HashMap::new();
+        let mut index: crate::util::ArtifactHashMap<String, Vec<(u64, EvidenceCategory)>> =
+            crate::util::artifact_hash_map();
         for record in records.iter() {
             if !record.trace_id.is_empty() {
                 index

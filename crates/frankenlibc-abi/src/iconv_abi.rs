@@ -9,7 +9,6 @@
 //! This module provides deterministic error semantics (`E2BIG`, `EILSEQ`, `EINVAL`)
 //! and tracks descriptor validity to avoid invalid/double-close behavior.
 
-use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void};
 use std::slice;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -21,7 +20,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
-use crate::util::scan_c_string;
+use crate::util::{ArtifactHashMap, artifact_hash_map, scan_c_string};
 
 /// Read a user-supplied C string pointer with a known-region bound so a
 /// non-NUL-terminated argument cannot walk arbitrary process memory through
@@ -55,13 +54,13 @@ fn iconv_error_return() -> usize {
 
 type IconvHandle = Arc<Mutex<IconvDescriptor>>;
 
-static ICONV_HANDLES: OnceLock<Mutex<HashMap<usize, IconvHandle>>> = OnceLock::new();
+static ICONV_HANDLES: OnceLock<Mutex<ArtifactHashMap<usize, IconvHandle>>> = OnceLock::new();
 
-fn handles() -> &'static Mutex<HashMap<usize, IconvHandle>> {
-    ICONV_HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
+fn handles() -> &'static Mutex<ArtifactHashMap<usize, IconvHandle>> {
+    ICONV_HANDLES.get_or_init(|| Mutex::new(artifact_hash_map()))
 }
 
-fn lock_handles() -> MutexGuard<'static, HashMap<usize, IconvHandle>> {
+fn lock_handles() -> MutexGuard<'static, ArtifactHashMap<usize, IconvHandle>> {
     handles()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())

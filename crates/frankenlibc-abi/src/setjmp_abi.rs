@@ -13,8 +13,6 @@
 use std::ffi::{c_int, c_void};
 
 #[cfg(any(debug_assertions, test))]
-use std::collections::HashMap;
-#[cfg(any(debug_assertions, test))]
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(any(debug_assertions, test))]
@@ -23,6 +21,8 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 #[cfg(any(debug_assertions, test))]
 use crate::runtime_policy;
+#[cfg(any(debug_assertions, test))]
+use crate::util::{ArtifactHashMap, artifact_hash_map};
 #[cfg(any(debug_assertions, test))]
 use frankenlibc_core::errno;
 #[cfg(any(debug_assertions, test))]
@@ -46,9 +46,9 @@ struct JumpRegistryEntry {
 }
 
 #[cfg(any(debug_assertions, test))]
-fn registry() -> &'static Mutex<HashMap<usize, JumpRegistryEntry>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<usize, JumpRegistryEntry>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+fn registry() -> &'static Mutex<ArtifactHashMap<usize, JumpRegistryEntry>> {
+    static REGISTRY: OnceLock<Mutex<ArtifactHashMap<usize, JumpRegistryEntry>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(artifact_hash_map()))
 }
 
 #[cfg(any(debug_assertions, test))]

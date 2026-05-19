@@ -16,7 +16,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
-use crate::util::scan_c_string;
+use crate::util::{ArtifactHashMap, artifact_hash_map, scan_c_string};
 
 #[repr(C)]
 struct RpcEnt {
@@ -11525,8 +11525,7 @@ pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut c_void) -> c_int {
     };
 
     // Parse link data to get index→name mapping
-    let mut if_names: std::collections::HashMap<i32, (String, u32)> =
-        std::collections::HashMap::new();
+    let mut if_names: ArtifactHashMap<i32, (String, u32)> = artifact_hash_map();
     parse_netlink_links(&link_data, &mut if_names);
 
     // Step 2: Get addresses for AF_INET and AF_INET6
@@ -11545,7 +11544,7 @@ pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut c_void) -> c_int {
     0
 }
 
-fn parse_netlink_links(data: &[u8], if_names: &mut std::collections::HashMap<i32, (String, u32)>) {
+fn parse_netlink_links(data: &[u8], if_names: &mut ArtifactHashMap<i32, (String, u32)>) {
     let hdr_size = std::mem::size_of::<NlMsgHdr>();
     let info_size = std::mem::size_of::<IfInfoMsg>();
     let mut off = 0;
@@ -11589,7 +11588,7 @@ fn parse_netlink_links(data: &[u8], if_names: &mut std::collections::HashMap<i32
 
 fn parse_netlink_addrs(
     data: &[u8],
-    if_names: &std::collections::HashMap<i32, (String, u32)>,
+    if_names: &ArtifactHashMap<i32, (String, u32)>,
     head: &mut *mut Ifaddrs,
     tail: &mut *mut Ifaddrs,
 ) {
@@ -17789,7 +17788,7 @@ pub unsafe extern "C" fn bind_textdomain_codeset(
 // Batch: FTS (file tree walk) — Implemented
 // ===========================================================================
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 /// Internal FTS stream state.
 struct FtsStream {
@@ -17811,7 +17810,7 @@ struct FtsStream {
     pending_children: Option<FtsEntryInternal>,
     /// One-shot controls installed via fts_set() on entries returned by
     /// fts_children().
-    pending_controls: HashMap<std::path::PathBuf, u16>,
+    pending_controls: ArtifactHashMap<std::path::PathBuf, u16>,
     /// Whether fts_read() has been called at least once.
     started: bool,
     /// Comparison function (reserved for future use).
@@ -18268,7 +18267,7 @@ pub unsafe extern "C" fn fts_open(
         options,
         pending_revisit: None,
         pending_children: None,
-        pending_controls: HashMap::new(),
+        pending_controls: artifact_hash_map(),
         started: false,
         _compar: compar,
     });

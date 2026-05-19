@@ -3,7 +3,6 @@
 //! Handles wide-character (32-bit) string operations.
 //! On Linux/glibc, `wchar_t` is 32-bit (UTF-32).
 //!
-use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 use std::mem::size_of;
 use std::sync::{Mutex, OnceLock};
@@ -17,7 +16,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
-use crate::util::scan_c_string;
+use crate::util::{ArtifactHashMap, artifact_hash_map, scan_c_string};
 
 #[inline]
 fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
@@ -62,9 +61,10 @@ struct WideMemStreamSync {
 // valid for the lifetime of the open_wmemstream stream.
 unsafe impl Send for WideMemStreamSync {}
 
-fn wide_memstream_registry() -> &'static Mutex<Option<HashMap<usize, WideMemStreamSync>>> {
-    static REGISTRY: OnceLock<Mutex<Option<HashMap<usize, WideMemStreamSync>>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(Some(HashMap::new())))
+fn wide_memstream_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, WideMemStreamSync>>> {
+    static REGISTRY: OnceLock<Mutex<Option<ArtifactHashMap<usize, WideMemStreamSync>>>> =
+        OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(Some(artifact_hash_map())))
 }
 
 fn decode_wmemstream_bytes(data: &[u8]) -> Vec<u32> {
@@ -4276,7 +4276,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
     let mut guard = wide_memstream_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let map = guard.get_or_insert_with(HashMap::new);
+    let map = guard.get_or_insert_with(artifact_hash_map);
     map.insert(
         id,
         WideMemStreamSync {

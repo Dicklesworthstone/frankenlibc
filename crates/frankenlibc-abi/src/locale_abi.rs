@@ -3,7 +3,6 @@
 //! Bootstrap provides the POSIX "C"/"POSIX" locale only. `setlocale` accepts
 //! these names and rejects all others. `localeconv` returns C-locale defaults.
 
-use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::sync::{Mutex, OnceLock};
@@ -13,7 +12,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-use crate::util::scan_c_string;
+use crate::util::{ArtifactHashMap, artifact_hash_map, scan_c_string};
 
 #[inline]
 fn known_locale_string_remaining(ptr: usize) -> Option<usize> {
@@ -328,7 +327,7 @@ struct TextDomainState {
 unsafe impl Send for TextDomainState {}
 
 struct LocaleDirState {
-    current_by_domain: std::collections::HashMap<Vec<u8>, *mut c_char>,
+    current_by_domain: ArtifactHashMap<Vec<u8>, *mut c_char>,
     pool: Vec<CString>,
 }
 
@@ -350,7 +349,7 @@ fn locale_dir_bindings() -> &'static Mutex<LocaleDirState> {
     static STORAGE: OnceLock<Mutex<LocaleDirState>> = OnceLock::new();
     STORAGE.get_or_init(|| {
         Mutex::new(LocaleDirState {
-            current_by_domain: std::collections::HashMap::new(),
+            current_by_domain: artifact_hash_map(),
             pool: Vec::new(),
         })
     })
@@ -571,7 +570,7 @@ use frankenlibc_core::locale::catgets::{
 
 struct CatalogRegistry {
     next_id: nl_catd,
-    open: HashMap<nl_catd, MessageCatalog>,
+    open: ArtifactHashMap<nl_catd, MessageCatalog>,
 }
 
 fn catalog_registry() -> &'static Mutex<CatalogRegistry> {
@@ -579,7 +578,7 @@ fn catalog_registry() -> &'static Mutex<CatalogRegistry> {
     STORAGE.get_or_init(|| {
         Mutex::new(CatalogRegistry {
             next_id: 1,
-            open: HashMap::new(),
+            open: artifact_hash_map(),
         })
     })
 }
