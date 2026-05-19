@@ -3684,11 +3684,9 @@ pub static mut error_message_count: c_uint = 0;
 /// appends ": strerror(errnum)". If status != 0, calls exit(status).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char, mut args: ...) {
-    use std::io::Write;
+    use std::fmt::Write as _;
 
     unsafe { error_message_count += 1 };
-
-    let mut stderr = std::io::stderr().lock();
 
     let progname = {
         let p = get_program_short_name();
@@ -3705,7 +3703,8 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
         }
     };
 
-    let _ = write!(stderr, "{progname}: ");
+    let mut out = String::new();
+    let _ = write!(out, "{progname}: ");
 
     // Format the message
     if !fmt.is_null() {
@@ -3721,7 +3720,7 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
                         (&mut args) as *mut _ as *mut c_void,
                     )
                 };
-                let _ = write!(stderr, "{msg}");
+                let _ = write!(out, "{msg}");
             }
         }
     }
@@ -3740,10 +3739,11 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
                 std::str::from_utf8(bytes).unwrap_or("Unknown error")
             }
         };
-        let _ = write!(stderr, ": {err_msg}");
+        let _ = write!(out, ": {err_msg}");
     }
 
-    let _ = writeln!(stderr);
+    let _ = writeln!(out);
+    let _ = crate::stdio_abi::write_all_fd(libc::STDERR_FILENO, out.as_bytes());
 
     if status != 0 {
         // GNU error(status, ...) terminates via libc exit(status), preserving
@@ -3762,11 +3762,9 @@ pub unsafe extern "C" fn error_at_line(
     fmt: *const c_char,
     mut args: ...
 ) {
-    use std::io::Write;
+    use std::fmt::Write as _;
 
     unsafe { error_message_count += 1 };
-
-    let mut stderr = std::io::stderr().lock();
 
     let progname = {
         let p = get_program_short_name();
@@ -3779,13 +3777,14 @@ pub unsafe extern "C" fn error_at_line(
         }
     };
 
-    let _ = write!(stderr, "{progname}:");
+    let mut out = String::new();
+    let _ = write!(out, "{progname}:");
 
     if !filename.is_null()
         && let Some(filename_bytes) = unsafe { read_bounded_cstr_bytes(filename) }
         && let Ok(f) = std::str::from_utf8(&filename_bytes)
     {
-        let _ = write!(stderr, "{f}:{linenum}: ");
+        let _ = write!(out, "{f}:{linenum}: ");
     }
 
     if !fmt.is_null()
@@ -3795,7 +3794,7 @@ pub unsafe extern "C" fn error_at_line(
         let msg = unsafe {
             crate::stdio_abi::vprintf_extract_and_render(f, (&mut args) as *mut _ as *mut c_void)
         };
-        let _ = write!(stderr, "{msg}");
+        let _ = write!(out, "{msg}");
     }
 
     if errnum != 0 {
@@ -3807,10 +3806,11 @@ pub unsafe extern "C" fn error_at_line(
         } else {
             "Unknown error".to_string()
         };
-        let _ = write!(stderr, ": {err_msg}");
+        let _ = write!(out, ": {err_msg}");
     }
 
-    let _ = writeln!(stderr);
+    let _ = writeln!(out);
+    let _ = crate::stdio_abi::write_all_fd(libc::STDERR_FILENO, out.as_bytes());
 
     if status != 0 {
         // GNU error_at_line(status, ...) has the same termination contract as

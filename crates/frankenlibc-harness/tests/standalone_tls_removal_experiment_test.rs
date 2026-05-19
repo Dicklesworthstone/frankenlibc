@@ -1629,6 +1629,12 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && !stdlib.contains("parking_lot::ReentrantMutex"),
         "stdlib environ lock must use the ABI reentrant lock instead of parking_lot ReentrantMutex",
     )?;
+    require(
+        production_prefix(&stdlib).contains("std::fmt::Write as _")
+            && production_prefix(&stdlib).contains("write_all_fd(libc::STDERR_FILENO")
+            && !production_prefix(&stdlib).contains("std::io::stderr"),
+        "stdlib error/error_at_line must write diagnostics through raw fd helpers instead of std::io::stderr",
+    )?;
 
     let util = std::fs::read_to_string(abi_util_path(&root))
         .map_err(|err| format!("read util.rs: {err}"))?;
