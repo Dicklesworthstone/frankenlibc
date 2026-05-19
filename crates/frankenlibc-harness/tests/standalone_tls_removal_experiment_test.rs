@@ -78,6 +78,21 @@ fn membrane_cargo_toml_path(root: &Path) -> PathBuf {
         .join("Cargo.toml")
 }
 
+fn membrane_fingerprint_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-membrane")
+        .join("src")
+        .join("fingerprint.rs")
+}
+
+fn membrane_runtime_math_evidence_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-membrane")
+        .join("src")
+        .join("runtime_math")
+        .join("evidence.rs")
+}
+
 fn abi_unistd_path(root: &Path) -> PathBuf {
     root.join("crates")
         .join("frankenlibc-abi")
@@ -1333,6 +1348,57 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             .lines()
             .any(|line| line.trim() == "tracing = { workspace = true, optional = true }"),
         "frankenlibc-core tracing dependency must be optional",
+    )?;
+
+    let fingerprint_path = membrane_fingerprint_path(&root);
+    let fingerprint = std::fs::read_to_string(&fingerprint_path)
+        .map_err(|err| format!("read {}: {err}", fingerprint_path.display()))?;
+    let owned_entropy_start = fingerprint
+        .find("#[cfg(feature = \"owned-tls-cache\")]\nfn current_thread_entropy() -> u64")
+        .ok_or_else(|| "fingerprint owned-tls entropy helper missing".to_string())?;
+    let fallback_entropy_start = fingerprint
+        .find("#[cfg(not(feature = \"owned-tls-cache\"))]\nfn current_thread_entropy() -> u64")
+        .ok_or_else(|| "fingerprint fallback entropy helper missing".to_string())?;
+    let init_keys_start = fingerprint
+        .find("fn init_keys()")
+        .ok_or_else(|| "fingerprint init_keys helper missing".to_string())?;
+    let owned_entropy = &fingerprint[owned_entropy_start..fallback_entropy_start];
+    let fallback_entropy = &fingerprint[fallback_entropy_start..init_keys_start];
+    require(
+        !owned_entropy.contains("std::thread::current"),
+        "fingerprint owned-tls entropy must not pull std::thread::current into the artifact lane",
+    )?;
+    require(
+        fallback_entropy.contains("std::thread::current().id().hash"),
+        "fingerprint non-owned fallback should retain the std thread-id entropy path",
+    )?;
+    require(
+        fingerprint.contains("let tid = current_thread_entropy();"),
+        "fingerprint init_keys must route thread entropy through the feature-gated helper",
+    )?;
+
+    let evidence_path = membrane_runtime_math_evidence_path(&root);
+    let evidence = std::fs::read_to_string(&evidence_path)
+        .map_err(|err| format!("read {}: {err}", evidence_path.display()))?;
+    let owned_id_start = evidence
+        .find("#[cfg(feature = \"owned-tls-cache\")]\nfn current_thread_id_u64() -> u64")
+        .ok_or_else(|| "runtime_math evidence owned-tls thread-id helper missing".to_string())?;
+    let fallback_id_start = evidence
+        .find("#[cfg(not(feature = \"owned-tls-cache\"))]\nfn current_thread_id_u64() -> u64")
+        .ok_or_else(|| "runtime_math evidence fallback thread-id helper missing".to_string())?;
+    let monotonic_elapsed_start = evidence[fallback_id_start..]
+        .find("fn monotonic_elapsed_ns")
+        .map(|offset| fallback_id_start + offset)
+        .ok_or_else(|| "runtime_math evidence monotonic elapsed helper missing".to_string())?;
+    let owned_id = &evidence[owned_id_start..fallback_id_start];
+    let fallback_id = &evidence[fallback_id_start..monotonic_elapsed_start];
+    require(
+        !owned_id.contains("std::thread::current"),
+        "runtime_math evidence owned-tls thread id must not pull std::thread::current into the artifact lane",
+    )?;
+    require(
+        fallback_id.contains("std::thread::current().id().hash"),
+        "runtime_math evidence non-owned fallback should retain the std thread-id hash path",
     )?;
 
     let unistd = std::fs::read_to_string(abi_unistd_path(&root))

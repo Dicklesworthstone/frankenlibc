@@ -116,7 +116,6 @@ impl Canary {
     }
 }
 
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -132,6 +131,22 @@ fn splitmix64(seed: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
+#[cfg(feature = "owned-tls-cache")]
+fn current_thread_entropy() -> u64 {
+    let stack_probe = 0u8;
+    let stack_addr = &stack_probe as *const u8 as usize as u64;
+    u64::from(std::process::id()).rotate_left(23) ^ stack_addr.rotate_left(11)
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+fn current_thread_entropy() -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut tid_hasher = std::collections::hash_map::DefaultHasher::new();
+    std::thread::current().id().hash(&mut tid_hasher);
+    tid_hasher.finish()
+}
+
 fn init_keys() -> (u64, u64) {
     let mut k0 = SIP_KEY_0.load(Ordering::Relaxed);
     let mut k1 = SIP_KEY_1.load(Ordering::Relaxed);
@@ -144,9 +159,7 @@ fn init_keys() -> (u64, u64) {
             .map_or(0u128, |d| d.as_nanos());
         let time_lo = time_nanos as u64;
         let time_hi = (time_nanos >> 64) as u64;
-        let mut tid_hasher = std::collections::hash_map::DefaultHasher::new();
-        std::thread::current().id().hash(&mut tid_hasher);
-        let tid = tid_hasher.finish();
+        let tid = current_thread_entropy();
 
         let mut seed = aslr
             ^ pid.rotate_left(11)
