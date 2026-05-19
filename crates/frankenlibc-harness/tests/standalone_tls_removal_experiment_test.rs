@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 10;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 9;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -873,7 +873,6 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
 
     let symbols: BTreeSet<&str> = rows.iter().map(|row| row.symbol.as_str()).collect();
     for required in [
-        "__libc_dlerror_result",
         "_RNvNCNKNvNvNtCsauQQugvlKcP_16parking_lot_core11parking_lot16with_thread_data11THREAD_DATA0023___RUST_STD_INTERNAL_VAL",
         "_RNvNtNtNtCsjCoUzHIWc5R_3std3sys12thread_local11destructors4list5DTORS",
         "_RNvNtNtCsjCoUzHIWc5R_3std6thread7current7CURRENT",
@@ -920,8 +919,13 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
         "residual artifact TLS inventory must not retain tracing-core dispatcher TLS when runtime-tracing is disabled",
     )?;
 
+    require(
+        !symbols.contains("__libc_dlerror_result"),
+        "residual artifact TLS inventory must not retain __libc_dlerror_result in the standalone owned-TLS lane",
+    )?;
+
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();
-    for required in ["frankenlibc-abi", "parking_lot", "parking_lot_core", "std"] {
+    for required in ["parking_lot", "parking_lot_core", "std"] {
         require(
             crates.contains(required),
             format!("residual artifact TLS inventory must include crate {required}"),
@@ -1378,6 +1382,12 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && glibc_internal.contains("RESOLV_CONTEXT_HEAD_OWNED_TLS")
             && glibc_internal.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "glibc-internal ABI must route pthread cleanup head, resolver state, rcmd errstr, sgetspent scratch, h_errno, and resolver context head through owned TLS cache",
+    )?;
+    require(
+        glibc_internal
+            .contains("not(all(feature = \"standalone\", feature = \"owned-tls-cache\"))")
+            && glibc_internal.contains("pub static mut __libc_dlerror_result"),
+        "glibc-internal ABI must keep __libc_dlerror_result TLS outside the standalone owned-TLS lane only",
     )?;
 
     let errno = std::fs::read_to_string(abi_errno_path(&root))

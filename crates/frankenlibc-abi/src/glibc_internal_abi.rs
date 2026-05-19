@@ -9640,11 +9640,20 @@ pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
 // in this crate. The four below close the remaining gap.
 
 /// `__libc_dlerror_result` — TLS slot holding the per-thread last
-/// dlerror() result struct. This must be a TLS export: host glibc's
-/// `__libc_dlerror_result_free` accesses it through the thread pointer, and a
-/// plain object export corrupts that offset under LD_PRELOAD interposition.
+/// dlerror() result struct. Normal interpose builds must keep this as a TLS
+/// export: host glibc's `__libc_dlerror_result_free` accesses it through the
+/// thread pointer, and a plain object export corrupts that offset under
+/// LD_PRELOAD interposition.
+///
+/// The `standalone + owned-tls-cache` experiment lane has no host glibc
+/// dlerror-result consumer, so it deliberately exports a plain compatibility
+/// object instead. That lets the replacement artifact burn down this residual
+/// TLS emitter without weakening the default LD_PRELOAD ABI path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-#[thread_local]
+#[cfg_attr(
+    not(all(feature = "standalone", feature = "owned-tls-cache")),
+    thread_local
+)]
 pub static mut __libc_dlerror_result: *mut c_void = std::ptr::null_mut();
 
 /// `_itoa_lower_digits` — 17-byte (16 hex chars + NUL) lookup table
