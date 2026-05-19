@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 14;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 13;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -895,6 +895,12 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
     require(
         !symbols.contains(removed_validation_depth_symbol),
         "residual artifact TLS inventory must not retain the removed validation-depth TLS emitter",
+    )?;
+
+    let removed_bravo_thread_token_symbol = "_RNvNCNKNvNtCsiOimjtHV038_20frankenlibc_membrane5bravo12THREAD_TOKEN0s_023___RUST_STD_INTERNAL_VAL";
+    require(
+        !symbols.contains(removed_bravo_thread_token_symbol),
+        "residual artifact TLS inventory must not retain the removed BRAVO thread-token TLS emitter",
     )?;
 
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();

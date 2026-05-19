@@ -30,12 +30,17 @@ const MIN_VISIBLE_READERS: usize = 32;
 const EMPTY_SLOT: usize = 0;
 const REVOCATION_YIELD_INTERVAL: u32 = 64;
 
+#[cfg(not(feature = "owned-tls-cache"))]
 static NEXT_THREAD_TOKEN: AtomicUsize = AtomicUsize::new(1);
 static NEXT_LOCK_ID: AtomicUsize = AtomicUsize::new(1);
 
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static THREAD_TOKEN: usize = NEXT_THREAD_TOKEN.fetch_add(1, Ordering::Relaxed).max(1);
 }
+
+#[cfg(feature = "owned-tls-cache")]
+const OWNED_TLS_CACHE_SHARED_THREAD_TOKEN: usize = 1;
 
 /// BRAVO reader path selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -422,7 +427,14 @@ impl<T: Send + Sync> Drop for BravoRwLock<T> {
 unsafe impl<T: Send + Sync> Sync for BravoRwLock<T> {}
 
 fn current_thread_token() -> usize {
-    THREAD_TOKEN.with(|token| *token)
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        THREAD_TOKEN.with(|token| *token)
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        OWNED_TLS_CACHE_SHARED_THREAD_TOKEN
+    }
 }
 
 fn mix(mut x: usize) -> usize {
@@ -537,6 +549,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "owned-tls-cache"))]
     #[test]
     fn slot_collision_rate_stays_below_five_percent_at_64_threads() {
         let lock = Arc::new(BravoRwLock::new(7_u64));
@@ -567,6 +580,26 @@ mod tests {
             diag.slot_collision_rate < 0.05,
             "slot collision rate should stay <5%, got {}",
             diag.slot_collision_rate
+        );
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    #[test]
+    fn owned_tls_cache_lane_uses_shared_process_token() {
+        assert_eq!(current_thread_token(), OWNED_TLS_CACHE_SHARED_THREAD_TOKEN);
+        let token_from_thread = std::thread::spawn(current_thread_token)
+            .join()
+            .expect("token thread should join");
+        assert_eq!(token_from_thread, OWNED_TLS_CACHE_SHARED_THREAD_TOKEN);
+
+        let lock = BravoRwLock::new(7_u64);
+        let first = lock.read();
+        assert_eq!(first.path(), BravoReadPath::Fast);
+        let second = lock.read();
+        assert_eq!(
+            second.path(),
+            BravoReadPath::Slow,
+            "shared token must conservatively force reentrant readers onto the slow path"
         );
     }
 
