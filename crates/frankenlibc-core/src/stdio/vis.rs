@@ -24,8 +24,10 @@
 //! ## Decoding
 //!
 //! Recognizes the inverse forms above plus the C-style short
-//! escapes `\\n \\t \\r \\b \\v \\a \\f \\0`. Anything else after a
-//! `\\` is passed through verbatim.
+//! escapes `\\n \\t \\r \\b \\v \\a \\f \\0`. Octal escapes accept
+//! one to three digits, matching the BSD decoder's push-back
+//! behavior when a non-octal byte terminates the sequence. Anything
+//! else after a `\\` is passed through verbatim.
 //!
 //! `VIS_SP`, `VIS_TAB`, and `VIS_NL` force the normally safe
 //! whitespace bytes to be escaped. `VIS_CSTYLE` uses C-style escape
@@ -139,6 +141,48 @@ fn push_octal(c: u8, out: &mut Vec<u8>) {
     out.push(b'0' + ((c >> 6) & 0x07));
     out.push(b'0' + ((c >> 3) & 0x07));
     out.push(b'0' + (c & 0x07));
+}
+
+fn decode_octal_escape(first_digit: u8, input: &[u8]) -> DecodeStep {
+    let mut value = first_digit - b'0';
+    let mut consumed = 2usize;
+
+    let Some(&second_digit) = input.get(2) else {
+        return DecodeStep::Byte {
+            byte: value,
+            consumed,
+        };
+    };
+    if !is_octal_digit(second_digit) {
+        return DecodeStep::Byte {
+            byte: value,
+            consumed,
+        };
+    }
+
+    value = (value << 3) | (second_digit - b'0');
+    consumed += 1;
+
+    let Some(&third_digit) = input.get(3) else {
+        return DecodeStep::Byte {
+            byte: value,
+            consumed,
+        };
+    };
+    if !is_octal_digit(third_digit) {
+        return DecodeStep::Byte {
+            byte: value,
+            consumed,
+        };
+    }
+    if value & 0o40 != 0 {
+        return DecodeStep::Invalid;
+    }
+
+    DecodeStep::Byte {
+        byte: (value << 3) | (third_digit - b'0'),
+        consumed: consumed + 1,
+    }
 }
 
 fn lower_hex_digit(n: u8) -> u8 {
@@ -453,42 +497,7 @@ pub fn decode_one(input: &[u8]) -> DecodeStep {
             byte: 0x0c,
             consumed: 2,
         },
-        b'0' => {
-            let (Some(&d2), Some(&d3)) = (input.get(2), input.get(3)) else {
-                return DecodeStep::Byte {
-                    byte: 0,
-                    consumed: 2,
-                };
-            };
-            if !d2.is_ascii_digit() || d2 > b'7' || !d3.is_ascii_digit() || d3 > b'7' {
-                return DecodeStep::Byte {
-                    byte: 0,
-                    consumed: 2,
-                };
-            }
-            DecodeStep::Byte {
-                byte: ((d2 - b'0') << 3) | (d3 - b'0'),
-                consumed: 4,
-            }
-        }
-        b'1'..=b'7' => {
-            // Octal triple `\NNN`. Need two more octal digits.
-            let d1 = second - b'0';
-            let Some(&d2) = input.get(2) else {
-                return DecodeStep::Invalid;
-            };
-            let Some(&d3) = input.get(3) else {
-                return DecodeStep::Invalid;
-            };
-            if !d2.is_ascii_digit() || d2 > b'7' || !d3.is_ascii_digit() || d3 > b'7' {
-                return DecodeStep::Invalid;
-            }
-            let v = (d1 << 6) | ((d2 - b'0') << 3) | (d3 - b'0');
-            DecodeStep::Byte {
-                byte: v,
-                consumed: 4,
-            }
-        }
+        d @ b'0'..=b'7' => decode_octal_escape(d, input),
         b'^' => {
             let Some(&third) = input.get(2) else {
                 return DecodeStep::Invalid;
@@ -858,6 +867,12 @@ mod tests {
     }
 
     #[test]
+    fn decode_octal_overflow_is_invalid() {
+        assert_eq!(dec(b"\\400"), None);
+        assert_eq!(dec(b"\\777"), None);
+    }
+
+    #[test]
     fn decode_short_c_escapes() {
         assert_eq!(dec(b"\\0"), Some(b"\0".to_vec()));
         assert_eq!(dec(b"\\n"), Some(b"\n".to_vec()));
@@ -882,9 +897,11 @@ mod tests {
     }
 
     #[test]
-    fn decode_short_octal_is_invalid() {
-        assert_eq!(dec(b"\\1"), None);
-        assert_eq!(dec(b"\\12"), None);
+    fn decode_short_octal_forms_match_bsd_pushback() {
+        assert_eq!(dec(b"\\1"), Some(vec![0o1]));
+        assert_eq!(dec(b"\\12"), Some(vec![0o12]));
+        assert_eq!(dec(b"\\12x"), Some(vec![0o12, b'x']));
+        assert_eq!(dec(b"\\178"), Some(vec![0o17, b'8']));
     }
 
     #[test]
@@ -1115,11 +1132,7 @@ impl UnvisDecoder {
                     self.state = UnvisState::Octal3;
                     UnvisOutcome::NoChar
                 } else {
-                    self.octal_value = 0;
-                    self.state = UnvisState::Initial;
-                    let out = if self.pending_meta { 0x80 } else { 0 };
-                    self.pending_meta = false;
-                    UnvisOutcome::ValidPush(out)
+                    self.finish_octal_push()
                 }
             }
             UnvisState::Octal2 => {
@@ -1128,34 +1141,53 @@ impl UnvisDecoder {
                     self.state = UnvisState::Octal3;
                     UnvisOutcome::NoChar
                 } else {
-                    self.reset();
-                    UnvisOutcome::Bad
+                    self.finish_octal_push()
                 }
             }
             UnvisState::Octal3 => {
                 if (b'0'..=b'7').contains(&c) {
-                    let v = (self.octal_value << 3) | (c - b'0');
-                    self.octal_value = 0;
-                    self.state = UnvisState::Initial;
-                    let out = if self.pending_meta { v | 0x80 } else { v };
-                    self.pending_meta = false;
-                    UnvisOutcome::Valid(out)
+                    if self.octal_value & 0o40 != 0 {
+                        self.reset();
+                        return UnvisOutcome::Bad;
+                    }
+                    self.octal_value = (self.octal_value << 3) | (c - b'0');
+                    self.finish_octal()
                 } else {
-                    self.reset();
-                    UnvisOutcome::Bad
+                    self.finish_octal_push()
                 }
             }
         }
     }
 
+    fn finish_octal(&mut self) -> UnvisOutcome {
+        let out = if self.pending_meta {
+            self.octal_value | 0x80
+        } else {
+            self.octal_value
+        };
+        self.reset();
+        UnvisOutcome::Valid(out)
+    }
+
+    fn finish_octal_push(&mut self) -> UnvisOutcome {
+        let out = if self.pending_meta {
+            self.octal_value | 0x80
+        } else {
+            self.octal_value
+        };
+        self.reset();
+        UnvisOutcome::ValidPush(out)
+    }
+
     /// Signal end-of-input. Returns `End` if there's no pending
-    /// state, `Valid(0)` if a short C-style NUL is pending, or `Bad`
-    /// if a partial sequence was open.
+    /// state, `Valid(byte)` if a one- or two-digit octal sequence is
+    /// pending, or `Bad` if another partial sequence was open.
     pub fn feed_end(&mut self) -> UnvisOutcome {
-        if self.state == UnvisState::ShortNulOrOctal2 {
-            let out = if self.pending_meta { 0x80 } else { 0 };
-            self.reset();
-            return UnvisOutcome::Valid(out);
+        if matches!(
+            self.state,
+            UnvisState::ShortNulOrOctal2 | UnvisState::Octal2 | UnvisState::Octal3
+        ) {
+            return self.finish_octal();
         }
         let was_initial = self.state == UnvisState::Initial && !self.pending_meta;
         self.reset();
@@ -1277,6 +1309,12 @@ mod unvis_tests {
     }
 
     #[test]
+    fn overflowing_octal_is_bad() {
+        assert_eq!(drain(b"\\400"), Err(()));
+        assert_eq!(drain(b"\\777"), Err(()));
+    }
+
+    #[test]
     fn meta_prefix() {
         assert_eq!(drain(b"\\M-A"), Ok(vec![0xc1]));
         assert_eq!(drain(b"\\M-\\^?"), Ok(vec![0xff]));
@@ -1304,10 +1342,13 @@ mod unvis_tests {
     }
 
     #[test]
-    fn malformed_octal_short_is_bad() {
-        // Octal must be 3 digits; "\\1x" feeds 1, then 'x' as second
-        // digit which isn't octal → Bad.
-        assert_eq!(drain(b"\\1x"), Err(()));
+    fn short_octal_forms_complete_at_end_or_push_back() {
+        assert_eq!(drain(b"\\1"), Ok(vec![0o1]));
+        assert_eq!(drain(b"\\12"), Ok(vec![0o12]));
+        assert_eq!(drain(b"\\12x"), Ok(vec![0o12, b'x']));
+        assert_eq!(drain(b"\\178"), Ok(vec![0o17, b'8']));
+        assert_eq!(drain(b"\\M-\\1"), Ok(vec![0x80 | 0o1]));
+        assert_eq!(drain(b"\\M-\\12"), Ok(vec![0x80 | 0o12]));
     }
 
     #[test]
