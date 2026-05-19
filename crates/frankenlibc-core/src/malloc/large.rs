@@ -68,12 +68,13 @@ impl LargeAllocator {
         }
 
         let mapped_size = Self::mapped_size_for(size)?;
+        let total_mapped = self.total_mapped.checked_add(mapped_size)?;
         let alloc = LargeAllocation {
             base,
             mapped_size,
             user_size: size,
         };
-        self.total_mapped = self.total_mapped.saturating_add(mapped_size);
+        self.total_mapped = total_mapped;
         self.allocations.insert(base, alloc.clone());
         Some(alloc)
     }
@@ -223,6 +224,21 @@ mod tests {
             allocator.lookup(0x7fff_0000).map(|entry| entry.user_size),
             Some(65_536)
         );
+    }
+
+    #[test]
+    fn test_register_rejects_total_mapped_overflow() {
+        let mut allocator = LargeAllocator::new();
+        let huge_size = usize::MAX - PAGE_SIZE + 1;
+
+        let huge = allocator.register(0x7fff_0000, huge_size).unwrap();
+        assert_eq!(huge.mapped_size, huge_size);
+        assert_eq!(allocator.total_mapped(), huge_size);
+
+        assert!(allocator.register(0x8fff_0000, 1).is_none());
+        assert_eq!(allocator.active_count(), 1);
+        assert_eq!(allocator.total_mapped(), huge_size);
+        assert!(allocator.lookup(0x8fff_0000).is_none());
     }
 
     #[test]
