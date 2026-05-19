@@ -6,9 +6,11 @@
 //! format; this module only implements the on-the-wire hex encoding
 //! that glibc's `inet_nsap_addr` / `inet_nsap_ntoa` accept.
 //!
-//! Wire form: pairs of hex digits, optionally separated by `.`.
-//! Example: `47.0005.80.005a00.0000.0001.0001.eed7d4f3.00`
-//! decodes to the corresponding 18 bytes.
+//! Wire form: pairs of hex digits, optionally separated by `.`, `+`,
+//! or `/` (all three are accepted on input, matching glibc).
+//! Example: `47.0005+80/005a00.0000.0001.0001.eed7d4f3.00`
+//! decodes to the corresponding 18 bytes. The `inet_nsap_ntoa`
+//! output form is uppercase hex grouped as `XX.XXXX.XXXX...`.
 
 /// Parse an NSAP hex address from `text` into `dst`, returning the
 /// number of bytes written.
@@ -16,13 +18,14 @@
 /// Returns `0` on any of:
 ///   - empty input,
 ///   - odd number of hex digits (truncated last byte),
-///   - non-hex character outside `.` separators,
+///   - non-hex character outside `.` / `+` / `/` separators,
 ///   - input requires more than `dst.len()` bytes (truncates without
 ///     error otherwise — caller can detect via the returned count).
 ///
-/// Dot separators between hex byte pairs are skipped, including leading,
-/// repeated, and trailing dots. Separators inside a byte pair are rejected
-/// to match host glibc's `inet_nsap_addr` parser.
+/// Separator characters (`.`, `+`, `/`) between hex byte pairs are
+/// skipped, including leading, repeated, and trailing separators.
+/// Separators inside a byte pair are rejected, matching host glibc's
+/// `inet_nsap_addr` parser.
 pub fn parse_nsap_addr(text: &[u8], dst: &mut [u8]) -> usize {
     let mut i = 0usize;
     let mut o = 0usize;
@@ -52,27 +55,29 @@ pub fn parse_nsap_addr(text: &[u8], dst: &mut [u8]) -> usize {
     o
 }
 
-/// Format `addr` bytes as the canonical NSAP hex form
-/// (`xx.xx.xx...`, lowercase hex with dot separators, no NUL).
+/// Format `addr` bytes as the canonical NSAP hex form, matching glibc
+/// `inet_nsap_ntoa`: uppercase hex, a `.` after every even-indexed
+/// byte (so bytes group as `XX.XXXX.XXXX...`), and no trailing NUL.
+/// glibc clamps the input length to 255 bytes; this does too.
 pub fn format_nsap_addr(addr: &[u8]) -> Vec<u8> {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    if addr.is_empty() {
-        return Vec::new();
-    }
-    let mut out = Vec::with_capacity(addr.len() * 3 - 1);
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let addr = &addr[..addr.len().min(255)];
+    let mut out = Vec::with_capacity(addr.len() * 3);
     for (i, &b) in addr.iter().enumerate() {
-        if i > 0 {
-            out.push(b'.');
-        }
         out.push(HEX[(b >> 4) as usize]);
         out.push(HEX[(b & 0x0F) as usize]);
+        // glibc emits a separator after each even-indexed byte that is
+        // not the last, producing a 1 + 2 + 2 + ... grouping.
+        if i % 2 == 0 && i + 1 < addr.len() {
+            out.push(b'.');
+        }
     }
     out
 }
 
 #[inline]
 fn is_separator(b: u8) -> bool {
-    b == b'.'
+    matches!(b, b'.' | b'+' | b'/')
 }
 
 #[inline]
@@ -116,6 +121,27 @@ mod tests {
         let n = parse_nsap_addr(b"01.23.45", &mut dst);
         assert_eq!(n, 3);
         assert_eq!(&dst[..3], &[0x01, 0x23, 0x45]);
+    }
+
+    #[test]
+    fn parse_accepts_plus_and_slash_separators() {
+        // glibc `inet_nsap_addr` skips `.`, `+`, and `/` alike.
+        let mut dst = [0u8; 16];
+        assert_eq!(parse_nsap_addr(b"ab+cd", &mut dst), 2);
+        assert_eq!(&dst[..2], &[0xab, 0xcd]);
+
+        let mut dst = [0u8; 16];
+        assert_eq!(parse_nsap_addr(b"ab/cd", &mut dst), 2);
+        assert_eq!(&dst[..2], &[0xab, 0xcd]);
+
+        let mut dst = [0u8; 16];
+        assert_eq!(parse_nsap_addr(b"47.0005+80/005a00", &mut dst), 7);
+        assert_eq!(&dst[..7], &[0x47, 0x00, 0x05, 0x80, 0x00, 0x5a, 0x00]);
+
+        // Leading and trailing `+` / `/` are skipped like `.`.
+        let mut dst = [0u8; 16];
+        assert_eq!(parse_nsap_addr(b"+ab/", &mut dst), 1);
+        assert_eq!(dst[0], 0xab);
     }
 
     #[test]
@@ -213,23 +239,29 @@ mod tests {
 
     #[test]
     fn format_single_byte() {
-        assert_eq!(format_nsap_addr(&[0xab]), b"ab".to_vec());
+        assert_eq!(format_nsap_addr(&[0xab]), b"AB".to_vec());
     }
 
     #[test]
-    fn format_multi_byte_with_dots() {
-        assert_eq!(format_nsap_addr(&[0x01, 0x23, 0x45]), b"01.23.45".to_vec());
+    fn format_groups_bytes_one_then_pairs() {
+        // glibc `inet_nsap_ntoa` emits a `.` after each even-indexed
+        // byte, so 3 bytes render as `XX.XXXX`, not `XX.XX.XX`.
+        assert_eq!(format_nsap_addr(&[0x01, 0x23, 0x45]), b"01.2345".to_vec());
+        assert_eq!(
+            format_nsap_addr(&[0x47, 0x00, 0x05, 0x80, 0x00, 0x5a]),
+            b"47.0005.8000.5A".to_vec()
+        );
     }
 
     #[test]
-    fn format_lowercase_hex() {
-        // Even with the high nibble being a letter, output is lowercase.
-        assert_eq!(format_nsap_addr(&[0xAB, 0xCD, 0xEF]), b"ab.cd.ef".to_vec());
+    fn format_uppercase_hex() {
+        // glibc `inet_nsap_ntoa` emits uppercase hex digits.
+        assert_eq!(format_nsap_addr(&[0xAB, 0xCD, 0xEF]), b"AB.CDEF".to_vec());
     }
 
     #[test]
     fn format_handles_zero_bytes() {
-        assert_eq!(format_nsap_addr(&[0x00, 0x00, 0x00]), b"00.00.00".to_vec());
+        assert_eq!(format_nsap_addr(&[0x00, 0x00, 0x00]), b"00.0000".to_vec());
     }
 
     #[test]
