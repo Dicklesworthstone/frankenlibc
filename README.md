@@ -1047,7 +1047,7 @@ C caller
 
 ## Harness CLI Reference
 
-`cargo run -p frankenlibc-harness --bin harness` is the verification frontend. The `Subcommand` enum in `crates/frankenlibc-harness/src/bin/harness.rs` declares **70 subcommands** spanning fixture capture, replay, reality reports, POSIX conformance, healing-oracle verification, runtime-math proofs, shadow runs, fault injection, evidence compliance, kernel snapshots, tail-stats, and certificate / probe / policy utilities. Representative entries:
+`cargo run -p frankenlibc-harness --bin harness` is the verification frontend. The `Subcommand` enum in `crates/frankenlibc-harness/src/bin/harness.rs` exposes **66 subcommands via `--help`** (verified at the latest commit) spanning fixture capture, replay, reality reports, POSIX conformance, healing-oracle verification, runtime-math proofs, shadow runs, fault injection, evidence compliance, kernel snapshots, tail-stats, and certificate / probe / policy utilities. Representative entries:
 
 | Subcommand | Purpose | Key output |
 |---|---|---|
