@@ -53,6 +53,20 @@ pub(crate) fn artifact_hash_map<K, V>() -> ArtifactHashMap<K, V> {
     ArtifactHashMap::default()
 }
 
+/// Back off under contention without linking Rust thread TLS in owned-TLS artifacts.
+#[inline]
+pub(crate) fn contention_backoff() {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        std::hint::spin_loop();
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        std::thread::yield_now();
+    }
+}
+
 /// Mutex wrapper that recovers poisoned locks instead of panicking.
 #[derive(Debug)]
 pub(crate) struct NoPoisonMutex<T>(StdMutex<T>);

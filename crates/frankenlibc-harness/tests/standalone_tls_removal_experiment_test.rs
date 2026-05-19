@@ -93,6 +93,13 @@ fn membrane_runtime_math_evidence_path(root: &Path) -> PathBuf {
         .join("evidence.rs")
 }
 
+fn production_prefix(source: &str) -> &str {
+    source
+        .split("#[cfg(test)]\nmod tests")
+        .next()
+        .unwrap_or(source)
+}
+
 fn abi_unistd_path(root: &Path) -> PathBuf {
     root.join("crates")
         .join("frankenlibc-abi")
@@ -1656,6 +1663,65 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         !core_cargo_toml.contains("parking_lot =")
             && !membrane_cargo_toml.contains("parking_lot ="),
         "core and membrane runtime lock surfaces must not keep direct parking_lot dependencies in the owned-TLS artifact lane",
+    )?;
+    let membrane_util = std::fs::read_to_string(
+        root.join("crates")
+            .join("frankenlibc-membrane")
+            .join("src")
+            .join("util.rs"),
+    )
+    .map_err(|err| format!("read membrane util.rs: {err}"))?;
+    let left_right = std::fs::read_to_string(
+        root.join("crates")
+            .join("frankenlibc-membrane")
+            .join("src")
+            .join("left_right.rs"),
+    )
+    .map_err(|err| format!("read left_right.rs: {err}"))?;
+    let bravo = std::fs::read_to_string(
+        root.join("crates")
+            .join("frankenlibc-membrane")
+            .join("src")
+            .join("bravo.rs"),
+    )
+    .map_err(|err| format!("read bravo.rs: {err}"))?;
+    let flat_combining = std::fs::read_to_string(
+        root.join("crates")
+            .join("frankenlibc-membrane")
+            .join("src")
+            .join("flat_combining.rs"),
+    )
+    .map_err(|err| format!("read flat_combining.rs: {err}"))?;
+    let elimination = std::fs::read_to_string(
+        root.join("crates")
+            .join("frankenlibc-core")
+            .join("src")
+            .join("malloc")
+            .join("elimination.rs"),
+    )
+    .map_err(|err| format!("read malloc elimination.rs: {err}"))?;
+    require(
+        membrane_util.contains("fn contention_backoff")
+            && membrane_util.contains("#[cfg(feature = \"owned-tls-cache\")]")
+            && membrane_util.contains("std::hint::spin_loop()")
+            && membrane_util.contains("std::thread::yield_now()")
+            && production_prefix(&left_right).contains("contention_backoff()")
+            && production_prefix(&bravo).contains("contention_backoff()")
+            && production_prefix(&flat_combining).contains("contention_backoff()")
+            && !production_prefix(&left_right).contains("std::thread::yield_now")
+            && !production_prefix(&bravo).contains("std::thread::yield_now")
+            && !production_prefix(&flat_combining).contains("std::thread::yield_now"),
+        "membrane production contention backoff must compile out std::thread::yield_now in owned-TLS artifacts",
+    )?;
+    require(
+        production_prefix(&elimination).contains("fn elimination_backoff")
+            && production_prefix(&elimination).contains("crate::syscall::sys_sched_yield()")
+            && production_prefix(&elimination).contains("elimination_backoff()")
+            && production_prefix(&elimination)
+                .matches("std::thread::yield_now()")
+                .count()
+                == 1,
+        "core malloc elimination production backoff must use syscall backoff in owned-TLS artifacts",
     )?;
 
     let grp = std::fs::read_to_string(abi_grp_path(&root))

@@ -20,6 +20,7 @@
 
 use crate::util::{
     NoPoisonMutex as Mutex, NoPoisonRwLock as RwLock, NoPoisonRwLockReadGuard as RwLockReadGuard,
+    contention_backoff,
 };
 use std::cell::UnsafeCell;
 use std::hint::spin_loop;
@@ -358,7 +359,7 @@ impl<T: Send + Sync> BravoRwLock<T> {
 
             spins = spins.saturating_add(1);
             if spins.is_multiple_of(REVOCATION_YIELD_INTERVAL) {
-                std::thread::yield_now();
+                contention_backoff();
             } else {
                 spin_loop();
             }

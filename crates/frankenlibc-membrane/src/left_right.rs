@@ -10,7 +10,7 @@
 //! Compared with [`crate::rcu::RcuCell`], this module targets multi-field state
 //! that must be observed as an internally consistent snapshot on every read.
 
-use crate::util::NoPoisonMutex as Mutex;
+use crate::util::{NoPoisonMutex as Mutex, contention_backoff};
 use std::hint::spin_loop;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
@@ -309,7 +309,7 @@ impl<T: Clone + Send + Sync> LeftRight<T> {
 
             spins = spins.saturating_add(1);
             if spins.is_multiple_of(64) {
-                std::thread::yield_now();
+                contention_backoff();
             } else {
                 spin_loop();
             }

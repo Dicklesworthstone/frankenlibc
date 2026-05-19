@@ -27,6 +27,19 @@ thread_local! {
 
 static NEXT_THREAD_TAG: AtomicU64 = AtomicU64::new(1);
 
+#[inline]
+fn elimination_backoff() {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        crate::syscall::sys_sched_yield();
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        std::thread::yield_now();
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EliminationOp {
@@ -491,7 +504,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                                 }
                             }
 
-                            std::thread::yield_now();
+                            elimination_backoff();
                         } else {
                             std::hint::spin_loop();
                         }
@@ -692,7 +705,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                 };
             }
 
-            std::thread::yield_now();
+            elimination_backoff();
         }
     }
 

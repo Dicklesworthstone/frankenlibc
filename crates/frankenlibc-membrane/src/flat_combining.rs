@@ -41,7 +41,7 @@
 //! - 4+ threads: combining amortizes lock cost → throughput scales near-linearly
 //! - Cache-friendly: combiner processes all ops sequentially → better L1 hit rate
 
-use crate::util::NoPoisonMutex as Mutex;
+use crate::util::{NoPoisonMutex as Mutex, contention_backoff};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Slot states for the publication list.
@@ -304,7 +304,7 @@ where
             }
             drop(slot);
             if attempt > 10 {
-                std::thread::yield_now();
+                contention_backoff();
             }
         }
     }
