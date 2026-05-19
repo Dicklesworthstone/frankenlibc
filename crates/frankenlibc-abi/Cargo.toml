@@ -16,7 +16,7 @@ unsafe_code = "allow"
 default = []
 standalone = []
 owned-unwind-stub = []
-owned-tls-cache = ["frankenlibc-membrane/owned-tls-cache"]
+owned-tls-cache = ["frankenlibc-core/owned-tls-cache", "frankenlibc-membrane/owned-tls-cache"]
 conformance-testing = []
 
 [dependencies]

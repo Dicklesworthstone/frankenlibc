@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 12;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 11;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -874,7 +874,6 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
     let symbols: BTreeSet<&str> = rows.iter().map(|row| row.symbol.as_str()).collect();
     for required in [
         "__libc_dlerror_result",
-        "_RNvNCNKNvNtNtCsIJ6DkCoJLi_16frankenlibc_core7pthread3tls19FALLBACK_TLS_VALUESs_0s_023___RUST_STD_INTERNAL_VAL",
         "_RNvNCNKNvNvNtCsauQQugvlKcP_16parking_lot_core11parking_lot16with_thread_data11THREAD_DATA0023___RUST_STD_INTERNAL_VAL",
         "_RNvNtNtNtCsjCoUzHIWc5R_3std3sys12thread_local11destructors4list5DTORS",
         "_RNvNtNtCsjCoUzHIWc5R_3std6thread7current7CURRENT",
@@ -909,10 +908,15 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
         "residual artifact TLS inventory must not retain the removed ptr_validator EBR_HANDLE TLS emitter",
     )?;
 
+    let removed_core_pthread_fallback_symbol = "_RNvNCNKNvNtNtCsIJ6DkCoJLi_16frankenlibc_core7pthread3tls19FALLBACK_TLS_VALUESs_0s_023___RUST_STD_INTERNAL_VAL";
+    require(
+        !symbols.contains(removed_core_pthread_fallback_symbol),
+        "residual artifact TLS inventory must not retain the removed core pthread fallback TLS emitter",
+    )?;
+
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();
     for required in [
         "frankenlibc-abi",
-        "frankenlibc-core",
         "tracing-core",
         "parking_lot",
         "parking_lot_core",
@@ -1217,6 +1221,10 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
         owned_tls_feature_line.contains("frankenlibc-membrane/owned-tls-cache"),
         "frankenlibc-abi owned-tls-cache feature must forward into frankenlibc-membrane",
     )?;
+    require(
+        owned_tls_feature_line.contains("frankenlibc-core/owned-tls-cache"),
+        "frankenlibc-abi owned-tls-cache feature must forward into frankenlibc-core",
+    )?;
 
     let membrane_cargo_toml = std::fs::read_to_string(
         root.join("crates")
@@ -1229,6 +1237,19 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             .lines()
             .any(|line| line.trim() == "owned-tls-cache = []"),
         "frankenlibc-membrane Cargo.toml must define owned-tls-cache feature",
+    )?;
+
+    let core_cargo_toml = std::fs::read_to_string(
+        root.join("crates")
+            .join("frankenlibc-core")
+            .join("Cargo.toml"),
+    )
+    .map_err(|err| format!("read frankenlibc-core Cargo.toml: {err}"))?;
+    require(
+        core_cargo_toml
+            .lines()
+            .any(|line| line.trim() == "owned-tls-cache = []"),
+        "frankenlibc-core Cargo.toml must define owned-tls-cache feature",
     )?;
 
     let unistd = std::fs::read_to_string(abi_unistd_path(&root))

@@ -122,9 +122,146 @@ static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] = [const { AtomicUsize::new(0) }
 //
 // This preserves per-thread isolation for host-created threads while remaining
 // allocation-free for clone-based threads (which are expected to register).
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static FALLBACK_TLS_VALUES: [core::cell::Cell<TlsEntry>; PTHREAD_KEYS_MAX] =
         const { [const { core::cell::Cell::new(TlsEntry { seq: 0, value: 0 }) }; PTHREAD_KEYS_MAX] };
+}
+
+// The standalone owned-TLS artifact lane cannot emit Rust TLS. Preserve the
+// same unregistered-thread fallback semantics with a small non-TLS table keyed
+// by kernel TID. Native clone-created threads still use TLS_TIDS/TLS_PTRS above.
+#[cfg(feature = "owned-tls-cache")]
+static FALLBACK_TLS_TIDS: [AtomicI32; TLS_TABLE_SLOTS] =
+    [const { AtomicI32::new(TLS_SLOT_EMPTY) }; TLS_TABLE_SLOTS];
+
+#[cfg(feature = "owned-tls-cache")]
+static FALLBACK_TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] =
+    [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
+
+#[cfg(feature = "owned-tls-cache")]
+fn allocate_fallback_tls_block() -> *mut TlsEntry {
+    Box::into_raw(Box::new([TlsEntry::default(); PTHREAD_KEYS_MAX])) as *mut TlsEntry
+}
+
+#[cfg(feature = "owned-tls-cache")]
+unsafe fn drop_fallback_tls_block(values_ptr: *mut TlsEntry) {
+    if !values_ptr.is_null() {
+        // SAFETY: values_ptr was produced by allocate_fallback_tls_block and has
+        // not been dropped yet; table_remove/reset ensure single ownership.
+        unsafe {
+            drop(Box::from_raw(
+                values_ptr as *mut [TlsEntry; PTHREAD_KEYS_MAX],
+            ));
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn fallback_table_lookup(tid: i32) -> *mut TlsEntry {
+    if tid <= 0 {
+        return core::ptr::null_mut();
+    }
+    let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
+    for i in 0..TLS_TABLE_SLOTS {
+        let idx = (start + i) % TLS_TABLE_SLOTS;
+        let stored_tid = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
+        if stored_tid == tid {
+            return FALLBACK_TLS_PTRS[idx].load(Ordering::Acquire) as *mut TlsEntry;
+        }
+        if stored_tid == TLS_SLOT_EMPTY {
+            return core::ptr::null_mut();
+        }
+    }
+    core::ptr::null_mut()
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
+    if tid <= 0 {
+        return core::ptr::null_mut();
+    }
+    let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
+    let mut first_tombstone: Option<usize> = None;
+    let mut owned_ptr: *mut TlsEntry = core::ptr::null_mut();
+
+    for i in 0..TLS_TABLE_SLOTS {
+        let idx = (start + i) % TLS_TABLE_SLOTS;
+        let current = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
+        if current == tid {
+            if !owned_ptr.is_null() {
+                // SAFETY: owned_ptr was allocated in this call and never stored.
+                unsafe { drop_fallback_tls_block(owned_ptr) };
+            }
+            return FALLBACK_TLS_PTRS[idx].load(Ordering::Acquire) as *mut TlsEntry;
+        }
+
+        if current == TLS_SLOT_TOMBSTONE {
+            if first_tombstone.is_none() {
+                first_tombstone = Some(idx);
+            }
+            continue;
+        }
+
+        if current == TLS_SLOT_EMPTY {
+            let target = first_tombstone.unwrap_or(idx);
+            let expected = if first_tombstone.is_some() {
+                TLS_SLOT_TOMBSTONE
+            } else {
+                TLS_SLOT_EMPTY
+            };
+            if FALLBACK_TLS_TIDS[target]
+                .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                if owned_ptr.is_null() {
+                    owned_ptr = allocate_fallback_tls_block();
+                }
+                FALLBACK_TLS_PTRS[target].store(owned_ptr as usize, Ordering::Release);
+                return owned_ptr;
+            }
+            first_tombstone = None;
+        }
+    }
+
+    if let Some(tomb_idx) = first_tombstone
+        && FALLBACK_TLS_TIDS[tomb_idx]
+            .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    {
+        if owned_ptr.is_null() {
+            owned_ptr = allocate_fallback_tls_block();
+        }
+        FALLBACK_TLS_PTRS[tomb_idx].store(owned_ptr as usize, Ordering::Release);
+        return owned_ptr;
+    }
+
+    if !owned_ptr.is_null() {
+        // SAFETY: owned_ptr was allocated in this call and never stored.
+        unsafe { drop_fallback_tls_block(owned_ptr) };
+    }
+    core::ptr::null_mut()
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn fallback_table_remove(tid: i32) -> *mut TlsEntry {
+    if tid <= 0 {
+        return core::ptr::null_mut();
+    }
+    let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
+    for i in 0..TLS_TABLE_SLOTS {
+        let idx = (start + i) % TLS_TABLE_SLOTS;
+        let stored_tid = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
+        if stored_tid == tid {
+            let ptr = FALLBACK_TLS_PTRS[idx].swap(0, Ordering::AcqRel);
+            FALLBACK_TLS_TIDS[idx].store(TLS_SLOT_TOMBSTONE, Ordering::Release);
+            return ptr as *mut TlsEntry;
+        }
+        if stored_tid == TLS_SLOT_EMPTY {
+            return core::ptr::null_mut();
+        }
+    }
+    core::ptr::null_mut()
 }
 
 /// Register a TID → values-pointer mapping in the global table.
@@ -260,14 +397,32 @@ fn read_tls_value(tid: i32, key_id: usize, expected_seq: u32) -> u64 {
         }
     } else {
         // Unregistered thread: use thread-local fallback storage.
-        FALLBACK_TLS_VALUES.with(|values| {
-            let entry = values[key_id].get();
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            FALLBACK_TLS_VALUES.with(|values| {
+                let entry = values[key_id].get();
+                if entry.seq == expected_seq {
+                    entry.value
+                } else {
+                    0
+                }
+            })
+        }
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            let fallback_ptr = fallback_table_lookup(tid);
+            if fallback_ptr.is_null() {
+                return 0;
+            }
+            // SAFETY: fallback_ptr points to an owned fallback block for this
+            // kernel TID. key_id < PTHREAD_KEYS_MAX checked by caller.
+            let entry = unsafe { *fallback_ptr.add(key_id) };
             if entry.seq == expected_seq {
                 entry.value
             } else {
                 0
             }
-        })
+        }
     }
 }
 
@@ -286,12 +441,30 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
         };
     } else {
         // Unregistered thread: use thread-local fallback storage.
-        FALLBACK_TLS_VALUES.with(|values| {
-            values[key_id].set(TlsEntry {
-                seq: expected_seq,
-                value,
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            FALLBACK_TLS_VALUES.with(|values| {
+                values[key_id].set(TlsEntry {
+                    seq: expected_seq,
+                    value,
+                });
             });
-        });
+        }
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            let fallback_ptr = fallback_table_get_or_insert(tid);
+            if fallback_ptr.is_null() {
+                return;
+            }
+            // SAFETY: fallback_ptr points to an owned fallback block for this
+            // kernel TID. Only the owning thread writes its fallback values.
+            unsafe {
+                *fallback_ptr.add(key_id) = TlsEntry {
+                    seq: expected_seq,
+                    value,
+                };
+            }
+        }
     }
 }
 
@@ -458,6 +631,8 @@ pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn teardown_thread_tls(tid: i32) {
     let values_ptr = table_lookup(tid);
+    #[cfg(feature = "owned-tls-cache")]
+    let fallback_values_ptr = fallback_table_lookup(tid);
 
     // Ensure RCU registration for lock-free registry reads. Required for the
     // registered-thread path; the fallback path also needs an RCU read lock to
@@ -505,27 +680,48 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                     // Fallback path: a thread whose pthread_create went
                     // through the host libc path never calls
                     // register_thread_tls, so values set via
-                    // pthread_setspecific landed in the thread-local
-                    // FALLBACK_TLS_VALUES Cell array (see write_tls_value).
-                    // FALLBACK_TLS_VALUES is thread-local, which means we
-                    // can only address it from the exiting thread itself —
-                    // which is exactly where teardown_thread_tls runs.
-                    FALLBACK_TLS_VALUES.with(|values| {
-                        let entry = values[i].get();
-                        if entry.seq == reg.slots[i].seq && entry.value != 0 {
-                            // Clear the value before calling destructor.
-                            values[i].set(TlsEntry {
-                                seq: entry.seq,
-                                value: 0,
-                            });
-                            if let Some(dtor) = reg.slots[i].destructor
-                                && call_count < MAX_CALLS
-                            {
-                                calls[call_count] = (entry.value, dtor);
-                                call_count += 1;
+                    // pthread_setspecific land in fallback storage.
+                    #[cfg(not(feature = "owned-tls-cache"))]
+                    {
+                        // FALLBACK_TLS_VALUES is thread-local, which means we
+                        // can only address it from the exiting thread itself —
+                        // exactly where teardown_thread_tls runs.
+                        FALLBACK_TLS_VALUES.with(|values| {
+                            let entry = values[i].get();
+                            if entry.seq == reg.slots[i].seq && entry.value != 0 {
+                                // Clear the value before calling destructor.
+                                values[i].set(TlsEntry {
+                                    seq: entry.seq,
+                                    value: 0,
+                                });
+                                if let Some(dtor) = reg.slots[i].destructor
+                                    && call_count < MAX_CALLS
+                                {
+                                    calls[call_count] = (entry.value, dtor);
+                                    call_count += 1;
+                                }
+                            }
+                        });
+                    }
+                    #[cfg(feature = "owned-tls-cache")]
+                    {
+                        if !fallback_values_ptr.is_null() {
+                            // SAFETY: fallback_values_ptr points to the
+                            // current thread's owned fallback block until the
+                            // end of teardown_thread_tls.
+                            let entry = *fallback_values_ptr.add(i);
+                            if entry.seq == reg.slots[i].seq && entry.value != 0 {
+                                // Clear the value before calling destructor.
+                                (*fallback_values_ptr.add(i)).value = 0;
+                                if let Some(dtor) = reg.slots[i].destructor
+                                    && call_count < MAX_CALLS
+                                {
+                                    calls[call_count] = (entry.value, dtor);
+                                    call_count += 1;
+                                }
                             }
                         }
-                    });
+                    }
                 }
             }
         }
@@ -547,6 +743,13 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
     // Remove from the table and unregister from RCU. table_remove is a no-op
     // for the fallback path (tid was never inserted) — safe to call either way.
     table_remove(tid);
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        let fallback_ptr = fallback_table_remove(tid);
+        // SAFETY: fallback_table_remove transfers ownership of the allocation
+        // created by fallback_table_get_or_insert.
+        unsafe { drop_fallback_tls_block(fallback_ptr) };
+    }
     let _ = rcu::rcu_unregister_thread(tid as u32);
 }
 
@@ -581,11 +784,25 @@ pub(crate) fn reset_tls_state() {
         TLS_PTRS[i].store(0, Ordering::Release);
     }
     // Clear fallback values for the current thread.
-    FALLBACK_TLS_VALUES.with(|values| {
-        for slot in values.iter() {
-            slot.set(TlsEntry::default());
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        FALLBACK_TLS_VALUES.with(|values| {
+            for slot in values.iter() {
+                slot.set(TlsEntry::default());
+            }
+        });
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        for i in 0..TLS_TABLE_SLOTS {
+            let ptr = FALLBACK_TLS_PTRS[i].swap(0, Ordering::AcqRel);
+            FALLBACK_TLS_TIDS[i].store(TLS_SLOT_EMPTY, Ordering::Release);
+            // SAFETY: reset runs under the serialized test lock after global
+            // state has been quiesced; each stored pointer is owned by the
+            // fallback table.
+            unsafe { drop_fallback_tls_block(ptr as *mut TlsEntry) };
         }
-    });
+    }
 }
 
 // ---------------------------------------------------------------------------

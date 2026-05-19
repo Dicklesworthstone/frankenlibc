@@ -9,6 +9,10 @@ build = "build.rs"
 [lints.rust]
 unsafe_code = "deny"
 
+[features]
+default = []
+owned-tls-cache = []
+
 [dependencies]
 frankenlibc-membrane = { workspace = true }
 libm = "0.2.16"
