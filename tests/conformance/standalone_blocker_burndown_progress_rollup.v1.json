@@ -42,6 +42,7 @@
     ],
     "promotion_allowed": false,
     "claim_status_until_all_categories_exit": "claim_blocked",
+    "claim_status_when_no_current_blockers": "artifact_current",
     "missing_category_result": "fail_closed",
     "missing_version_provider_result": "fail_closed",
     "stale_or_partial_source_refresh_result": "fail_closed"
@@ -66,7 +67,7 @@
         "host_needed_libraries_present"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 4,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -80,7 +81,7 @@
         "host_direct_needed_libraries_present"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 2,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -94,7 +95,7 @@
         "host_resolved_libraries_present"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 3,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -108,7 +109,7 @@
         "host_loader_dependency"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 2,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -122,7 +123,7 @@
         "host_libc_dependency"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 1,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -136,7 +137,7 @@
         "libgcc_runtime_dependency"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 4,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -150,7 +151,7 @@
         "undefined_unwind_symbols"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 12,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -164,7 +165,7 @@
         "undefined_glibc_symbols"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 1,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -178,7 +179,7 @@
         "undefined_tls_symbols"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 1,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -192,7 +193,7 @@
         "host_version_requirements"
       ],
       "current_reason_count": 1,
-      "last_known_value_count": 4,
+      "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
       "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
@@ -275,12 +276,12 @@
     }
   ],
   "summary": {
-    "current_blocking_reason_count": 10,
+    "current_blocking_reason_count": 0,
     "progress_category_count": 10,
-    "blocked_progress_category_count": 10,
+    "blocked_progress_category_count": 0,
     "partial_burndown_experiment_count": 2,
     "report_only_reduced_value_count": 13,
-    "last_known_value_count": 34,
+    "last_known_value_count": 0,
     "host_version_requirement_count": 4,
     "version_provider_count": 2,
     "promotion_allowed": false

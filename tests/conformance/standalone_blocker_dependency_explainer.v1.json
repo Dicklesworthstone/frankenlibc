@@ -5,7 +5,7 @@
   "refresh_bead": "bd-kh0jc",
   "generated_utc": "2026-05-19T03:31:12Z",
   "source_commit": "current",
-  "purpose": "Fail-closed explainer for why bd-c51oi remains open after RCH recovered and report-only standalone burndown experiments landed. The checker ties tracker state to the standalone blocker rollup so agents do not mistake partial experiment progress or a retired RCH blocker for default forge promotion.",
+  "purpose": "Fail-closed explainer for bd-c51oi after the default standalone forge consumed the RCH-recovered unwinder/TLS evidence. The checker ties tracker state to the standalone blocker rollup so agents do not reintroduce retired dependencies or mistake artifact-current evidence for replacement-level promotion.",
   "inputs": {
     "tracker_jsonl": ".beads/issues.jsonl",
     "standalone_blocker_burndown_dag": "tests/conformance/standalone_blocker_burndown_dag.v1.json",
@@ -25,10 +25,10 @@
     "retired_blocker_reopened_result": "fail_closed"
   },
   "standalone_claim_contract": {
-    "rollup_claim_status": "claim_blocked",
+    "rollup_claim_status": "artifact_current",
     "promotion_allowed": false,
-    "minimum_current_blocking_reason_count": 10,
-    "minimum_blocked_progress_category_count": 10,
+    "minimum_current_blocking_reason_count": 0,
+    "minimum_blocked_progress_category_count": 0,
     "required_dag_dedupe_key": "burn-runtime_linkage-host_needed_libraries_present",
     "required_validation_lane": "standalone-forge-scripts",
     "required_partial_experiments": [
@@ -38,7 +38,7 @@
     "partial_experiments_must_be_report_only": true,
     "partial_experiments_must_keep_default_forge_path_unchanged": true,
     "partial_experiments_must_not_allow_promotion": true,
-    "report_only_progress_result": "keep_bd_c51oi_claim_blocked"
+    "report_only_progress_result": "keep_artifact_current_without_replacement_level_promotion"
   },
   "live_action_row_source_contract": {
     "missing_source_action_row_result": "fail_closed",
@@ -79,10 +79,10 @@
       "negative_controls"
     ],
     "closure_blocker_reasons": [
-      "default standalone forge still reports claim_blocked",
-      "host loader, libgcc, and TLS startup blockers remain in the default artifact",
-      "standalone blocker rollup remains claim_blocked",
-      "partial burndown experiments are report-only and non-promotable"
+      "tracker still records bd-c51oi in_progress until explicit closeout",
+      "standalone blocker rollup is artifact_current with zero current host blockers",
+      "partial burndown experiments remain historical report-only evidence",
+      "replacement-level promotion remains outside this artifact-current gate"
     ]
   },
   "negative_controls": [
@@ -93,7 +93,7 @@
     },
     {
       "control_id": "target_closed_before_claim_exit_fails",
-      "mutation": "mark bd-c51oi closed while standalone rollup remains claim_blocked",
+      "mutation": "mark bd-c51oi closed before tracker closeout is coordinated",
       "expected_error": "target_status_not_in_progress"
     },
     {

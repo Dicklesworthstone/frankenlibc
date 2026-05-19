@@ -290,7 +290,7 @@ fn contract_names_the_claim_and_negative_controls() -> TestResult {
 
     let claim = json_field(&contract, "standalone_claim_contract")?;
     require(
-        json_string(claim, "rollup_claim_status")? == "claim_blocked",
+        json_string(claim, "rollup_claim_status")? == "artifact_current",
         "rollup claim status",
     )?;
     require(
@@ -384,8 +384,8 @@ fn checker_materializes_claim_blockers_and_report_only_experiments() -> TestResu
     )?;
     let claim = json_field(&report_json, "standalone_claim_state")?;
     require(
-        json_string(claim, "claim_status")? == "claim_blocked",
-        "standalone claim stays blocked",
+        json_string(claim, "claim_status")? == "artifact_current",
+        "standalone claim is artifact-current",
     )?;
     let summary = json_field(claim, "summary")?;
     require(
@@ -393,11 +393,11 @@ fn checker_materializes_claim_blockers_and_report_only_experiments() -> TestResu
         "rollup summary forbids promotion",
     )?;
     require(
-        json_field(summary, "current_blocking_reason_count")?.as_u64() == Some(10),
+        json_field(summary, "current_blocking_reason_count")?.as_u64() == Some(0),
         "current blocking reason count",
     )?;
     require(
-        json_field(summary, "blocked_progress_category_count")?.as_u64() == Some(10),
+        json_field(summary, "blocked_progress_category_count")?.as_u64() == Some(0),
         "blocked progress category count",
     )?;
 

@@ -202,6 +202,8 @@ EXPECTED_HASH_EVIDENCE_POLICY = {
 }
 
 BUILD_PROVENANCE_ENV_KEYS = [
+    "CARGO_PROFILE_RELEASE_PANIC",
+    "RCH_REQUIRE_REMOTE",
     "RUSTFLAGS",
     "RUSTC_WRAPPER",
     "RCH_ENV_ALLOWLIST",
@@ -263,8 +265,31 @@ EXPECTED_ARTIFACT_POLICY = {
     "source_cdylib_name": "libfrankenlibc_abi.so",
     "cargo_package": "frankenlibc-abi",
     "cargo_profile": "release",
-    "cargo_features": ["standalone"],
+    "cargo_features": ["standalone", "owned-unwind-stub", "owned-tls-cache"],
+    "build_std_components": ["std", "panic_abort"],
+    "panic_strategy": "immediate-abort",
     "default_cargo_target_dir": "target/standalone_replacement_artifact/cargo-target",
+    "default_build_command": [
+        "rch",
+        "exec",
+        "--",
+        "cargo",
+        "build",
+        "-Z",
+        "build-std=std,panic_abort",
+        "-p",
+        "frankenlibc-abi",
+        "--release",
+        "--features=standalone,owned-unwind-stub,owned-tls-cache",
+    ],
+    "default_build_env": {
+        "CARGO_PROFILE_RELEASE_PANIC": "immediate-abort",
+        "RCH_REQUIRE_REMOTE": "1",
+    },
+    "default_remote_env_allowlist": [
+        "CARGO_TARGET_DIR",
+        "CARGO_PROFILE_RELEASE_PANIC",
+    ],
     "artifact_env": "FRANKENLIBC_STANDALONE_LIB",
     "source_artifact_env": "STANDALONE_REPLACEMENT_SOURCE_LIB",
     "cargo_target_dir_env": "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
@@ -273,6 +298,9 @@ EXPECTED_ARTIFACT_POLICY = {
     "stale_if_older_than_head": True,
     "ld_preload_substitutes_allowed": False,
 }
+DEFAULT_BUILD_COMMAND = EXPECTED_ARTIFACT_POLICY["default_build_command"]
+DEFAULT_BUILD_ENV = EXPECTED_ARTIFACT_POLICY["default_build_env"]
+DEFAULT_REMOTE_ENV_ALLOWLIST = EXPECTED_ARTIFACT_POLICY["default_remote_env_allowlist"]
 
 EXPECTED_COMPILER_RUNTIME_EXPERIMENT_MANIFEST_ID = "standalone-compiler-runtime-experiment"
 EXPECTED_COMPILER_RUNTIME_EXPERIMENT_POLICY = {
@@ -1680,10 +1708,21 @@ def rustflags_linker():
     return None
 
 
+def using_default_build_command():
+    return not bool(os.environ.get("STANDALONE_REPLACEMENT_BUILD_CMD"))
+
+
+def effective_build_env_overrides():
+    return dict(DEFAULT_BUILD_ENV) if using_default_build_command() else {}
+
+
 def sanitized_env_snapshot():
+    default_env = effective_build_env_overrides()
     snapshot = {}
     for key in BUILD_PROVENANCE_ENV_KEYS:
         value = os.environ.get(key)
+        if value is None and key in default_env:
+            value = default_env[key]
         if value is None:
             snapshot[key] = {
                 "present": False,
@@ -2013,17 +2052,7 @@ def build_command():
     raw = os.environ.get("STANDALONE_REPLACEMENT_BUILD_CMD")
     if raw:
         return shlex.split(raw)
-    return [
-        "rch",
-        "exec",
-        "--",
-        "cargo",
-        "build",
-        "-p",
-        "frankenlibc-abi",
-        "--release",
-        "--features=standalone",
-    ]
+    return list(DEFAULT_BUILD_COMMAND)
 
 
 def forge_artifact():
@@ -2034,11 +2063,13 @@ def forge_artifact():
     build_stderr = out_dir / "build.stderr.txt"
     if mode == "forge" and not skip_build:
         env = os.environ.copy()
+        env.update(effective_build_env_overrides())
         env["CARGO_TARGET_DIR"] = str(cargo_target_dir)
         allowlist = env.get("RCH_ENV_ALLOWLIST", "")
         allowed = [item for item in allowlist.split(",") if item]
-        if "CARGO_TARGET_DIR" not in allowed:
-            allowed.append("CARGO_TARGET_DIR")
+        for key in DEFAULT_REMOTE_ENV_ALLOWLIST:
+            if key not in allowed and (key == "CARGO_TARGET_DIR" or env.get(key) is not None):
+                allowed.append(key)
         env["RCH_ENV_ALLOWLIST"] = ",".join(allowed)
         result = run_command(command, env=env)
         write_text(build_stdout, result["stdout"])

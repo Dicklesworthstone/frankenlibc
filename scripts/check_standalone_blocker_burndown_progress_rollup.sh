@@ -75,6 +75,7 @@ EXPECTED_ROLLUP_POLICY = {
     ],
     "promotion_allowed": False,
     "claim_status_until_all_categories_exit": "claim_blocked",
+    "claim_status_when_no_current_blockers": "artifact_current",
     "missing_category_result": "fail_closed",
     "missing_version_provider_result": "fail_closed",
     "stale_or_partial_source_refresh_result": "fail_closed",
@@ -177,16 +178,18 @@ def matrix_requirement_id(row):
 
 def expected_live_action_values(reason, snapshot):
     if reason == "host_needed_libraries_present":
-        return string_list(snapshot.get("host_needed_libraries"), "snapshot.host_needed_libraries")
+        return string_list(snapshot.get("host_needed_libraries"), "snapshot.host_needed_libraries", min_len=0)
     if reason == "host_direct_needed_libraries_present":
         return string_list(
             snapshot.get("host_direct_needed_libraries"),
             "snapshot.host_direct_needed_libraries",
+            min_len=0,
         )
     if reason == "host_resolved_libraries_present":
         return string_list(
             snapshot.get("host_resolved_libraries"),
             "snapshot.host_resolved_libraries",
+            min_len=0,
         )
     if reason == "host_loader_dependency":
         return [
@@ -194,6 +197,7 @@ def expected_live_action_values(reason, snapshot):
             for value in string_list(
                 snapshot.get("host_needed_libraries"),
                 "snapshot.host_needed_libraries",
+                min_len=0,
             )
             if "ld-linux" in value
         ]
@@ -203,6 +207,7 @@ def expected_live_action_values(reason, snapshot):
             for value in string_list(
                 snapshot.get("host_needed_libraries"),
                 "snapshot.host_needed_libraries",
+                min_len=0,
             )
             if "libc.so" in value
         ]
@@ -213,6 +218,7 @@ def expected_live_action_values(reason, snapshot):
                 for value in string_list(
                     snapshot.get("host_needed_libraries"),
                     "snapshot.host_needed_libraries",
+                    min_len=0,
                 )
                 if "libgcc_s.so" in value
             ],
@@ -221,18 +227,19 @@ def expected_live_action_values(reason, snapshot):
                 for value in string_list(
                     snapshot.get("host_version_requirements"),
                     "snapshot.host_version_requirements",
+                    min_len=0,
                 )
                 if value.startswith("libgcc_s.so")
             ],
         ]
     if reason == "undefined_unwind_symbols":
-        return string_list(snapshot.get("undefined_unwind_symbols"), "snapshot.undefined_unwind_symbols")
+        return string_list(snapshot.get("undefined_unwind_symbols"), "snapshot.undefined_unwind_symbols", min_len=0)
     if reason == "undefined_glibc_symbols":
-        return string_list(snapshot.get("undefined_glibc_symbols"), "snapshot.undefined_glibc_symbols")
+        return string_list(snapshot.get("undefined_glibc_symbols"), "snapshot.undefined_glibc_symbols", min_len=0)
     if reason == "undefined_tls_symbols":
-        return string_list(snapshot.get("undefined_tls_symbols"), "snapshot.undefined_tls_symbols")
+        return string_list(snapshot.get("undefined_tls_symbols"), "snapshot.undefined_tls_symbols", min_len=0)
     if reason == "host_version_requirements":
-        return string_list(snapshot.get("host_version_requirements"), "snapshot.host_version_requirements")
+        return string_list(snapshot.get("host_version_requirements"), "snapshot.host_version_requirements", min_len=0)
     errors.append(f"unknown live action reason {reason}")
     return []
 
@@ -344,35 +351,7 @@ snapshot = object_value(
     projection.get("current_forge_blocker_value_snapshot"),
     "current_forge_blocker_value_snapshot",
 )
-current_reasons = set(string_list(snapshot.get("blocking_reasons"), "snapshot.blocking_reasons", min_len=10))
-if len(current_reasons) != 10:
-    errors.append("current forge snapshot must expose ten unique blocking reasons")
-
-action_rows = projection.get("blocker_action_required_rows", {})
-if not isinstance(action_rows, dict) or not action_rows:
-    errors.append("current_forge_blocker_projection.blocker_action_required_rows must be a non-empty object")
-    action_rows = {}
-live_action_by_reason = {}
-for reason in sorted(current_reasons):
-    row = action_rows.get(reason)
-    context = f"current_forge_blocker_projection.blocker_action_required_rows.{reason}"
-    if row is None:
-        errors.append(f"current_forge_blocker_projection.blocker_action_required_rows missing {reason}")
-        continue
-    if not isinstance(row, dict):
-        errors.append(f"{context} must be an object")
-        continue
-    if row.get("blocking_reason") != reason:
-        errors.append(f"{context}.blocking_reason mismatch")
-    if row.get("promotion_allowed") is not False:
-        errors.append(f"{context}.promotion_allowed must be false")
-    live_values = string_list(row.get("current_blocker_values"), f"{context}.current_blocker_values")
-    if live_values != expected_live_action_values(reason, snapshot):
-        errors.append(f"{context}.current_blocker_values must match snapshot blocker values")
-    string_list(row.get("exit_criteria"), f"{context}.exit_criteria")
-    live_action_by_reason[reason] = row
-for reason in sorted(set(action_rows) - current_reasons):
-    errors.append(f"current_forge_blocker_projection.blocker_action_required_rows has unexpected reason {reason}")
+current_reasons = set(string_list(snapshot.get("blocking_reasons"), "snapshot.blocking_reasons", min_len=0))
 
 owner_rows = owner_ledger.get("ledger_rows", [])
 if not isinstance(owner_rows, list):
@@ -392,6 +371,31 @@ for row in owner_rows:
         reasons_by_owner[owner].append(reason)
 for reason in sorted(current_reasons - set(owner_by_reason)):
     errors.append(f"owner ledger missing current blocker reason {reason}")
+
+action_rows = projection.get("blocker_action_required_rows", {})
+if not isinstance(action_rows, dict) or not action_rows:
+    errors.append("current_forge_blocker_projection.blocker_action_required_rows must be a non-empty object")
+    action_rows = {}
+live_action_by_reason = {}
+for reason in sorted(action_rows):
+    row = action_rows.get(reason)
+    context = f"current_forge_blocker_projection.blocker_action_required_rows.{reason}"
+    if reason not in owner_by_reason:
+        errors.append(f"current_forge_blocker_projection.blocker_action_required_rows has unexpected reason {reason}")
+    if not isinstance(row, dict):
+        errors.append(f"{context} must be an object")
+        continue
+    if row.get("blocking_reason") != reason:
+        errors.append(f"{context}.blocking_reason mismatch")
+    if row.get("promotion_allowed") is not False:
+        errors.append(f"{context}.promotion_allowed must be false")
+    live_values = string_list(row.get("current_blocker_values"), f"{context}.current_blocker_values", min_len=0)
+    if live_values != expected_live_action_values(reason, snapshot):
+        errors.append(f"{context}.current_blocker_values must match snapshot blocker values")
+    string_list(row.get("exit_criteria"), f"{context}.exit_criteria")
+    live_action_by_reason[reason] = row
+for reason in sorted(current_reasons - set(live_action_by_reason)):
+    errors.append(f"current_forge_blocker_projection.blocker_action_required_rows missing {reason}")
 
 progress_rows = rollup.get("progress_categories", [])
 if not isinstance(progress_rows, list):
@@ -439,6 +443,7 @@ for row in progress_rows:
         action_values = string_list(
             action_row.get("current_blocker_values"),
             f"blocker_action_required_rows.{reason}.current_blocker_values",
+            min_len=0,
         )
         action_exit_criteria = string_list(
             action_row.get("exit_criteria"),
@@ -487,7 +492,7 @@ for row in progress_rows:
         }
     )
 
-if rollup_reason_set != current_reasons:
+if current_reasons and rollup_reason_set != current_reasons:
     errors.append("progress_categories must cover every current blocker reason exactly through owner ledger")
 
 matrix_rows = version_burndown.get("version_requirement_matrix", [])
@@ -709,10 +714,13 @@ if partial_seen != set(partial_specs):
 
 summary = object_value(rollup.get("summary"), "summary")
 last_known_value_count = sum(row["last_known_value_count"] for row in materialized_categories)
+blocked_progress_category_count = sum(
+    1 for row in materialized_categories if row["unique_current_value_count"] > 0
+)
 summary_expectations = {
     "current_blocking_reason_count": len(current_reasons),
     "progress_category_count": len(materialized_categories),
-    "blocked_progress_category_count": len(materialized_categories),
+    "blocked_progress_category_count": blocked_progress_category_count,
     "partial_burndown_experiment_count": len(materialized_partial_experiments),
     "report_only_reduced_value_count": partial_reduced_count,
     "last_known_value_count": last_known_value_count,

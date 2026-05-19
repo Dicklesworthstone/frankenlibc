@@ -384,10 +384,6 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
     for row in json_array(&owner_ledger, "ledger_rows")? {
         let owner = json_string(row, "owner_surface")?.to_owned();
         let reason = json_string(row, "blocking_reason")?.to_owned();
-        require(
-            current_reasons.contains(&reason),
-            format!("owner ledger reason {reason} must be current"),
-        )?;
         reasons_by_owner
             .entry(owner.clone())
             .or_default()
@@ -441,8 +437,12 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
         )?;
     }
     require(
-        rollup_reasons == current_reasons,
-        "rollup categories must cover every current blocker reason",
+        current_reasons.is_empty(),
+        "clean forge snapshot should expose no current blocker reasons",
+    )?;
+    require(
+        rollup_reasons == action_rows.keys().cloned().collect::<BTreeSet<_>>(),
+        "rollup categories must retain every known blocker action row",
     )?;
 
     let provider_requirements = matrix_requirement_ids_by_provider(&version_burndown)?;
@@ -665,8 +665,8 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
     for row in categories {
         let category = json_string(row, "category_id")?;
         require(
-            !json_array(row, "last_known_values")?.is_empty(),
-            format!("{category}: values must be materialized in report"),
+            json_array(row, "last_known_values")?.is_empty(),
+            format!("{category}: values must be empty after clean default forge"),
         )?;
         let action_rows = json_array(row, "blocker_action_rows")?;
         require(
@@ -735,12 +735,8 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
         "direct NEEDED row primary probe",
     )?;
     require(
-        array_contains(
-            direct_needed,
-            "current_blocker_values",
-            "ld-linux-x86-64.so.2",
-        )?,
-        "direct NEEDED row must include ld-linux DT_NEEDED value",
+        json_array(direct_needed, "current_blocker_values")?.is_empty(),
+        "direct NEEDED row must have no current blocker values",
     )?;
     require(
         !array_contains(direct_needed, "current_blocker_values", "libc.so.6")?,
@@ -771,16 +767,8 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
         "resolved library row primary probe",
     )?;
     require(
-        array_contains(resolved, "current_blocker_values", "libc.so.6")?,
-        "resolved library row must include transitive libc value",
-    )?;
-    require(
-        array_contains(
-            resolved,
-            "current_blocker_values",
-            "/lib64/ld-linux-x86-64.so.2",
-        )?,
-        "resolved library row must include loader path value",
+        json_array(resolved, "current_blocker_values")?.is_empty(),
+        "resolved library row must have no current blocker values",
     )?;
     require(
         json_field(
@@ -788,8 +776,26 @@ fn checker_materializes_current_values_and_exit_criteria() -> TestResult {
             "last_known_value_count",
         )?
         .as_u64()
-            == Some(34),
-        "report summary last_known_value_count must be 34",
+            == Some(0),
+        "report summary last_known_value_count must be 0",
+    )?;
+    require(
+        json_field(
+            json_field(&report_json, "summary")?,
+            "current_blocking_reason_count",
+        )?
+        .as_u64()
+            == Some(0),
+        "report summary current blocker count must be 0",
+    )?;
+    require(
+        json_field(
+            json_field(&report_json, "summary")?,
+            "blocked_progress_category_count",
+        )?
+        .as_u64()
+            == Some(0),
+        "report summary blocked category count must be 0",
     )?;
     require(
         json_field(
@@ -927,7 +933,7 @@ fn checker_rejects_missing_live_action_row() -> TestResult {
     expect_checker_failure_with_plan(
         &mutated,
         "plan-missing-live-action-row",
-        "current_forge_blocker_projection.blocker_action_required_rows missing undefined_tls_symbols",
+        "progress_categories[tls_startup].undefined_tls_symbols.owner_surface must match progress category tls_startup",
     )
 }
 

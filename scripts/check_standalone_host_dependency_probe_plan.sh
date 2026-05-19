@@ -142,79 +142,22 @@ EXPECTED_FORGE_BLOCKER_SNAPSHOT = {
     "source_artifact": "target/conformance/standalone_replacement_artifact.report.json",
     "source_mode": "forge",
     "source_commit": "current",
-    "decision": "snapshot_only_claims_remain_blocked",
-    "claim_status": "claim_blocked",
+    "decision": "snapshot_only_artifact_current_no_l2_promotion",
+    "claim_status": "artifact_current",
     "artifact_status": "current",
-    "failure_signature": "host_glibc_dependency",
-    "host_glibc_dependency": True,
+    "failure_signature": "none",
+    "host_glibc_dependency": False,
     "sampled_symbols_present": True,
-    "blocking_reasons": [
-        "host_needed_libraries_present",
-        "host_direct_needed_libraries_present",
-        "host_resolved_libraries_present",
-        "host_loader_dependency",
-        "host_libc_dependency",
-        "libgcc_runtime_dependency",
-        "undefined_unwind_symbols",
-        "undefined_glibc_symbols",
-        "undefined_tls_symbols",
-        "host_version_requirements",
-    ],
-    "needed_libraries": [
-        "ld-linux-x86-64.so.2",
-        "libgcc_s.so.1",
-    ],
-    "host_direct_needed_libraries": [
-        "ld-linux-x86-64.so.2",
-        "libgcc_s.so.1",
-    ],
-    "host_resolved_libraries": [
-        "/lib64/ld-linux-x86-64.so.2",
-        "libc.so.6",
-        "libgcc_s.so.1",
-    ],
-    "host_needed_libraries": [
-        "/lib64/ld-linux-x86-64.so.2",
-        "ld-linux-x86-64.so.2",
-        "libc.so.6",
-        "libgcc_s.so.1",
-    ],
-    "undefined_unwind_symbols": [
-        "_Unwind_Backtrace@GCC_3.3",
-        "_Unwind_DeleteException@GCC_3.0",
-        "_Unwind_GetDataRelBase@GCC_3.0",
-        "_Unwind_GetIP@GCC_3.0",
-        "_Unwind_GetIPInfo@GCC_4.2.0",
-        "_Unwind_GetLanguageSpecificData@GCC_3.0",
-        "_Unwind_GetRegionStart@GCC_3.0",
-        "_Unwind_GetTextRelBase@GCC_3.0",
-        "_Unwind_RaiseException@GCC_3.0",
-        "_Unwind_Resume@GCC_3.0",
-        "_Unwind_SetGR@GCC_3.0",
-        "_Unwind_SetIP@GCC_3.0",
-    ],
-    "undefined_glibc_symbols": [
-        "__tls_get_addr@GLIBC_2.3",
-    ],
-    "undefined_tls_symbols": [
-        "__tls_get_addr@GLIBC_2.3",
-    ],
-    "host_version_requirements": [
-        "ld-linux-x86-64.so.2:GLIBC_2.3",
-        "libgcc_s.so.1:GCC_3.0",
-        "libgcc_s.so.1:GCC_3.3",
-        "libgcc_s.so.1:GCC_4.2.0",
-    ],
-    "version_needs": {
-        "ld-linux-x86-64.so.2": [
-            "GLIBC_2.3",
-        ],
-        "libgcc_s.so.1": [
-            "GCC_3.0",
-            "GCC_3.3",
-            "GCC_4.2.0",
-        ],
-    },
+    "blocking_reasons": [],
+    "needed_libraries": [],
+    "host_direct_needed_libraries": [],
+    "host_resolved_libraries": [],
+    "host_needed_libraries": [],
+    "undefined_unwind_symbols": [],
+    "undefined_glibc_symbols": [],
+    "undefined_tls_symbols": [],
+    "host_version_requirements": [],
+    "version_needs": {},
     "snapshot_policy": {
         "promotion_allowed": False,
         "refresh_required_on_blocker_delta": True,
@@ -330,8 +273,12 @@ def validate_current_forge_blocker_snapshot(projection):
     blocking_reasons = snapshot.get("blocking_reasons", [])
     if not isinstance(blocking_reasons, list) or not all(isinstance(reason, str) for reason in blocking_reasons):
         errors.append("current_forge_blocker_value_snapshot.blocking_reasons must be a string array")
-    elif set(blocking_reasons) != set(REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE):
-        errors.append("current_forge_blocker_value_snapshot.blocking_reasons must match projected forge reasons")
+    else:
+        unknown_reasons = sorted(set(blocking_reasons) - set(REQUIRED_FORGE_BLOCKING_REASON_TO_PROBE))
+        if unknown_reasons:
+            errors.append(
+                f"current_forge_blocker_value_snapshot.blocking_reasons contains unknown reasons: {unknown_reasons}"
+            )
 
     version_needs = snapshot.get("version_needs", {})
     if not isinstance(version_needs, dict):

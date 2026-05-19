@@ -23,8 +23,31 @@
     "source_cdylib_name": "libfrankenlibc_abi.so",
     "cargo_package": "frankenlibc-abi",
     "cargo_profile": "release",
-    "cargo_features": ["standalone"],
+    "cargo_features": ["standalone", "owned-unwind-stub", "owned-tls-cache"],
+    "build_std_components": ["std", "panic_abort"],
+    "panic_strategy": "immediate-abort",
     "default_cargo_target_dir": "target/standalone_replacement_artifact/cargo-target",
+    "default_build_command": [
+      "rch",
+      "exec",
+      "--",
+      "cargo",
+      "build",
+      "-Z",
+      "build-std=std,panic_abort",
+      "-p",
+      "frankenlibc-abi",
+      "--release",
+      "--features=standalone,owned-unwind-stub,owned-tls-cache"
+    ],
+    "default_build_env": {
+      "CARGO_PROFILE_RELEASE_PANIC": "immediate-abort",
+      "RCH_REQUIRE_REMOTE": "1"
+    },
+    "default_remote_env_allowlist": [
+      "CARGO_TARGET_DIR",
+      "CARGO_PROFILE_RELEASE_PANIC"
+    ],
     "artifact_env": "FRANKENLIBC_STANDALONE_LIB",
     "source_artifact_env": "STANDALONE_REPLACEMENT_SOURCE_LIB",
     "cargo_target_dir_env": "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
@@ -58,6 +81,8 @@
       "cc"
     ],
     "sanitized_env_keys": [
+      "CARGO_PROFILE_RELEASE_PANIC",
+      "RCH_REQUIRE_REMOTE",
       "RUSTFLAGS",
       "RUSTC_WRAPPER",
       "RCH_ENV_ALLOWLIST",

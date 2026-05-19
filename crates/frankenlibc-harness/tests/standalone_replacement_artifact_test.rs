@@ -427,7 +427,7 @@ EOF
     path
 }
 
-fn fake_improved_dependency_probe_path(temp: &Path) -> OsString {
+fn fake_zero_dependency_probe_path(temp: &Path) -> OsString {
     let path = fake_dependency_probe_path(temp);
     let fake_bin = temp.join("fake-probe-bin");
     std::fs::write(
@@ -435,8 +435,8 @@ fn fake_improved_dependency_probe_path(temp: &Path) -> OsString {
         r#"#!/bin/sh
 if [ "$1" = "-d" ]; then
   cat <<'EOF'
-Dynamic section at offset 0x1000 contains 2 entries:
- 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
+Dynamic section at offset 0x1000 contains 1 entry:
+ 0x0000000000000000 (NULL)               0x0
 EOF
   exit 0
 fi
@@ -449,17 +449,12 @@ if [ "$1" = "-Ws" ]; then
      4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
      5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
      6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
-     7: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND _Unwind_Resume@GCC_3.0
-     8: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __tls_get_addr@GLIBC_2.3
 EOF
   exit 0
 fi
 if [ "$1" = "--version-info" ]; then
   cat <<'EOF'
-Version needs section '.gnu.version_r' contains 1 entry:
- Addr: 0x0000000000001000  Offset: 0x00001000  Link: 7 (.dynstr)
-  000000: Version: 1  File: libgcc_s.so.1  Cnt: 1
-  0x0020:   Name: GCC_3.0  Flags: none  Version: 5
+No version information found in this file.
 EOF
   exit 0
 fi
@@ -467,27 +462,30 @@ echo unexpected readelf invocation "$@" >&2
 exit 2
 "#,
     )
-    .expect("write improved fake readelf");
+    .expect("write zero-dependency fake readelf");
     std::fs::write(
         fake_bin.join("nm"),
         r#"#!/bin/sh
 cat <<'EOF'
-                 U _Unwind_Resume@GCC_3.0
-                 U __tls_get_addr@GLIBC_2.3
+0000000000001000 T __libc_start_main
+0000000000001001 T malloc
+0000000000001002 T free
+0000000000001003 T printf
+0000000000001004 T pthread_create
+0000000000001005 T getaddrinfo
 EOF
 "#,
     )
-    .expect("write improved fake nm");
+    .expect("write zero-dependency fake nm");
     std::fs::write(
         fake_bin.join("ldd"),
         r#"#!/bin/sh
 cat <<'EOF'
-	linux-vdso.so.1 (0x00007fff00000000)
-	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f0000000000)
+	statically linked
 EOF
 "#,
     )
-    .expect("write improved fake ldd");
+    .expect("write zero-dependency fake ldd");
     path
 }
 
@@ -1022,8 +1020,31 @@ fn manifest_matches_forge_contract() {
             "source_cdylib_name": "libfrankenlibc_abi.so",
             "cargo_package": "frankenlibc-abi",
             "cargo_profile": "release",
-            "cargo_features": ["standalone"],
+            "cargo_features": ["standalone", "owned-unwind-stub", "owned-tls-cache"],
+            "build_std_components": ["std", "panic_abort"],
+            "panic_strategy": "immediate-abort",
             "default_cargo_target_dir": "target/standalone_replacement_artifact/cargo-target",
+            "default_build_command": [
+                "rch",
+                "exec",
+                "--",
+                "cargo",
+                "build",
+                "-Z",
+                "build-std=std,panic_abort",
+                "-p",
+                "frankenlibc-abi",
+                "--release",
+                "--features=standalone,owned-unwind-stub,owned-tls-cache",
+            ],
+            "default_build_env": {
+                "CARGO_PROFILE_RELEASE_PANIC": "immediate-abort",
+                "RCH_REQUIRE_REMOTE": "1",
+            },
+            "default_remote_env_allowlist": [
+                "CARGO_TARGET_DIR",
+                "CARGO_PROFILE_RELEASE_PANIC",
+            ],
             "artifact_env": "FRANKENLIBC_STANDALONE_LIB",
             "source_artifact_env": "STANDALONE_REPLACEMENT_SOURCE_LIB",
             "cargo_target_dir_env": "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
@@ -1093,6 +1114,8 @@ fn manifest_matches_forge_contract() {
                 "cc",
             ],
             "sanitized_env_keys": [
+                "CARGO_PROFILE_RELEASE_PANIC",
+                "RCH_REQUIRE_REMOTE",
                 "RUSTFLAGS",
                 "RUSTC_WRAPPER",
                 "RCH_ENV_ALLOWLIST",
@@ -2212,14 +2235,14 @@ fn forge_mode_reports_host_dependency_breakdown() {
         .output()
         .expect("forge mode should run");
     assert!(
-        output.status.success(),
-        "forge mode should keep the gate pass/claim blocked for host dependencies:\nstdout={}\nstderr={}",
+        !output.status.success(),
+        "synthetic host dependencies should fail closed as a blocker-delta regression:\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
     let report_json = load_json(&report);
-    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["status"].as_str(), Some("fail"));
     assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
     assert_eq!(
         report_json["artifact_state"]["status"].as_str(),
@@ -2859,38 +2882,42 @@ fn forge_mode_reports_host_dependency_breakdown() {
         delta
             .get("delta_classification")
             .and_then(serde_json::Value::as_str),
-        Some("unchanged")
+        Some("regression")
     );
     assert_eq!(
         delta
             .get("refresh_required")
             .and_then(serde_json::Value::as_bool),
-        Some(false)
+        Some(true)
     );
     assert!(
-        delta["added_host_needed_libraries"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
+        string_set(&delta["added_host_needed_libraries"]).contains("libgcc_s.so.1"),
+        "host dependency regression should record added host libraries"
     );
     assert!(
-        delta["added_host_direct_needed_libraries"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
+        string_set(&delta["added_host_direct_needed_libraries"]).contains("libgcc_s.so.1"),
+        "host dependency regression should record added direct DT_NEEDED libraries"
     );
     assert!(
-        delta["added_host_resolved_libraries"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
+        string_set(&delta["added_host_resolved_libraries"]).contains("libgcc_s.so.1"),
+        "host dependency regression should record added ldd-resolved libraries"
     );
     assert!(
-        delta["added_undefined_symbols"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
+        string_set(&delta["added_undefined_symbols"]).contains("__tls_get_addr@GLIBC_2.3"),
+        "host dependency regression should record added undefined symbols"
     );
     assert!(
-        delta["added_version_requirements"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
+        string_set(&delta["added_version_requirements"]).contains("libgcc_s.so.1:GCC_3.0"),
+        "host dependency regression should record added version requirements"
+    );
+    let errors = report_json["errors"]
+        .as_array()
+        .expect("errors should be an array");
+    assert!(
+        errors.iter().any(|error| error
+            .as_str()
+            .is_some_and(|message| message.contains("blocker_delta regression"))),
+        "expected blocker_delta regression error: {errors:?}"
     );
 }
 
@@ -2983,13 +3010,13 @@ fn forge_mode_fails_closed_on_new_blocker_delta() {
 }
 
 #[test]
-fn forge_mode_requires_refresh_note_for_removed_blockers() {
+fn forge_mode_accepts_zero_host_dependency_snapshot_without_refresh_note() {
     if Command::new("cc").arg("--version").output().is_err() {
         return;
     }
 
     let root = workspace_root();
-    let temp = unique_temp_dir("standalone-artifact-blocker-delta-improvement");
+    let temp = unique_temp_dir("standalone-artifact-zero-host-delta");
     let source_c = temp.join("sample.c");
     let source_so = temp.join("libfrankenlibc_abi.so");
     std::fs::write(
@@ -3009,23 +3036,20 @@ fn forge_mode_requires_refresh_note_for_removed_blockers() {
         return;
     }
 
-    let first_report = temp.join("refresh-needed.report.json");
-    let first_output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+    let report = temp.join("zero-host.report.json");
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
         .arg("--forge")
         .current_dir(&root)
-        .env("PATH", fake_improved_dependency_probe_path(&temp))
-        .env(
-            "STANDALONE_REPLACEMENT_OUT_DIR",
-            temp.join("refresh-needed-out"),
-        )
+        .env("PATH", fake_zero_dependency_probe_path(&temp))
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", temp.join("zero-host-out"))
         .env(
             "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
-            temp.join("refresh-needed-cargo-target"),
+            temp.join("zero-host-cargo-target"),
         )
-        .env("STANDALONE_REPLACEMENT_REPORT", &first_report)
+        .env("STANDALONE_REPLACEMENT_REPORT", &report)
         .env(
             "STANDALONE_REPLACEMENT_LOG",
-            temp.join("refresh-needed.log.jsonl"),
+            temp.join("zero-host.log.jsonl"),
         )
         .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
         .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
@@ -3033,83 +3057,59 @@ fn forge_mode_requires_refresh_note_for_removed_blockers() {
         .output()
         .expect("forge mode should run");
     assert!(
-        !first_output.status.success(),
-        "removed blockers without a refresh note should require snapshot refresh\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&first_output.stdout),
-        String::from_utf8_lossy(&first_output.stderr)
+        output.status.success(),
+        "zero-host synthetic forge should match the committed clean snapshot\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
-    let first = load_json(&first_report);
-    assert_eq!(first["status"].as_str(), Some("fail"));
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
     assert_eq!(
-        first["blocker_delta"]["delta_classification"].as_str(),
-        Some("expected_refresh_needed")
+        report_json["claim_status"].as_str(),
+        Some("artifact_current")
     );
     assert_eq!(
-        first["blocker_delta"]["refresh_required"].as_bool(),
+        report_json["artifact_state"]["failure_signature"].as_str(),
+        Some("none")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["host_glibc_dependency"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        report_json["artifact_state"]["sampled_symbols_present"].as_bool(),
         Some(true)
     );
+    let breakdown = &report_json["artifact_state"]["dependency_breakdown"];
+    for field in [
+        "host_needed_libraries",
+        "host_direct_needed_libraries",
+        "host_resolved_libraries",
+        "undefined_symbols",
+        "host_version_requirements",
+        "blocking_reasons",
+    ] {
+        assert!(
+            breakdown[field].as_array().is_some_and(Vec::is_empty),
+            "{field} should remain empty for the zero-host synthetic forge"
+        );
+    }
     assert!(
-        !string_set(&first["blocker_delta"]["removed_undefined_symbols"]).is_empty(),
-        "removed undefined blockers should be recorded"
-    );
-    assert!(
-        !string_set(&first["blocker_delta"]["removed_host_direct_needed_libraries"]).is_empty(),
-        "removed direct DT_NEEDED blockers should be recorded"
-    );
-    assert!(
-        !string_set(&first["blocker_delta"]["removed_host_resolved_libraries"]).is_empty(),
-        "removed ldd-resolved blockers should be recorded"
-    );
-    assert!(
-        string_set(&first["blocker_delta"]["added_undefined_symbols"]).is_empty(),
-        "improvement path should not add undefined blockers"
-    );
-
-    let second_report = temp.join("improvement.report.json");
-    let second_output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
-        .arg("--forge")
-        .current_dir(&root)
-        .env("PATH", fake_improved_dependency_probe_path(&temp))
-        .env(
-            "STANDALONE_REPLACEMENT_OUT_DIR",
-            temp.join("improvement-out"),
-        )
-        .env(
-            "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
-            temp.join("improvement-cargo-target"),
-        )
-        .env("STANDALONE_REPLACEMENT_REPORT", &second_report)
-        .env(
-            "STANDALONE_REPLACEMENT_LOG",
-            temp.join("improvement.log.jsonl"),
-        )
-        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
-        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
-        .env(
-            "STANDALONE_REPLACEMENT_BLOCKER_DELTA_REFRESH_NOTE",
-            "bd-zyck1.92 synthetic snapshot refresh evidence",
-        )
-        .env_remove("LD_PRELOAD")
-        .output()
-        .expect("forge mode should run");
-    assert!(
-        second_output.status.success(),
-        "refresh note should classify pure removals as improvement\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&second_output.stdout),
-        String::from_utf8_lossy(&second_output.stderr)
-    );
-    let second = load_json(&second_report);
-    assert_eq!(second["status"].as_str(), Some("pass"));
-    assert_eq!(
-        second["blocker_delta"]["delta_classification"].as_str(),
-        Some("improvement")
+        breakdown["version_needs"]
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty),
+        "version_needs should remain empty for the zero-host synthetic forge"
     );
     assert_eq!(
-        second["blocker_delta"]["refresh_note_present"].as_bool(),
-        Some(true)
+        report_json["blocker_delta"]["delta_classification"].as_str(),
+        Some("unchanged")
     );
     assert_eq!(
-        second["blocker_delta"]["refresh_required"].as_bool(),
+        report_json["blocker_delta"]["refresh_note_present"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        report_json["blocker_delta"]["refresh_required"].as_bool(),
         Some(false)
     );
 }

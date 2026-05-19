@@ -119,60 +119,22 @@ const FORGE_FAILURE_SIGNATURE_MAPPINGS: &[(&str, &str)] = &[
     ("symbol_evidence_missing", "missing_symbol_evidence"),
 ];
 
-const FORGE_BLOCKER_SNAPSHOT_BLOCKING_REASONS: &[&str] = &[
-    "host_needed_libraries_present",
-    "host_direct_needed_libraries_present",
-    "host_resolved_libraries_present",
-    "host_loader_dependency",
-    "host_libc_dependency",
-    "libgcc_runtime_dependency",
-    "undefined_unwind_symbols",
-    "undefined_glibc_symbols",
-    "undefined_tls_symbols",
-    "host_version_requirements",
-];
+const FORGE_BLOCKER_SNAPSHOT_BLOCKING_REASONS: &[&str] = &[];
 
-const FORGE_BLOCKER_SNAPSHOT_NEEDED_LIBRARIES: &[&str] = &["ld-linux-x86-64.so.2", "libgcc_s.so.1"];
+const FORGE_BLOCKER_SNAPSHOT_NEEDED_LIBRARIES: &[&str] = &[];
 
-const FORGE_BLOCKER_SNAPSHOT_HOST_RESOLVED_LIBRARIES: &[&str] =
-    &["/lib64/ld-linux-x86-64.so.2", "libc.so.6", "libgcc_s.so.1"];
+const FORGE_BLOCKER_SNAPSHOT_HOST_RESOLVED_LIBRARIES: &[&str] = &[];
 
-const FORGE_BLOCKER_SNAPSHOT_HOST_NEEDED_LIBRARIES: &[&str] = &[
-    "/lib64/ld-linux-x86-64.so.2",
-    "ld-linux-x86-64.so.2",
-    "libc.so.6",
-    "libgcc_s.so.1",
-];
+const FORGE_BLOCKER_SNAPSHOT_HOST_NEEDED_LIBRARIES: &[&str] = &[];
 
-const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_UNWIND_SYMBOLS: &[&str] = &[
-    "_Unwind_Backtrace@GCC_3.3",
-    "_Unwind_DeleteException@GCC_3.0",
-    "_Unwind_GetDataRelBase@GCC_3.0",
-    "_Unwind_GetIP@GCC_3.0",
-    "_Unwind_GetIPInfo@GCC_4.2.0",
-    "_Unwind_GetLanguageSpecificData@GCC_3.0",
-    "_Unwind_GetRegionStart@GCC_3.0",
-    "_Unwind_GetTextRelBase@GCC_3.0",
-    "_Unwind_RaiseException@GCC_3.0",
-    "_Unwind_Resume@GCC_3.0",
-    "_Unwind_SetGR@GCC_3.0",
-    "_Unwind_SetIP@GCC_3.0",
-];
+const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_UNWIND_SYMBOLS: &[&str] = &[];
 
-const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_GLIBC_SYMBOLS: &[&str] = &["__tls_get_addr@GLIBC_2.3"];
-const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_TLS_SYMBOLS: &[&str] = &["__tls_get_addr@GLIBC_2.3"];
+const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_GLIBC_SYMBOLS: &[&str] = &[];
+const FORGE_BLOCKER_SNAPSHOT_UNDEFINED_TLS_SYMBOLS: &[&str] = &[];
 
-const FORGE_BLOCKER_SNAPSHOT_HOST_VERSION_REQUIREMENTS: &[&str] = &[
-    "ld-linux-x86-64.so.2:GLIBC_2.3",
-    "libgcc_s.so.1:GCC_3.0",
-    "libgcc_s.so.1:GCC_3.3",
-    "libgcc_s.so.1:GCC_4.2.0",
-];
+const FORGE_BLOCKER_SNAPSHOT_HOST_VERSION_REQUIREMENTS: &[&str] = &[];
 
-const FORGE_BLOCKER_SNAPSHOT_VERSION_NEEDS: &[(&str, &[&str])] = &[
-    ("ld-linux-x86-64.so.2", &["GLIBC_2.3"]),
-    ("libgcc_s.so.1", &["GCC_3.0", "GCC_3.3", "GCC_4.2.0"]),
-];
+const FORGE_BLOCKER_SNAPSHOT_VERSION_NEEDS: &[(&str, &[&str])] = &[];
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -327,11 +289,11 @@ fn assert_forge_blocker_value_snapshot(
         "current_forge_blocker_value_snapshot.source_commit must be 'current' or match current git HEAD",
     )?;
     require(
-        json_string(snapshot, "decision")? == "snapshot_only_claims_remain_blocked",
-        "snapshot decision must not promote claims",
+        json_string(snapshot, "decision")? == "snapshot_only_artifact_current_no_l2_promotion",
+        "snapshot decision must not promote replacement level",
     )?;
     require(
-        json_string(snapshot, "claim_status")? == "claim_blocked",
+        json_string(snapshot, "claim_status")? == "artifact_current",
         "snapshot claim_status",
     )?;
     require(
@@ -339,11 +301,11 @@ fn assert_forge_blocker_value_snapshot(
         "snapshot artifact_status",
     )?;
     require(
-        json_string(snapshot, "failure_signature")?.eq("host_glibc_dependency"),
+        json_string(snapshot, "failure_signature")?.eq("none"),
         "snapshot failure_signature",
     )?;
     require(
-        json_field(snapshot, "host_glibc_dependency")?.as_bool() == Some(true),
+        json_field(snapshot, "host_glibc_dependency")?.as_bool() == Some(false),
         "snapshot host_glibc_dependency",
     )?;
     require(
@@ -356,9 +318,15 @@ fn assert_forge_blocker_value_snapshot(
         "blocking_reasons",
         FORGE_BLOCKER_SNAPSHOT_BLOCKING_REASONS,
     )?;
+    let unknown_reasons = string_set(snapshot, "blocking_reasons")?
+        .difference(expected_reason_set)
+        .cloned()
+        .collect::<HashSet<_>>();
     require(
-        string_set(snapshot, "blocking_reasons")? == *expected_reason_set,
-        "snapshot blocking_reasons must match projected forge reasons",
+        unknown_reasons.is_empty(),
+        format!(
+            "snapshot blocking_reasons must be known projected forge reasons: {unknown_reasons:?}"
+        ),
     )?;
     assert_string_array_eq(
         snapshot,
@@ -551,17 +519,12 @@ fn expected_blocker_action_values(reason: &str) -> TestResult<HashSet<String>> {
         "host_needed_libraries_present" => FORGE_BLOCKER_SNAPSHOT_HOST_NEEDED_LIBRARIES,
         "host_direct_needed_libraries_present" => FORGE_BLOCKER_SNAPSHOT_NEEDED_LIBRARIES,
         "host_resolved_libraries_present" => FORGE_BLOCKER_SNAPSHOT_HOST_RESOLVED_LIBRARIES,
-        "host_loader_dependency" => &["/lib64/ld-linux-x86-64.so.2", "ld-linux-x86-64.so.2"],
-        "host_libc_dependency" => &["libc.so.6"],
-        "libgcc_runtime_dependency" => &[
-            "libgcc_s.so.1",
-            "libgcc_s.so.1:GCC_3.0",
-            "libgcc_s.so.1:GCC_3.3",
-            "libgcc_s.so.1:GCC_4.2.0",
-        ],
+        "host_loader_dependency" => &[],
+        "host_libc_dependency" => &[],
+        "libgcc_runtime_dependency" => &[],
         "undefined_unwind_symbols" => FORGE_BLOCKER_SNAPSHOT_UNDEFINED_UNWIND_SYMBOLS,
-        "undefined_glibc_symbols" => &["__tls_get_addr@GLIBC_2.3"],
-        "undefined_tls_symbols" => &["__tls_get_addr@GLIBC_2.3"],
+        "undefined_glibc_symbols" => &[],
+        "undefined_tls_symbols" => &[],
         "host_version_requirements" => FORGE_BLOCKER_SNAPSHOT_HOST_VERSION_REQUIREMENTS,
         _ => return Err(format!("unexpected blocker action reason {reason}")),
     };
@@ -1046,37 +1009,37 @@ fn checker_emits_report_and_required_jsonl_rows() -> TestResult {
         }
     }
     require(
-        json_u64(summary, "forge_blocker_snapshot_blocking_reason_count")? == 10,
-        "forge blocker snapshot reason count must be 10",
+        json_u64(summary, "forge_blocker_snapshot_blocking_reason_count")? == 0,
+        "forge blocker snapshot reason count must be 0",
     )?;
     require(
-        json_u64(summary, "forge_blocker_snapshot_needed_library_count")? == 2,
-        "forge blocker snapshot needed library count must be 2",
+        json_u64(summary, "forge_blocker_snapshot_needed_library_count")? == 0,
+        "forge blocker snapshot needed library count must be 0",
     )?;
     require(
         json_u64(
             summary,
             "forge_blocker_snapshot_host_resolved_library_count",
-        )? == 3,
-        "forge blocker snapshot host resolved library count must be 3",
+        )? == 0,
+        "forge blocker snapshot host resolved library count must be 0",
     )?;
     require(
-        json_u64(summary, "forge_blocker_snapshot_undefined_symbol_count")? == 14,
-        "forge blocker snapshot undefined symbol count must be 14",
+        json_u64(summary, "forge_blocker_snapshot_undefined_symbol_count")? == 0,
+        "forge blocker snapshot undefined symbol count must be 0",
     )?;
     require(
         json_u64(
             summary,
             "forge_blocker_snapshot_host_version_requirement_count",
-        )? == 4,
-        "forge blocker snapshot host version requirement count must be 4",
+        )? == 0,
+        "forge blocker snapshot host version requirement count must be 0",
     )?;
     require(
         json_u64(
             summary,
             "forge_blocker_snapshot_version_need_provider_count",
-        )? == 2,
-        "forge blocker snapshot version need provider count must be 2",
+        )? == 0,
+        "forge blocker snapshot version need provider count must be 0",
     )?;
     require(
         json_string(&report, "source_commit")?.len() == 40,
@@ -1424,7 +1387,7 @@ fn checker_rejects_forge_blocker_value_snapshot_drift() -> TestResult {
             .ok_or_else(|| "missing current_forge_blocker_value_snapshot".to_string())?;
         snapshot.insert(
             "undefined_tls_symbols".to_string(),
-            Value::Array(Vec::new()),
+            Value::Array(vec![Value::String("__tls_get_addr@GLIBC_2.3".to_string())]),
         );
         Ok(())
     })?;

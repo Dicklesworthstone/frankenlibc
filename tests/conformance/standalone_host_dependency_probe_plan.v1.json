@@ -119,79 +119,22 @@
       "source_artifact": "target/conformance/standalone_replacement_artifact.report.json",
       "source_mode": "forge",
       "source_commit": "current",
-      "decision": "snapshot_only_claims_remain_blocked",
-      "claim_status": "claim_blocked",
+      "decision": "snapshot_only_artifact_current_no_l2_promotion",
+      "claim_status": "artifact_current",
       "artifact_status": "current",
-      "failure_signature": "host_glibc_dependency",
-      "host_glibc_dependency": true,
+      "failure_signature": "none",
+      "host_glibc_dependency": false,
       "sampled_symbols_present": true,
-      "blocking_reasons": [
-        "host_needed_libraries_present",
-        "host_direct_needed_libraries_present",
-        "host_resolved_libraries_present",
-        "host_loader_dependency",
-        "host_libc_dependency",
-        "libgcc_runtime_dependency",
-        "undefined_unwind_symbols",
-        "undefined_glibc_symbols",
-        "undefined_tls_symbols",
-        "host_version_requirements"
-      ],
-      "needed_libraries": [
-        "ld-linux-x86-64.so.2",
-        "libgcc_s.so.1"
-      ],
-      "host_direct_needed_libraries": [
-        "ld-linux-x86-64.so.2",
-        "libgcc_s.so.1"
-      ],
-      "host_resolved_libraries": [
-        "/lib64/ld-linux-x86-64.so.2",
-        "libc.so.6",
-        "libgcc_s.so.1"
-      ],
-      "host_needed_libraries": [
-        "/lib64/ld-linux-x86-64.so.2",
-        "ld-linux-x86-64.so.2",
-        "libc.so.6",
-        "libgcc_s.so.1"
-      ],
-      "undefined_unwind_symbols": [
-        "_Unwind_Backtrace@GCC_3.3",
-        "_Unwind_DeleteException@GCC_3.0",
-        "_Unwind_GetDataRelBase@GCC_3.0",
-        "_Unwind_GetIP@GCC_3.0",
-        "_Unwind_GetIPInfo@GCC_4.2.0",
-        "_Unwind_GetLanguageSpecificData@GCC_3.0",
-        "_Unwind_GetRegionStart@GCC_3.0",
-        "_Unwind_GetTextRelBase@GCC_3.0",
-        "_Unwind_RaiseException@GCC_3.0",
-        "_Unwind_Resume@GCC_3.0",
-        "_Unwind_SetGR@GCC_3.0",
-        "_Unwind_SetIP@GCC_3.0"
-      ],
-      "undefined_glibc_symbols": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "undefined_tls_symbols": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "host_version_requirements": [
-        "ld-linux-x86-64.so.2:GLIBC_2.3",
-        "libgcc_s.so.1:GCC_3.0",
-        "libgcc_s.so.1:GCC_3.3",
-        "libgcc_s.so.1:GCC_4.2.0"
-      ],
-      "version_needs": {
-        "ld-linux-x86-64.so.2": [
-          "GLIBC_2.3"
-        ],
-        "libgcc_s.so.1": [
-          "GCC_3.0",
-          "GCC_3.3",
-          "GCC_4.2.0"
-        ]
-      },
+      "blocking_reasons": [],
+      "needed_libraries": [],
+      "host_direct_needed_libraries": [],
+      "host_resolved_libraries": [],
+      "host_needed_libraries": [],
+      "undefined_unwind_symbols": [],
+      "undefined_glibc_symbols": [],
+      "undefined_tls_symbols": [],
+      "host_version_requirements": [],
+      "version_needs": {},
       "snapshot_policy": {
         "promotion_allowed": false,
         "refresh_required_on_blocker_delta": true,
@@ -317,12 +260,7 @@
           "artifact_state.dependency_breakdown.host_needed_libraries is empty",
           "blocking_reasons omits host_needed_libraries_present"
         ],
-        "current_blocker_values": [
-          "/lib64/ld-linux-x86-64.so.2",
-          "ld-linux-x86-64.so.2",
-          "libc.so.6",
-          "libgcc_s.so.1"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "host_direct_needed_libraries_present": {
@@ -338,10 +276,7 @@
           "artifact_state.dependency_breakdown.host_direct_needed_libraries is empty",
           "blocking_reasons omits host_direct_needed_libraries_present"
         ],
-        "current_blocker_values": [
-          "ld-linux-x86-64.so.2",
-          "libgcc_s.so.1"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "host_resolved_libraries_present": {
@@ -357,11 +292,7 @@
           "artifact_state.dependency_breakdown.host_resolved_libraries is empty",
           "blocking_reasons omits host_resolved_libraries_present"
         ],
-        "current_blocker_values": [
-          "/lib64/ld-linux-x86-64.so.2",
-          "libc.so.6",
-          "libgcc_s.so.1"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "host_loader_dependency": {
@@ -378,10 +309,7 @@
           "artifact_state.dependency_breakdown.host_needed_libraries contains no loader path",
           "blocking_reasons omits host_loader_dependency"
         ],
-        "current_blocker_values": [
-          "/lib64/ld-linux-x86-64.so.2",
-          "ld-linux-x86-64.so.2"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "host_libc_dependency": {
@@ -397,9 +325,7 @@
           "artifact_state.dependency_breakdown.host_needed_libraries contains no libc.so entry",
           "blocking_reasons omits host_libc_dependency"
         ],
-        "current_blocker_values": [
-          "libc.so.6"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "libgcc_runtime_dependency": {
@@ -417,12 +343,7 @@
           "artifact_state.dependency_breakdown.host_version_requirements contains no libgcc_s entry",
           "blocking_reasons omits libgcc_runtime_dependency"
         ],
-        "current_blocker_values": [
-          "libgcc_s.so.1",
-          "libgcc_s.so.1:GCC_3.0",
-          "libgcc_s.so.1:GCC_3.3",
-          "libgcc_s.so.1:GCC_4.2.0"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "undefined_unwind_symbols": {
@@ -438,20 +359,7 @@
           "artifact_state.dependency_breakdown.undefined_unwind_symbols is empty",
           "blocking_reasons omits undefined_unwind_symbols"
         ],
-        "current_blocker_values": [
-          "_Unwind_Backtrace@GCC_3.3",
-          "_Unwind_DeleteException@GCC_3.0",
-          "_Unwind_GetDataRelBase@GCC_3.0",
-          "_Unwind_GetIP@GCC_3.0",
-          "_Unwind_GetIPInfo@GCC_4.2.0",
-          "_Unwind_GetLanguageSpecificData@GCC_3.0",
-          "_Unwind_GetRegionStart@GCC_3.0",
-          "_Unwind_GetTextRelBase@GCC_3.0",
-          "_Unwind_RaiseException@GCC_3.0",
-          "_Unwind_Resume@GCC_3.0",
-          "_Unwind_SetGR@GCC_3.0",
-          "_Unwind_SetIP@GCC_3.0"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "undefined_glibc_symbols": {
@@ -467,9 +375,7 @@
           "artifact_state.dependency_breakdown.undefined_glibc_symbols is empty",
           "blocking_reasons omits undefined_glibc_symbols"
         ],
-        "current_blocker_values": [
-          "__tls_get_addr@GLIBC_2.3"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "undefined_tls_symbols": {
@@ -485,9 +391,7 @@
           "artifact_state.dependency_breakdown.undefined_tls_symbols is empty",
           "blocking_reasons omits undefined_tls_symbols"
         ],
-        "current_blocker_values": [
-          "__tls_get_addr@GLIBC_2.3"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       },
       "host_version_requirements": {
@@ -503,12 +407,7 @@
           "artifact_state.dependency_breakdown.host_version_requirements is empty",
           "blocking_reasons omits host_version_requirements"
         ],
-        "current_blocker_values": [
-          "ld-linux-x86-64.so.2:GLIBC_2.3",
-          "libgcc_s.so.1:GCC_3.0",
-          "libgcc_s.so.1:GCC_3.3",
-          "libgcc_s.so.1:GCC_4.2.0"
-        ],
+        "current_blocker_values": [],
         "promotion_allowed": false
       }
     },
@@ -1034,12 +933,12 @@
     "forge_projection_blocker_catalog_row_count": 10,
     "forge_projection_blocker_action_row_count": 10,
     "forge_projection_failure_signature_count": 6,
-    "forge_blocker_snapshot_blocking_reason_count": 10,
-    "forge_blocker_snapshot_needed_library_count": 2,
-    "forge_blocker_snapshot_host_resolved_library_count": 3,
-    "forge_blocker_snapshot_undefined_symbol_count": 14,
-    "forge_blocker_snapshot_host_version_requirement_count": 4,
-    "forge_blocker_snapshot_version_need_provider_count": 2,
+    "forge_blocker_snapshot_blocking_reason_count": 0,
+    "forge_blocker_snapshot_needed_library_count": 0,
+    "forge_blocker_snapshot_host_resolved_library_count": 0,
+    "forge_blocker_snapshot_undefined_symbol_count": 0,
+    "forge_blocker_snapshot_host_version_requirement_count": 0,
+    "forge_blocker_snapshot_version_need_provider_count": 0,
     "tool_count": 10
   }
 }
