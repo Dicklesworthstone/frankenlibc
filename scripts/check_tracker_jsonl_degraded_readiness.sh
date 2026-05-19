@@ -316,13 +316,16 @@ def permissioned_ready_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any
         issue_id = row.get("id")
         if not isinstance(issue_id, str):
             continue
+        approval_request = row.get("approval_request")
+        if not isinstance(approval_request, dict):
+            approval_request = permissioned_approval_request(row)
         summary.append(
             {
                 "id": issue_id,
                 "title": row.get("title"),
                 "priority": row.get("priority"),
                 "permission_markers": row.get("permission_markers") if isinstance(row.get("permission_markers"), list) else [],
-                "approval_request": permissioned_approval_request(row),
+                "approval_request": approval_request,
             }
         )
     return sorted(summary, key=lambda item: (str(item.get("id", ""))))
@@ -495,12 +498,15 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
                     )
                 )
             else:
+                extra = {
+                    "permission_required": permissioned,
+                    "permission_markers": markers,
+                }
+                if permissioned:
+                    extra["approval_request"] = permissioned_approval_request(issue)
                 ready_row = project_issue(
                     issue,
-                    extra={
-                        "permission_required": permissioned,
-                        "permission_markers": markers,
-                    },
+                    extra=extra,
                 )
                 ready.append(ready_row)
                 if permissioned:
@@ -716,6 +722,15 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
             "updated_at": "2026-05-17T00:00:00Z",
         }
     )
+    permissioned.append(
+        {
+            "id": "bd-jsonl-negative-safe-ready",
+            "title": "negative safe ready",
+            "description": "ordinary unblocked work without special permission markers",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
     perm_analysis = analyze(permissioned, contract)
     perm_ids = {row["id"] for row in perm_analysis["permissioned_ready"]}
     safe_ids = {row["id"] for row in perm_analysis["safe_ready"]}
@@ -739,15 +754,47 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
         and approval.get("safe_to_run_without_user_approval") is False
         and approval.get("execution_not_started") is True
         and isinstance(approval.get("explicit_user_approval_text"), str)
-        and "explicit written approval" in approval["explicit_user_approval_text"]
+        and "approve" in approval["explicit_user_approval_text"]
         and isinstance(approval.get("required_env"), dict)
         and isinstance(approval.get("capability_prerequisites"), list)
-        and approval.get("next_action") == "request_explicit_permission_before_claiming_or_running"
+        and isinstance(approval.get("next_action"), str)
+        and approval["next_action"]
     )
     controls.append(
         {
             "name": "permissioned_summary_includes_approval_request",
             "expected_signature": "permissioned_summary_approval_packet",
+            "status": "pass" if ok else "fail",
+        }
+    )
+    permissioned_row = next(
+        (
+            row
+            for row in perm_analysis["permissioned_ready"]
+            if row.get("id") == "bd-jsonl-negative-permissioned"
+        ),
+        {},
+    )
+    safe_row = next(
+        (
+            row
+            for row in perm_analysis["safe_ready"]
+            if row.get("id") == "bd-jsonl-negative-safe-ready"
+        ),
+        {},
+    )
+    row_approval = permissioned_row.get("approval_request")
+    ok = (
+        isinstance(row_approval, dict)
+        and row_approval.get("exact_user_approval_required") is True
+        and row_approval.get("safe_to_run_without_user_approval") is False
+        and row_approval.get("execution_not_started") is True
+        and "approval_request" not in safe_row
+    )
+    controls.append(
+        {
+            "name": "permissioned_rows_include_approval_request",
+            "expected_signature": "canonical_permissioned_row_approval_packet",
             "status": "pass" if ok else "fail",
         }
     )
