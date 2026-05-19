@@ -3341,21 +3341,89 @@ pub unsafe extern "C" fn res_gethostbyaddr(
 // store them per-thread for any caller that registers and re-reads them
 // (some test harnesses do exactly this).
 
+#[cfg(feature = "owned-tls-cache")]
+struct ResSendHooks {
+    qhook: *mut c_void,
+    rhook: *mut c_void,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+// SAFETY: `ResSendHooks` stores opaque callback pointer tokens for round-trip
+// ABI compatibility. The cache never dereferences or invokes the pointers.
+unsafe impl Send for ResSendHooks {}
+
+#[cfg(feature = "owned-tls-cache")]
+const fn empty_res_send_hooks() -> ResSendHooks {
+    ResSendHooks {
+        qhook: core::ptr::null_mut(),
+        rhook: core::ptr::null_mut(),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RES_SEND_HOOKS_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ResSendHooks> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_res_send_hooks);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     static RES_QHOOK: std::cell::Cell<*mut c_void> = const { std::cell::Cell::new(core::ptr::null_mut()) };
     static RES_RHOOK: std::cell::Cell<*mut c_void> = const { std::cell::Cell::new(core::ptr::null_mut()) };
 }
 
+fn current_res_send_qhook() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.qhook)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_QHOOK.with(|c| c.get())
+    }
+}
+
+fn current_res_send_rhook() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.rhook)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_RHOOK.with(|c| c.get())
+    }
+}
+
+fn set_res_send_qhook(qhook: *mut c_void) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.qhook = qhook);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_QHOOK.with(|c| c.set(qhook));
+    }
+}
+
+fn set_res_send_rhook(rhook: *mut c_void) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.rhook = rhook);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_RHOOK.with(|c| c.set(rhook));
+    }
+}
+
 /// Test/inspection accessor for the most recently installed query hook.
 #[doc(hidden)]
 pub fn res_send_qhook_for_tests() -> *mut c_void {
-    RES_QHOOK.with(|c| c.get())
+    current_res_send_qhook()
 }
 
 /// Test/inspection accessor for the most recently installed response hook.
 #[doc(hidden)]
 pub fn res_send_rhook_for_tests() -> *mut c_void {
-    RES_RHOOK.with(|c| c.get())
+    current_res_send_rhook()
 }
 
 /// libresolv `res_send_setqhook(qhook)` — install a pre-query
@@ -3364,14 +3432,14 @@ pub fn res_send_rhook_for_tests() -> *mut c_void {
 /// hook don't fail at link time.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_send_setqhook(qhook: *mut c_void) {
-    RES_QHOOK.with(|c| c.set(qhook));
+    set_res_send_qhook(qhook);
 }
 
 /// libresolv `res_send_setrhook(rhook)` — install a post-response
 /// callback. Stored per-thread; not invoked internally.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_send_setrhook(rhook: *mut c_void) {
-    RES_RHOOK.with(|c| c.set(rhook));
+    set_res_send_rhook(rhook);
 }
 
 // ----- ns_name_ntol / ns_name_rollback -----
