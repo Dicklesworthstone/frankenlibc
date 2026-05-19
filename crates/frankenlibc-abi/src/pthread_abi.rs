@@ -2075,6 +2075,20 @@ const ONCE_INIT: i32 = 0;
 const ONCE_IN_PROGRESS: i32 = 1;
 const ONCE_DONE: i32 = 2;
 
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+fn run_pthread_once_init(routine: unsafe extern "C" fn()) -> Result<(), ()> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        unsafe { routine() };
+    }))
+    .map_err(|_| ())
+}
+
+#[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+fn run_pthread_once_init(routine: unsafe extern "C" fn()) -> Result<(), ()> {
+    unsafe { routine() };
+    Ok(())
+}
+
 fn reset_mutex_registry_for_tests() {
     MUTEX_SPIN_BRANCHES.store(0, Ordering::Relaxed);
     MUTEX_WAIT_BRANCHES.store(0, Ordering::Relaxed);
@@ -3215,11 +3229,11 @@ pub unsafe extern "C" fn pthread_once(
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    // We won; run the init routine.
-                    // Use catch_unwind to prevent permanent deadlock if routine panics.
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        unsafe { routine() };
-                    }));
+                    // We won; run the init routine. The default lane catches
+                    // panics so the once word can be reset. The standalone
+                    // owned-unwind experiment builds for abort-on-panic and
+                    // avoids linking std panic TLS here.
+                    let result = run_pthread_once_init(routine);
                     match result {
                         Ok(()) => {
                             state.store(ONCE_DONE, Ordering::Release);

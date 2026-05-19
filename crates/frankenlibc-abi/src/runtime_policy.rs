@@ -8,6 +8,7 @@
 
 use std::collections::VecDeque;
 use std::ffi::c_char;
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
@@ -1090,11 +1091,26 @@ fn mark_kernel_broken() {
     KERNEL_STATE.store(STATE_BROKEN, AtomicOrdering::Release);
 }
 
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+#[inline]
+fn runtime_policy_guard<T>(f: impl FnOnce() -> T) -> Result<T, ()> {
+    panic::catch_unwind(AssertUnwindSafe(f)).map_err(|_| ())
+}
+
+#[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+#[inline]
+fn runtime_policy_guard<T>(f: impl FnOnce() -> T) -> Result<T, ()> {
+    Ok(f())
+}
+
 fn ensure_minimal_panic_hook() {
     // In test mode the standard test harness owns the panic hook. Installing our
     // custom hook would poison the kernel on normal assertion failures, cascading
     // into false failures in subsequent kernel-dependent tests.
-    #[cfg(not(test))]
+    #[cfg(all(
+        not(test),
+        not(all(feature = "standalone", feature = "owned-unwind-stub"))
+    ))]
     {
         if PANIC_HOOK_STATE
             .compare_exchange(
@@ -1330,7 +1346,7 @@ fn kernel() -> Option<&'static RuntimeMathKernel> {
 
     // We own the init. Allocate kernel on heap (leaked, lives forever).
     ensure_minimal_panic_hook();
-    let kernel = match panic::catch_unwind(AssertUnwindSafe(RuntimeMathKernel::new)) {
+    let kernel = match runtime_policy_guard(RuntimeMathKernel::new) {
         Ok(k) => Box::new(k),
         Err(_) => {
             mark_kernel_broken();
@@ -1358,11 +1374,26 @@ fn kernel_with_retry(spins: usize) -> Option<&'static RuntimeMathKernel> {
         if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_BROKEN {
             return None;
         }
+        kernel_retry_backoff();
+    }
+    kernel()
+}
+
+#[inline]
+fn kernel_retry_backoff() {
+    #[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+    {
+        for _ in 0..64 {
+            std::hint::spin_loop();
+        }
+    }
+
+    #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+    {
         std::hint::spin_loop();
         std::thread::yield_now();
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    kernel()
 }
 
 #[must_use]
@@ -1370,7 +1401,7 @@ pub(crate) fn runtime_kernel_snapshot(mode: SafetyLevel) -> Option<RuntimeKernel
     let _reentry_guard = enter_policy_reentry_guard()?;
     ensure_minimal_panic_hook();
     let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
-    match panic::catch_unwind(AssertUnwindSafe(|| k.snapshot(mode))) {
+    match runtime_policy_guard(|| k.snapshot(mode)) {
         Ok(snapshot) => Some(snapshot),
         Err(_) => {
             mark_kernel_broken();
@@ -1384,7 +1415,7 @@ pub(crate) fn runtime_evidence_contract_snapshot() -> Option<RuntimeEvidenceCont
     let _reentry_guard = enter_policy_reentry_guard()?;
     ensure_minimal_panic_hook();
     let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
-    match panic::catch_unwind(AssertUnwindSafe(|| k.evidence_contract_snapshot())) {
+    match runtime_policy_guard(|| k.evidence_contract_snapshot()) {
         Ok(snapshot) => Some(snapshot),
         Err(_) => {
             mark_kernel_broken();
@@ -1398,7 +1429,7 @@ pub(crate) fn export_runtime_decision_cards_json() -> Option<String> {
     let _reentry_guard = enter_policy_reentry_guard()?;
     ensure_minimal_panic_hook();
     let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
-    match panic::catch_unwind(AssertUnwindSafe(|| k.export_decision_cards_json())) {
+    match runtime_policy_guard(|| k.export_decision_cards_json()) {
         Ok(export) => Some(export),
         Err(_) => {
             mark_kernel_broken();
@@ -1416,9 +1447,7 @@ pub(crate) fn export_runtime_math_log_jsonl(
     let _reentry_guard = enter_policy_reentry_guard()?;
     ensure_minimal_panic_hook();
     let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
-    match panic::catch_unwind(AssertUnwindSafe(|| {
-        k.export_runtime_math_log_jsonl(mode, bead_id, run_id)
-    })) {
+    match runtime_policy_guard(|| k.export_runtime_math_log_jsonl(mode, bead_id, run_id)) {
         Ok(export) => Some(export),
         Err(_) => {
             mark_kernel_broken();
@@ -1629,7 +1658,7 @@ pub(crate) fn decide(
         record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
         return (mode, decision);
     };
-    let decision = match panic::catch_unwind(AssertUnwindSafe(|| k.decide(mode, ctx))) {
+    let decision = match runtime_policy_guard(|| k.decide(mode, ctx)) {
         Ok(decision) => decision,
         Err(_) => {
             mark_kernel_broken();
@@ -1668,9 +1697,9 @@ pub(crate) fn observe(
     };
     ensure_minimal_panic_hook();
     if let Some(k) = kernel()
-        && panic::catch_unwind(AssertUnwindSafe(|| {
+        && runtime_policy_guard(|| {
             k.observe_validation_result(mode, family, profile, estimated_cost_ns, adverse);
-        }))
+        })
         .is_err()
     {
         mark_kernel_broken();
@@ -1704,9 +1733,7 @@ pub(crate) fn check_ordering(
     let Some(k) = kernel() else {
         return PASSTHROUGH_ORDERING;
     };
-    match panic::catch_unwind(AssertUnwindSafe(|| {
-        k.check_ordering(family, aligned, recent_page)
-    })) {
+    match runtime_policy_guard(|| k.check_ordering(family, aligned, recent_page)) {
         Ok(ordering) => ordering,
         Err(_) => {
             mark_kernel_broken();
@@ -1742,7 +1769,7 @@ pub(crate) fn note_check_order_outcome(
     };
     ensure_minimal_panic_hook();
     if let Some(k) = kernel()
-        && panic::catch_unwind(AssertUnwindSafe(|| {
+        && runtime_policy_guard(|| {
             k.note_check_order_outcome(
                 mode,
                 family,
@@ -1752,7 +1779,7 @@ pub(crate) fn note_check_order_outcome(
                 exit_stage,
             );
             note_cross_family_overlap(k, family, ordering_used, aligned, recent_page, exit_stage);
-        }))
+        })
         .is_err()
     {
         mark_kernel_broken();

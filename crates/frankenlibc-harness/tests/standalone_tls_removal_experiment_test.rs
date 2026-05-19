@@ -1555,6 +1555,14 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && runtime_policy.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "runtime policy must route mode, trace, explainability, reentry, and contract state through owned TLS cache",
     )?;
+    require(
+        runtime_policy.contains("fn runtime_policy_guard")
+            && runtime_policy.contains("Ok(f())")
+            && runtime_policy.contains("fn kernel_retry_backoff")
+            && runtime_policy
+                .contains("not(all(feature = \"standalone\", feature = \"owned-unwind-stub\"))"),
+        "runtime policy must compile out std panic/thread retry helpers in standalone owned-unwind experiments",
+    )?;
 
     let startup = std::fs::read_to_string(abi_startup_path(&root))
         .map_err(|err| format!("read startup_abi.rs: {err}"))?;
@@ -1683,6 +1691,13 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && pthread.contains("try_with_pthread_tls")
             && pthread.contains("crate::owned_tls_cache::OwnedTlsCache"),
         "pthread ABI must route policy, cancellation, backend, and self-cache state through owned TLS cache",
+    )?;
+    require(
+        pthread.contains("fn run_pthread_once_init")
+            && pthread.contains("Ok(())")
+            && pthread
+                .contains("not(all(feature = \"standalone\", feature = \"owned-unwind-stub\"))"),
+        "pthread_once must compile out std::panic::catch_unwind in standalone owned-unwind experiments",
     )?;
 
     let inet = std::fs::read_to_string(abi_inet_path(&root))
