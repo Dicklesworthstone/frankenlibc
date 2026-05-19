@@ -107,8 +107,8 @@ const POLICY_LOAD_STATE_VERIFY_FAILED: u8 = 2;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
+use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::check_oracle::{CheckContext, CheckOracle, CheckStage};

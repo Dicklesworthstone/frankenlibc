@@ -5,11 +5,11 @@
 //! immediately recycled. This ensures use-after-free is detected with
 //! probability 1 (generation mismatch).
 //!
-//! Thread-safe via sharded `parking_lot::Mutex`.
+//! Thread-safe via sharded no-poison mutexes.
 
 #![allow(unsafe_code)]
 
-use parking_lot::Mutex;
+use crate::util::{NoPoisonMutex as Mutex, NoPoisonMutexGuard as MutexGuard};
 use std::collections::VecDeque;
 
 use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
@@ -126,7 +126,7 @@ pub struct AllocationResult {
 
 /// Guard representing all locked arena shards during a fork.
 pub struct ArenaAtforkGuard<'a> {
-    _guards: Vec<parking_lot::MutexGuard<'a, ArenaShard>>,
+    _guards: Vec<MutexGuard<'a, ArenaShard>>,
 }
 
 impl AllocationArena {

@@ -24,8 +24,8 @@ use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
 use crate::tls_cache::{CachedValidation, with_tls_cache};
+use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
-use parking_lot::Mutex;
 use serde::Serialize;
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::Cell;

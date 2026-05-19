@@ -15,6 +15,7 @@ use crate::ebr::EbrDiagnostics;
 use crate::flat_combining::FlatCombinerDiagnostics;
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};
 use crate::seqlock::SeqLockDiagnostics;
+use crate::util::NoPoisonMutex;
 use crate::util::now_utc_iso_like;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
@@ -246,7 +247,7 @@ pub struct MetricEvent {
 
 /// Ring buffer for metric events (fixed capacity, overwrites oldest).
 pub struct MetricRing {
-    events: parking_lot::Mutex<Vec<MetricEvent>>,
+    events: NoPoisonMutex<Vec<MetricEvent>>,
     capacity: usize,
     total_emitted: AtomicU64,
     epoch_start: Instant,
@@ -257,7 +258,7 @@ impl MetricRing {
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
-            events: parking_lot::Mutex::new(Vec::with_capacity(capacity.min(4096))),
+            events: NoPoisonMutex::new(Vec::with_capacity(capacity.min(4096))),
             capacity,
             total_emitted: AtomicU64::new(0),
             epoch_start: Instant::now(),

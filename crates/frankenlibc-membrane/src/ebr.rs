@@ -4,7 +4,7 @@
 //! (`#![deny(unsafe_code)]`). It enables lock-free data structures to defer reclamation
 //! of retired items until all threads that might hold references have advanced.
 
-use parking_lot::Mutex;
+use crate::util::NoPoisonMutex as Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 

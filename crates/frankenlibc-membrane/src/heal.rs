@@ -5,7 +5,7 @@
 //! Every libc function has defined healing for every class of invalid input.
 
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION};
-use parking_lot::Mutex;
+use crate::util::NoPoisonMutex as Mutex;
 use std::collections::VecDeque;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

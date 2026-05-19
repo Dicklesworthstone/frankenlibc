@@ -18,7 +18,9 @@
 
 #![allow(unsafe_code)]
 
-use parking_lot::{Mutex, RwLock, RwLockReadGuard};
+use crate::util::{
+    NoPoisonMutex as Mutex, NoPoisonRwLock as RwLock, NoPoisonRwLockReadGuard as RwLockReadGuard,
+};
 use std::cell::UnsafeCell;
 use std::hint::spin_loop;
 use std::ops::Deref;

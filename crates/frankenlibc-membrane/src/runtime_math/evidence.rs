@@ -19,7 +19,7 @@ use std::io::{self, ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
 use std::time::Instant;
 
-use parking_lot::Mutex;
+use crate::util::NoPoisonMutex as Mutex;
 use serde_json::Value;
 
 use crate::config::SafetyLevel;

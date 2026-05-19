@@ -1,6 +1,6 @@
 //! Versioned JSONL evidence schema and bounded ring buffer for stdio evidence.
 
-use parking_lot::Mutex;
+use crate::util::NoPoisonMutex as Mutex;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::VecDeque;

@@ -8,7 +8,7 @@ use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::Instant;
 
@@ -52,7 +52,9 @@ fn arena_metadata_retired_on_rebalance() {
         };
         let gens = Arc::clone(&reclaimed_gens);
         collector.retire(move || {
-            gens.lock().push(meta.generation);
+            gens.lock()
+                .expect("reclaimed generation lock should not be poisoned")
+                .push(meta.generation);
         });
     }
 
@@ -61,11 +63,11 @@ fn arena_metadata_retired_on_rebalance() {
     collector.try_advance();
     collector.try_advance();
 
-    let reclaimed = reclaimed_gens.lock();
+    let reclaimed = reclaimed_gens
+        .lock()
+        .expect("reclaimed generation lock should not be poisoned");
     assert_eq!(reclaimed.len(), 5, "all metadata should be reclaimed");
 }
-
-use parking_lot::Mutex;
 
 // ──────────────── TLS cache invalidation pattern ────────────────
 

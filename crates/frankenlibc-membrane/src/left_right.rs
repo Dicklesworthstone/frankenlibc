@@ -10,7 +10,7 @@
 //! Compared with [`crate::rcu::RcuCell`], this module targets multi-field state
 //! that must be observed as an internally consistent snapshot on every read.
 
-use parking_lot::Mutex;
+use crate::util::NoPoisonMutex as Mutex;
 use std::hint::spin_loop;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};

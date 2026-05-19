@@ -1,5 +1,72 @@
 //! Shared utilities for the membrane crate.
 
+use std::sync::{
+    Mutex as StdMutex, MutexGuard as StdMutexGuard, RwLock as StdRwLock,
+    RwLockReadGuard as StdRwLockReadGuard, RwLockWriteGuard as StdRwLockWriteGuard, TryLockError,
+};
+
+/// Mutex wrapper that recovers poisoned locks instead of panicking.
+#[derive(Debug)]
+pub(crate) struct NoPoisonMutex<T>(StdMutex<T>);
+
+pub(crate) type NoPoisonMutexGuard<'a, T> = StdMutexGuard<'a, T>;
+
+impl<T> NoPoisonMutex<T> {
+    pub(crate) const fn new(value: T) -> Self {
+        Self(StdMutex::new(value))
+    }
+
+    pub(crate) fn lock(&self) -> NoPoisonMutexGuard<'_, T> {
+        match self.0.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    pub(crate) fn try_lock(&self) -> Option<NoPoisonMutexGuard<'_, T>> {
+        match self.0.try_lock() {
+            Ok(guard) => Some(guard),
+            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => None,
+        }
+    }
+}
+
+/// RwLock wrapper that recovers poisoned locks instead of panicking.
+#[derive(Debug)]
+pub(crate) struct NoPoisonRwLock<T>(StdRwLock<T>);
+
+pub(crate) type NoPoisonRwLockReadGuard<'a, T> = StdRwLockReadGuard<'a, T>;
+pub(crate) type NoPoisonRwLockWriteGuard<'a, T> = StdRwLockWriteGuard<'a, T>;
+
+impl<T> NoPoisonRwLock<T> {
+    pub(crate) const fn new(value: T) -> Self {
+        Self(StdRwLock::new(value))
+    }
+
+    pub(crate) fn read(&self) -> NoPoisonRwLockReadGuard<'_, T> {
+        match self.0.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    pub(crate) fn write(&self) -> NoPoisonRwLockWriteGuard<'_, T> {
+        match self.0.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    pub(crate) fn try_write(&self) -> Option<NoPoisonRwLockWriteGuard<'_, T>> {
+        match self.0.try_write() {
+            Ok(guard) => Some(guard),
+            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => None,
+        }
+    }
+}
+
 /// Convert a Unix timestamp (days since 1970-01-01) to a civil date (year, month, day).
 ///
 /// Uses Howard Hinnant's algorithm for efficient conversion without loops.

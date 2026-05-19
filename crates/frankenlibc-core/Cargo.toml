@@ -18,7 +18,6 @@ runtime-tracing = ["dep:tracing"]
 frankenlibc-membrane = { workspace = true }
 libm = "0.2.16"
 md-5 = { workspace = true }
-parking_lot = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true, optional = true }
 

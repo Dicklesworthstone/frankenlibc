@@ -8,9 +8,8 @@
 use std::array;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
-
-use parking_lot::{Mutex, MutexGuard};
 
 pub const DEFAULT_ELIMINATION_SLOTS: usize = 8;
 
@@ -369,7 +368,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                     let mut wait_cycles = (step + 1) as u64;
 
                     loop {
-                        if let Some(mut state) = slot.state.try_lock() {
+                        if let Some(mut state) = try_lock_no_poison(&slot.state) {
                             match &*state {
                                 SlotState::Taken { consumer_thread } => {
                                     let consumer_thread = *consumer_thread;
@@ -858,7 +857,18 @@ impl<T: Send, const SLOTS: usize> Default for EliminationArray<T, SLOTS> {
 }
 
 fn lock_no_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock()
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn try_lock_no_poison<T>(mutex: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
+    match mutex.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+        Err(TryLockError::WouldBlock) => None,
+    }
 }
 
 fn current_thread_tag() -> u64 {

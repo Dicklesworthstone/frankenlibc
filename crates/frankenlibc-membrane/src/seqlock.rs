@@ -26,7 +26,7 @@
 //! - TSM policy tables (updated via config reload, queried per validation)
 //! - Safety level + feature flags
 
-use parking_lot::{Mutex, MutexGuard};
+use crate::util::{NoPoisonMutex as Mutex, NoPoisonMutexGuard as MutexGuard};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 

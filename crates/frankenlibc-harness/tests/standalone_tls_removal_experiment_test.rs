@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 8;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 7;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -63,6 +63,18 @@ fn manifest_path(root: &Path) -> PathBuf {
 fn abi_cargo_toml_path(root: &Path) -> PathBuf {
     root.join("crates")
         .join("frankenlibc-abi")
+        .join("Cargo.toml")
+}
+
+fn core_cargo_toml_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-core")
+        .join("Cargo.toml")
+}
+
+fn membrane_cargo_toml_path(root: &Path) -> PathBuf {
+    root.join("crates")
+        .join("frankenlibc-membrane")
         .join("Cargo.toml")
 }
 
@@ -887,7 +899,6 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
 
     let symbols: BTreeSet<&str> = rows.iter().map(|row| row.symbol.as_str()).collect();
     for required in [
-        "_RNvNCNKNvNvNtCsauQQugvlKcP_16parking_lot_core11parking_lot16with_thread_data11THREAD_DATA0023___RUST_STD_INTERNAL_VAL",
         "_RNvNtNtNtCsjCoUzHIWc5R_3std3sys12thread_local11destructors4list5DTORS",
         "_RNvNtNtCsjCoUzHIWc5R_3std6thread7current7CURRENT",
     ] {
@@ -944,13 +955,21 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
         "residual artifact TLS inventory must not retain parking_lot RawThreadId TLS after ABI reentrant locks move to gettid ownership",
     )?;
 
+    let removed_parking_lot_core_thread_data_symbol = "_RNvNCNKNvNvNtCsauQQugvlKcP_16parking_lot_core11parking_lot16with_thread_data11THREAD_DATA0023___RUST_STD_INTERNAL_VAL";
+    require(
+        !symbols.contains(removed_parking_lot_core_thread_data_symbol),
+        "residual artifact TLS inventory must not retain parking_lot_core THREAD_DATA after core/membrane locks move to no-poison std locks",
+    )?;
+
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();
-    for required in ["parking_lot_core", "std"] {
-        require(
-            crates.contains(required),
-            format!("residual artifact TLS inventory must include crate {required}"),
-        )?;
-    }
+    require(
+        crates.contains("std"),
+        "residual artifact TLS inventory must include crate std",
+    )?;
+    require(
+        !crates.contains("parking_lot_core"),
+        "residual artifact TLS inventory must not retain parking_lot_core after lock-provider swap",
+    )?;
 
     let summary = json_field(&m, "summary")?;
     require(
@@ -1538,6 +1557,15 @@ fn owned_tls_cache_feature_gate_is_wired_but_not_promoted() -> TestResult {
             && !runtime_policy.contains("use parking_lot")
             && !runtime_policy.contains("parking_lot::ReentrantMutex"),
         "ABI runtime policy test serialization must use AbiReentrantMutex and must not keep a direct parking_lot dependency",
+    )?;
+    let core_cargo_toml = std::fs::read_to_string(core_cargo_toml_path(&root))
+        .map_err(|err| format!("read frankenlibc-core Cargo.toml: {err}"))?;
+    let membrane_cargo_toml = std::fs::read_to_string(membrane_cargo_toml_path(&root))
+        .map_err(|err| format!("read frankenlibc-membrane Cargo.toml: {err}"))?;
+    require(
+        !core_cargo_toml.contains("parking_lot =")
+            && !membrane_cargo_toml.contains("parking_lot ="),
+        "core and membrane runtime lock surfaces must not keep direct parking_lot dependencies in the owned-TLS artifact lane",
     )?;
 
     let grp = std::fs::read_to_string(abi_grp_path(&root))

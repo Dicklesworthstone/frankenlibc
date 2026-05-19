@@ -47,7 +47,7 @@
 //! // snapshot is &MySnapshot, valid until next read() call
 //! ```
 
-use parking_lot::Mutex;
+use crate::util::NoPoisonMutex as Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 

@@ -21,7 +21,7 @@ use crate::config::SafetyLevel;
 use crate::heal::HealingAction;
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};
 use crate::metrics::MetricsSnapshot;
-use parking_lot::Mutex;
+use crate::util::NoPoisonMutex as Mutex;
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
