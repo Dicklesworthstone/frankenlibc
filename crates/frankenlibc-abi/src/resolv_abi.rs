@@ -2077,9 +2077,36 @@ impl ServentTlsStorage {
     }
 }
 
+// SAFETY: the owned-TLS experiment stores one boxed service result per thread
+// id. `servent` only points into the same boxed storage, so moving the box while
+// the cache mutex is held does not transfer ownership of pointees across
+// threads.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for ServentTlsStorage {}
+
+#[cfg(feature = "owned-tls-cache")]
+static SERVENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServentTlsStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(ServentTlsStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static SERVENT_TLS: RefCell<ServentTlsStorage> =
         RefCell::new(ServentTlsStorage::new());
+}
+
+fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERVENT_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERVENT_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
 }
 
 /// Thread-local storage for protoent results.
@@ -2464,8 +2491,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
     };
 
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
-    SERVENT_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_tls_servent(|storage| {
         copy_to_cchar_buf(&mut storage.name, name_bytes);
         copy_to_cchar_buf(&mut storage.proto, &proto_bytes);
         storage.aliases[0] = ptr::null_mut();
@@ -2538,8 +2564,7 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
     // Success path: record service lookup completed
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
-    SERVENT_TLS.with(|cell| {
-        let mut storage = cell.borrow_mut();
+    with_tls_servent(|storage| {
         copy_to_cchar_buf(&mut storage.name, &svc_name);
         copy_to_cchar_buf(&mut storage.proto, &svc_proto);
         storage.aliases[0] = ptr::null_mut();
