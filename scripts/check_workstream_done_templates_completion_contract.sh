@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,6 +120,7 @@ REQUIRED_BASE_REPORT_CHECKS = {
     "checklist_replay_is_fail_closed",
     "implementation_handoff_checklist_complete",
     "handoff_transcripts_choose_next_safe_action",
+    "rch_cargo_target_dir_contract",
 }
 
 REQUIRED_BASE_LOG_EVENTS = {
@@ -234,12 +236,47 @@ def run_base_gate(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, Any
     return report, log_rows
 
 
-def command_uses_rch_or_script(command: str) -> bool:
+def command_contract_failures(command: str) -> list[str]:
     if command.startswith("scripts/") or command.startswith("bash scripts/"):
-        return True
-    if "cargo" in command and "rch exec --" in command:
-        return True
-    return "cargo" not in command
+        return []
+    if "cargo" not in command:
+        return []
+
+    if "rch exec --" not in command:
+        return [f"required command must use rch or a repo script, not bare cargo: {command}"]
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        return [f"required command is not shell-parseable: {command}: {exc}"]
+
+    failures: list[str] = []
+    saw_rch_cargo = False
+    for index in range(max(0, len(tokens) - 2)):
+        if tokens[index:index + 3] != ["rch", "exec", "--"]:
+            continue
+        payload = tokens[index + 3:]
+        if "cargo" not in payload:
+            continue
+        saw_rch_cargo = True
+        cargo_index = payload.index("cargo")
+        cargo_prefix = payload[:cargo_index]
+        has_target_dir = (
+            cargo_prefix
+            and cargo_prefix[0] == "env"
+            and any(
+                token.startswith("CARGO_TARGET_DIR=") and token != "CARGO_TARGET_DIR="
+                for token in cargo_prefix[1:]
+            )
+        )
+        if "RCH_REQUIRE_REMOTE=1" not in tokens[:index]:
+            failures.append(f"required command must set RCH_REQUIRE_REMOTE=1: {command}")
+        if not has_target_dir:
+            failures.append(f"required command must set isolated CARGO_TARGET_DIR: {command}")
+
+    if not saw_rch_cargo:
+        failures.append(f"required cargo command must use an rch exec -- payload containing cargo: {command}")
+    return failures
 
 
 def emit_event(
@@ -387,6 +424,9 @@ for required in [
     "handoff_transcripts_choose_next_safe_action",
     "workstream_done_template",
     "implementation_handoff_branch",
+    "rch_cargo_target_dir_contract",
+    "RCH_REQUIRE_REMOTE=1",
+    "CARGO_TARGET_DIR",
 ]:
     require_contains("base checker", base_checker_text, required)
 
@@ -396,6 +436,7 @@ for required in [
     "gate_script_rejects_missing_template_sections",
     "gate_script_rejects_toothless_blocked_replay",
     "gate_script_rejects_handoff_without_next_safe_action",
+    "gate_script_rejects_bare_rch_cargo_without_target_dir",
 ]:
     require_contains("base harness test", base_test_text, required)
 
@@ -412,8 +453,7 @@ for section_name in ["unit_primary", "e2e_primary"]:
             continue
         require_test_fn(artifact_paths[source], name)
     for command in section.get("required_commands", []):
-        if not command_uses_rch_or_script(str(command)):
-            errors.append(f"required command must use rch or a repo script, not bare cargo: {command}")
+        errors.extend(command_contract_failures(str(command)))
 
 for script in evidence.get("e2e_primary", {}).get("required_scripts", []):
     try:

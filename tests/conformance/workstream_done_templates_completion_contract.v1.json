@@ -35,13 +35,19 @@
       "scripts/check_workstream_done_templates.sh:259",
       "scripts/check_workstream_done_templates.sh:297",
       "scripts/check_workstream_done_templates.sh:410",
-      "scripts/check_workstream_done_templates.sh:441",
+      "scripts/check_workstream_done_templates.sh:442",
       "scripts/check_workstream_done_templates.sh:455",
+      "scripts/check_workstream_done_templates_completion_contract.sh:239",
+      "scripts/check_workstream_done_templates_completion_contract.sh:272",
+      "scripts/check_workstream_done_templates_completion_contract.sh:410",
       "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:217",
       "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:540",
       "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:678",
       "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:727",
-      "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:769"
+      "crates/frankenlibc-harness/tests/workstream_done_templates_test.rs:769",
+      "crates/frankenlibc-harness/tests/workstream_done_templates_completion_contract_test.rs:258",
+      "crates/frankenlibc-harness/tests/workstream_done_templates_completion_contract_test.rs:299",
+      "crates/frankenlibc-harness/tests/workstream_done_templates_completion_contract_test.rs:458"
     ],
     "template_policy": {
       "required_workstream_count": 10,
@@ -110,7 +116,8 @@
         "closure_commands_complete",
         "checklist_replay_is_fail_closed",
         "implementation_handoff_checklist_complete",
-        "handoff_transcripts_choose_next_safe_action"
+        "handoff_transcripts_choose_next_safe_action",
+        "rch_cargo_target_dir_contract"
       ],
       "required_base_log_events": [
         "workstream_done_template",
@@ -139,6 +146,10 @@
           "name": "gate_script_rejects_handoff_without_next_safe_action"
         },
         {
+          "source": "base_harness_test",
+          "name": "gate_script_rejects_bare_rch_cargo_without_target_dir"
+        },
+        {
           "source": "completion_harness_test",
           "name": "contract_binds_done_template_gate_handoff_and_existing_tests"
         },
@@ -149,11 +160,15 @@
         {
           "source": "completion_harness_test",
           "name": "checker_rejects_local_cargo_command"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "checker_rejects_rch_cargo_without_remote_or_target_dir"
         }
       ],
       "required_commands": [
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_completion_contract_test -- --nocapture"
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_completion_contract_test -- --nocapture"
       ]
     },
     "e2e_primary": {
@@ -178,8 +193,8 @@
       ],
       "required_commands": [
         "scripts/check_workstream_done_templates_completion_contract.sh",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_completion_contract_test -- --nocapture"
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test workstream_done_templates_completion_contract_test -- --nocapture"
       ]
     },
     "telemetry_primary": {

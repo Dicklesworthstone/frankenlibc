@@ -261,6 +261,7 @@ fn contract_binds_done_template_gate_handoff_and_existing_tests() -> TestResult 
         "base_harness_test::gate_script_rejects_missing_template_sections",
         "base_harness_test::gate_script_rejects_toothless_blocked_replay",
         "base_harness_test::gate_script_rejects_handoff_without_next_safe_action",
+        "base_harness_test::gate_script_rejects_bare_rch_cargo_without_target_dir",
         "completion_harness_test::contract_binds_done_template_gate_handoff_and_existing_tests",
     ] {
         assert!(unit_refs.contains(expected), "missing unit ref {expected}");
@@ -294,6 +295,18 @@ fn contract_binds_done_template_gate_handoff_and_existing_tests() -> TestResult 
             assert!(
                 command.contains("rch exec --"),
                 "cargo command must go through rch: {command}"
+            );
+            assert!(
+                command.contains("RCH_REQUIRE_REMOTE=1"),
+                "cargo command must require remote rch execution: {command}"
+            );
+            assert!(
+                command.contains("CARGO_TARGET_DIR="),
+                "cargo command must set isolated CARGO_TARGET_DIR: {command}"
+            );
+            assert!(
+                !command.contains("rch exec -- cargo"),
+                "cargo command must not use bare rch cargo payload: {command}"
             );
         }
     }
@@ -367,6 +380,10 @@ fn checker_emits_report_log_and_replays_existing_gate() -> TestResult {
         base_report["checks"]["handoff_transcripts_choose_next_safe_action"].as_str(),
         Some("pass")
     );
+    assert_eq!(
+        base_report["checks"]["rch_cargo_target_dir_contract"].as_str(),
+        Some("pass")
+    );
 
     Ok(())
 }
@@ -432,6 +449,39 @@ fn checker_rejects_local_cargo_command() -> TestResult {
     assert!(
         message.contains("bare cargo"),
         "failure should name bare cargo command: {message}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_rch_cargo_without_remote_or_target_dir() -> TestResult {
+    let _guard = match SCRIPT_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let root = workspace_root()?;
+    let mut contract = read_json(&contract_path(&root))?;
+    contract["completion_debt_evidence"]["unit_primary"]["required_commands"][0] =
+        serde_json::Value::String(
+            "rch exec -- cargo test -p frankenlibc-harness --test workstream_done_templates_test"
+                .to_string(),
+        );
+
+    let out_dir = unique_output_dir(&root, "bare-rch-cargo")?;
+    let bad_path = out_dir.join("bare-rch-cargo.json");
+    write_json(&bad_path, &contract)?;
+    let output = run_checker(&root, &bad_path, &out_dir)?;
+    assert!(
+        !output.status.success(),
+        "checker should fail on rch cargo without remote and target-dir guards"
+    );
+    let report = parse_stdout_report(&output)?;
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    let message = checker_output_message(&output);
+    assert!(
+        message.contains("RCH_REQUIRE_REMOTE=1") && message.contains("CARGO_TARGET_DIR"),
+        "failure should name missing remote and target-dir guards: {message}"
     );
 
     Ok(())
