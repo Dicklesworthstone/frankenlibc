@@ -230,6 +230,86 @@ def in_progress_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def permissioned_approval_request(row: dict[str, Any]) -> dict[str, Any]:
+    issue_id = str(row.get("id") or "")
+    text = issue_text(row)
+    required_env: dict[str, str] = {}
+    capability_prerequisites: list[str] = []
+    permission_source = "generic_permissioned_ready"
+    explicit_user_approval_text = (
+        "User must provide explicit written approval naming the bead id, exact command, "
+        "affected paths or resources, and required ACK values before execution."
+    )
+    next_action = "request_explicit_permission_before_claiming_or_running"
+    commands_or_workloads_not_started: list[str] = []
+
+    if "xfstests" in text or issue_id in {"bd-rchk3", "bd-rchk3.3"}:
+        permission_source = "xfstests_real_run_ack"
+        required_env = {
+            "XFSTESTS_REAL_RUN_ACK": "xfstests-may-mutate-test-and-scratch-devices",
+            "TEST_DIR": "artifact-scoped test mount path",
+            "SCRATCH_MNT": "artifact-scoped scratch mount path",
+            "RESULT_BASE": "artifact-scoped result directory",
+        }
+        capability_prerequisites = [
+            "explicit operator permission for xfstests test and scratch mutation",
+            "prepared xfstests helper tree and supported V1 subset",
+            "TEST_DIR and SCRATCH_MNT must identify the exact paths or devices affected",
+            "RESULT_BASE must preserve raw logs, stdout, stderr, pass, fail, and not-run rows",
+        ]
+        explicit_user_approval_text = (
+            "User must explicitly approve the exact xfstests command for this bead, name "
+            "TEST_DIR, SCRATCH_MNT, RESULT_BASE, and set XFSTESTS_REAL_RUN_ACK="
+            "xfstests-may-mutate-test-and-scratch-devices before execution."
+        )
+        next_action = "ask_operator_for_exact_xfstests_command_paths_and_ack"
+        commands_or_workloads_not_started = ["xfstests_real_baseline"]
+    elif (
+        "swarm-workload-may-use-permissioned-large-host" in text
+        or "ffs_swarm_workload_real_run_ack" in text
+        or issue_id == "bd-rchk0.53.8"
+    ):
+        permission_source = "swarm_workload_permissioned_large_host"
+        required_env = {
+            "FFS_ENABLE_PERMISSIONED_SWARM_WORKLOAD": "1",
+            "FFS_SWARM_WORKLOAD_REAL_RUN_ACK": "swarm-workload-may-use-permissioned-large-host",
+            "FFS_SWARM_WORKLOAD_PERMISSIONED_RUNNER": "configured permissioned runner",
+            "RCH_REQUIRE_REMOTE": "1",
+        }
+        capability_prerequisites = [
+            "remote runner with at least 64 logical CPUs",
+            "remote runner with at least 256 GiB RAM",
+            "visible NUMA topology in the host capability proof",
+            "configured permissioned runner preserves manifest, logs, p99 ledger, and release-gate output",
+            "local smoke or downgraded capability evidence must not upgrade public readiness",
+        ]
+        explicit_user_approval_text = (
+            "User must explicitly approve the exact large-host swarm command for this bead, "
+            "name the configured runner, confirm >=64 logical CPUs, >=256 GiB RAM, visible "
+            "NUMA topology, and set FFS_SWARM_WORKLOAD_REAL_RUN_ACK="
+            "swarm-workload-may-use-permissioned-large-host before execution."
+        )
+        next_action = "ask_operator_for_large_host_runner_command_capabilities_and_ack"
+        commands_or_workloads_not_started = ["permissioned_large_host_swarm_workload"]
+    else:
+        capability_prerequisites = [
+            "inspect the bead description, notes, labels, and blocker metadata for exact permission scope",
+            "operator approval must name every affected path, device, remote host, or workload",
+        ]
+
+    return {
+        "permission_source": permission_source,
+        "exact_user_approval_required": True,
+        "explicit_user_approval_text": explicit_user_approval_text,
+        "safe_to_run_without_user_approval": False,
+        "execution_not_started": True,
+        "required_env": required_env,
+        "capability_prerequisites": capability_prerequisites,
+        "commands_or_workloads_not_started": commands_or_workloads_not_started,
+        "next_action": next_action,
+    }
+
+
 def permissioned_ready_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     summary: list[dict[str, Any]] = []
     for row in rows:
@@ -242,6 +322,7 @@ def permissioned_ready_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any
                 "title": row.get("title"),
                 "priority": row.get("priority"),
                 "permission_markers": row.get("permission_markers") if isinstance(row.get("permission_markers"), list) else [],
+                "approval_request": permissioned_approval_request(row),
             }
         )
     return sorted(summary, key=lambda item: (str(item.get("id", ""))))
@@ -643,6 +724,30 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
         {
             "name": "permissioned_ready_is_separated",
             "expected_signature": "permissioned_ready_not_safe_ready",
+            "status": "pass" if ok else "fail",
+        }
+    )
+    perm_summary_by_id = {
+        str(row.get("id")): row
+        for row in permissioned_ready_summary(perm_analysis["permissioned_ready"])
+        if isinstance(row.get("id"), str)
+    }
+    approval = perm_summary_by_id.get("bd-jsonl-negative-permissioned", {}).get("approval_request", {})
+    ok = (
+        isinstance(approval, dict)
+        and approval.get("exact_user_approval_required") is True
+        and approval.get("safe_to_run_without_user_approval") is False
+        and approval.get("execution_not_started") is True
+        and isinstance(approval.get("explicit_user_approval_text"), str)
+        and "explicit written approval" in approval["explicit_user_approval_text"]
+        and isinstance(approval.get("required_env"), dict)
+        and isinstance(approval.get("capability_prerequisites"), list)
+        and approval.get("next_action") == "request_explicit_permission_before_claiming_or_running"
+    )
+    controls.append(
+        {
+            "name": "permissioned_summary_includes_approval_request",
+            "expected_signature": "permissioned_summary_approval_packet",
             "status": "pass" if ok else "fail",
         }
     )

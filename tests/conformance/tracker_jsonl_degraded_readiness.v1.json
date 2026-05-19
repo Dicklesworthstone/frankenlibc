@@ -79,12 +79,31 @@
     "stale_threshold_hours",
     "recommended_next_action"
   ],
+  "permissioned_ready_summary_fields": [
+    "id",
+    "title",
+    "priority",
+    "permission_markers",
+    "approval_request"
+  ],
+  "permissioned_approval_request_fields": [
+    "permission_source",
+    "exact_user_approval_required",
+    "explicit_user_approval_text",
+    "safe_to_run_without_user_approval",
+    "execution_not_started",
+    "required_env",
+    "capability_prerequisites",
+    "commands_or_workloads_not_started",
+    "next_action"
+  ],
   "required_negative_controls": [
     "missing_forbidden_source_fails_contract",
     "blocks_dependency_excludes_ready",
     "old_in_progress_is_stale",
     "recent_comment_prevents_stale",
     "permissioned_ready_is_separated",
+    "permissioned_summary_includes_approval_request",
     "closed_dependency_allows_ready",
     "blocker_explanation_preserves_metadata",
     "parent_with_active_child_excluded_ready",
@@ -101,6 +120,7 @@
     "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only | jq -e '.safe_ready_ids == [] and (.permissioned_ready_ids | type == \"array\") and (.permissioned_ready_summary | type == \"array\") and (.blocked_open_ids | type == \"array\") and (.blocker_explanations | type == \"array\") and (.blocked_by_counts | type == \"array\") and (.top_blocker_ids | type == \"array\") and (.in_progress_ids | type == \"array\") and (.in_progress_age_summary | type == \"array\") and (.recommended_next_action.decision | type == \"string\")'",
     "jq '.status == \"pass\" and (.negative_controls | all(.status == \"pass\"))' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "jq -e '.stdout_summary.safe_ready_ids == [] and (.stdout_summary.permissioned_ready_ids | type == \"array\") and (.stdout_summary.permissioned_ready_summary | type == \"array\") and (.stdout_summary.blocked_open_ids | type == \"array\") and (.stdout_summary.blocker_explanations | type == \"array\") and (.stdout_summary.blocked_by_counts | type == \"array\") and (.stdout_summary.top_blocker_ids | type == \"array\") and (.stdout_summary.in_progress_ids | type == \"array\") and (.stdout_summary.in_progress_age_summary | type == \"array\") and (.stdout_summary.recommended_next_action.decision | type == \"string\")' target/conformance/tracker_jsonl_degraded_readiness.report.json",
+    "jq -e 'all(.stdout_summary.permissioned_ready_summary[]; .approval_request.exact_user_approval_required == true and .approval_request.safe_to_run_without_user_approval == false and .approval_request.execution_not_started == true and (.approval_request.explicit_user_approval_text | type == \"string\") and (.approval_request.required_env | type == \"object\") and (.approval_request.capability_prerequisites | type == \"array\") and (.approval_request.next_action | type == \"string\"))' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "jq -e '.report_path == \"target/conformance/tracker_jsonl_degraded_readiness.report.json\" and .log_path == \"target/conformance/tracker_jsonl_degraded_readiness.log.jsonl\"' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "git diff --check -- scripts/check_tracker_jsonl_degraded_readiness.sh tests/conformance/tracker_jsonl_degraded_readiness.v1.json .beads/issues.jsonl"
   ]
