@@ -1,8 +1,8 @@
 //! Integration test: standalone blocker burn-down progress rollup (bd-zyck1.94).
 //!
 //! The committed rollup stays compact and reference-based. The checker report
-//! must materialize current values, owners, and exit criteria from the blocker
-//! snapshot, version matrix, and owner/action ledger.
+//! must materialize current values and exit criteria from live blocker action
+//! rows while preserving compact owner/action-ledger category grouping.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -24,6 +24,8 @@ const OWNED_UNWIND_EXPERIMENT_PATH: &str =
     "tests/conformance/standalone_owned_unwind_experiment.v1.json";
 const TLS_REMOVAL_EXPERIMENT_PATH: &str =
     "tests/conformance/standalone_tls_removal_experiment.v1.json";
+const BLOCKER_ACTION_VALUE_SOURCE: &str = "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values";
+const BLOCKER_ACTION_EXIT_CRITERIA_SOURCE: &str = "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria";
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -133,6 +135,26 @@ fn run_checker_with_owned_unwind(
     Ok((output, report))
 }
 
+fn run_checker_with_plan(
+    root: &Path,
+    rollup: &Path,
+    plan: &Path,
+    label: &str,
+) -> TestResult<(Output, PathBuf)> {
+    let report = root.join("target/conformance").join(format!(
+        "standalone_blocker_burndown_progress_rollup.{label}.report.json"
+    ));
+    let output = Command::new("bash")
+        .arg(checker_path(root))
+        .env("FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP", rollup)
+        .env("FRANKENLIBC_STANDALONE_HOST_DEP_PLAN", plan)
+        .env("FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP_REPORT", &report)
+        .current_dir(root)
+        .output()
+        .map_err(|err| format!("failed to run rollup checker: {err}"))?;
+    Ok((output, report))
+}
+
 fn format_output(output: &Output) -> String {
     format!(
         "status={}\nstdout={}\nstderr={}",
@@ -168,6 +190,24 @@ fn expect_checker_failure_with_owned_unwind(
     let root = workspace_root()?;
     let (output, report) =
         run_checker_with_owned_unwind(&root, &root.join(ROLLUP_PATH), owned_unwind, label)?;
+    require(
+        !output.status.success(),
+        format!("checker unexpectedly passed\n{}", format_output(&output)),
+    )?;
+    let report_json = load_json_path(&report)?;
+    let errors = json_array(&report_json, "errors")?;
+    require(
+        errors
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|error| error.contains(expected_error)),
+        format!("expected error {expected_error:?}; report={report_json:?}"),
+    )
+}
+
+fn expect_checker_failure_with_plan(plan: &Path, label: &str, expected_error: &str) -> TestResult {
+    let root = workspace_root()?;
+    let (output, report) = run_checker_with_plan(&root, &root.join(ROLLUP_PATH), plan, label)?;
     require(
         !output.status.success(),
         format!("checker unexpectedly passed\n{}", format_output(&output)),
@@ -225,6 +265,23 @@ fn write_mutated_owned_unwind(
     Ok(path)
 }
 
+fn write_mutated_plan(
+    label: &str,
+    mutate: impl FnOnce(&mut Value) -> TestResult,
+) -> TestResult<PathBuf> {
+    let root = workspace_root()?;
+    let mut plan = load_json(&root, HOST_PROBE_PLAN_PATH)?;
+    mutate(&mut plan)?;
+    let dir = root.join("target/conformance/mutated-rollup-sources");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    let path = dir.join(format!("{}.json", unique_label(label)?));
+    let content = serde_json::to_string_pretty(&plan)
+        .map_err(|err| format!("failed to serialize mutated host dependency plan: {err}"))?;
+    std::fs::write(&path, format!("{content}\n"))
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(path)
+}
+
 fn progress_row_mut<'a>(rollup: &'a mut Value, category: &str) -> TestResult<&'a mut Value> {
     let rows = rollup
         .get_mut("progress_categories")
@@ -243,6 +300,13 @@ fn provider_row_mut<'a>(rollup: &'a mut Value, provider: &str) -> TestResult<&'a
     rows.iter_mut()
         .find(|row| row.get("provider_library").and_then(Value::as_str) == Some(provider))
         .ok_or_else(|| format!("missing provider {provider}"))
+}
+
+fn action_rows_mut(plan: &mut Value) -> TestResult<&mut serde_json::Map<String, Value>> {
+    plan.get_mut("current_forge_blocker_projection")
+        .and_then(|projection| projection.get_mut("blocker_action_required_rows"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "blocker_action_required_rows must be an object".to_string())
 }
 
 fn partial_experiment_row_mut<'a>(
@@ -308,6 +372,12 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
         )?,
         "blocking_reasons",
     )?;
+    let action_rows = get_path(
+        &plan,
+        "current_forge_blocker_projection.blocker_action_required_rows",
+    )?
+    .as_object()
+    .ok_or_else(|| "blocker_action_required_rows must be an object".to_string())?;
     let mut reasons_by_owner: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut value_count_by_owner: BTreeMap<String, usize> = BTreeMap::new();
     for row in json_array(&owner_ledger, "ledger_rows")? {
@@ -320,9 +390,20 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
         reasons_by_owner
             .entry(owner.clone())
             .or_default()
-            .insert(reason);
+            .insert(reason.clone());
+        let action_row = action_rows
+            .get(&reason)
+            .ok_or_else(|| format!("missing live action row for {reason}"))?;
+        require(
+            json_string(action_row, "blocking_reason")? == reason,
+            format!("{reason}: live action row reason mismatch"),
+        )?;
+        require(
+            json_field(action_row, "promotion_allowed")?.as_bool() == Some(false),
+            format!("{reason}: live action row must not permit promotion"),
+        )?;
         *value_count_by_owner.entry(owner).or_default() +=
-            json_array(row, "current_blocker_values")?.len();
+            json_array(action_row, "current_blocker_values")?.len();
     }
 
     let mut rollup_reasons = BTreeSet::new();
@@ -348,6 +429,14 @@ fn rollup_manifest_covers_owner_ledger_and_version_matrix() -> TestResult {
             json_field(row, "last_known_value_count")?.as_u64()
                 == Some(*value_count_by_owner.get(category).unwrap_or(&0) as u64),
             format!("{category}: value count mismatch"),
+        )?;
+        require(
+            json_string(row, "value_source")? == BLOCKER_ACTION_VALUE_SOURCE,
+            format!("{category}: value source must use live action rows"),
+        )?;
+        require(
+            json_string(row, "exit_criteria_source")? == BLOCKER_ACTION_EXIT_CRITERIA_SOURCE,
+            format!("{category}: exit criteria source must use live action rows"),
         )?;
     }
     require(
@@ -693,6 +782,45 @@ fn checker_rejects_stale_value_count() -> TestResult {
         &mutated,
         "rollup-stale-count",
         "progress_categories[unwind_runtime].last_known_value_count mismatch",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_live_action_row() -> TestResult {
+    let mutated = write_mutated_plan("plan-missing-live-action-row", |plan| {
+        action_rows_mut(plan)?.remove("undefined_tls_symbols");
+        Ok(())
+    })?;
+    expect_checker_failure_with_plan(
+        &mutated,
+        "plan-missing-live-action-row",
+        "current_forge_blocker_projection.blocker_action_required_rows missing undefined_tls_symbols",
+    )
+}
+
+#[test]
+fn checker_rejects_live_action_value_drift() -> TestResult {
+    let mutated = write_mutated_plan("plan-live-action-value-drift", |plan| {
+        let rows = action_rows_mut(plan)?;
+        let row = rows
+            .get_mut("host_version_requirements")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "host_version_requirements action row must be object".to_string())?;
+        row.insert(
+            "current_blocker_values".to_string(),
+            Value::Array(vec![
+                Value::String("stale-provider:STALE_1.0".to_string()),
+                Value::String("libgcc_s.so.1:GCC_3.0".to_string()),
+                Value::String("libgcc_s.so.1:GCC_3.3".to_string()),
+                Value::String("libgcc_s.so.1:GCC_4.2.0".to_string()),
+            ]),
+        );
+        Ok(())
+    })?;
+    expect_checker_failure_with_plan(
+        &mutated,
+        "plan-live-action-value-drift",
+        "current_forge_blocker_projection.blocker_action_required_rows.host_version_requirements.current_blocker_values must match snapshot blocker values",
     )
 }
 

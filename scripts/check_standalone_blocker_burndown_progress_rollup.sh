@@ -55,6 +55,7 @@ EXPECTED_FRESHNESS_POLICY = {
 EXPECTED_ROLLUP_POLICY = {
     "source_of_truth": [
         "standalone_host_dependency_probe_plan.current_forge_blocker_projection.current_forge_blocker_value_snapshot",
+        "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows",
         "standalone_forge_blocker_owner_action_ledger.ledger_rows",
         "standalone_host_version_requirement_burndown.version_requirement_matrix",
         "standalone_owned_unwind_experiment.summary",
@@ -78,6 +79,14 @@ REQUIRED_ROLLUP_ROW_FIELDS = {
     "exit_criteria_source",
     "status_until_exit",
 }
+LIVE_ACTION_VALUE_SOURCE = (
+    "standalone_host_dependency_probe_plan.current_forge_blocker_projection."
+    "blocker_action_required_rows.current_blocker_values"
+)
+LIVE_ACTION_EXIT_CRITERIA_SOURCE = (
+    "standalone_host_dependency_probe_plan.current_forge_blocker_projection."
+    "blocker_action_required_rows.exit_criteria"
+)
 errors = []
 
 
@@ -151,6 +160,68 @@ def matrix_requirement_id(row):
     if isinstance(provider, str) and isinstance(version, str):
         return f"{provider}:{version}"
     return None
+
+
+def expected_live_action_values(reason, snapshot):
+    if reason == "host_needed_libraries_present":
+        return string_list(snapshot.get("host_needed_libraries"), "snapshot.host_needed_libraries")
+    if reason == "host_direct_needed_libraries_present":
+        return string_list(
+            snapshot.get("host_direct_needed_libraries"),
+            "snapshot.host_direct_needed_libraries",
+        )
+    if reason == "host_resolved_libraries_present":
+        return string_list(
+            snapshot.get("host_resolved_libraries"),
+            "snapshot.host_resolved_libraries",
+        )
+    if reason == "host_loader_dependency":
+        return [
+            value
+            for value in string_list(
+                snapshot.get("host_needed_libraries"),
+                "snapshot.host_needed_libraries",
+            )
+            if "ld-linux" in value
+        ]
+    if reason == "host_libc_dependency":
+        return [
+            value
+            for value in string_list(
+                snapshot.get("host_needed_libraries"),
+                "snapshot.host_needed_libraries",
+            )
+            if "libc.so" in value
+        ]
+    if reason == "libgcc_runtime_dependency":
+        return [
+            *[
+                value
+                for value in string_list(
+                    snapshot.get("host_needed_libraries"),
+                    "snapshot.host_needed_libraries",
+                )
+                if "libgcc_s.so" in value
+            ],
+            *[
+                value
+                for value in string_list(
+                    snapshot.get("host_version_requirements"),
+                    "snapshot.host_version_requirements",
+                )
+                if value.startswith("libgcc_s.so")
+            ],
+        ]
+    if reason == "undefined_unwind_symbols":
+        return string_list(snapshot.get("undefined_unwind_symbols"), "snapshot.undefined_unwind_symbols")
+    if reason == "undefined_glibc_symbols":
+        return string_list(snapshot.get("undefined_glibc_symbols"), "snapshot.undefined_glibc_symbols")
+    if reason == "undefined_tls_symbols":
+        return string_list(snapshot.get("undefined_tls_symbols"), "snapshot.undefined_tls_symbols")
+    if reason == "host_version_requirements":
+        return string_list(snapshot.get("host_version_requirements"), "snapshot.host_version_requirements")
+    errors.append(f"unknown live action reason {reason}")
+    return []
 
 
 def owned_unwind_live_dependency_contract_report(expected_lane):
@@ -264,6 +335,32 @@ current_reasons = set(string_list(snapshot.get("blocking_reasons"), "snapshot.bl
 if len(current_reasons) != 10:
     errors.append("current forge snapshot must expose ten unique blocking reasons")
 
+action_rows = projection.get("blocker_action_required_rows", {})
+if not isinstance(action_rows, dict) or not action_rows:
+    errors.append("current_forge_blocker_projection.blocker_action_required_rows must be a non-empty object")
+    action_rows = {}
+live_action_by_reason = {}
+for reason in sorted(current_reasons):
+    row = action_rows.get(reason)
+    context = f"current_forge_blocker_projection.blocker_action_required_rows.{reason}"
+    if row is None:
+        errors.append(f"current_forge_blocker_projection.blocker_action_required_rows missing {reason}")
+        continue
+    if not isinstance(row, dict):
+        errors.append(f"{context} must be an object")
+        continue
+    if row.get("blocking_reason") != reason:
+        errors.append(f"{context}.blocking_reason mismatch")
+    if row.get("promotion_allowed") is not False:
+        errors.append(f"{context}.promotion_allowed must be false")
+    live_values = string_list(row.get("current_blocker_values"), f"{context}.current_blocker_values")
+    if live_values != expected_live_action_values(reason, snapshot):
+        errors.append(f"{context}.current_blocker_values must match snapshot blocker values")
+    string_list(row.get("exit_criteria"), f"{context}.exit_criteria")
+    live_action_by_reason[reason] = row
+for reason in sorted(set(action_rows) - current_reasons):
+    errors.append(f"current_forge_blocker_projection.blocker_action_required_rows has unexpected reason {reason}")
+
 owner_rows = owner_ledger.get("ledger_rows", [])
 if not isinstance(owner_rows, list):
     errors.append("owner ledger ledger_rows must be an array")
@@ -318,14 +415,24 @@ for row in progress_rows:
     exit_criteria = []
     for reason in reasons:
         rollup_reason_set.add(reason)
-        owner_row = owner_by_reason.get(reason, {})
-        values.extend(string_list(owner_row.get("current_blocker_values"), f"owner_ledger.{reason}.current_blocker_values"))
-        exit_criteria.extend(string_list(owner_row.get("exit_criteria"), f"owner_ledger.{reason}.exit_criteria"))
+        action_row = live_action_by_reason.get(reason, {})
+        values.extend(
+            string_list(
+                action_row.get("current_blocker_values"),
+                f"blocker_action_required_rows.{reason}.current_blocker_values",
+            )
+        )
+        exit_criteria.extend(
+            string_list(
+                action_row.get("exit_criteria"),
+                f"blocker_action_required_rows.{reason}.exit_criteria",
+            )
+        )
     if row.get("last_known_value_count") != len(values):
         errors.append(f"{context}.last_known_value_count mismatch")
-    if row.get("value_source") != "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values":
+    if row.get("value_source") != LIVE_ACTION_VALUE_SOURCE:
         errors.append(f"{context}.value_source mismatch")
-    if row.get("exit_criteria_source") != "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria":
+    if row.get("exit_criteria_source") != LIVE_ACTION_EXIT_CRITERIA_SOURCE:
         errors.append(f"{context}.exit_criteria_source mismatch")
     if row.get("status_until_exit") != "claim_blocked":
         errors.append(f"{context}.status_until_exit must be claim_blocked")

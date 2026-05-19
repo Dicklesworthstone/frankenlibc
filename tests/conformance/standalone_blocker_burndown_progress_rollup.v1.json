@@ -22,6 +22,7 @@
   "rollup_policy": {
     "source_of_truth": [
       "standalone_host_dependency_probe_plan.current_forge_blocker_projection.current_forge_blocker_value_snapshot",
+      "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows",
       "standalone_forge_blocker_owner_action_ledger.ledger_rows",
       "standalone_host_version_requirement_burndown.version_requirement_matrix",
       "standalone_owned_unwind_experiment.summary",
@@ -58,8 +59,8 @@
       ],
       "current_reason_count": 3,
       "last_known_value_count": 9,
-      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
-      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
     },
     {
@@ -72,8 +73,8 @@
       ],
       "current_reason_count": 1,
       "last_known_value_count": 2,
-      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
-      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
     },
     {
@@ -86,8 +87,8 @@
       ],
       "current_reason_count": 1,
       "last_known_value_count": 1,
-      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
-      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
     },
     {
@@ -100,8 +101,8 @@
       ],
       "current_reason_count": 1,
       "last_known_value_count": 4,
-      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
-      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
     },
     {
@@ -114,8 +115,8 @@
       ],
       "current_reason_count": 1,
       "last_known_value_count": 12,
-      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
-      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
     },
     {
@@ -128,8 +129,8 @@
       ],
       "current_reason_count": 1,
       "last_known_value_count": 1,
-      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
-      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
     },
     {
@@ -142,8 +143,8 @@
       ],
       "current_reason_count": 1,
       "last_known_value_count": 1,
-      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
-      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
     },
     {
@@ -156,8 +157,8 @@
       ],
       "current_reason_count": 1,
       "last_known_value_count": 4,
-      "value_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.current_blocker_values",
-      "exit_criteria_source": "standalone_forge_blocker_owner_action_ledger.ledger_rows.exit_criteria",
+      "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
+      "exit_criteria_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.exit_criteria",
       "status_until_exit": "claim_blocked"
     }
   ],
