@@ -29,7 +29,7 @@ const TLS_SYMBOL: &str = "__tls_get_addr@GLIBC_2.3";
 const TLS_VERSION_REQ: &str = "ld-linux-x86-64.so.2:GLIBC_2.3";
 const EXPECTED_OWNER_SURFACE_COUNT: usize = 20;
 const EXPECTED_NON_TARGETED_TLS_EMITTER_COUNT: usize = 0;
-const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 15;
+const EXPECTED_RESIDUAL_ARTIFACT_TLS_EMITTER_COUNT: usize = 14;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ThreadLocalMacroSite {
@@ -875,7 +875,6 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
     for required in [
         "__libc_dlerror_result",
         "_RNvNCNKNvNtNtCsIJ6DkCoJLi_16frankenlibc_core7pthread3tls19FALLBACK_TLS_VALUESs_0s_023___RUST_STD_INTERNAL_VAL",
-        "_RNvNCNKNvNtCsiOimjtHV038_20frankenlibc_membrane13ptr_validator16VALIDATION_DEPTH0s_023___RUST_STD_INTERNAL_VAL",
         "_RNvNCNKNvNvNtCsauQQugvlKcP_16parking_lot_core11parking_lot16with_thread_data11THREAD_DATA0023___RUST_STD_INTERNAL_VAL",
         "_RNvNtNtNtCsjCoUzHIWc5R_3std3sys12thread_local11destructors4list5DTORS",
         "_RNvNtNtCsjCoUzHIWc5R_3std6thread7current7CURRENT",
@@ -890,6 +889,12 @@ fn residual_artifact_tls_emitters_are_inventory_locked() -> TestResult {
     require(
         !symbols.contains(removed_tls_cache_symbol),
         "residual artifact TLS inventory must not retain the removed membrane TLS_CACHE emitter",
+    )?;
+
+    let removed_validation_depth_symbol = "_RNvNCNKNvNtCsiOimjtHV038_20frankenlibc_membrane13ptr_validator16VALIDATION_DEPTH0s_023___RUST_STD_INTERNAL_VAL";
+    require(
+        !symbols.contains(removed_validation_depth_symbol),
+        "residual artifact TLS inventory must not retain the removed validation-depth TLS emitter",
     )?;
 
     let crates: BTreeSet<&str> = rows.iter().map(|row| row.crate_name.as_str()).collect();

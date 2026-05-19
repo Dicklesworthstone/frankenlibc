@@ -27,8 +27,11 @@ use crate::tls_cache::{CachedValidation, with_tls_cache};
 use crate::util::now_utc_iso_like;
 use parking_lot::Mutex;
 use serde::Serialize;
+#[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::Cell;
 use std::collections::VecDeque;
+#[cfg(feature = "owned-tls-cache")]
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const VALIDATION_LOG_CAPACITY: usize = 2048;
@@ -264,31 +267,55 @@ thread_local! {
     /// collector remains alive as long as the handle is cached, preventing
     /// Use-After-Free if the original ValidationPipeline is dropped.
     static EBR_HANDLE: std::cell::RefCell<Option<(std::sync::Arc<crate::ebr::QuarantineEbr>, crate::ebr::EbrHandle<'static>)>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
     static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
+
+#[cfg(feature = "owned-tls-cache")]
+static VALIDATION_DEPTH: AtomicU32 = AtomicU32::new(0);
 
 struct ValidationExecutionGuard;
 
 impl Drop for ValidationExecutionGuard {
     fn drop(&mut self) {
+        #[cfg(not(feature = "owned-tls-cache"))]
         let _ = VALIDATION_DEPTH.try_with(|depth| {
             depth.set(depth.get().saturating_sub(1));
+        });
+        #[cfg(feature = "owned-tls-cache")]
+        let _ = VALIDATION_DEPTH.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            Some(current.saturating_sub(1))
         });
     }
 }
 
 fn enter_validation_execution_context() -> ValidationExecutionGuard {
+    #[cfg(not(feature = "owned-tls-cache"))]
     let _ = VALIDATION_DEPTH.try_with(|depth| {
         depth.set(depth.get().saturating_add(1));
+    });
+    #[cfg(feature = "owned-tls-cache")]
+    let _ = VALIDATION_DEPTH.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        Some(current.saturating_add(1))
     });
     ValidationExecutionGuard
 }
 
 #[must_use]
 pub fn in_validation_context() -> bool {
-    VALIDATION_DEPTH
-        .try_with(|depth| depth.get() > 0)
-        .unwrap_or(false)
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        VALIDATION_DEPTH
+            .try_with(|depth| depth.get() > 0)
+            .unwrap_or(false)
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        VALIDATION_DEPTH.load(Ordering::Acquire) > 0
+    }
 }
 
 impl ValidationPipeline {
@@ -2061,6 +2088,22 @@ mod tests {
             "owned metadata validation must pin through arena/fingerprint/canary reads"
         );
         assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    #[test]
+    fn owned_tls_cache_lane_tracks_validation_depth_without_rust_tls() {
+        assert!(!in_validation_context());
+        {
+            let _outer = enter_validation_execution_context();
+            assert!(in_validation_context());
+            {
+                let _inner = enter_validation_execution_context();
+                assert!(in_validation_context());
+            }
+            assert!(in_validation_context());
+        }
+        assert!(!in_validation_context());
     }
 
     #[test]
