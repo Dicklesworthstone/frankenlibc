@@ -13,10 +13,12 @@
   "purpose": "Report-only ownership contract for the current standalone forge _Unwind_* blockers. This maps each undefined unwind symbol to the libgcc_s provider/version row, owner surface, semantic contract class, evidence commands, and exit criteria so future owned-unwinder work can prove real blocker removal instead of hiding the dependency in prose.",
   "inputs": {
     "standalone_compiler_runtime_blocker_diagnostics": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
     "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
     "standalone_blocker_burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json"
   },
+  "source_action_row": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_unwind_symbols",
   "report_policy": {
     "report_only": true,
     "promotion_allowed": false,

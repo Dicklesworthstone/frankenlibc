@@ -16,11 +16,13 @@ type TestResult<T = ()> = Result<T, String>;
 const SURFACE_PATH: &str = "tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json";
 const DIAGNOSTICS_PATH: &str =
     "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json";
+const PLAN_PATH: &str = "tests/conformance/standalone_host_dependency_probe_plan.v1.json";
 const VERSION_BURNDOWN_PATH: &str =
     "tests/conformance/standalone_host_version_requirement_burndown.v1.json";
 const OWNER_LEDGER_PATH: &str =
     "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json";
 const ROLLUP_PATH: &str = "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json";
+const SOURCE_ACTION_ROW: &str = "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_unwind_symbols";
 
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -93,12 +95,23 @@ fn get_path<'a>(mut value: &'a Value, dotted: &str) -> TestResult<&'a Value> {
 }
 
 fn run_checker(root: &Path, surface: &Path, label: &str) -> TestResult<(Output, PathBuf)> {
+    let plan = root.join(PLAN_PATH);
+    run_checker_with_plan(root, surface, &plan, label)
+}
+
+fn run_checker_with_plan(
+    root: &Path,
+    surface: &Path,
+    plan: &Path,
+    label: &str,
+) -> TestResult<(Output, PathBuf)> {
     let report = root.join("target/conformance").join(format!(
         "standalone_owned_unwinder_symbol_surface.{label}.report.json"
     ));
     let output = Command::new("bash")
         .arg(checker_path(root))
         .env("FRANKENLIBC_STANDALONE_OWNED_UNWINDER_SURFACE", surface)
+        .env("FRANKENLIBC_STANDALONE_HOST_DEPENDENCY_PROBE_PLAN", plan)
         .env(
             "FRANKENLIBC_STANDALONE_OWNED_UNWINDER_SURFACE_REPORT",
             &report,
@@ -121,6 +134,21 @@ fn format_output(output: &Output) -> String {
 fn expect_checker_failure(surface: &Path, label: &str, expected_error: &str) -> TestResult {
     let root = workspace_root()?;
     let (output, report) = run_checker(&root, surface, label)?;
+    expect_failure_output(output, report, expected_error)
+}
+
+fn expect_checker_failure_with_plan(
+    surface: &Path,
+    plan: &Path,
+    label: &str,
+    expected_error: &str,
+) -> TestResult {
+    let root = workspace_root()?;
+    let (output, report) = run_checker_with_plan(&root, surface, plan, label)?;
+    expect_failure_output(output, report, expected_error)
+}
+
+fn expect_failure_output(output: Output, report: PathBuf, expected_error: &str) -> TestResult {
     require(
         !output.status.success(),
         format!("checker unexpectedly passed\n{}", format_output(&output)),
@@ -161,6 +189,23 @@ fn write_mutated_surface(
     Ok(path)
 }
 
+fn write_mutated_plan(
+    label: &str,
+    mutate: impl FnOnce(&mut Value) -> TestResult,
+) -> TestResult<PathBuf> {
+    let root = workspace_root()?;
+    let mut plan = load_json(&root, PLAN_PATH)?;
+    mutate(&mut plan)?;
+    let dir = root.join("target/conformance/mutated-owned-unwinder-plans");
+    std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    let path = dir.join(format!("{}.json", unique_label(label)?));
+    let content = serde_json::to_string_pretty(&plan)
+        .map_err(|err| format!("failed to serialize mutated plan: {err}"))?;
+    std::fs::write(&path, format!("{content}\n"))
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(path)
+}
+
 fn symbol_row_mut<'a>(surface: &'a mut Value, symbol: &str) -> TestResult<&'a mut Value> {
     let rows = surface
         .get_mut("symbol_rows")
@@ -189,6 +234,13 @@ fn current_unwind_symbols(diagnostics: &Value) -> TestResult<BTreeSet<String>> {
     )
 }
 
+fn live_unwind_action_row(plan: &Value) -> TestResult<&Value> {
+    get_path(
+        plan,
+        "current_forge_blocker_projection.blocker_action_required_rows.undefined_unwind_symbols",
+    )
+}
+
 fn version_symbols_by_requirement(
     burndown: &Value,
 ) -> TestResult<BTreeMap<String, BTreeSet<String>>> {
@@ -214,6 +266,7 @@ fn surface_manifest_covers_current_unwind_diagnostics() -> TestResult {
     let root = workspace_root()?;
     let surface = load_json(&root, SURFACE_PATH)?;
     let diagnostics = load_json(&root, DIAGNOSTICS_PATH)?;
+    let plan = load_json(&root, PLAN_PATH)?;
     let burndown = load_json(&root, VERSION_BURNDOWN_PATH)?;
     let owner_ledger = load_json(&root, OWNER_LEDGER_PATH)?;
     let rollup = load_json(&root, ROLLUP_PATH)?;
@@ -229,6 +282,10 @@ fn surface_manifest_covers_current_unwind_diagnostics() -> TestResult {
             .and_then(Value::as_bool)
             == Some(false),
         "surface must not allow promotion",
+    )?;
+    require(
+        json_string(&surface, "source_action_row")? == SOURCE_ACTION_ROW,
+        "surface must point at the live unwind blocker action row",
     )?;
 
     let current_symbols = current_unwind_symbols(&diagnostics)?;
@@ -270,13 +327,39 @@ fn surface_manifest_covers_current_unwind_diagnostics() -> TestResult {
         )?;
     }
 
+    let action_row = live_unwind_action_row(&plan)?;
+    require(
+        json_string(action_row, "blocking_reason")? == "undefined_unwind_symbols",
+        "live action row blocking reason",
+    )?;
+    require(
+        json_string(action_row, "owner_surface")? == "unwind_runtime",
+        "live action row owner surface",
+    )?;
+    require(
+        json_string(action_row, "primary_probe_id")? == "nm_dynamic_undefined_symbols",
+        "live action row primary probe",
+    )?;
+    require(
+        json_field(action_row, "promotion_allowed")?.as_bool() == Some(false),
+        "live action row must not allow promotion",
+    )?;
+    require(
+        string_set(action_row, "current_blocker_values")? == current_symbols,
+        "live action row values must match diagnostics",
+    )?;
+    require(
+        json_array(action_row, "exit_criteria")?.len() >= 2,
+        "live action row exit criteria",
+    )?;
+
     let owner_row = json_array(&owner_ledger, "ledger_rows")?
         .iter()
         .find(|row| json_string(row, "blocking_reason") == Ok("undefined_unwind_symbols"))
         .ok_or_else(|| "owner ledger missing undefined_unwind_symbols row".to_string())?;
     require(
-        string_set(owner_row, "current_blocker_values")? == current_symbols,
-        "owner ledger values must match diagnostics",
+        json_string(owner_row, "owner_surface")? == "unwind_runtime",
+        "owner ledger must retain stable unwind owner context",
     )?;
     let rollup_row = json_array(&rollup, "progress_categories")?
         .iter()
@@ -399,5 +482,54 @@ fn checker_rejects_stale_source_commit() -> TestResult {
         &mutated,
         "stale-source",
         "surface source_commit must be 'current' or match current git HEAD",
+    )
+}
+
+#[test]
+fn checker_rejects_missing_live_unwind_action_row() -> TestResult {
+    let root = workspace_root()?;
+    let surface = root.join(SURFACE_PATH);
+    let mutated_plan = write_mutated_plan("missing-live-unwind-action-row", |plan| {
+        let action_rows = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(|projection| projection.get_mut("blocker_action_required_rows"))
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "blocker_action_required_rows must be an object".to_string())?;
+        action_rows
+            .remove("undefined_unwind_symbols")
+            .ok_or_else(|| "mutation must remove undefined_unwind_symbols".to_string())?;
+        Ok(())
+    })?;
+    expect_checker_failure_with_plan(
+        &surface,
+        &mutated_plan,
+        "missing-live-unwind-action-row",
+        "undefined_unwind_symbols: must be an object",
+    )
+}
+
+#[test]
+fn checker_rejects_drifted_live_unwind_action_values() -> TestResult {
+    let root = workspace_root()?;
+    let surface = root.join(SURFACE_PATH);
+    let mutated_plan = write_mutated_plan("drifted-live-unwind-action-values", |plan| {
+        let values = plan
+            .get_mut("current_forge_blocker_projection")
+            .and_then(|projection| projection.get_mut("blocker_action_required_rows"))
+            .and_then(|rows| rows.get_mut("undefined_unwind_symbols"))
+            .and_then(|row| row.get_mut("current_blocker_values"))
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "current_blocker_values must be an array".to_string())?;
+        let first = values
+            .first_mut()
+            .ok_or_else(|| "mutation needs at least one current blocker value".to_string())?;
+        *first = Value::String("_Unwind_Bogus@GCC_0.0".to_owned());
+        Ok(())
+    })?;
+    expect_checker_failure_with_plan(
+        &surface,
+        &mutated_plan,
+        "drifted-live-unwind-action-values",
+        "undefined_unwind_symbols.current_blocker_values must match current diagnostics",
     )
 }

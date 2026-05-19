@@ -8,6 +8,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SURFACE="${FRANKENLIBC_STANDALONE_OWNED_UNWINDER_SURFACE:-${ROOT}/tests/conformance/standalone_owned_unwinder_symbol_surface.v1.json}"
 DIAGNOSTICS="${FRANKENLIBC_STANDALONE_COMPILER_RUNTIME_DIAGNOSTICS:-${ROOT}/tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json}"
+PLAN="${FRANKENLIBC_STANDALONE_HOST_DEPENDENCY_PROBE_PLAN:-${ROOT}/tests/conformance/standalone_host_dependency_probe_plan.v1.json}"
 VERSION_BURNDOWN="${FRANKENLIBC_STANDALONE_VERSION_BURNDOWN:-${ROOT}/tests/conformance/standalone_host_version_requirement_burndown.v1.json}"
 OWNER_LEDGER="${FRANKENLIBC_STANDALONE_BLOCKER_OWNER_LEDGER:-${ROOT}/tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json}"
 ROLLUP="${FRANKENLIBC_STANDALONE_BLOCKER_ROLLUP:-${ROOT}/tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json}"
@@ -16,7 +17,7 @@ REPORT="${FRANKENLIBC_STANDALONE_OWNED_UNWINDER_SURFACE_REPORT:-${OUT_DIR}/stand
 
 mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")"
 
-python3 - "${ROOT}" "${SURFACE}" "${DIAGNOSTICS}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${ROLLUP}" "${REPORT}" <<'PY'
+python3 - "${ROOT}" "${SURFACE}" "${DIAGNOSTICS}" "${PLAN}" "${VERSION_BURNDOWN}" "${OWNER_LEDGER}" "${ROLLUP}" "${REPORT}" <<'PY'
 import json
 import subprocess
 import sys
@@ -26,13 +27,15 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve()
 surface_path = Path(sys.argv[2])
 diagnostics_path = Path(sys.argv[3])
-version_path = Path(sys.argv[4])
-owner_path = Path(sys.argv[5])
-rollup_path = Path(sys.argv[6])
-report_path = Path(sys.argv[7])
+plan_path = Path(sys.argv[4])
+version_path = Path(sys.argv[5])
+owner_path = Path(sys.argv[6])
+rollup_path = Path(sys.argv[7])
+report_path = Path(sys.argv[8])
 for name in [
     "surface_path",
     "diagnostics_path",
+    "plan_path",
     "version_path",
     "owner_path",
     "rollup_path",
@@ -45,6 +48,7 @@ for name in [
 BEAD_ID = "bd-zyck1.95"
 EXPECTED_INPUTS = {
     "standalone_compiler_runtime_blocker_diagnostics": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
+    "standalone_host_dependency_probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
     "standalone_host_version_requirement_burndown": "tests/conformance/standalone_host_version_requirement_burndown.v1.json",
     "standalone_forge_blocker_owner_action_ledger": "tests/conformance/standalone_forge_blocker_owner_action_ledger.v1.json",
     "standalone_blocker_burndown_progress_rollup": "tests/conformance/standalone_blocker_burndown_progress_rollup.v1.json",
@@ -72,6 +76,10 @@ EXPECTED_REPORT_POLICY = {
 EXPECTED_SOURCE_DIAGNOSTIC = (
     "standalone_compiler_runtime_blocker_diagnostics.current_forge_evidence."
     "evidence_command_results.nm_dynamic.observed_undefined_unwind_symbols"
+)
+EXPECTED_SOURCE_ACTION_ROW = (
+    "standalone_host_dependency_probe_plan.current_forge_blocker_projection."
+    "blocker_action_required_rows.undefined_unwind_symbols"
 )
 EXPECTED_SOURCE_VERSION_MATRIX = "standalone_host_version_requirement_burndown.version_requirement_matrix"
 REQUIRED_SYMBOL_ROW_FIELDS = {
@@ -189,10 +197,11 @@ def split_symbol_version(symbol):
 head = current_commit()
 surface = load_json(surface_path)
 diagnostics = load_json(diagnostics_path)
+plan = load_json(plan_path)
 version_burndown = load_json(version_path)
 owner_ledger = load_json(owner_path)
 rollup = load_json(rollup_path)
-for value_name in ["surface", "diagnostics", "version_burndown", "owner_ledger", "rollup"]:
+for value_name in ["surface", "diagnostics", "plan", "version_burndown", "owner_ledger", "rollup"]:
     if not isinstance(locals()[value_name], dict):
         locals()[value_name] = {}
 
@@ -209,6 +218,8 @@ if surface.get("source_commit_freshness_policy") != EXPECTED_FRESHNESS_POLICY:
     errors.append("source_commit_freshness_policy must match owned-unwinder stale-source contract")
 if surface.get("report_policy") != EXPECTED_REPORT_POLICY:
     errors.append("report_policy must match owned-unwinder fail-closed contract")
+if surface.get("source_action_row") != EXPECTED_SOURCE_ACTION_ROW:
+    errors.append("source_action_row must point at live undefined_unwind_symbols blocker action row")
 inputs = object_value(surface.get("inputs"), "inputs")
 if inputs != EXPECTED_INPUTS:
     errors.append("inputs must match owned-unwinder symbol surface input contract")
@@ -249,6 +260,51 @@ if nm_symbols != mapping_symbols:
 if len(nm_symbols) != 12:
     errors.append("current diagnostics must expose twelve unique undefined unwind symbols")
 
+projection = object_value(plan.get("current_forge_blocker_projection"), "plan.current_forge_blocker_projection")
+action_rows = object_value(
+    projection.get("blocker_action_required_rows"),
+    "plan.current_forge_blocker_projection.blocker_action_required_rows",
+)
+unwind_action = object_value(
+    action_rows.get("undefined_unwind_symbols"),
+    "plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_unwind_symbols",
+)
+if unwind_action:
+    expected_pairs = {
+        "blocking_reason": "undefined_unwind_symbols",
+        "owner_surface": "unwind_runtime",
+        "primary_probe_id": "nm_dynamic_undefined_symbols",
+    }
+    for field, expected in expected_pairs.items():
+        if unwind_action.get(field) != expected:
+            errors.append(
+                "plan.current_forge_blocker_projection.blocker_action_required_rows."
+                f"undefined_unwind_symbols.{field} must be {expected}"
+            )
+    if unwind_action.get("promotion_allowed") is not False:
+        errors.append(
+            "plan.current_forge_blocker_projection.blocker_action_required_rows."
+            "undefined_unwind_symbols.promotion_allowed must be false"
+        )
+action_values = set(
+    string_list(
+        unwind_action.get("current_blocker_values"),
+        "plan.current_forge_blocker_projection.blocker_action_required_rows."
+        "undefined_unwind_symbols.current_blocker_values",
+        min_len=12,
+    )
+)
+if action_values != nm_symbols:
+    errors.append(
+        "plan.current_forge_blocker_projection.blocker_action_required_rows."
+        "undefined_unwind_symbols.current_blocker_values must match current diagnostics"
+    )
+action_exit_criteria = string_list(
+    unwind_action.get("exit_criteria"),
+    "plan.current_forge_blocker_projection.blocker_action_required_rows.undefined_unwind_symbols.exit_criteria",
+    min_len=2,
+)
+
 owner_rows = owner_ledger.get("ledger_rows", [])
 if not isinstance(owner_rows, list):
     errors.append("owner ledger ledger_rows must be an array")
@@ -263,9 +319,6 @@ owner_unwind = next(
 )
 if owner_unwind.get("owner_surface") != "unwind_runtime":
     errors.append("owner ledger undefined_unwind_symbols row must belong to unwind_runtime")
-owner_values = set(string_list(owner_unwind.get("current_blocker_values"), "owner ledger unwind current_blocker_values", min_len=12))
-if owner_values != nm_symbols:
-    errors.append("owner ledger unwind current_blocker_values must match current diagnostics")
 
 rollup_rows = rollup.get("progress_categories", [])
 if not isinstance(rollup_rows, list):
@@ -407,6 +460,8 @@ report = {
     "current_head": head,
     "claim_status": "claim_blocked",
     "owner_surface": "unwind_runtime",
+    "source_action_row": EXPECTED_SOURCE_ACTION_ROW,
+    "source_action_exit_criteria": action_exit_criteria,
     "provider_version_requirement_ids": sorted(libgcc_requirement_ids),
     "symbol_rows": materialized_rows,
     "summary": {
