@@ -177,12 +177,36 @@ impl MallocState {
         &mut self.central_bins[index.get()]
     }
 
+    fn can_track_allocation(&self, size: usize) -> bool {
+        self.total_allocated.checked_add(size).is_some()
+            && self.active_count.checked_add(1).is_some()
+    }
+
+    fn track_allocation(&mut self, size: usize) {
+        self.total_allocated += size;
+        self.active_count += 1;
+    }
+
     /// Allocates `size` bytes of memory using the given backend.
     pub fn malloc<F>(&mut self, size: usize, mut alloc_fn: F) -> Option<usize>
     where
         F: FnMut(usize) -> Option<usize>,
     {
         let size = if size == 0 { 1 } else { size };
+        if !self.can_track_allocation(size) {
+            self.record_lifecycle(
+                AllocatorLogLevel::Warn,
+                "malloc",
+                "alloc",
+                None,
+                Some(size),
+                None,
+                "accounting_overflow",
+                "allocation_counters_would_overflow",
+            );
+            return None;
+        }
+
         let Some(bin) = size_class::small_bin_index(size) else {
             // Large allocation path
             if LargeAllocator::mapped_size_for(size).is_none() {
@@ -202,8 +226,7 @@ impl MallocState {
             let out = alloc_fn(size);
             if let Some(ptr) = out {
                 if let Some(large_alloc) = self.large_allocations.register(ptr, size) {
-                    self.total_allocated = self.total_allocated.saturating_add(size);
-                    self.active_count = self.active_count.saturating_add(1);
+                    self.track_allocation(size);
                     self.record_lifecycle(
                         AllocatorLogLevel::Trace,
                         "malloc",
@@ -264,8 +287,7 @@ impl MallocState {
         // Try thread cache first
         if let Some(ptr) = self.thread_cache.alloc(bin_usize) {
             self.thread_cache_hits += 1;
-            self.total_allocated = self.total_allocated.saturating_add(size);
-            self.active_count = self.active_count.saturating_add(1);
+            self.track_allocation(size);
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "malloc",
@@ -283,8 +305,7 @@ impl MallocState {
 
         match self.elimination.try_take(bin_usize) {
             TakeOutcome::Matched { value: ptr, meta } => {
-                self.total_allocated = self.total_allocated.saturating_add(size);
-                self.active_count = self.active_count.saturating_add(1);
+                self.track_allocation(size);
                 self.record_lifecycle(
                     AllocatorLogLevel::Trace,
                     "malloc",
@@ -308,8 +329,7 @@ impl MallocState {
         // Try central bin
         if let Some(ptr) = self.central_bin_mut(bin).pop() {
             self.central_bin_hits += 1;
-            self.total_allocated = self.total_allocated.saturating_add(size);
-            self.active_count = self.active_count.saturating_add(1);
+            self.track_allocation(size);
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "malloc",
@@ -325,8 +345,7 @@ impl MallocState {
 
         // Refill from backend
         if let Some(ptr) = alloc_fn(class_size) {
-            self.total_allocated = self.total_allocated.saturating_add(size);
-            self.active_count = self.active_count.saturating_add(1);
+            self.track_allocation(size);
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "malloc",
@@ -630,6 +649,52 @@ mod tests {
         assert_eq!(state.total_large_mapped(), 0);
         assert_eq!(state.active_count(), 0);
         assert_eq!(state.total_allocated(), 0);
+    }
+
+    #[test]
+    fn test_malloc_rejects_total_allocated_overflow_before_backend() {
+        let mut state = MallocState::new();
+        state.total_allocated = usize::MAX;
+        let mut backend_called = false;
+
+        let ptr = state.malloc(16, |_| {
+            backend_called = true;
+            Some(0x7000)
+        });
+
+        assert!(ptr.is_none());
+        assert!(!backend_called);
+        assert_eq!(state.active_count(), 0);
+        assert_eq!(state.total_allocated(), usize::MAX);
+        let last = state
+            .lifecycle_logs()
+            .last()
+            .expect("expected accounting overflow lifecycle record");
+        assert_eq!(last.outcome, "accounting_overflow");
+        assert_eq!(last.details, "allocation_counters_would_overflow");
+    }
+
+    #[test]
+    fn test_malloc_rejects_active_count_overflow_before_backend() {
+        let mut state = MallocState::new();
+        state.active_count = usize::MAX;
+        let mut backend_called = false;
+
+        let ptr = state.malloc(16, |_| {
+            backend_called = true;
+            Some(0x7000)
+        });
+
+        assert!(ptr.is_none());
+        assert!(!backend_called);
+        assert_eq!(state.active_count(), usize::MAX);
+        assert_eq!(state.total_allocated(), 0);
+        let last = state
+            .lifecycle_logs()
+            .last()
+            .expect("expected accounting overflow lifecycle record");
+        assert_eq!(last.outcome, "accounting_overflow");
+        assert_eq!(last.details, "allocation_counters_would_overflow");
     }
 
     #[test]
