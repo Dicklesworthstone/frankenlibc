@@ -1,0 +1,95 @@
+{
+  "schema_version": "runtime_membrane_overhead_evidence_lane_completion_contract.v1",
+  "bead": "bd-owqho",
+  "purpose": "Completion contract for the runtime membrane overhead evidence lane. It binds the fail-closed budget checker, TSM contention lane, and reviewer report into one replayable closeout without treating schema-golden or smoke-only evidence as public performance proof.",
+  "child_artifacts": [
+    {
+      "bead": "bd-e1eko",
+      "title": "Fail closed on TSM overhead budget regressions",
+      "artifact_path": "tests/conformance/strict_hardened_membrane_overhead_budget_golden.v1.json",
+      "artifact_schema": "v1",
+      "checker_path": "scripts/check_strict_hardened_membrane_overhead_budget.sh",
+      "test_path": "crates/frankenlibc-harness/tests/strict_hardened_membrane_overhead_budget_test.rs",
+      "status_required": "closed",
+      "required_failure_signatures": [
+        "stale_source_commit",
+        "missing_rch_remote",
+        "local_fallback_seen",
+        "missing_family",
+        "missing_mode",
+        "invalid_quantile",
+        "budget_regression",
+        "missing_runtime_math_telemetry"
+      ]
+    },
+    {
+      "bead": "bd-rakj1",
+      "title": "Add massive-thread TSM contention E2E lane",
+      "artifact_path": "tests/conformance/tsm_contention_e2e_lane.v1.json",
+      "artifact_schema": "tsm_contention_e2e_lane.v1",
+      "checker_path": "scripts/check_tsm_contention_e2e_lane.sh",
+      "test_path": "crates/frankenlibc-harness/tests/tsm_contention_e2e_lane_test.rs",
+      "status_required": "closed",
+      "required_failure_signatures": [
+        "smoke_claim_upgrade",
+        "invalid_contention_lane",
+        "missing_rch_remote"
+      ]
+    },
+    {
+      "bead": "bd-hdflr",
+      "title": "Publish TSM overhead evidence report and reviewer checklist",
+      "artifact_path": "tests/conformance/tsm_overhead_evidence_report.v1.json",
+      "artifact_schema": "tsm_overhead_evidence_report.v1",
+      "checker_path": "scripts/check_tsm_overhead_evidence_report.sh",
+      "test_path": "crates/frankenlibc-harness/tests/tsm_overhead_evidence_report_test.rs",
+      "status_required": "closed",
+      "required_failure_signatures": [
+        "missing_evidence",
+        "budget_regression",
+        "stale_source_commit",
+        "smoke_claim_upgrade",
+        "invalid_contention_lane"
+      ]
+    }
+  ],
+  "closure_policy": {
+    "child_beads_must_be_closed": true,
+    "replay_child_checkers": true,
+    "public_claim_must_remain_blocked_without_permissioned_evidence": true,
+    "schema_golden_must_not_upgrade_public_claim": true,
+    "smoke_evidence_must_not_upgrade_public_claim": true,
+    "no_local_cargo_proof_counted": true,
+    "br_dep_cycles_required_empty": true
+  },
+  "claim_blockers_expected_without_live_permissioned_evidence": [
+    "overhead evidence is schema-golden or not current-source live proof",
+    "permissioned large-host contention evidence is absent"
+  ],
+  "required_remote_validation_commands": [
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-owqho-test rch exec -- cargo test -p frankenlibc-harness --test runtime_membrane_overhead_evidence_lane_completion_contract_test -- --nocapture",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-owqho-check rch exec -- cargo check -p frankenlibc-harness --test runtime_membrane_overhead_evidence_lane_completion_contract_test",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-owqho-clippy rch exec -- cargo clippy -p frankenlibc-harness --test runtime_membrane_overhead_evidence_lane_completion_contract_test -- -D warnings"
+  ],
+  "replay_validators": [
+    "bash scripts/check_strict_hardened_membrane_overhead_budget.sh",
+    "bash scripts/check_tsm_contention_e2e_lane.sh",
+    "bash scripts/check_tsm_overhead_evidence_report.sh"
+  ],
+  "structured_log_events": [
+    "runtime_membrane_overhead_completion_children_verified",
+    "runtime_membrane_overhead_completion_checkers_replayed",
+    "runtime_membrane_overhead_completion_claim_policy_verified",
+    "runtime_membrane_overhead_completion_rch_proof_verified",
+    "runtime_membrane_overhead_completion_contract_validated"
+  ],
+  "validation_commands": [
+    "jq empty tests/conformance/runtime_membrane_overhead_evidence_lane_completion_contract.v1.json",
+    "bash -n scripts/check_runtime_membrane_overhead_evidence_lane_completion_contract.sh",
+    "bash scripts/check_runtime_membrane_overhead_evidence_lane_completion_contract.sh",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-owqho-test rch exec -- cargo test -p frankenlibc-harness --test runtime_membrane_overhead_evidence_lane_completion_contract_test -- --nocapture",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-owqho-check rch exec -- cargo check -p frankenlibc-harness --test runtime_membrane_overhead_evidence_lane_completion_contract_test",
+    "RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=target/bd-owqho-clippy rch exec -- cargo clippy -p frankenlibc-harness --test runtime_membrane_overhead_evidence_lane_completion_contract_test -- -D warnings",
+    "AGENT_NAME=DarkShore br dep cycles --json"
+  ]
+}
