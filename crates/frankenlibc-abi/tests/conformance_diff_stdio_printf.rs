@@ -372,6 +372,11 @@ fn diff_snprintf_float_specifiers() {
         (b"%g\0", 0.0001),
         (b"%g\0", 1234567.0),
         (b"%.3g\0", std::f64::consts::PI),
+        (b"%.0a\0", 1.5),
+        (b"%.1a\0", 1.09375),
+        (b"%.1a\0", 1.03125),
+        (b"%#.0a\0", 1.0),
+        (b"%.1A\0", 0.1),
     ];
     for (fmt, val) in cases {
         let mut buf_fl = vec![0u8; 64];

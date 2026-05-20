@@ -1460,6 +1460,9 @@ fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: boo
     let sign = if bin_exp < 0 { '-' } else { '+' };
     let abs_exp = bin_exp.unsigned_abs();
 
+    let (lead_digit, frac_digits) =
+        rounded_hex_components(lead_digit, mantissa_bits, prec, default_prec);
+
     if prec == 0 {
         let dot = if alt_form { "." } else { "" };
         let lead_hex = if lead_digit < 10 {
@@ -1469,14 +1472,8 @@ fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: boo
         };
         alloc::format!("{prefix}{lead_hex}{dot}{p_char}{sign}{abs_exp}")
     } else {
-        // Build hex fractional digits from mantissa_bits, left-to-right.
         let mut frac = String::with_capacity(prec);
-        for i in 0..prec {
-            let nibble = if i < default_prec {
-                ((mantissa_bits >> (48 - i * 4)) & 0xF) as u8
-            } else {
-                0
-            };
+        for nibble in frac_digits {
             let ch = if nibble < 10 {
                 (b'0' + nibble) as char
             } else {
@@ -1484,7 +1481,72 @@ fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: boo
             };
             frac.push(ch);
         }
-        alloc::format!("{prefix}{lead_digit}.{frac}{p_char}{sign}{abs_exp}")
+        let lead_hex = if lead_digit < 10 {
+            (b'0' + lead_digit) as char
+        } else {
+            (hex_alpha + (lead_digit - 10)) as char
+        };
+        alloc::format!("{prefix}{lead_hex}.{frac}{p_char}{sign}{abs_exp}")
+    }
+}
+
+fn rounded_hex_components(
+    mut lead_digit: u8,
+    mantissa_bits: u64,
+    precision: usize,
+    default_prec: usize,
+) -> (u8, Vec<u8>) {
+    let mut frac: Vec<u8> = (0..precision)
+        .map(|i| hex_fraction_nibble(mantissa_bits, i, default_prec))
+        .collect();
+    if precision >= default_prec {
+        return (lead_digit, frac);
+    }
+
+    let first_discarded = hex_fraction_nibble(mantissa_bits, precision, default_prec);
+    let lower_nibbles = default_prec.saturating_sub(precision + 1);
+    let lower_nonzero = if lower_nibbles == 0 {
+        false
+    } else {
+        let lower_mask = (1_u64 << (lower_nibbles * 4)) - 1;
+        mantissa_bits & lower_mask != 0
+    };
+    let last_kept_odd = if precision == 0 {
+        lead_digit & 1 != 0
+    } else {
+        frac[precision - 1] & 1 != 0
+    };
+    let round_up =
+        first_discarded > 8 || (first_discarded == 8 && (lower_nonzero || last_kept_odd));
+    if !round_up {
+        return (lead_digit, frac);
+    }
+
+    if precision == 0 {
+        lead_digit = lead_digit.saturating_add(1);
+        return (lead_digit, frac);
+    }
+
+    let mut carry = true;
+    for nibble in frac.iter_mut().rev() {
+        if *nibble < 0xF {
+            *nibble += 1;
+            carry = false;
+            break;
+        }
+        *nibble = 0;
+    }
+    if carry {
+        lead_digit = lead_digit.saturating_add(1);
+    }
+    (lead_digit, frac)
+}
+
+fn hex_fraction_nibble(mantissa_bits: u64, index: usize, default_prec: usize) -> u8 {
+    if index < default_prec {
+        ((mantissa_bits >> (48 - index * 4)) & 0xF) as u8
+    } else {
+        0
     }
 }
 
@@ -2176,6 +2238,41 @@ mod tests {
         buf.clear();
         format_float(0.0, &spec, &mut buf);
         assert_eq!(&buf, b"0x0.p+0");
+    }
+
+    #[test]
+    fn test_hex_float_explicit_precision_rounds_nibbles() {
+        let mut spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::Fixed(1),
+            length: LengthMod::None,
+            conversion: b'a',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+
+        // 1.09375 == 0x1.18p+0. At one hex digit this is an exact
+        // half-way case; ties round to even, so the odd retained
+        // nibble 1 rounds up to 2.
+        format_float(1.09375, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1.2p+0");
+
+        buf.clear();
+        // 1.03125 == 0x1.08p+0. The retained nibble is even, so the
+        // half-way discarded 8 does not round up.
+        format_float(1.03125, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1.0p+0");
+
+        buf.clear();
+        spec.precision = Precision::Fixed(0);
+        format_float(1.5, &spec, &mut buf);
+        assert_eq!(&buf, b"0x2p+0");
+
+        buf.clear();
+        format_float(1.9999999999999998, &spec, &mut buf);
+        assert_eq!(&buf, b"0x2p+0");
     }
 
     #[test]
