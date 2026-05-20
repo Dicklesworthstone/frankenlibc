@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-KEY_RE = re.compile(r"\b(FRANKENLIBC_[A-Z0-9_]+)\b")
+KEY_RE = re.compile(r"\b(FRANKENLIBC_[A-Z0-9_]*[A-Z0-9])\b")
 
 DOC_FILES = (
     "README.md",
