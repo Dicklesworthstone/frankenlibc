@@ -76,8 +76,8 @@
       "forbidden_claim_count": 0,
       "claim_reconciliation_errors": 0,
       "claim_reconciliation_warnings": 0,
-      "current_level": "L0",
-      "current_release_level": "L0",
+      "current_level": "L1",
+      "current_release_level": "L1",
       "required_readme_phrases": [
         "not a full standalone libc replacement",
         "support_matrix.json",
@@ -121,7 +121,7 @@
         {"source": "claim_reconciliation_harness", "name": "claim_reconciliation_detects_readme_drift_and_routes_owner"},
         {"source": "claim_reconciliation_harness", "name": "claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_owner"},
         {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_docs_claim_gates_and_preserves_l0_scope"}
+        {"source": "completion_harness", "name": "checker_replays_docs_claim_gates_and_preserves_current_scope"}
       ],
       "required_commands": [
         "bash scripts/check_docs_semantic_claims.sh",

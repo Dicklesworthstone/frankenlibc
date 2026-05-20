@@ -322,7 +322,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 }
 
 #[test]
-fn checker_replays_docs_claim_gates_and_preserves_l0_scope() -> TestResult {
+fn checker_replays_docs_claim_gates_and_preserves_current_scope() -> TestResult {
     let root = workspace_root()?;
     let out_dir = run_passing_checker(&root, "gates")?;
     let report = read_json(&out_dir.join("docs_support_taxonomy_completion_contract.report.json"))?;
@@ -343,8 +343,8 @@ fn checker_replays_docs_claim_gates_and_preserves_l0_scope() -> TestResult {
     assert_eq!(claim_report["summary"]["errors"].as_u64(), Some(0));
     assert_eq!(claim_report["summary"]["warnings"].as_u64(), Some(0));
     assert_eq!(levels_report["status"].as_str(), Some("pass"));
-    assert_eq!(levels_report["current_level"].as_str(), Some("L0"));
-    assert_eq!(report["docs_summary"]["current_level"].as_str(), Some("L0"));
+    assert_eq!(levels_report["current_level"].as_str(), Some("L1"));
+    assert_eq!(report["docs_summary"]["current_level"].as_str(), Some("L1"));
     Ok(())
 }
 

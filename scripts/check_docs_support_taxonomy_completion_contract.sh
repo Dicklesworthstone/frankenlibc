@@ -335,12 +335,19 @@ def validate_docs_truth(expected: dict[str, Any]) -> dict[str, Any]:
 
     levels_report = load_json(LEVELS_REPORT, "replacement levels report")
     levels = load_json(ROOT / "tests/conformance/replacement_levels.json", "replacement levels")
-    if levels.get("current_level") != expected.get("current_level"):
-        err("replacement_levels.current_level must remain L0")
-    if levels.get("release_tag_policy", {}).get("current_release_level") != expected.get("current_release_level"):
-        err("replacement_levels.release_tag_policy.current_release_level must remain L0")
-    if levels_report.get("status") != "pass" or levels_report.get("current_level") != expected.get("current_level"):
-        err("replacement levels gate report must pass and preserve current_level L0")
+    expected_current = expected.get("current_level")
+    expected_release = expected.get("current_release_level")
+    actual_current = levels.get("current_level")
+    actual_release = levels.get("release_tag_policy", {}).get("current_release_level")
+    if actual_current != expected_current:
+        err(f"replacement_levels.current_level expected {expected_current}, got {actual_current}")
+    if actual_release != expected_release:
+        err(
+            "replacement_levels.release_tag_policy.current_release_level "
+            f"expected {expected_release}, got {actual_release}"
+        )
+    if levels_report.get("status") != "pass" or levels_report.get("current_level") != expected_current:
+        err(f"replacement levels gate report must pass and preserve current_level {expected_current}")
 
     return {
         "docs_semantic": docs_summary,
