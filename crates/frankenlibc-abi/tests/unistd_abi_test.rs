@@ -38,6 +38,9 @@ static CWD_TEST_LOCK: Mutex<()> = Mutex::new(());
 /// Serializes tests that mutate HOSTALIASES.
 static HOSTALIASES_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serializes tests that mutate exported argp globals.
+static ARGP_GLOBAL_LOCK: Mutex<()> = Mutex::new(());
+
 /// Serializes wordexp host-vs-ABI tests that mutate process environment.
 static WORDEXP_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -2605,6 +2608,26 @@ fn empty_argp_storage() -> [usize; 7] {
     [0; 7]
 }
 
+struct ArgpBugAddressGuard {
+    previous: *const c_char,
+}
+
+impl ArgpBugAddressGuard {
+    fn set(ptr: *const c_char) -> Self {
+        let previous = unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_bug_address };
+        unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_bug_address = ptr };
+        Self { previous }
+    }
+}
+
+impl Drop for ArgpBugAddressGuard {
+    fn drop(&mut self) {
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::argp_program_bug_address = self.previous;
+        }
+    }
+}
+
 fn capture_argp_stream_output(
     write: impl FnOnce(*mut libc::FILE),
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -2781,6 +2804,60 @@ fn abi_argp_help_null_stream_preserves_fixture_noop_contract() {
         );
     }
 
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_help_renders_configured_bug_address() {
+    const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
+
+    let _guard = ARGP_GLOBAL_LOCK.lock().unwrap();
+    let bug_address = CString::new("bugs@example.test").unwrap();
+    let _bug_address_guard = ArgpBugAddressGuard::set(bug_address.as_ptr());
+    let argp_struct = empty_argp_storage();
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            argp_struct.as_ptr().cast(),
+            stream,
+            ARGP_HELP_BUG_ADDR,
+            std::ptr::null_mut(),
+        )
+    })
+    .unwrap();
+
+    assert_eq!(output, "\nReport bugs to bugs@example.test.\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_help_ignores_unterminated_literal_text() {
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+    const ARGP_HELP_LONG: c_uint = 0x08;
+    const ARGP_HELP_PRE_DOC: c_uint = 0x10;
+    const ARGP_HELP_POST_DOC: c_uint = 0x20;
+    const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
+
+    let args_doc = vec![b'A'; ARGP_TEXT_SCAN_LIMIT];
+    let doc = vec![b'B'; ARGP_TEXT_SCAN_LIMIT];
+    let name = CString::new("bounded-argp").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+    argp_struct[3] = doc.as_ptr() as usize;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            argp_struct.as_ptr().cast(),
+            stream,
+            ARGP_HELP_SHORT_USAGE | ARGP_HELP_LONG | ARGP_HELP_PRE_DOC | ARGP_HELP_POST_DOC,
+            name.as_ptr().cast_mut(),
+        )
+    })
+    .unwrap();
+
+    assert_eq!(output, "Usage: bounded-argp\n");
     assert_eq!(errno_value(), 0);
 }
 
