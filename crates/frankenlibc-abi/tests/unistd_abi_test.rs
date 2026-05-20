@@ -8862,34 +8862,73 @@ fn strfry_rejects_tracked_unterminated_string() {
 // __cxa_pure_virtual (Itanium C++ ABI pure-virtual stub)
 // ===========================================================================
 
-#[test]
-fn cxa_pure_virtual_aborts_child_process() {
-    // The function never returns and aborts the process. Run it in
-    // a forked child so we can observe SIGABRT without killing the
-    // test runner.
-    use frankenlibc_abi::unistd_abi::__cxa_pure_virtual;
+fn assert_cxa_fail_stop_hook_aborts_with_stderr(
+    label: &str,
+    expected_stderr: &str,
+    hook: unsafe extern "C" fn() -> !,
+) {
+    let mut fds = [0; 2];
+    assert_eq!(
+        unsafe { libc::pipe(fds.as_mut_ptr()) },
+        0,
+        "pipe failed for {label}: {}",
+        std::io::Error::last_os_error()
+    );
 
     let pid = unsafe { libc::fork() };
-    assert!(pid >= 0, "fork failed");
+    assert!(pid >= 0, "fork failed for {label}");
 
     if pid == 0 {
-        // Child: invoke the stub. Should abort immediately.
-        unsafe { __cxa_pure_virtual() };
-        // Unreachable.
+        unsafe {
+            let _ = libc::close(fds[0]);
+            if libc::dup2(fds[1], libc::STDERR_FILENO) < 0 {
+                libc::_exit(126);
+            }
+            if fds[1] != libc::STDERR_FILENO {
+                let _ = libc::close(fds[1]);
+            }
+            hook();
+        }
     }
 
-    // Parent: wait for child and verify it died via SIGABRT.
+    unsafe {
+        let _ = libc::close(fds[1]);
+    }
+
     let mut status: c_int = 0;
     let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
-    assert_eq!(waited, pid);
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+
+    let mut stderr_bytes = Vec::new();
+    let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    read_end
+        .read_to_end(&mut stderr_bytes)
+        .unwrap_or_else(|err| panic!("failed to read {label} stderr: {err}"));
+    let stderr = String::from_utf8_lossy(&stderr_bytes);
+
     assert!(
         libc::WIFSIGNALED(status),
-        "child must have terminated by signal"
+        "{label} child must terminate by signal; status={status}, stderr={stderr:?}"
     );
     assert_eq!(
         libc::WTERMSIG(status),
         libc::SIGABRT,
-        "child must have terminated by SIGABRT"
+        "{label} child must terminate with SIGABRT; stderr={stderr:?}"
+    );
+    assert!(
+        stderr.contains(expected_stderr),
+        "{label} child stderr must contain {expected_stderr:?}; stderr={stderr:?}"
+    );
+}
+
+#[test]
+fn cxa_pure_virtual_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_pure_virtual;
+
+    assert_cxa_fail_stop_hook_aborts_with_stderr(
+        "__cxa_pure_virtual",
+        "pure virtual method called",
+        __cxa_pure_virtual,
     );
 }
 
@@ -8953,18 +8992,11 @@ fn cxa_call_terminate_aborts_child_process() {
 fn cxa_deleted_virtual_aborts_child_process() {
     use frankenlibc_abi::unistd_abi::__cxa_deleted_virtual;
 
-    let pid = unsafe { libc::fork() };
-    assert!(pid >= 0, "fork failed");
-
-    if pid == 0 {
-        unsafe { __cxa_deleted_virtual() };
-    }
-
-    let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
-    assert_eq!(waited, pid);
-    assert!(libc::WIFSIGNALED(status));
-    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+    assert_cxa_fail_stop_hook_aborts_with_stderr(
+        "__cxa_deleted_virtual",
+        "deleted virtual method called",
+        __cxa_deleted_virtual,
+    );
 }
 
 #[test]
