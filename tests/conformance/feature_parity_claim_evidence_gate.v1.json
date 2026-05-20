@@ -2,7 +2,7 @@
   "schema_version": "v1",
   "manifest_id": "feature-parity-claim-evidence-gate",
   "bead": "bd-bp8fl.3.4",
-  "generated_utc": "2026-05-03T22:10:00Z",
+  "generated_utc": "2026-05-20T03:16:03Z",
   "purpose": "Fail CI when README, FEATURE_PARITY, support taxonomy, semantic overlay, replacement-level, or compatibility claim surfaces advance without current machine-verifiable evidence artifacts.",
   "inputs": {
     "readme": "README.md",
@@ -48,9 +48,9 @@
       "claim_id": "readme-current-source-of-truth",
       "claim_surface": "README.md",
       "required_tokens": [
-        "Current source of truth",
-        "Declared replacement level claim",
-        "L0"
+        "Claim-Field Contract",
+        "Source of truth: `support_matrix.json`",
+        "Declared replacement level: **L1"
       ],
       "evidence_refs": [
         "tests/conformance/replacement_levels.json",
@@ -113,12 +113,12 @@
       ]
     },
     {
-      "claim_id": "replacement-level-current-l0",
+      "claim_id": "replacement-level-current-l1",
       "claim_surface": "tests/conformance/replacement_levels.json",
       "required_tokens": [
-        "\"current_level\": \"L0\"",
+        "\"current_level\": \"L1\"",
         "\"release_tag_policy\"",
-        "\"current_release_level\": \"L0\""
+        "\"current_release_level\": \"L1\""
       ],
       "evidence_refs": [
         "tests/conformance/replacement_levels.json",
@@ -157,7 +157,7 @@
   ],
   "scenarios": [
     {
-      "scenario_id": "current-readme-l0-bound-to-evidence",
+      "scenario_id": "current-readme-l1-bound-to-evidence",
       "claim_id": "readme-current-source-of-truth",
       "claim_surface": "README.md",
       "simulated_advancement": false,
@@ -189,11 +189,11 @@
       "expected_failure_signature": "claim_advancement_missing_evidence"
     },
     {
-      "scenario_id": "readme-l1-claim-without-replacement-promotion",
+      "scenario_id": "readme-l2-claim-without-replacement-promotion",
       "claim_id": "readme-current-source-of-truth",
       "claim_surface": "README.md",
       "simulated_advancement": true,
-      "simulated_claim": "Declared replacement level claim changes from L0 to L1",
+      "simulated_claim": "Declared replacement level claim changes from L1 to L2",
       "evidence_refs": [
         "README.md"
       ],
