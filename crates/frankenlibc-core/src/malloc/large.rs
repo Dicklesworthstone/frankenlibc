@@ -85,9 +85,11 @@ impl LargeAllocator {
     pub fn alloc(&mut self, size: usize) -> Option<LargeAllocation> {
         let mapped_size = Self::mapped_size_for(size)?;
         let base = self.next_base;
-        self.next_base = self.next_base.checked_add(mapped_size)?;
+        let next_base = self.next_base.checked_add(mapped_size)?;
 
-        self.register(base, size)
+        let alloc = self.register(base, size)?;
+        self.next_base = next_base;
+        Some(alloc)
     }
 
     /// Frees a large allocation by base offset.
@@ -303,6 +305,20 @@ mod tests {
         assert!(allocator.alloc(usize::MAX).is_none());
         assert_eq!(allocator.active_count(), 0);
         assert_eq!(allocator.total_mapped(), 0);
+    }
+
+    #[test]
+    fn test_large_alloc_registration_failure_does_not_advance_next_base() {
+        let mut allocator = LargeAllocator::new();
+        let original_next = allocator.next_base;
+
+        assert!(allocator.register(original_next, 4096).is_some());
+        assert!(allocator.alloc(4096).is_none());
+        assert_eq!(allocator.next_base, original_next);
+
+        assert!(allocator.free(original_next));
+        let retry = allocator.alloc(4096).unwrap();
+        assert_eq!(retry.base, original_next);
     }
 
     #[test]
