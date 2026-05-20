@@ -1509,10 +1509,6 @@ pub const SYS_PIDFD_GETFD: usize = 438;
 
 // Memory/process management syscalls - aarch64
 #[cfg(target_arch = "aarch64")]
-pub const SYS_GETCWD: usize = 17;
-#[cfg(target_arch = "aarch64")]
-pub const SYS_PRLIMIT64: usize = 261;
-#[cfg(target_arch = "aarch64")]
 pub const SYS_GETRLIMIT: usize = 163; // prlimit64 preferred on aarch64
 #[cfg(target_arch = "aarch64")]
 pub const SYS_TGKILL: usize = 131;
