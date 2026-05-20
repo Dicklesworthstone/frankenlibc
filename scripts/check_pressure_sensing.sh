@@ -6,14 +6,58 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RUN_MODE="rch"
 
-echo "=== Pressure Sensing Gate (bd-w2c3.7.1) ==="
+usage() {
+    cat <<'EOF'
+Usage: check_pressure_sensing.sh [--rch|--local]
+
+Validates deterministic pressure sensing regime transitions and emits structured
+evidence artifacts for replay/triage.
+
+Modes:
+  --rch    Run cargo tests through remote rch execution (default).
+  --local  Run cargo tests directly. Use only inside an already-remote worker
+           or for deliberate local debugging.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --rch)
+            RUN_MODE="rch"
+            ;;
+        --local)
+            RUN_MODE="local"
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "FAIL: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
 
 MODULE="$REPO_ROOT/crates/frankenlibc-membrane/src/pressure_sensor.rs"
 FIXTURE="$REPO_ROOT/tests/conformance/fixtures/pressure_sensing.json"
 SCENARIO="$REPO_ROOT/tests/conformance/pressure_sensing_scenarios.v1.json"
 REPORT_PATH="$REPO_ROOT/target/conformance/pressure_sensing.report.json"
 LOG_PATH="$REPO_ROOT/target/conformance/pressure_sensing.log.jsonl"
+
+run_cargo() {
+    if [[ "${RUN_MODE}" == "rch" ]]; then
+        RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" rch exec -- "$@"
+    else
+        "$@"
+    fi
+}
+
+echo "=== Pressure Sensing Gate (bd-w2c3.7.1) ==="
 
 if [ ! -f "$MODULE" ]; then
     echo "FAIL: pressure_sensor.rs not found"
@@ -32,7 +76,7 @@ echo "Module: $(wc -l < "$MODULE") lines"
 mkdir -p "$(dirname "$REPORT_PATH")"
 
 echo "--- Running pressure_sensor unit tests ---"
-cargo test -p frankenlibc-membrane pressure_sensor:: -- --nocapture
+run_cargo cargo test -p frankenlibc-membrane pressure_sensor:: -- --nocapture
 
 python3 - "$FIXTURE" "$SCENARIO" "$REPORT_PATH" "$LOG_PATH" "$REPO_ROOT" <<'PY'
 import json

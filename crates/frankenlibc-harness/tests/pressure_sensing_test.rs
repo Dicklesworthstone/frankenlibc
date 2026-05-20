@@ -15,10 +15,20 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 fn load_json(path: &Path) -> serde_json::Value {
-    let content = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
-    serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+    let content = std::fs::read_to_string(path).expect("pressure sensing JSON should be readable");
+    serde_json::from_str(&content).expect("pressure sensing JSON should parse")
+}
+
+fn load_text(path: &Path) -> String {
+    std::fs::read_to_string(path).expect("pressure sensing text should be readable")
+}
+
+fn output_text(output: &std::process::Output) -> String {
+    format!(
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 #[test]
@@ -187,6 +197,46 @@ fn pressure_sensing_scenario_invariants() {
 }
 
 #[test]
+fn pressure_sensing_gate_locks_rch_execution_contract() {
+    let root = repo_root();
+    let script = root.join("scripts/check_pressure_sensing.sh");
+    let text = load_text(&script);
+
+    for required in [
+        "RUN_MODE=\"rch\"",
+        "--rch",
+        "--local",
+        "RCH_REQUIRE_REMOTE=1",
+        "rch exec --",
+        "run_cargo cargo test -p frankenlibc-membrane pressure_sensor:: -- --nocapture",
+        "cargo test -p frankenlibc-membrane pressure_sensor:: -- --nocapture",
+        "target/conformance/pressure_sensing.report.json",
+        "target/conformance/pressure_sensing.log.jsonl",
+    ] {
+        assert!(
+            text.contains(required),
+            "pressure sensing gate should contain contract fragment {required:?}"
+        );
+    }
+
+    let help = Command::new("bash")
+        .arg(&script)
+        .arg("--help")
+        .current_dir(&root)
+        .output()
+        .expect("failed to run check_pressure_sensing.sh --help");
+    assert!(
+        help.status.success(),
+        "check_pressure_sensing.sh --help failed:\n{}",
+        output_text(&help)
+    );
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    assert!(help_text.contains("--rch"));
+    assert!(help_text.contains("--local"));
+    assert!(help_text.contains("default"));
+}
+
+#[test]
 fn pressure_sensing_gate_emits_structured_artifacts() {
     let root = repo_root();
     let script = root.join("scripts/check_pressure_sensing.sh");
@@ -194,14 +244,14 @@ fn pressure_sensing_gate_emits_structured_artifacts() {
 
     let output = Command::new("bash")
         .arg(&script)
+        .arg("--local")
         .current_dir(&root)
         .output()
         .expect("failed to run check_pressure_sensing.sh");
     assert!(
         output.status.success(),
-        "check_pressure_sensing.sh failed:\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        "check_pressure_sensing.sh failed:\n{}",
+        output_text(&output)
     );
 
     let report_path = root.join("target/conformance/pressure_sensing.report.json");
