@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -151,6 +152,26 @@ def is_permissioned(issue: dict[str, Any], markers: list[str]) -> tuple[bool, li
     text = issue_text(issue)
     hits = [marker for marker in markers if marker.lower() in text]
     return bool(hits), hits
+
+
+def is_cross_project(issue: dict[str, Any], markers: list[str]) -> tuple[bool, list[str]]:
+    text = issue_text(issue)
+    hits = [marker for marker in markers if marker.lower() in text]
+    return bool(hits), hits
+
+
+def artifact_references(issue: dict[str, Any], prefixes: list[str]) -> list[str]:
+    text = "\n".join(
+        value for key in ("title", "description", "acceptance_criteria", "notes")
+        if isinstance((value := issue.get(key)), str)
+    )
+    candidates = re.findall(r"(?:^|[\s`'\"])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.@:+-]+)", text)
+    refs: list[str] = []
+    for candidate in candidates:
+        cleaned = candidate.rstrip(".,;:)")
+        if any(cleaned.startswith(prefix) for prefix in prefixes) and cleaned not in refs:
+            refs.append(cleaned)
+    return sorted(refs)
 
 
 def dependency_blockers(issue: dict[str, Any], issue_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -401,7 +422,10 @@ def recommended_next_action(
     permissioned_ready_ids: list[str],
     stale_in_progress_ids: list[str],
     top_blocker_ids: list[str],
+    cross_project_review_ids: list[str] | None = None,
 ) -> dict[str, Any]:
+    if cross_project_review_ids is None:
+        cross_project_review_ids = []
     if stale_in_progress_ids:
         return {
             "decision": "review_stale_in_progress",
@@ -425,6 +449,14 @@ def recommended_next_action(
             "candidate_ids": permissioned_ready_ids,
             "safe_to_claim_without_permission": False,
             "requires_user_permission": True,
+        }
+    if cross_project_review_ids:
+        return {
+            "decision": "review_cross_project_rows",
+            "reason": "ready-like rows contain cross-project or stale external workload markers and must not be claimed as FrankenLibC work",
+            "candidate_ids": cross_project_review_ids,
+            "safe_to_claim_without_permission": False,
+            "requires_user_permission": False,
         }
     if top_blocker_ids:
         return {
@@ -452,12 +484,19 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
     permission_markers = [
         str(marker) for marker in contract.get("permission_required_markers", []) if str(marker).strip()
     ]
+    cross_project_markers = [
+        str(marker) for marker in contract.get("cross_project_markers", []) if str(marker).strip()
+    ]
+    artifact_prefixes = [
+        str(prefix) for prefix in contract.get("artifact_reference_prefixes", []) if str(prefix).strip()
+    ]
     stale_hours = float(contract.get("stale_in_progress_after_hours", 72))
     now = datetime.now(timezone.utc)
 
     ready: list[dict[str, Any]] = []
     safe_ready: list[dict[str, Any]] = []
     permissioned_ready: list[dict[str, Any]] = []
+    cross_project_review: list[dict[str, Any]] = []
     blocked_open: list[dict[str, Any]] = []
     container_open: list[dict[str, Any]] = []
     stale_in_progress: list[dict[str, Any]] = []
@@ -484,6 +523,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
             continue
         blockers = dependency_blockers(issue, issue_by_id)
         permissioned, markers = is_permissioned(issue, permission_markers)
+        cross_project, cross_markers = is_cross_project(issue, cross_project_markers)
         if status == "open":
             if blockers:
                 blocked_open.append(project_issue(issue, extra={"blockers": blockers}))
@@ -498,6 +538,20 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
                     )
                 )
             else:
+                refs = artifact_references(issue, artifact_prefixes)
+                if cross_project:
+                    extra = {
+                        "review_reason": "cross_project_or_external_workload_marker",
+                        "cross_project_markers": cross_markers,
+                        "artifact_references": refs,
+                        "artifact_reference_status": "present" if refs else "missing",
+                        "permission_required": permissioned,
+                        "permission_markers": markers,
+                    }
+                    if permissioned:
+                        extra["approval_request"] = permissioned_approval_request(issue)
+                    cross_project_review.append(project_issue(issue, extra=extra))
+                    continue
                 extra = {
                     "permission_required": permissioned,
                     "permission_markers": markers,
@@ -543,6 +597,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
             "ready_total": len(ready),
             "safe_ready_total": len(safe_ready),
             "permissioned_ready_total": len(permissioned_ready),
+            "cross_project_review_total": len(cross_project_review),
             "blocked_open_total": len(blocked_open),
             "container_open_total": len(container_open),
             "in_progress_total": len(in_progress),
@@ -552,6 +607,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
         "ready": ready,
         "safe_ready": safe_ready,
         "permissioned_ready": permissioned_ready,
+        "cross_project_review": cross_project_review,
         "blocked_open": blocked_open,
         "container_open": container_open,
         "in_progress": in_progress,
@@ -586,6 +642,16 @@ def validate_contract(contract: dict[str, Any]) -> list[dict[str, str]]:
     markers = contract.get("permission_required_markers")
     if not isinstance(markers, list) or len(markers) < 5:
         errors.append({"failure_signature": "permission_markers", "message": "permission marker list too small"})
+    cross_markers = contract.get("cross_project_markers")
+    if not isinstance(cross_markers, list) or len(cross_markers) < 5:
+        errors.append(
+            {"failure_signature": "cross_project_markers", "message": "cross-project marker list too small"}
+        )
+    artifact_prefixes = contract.get("artifact_reference_prefixes")
+    if not isinstance(artifact_prefixes, list) or len(artifact_prefixes) < 3:
+        errors.append(
+            {"failure_signature": "artifact_reference_prefixes", "message": "artifact reference prefixes too small"}
+        )
     required_controls = contract.get("required_negative_controls")
     if not isinstance(required_controls, list) or not required_controls:
         errors.append(
@@ -608,6 +674,7 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
             projected_ids(test_analysis["permissioned_ready"]),
             projected_ids(test_analysis["stale_in_progress"]),
             [str(row["id"]) for row in test_blockers[:5]],
+            projected_ids(test_analysis["cross_project_review"]),
         )
 
     missing_forbidden = deepcopy(contract)
@@ -796,6 +863,68 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
             "name": "permissioned_rows_include_approval_request",
             "expected_signature": "canonical_permissioned_row_approval_packet",
             "status": "pass" if ok else "fail",
+        }
+    )
+
+    cross_project = deepcopy(rows)
+    cross_project.append(
+        {
+            "id": "bd-jsonl-negative-cross-project",
+            "title": "FrankenFS xfstests stale ready row",
+            "description": "Run xfstests baseline for frankenfs on a permissioned large host with no FrankenLibC artifact path.",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
+    cross_project.append(
+        {
+            "id": "bd-jsonl-negative-frankenlibc-ready",
+            "title": "FrankenLibC tracker hygiene ready row",
+            "description": "Implement scripts/check_tracker_jsonl_degraded_readiness.sh and tests/conformance/tracker_jsonl_degraded_readiness.v1.json.",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
+    cross_analysis = analyze(cross_project, contract)
+    cross_ids = {row["id"] for row in cross_analysis["cross_project_review"]}
+    cross_ready_ids = {row["id"] for row in cross_analysis["ready"]}
+    safe_ids = {row["id"] for row in cross_analysis["safe_ready"]}
+    controls.append(
+        {
+            "name": "cross_project_ready_is_quarantined",
+            "expected_signature": "cross_project_marker_not_safe_ready",
+            "status": "pass"
+            if "bd-jsonl-negative-cross-project" in cross_ids
+            and "bd-jsonl-negative-cross-project" not in cross_ready_ids
+            else "fail",
+        }
+    )
+    cross_row = next(
+        (
+            row
+            for row in cross_analysis["cross_project_review"]
+            if row.get("id") == "bd-jsonl-negative-cross-project"
+        ),
+        {},
+    )
+    controls.append(
+        {
+            "name": "cross_project_review_reports_missing_artifact_reference",
+            "expected_signature": "missing_frankenlibc_artifact_reference_reported",
+            "status": "pass"
+            if cross_row.get("artifact_reference_status") == "missing"
+            and "frankenfs" in set(cross_row.get("cross_project_markers", []))
+            else "fail",
+        }
+    )
+    controls.append(
+        {
+            "name": "frankenlibc_ready_stays_safe",
+            "expected_signature": "frankenlibc_row_remains_claimable",
+            "status": "pass"
+            if "bd-jsonl-negative-frankenlibc-ready" in safe_ids
+            and "bd-jsonl-negative-frankenlibc-ready" not in cross_ids
+            else "fail",
         }
     )
 
@@ -1053,6 +1182,7 @@ analysis = analyze(rows, contract)
 blocked_chokepoints = blocker_chokepoints(analysis["blocked_open"])
 safe_ready_ids = projected_ids(analysis["safe_ready"])
 permissioned_ready_ids = projected_ids(analysis["permissioned_ready"])
+cross_project_review_ids = projected_ids(analysis["cross_project_review"])
 stale_in_progress_ids = projected_ids(analysis["stale_in_progress"])
 top_blocker_ids = [str(row["id"]) for row in blocked_chokepoints[:5]]
 stdout_summary = {
@@ -1061,6 +1191,8 @@ stdout_summary = {
     "permissioned_ready": analysis["summary"]["permissioned_ready_total"],
     "permissioned_ready_ids": permissioned_ready_ids,
     "permissioned_ready_summary": permissioned_ready_summary(analysis["permissioned_ready"]),
+    "cross_project_review": analysis["summary"]["cross_project_review_total"],
+    "cross_project_review_ids": cross_project_review_ids,
     "stale_in_progress": analysis["summary"]["stale_in_progress_total"],
     "stale_in_progress_ids": stale_in_progress_ids,
     "blocked_open": analysis["summary"]["blocked_open_total"],
@@ -1078,6 +1210,7 @@ stdout_summary["recommended_next_action"] = recommended_next_action(
     permissioned_ready_ids,
     stale_in_progress_ids,
     top_blocker_ids,
+    cross_project_review_ids,
 )
 negative_controls = run_negative_controls(rows, contract)
 required_controls = {str(name) for name in contract.get("required_negative_controls", [])}
@@ -1114,6 +1247,7 @@ report = {
     "summary": analysis["summary"],
     "safe_ready": analysis["safe_ready"],
     "permissioned_ready": analysis["permissioned_ready"],
+    "cross_project_review": analysis["cross_project_review"],
     "blocked_open": analysis["blocked_open"],
     "blocker_explanations": stdout_summary["blocker_explanations"],
     "container_open": analysis["container_open"],
@@ -1142,6 +1276,7 @@ events = [
         "source": rel(ISSUES),
         "safe_ready_total": report["summary"]["safe_ready_total"],
         "permissioned_ready_total": report["summary"]["permissioned_ready_total"],
+        "cross_project_review_total": report["summary"]["cross_project_review_total"],
         "stale_in_progress_total": report["summary"]["stale_in_progress_total"],
         "source_commit": report["source_commit"],
     }

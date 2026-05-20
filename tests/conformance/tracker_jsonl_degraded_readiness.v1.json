@@ -37,6 +37,24 @@
     "swarm-workload-may-use-permissioned-large-host",
     "large host"
   ],
+  "cross_project_markers": [
+    "frankenfs",
+    "frankentorch",
+    "frankenpandas",
+    "franken_networkx",
+    "frankenredis",
+    "xfstests baseline",
+    "ffs-",
+    "fuse_e2e",
+    "permissioned large host"
+  ],
+  "artifact_reference_prefixes": [
+    "scripts/",
+    "tests/",
+    "crates/",
+    "artifacts/",
+    ".beads/"
+  ],
   "required_report_fields": [
     "schema_version",
     "status",
@@ -52,6 +70,7 @@
     "summary",
     "safe_ready",
     "permissioned_ready",
+    "cross_project_review",
     "blocked_open",
     "blocker_explanations",
     "container_open",
@@ -66,6 +85,8 @@
     "permissioned_ready",
     "permissioned_ready_ids",
     "permissioned_ready_summary",
+    "cross_project_review",
+    "cross_project_review_ids",
     "stale_in_progress",
     "stale_in_progress_ids",
     "blocked_open",
@@ -95,6 +116,18 @@
     "permission_markers",
     "approval_request"
   ],
+  "cross_project_review_row_fields": [
+    "id",
+    "title",
+    "status",
+    "priority",
+    "review_reason",
+    "cross_project_markers",
+    "artifact_references",
+    "artifact_reference_status",
+    "permission_required",
+    "permission_markers"
+  ],
   "permissioned_approval_request_fields": [
     "permission_source",
     "exact_user_approval_required",
@@ -114,6 +147,9 @@
     "permissioned_ready_is_separated",
     "permissioned_summary_includes_approval_request",
     "permissioned_rows_include_approval_request",
+    "cross_project_ready_is_quarantined",
+    "cross_project_review_reports_missing_artifact_reference",
+    "frankenlibc_ready_stays_safe",
     "closed_dependency_allows_ready",
     "blocker_explanation_preserves_metadata",
     "parent_with_active_child_excluded_ready",
@@ -127,11 +163,12 @@
     "jq empty tests/conformance/tracker_jsonl_degraded_readiness.v1.json",
     "bash -n scripts/check_tracker_jsonl_degraded_readiness.sh",
     "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only",
-    "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only | jq -e '.safe_ready_ids == [] and (.permissioned_ready_ids | type == \"array\") and (.permissioned_ready_summary | type == \"array\") and (.blocked_open_ids | type == \"array\") and (.blocker_explanations | type == \"array\") and (.blocked_by_counts | type == \"array\") and (.top_blocker_ids | type == \"array\") and (.in_progress_ids | type == \"array\") and (.in_progress_age_summary | type == \"array\") and (.recommended_next_action.decision | type == \"string\")'",
+    "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only | jq -e '(.safe_ready_ids | type == \"array\") and (.permissioned_ready_ids | type == \"array\") and (.permissioned_ready_summary | type == \"array\") and (.cross_project_review_ids | type == \"array\") and (.blocked_open_ids | type == \"array\") and (.blocker_explanations | type == \"array\") and (.blocked_by_counts | type == \"array\") and (.top_blocker_ids | type == \"array\") and (.in_progress_ids | type == \"array\") and (.in_progress_age_summary | type == \"array\") and (.recommended_next_action.decision | type == \"string\")'",
     "jq '.status == \"pass\" and (.negative_controls | all(.status == \"pass\"))' target/conformance/tracker_jsonl_degraded_readiness.report.json",
-    "jq -e '.stdout_summary.safe_ready_ids == [] and (.stdout_summary.permissioned_ready_ids | type == \"array\") and (.stdout_summary.permissioned_ready_summary | type == \"array\") and (.stdout_summary.blocked_open_ids | type == \"array\") and (.stdout_summary.blocker_explanations | type == \"array\") and (.stdout_summary.blocked_by_counts | type == \"array\") and (.stdout_summary.top_blocker_ids | type == \"array\") and (.stdout_summary.in_progress_ids | type == \"array\") and (.stdout_summary.in_progress_age_summary | type == \"array\") and (.stdout_summary.recommended_next_action.decision | type == \"string\")' target/conformance/tracker_jsonl_degraded_readiness.report.json",
+    "jq -e '(.stdout_summary.safe_ready_ids | type == \"array\") and (.stdout_summary.permissioned_ready_ids | type == \"array\") and (.stdout_summary.permissioned_ready_summary | type == \"array\") and (.stdout_summary.cross_project_review_ids | type == \"array\") and (.stdout_summary.blocked_open_ids | type == \"array\") and (.stdout_summary.blocker_explanations | type == \"array\") and (.stdout_summary.blocked_by_counts | type == \"array\") and (.stdout_summary.top_blocker_ids | type == \"array\") and (.stdout_summary.in_progress_ids | type == \"array\") and (.stdout_summary.in_progress_age_summary | type == \"array\") and (.stdout_summary.recommended_next_action.decision | type == \"string\")' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "jq -e 'all(.stdout_summary.permissioned_ready_summary[]; .approval_request.exact_user_approval_required == true and .approval_request.safe_to_run_without_user_approval == false and .approval_request.execution_not_started == true and (.approval_request.explicit_user_approval_text | type == \"string\") and (.approval_request.required_env | type == \"object\") and (.approval_request.capability_prerequisites | type == \"array\") and (.approval_request.next_action | type == \"string\"))' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "jq -e 'all(.permissioned_ready[]; .approval_request.exact_user_approval_required == true and .approval_request.safe_to_run_without_user_approval == false and .approval_request.execution_not_started == true and (.approval_request.explicit_user_approval_text | type == \"string\") and (.approval_request.required_env | type == \"object\") and (.approval_request.capability_prerequisites | type == \"array\") and (.approval_request.next_action | type == \"string\"))' target/conformance/tracker_jsonl_degraded_readiness.report.json",
+    "jq -e 'all(.cross_project_review[]; (.cross_project_markers | type == \"array\") and (.artifact_references | type == \"array\") and (.artifact_reference_status == \"present\" or .artifact_reference_status == \"missing\") and .review_reason == \"cross_project_or_external_workload_marker\")' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "jq -e '.report_path == \"target/conformance/tracker_jsonl_degraded_readiness.report.json\" and .log_path == \"target/conformance/tracker_jsonl_degraded_readiness.log.jsonl\"' target/conformance/tracker_jsonl_degraded_readiness.report.json",
     "git diff --check -- scripts/check_tracker_jsonl_degraded_readiness.sh tests/conformance/tracker_jsonl_degraded_readiness.v1.json .beads/issues.jsonl"
   ]
