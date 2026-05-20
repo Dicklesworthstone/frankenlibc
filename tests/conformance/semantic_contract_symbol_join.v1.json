@@ -64,9 +64,9 @@
     },
     "by_semantic_class": {
       "abort_only": 1,
-      "compat_noop": 5,
+      "compat_noop": 4,
       "deterministic_fallback": 5,
-      "limited_bootstrap": 5,
+      "limited_bootstrap": 6,
       "unsupported_platform_contract": 2,
       "proof_gap": 1
     }
@@ -283,8 +283,8 @@
       "surface": "GNU argp help and reporting helpers",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "taxonomy_status": "Implemented",
-      "semantic_class": "compat_noop",
-      "semantic_parity_status": "blocked_compat_noop",
+      "semantic_class": "limited_bootstrap",
+      "semantic_parity_status": "blocked_limited_bootstrap",
       "taxonomy_status_is_semantic_parity": false,
       "symbol_refs": [
         "argp_help",

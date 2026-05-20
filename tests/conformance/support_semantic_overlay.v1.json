@@ -177,11 +177,11 @@
         "argp_state_help"
       ],
       "support_matrix_status": "Implemented",
-      "semantic_class": "compat_noop",
+      "semantic_class": "limited_bootstrap",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 21783,
-      "evidence": "argp_help renders bounded literal usage/doc strings to caller-provided streams while null-stream fixture rows remain deterministic no-ops; usage/error/failure/state helpers are still link-compatible no-op stubs.",
-      "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, state streams, and variadic diagnostics before claiming complete GNU argp parity."
+      "source_line": 21879,
+      "evidence": "argp_help renders bounded literal usage/doc strings to caller-provided streams while null-stream fixture rows remain deterministic no-ops; argp_state_help now bridges state.root_argp/name into the same bounded renderer without process exit; usage/error/failure are still link-compatible no-op stubs.",
+      "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, state stream selection, process-exit behavior, and variadic diagnostics before claiming complete GNU argp parity."
     },
     {
       "id": "sem-nexttoward-long-double-direction",
@@ -202,9 +202,9 @@
   "audited_summary": {
     "entries": 11,
     "by_semantic_class": {
-      "compat_noop": 4,
+      "compat_noop": 3,
       "deterministic_fallback": 3,
-      "limited_bootstrap": 2,
+      "limited_bootstrap": 3,
       "unsupported_platform_contract": 1,
       "proof_gap": 1,
       "full_semantics": 0

@@ -2608,6 +2608,44 @@ fn empty_argp_storage() -> [usize; 7] {
     [0; 7]
 }
 
+#[allow(dead_code)]
+#[repr(C)]
+struct FixtureArgpState {
+    root_argp: *const c_void,
+    argc: c_int,
+    argv: *mut *mut c_char,
+    next: c_int,
+    flags: c_uint,
+    arg_num: c_uint,
+    quoted: c_int,
+    input: *mut c_void,
+    child_inputs: *mut *mut c_void,
+    hook: *mut c_void,
+    name: *mut c_char,
+    err_stream: *mut libc::FILE,
+    out_stream: *mut libc::FILE,
+    pstate: *mut c_void,
+}
+
+fn fixture_argp_state(root_argp: *const c_void, name: *mut c_char) -> FixtureArgpState {
+    FixtureArgpState {
+        root_argp,
+        argc: 0,
+        argv: std::ptr::null_mut(),
+        next: 0,
+        flags: 0,
+        arg_num: 0,
+        quoted: 0,
+        input: std::ptr::null_mut(),
+        child_inputs: std::ptr::null_mut(),
+        hook: std::ptr::null_mut(),
+        name,
+        err_stream: std::ptr::null_mut(),
+        out_stream: std::ptr::null_mut(),
+        pstate: std::ptr::null_mut(),
+    }
+}
+
 struct ArgpBugAddressGuard {
     previous: *const c_char,
 }
@@ -2858,6 +2896,63 @@ fn abi_argp_help_ignores_unterminated_literal_text() {
     .unwrap();
 
     assert_eq!(output, "Usage: bounded-argp\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_state_help_renders_state_root_usage_and_docs_without_exiting() {
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+    const ARGP_HELP_SEE: c_uint = 0x04;
+    const ARGP_HELP_LONG: c_uint = 0x08;
+    const ARGP_HELP_PRE_DOC: c_uint = 0x10;
+    const ARGP_HELP_POST_DOC: c_uint = 0x20;
+    const ARGP_HELP_EXIT_OK: c_uint = 0x200;
+
+    let args_doc = CString::new("INPUT").unwrap();
+    let doc = CString::new("state pre\x0bstate post").unwrap();
+    let name = CString::new("state-demo").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+    argp_struct[3] = doc.as_ptr() as usize;
+    let mut state = fixture_argp_state(argp_struct.as_ptr().cast(), name.as_ptr().cast_mut());
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_state_help(
+            (&mut state as *mut FixtureArgpState).cast(),
+            stream,
+            ARGP_HELP_SHORT_USAGE
+                | ARGP_HELP_SEE
+                | ARGP_HELP_LONG
+                | ARGP_HELP_PRE_DOC
+                | ARGP_HELP_POST_DOC
+                | ARGP_HELP_EXIT_OK,
+        )
+    })
+    .unwrap();
+
+    assert_eq!(
+        output,
+        "Usage: state-demo INPUT\n\nstate pre\n\nstate post\n"
+    );
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_state_help_null_state_preserves_noop_contract() {
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_state_help(
+            std::ptr::null_mut(),
+            stream,
+            ARGP_HELP_SHORT_USAGE,
+        )
+    })
+    .unwrap();
+
+    assert_eq!(output, "");
     assert_eq!(errno_value(), 0);
 }
 

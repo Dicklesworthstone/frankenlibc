@@ -21653,13 +21653,37 @@ impl ArgpHeader {
     }
 }
 
+#[allow(dead_code)]
+#[repr(C)]
+struct ArgpStateHeader {
+    root_argp: *const c_void,
+    argc: c_int,
+    argv: *mut *mut c_char,
+    next: c_int,
+    flags: c_uint,
+    arg_num: c_uint,
+    quoted: c_int,
+    input: *mut c_void,
+    child_inputs: *mut *mut c_void,
+    hook: *mut c_void,
+    name: *mut c_char,
+    err_stream: *mut libc::FILE,
+    out_stream: *mut libc::FILE,
+    pstate: *mut c_void,
+}
+
 const ARGP_HELP_USAGE: c_uint = 0x01;
 const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+const ARGP_HELP_SEE: c_uint = 0x04;
 const ARGP_HELP_LONG: c_uint = 0x08;
 const ARGP_HELP_PRE_DOC: c_uint = 0x10;
 const ARGP_HELP_POST_DOC: c_uint = 0x20;
 const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
+const ARGP_HELP_EXIT_ERR: c_uint = 0x100;
+const ARGP_HELP_EXIT_OK: c_uint = 0x200;
 const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
+const ARGP_HELP_STATE_NON_RENDERING_FLAGS: c_uint =
+    ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR | ARGP_HELP_EXIT_OK;
 
 #[inline]
 unsafe fn argp_read_text(ptr: *const c_char) -> Option<Vec<u8>> {
@@ -21750,6 +21774,24 @@ unsafe fn argp_write_bug_address(stream: *mut libc::FILE) -> bool {
     unsafe { argp_write_bytes(stream, &line) }
 }
 
+#[inline]
+fn argp_state_stream(
+    state: &ArgpStateHeader,
+    stream: *mut libc::FILE,
+    flags: c_uint,
+) -> *mut libc::FILE {
+    if !stream.is_null() {
+        return stream;
+    }
+    if flags & ARGP_HELP_EXIT_OK != 0 && !state.out_stream.is_null() {
+        return state.out_stream;
+    }
+    if !state.err_stream.is_null() {
+        return state.err_stream;
+    }
+    state.out_stream
+}
+
 /// `argp_parse` — parse arguments using argp framework.
 ///
 /// Native phase-1 support handles the common zeroed `struct argp` case as a
@@ -21834,14 +21876,28 @@ pub unsafe extern "C" fn argp_failure(
     // No-op: argp framework not available
 }
 
-/// `argp_state_help` — print help from state. No-op stub.
+/// `argp_state_help` — print bounded phase-1 help from state.
+///
+/// Phase-1 intentionally renders the stable `root_argp`/`name` state prefix
+/// and returns; glibc's process-exit behavior remains explicit follow-up work.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_state_help(
-    _state: *mut c_void,
-    _stream: *mut libc::FILE,
-    _flags: libc::c_uint,
+    state: *mut c_void,
+    stream: *mut libc::FILE,
+    flags: libc::c_uint,
 ) {
-    // No-op: argp framework not available
+    if state.is_null() {
+        return;
+    }
+
+    let state = unsafe { &*(state as *const ArgpStateHeader) };
+    if state.root_argp.is_null() {
+        return;
+    }
+
+    let stream = argp_state_stream(state, stream, flags);
+    let render_flags = flags & !ARGP_HELP_STATE_NON_RENDERING_FLAGS;
+    unsafe { argp_help(state.root_argp, stream, render_flags, state.name) };
 }
 
 // ===========================================================================

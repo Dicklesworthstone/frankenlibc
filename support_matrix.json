@@ -1512,7 +1512,7 @@
       "symbol": "argp_state_help",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp link-compatible no-op state helper until full argp state formatting",
+      "notes": "GNU argp phase-1 state helper renders bounded literal usage/doc output via state.root_argp/name; exit semantics and full state formatting deferred",
       "module": "unistd_abi"
     },
     {
