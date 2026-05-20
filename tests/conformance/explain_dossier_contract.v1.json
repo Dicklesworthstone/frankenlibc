@@ -3,7 +3,16 @@
   "manifest_id": "explain-dossier-contract",
   "bead": "bd-juvqm.10",
   "generated_utc": "2026-05-09T00:00:00Z",
-  "source_commit": "595224166c3be80fc23f888c5375129a5b26c1b9",
+  "source_commit": "6622a48844408e59dd309e0f3def7f0220f10472",
+  "source_commit_freshness": {
+    "require_no_tracked_source_changes_since_source_commit": true,
+    "tracked_source_roots": [
+      "crates/frankenlibc-harness/src/explain_dossier.rs",
+      "tests/conformance/standalone_replacement_artifact.v1.json",
+      "tests/conformance/replacement_level_dashboard.v1.json",
+      "tests/conformance/semantic_contract_inventory.v1.json"
+    ]
+  },
   "purpose": "Pin the contract for the user-facing explain dossier produced by `frankenlibc_harness::explain_dossier::build_dossier`. The dossier joins workload-replay metadata, runtime decision evidence, standalone blocker snapshots, L1 dashboard rows, and a semantic-overlay summary into a compact explanation. Every claim in the dossier MUST cite an artifact_ref + source_commit; the generator never invents claims and never promotes the support taxonomy (\"works on host\", \"works under preload\") into a semantic-parity assertion.",
   "required_input_kinds": [
     "workload_replay",
