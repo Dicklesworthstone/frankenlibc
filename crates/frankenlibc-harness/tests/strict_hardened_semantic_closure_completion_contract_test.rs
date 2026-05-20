@@ -312,7 +312,7 @@ fn checker_replays_track2_source_gates_and_emits_report() -> TestResult {
     );
     assert_eq!(
         report["summary"]["semantic_inventory_entries"].as_u64(),
-        Some(18)
+        Some(19)
     );
     assert_eq!(
         report["source_gate_outputs"]

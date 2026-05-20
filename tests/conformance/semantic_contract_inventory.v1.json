@@ -14,7 +14,8 @@
     "deterministic_fallback": "Call returns a deterministic fallback/error/fail-stop result instead of full upstream behavior.",
     "limited_bootstrap": "Implementation supports a useful bootstrap subset, but broader upstream subsystem semantics remain deferred.",
     "unsupported_platform_contract": "Historical, non-Linux, removed, or deliberately unavailable surface returns ENOSYS or an equivalent unavailable status.",
-    "abort_only": "Surface intentionally fails closed through abort or process termination instead of performing full upstream behavior."
+    "abort_only": "Surface intentionally fails closed through abort or process termination instead of performing full upstream behavior.",
+    "proof_gap": "Surface is link-compatible and taxonomy-implemented, but a known semantic gap lacks fixture/proof evidence for release-level parity."
   },
   "claim_policy": {
     "support_matrix_stub_zero_is_not_full_parity": true,
@@ -79,7 +80,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 7467,
+      "source_line": 7586,
       "line_marker": "DES is obsolete and unsupported",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -103,7 +104,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 9192,
+      "source_line": 9311,
       "line_marker": "_nss_files_endXX NSS plugin",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "deterministic_fallback",
@@ -225,7 +226,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 19188,
+      "source_line": 19307,
       "line_marker": "Malloc debug stubs",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -250,7 +251,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 21553,
+      "source_line": 21672,
       "line_marker": "No-op stub",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -356,7 +357,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 7963,
+      "source_line": 8082,
       "line_marker": "NIS / Yellow Pages is dead infrastructure",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
@@ -381,7 +382,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 9126,
+      "source_line": 9245,
       "line_marker": "Without a real NIS backend",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
@@ -405,7 +406,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 24486,
+      "source_line": 24605,
       "line_marker": "all resolution is synchronous",
       "support_matrix_status": "Implemented",
       "semantic_class": "limited_bootstrap",
@@ -444,6 +445,31 @@
       ]
     },
     {
+      "id": "sem-nexttoward-long-double-direction",
+      "seed_overlay_id": "sem-nexttoward-long-double-direction",
+      "surface": "C99 nexttoward long-double direction semantics",
+      "symbols": [
+        "nexttoward",
+        "nexttowardf",
+        "nexttowardl"
+      ],
+      "module": "frankenlibc-abi::math_abi",
+      "source_path": "crates/frankenlibc-abi/src/math_abi.rs",
+      "source_line": 609,
+      "line_marker": "C99 `nexttoward`: next representable f64 toward a long-double direction.",
+      "support_matrix_status": "Implemented",
+      "semantic_class": "proof_gap",
+      "contract_kind": "long_double_direction_not_represented",
+      "current_behavior": "The ABI accepts nexttoward-family direction values as f64 and delegates through nextafter-style f64 paths, so long-double-only direction differences can be lost before core math dispatch.",
+      "user_risk": "Math callers can observe no step when the true long-double direction differs from x only outside f64 precision.",
+      "required_followup": "Implement 80-bit long-double ABI plumbing and add directed nexttoward fixtures for direction values that round to x in f64 before semantic parity promotion.",
+      "evidence_artifacts": [
+        "support_matrix.json",
+        "crates/frankenlibc-abi/src/math_abi.rs",
+        "crates/frankenlibc-core/src/math/float.rs"
+      ]
+    },
+    {
       "id": "sem-cxx-abi-fail-stop",
       "seed_overlay_id": null,
       "surface": "C++ ABI fail-stop hooks exported for compatibility",
@@ -455,7 +481,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 16088,
+      "source_line": 16207,
       "line_marker": "__cxa_pure_virtual",
       "support_matrix_status": "Implemented",
       "semantic_class": "abort_only",
@@ -469,22 +495,24 @@
     }
   ],
   "summary": {
-    "entry_count": 18,
-    "seed_overlay_entries": 10,
-    "seed_overlay_covered": 10,
+    "entry_count": 19,
+    "seed_overlay_entries": 11,
+    "seed_overlay_covered": 11,
     "new_entries": 8,
     "by_semantic_class": {
       "compat_noop": 5,
       "deterministic_fallback": 5,
       "limited_bootstrap": 5,
       "unsupported_platform_contract": 2,
-      "abort_only": 1
+      "abort_only": 1,
+      "proof_gap": 1
     },
     "by_source_path": {
       "crates/frankenlibc-abi/src/glibc_internal_abi.rs": 7,
       "crates/frankenlibc-abi/src/unistd_abi.rs": 8,
       "crates/frankenlibc-abi/src/pthread_abi.rs": 1,
       "crates/frankenlibc-abi/src/setjmp_abi.rs": 1,
+      "crates/frankenlibc-abi/src/math_abi.rs": 1,
       "crates/frankenlibc-core/src/elf/mod.rs": 1
     },
     "blocked_claim": "Stub=0 in support_matrix.json is compatible with this inventory only as a symbol-presence taxonomy. It is not evidence of full semantic replacement readiness."

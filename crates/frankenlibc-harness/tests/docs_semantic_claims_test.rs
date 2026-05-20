@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const REQUIRED_FIELDS: &[&str] = &[
@@ -30,6 +31,11 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "source_commit",
     "failure_signature",
 ];
+
+fn gate_mutex() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -137,6 +143,7 @@ fn artifact_declares_claim_fields_inputs_replays_and_log_contract() {
 
 #[test]
 fn gate_passes_current_docs_and_emits_report_and_log() {
+    let _guard = gate_mutex().lock().unwrap();
     let root = workspace_root();
     let script = root.join("scripts/check_docs_semantic_claims.sh");
     assert!(script.exists(), "missing {}", script.display());
@@ -167,11 +174,11 @@ fn gate_passes_current_docs_and_emits_report_and_log() {
     );
     assert_eq!(
         report["summary"]["semantic_parity_blocker_count"].as_u64(),
-        Some(18)
+        Some(19)
     );
     assert_eq!(
         report["summary"]["taxonomy_semantic_conflict_count"].as_u64(),
-        Some(18)
+        Some(19)
     );
     assert_eq!(report["summary"]["forbidden_claim_count"].as_u64(), Some(0));
 
@@ -191,6 +198,7 @@ fn gate_passes_current_docs_and_emits_report_and_log() {
 
 #[test]
 fn missing_claim_field_fails() {
+    let _guard = gate_mutex().lock().unwrap();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("README.md")).unwrap();
     let mutated = source.replace("| `user_recommendation` |", "| `user_guidance` |");
@@ -216,6 +224,7 @@ fn missing_claim_field_fails() {
 
 #[test]
 fn forbidden_full_replacement_claim_fails() {
+    let _guard = gate_mutex().lock().unwrap();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("FEATURE_PARITY.md")).unwrap();
     let mutated = format!("{source}\n\nStub: 0 proves full standalone replacement today.\n");
@@ -242,6 +251,7 @@ fn forbidden_full_replacement_claim_fails() {
 
 #[test]
 fn stale_semantic_join_fails() {
+    let _guard = gate_mutex().lock().unwrap();
     let root = workspace_root();
     let canonical = root.join("tests/conformance/semantic_contract_symbol_join.v1.json");
     let mut join = load_json(&canonical);

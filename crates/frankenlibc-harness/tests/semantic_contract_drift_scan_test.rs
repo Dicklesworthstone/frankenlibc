@@ -184,11 +184,11 @@ fn gate_passes_clean_tree_and_emits_report_and_required_log_fields() {
     }
     assert_eq!(
         report["summary"]["tracked_inventory_entries"].as_u64(),
-        Some(18)
+        Some(19)
     );
     assert_eq!(
         report["summary"]["semantic_parity_blocker_count"].as_u64(),
-        Some(18)
+        Some(19)
     );
     assert_eq!(
         report["summary"]["untracked_contract_annotation_count"].as_u64(),

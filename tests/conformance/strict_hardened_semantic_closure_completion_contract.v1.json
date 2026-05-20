@@ -141,20 +141,21 @@
     },
     "semantic_contract_inventory": {
       "schema_version": "v1",
-      "entry_count": 18,
-      "seed_overlay_covered": 10,
+      "entry_count": 19,
+      "seed_overlay_covered": 11,
       "required_semantic_classes": [
         "compat_noop",
         "deterministic_fallback",
         "limited_bootstrap",
         "unsupported_platform_contract",
-        "abort_only"
+        "abort_only",
+        "proof_gap"
       ],
       "blocked_claim_fragment": "not evidence of full semantic replacement readiness"
     },
     "semantic_contract_drift": {
       "schema_version": "v1",
-      "tracked_inventory_entries": 18,
+      "tracked_inventory_entries": 19,
       "untracked_contract_annotation_count": 0,
       "newly_found_drift_count": 0,
       "required_blocked_claims": [
@@ -367,7 +368,7 @@
       "kind": "semantic_inventory_summary",
       "path": "tests/conformance/semantic_contract_inventory.v1.json",
       "line": 1,
-      "anchor": "\"entry_count\": 18"
+      "anchor": "\"entry_count\": 19"
     },
     {
       "kind": "semantic_inventory_gate",

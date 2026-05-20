@@ -288,11 +288,11 @@ fn checker_emits_report_log_and_runs_existing_drift_gate() -> TestResult {
     );
     assert_eq!(
         report["summary"]["tracked_inventory_entries"].as_u64(),
-        Some(18)
+        Some(19)
     );
     assert_eq!(
         report["summary"]["semantic_parity_blocker_count"].as_u64(),
-        Some(18)
+        Some(19)
     );
     assert_eq!(
         report["summary"]["untracked_contract_annotation_count"].as_u64(),

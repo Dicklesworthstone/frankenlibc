@@ -94,8 +94,8 @@
     "supporting_symbol_join_policy": {
       "minimum_resolved_symbol_join_rows": 88,
       "required_summary_values": {
-        "inventory_entry_count": 18,
-        "semantic_parity_blocker_count": 18,
+        "inventory_entry_count": 19,
+        "semantic_parity_blocker_count": 19,
         "source_missing_exact_symbol_count": 0,
         "support_matrix_missing_exact_symbol_count": 6,
         "version_script_missing_exact_symbol_count": 2

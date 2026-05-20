@@ -71,8 +71,8 @@
     "required_docs_truth": {
       "doc_surfaces": ["README", "FEATURE_PARITY"],
       "required_claim_field_count": 8,
-      "semantic_parity_blocker_count": 18,
-      "taxonomy_semantic_conflict_count": 18,
+      "semantic_parity_blocker_count": 19,
+      "taxonomy_semantic_conflict_count": 19,
       "forbidden_claim_count": 0,
       "claim_reconciliation_errors": 0,
       "claim_reconciliation_warnings": 0,

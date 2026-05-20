@@ -66,7 +66,7 @@
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 7234,
+      "source_line": 7586,
       "evidence": "DES encrypt/decrypt helpers are intentionally documented as no-op because DES support is obsolete and unsupported.",
       "required_followup": "Keep no-op contract explicit in conformance fixtures and exclude it from full crypt semantic parity counts unless DES behavior is implemented."
     },
@@ -82,7 +82,7 @@
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "deterministic_fallback",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 8889,
+      "source_line": 9311,
       "evidence": "Private NSS plugin entry families return SUCCESS/NOTFOUND/ENOENT style deterministic contracts without opening or parsing the full backing NSS data source.",
       "required_followup": "Create an exhaustive NSS private-entry inventory and fixtures that distinguish bootstrap fallthrough behavior from full files/compat/hesiod/systemd backends."
     },
@@ -162,7 +162,7 @@
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 18555,
+      "source_line": 19307,
       "evidence": "Malloc debug hooks are documented as safe no-ops because the membrane supplies allocation safety rather than glibc mcheck/mtrace behavior.",
       "required_followup": "Track these as membrane-substituted compatibility contracts with explicit tests and exclude them from glibc debug-hook parity counts."
     },
@@ -179,19 +179,34 @@
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 20799,
+      "source_line": 21672,
       "evidence": "Argp help/reporting helpers are documented no-op stubs.",
       "required_followup": "Add argp parser/help fixtures or classify this family as link-compatible only."
+    },
+    {
+      "id": "sem-nexttoward-long-double-direction",
+      "surface": "C99 nexttoward long-double direction semantics",
+      "symbols": [
+        "nexttoward",
+        "nexttowardf",
+        "nexttowardl"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "proof_gap",
+      "source_path": "crates/frankenlibc-abi/src/math_abi.rs",
+      "source_line": 609,
+      "evidence": "The ABI accepts the direction argument as f64 and delegates through nextafter-style f64 paths, so long-double-only direction differences are not represented.",
+      "required_followup": "Keep nexttoward-family replacement claims blocked until 80-bit long-double ABI plumbing and directed fixtures cover long-double direction values that round to x in f64."
     }
   ],
   "audited_summary": {
-    "entries": 10,
+    "entries": 11,
     "by_semantic_class": {
       "compat_noop": 4,
       "deterministic_fallback": 3,
       "limited_bootstrap": 2,
       "unsupported_platform_contract": 1,
-      "proof_gap": 0,
+      "proof_gap": 1,
       "full_semantics": 0
     },
     "blocked_claim": "The current support taxonomy can honestly say there are zero rows with status Stub. It cannot honestly say there are zero no-op, fallback, bootstrap, unsupported, or under-proven semantic surfaces."

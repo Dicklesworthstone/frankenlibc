@@ -150,8 +150,8 @@
   "expected_current_summary": {
     "doc_surface_count": 2,
     "required_claim_field_count": 8,
-    "semantic_parity_blocker_count": 18,
-    "taxonomy_semantic_conflict_count": 18,
+    "semantic_parity_blocker_count": 19,
+    "taxonomy_semantic_conflict_count": 19,
     "forbidden_claim_count": 0
   }
 }
