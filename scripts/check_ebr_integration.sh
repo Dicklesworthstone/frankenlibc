@@ -3,25 +3,88 @@
 #
 # Runs the artifact-emitting EBR integration test and validates the resulting
 # structured log/report pair under target/conformance.
+#
+# Modes:
+#   --validate-only  validate existing artifacts only (does not invoke cargo)
+#   --rch (default)  delegate the Rust E2E test to rch exec
+#   --local          run cargo locally (only for manual fallback)
+#
+# Artifact path overrides for validate-only harness tests:
+#   FRANKENLIBC_EBR_E2E_REPORT=/path/to/ebr_e2e.report.json
+#   FRANKENLIBC_EBR_E2E_LOG=/path/to/ebr_e2e.log.jsonl
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPORT="${ROOT}/target/conformance/ebr_e2e.report.json"
-LOG="${ROOT}/target/conformance/ebr_e2e.log.jsonl"
+REPORT="${FRANKENLIBC_EBR_E2E_REPORT:-${ROOT}/target/conformance/ebr_e2e.report.json}"
+LOG="${FRANKENLIBC_EBR_E2E_LOG:-${ROOT}/target/conformance/ebr_e2e.log.jsonl}"
+
+if [[ $# -gt 1 ]]; then
+  echo "$0: expected at most one mode argument" >&2
+  exit 2
+fi
+
+MODE="rch"
+case "${1:-}" in
+  ""|--rch)
+    MODE="rch"
+    ;;
+  --validate-only)
+    MODE="validate-only"
+    ;;
+  --local)
+    MODE="local"
+    ;;
+  -h|--help)
+    cat <<USAGE
+Usage: $0 [--rch | --validate-only | --local]
+  --rch (default)   Run the Rust EBR test via 'rch exec -- cargo test'.
+  --validate-only   Validate existing artifacts only; never invokes cargo.
+  --local           Run 'cargo test' locally for manual fallback.
+USAGE
+    exit 0
+    ;;
+  *)
+    echo "$0: unknown mode ${1:-}" >&2
+    exit 2
+    ;;
+esac
 
 cd "${ROOT}"
 
 echo "=== EBR Integration Gate (bd-1sp.4) ==="
-cargo test -p frankenlibc-membrane --test ebr_integration_test ebr_e2e_emits_structured_artifacts -- --nocapture
+if [[ "${MODE}" == "rch" ]]; then
+  if ! command -v rch >/dev/null 2>&1; then
+    echo "rch not available; rerun with --local only for manual fallback" >&2
+    exit 2
+  fi
+  RCH_REQUIRE_REMOTE=1 \
+    RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" \
+    rch exec -- cargo test -p frankenlibc-membrane --test ebr_integration_test ebr_e2e_emits_structured_artifacts -- --nocapture
+elif [[ "${MODE}" == "local" ]]; then
+  cargo test -p frankenlibc-membrane --test ebr_integration_test ebr_e2e_emits_structured_artifacts -- --nocapture
+fi
 
-python3 - <<'PY'
+python3 - "${REPORT}" "${LOG}" <<'PY'
 import json
+import sys
 from pathlib import Path
 
 root = Path.cwd()
-report_path = root / "target/conformance/ebr_e2e.report.json"
-log_path = root / "target/conformance/ebr_e2e.log.jsonl"
+report_path = Path(sys.argv[1])
+log_path = Path(sys.argv[2])
+
+if not report_path.is_absolute():
+    report_path = root / report_path
+if not log_path.is_absolute():
+    log_path = root / log_path
+
+
+def display_path(path):
+    try:
+        return path.relative_to(root)
+    except ValueError:
+        return path
 
 if not report_path.exists():
     raise SystemExit(f"FAIL: missing report {report_path}")
@@ -85,6 +148,6 @@ for event in ("pin_guard", "retire", "epoch_advance", "quarantine_enqueue", "qua
         raise SystemExit(f"FAIL: missing event {event!r} in structured log")
 
 print("PASS: EBR report + structured log validated")
-print(f"REPORT={report_path.relative_to(root)}")
-print(f"LOG={log_path.relative_to(root)}")
+print(f"REPORT={display_path(report_path)}")
+print(f"LOG={display_path(log_path)}")
 PY
