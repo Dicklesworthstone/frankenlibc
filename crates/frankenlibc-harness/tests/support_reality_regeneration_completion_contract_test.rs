@@ -258,6 +258,109 @@ fn checker_emits_report_and_jsonl_with_conformance_rows() -> TestResult {
 }
 
 #[test]
+fn checker_rejects_required_command_without_remote_requirement() -> TestResult {
+    let root = repo_root()?;
+    let out_dir = unique_out_dir(&root, "missing_rch_remote")?;
+    let mut manifest = load_json(&contract_path(&root))?;
+    let commands = manifest["missing_item_bindings"]
+        .as_array_mut()
+        .ok_or("missing_item_bindings array")?
+        .iter_mut()
+        .find(|item| item["id"].as_str() == Some("tests.conformance.primary"))
+        .ok_or("tests.conformance.primary binding")?["required_commands"]
+        .as_array_mut()
+        .ok_or("required_commands array")?;
+    let command = commands
+        .iter_mut()
+        .find(|entry| {
+            entry
+                .as_str()
+                .is_some_and(|value| value.contains("support_reality_regeneration_test"))
+        })
+        .ok_or("source harness cargo command")?;
+    let command_text = command
+        .as_str()
+        .ok_or("source harness command string")?
+        .replacen("RCH_REQUIRE_REMOTE=1 ", "", 1);
+    *command = json!(command_text);
+
+    let mutated = out_dir.join("missing_rch_remote_contract.json");
+    write_json(&mutated, &manifest)?;
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(
+        !output.status.success(),
+        "checker should reject missing remote requirement:\n{}",
+        output_text(&output)
+    );
+    let report =
+        load_json(&out_dir.join("support_reality_regeneration_completion_contract.report.json"))?;
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert!(
+        report["errors"]
+            .as_array()
+            .ok_or("errors array")?
+            .iter()
+            .any(|error| error
+                .as_str()
+                .unwrap_or("")
+                .contains("RCH_REQUIRE_REMOTE=1")),
+        "report should name missing RCH_REQUIRE_REMOTE=1: {report}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_required_command_without_target_dir() -> TestResult {
+    let root = repo_root()?;
+    let out_dir = unique_out_dir(&root, "missing_cargo_target_dir")?;
+    let mut manifest = load_json(&contract_path(&root))?;
+    let commands = manifest["missing_item_bindings"]
+        .as_array_mut()
+        .ok_or("missing_item_bindings array")?
+        .iter_mut()
+        .find(|item| item["id"].as_str() == Some("tests.conformance.primary"))
+        .ok_or("tests.conformance.primary binding")?["required_commands"]
+        .as_array_mut()
+        .ok_or("required_commands array")?;
+    let command = commands
+        .iter_mut()
+        .find(|entry| {
+            entry.as_str().is_some_and(|value| {
+                value.contains("support_reality_regeneration_completion_contract_test")
+            })
+        })
+        .ok_or("completion harness cargo command")?;
+    let command_text = command
+        .as_str()
+        .ok_or("completion harness command string")?
+        .replacen("env CARGO_TARGET_DIR=<target> ", "", 1);
+    *command = json!(command_text);
+
+    let mutated = out_dir.join("missing_cargo_target_dir_contract.json");
+    write_json(&mutated, &manifest)?;
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(
+        !output.status.success(),
+        "checker should reject missing target dir:\n{}",
+        output_text(&output)
+    );
+    let report =
+        load_json(&out_dir.join("support_reality_regeneration_completion_contract.report.json"))?;
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert!(
+        report["errors"]
+            .as_array()
+            .ok_or("errors array")?
+            .iter()
+            .any(|error| error.as_str().unwrap_or("").contains("CARGO_TARGET_DIR")),
+        "report should name missing CARGO_TARGET_DIR: {report}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn checker_rejects_missing_pair_artifact_binding() -> TestResult {
     let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "missing_pair")?;

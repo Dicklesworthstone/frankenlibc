@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import time
 from typing import Any
@@ -140,6 +141,52 @@ def require_set(value: Any, required: set[str], context: str) -> set[str]:
 
 def function_exists(source: str, name: str) -> bool:
     return f"fn {name}" in source
+
+
+def command_contract_failures(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        return [f"command is not shell-tokenizable: {command}: {exc}"]
+    if "cargo" not in tokens:
+        return []
+    failures: list[str] = []
+    cargo_index = tokens.index("cargo")
+    try:
+        rch_index = tokens.index("rch")
+    except ValueError:
+        failures.append(f"cargo command must run through rch exec: {command}")
+        return failures
+    if rch_index > cargo_index:
+        failures.append(f"rch must appear before cargo: {command}")
+        return failures
+    if "RCH_REQUIRE_REMOTE=1" not in tokens[:rch_index]:
+        failures.append(f"cargo command must set RCH_REQUIRE_REMOTE=1 before rch: {command}")
+    if tokens[rch_index + 1 : rch_index + 3] != ["exec", "--"]:
+        failures.append(f"cargo command must use 'rch exec --': {command}")
+    payload = tokens[rch_index + 3 : cargo_index]
+    if not payload or payload[0] != "env":
+        failures.append(f"cargo command must place env assignments inside rch payload: {command}")
+    if not any(token.startswith("CARGO_TARGET_DIR=") for token in payload[1:]):
+        failures.append(f"cargo command must set CARGO_TARGET_DIR inside rch env payload: {command}")
+    return failures
+
+
+def validate_required_commands(binding: dict[str, Any]) -> None:
+    commands = as_string_list(binding.get("required_commands"), "tests.conformance.primary.required_commands")
+    cargo_command_count = 0
+    for command in commands:
+        failures = command_contract_failures(command)
+        if failures:
+            for failure in failures:
+                err(f"required command contract failed: {failure}")
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = []
+        if "cargo" in tokens:
+            cargo_command_count += 1
+    require(cargo_command_count == 2, f"tests.conformance.primary must bind exactly 2 cargo proof commands, got {cargo_command_count}")
 
 
 manifest = load_json(CONTRACT, "contract")
@@ -276,6 +323,7 @@ for artifact in as_string_list(binding.get("required_artifacts"), "tests.conform
     require((ROOT / artifact).is_file(), f"conformance artifact missing: {artifact}")
 for ref in as_string_list(binding.get("required_test_refs"), "tests.conformance.primary.required_test_refs"):
     require(any(ref in recorded for recorded in test_refs), f"tests.conformance.primary references missing test ref {ref}")
+validate_required_commands(binding)
 
 telemetry = manifest.get("telemetry_contract", {})
 if not isinstance(telemetry, dict):

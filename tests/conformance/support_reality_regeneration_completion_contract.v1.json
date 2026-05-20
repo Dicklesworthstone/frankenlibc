@@ -83,6 +83,7 @@
           "support_reality_regeneration_source_bindings",
           "support_reality_regeneration_conformance_bindings",
           "support_reality_regeneration_completion_contract_pass",
+          "validate_required_commands",
           "FRANKENLIBC_SUPPORT_REALITY_REGEN_COMPLETION_REPORT",
           "FRANKENLIBC_SUPPORT_REALITY_REGEN_COMPLETION_LOG"
         ]
@@ -105,6 +106,8 @@
           "manifest_binds_conformance_completion_evidence",
           "checker_validates_support_reality_regeneration_contract",
           "checker_emits_report_and_jsonl_with_conformance_rows",
+          "checker_rejects_required_command_without_remote_requirement",
+          "checker_rejects_required_command_without_target_dir",
           "checker_rejects_missing_pair_artifact_binding",
           "checker_rejects_missing_source_test_ref",
           "checker_rejects_missing_telemetry_event"
@@ -133,8 +136,8 @@
       ],
       "required_commands": [
         "bash scripts/check_support_reality_regeneration_completion_contract.sh",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_reality_regeneration_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_reality_regeneration_completion_contract_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_reality_regeneration_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test support_reality_regeneration_completion_contract_test -- --nocapture",
         "jq empty tests/conformance/support_reality_regeneration_completion_contract.v1.json"
       ]
     }
