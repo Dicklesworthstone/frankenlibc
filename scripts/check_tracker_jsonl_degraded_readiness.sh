@@ -207,6 +207,79 @@ def dependency_blockers(issue: dict[str, Any], issue_by_id: dict[str, dict[str, 
     return blockers
 
 
+def normalized_cycle(cycle_ids: list[str]) -> tuple[str, ...]:
+    if not cycle_ids:
+        return tuple()
+    rotations = [tuple(cycle_ids[index:] + cycle_ids[:index]) for index in range(len(cycle_ids))]
+    return min(rotations)
+
+
+def dependency_cycles(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    active_ids = {
+        str(row.get("id"))
+        for row in rows
+        if isinstance(row.get("id"), str) and row.get("status") in ACTIVE_STATUSES
+    }
+    graph: dict[str, list[str]] = {issue_id: [] for issue_id in active_ids}
+    for row in rows:
+        issue_id = row.get("id")
+        if not isinstance(issue_id, str) or issue_id not in active_ids:
+            continue
+        dependencies = row.get("dependencies")
+        if not isinstance(dependencies, list):
+            continue
+        for dep in dependencies:
+            if not isinstance(dep, dict) or dep.get("type") != "blocks":
+                continue
+            depends_on_id = dep.get("depends_on_id")
+            if isinstance(depends_on_id, str) and depends_on_id in active_ids:
+                graph[issue_id].append(depends_on_id)
+
+    discovered: set[str] = set()
+    stack: list[str] = []
+    stack_positions: dict[str, int] = {}
+    cycles: set[tuple[str, ...]] = set()
+
+    def visit(node: str) -> None:
+        discovered.add(node)
+        stack_positions[node] = len(stack)
+        stack.append(node)
+        for next_node in sorted(graph.get(node, [])):
+            if next_node in stack_positions:
+                cycle = stack[stack_positions[next_node]:]
+                if cycle:
+                    cycles.add(normalized_cycle(cycle))
+            elif next_node not in discovered:
+                visit(next_node)
+        stack.pop()
+        del stack_positions[node]
+
+    for issue_id in sorted(graph):
+        if issue_id not in discovered:
+            visit(issue_id)
+
+    return [
+        {
+            "cycle_ids": list(cycle),
+            "edge_type": "blocks",
+            "length": len(cycle),
+        }
+        for cycle in sorted(cycles)
+    ]
+
+
+def dependency_cycle_candidate_ids(cycles: list[dict[str, Any]]) -> list[str]:
+    ids: list[str] = []
+    for cycle in cycles:
+        cycle_ids = cycle.get("cycle_ids")
+        if not isinstance(cycle_ids, list):
+            continue
+        for issue_id in cycle_ids:
+            if isinstance(issue_id, str) and issue_id not in ids:
+                ids.append(issue_id)
+    return ids
+
+
 def project_issue(issue: dict[str, Any], *, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     row = {
         "id": issue.get("id"),
@@ -421,6 +494,7 @@ def recommended_next_action(
     safe_ready_ids: list[str],
     permissioned_ready_ids: list[str],
     stale_in_progress_ids: list[str],
+    dependency_cycle_rows: list[dict[str, Any]],
     top_blocker_ids: list[str],
     cross_project_review_ids: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -431,6 +505,14 @@ def recommended_next_action(
             "decision": "review_stale_in_progress",
             "reason": "stale in-progress beads are present and should be reviewed before starting new work",
             "candidate_ids": stale_in_progress_ids,
+            "safe_to_claim_without_permission": False,
+            "requires_user_permission": False,
+        }
+    if dependency_cycle_rows:
+        return {
+            "decision": "fix_dependency_cycles",
+            "reason": "active blocks-dependency cycles are present; repair the tracker graph before claiming new work",
+            "candidate_ids": dependency_cycle_candidate_ids(dependency_cycle_rows),
             "safe_to_claim_without_permission": False,
             "requires_user_permission": False,
         }
@@ -502,6 +584,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
     stale_in_progress: list[dict[str, Any]] = []
     in_progress: list[dict[str, Any]] = []
     active_parent_children: dict[str, list[str]] = {}
+    cycles = dependency_cycles(rows)
 
     for row in rows:
         child_id = row.get("id")
@@ -603,6 +686,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
             "in_progress_total": len(in_progress),
             "stale_in_progress_total": len(stale_in_progress),
             "stale_in_progress_after_hours": stale_hours,
+            "dependency_cycle_total": len(cycles),
         },
         "ready": ready,
         "safe_ready": safe_ready,
@@ -612,6 +696,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
         "container_open": container_open,
         "in_progress": in_progress,
         "stale_in_progress": stale_in_progress,
+        "dependency_cycles": cycles,
     }
 
 
@@ -673,6 +758,7 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
             projected_ids(test_analysis["safe_ready"]),
             projected_ids(test_analysis["permissioned_ready"]),
             projected_ids(test_analysis["stale_in_progress"]),
+            test_analysis["dependency_cycles"],
             [str(row["id"]) for row in test_blockers[:5]],
             projected_ids(test_analysis["cross_project_review"]),
         )
@@ -1051,6 +1137,93 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
         }
     )
 
+    cycle = deepcopy(rows)
+    cycle.append(
+        {
+            "id": "bd-jsonl-negative-cycle-a",
+            "title": "negative dependency cycle a",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+            "dependencies": [
+                {
+                    "issue_id": "bd-jsonl-negative-cycle-a",
+                    "depends_on_id": "bd-jsonl-negative-cycle-b",
+                    "type": "blocks",
+                }
+            ],
+        }
+    )
+    cycle.append(
+        {
+            "id": "bd-jsonl-negative-cycle-b",
+            "title": "negative dependency cycle b",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+            "dependencies": [
+                {
+                    "issue_id": "bd-jsonl-negative-cycle-b",
+                    "depends_on_id": "bd-jsonl-negative-cycle-a",
+                    "type": "blocks",
+                }
+            ],
+        }
+    )
+    cycle_analysis = analyze(cycle, contract)
+    cycle_id_sets = [
+        set(row.get("cycle_ids", []))
+        for row in cycle_analysis["dependency_cycles"]
+        if isinstance(row, dict) and isinstance(row.get("cycle_ids"), list)
+    ]
+    ok = {"bd-jsonl-negative-cycle-a", "bd-jsonl-negative-cycle-b"} in cycle_id_sets
+    controls.append(
+        {
+            "name": "dependency_cycle_detected_without_br",
+            "expected_signature": "jsonl_blocks_dependency_cycle",
+            "status": "pass" if ok else "fail",
+        }
+    )
+
+    action = decision_for(
+        [
+            {
+                "id": "bd-jsonl-action-cycle-a",
+                "title": "action dependency cycle a",
+                "status": "open",
+                "updated_at": "2026-05-17T00:00:00Z",
+                "dependencies": [
+                    {
+                        "issue_id": "bd-jsonl-action-cycle-a",
+                        "depends_on_id": "bd-jsonl-action-cycle-b",
+                        "type": "blocks",
+                    }
+                ],
+            },
+            {
+                "id": "bd-jsonl-action-cycle-b",
+                "title": "action dependency cycle b",
+                "status": "open",
+                "updated_at": "2026-05-17T00:00:00Z",
+                "dependencies": [
+                    {
+                        "issue_id": "bd-jsonl-action-cycle-b",
+                        "depends_on_id": "bd-jsonl-action-cycle-a",
+                        "type": "blocks",
+                    }
+                ],
+            },
+        ]
+    )
+    controls.append(
+        {
+            "name": "action_prioritizes_dependency_cycles",
+            "expected_signature": "fix_dependency_cycles",
+            "status": "pass"
+            if action.get("decision") == "fix_dependency_cycles"
+            and action.get("candidate_ids") == ["bd-jsonl-action-cycle-a", "bd-jsonl-action-cycle-b"]
+            else "fail",
+        }
+    )
+
     action = decision_for(
         [
             {
@@ -1204,11 +1377,14 @@ stdout_summary = {
     "in_progress_ids": projected_ids(analysis["in_progress"]),
     "in_progress_age_summary": in_progress_summary(analysis["in_progress"]),
     "stale_threshold_hours": analysis["summary"]["stale_in_progress_after_hours"],
+    "dependency_cycle_count": analysis["summary"]["dependency_cycle_total"],
+    "dependency_cycles": analysis["dependency_cycles"],
 }
 stdout_summary["recommended_next_action"] = recommended_next_action(
     safe_ready_ids,
     permissioned_ready_ids,
     stale_in_progress_ids,
+    analysis["dependency_cycles"],
     top_blocker_ids,
     cross_project_review_ids,
 )
@@ -1253,6 +1429,7 @@ report = {
     "container_open": analysis["container_open"],
     "stale_in_progress": analysis["stale_in_progress"],
     "in_progress": analysis["in_progress"],
+    "dependency_cycles": analysis["dependency_cycles"],
     "negative_controls": negative_controls,
     "failures": errors,
 }
@@ -1278,6 +1455,7 @@ events = [
         "permissioned_ready_total": report["summary"]["permissioned_ready_total"],
         "cross_project_review_total": report["summary"]["cross_project_review_total"],
         "stale_in_progress_total": report["summary"]["stale_in_progress_total"],
+        "dependency_cycle_total": report["summary"]["dependency_cycle_total"],
         "source_commit": report["source_commit"],
     }
 ]
