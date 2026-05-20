@@ -73,6 +73,59 @@ fn run_getopt_loop(args: &[&str], optstr: &str) -> Vec<(c_int, Option<String>)> 
     out
 }
 
+fn capture_stderr(body: impl FnOnce() -> c_int) -> (c_int, Vec<u8>) {
+    let mut pipe_fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+    let saved_stderr = unsafe { libc::dup(libc::STDERR_FILENO) };
+    assert!(saved_stderr >= 0);
+    assert_eq!(
+        unsafe { libc::dup2(pipe_fds[1], libc::STDERR_FILENO) },
+        libc::STDERR_FILENO
+    );
+
+    let rc = body();
+
+    unsafe {
+        libc::dup2(saved_stderr, libc::STDERR_FILENO);
+        libc::close(saved_stderr);
+        libc::close(pipe_fds[1]);
+    }
+
+    let mut stderr = Vec::new();
+    let mut buf = [0u8; 256];
+    loop {
+        let n = unsafe { libc::read(pipe_fds[0], buf.as_mut_ptr().cast(), buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        stderr.extend_from_slice(&buf[..n as usize]);
+    }
+    unsafe {
+        libc::close(pipe_fds[0]);
+    }
+
+    (rc, stderr)
+}
+
+fn run_getopt_once_with_stderr(
+    args: &[&str],
+    optstr: &str,
+    opterr_value: c_int,
+) -> (c_int, String) {
+    let (_keep, argv) = build_argv(args);
+    let argc = (argv.len() - 1) as c_int;
+    let optstr_c = CString::new(optstr).unwrap();
+    unsafe {
+        optind = 1;
+        optarg = std::ptr::null_mut();
+        opterr = opterr_value;
+    }
+
+    let (rc, stderr) =
+        capture_stderr(|| unsafe { fl::getopt(argc, argv.as_ptr(), optstr_c.as_ptr()) });
+    (rc, String::from_utf8_lossy(&stderr).into_owned())
+}
+
 #[test]
 fn conformance_getopt_basic_short_opts() {
     let _g = OPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -142,6 +195,43 @@ fn conformance_getopt_basic_short_opts() {
         run_getopt_loop(&["prog", "-a", "--", "-b"], "ab"),
         vec![(b'a' as c_int, None)]
     );
+}
+
+#[test]
+fn conformance_getopt_return_in_order_for_leading_dash_optstring() {
+    let _g = OPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    assert_eq!(
+        run_getopt_loop(&["prog", "file", "-a", "tail"], "-a"),
+        vec![
+            (1, Some("file".to_string())),
+            (b'a' as c_int, None),
+            (1, Some("tail".to_string()))
+        ]
+    );
+}
+
+#[test]
+fn conformance_getopt_opterr_diagnostics() {
+    let _g = OPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let (rc, stderr) = run_getopt_once_with_stderr(&["prog", "-x"], "ab", 1);
+    assert_eq!(rc, b'?' as c_int);
+    assert!(stderr.contains("prog: invalid option"));
+    assert!(stderr.contains("'x'"));
+
+    let (rc, stderr) = run_getopt_once_with_stderr(&["prog", "-x"], "ab", 0);
+    assert_eq!(rc, b'?' as c_int);
+    assert_eq!(stderr, "");
+
+    let (rc, stderr) = run_getopt_once_with_stderr(&["prog", "-a"], "a:", 1);
+    assert_eq!(rc, b'?' as c_int);
+    assert!(stderr.contains("prog: option requires an argument"));
+    assert!(stderr.contains("'a'"));
+
+    let (rc, stderr) = run_getopt_once_with_stderr(&["prog", "-a"], ":a:", 1);
+    assert_eq!(rc, b':' as c_int);
+    assert_eq!(stderr, "");
 }
 
 #[test]

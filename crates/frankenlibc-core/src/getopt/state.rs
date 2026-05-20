@@ -50,6 +50,15 @@ impl Default for GetoptState {
     }
 }
 
+/// Diagnostic class for a `getopt` error outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GetoptDiagnostic {
+    /// The option byte is not present in the optstring.
+    UnknownOption(u8),
+    /// The option byte requires an argument, but none was available.
+    MissingArgument(u8),
+}
+
 /// Outcome of one [`step_short`] call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepOutcome {
@@ -59,7 +68,33 @@ pub enum StepOutcome {
     /// Found an option. `code` is the option byte as `i32`, or `'?'`
     /// for unknown options, or `':'` (when optspec begins with `:`)
     /// for missing required arguments.
-    Found(i32),
+    Found {
+        code: i32,
+        diagnostic: Option<GetoptDiagnostic>,
+    },
+}
+
+impl StepOutcome {
+    pub fn found(code: i32) -> Self {
+        Self::Found {
+            code,
+            diagnostic: None,
+        }
+    }
+
+    pub fn diagnostic(code: i32, diagnostic: GetoptDiagnostic) -> Self {
+        Self::Found {
+            code,
+            diagnostic: Some(diagnostic),
+        }
+    }
+
+    pub fn code(self) -> Option<i32> {
+        match self {
+            Self::Done => None,
+            Self::Found { code, .. } => Some(code),
+        }
+    }
 }
 
 /// One step of the short-option scanner.
@@ -134,14 +169,14 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
                 state.optind += 1;
                 state.nextchar = None;
             }
-            StepOutcome::Found(b'?' as i32)
+            StepOutcome::diagnostic(b'?' as i32, GetoptDiagnostic::UnknownOption(option))
         }
         Some(GetoptArgMode::None) => {
             if at_end {
                 state.optind += 1;
                 state.nextchar = None;
             }
-            StepOutcome::Found(option as i32)
+            StepOutcome::found(option as i32)
         }
         Some(GetoptArgMode::Required) => {
             if !at_end {
@@ -152,14 +187,17 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
                 });
                 state.optind += 1;
                 state.nextchar = None;
-                return StepOutcome::Found(option as i32);
+                return StepOutcome::found(option as i32);
             }
             // Argument is the next argv slot.
             if state.optind + 1 >= argv.len() {
                 state.optopt = option;
                 state.optind += 1;
                 state.nextchar = None;
-                return StepOutcome::Found(missing_code);
+                return StepOutcome::diagnostic(
+                    missing_code,
+                    GetoptDiagnostic::MissingArgument(option),
+                );
             }
             state.optind += 1;
             let next_idx = state.optind;
@@ -169,7 +207,7 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
             });
             state.optind += 1;
             state.nextchar = None;
-            StepOutcome::Found(option as i32)
+            StepOutcome::found(option as i32)
         }
         Some(GetoptArgMode::Optional) => {
             if !at_end {
@@ -180,7 +218,7 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
             }
             state.optind += 1;
             state.nextchar = None;
-            StepOutcome::Found(option as i32)
+            StepOutcome::found(option as i32)
         }
     }
 }
@@ -198,8 +236,8 @@ mod tests {
         loop {
             match step_short(&argv, optspec, &mut state) {
                 StepOutcome::Done => break,
-                StepOutcome::Found(c) => {
-                    codes.push(c);
+                StepOutcome::Found { code, .. } => {
+                    codes.push(code);
                     args.push(state.optarg.map(|a| {
                         let s = argv[a.argv_idx];
                         std::str::from_utf8(&s[a.byte_offset..])
@@ -337,9 +375,29 @@ mod tests {
         let optspec = b"a:";
         let mut state = GetoptState::default();
         let r = step_short(&argv, optspec, &mut state);
-        assert_eq!(r, StepOutcome::Found(b'a' as i32));
+        assert_eq!(r.code(), Some(b'a' as i32));
         let arg = state.optarg.expect("optarg set");
         let slice = &argv[arg.argv_idx][arg.byte_offset..];
         assert_eq!(slice, b"XYZ");
+    }
+
+    #[test]
+    fn unknown_option_carries_diagnostic() {
+        let argv: Vec<&[u8]> = vec![b"prog", b"-x"];
+        let mut state = GetoptState::default();
+        assert_eq!(
+            step_short(&argv, b"ab", &mut state),
+            StepOutcome::diagnostic(b'?' as i32, GetoptDiagnostic::UnknownOption(b'x'))
+        );
+    }
+
+    #[test]
+    fn missing_required_arg_carries_diagnostic() {
+        let argv: Vec<&[u8]> = vec![b"prog", b"-a"];
+        let mut state = GetoptState::default();
+        assert_eq!(
+            step_short(&argv, b":a:", &mut state),
+            StepOutcome::diagnostic(b':' as i32, GetoptDiagnostic::MissingArgument(b'a'))
+        );
     }
 }

@@ -2539,10 +2539,12 @@ unsafe extern "C" {
     static mut libc_optind: c_int;
     #[link_name = "optopt"]
     static mut libc_optopt: c_int;
+    #[link_name = "opterr"]
+    static mut libc_opterr: c_int;
 }
 
 use frankenlibc_core::getopt as getopt_core;
-use frankenlibc_core::getopt::{ArgRef, GetoptState, StepOutcome};
+use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, StepOutcome};
 
 /// Persistent scanner state across `parse_getopt_short` calls.
 ///
@@ -2594,6 +2596,33 @@ fn getopt_block_takes_next_arg(elem: &[u8], optspec: &[u8]) -> bool {
     false
 }
 
+fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<GetoptDiagnostic>) {
+    let Some(diagnostic) = diagnostic else {
+        return;
+    };
+    if unsafe { libc_opterr == 0 } || getopt_core::getopt_prefers_colon(optspec) {
+        return;
+    }
+
+    let program = if argv0.is_empty() { b"?" } else { argv0 };
+    let mut msg = Vec::new();
+    msg.extend_from_slice(program);
+    match diagnostic {
+        GetoptDiagnostic::UnknownOption(option) => {
+            msg.extend_from_slice(b": invalid option -- '");
+            msg.push(option);
+            msg.extend_from_slice(b"'\n");
+        }
+        GetoptDiagnostic::MissingArgument(option) => {
+            msg.extend_from_slice(b": option requires an argument -- '");
+            msg.push(option);
+            msg.extend_from_slice(b"'\n");
+        }
+    }
+
+    let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+}
+
 unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> c_int {
     if argc <= 0 || argv.is_null() {
         return -1;
@@ -2603,8 +2632,11 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
     // by an optional `:`. `POSIXLY_CORRECT` in the environment also forces
     // strict ordering. The flag byte is stripped so it is never treated as a
     // selectable option; a leading `:` stays for the colon/arg-mode helpers.
-    let mode_prefix = matches!(optspec.first(), Some(b'+' | b'-')) as usize;
-    let strict = mode_prefix == 1 || std::env::var_os("POSIXLY_CORRECT").is_some();
+    let mode = optspec.first().copied();
+    let mode_prefix = matches!(mode, Some(b'+' | b'-')) as usize;
+    let return_in_order = mode == Some(b'-');
+    let strict =
+        mode == Some(b'+') || (mode != Some(b'-') && std::env::var_os("POSIXLY_CORRECT").is_some());
     let effective = &optspec[mode_prefix..];
 
     let mut argv_bytes = match unsafe { argv_byte_slices(argc, argv) } {
@@ -2623,11 +2655,34 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
     };
     let mid_bundle = raw_optind > 0 && unsafe { GETOPT_NEXTCHAR }.is_some();
 
+    if return_in_order && !mid_bundle && optind >= 1 && optind < argc_us {
+        let current = &argv_bytes[optind];
+        if current == b"--" {
+            unsafe {
+                libc_optind = (optind + 1) as c_int;
+                libc_optopt = 0;
+                libc_optarg = std::ptr::null_mut();
+                GETOPT_NEXTCHAR = None;
+            }
+            return -1;
+        }
+        if !getopt_is_option_like(current) {
+            unsafe {
+                libc_optind = (optind + 1) as c_int;
+                libc_optopt = 0;
+                libc_optarg = *argv.add(optind);
+                GETOPT_NEXTCHAR = None;
+            }
+            return 1;
+        }
+    }
+
     // Argument permutation (glibc default mode): when the element at `optind`
     // is an operand, rotate the next option element — together with its
     // separate argument, if any — in front of the run of operands, so options
     // are reported in order and operands accumulate at the tail of argv.
     if !strict
+        && !return_in_order
         && !mid_bundle
         && optind >= 1
         && optind < argc_us
@@ -2691,7 +2746,14 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
 
     match outcome {
         StepOutcome::Done => -1,
-        StepOutcome::Found(c) => c,
+        StepOutcome::Found { code, diagnostic } => {
+            emit_getopt_diagnostic(
+                argv_slices.first().copied().unwrap_or(b""),
+                effective,
+                diagnostic,
+            );
+            code
+        }
     }
 }
 
