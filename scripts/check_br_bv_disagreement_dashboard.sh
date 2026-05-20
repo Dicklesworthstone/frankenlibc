@@ -74,6 +74,7 @@ REQUIRED_DISCREPANCIES = {
     "conflicting_ready_lists",
     "cycle_report_disagreement",
     "missing_issue_record",
+    "source_filter_quarantine",
 }
 
 SIGNATURE_ALIASES = {
@@ -138,6 +139,15 @@ def detect_discrepancies(inputs, commands):
         discrepancies.add("missing_issue_record")
     if inputs.get("cycles_count") not in (0, None):
         discrepancies.add("cycle_report_disagreement")
+    if (
+        inputs.get("safe_ready_count") == 0
+        and (
+            (inputs.get("cross_project_review_count") or 0) > 0
+            or (inputs.get("permissioned_ready_count") or 0) > 0
+        )
+        and (inputs.get("bv_ready_like_count") or 0) > 0
+    ):
+        discrepancies.add("source_filter_quarantine")
 
     br_open = inputs.get("br_open_count")
     bv_open = inputs.get("bv_open_count")
@@ -161,6 +171,8 @@ def current_source_of_truth(discrepancies, inputs):
         return "blocked_graph"
     if "exact_id_split_brain" in discrepancy_set or "missing_issue_record" in discrepancy_set:
         return "br_no_db_show"
+    if "source_filter_quarantine" in discrepancy_set:
+        return "source_filtered_jsonl"
     return "br_no_db_jsonl"
 
 
@@ -176,6 +188,8 @@ def next_safe_action(discrepancies, inputs):
         return "prefer_named_no_db_show_and_reconcile_duplicate_rows"
     if "missing_issue_record" in discrepancy_set:
         return "repair_missing_issue_or_dependency_record"
+    if "source_filter_quarantine" in discrepancy_set:
+        return "use_source_aware_readiness_and_do_not_claim_quarantined_rows"
     if "already_shipped_but_open_bead" in discrepancy_set:
         return "close_shipped_bead_or_reopen_with_current_blocker"
     if "db_jsonl_count_mismatch" in discrepancy_set or "stale_blocked_cache" in discrepancy_set:
@@ -248,6 +262,7 @@ for scenario in artifact.get("scenarios", []):
             "evidence_age": scenario.get("evidence_age", "fixture"),
             "affected_bead_ids": inputs.get("missing_records", [])
             + inputs.get("already_shipped_but_open", []),
+            "quarantined_bead_ids": inputs.get("source_filtered_ids", []),
             "user_impact": "dashboard_claim_blocked" if discrepancies else "dashboard_claim_allowed",
             "failure_class": implementation_failure_class(discrepancies, may_proceed),
             "implementation_may_proceed": may_proceed,

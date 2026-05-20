@@ -47,6 +47,7 @@ const REQUIRED_DISCREPANCIES: &[&str] = &[
     "conflicting_ready_lists",
     "cycle_report_disagreement",
     "missing_issue_record",
+    "source_filter_quarantine",
 ];
 
 fn test_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
@@ -125,7 +126,7 @@ fn fixture_scenarios_cover_disagreement_taxonomy() -> TestResult {
     let scenarios = artifact["scenarios"]
         .as_array()
         .ok_or_else(|| test_error("scenarios should be array"))?;
-    assert!(scenarios.len() >= 8);
+    assert!(scenarios.len() >= 9);
 
     let mut covered = HashSet::new();
     let mut source_modes = HashSet::new();
@@ -158,6 +159,7 @@ fn fixture_scenarios_cover_disagreement_taxonomy() -> TestResult {
     assert!(source_modes.contains("br_no_db_show"));
     assert!(source_modes.contains("inconclusive"));
     assert!(source_modes.contains("blocked_graph"));
+    assert!(source_modes.contains("source_filtered_jsonl"));
     Ok(())
 }
 
@@ -187,7 +189,29 @@ fn fixture_replay_emits_dashboard_rows_and_structured_logs() -> TestResult {
     assert_eq!(report_json["status"].as_str(), Some("pass"));
     assert_eq!(
         report_json["dashboard_rows"].as_array().map(Vec::len),
-        Some(8)
+        Some(9)
+    );
+    let source_filtered_row = report_json["dashboard_rows"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                row["scenario_id"].as_str() == Some("bv_ready_like_rows_source_filtered")
+            })
+        })
+        .ok_or_else(|| test_error("missing source-filter quarantine row"))?;
+    assert_eq!(
+        source_filtered_row["current_source_of_truth"].as_str(),
+        Some("source_filtered_jsonl")
+    );
+    assert_eq!(
+        source_filtered_row["next_safe_action"].as_str(),
+        Some("use_source_aware_readiness_and_do_not_claim_quarantined_rows")
+    );
+    assert_eq!(
+        source_filtered_row["quarantined_bead_ids"]
+            .as_array()
+            .map(Vec::len),
+        Some(3)
     );
     assert_eq!(
         report_json["summary"]["implementation_may_continue_on_unrelated_jsonl_beads"].as_bool(),
@@ -219,5 +243,6 @@ fn fixture_replay_emits_dashboard_rows_and_structured_logs() -> TestResult {
     assert!(log_discrepancies.contains("db_jsonl_count_mismatch"));
     assert!(log_discrepancies.contains("timeout"));
     assert!(log_discrepancies.contains("cycle_report_disagreement"));
+    assert!(log_discrepancies.contains("source_filter_quarantine"));
     Ok(())
 }

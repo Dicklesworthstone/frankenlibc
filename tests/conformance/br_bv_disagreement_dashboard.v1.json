@@ -45,7 +45,8 @@
     "already_shipped_but_open_bead",
     "conflicting_ready_lists",
     "cycle_report_disagreement",
-    "missing_issue_record"
+    "missing_issue_record",
+    "source_filter_quarantine"
   ],
   "scenarios": [
     {
@@ -129,6 +130,58 @@
           "expected": "must not hide br open rows",
           "actual": "0 open rows despite br_open_count=64",
           "failure_signature": "conflicting_ready_lists"
+        }
+      ]
+    },
+    {
+      "scenario_id": "bv_ready_like_rows_source_filtered",
+      "expected_discrepancies": [
+        "source_filter_quarantine"
+      ],
+      "expected_current_source_of_truth": "source_filtered_jsonl",
+      "expected_next_safe_action": "use_source_aware_readiness_and_do_not_claim_quarantined_rows",
+      "implementation_may_proceed": true,
+      "inputs": {
+        "jsonl_records": 5820,
+        "db_records": 5820,
+        "br_ready_count": 0,
+        "br_open_count": 6,
+        "bv_open_count": 6,
+        "bv_ready_like_count": 3,
+        "safe_ready_count": 0,
+        "permissioned_ready_count": 0,
+        "cross_project_review_count": 3,
+        "source_filtered_ids": [
+          "bd-rchk0.53.8",
+          "bd-rchk3",
+          "bd-rchk3.3"
+        ],
+        "cycles_count": 0,
+        "exact_id_split_brain": false,
+        "stale_blocked_cache": false,
+        "already_shipped_but_open": [],
+        "missing_records": []
+      },
+      "commands": [
+        {
+          "name": "tracker_jsonl_degraded_readiness",
+          "source": "br",
+          "command": "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only",
+          "exit_status": 0,
+          "duration_ms": 620,
+          "expected": "source-aware safe_ready rows or explicit quarantine",
+          "actual": "safe_ready=0 cross_project_review=3 cross_project_review_ids=[bd-rchk0.53.8,bd-rchk3,bd-rchk3.3]",
+          "failure_signature": "source_filter_quarantine"
+        },
+        {
+          "name": "bv_robot_triage",
+          "source": "bv",
+          "command": "bv --robot-triage",
+          "exit_status": 0,
+          "duration_ms": 15000,
+          "expected": "ready-like rows must be checked against source-aware readiness before claiming",
+          "actual": "bv reports ready-like recommendations that source-aware readiness quarantines",
+          "failure_signature": "source_filter_quarantine"
         }
       ]
     },
