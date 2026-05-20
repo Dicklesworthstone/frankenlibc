@@ -210,14 +210,14 @@ fn gate_passes_current_overlay_and_emits_report_log_and_normalized_rows() {
     );
     let report = parse_stdout_report(&output);
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["audited_entry_count"].as_u64(), Some(10));
+    assert_eq!(report["summary"]["audited_entry_count"].as_u64(), Some(9));
     assert_eq!(
         report["summary"]["normalized_claim_row_count"].as_u64(),
-        Some(37)
+        Some(36)
     );
     assert_eq!(
         report["summary"]["exact_symbol_reference_count"].as_u64(),
-        Some(32)
+        Some(31)
     );
     assert_eq!(
         report["summary"]["wildcard_symbol_reference_count"].as_u64(),

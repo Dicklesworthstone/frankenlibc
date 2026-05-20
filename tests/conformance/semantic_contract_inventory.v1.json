@@ -423,29 +423,6 @@
       ]
     },
     {
-      "id": "sem-nexttoward-long-double-direction",
-      "seed_overlay_id": "sem-nexttoward-long-double-direction",
-      "surface": "C99 nexttowardl long-double direction and result semantics",
-      "symbols": [
-        "nexttowardl"
-      ],
-      "module": "frankenlibc-abi::math_abi",
-      "source_path": "crates/frankenlibc-abi/src/math_abi.rs",
-      "source_line": 4544,
-      "line_marker": "pub unsafe extern \"C\" fn nexttowardl(x: f64, y: f64) -> f64 {",
-      "support_matrix_status": "Implemented",
-      "semantic_class": "proof_gap",
-      "contract_kind": "long_double_result_and_direction_not_represented",
-      "current_behavior": "nexttoward and nexttowardf have x86_64 stack-slot shims that classify 80-bit direction bytes before stepping; nexttowardl still models both long-double operands and the return value as f64 and delegates through nextafter.",
-      "user_risk": "Long-double callers of nexttowardl can lose extended-precision input, direction, and result differences that are observable outside the f64 envelope.",
-      "required_followup": "Implement 80-bit long-double argument and result ABI plumbing for nexttowardl, then add directed fixtures for x87 values that round together in f64 before semantic parity promotion.",
-      "evidence_artifacts": [
-        "support_matrix.json",
-        "crates/frankenlibc-abi/src/math_abi.rs",
-        "crates/frankenlibc-core/src/math/float.rs"
-      ]
-    },
-    {
       "id": "sem-cxx-abi-fail-stop",
       "seed_overlay_id": null,
       "surface": "C++ ABI fail-stop hooks exported for compatibility",
@@ -471,24 +448,22 @@
     }
   ],
   "summary": {
-    "entry_count": 18,
-    "seed_overlay_entries": 10,
-    "seed_overlay_covered": 10,
+    "entry_count": 17,
+    "seed_overlay_entries": 9,
+    "seed_overlay_covered": 9,
     "new_entries": 8,
     "by_semantic_class": {
       "compat_noop": 4,
       "deterministic_fallback": 4,
       "limited_bootstrap": 6,
       "unsupported_platform_contract": 2,
-      "abort_only": 1,
-      "proof_gap": 1
+      "abort_only": 1
     },
     "by_source_path": {
       "crates/frankenlibc-abi/src/glibc_internal_abi.rs": 6,
       "crates/frankenlibc-abi/src/unistd_abi.rs": 8,
       "crates/frankenlibc-abi/src/pthread_abi.rs": 1,
       "crates/frankenlibc-abi/src/setjmp_abi.rs": 1,
-      "crates/frankenlibc-abi/src/math_abi.rs": 1,
       "crates/frankenlibc-core/src/elf/mod.rs": 1
     },
     "blocked_claim": "Stub=0 in support_matrix.json is compatible with this inventory only as a symbol-presence taxonomy. It is not evidence of full semantic replacement readiness."

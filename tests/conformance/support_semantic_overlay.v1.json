@@ -168,29 +168,16 @@
       "source_line": 21901,
       "evidence": "argp_help renders bounded literal usage/doc strings to caller-provided streams while null-stream fixture rows remain deterministic no-ops; argp_state_help bridges state.root_argp/name into the same bounded renderer without process exit; argp_usage renders standard usage through state.err_stream without process exit; argp_error/failure render bounded printf-style diagnostics to state.err_stream/state.out_stream when a non-null state stream is available while null-state fixture rows remain deterministic no-ops.",
       "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, complete state stream selection, and process-exit behavior before claiming complete GNU argp parity."
-    },
-    {
-      "id": "sem-nexttoward-long-double-direction",
-      "surface": "C99 nexttowardl long-double direction and result semantics",
-      "symbols": [
-        "nexttowardl"
-      ],
-      "support_matrix_status": "Implemented",
-      "semantic_class": "proof_gap",
-      "source_path": "crates/frankenlibc-abi/src/math_abi.rs",
-      "source_line": 4544,
-      "evidence": "nexttoward and nexttowardf now use x86_64 stack-slot shims plus x87 byte classification tests for long-double-only direction differences; nexttowardl still models x, y, and the result as f64 and delegates through nextafter.",
-      "required_followup": "Keep nexttowardl replacement claims blocked until 80-bit long-double argument/result ABI plumbing and directed fixtures cover values that round together in f64."
     }
   ],
   "audited_summary": {
-    "entries": 10,
+    "entries": 9,
     "by_semantic_class": {
       "compat_noop": 3,
       "deterministic_fallback": 2,
       "limited_bootstrap": 3,
       "unsupported_platform_contract": 1,
-      "proof_gap": 1,
+      "proof_gap": 0,
       "full_semantics": 0
     },
     "blocked_claim": "The current support taxonomy can honestly say there are zero rows with status Stub. It cannot honestly say there are zero no-op, fallback, bootstrap, unsupported, or under-proven semantic surfaces."

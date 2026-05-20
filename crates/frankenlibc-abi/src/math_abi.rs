@@ -1404,6 +1404,18 @@ core::arch::global_asm!(
     "  lea rdi, [rsp + 8]",
     "  jmp __frankenlibc_nexttowardf_x86_64",
     ".size nexttowardf, .-nexttowardf",
+    ".global nexttowardl",
+    ".type nexttowardl, @function",
+    "nexttowardl:",
+    "  sub rsp, 24",
+    "  lea rdi, [rsp + 32]",
+    "  lea rsi, [rsp + 48]",
+    "  mov rdx, rsp",
+    "  call __frankenlibc_nexttowardl_x86_64",
+    "  fld tbyte ptr [rsp]",
+    "  add rsp, 24",
+    "  ret",
+    ".size nexttowardl, .-nexttowardl",
 );
 
 #[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
@@ -1431,6 +1443,23 @@ pub unsafe extern "C" fn __frankenlibc_nexttowardf_x86_64(x: f32, y: *const u8) 
     // direction argument.
     let y = unsafe { read_x87_long_double_arg(y) };
     frankenlibc_core::math::nexttowardf_long_double_bits(x, y)
+}
+
+#[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __frankenlibc_nexttowardl_x86_64(
+    x: *const u8,
+    y: *const u8,
+    out: *mut u8,
+) {
+    // SAFETY: `x` and `y` point at x86_64 SysV stack slots for `long double`
+    // arguments. `out` points at the assembly wrapper's 16-byte return slot.
+    let x = unsafe { read_x87_long_double_arg(x) };
+    let y = unsafe { read_x87_long_double_arg(y) };
+    let result = frankenlibc_core::math::nexttowardl_long_double_bits(x, y);
+    // SAFETY: `out` points to a 16-byte writable stack slot owned by the
+    // assembly wrapper.
+    unsafe { std::ptr::copy_nonoverlapping(result.as_ptr(), out, result.len()) };
 }
 
 // ---------------------------------------------------------------------------
@@ -4540,7 +4569,10 @@ pub unsafe extern "C" fn remquol(x: f64, y: f64, quo: *mut c_int) -> f64 {
 pub unsafe extern "C" fn nanl(tagp: *const std::ffi::c_char) -> f64 {
     unsafe { nan(tagp) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nexttowardl(x: f64, y: f64) -> f64 {
     unsafe { nextafter(x, y) }
 }
@@ -7096,6 +7128,38 @@ mod tests {
         out
     }
 
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn call_nexttowardl_symbol_with_x87_args(x: [u8; 16], y: [u8; 16]) -> [u8; 16] {
+        let mut out = [0u8; 16];
+        // SAFETY: The inline call builds the two x86_64 SysV stack slots
+        // expected for `long double` arguments, calls the exported assembly
+        // shim, stores the x87 `st(0)` result into `out`, and restores the
+        // stack pointer before returning to Rust.
+        unsafe {
+            std::arch::asm!(
+                "sub rsp, 48",
+                "mov qword ptr [rsp + 32], rdx",
+                "mov rax, qword ptr [rdi]",
+                "mov qword ptr [rsp], rax",
+                "mov rax, qword ptr [rdi + 8]",
+                "mov qword ptr [rsp + 8], rax",
+                "mov rax, qword ptr [rsi]",
+                "mov qword ptr [rsp + 16], rax",
+                "mov rax, qword ptr [rsi + 8]",
+                "mov qword ptr [rsp + 24], rax",
+                "call nexttowardl",
+                "mov rax, qword ptr [rsp + 32]",
+                "fstp tbyte ptr [rax]",
+                "add rsp, 48",
+                in("rdi") x.as_ptr(),
+                in("rsi") y.as_ptr(),
+                in("rdx") out.as_mut_ptr(),
+                clobber_abi("C"),
+            );
+        }
+        out
+    }
+
     fn abi_errno() -> i32 {
         // SAFETY: `__errno_location` returns valid thread-local storage for this thread.
         // Use volatile read to match the volatile write in set_abi_errno,
@@ -7954,6 +8018,44 @@ mod tests {
         let up = unsafe { call_nexttowardf_symbol_with_x87_arg(1.0, one_plus_tiny) };
 
         assert_eq!(up, frankenlibc_core::math::nextafterf(1.0, f32::INFINITY));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn nexttowardl_x86_64_symbol_returns_x87_long_double_result() {
+        let one = x87_pack(false, X87_EXP_BIAS, X87_INTEGER_BIT);
+        let one_plus_one_ulp = x87_pack(false, X87_EXP_BIAS, X87_INTEGER_BIT | 1);
+        let one_plus_two_ulps = x87_pack(false, X87_EXP_BIAS, X87_INTEGER_BIT | 2);
+
+        // SAFETY: The helper constructs the C ABI long-double stack slots and
+        // stores the x87 long-double return value.
+        let up = unsafe { call_nexttowardl_symbol_with_x87_args(one, one_plus_two_ulps) };
+        // SAFETY: The helper constructs the C ABI long-double stack slots and
+        // stores the x87 long-double return value.
+        let down = unsafe { call_nexttowardl_symbol_with_x87_args(one_plus_one_ulp, one) };
+
+        assert_eq!(up, one_plus_one_ulp);
+        assert_eq!(down, one);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn nexttowardl_x86_64_symbol_preserves_zero_sign_direction() {
+        let positive_zero = x87_pack(false, 0, 0);
+        let negative_zero = x87_pack(true, 0, 0);
+        let negative_min = x87_pack(true, 0, 1);
+
+        // SAFETY: The helper constructs the C ABI long-double stack slots and
+        // stores the x87 long-double return value.
+        let toward_negative =
+            unsafe { call_nexttowardl_symbol_with_x87_args(positive_zero, negative_min) };
+        // SAFETY: The helper constructs the C ABI long-double stack slots and
+        // stores the x87 long-double return value.
+        let equal_negative_zero =
+            unsafe { call_nexttowardl_symbol_with_x87_args(positive_zero, negative_zero) };
+
+        assert_eq!(toward_negative, negative_min);
+        assert_eq!(equal_negative_zero, negative_zero);
     }
 
     // -----------------------------------------------------------------------

@@ -14,8 +14,9 @@ pub use float::{
     FP_INFINITE, FP_NAN, FP_NORMAL, FP_SUBNORMAL, FP_ZERO, cbrt, ceil, copysign, drem, exp10, fabs,
     fdim, finite, floor, fma, fmax, fmin, fmod, fpclassify, frexp, gamma, hypot, ilogb, isinf,
     isnan, ldexp, llrint, llround, logb, lrint, lround, modf, nan, nearbyint, nextafter,
-    nexttoward, nexttoward_long_double_bits, nexttowardf_long_double_bits, remainder, remquo, rint,
-    round, scalbln, scalbn, signbit, significand, sincos, sqrt, trunc,
+    nexttoward, nexttoward_long_double_bits, nexttowardf_long_double_bits,
+    nexttowardl_long_double_bits, remainder, remquo, rint, round, scalbln, scalbn, signbit,
+    significand, sincos, sqrt, trunc,
 };
 pub use float32::{
     acosf, acoshf, asinf, asinhf, atan2f, atanf, atanhf, cbrtf, ceilf, copysignf, cosf, coshf,

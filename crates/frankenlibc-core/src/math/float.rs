@@ -202,7 +202,6 @@ enum X87Class {
     Finite(X87Finite),
 }
 
-#[cfg(test)]
 fn x87_pack(negative: bool, exponent_bits: u16, significand: u64) -> [u8; X87_EXTENDED_LEN] {
     let mut bytes = [0u8; X87_EXTENDED_LEN];
     let sign_exp = exponent_bits | if negative { 0x8000 } else { 0 };
@@ -418,6 +417,90 @@ fn equal_x87_zero_f32(y: X87Class, fallback: f32) -> f32 {
     }
 }
 
+fn x87_zero(negative: bool) -> [u8; X87_EXTENDED_LEN] {
+    x87_pack(negative, 0, 0)
+}
+
+fn x87_infinity(negative: bool) -> [u8; X87_EXTENDED_LEN] {
+    x87_pack(negative, X87_EXP_INF_NAN, X87_INTEGER_BIT)
+}
+
+fn x87_min_subnormal(negative: bool) -> [u8; X87_EXTENDED_LEN] {
+    x87_pack(negative, 0, 1)
+}
+
+fn x87_max_finite(negative: bool) -> [u8; X87_EXTENDED_LEN] {
+    x87_pack(negative, X87_EXP_INF_NAN - 1, u64::MAX)
+}
+
+fn x87_next_greater_magnitude(finite: X87Finite) -> [u8; X87_EXTENDED_LEN] {
+    if finite.exponent_bits == 0 {
+        if finite.significand < X87_INTEGER_BIT - 1 {
+            return x87_pack(finite.negative, 0, finite.significand + 1);
+        }
+        return x87_pack(finite.negative, 1, X87_INTEGER_BIT);
+    }
+
+    if finite.exponent_bits == X87_EXP_INF_NAN - 1 && finite.significand == u64::MAX {
+        return x87_infinity(finite.negative);
+    }
+
+    if finite.significand < u64::MAX {
+        return x87_pack(
+            finite.negative,
+            finite.exponent_bits,
+            finite.significand + 1,
+        );
+    }
+
+    x87_pack(finite.negative, finite.exponent_bits + 1, X87_INTEGER_BIT)
+}
+
+fn x87_next_smaller_magnitude(finite: X87Finite) -> [u8; X87_EXTENDED_LEN] {
+    if finite.exponent_bits == 0 {
+        if finite.significand <= 1 {
+            return x87_zero(finite.negative);
+        }
+        return x87_pack(finite.negative, 0, finite.significand - 1);
+    }
+
+    if finite.significand > X87_INTEGER_BIT {
+        return x87_pack(
+            finite.negative,
+            finite.exponent_bits,
+            finite.significand - 1,
+        );
+    }
+
+    if finite.exponent_bits == 1 {
+        return x87_pack(finite.negative, 0, X87_INTEGER_BIT - 1);
+    }
+
+    x87_pack(finite.negative, finite.exponent_bits - 1, u64::MAX)
+}
+
+fn x87_next_up(class: X87Class) -> [u8; X87_EXTENDED_LEN] {
+    match class {
+        X87Class::Nan => x87_pack(false, X87_EXP_INF_NAN, X87_INTEGER_BIT | 1),
+        X87Class::Infinite { negative: true } => x87_max_finite(true),
+        X87Class::Infinite { negative: false } => x87_infinity(false),
+        X87Class::Zero { .. } => x87_min_subnormal(false),
+        X87Class::Finite(finite) if finite.negative => x87_next_smaller_magnitude(finite),
+        X87Class::Finite(finite) => x87_next_greater_magnitude(finite),
+    }
+}
+
+fn x87_next_down(class: X87Class) -> [u8; X87_EXTENDED_LEN] {
+    match class {
+        X87Class::Nan => x87_pack(false, X87_EXP_INF_NAN, X87_INTEGER_BIT | 1),
+        X87Class::Infinite { negative: true } => x87_infinity(true),
+        X87Class::Infinite { negative: false } => x87_max_finite(false),
+        X87Class::Zero { .. } => x87_min_subnormal(true),
+        X87Class::Finite(finite) if finite.negative => x87_next_greater_magnitude(finite),
+        X87Class::Finite(finite) => x87_next_smaller_magnitude(finite),
+    }
+}
+
 /// Return the next representable `f64` after `x` toward an x86 80-bit
 /// `long double` direction slot.
 #[inline]
@@ -445,6 +528,34 @@ pub fn nexttowardf_long_double_bits(x: f32, y: [u8; X87_EXTENDED_LEN]) -> f32 {
         Ordering::Less => libm::nextafterf(x, f32::INFINITY),
         Ordering::Equal => equal_x87_zero_f32(y_class, x),
         Ordering::Greater => libm::nextafterf(x, f32::NEG_INFINITY),
+    }
+}
+
+/// Return the next representable x86 80-bit `long double` after `x` toward
+/// `y`, with both operands and the result represented as their 16-byte SysV
+/// stack slots.
+#[inline]
+pub fn nexttowardl_long_double_bits(
+    x: [u8; X87_EXTENDED_LEN],
+    y: [u8; X87_EXTENDED_LEN],
+) -> [u8; X87_EXTENDED_LEN] {
+    let x_class = x87_classify(x);
+    let y_class = x87_classify(y);
+    if matches!(x_class, X87Class::Nan) {
+        return x;
+    }
+    if matches!(y_class, X87Class::Nan) {
+        return y;
+    }
+
+    let Some(order) = cmp_binary(x87_to_binary(x_class), x87_to_binary(y_class)) else {
+        return x87_pack(false, X87_EXP_INF_NAN, X87_INTEGER_BIT | 1);
+    };
+
+    match order {
+        Ordering::Less => x87_next_up(x_class),
+        Ordering::Equal => y,
+        Ordering::Greater => x87_next_down(x_class),
     }
 }
 
@@ -774,6 +885,40 @@ mod tests {
         assert_eq!(
             nexttowardf_long_double_bits(0.0, negative_zero).to_bits(),
             (-0.0f32).to_bits()
+        );
+    }
+
+    #[test]
+    fn test_nexttowardl_long_double_bits_steps_extended_precision() {
+        let one = x87_pack(false, X87_EXP_BIAS as u16, X87_INTEGER_BIT);
+        let one_plus_one_ulp = x87_pack(false, X87_EXP_BIAS as u16, X87_INTEGER_BIT | 1);
+        let one_plus_two_ulps = x87_pack(false, X87_EXP_BIAS as u16, X87_INTEGER_BIT | 2);
+
+        assert_eq!(
+            nexttowardl_long_double_bits(one, one_plus_two_ulps),
+            one_plus_one_ulp
+        );
+        assert_eq!(nexttowardl_long_double_bits(one_plus_one_ulp, one), one);
+    }
+
+    #[test]
+    fn test_nexttowardl_long_double_bits_preserves_zero_sign_direction() {
+        let positive_zero = x87_pack(false, 0, 0);
+        let negative_zero = x87_pack(true, 0, 0);
+        let positive_min = x87_pack(false, 0, 1);
+        let negative_min = x87_pack(true, 0, 1);
+
+        assert_eq!(
+            nexttowardl_long_double_bits(positive_zero, positive_min),
+            positive_min
+        );
+        assert_eq!(
+            nexttowardl_long_double_bits(positive_zero, negative_min),
+            negative_min
+        );
+        assert_eq!(
+            nexttowardl_long_double_bits(positive_zero, negative_zero),
+            negative_zero
         );
     }
 
