@@ -219,6 +219,59 @@ def classify_status(signatures: list[str], dry_run_status: int | None) -> str:
     return "admissible"
 
 
+def remote_refusal_reason(signatures: list[str], dry_run_status: int | None) -> str | None:
+    signature_set = set(signatures)
+    if "no_admissible_workers" in signature_set:
+        return "no_admissible_workers"
+    if "remote_required_refusal" in signature_set:
+        return "remote_required_refusing_local_fallback"
+    if "worker_selection_skipped" in signature_set:
+        return "worker_selection_skipped"
+    if "critical_pressure" in signature_set:
+        return "critical_pressure"
+    if "local_fallback_marker" in signature_set:
+        return "local_fallback_marker_observed"
+    if "missing_offload_classification" in signature_set:
+        return "missing_offload_classification"
+    if "not_classified_for_offload" in signature_set:
+        return "not_classified_for_offload"
+    if dry_run_status not in (0, None):
+        return "rch_diagnose_failed"
+    return None
+
+
+def build_proof_disposition(
+    contract: dict[str, Any],
+    validation_command: str,
+    status: str,
+    signatures: list[str],
+    dry_run_status: int | None,
+    generated_at_utc: str,
+) -> dict[str, Any]:
+    signature_set = set(signatures)
+    return {
+        "schema_version": "rch_proof_disposition.v1",
+        "evidence_kind": "validation_proof" if status == "admissible" else "blocker_evidence",
+        "proof_status": status,
+        "generated_at_utc": generated_at_utc,
+        "validation_command": validation_command,
+        "affected_bead_or_contract": {
+            "bead": contract.get("bead"),
+            "upstream_bead": contract.get("upstream_bead"),
+            "contract_bead": contract.get("bead"),
+        },
+        "remote_required": True,
+        "required_remote_env": "RCH_REQUIRE_REMOTE=1",
+        "dry_run_exit_status": dry_run_status,
+        "failure_signatures": sorted(signature_set),
+        "remote_refusal_reason": remote_refusal_reason(signatures, dry_run_status),
+        "local_fallback_refused": "remote_required_refusal" in signature_set,
+        "local_fallback_observed": "local_fallback_marker" in signature_set,
+        "counts_as_validation_proof": status == "admissible",
+        "counts_as_blocker_evidence": status != "admissible",
+    }
+
+
 def current_blocked_field(
     contract: dict[str, Any],
     report_status: str,
@@ -519,9 +572,12 @@ def validate_contract(contract: dict[str, Any], head: str) -> None:
         "diagnose_failed_status",
         "required_remote_env",
         "local_fallback_policy",
+        "proof_disposition_schema",
     ]:
         if not isinstance(preflight.get(field), str) or not preflight.get(field):
             contract_errors.append(f"preflight_contract.{field}: must be a non-empty string")
+    if preflight.get("proof_disposition_schema") != "rch_proof_disposition.v1":
+        contract_errors.append("preflight_contract.proof_disposition_schema mismatch")
     string_list(preflight.get("allowed_statuses"), "preflight_contract.allowed_statuses", min_len=3)
     current_cfg = contract.get("current_blocked_state", {})
     if not isinstance(current_cfg, dict):
@@ -583,6 +639,25 @@ for control in contract.get("negative_controls", []):
     observed = "unknown_negative_control"
     if control_id == "local_fallback_signature_blocks":
         observed = classify_status(["local_fallback_marker"], 0)
+    elif control_id == "remote_required_refusal_sample_is_blocker_evidence":
+        synthetic_signatures = ["remote_required_refusal", "no_admissible_workers"]
+        disposition = build_proof_disposition(
+            contract,
+            "cargo check -p frankenlibc-harness",
+            classify_status(synthetic_signatures, 0),
+            synthetic_signatures,
+            0,
+            "2000-01-01T00:00:00Z",
+        )
+        observed = (
+            "blocker_evidence"
+            if disposition.get("evidence_kind") == "blocker_evidence"
+            and disposition.get("counts_as_validation_proof") is False
+            and disposition.get("counts_as_blocker_evidence") is True
+            and disposition.get("local_fallback_refused") is True
+            and disposition.get("remote_refusal_reason") == "no_admissible_workers"
+            else str(disposition)
+        )
     elif control_id == "diagnose_failure_blocks":
         observed = classify_status([], 1)
     elif control_id == "admissible_without_failures_passes":
@@ -756,12 +831,21 @@ for control in contract.get("negative_controls", []):
 
 approval_packet = load_optional_json(APPROVAL_PACKET_REPORT)
 approval_summary = approval_packet_summary(approval_packet, head)
+generated_at_utc = utc_now()
+proof_disposition = build_proof_disposition(
+    contract,
+    VALIDATION_COMMAND,
+    status,
+    sorted(set(failure_signatures)),
+    dry_run_status,
+    generated_at_utc,
+)
 
 report: dict[str, Any] = {
     "schema_version": "rch_remote_admissibility_preflight.v1",
     "bead": "bd-xkykd",
     "contract_bead": "bd-rchk0.95",
-    "generated_at_utc": utc_now(),
+    "generated_at_utc": generated_at_utc,
     "source_commit": contract.get("source_commit"),
     "current_head": head,
     "report_path": rel(REPORT),
@@ -777,6 +861,7 @@ report: dict[str, Any] = {
     },
     "status": status,
     "failure_signatures": sorted(set(failure_signatures)),
+    "proof_disposition": proof_disposition,
     "approval_packet_command": str(APPROVAL_PACKET_SCRIPT),
     "approval_packet_report_path": rel(APPROVAL_PACKET_REPORT),
     "approval_packet_markdown_path": rel(APPROVAL_PACKET_MARKDOWN),
@@ -816,6 +901,11 @@ event = {
     "trace_id": "bd-xkykd::rch-remote-admissibility",
     "generated_at_utc": report["generated_at_utc"],
     "status": status,
+    "proof_disposition_evidence_kind": proof_disposition["evidence_kind"],
+    "proof_disposition_remote_refusal_reason": proof_disposition["remote_refusal_reason"],
+    "proof_disposition_counts_as_validation_proof": proof_disposition["counts_as_validation_proof"],
+    "proof_disposition_counts_as_blocker_evidence": proof_disposition["counts_as_blocker_evidence"],
+    "local_fallback_refused": proof_disposition["local_fallback_refused"],
     "contract_status": report["contract_status"],
     "failure_signatures": report["failure_signatures"],
     "validation_command": VALIDATION_COMMAND,
