@@ -3009,6 +3009,31 @@ fn abi_argp_error_renders_formatted_diagnostic_to_state_error_stream() {
 }
 
 #[test]
+fn abi_argp_error_normalizes_negative_star_width_and_precision() {
+    let name = CString::new("diag-demo").unwrap();
+    let fmt = CString::new("bad |%*d| %.*s").unwrap();
+    let word = CString::new("abcdef").unwrap();
+    let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_error(
+            (&mut state as *mut FixtureArgpState).cast(),
+            fmt.as_ptr(),
+            -5 as c_int,
+            42 as c_int,
+            -1 as c_int,
+            word.as_ptr(),
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "diag-demo: bad |42   | abcdef\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
 fn abi_argp_failure_renders_formatted_diagnostic_and_errno_suffix() {
     let name = CString::new("diag-demo").unwrap();
     let fmt = CString::new("failed item %d").unwrap();

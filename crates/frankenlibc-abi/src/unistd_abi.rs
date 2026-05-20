@@ -3246,11 +3246,13 @@ macro_rules! extract_syslog_args {
             for seg in $segments {
                 if let FormatSegment::Spec(spec) = seg {
                     if spec.width.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                        let raw = unsafe { $args.next_arg::<core::ffi::c_int>() };
+                        $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
                     if spec.precision.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                        let raw = unsafe { $args.next_arg::<core::ffi::c_int>() };
+                        $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
                     match spec.conversion {
