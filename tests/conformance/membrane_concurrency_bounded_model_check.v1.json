@@ -3,7 +3,15 @@
   "manifest_id": "membrane-concurrency-bounded-model-check",
   "bead": "bd-juvqm.8",
   "generated_utc": "2026-05-09T00:00:00Z",
-  "source_commit": "71325872c518f7437d869732e67c78a6e7732e38",
+  "source_commit": "4f90d334918a838042e7a6d8caf2d35fe1da4ab7",
+  "source_commit_freshness": {
+    "require_no_tracked_source_changes_since_source_commit": true,
+    "tracked_source_roots": [
+      "crates/frankenlibc-harness/src/concurrency_model_check.rs",
+      "crates/frankenlibc-harness/src/read_mostly_fast_path_prototype.rs",
+      "tests/conformance/profile_gated_read_mostly_fast_path.v1.json"
+    ]
+  },
   "purpose": "Pin the bounded interleaving model checker for the seqlock primitive — the smallest read-mostly published-value primitive in the membrane family. Production seqlock invariants (no torn read, no missed writer publication, monotone version, monotone retry diagnostic) are a strict subset of every other read-mostly primitive (RCU/EBR/left-right/BRAVO/flat-combining); proving them on a bounded model gives a structural-soundness floor any future read-mostly fast-path can rely on. NO production concurrency primitive changes are required by this bead — the manifest gates the *shape* of the model report and the precise bound the model has explored.",
   "primitive_under_check": {
     "name": "SeqlockCounter",
