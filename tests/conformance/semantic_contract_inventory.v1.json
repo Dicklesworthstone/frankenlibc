@@ -176,14 +176,14 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 3434,
-      "line_marker": "deterministic fallback stub",
+      "source_line": 3499,
+      "line_marker": "native file overflow bridge",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
-      "contract_kind": "eof_enosys_fallback",
-      "current_behavior": "Internal libio-style vtable helpers set ENOSYS and return EOF/-1 sentinel values.",
-      "user_risk": "Reachable _IO helper paths can fail instead of driving glibc stream internals.",
-      "required_followup": "Separate link compatibility from libio semantic parity and add fixtures for reachable _IO helper paths.",
+      "contract_kind": "narrow_native_bridge_wide_eof_fallback",
+      "current_behavior": "Narrow libio-style vtable helpers route through native _IO file overflow and underflow paths; wide vtable helpers return deterministic WEOF fallbacks.",
+      "user_risk": "Wide _IO helper paths still fail instead of driving full glibc stream internals.",
+      "required_followup": "Separate link compatibility from libio semantic parity and add fixtures for the remaining wide _IO helper paths.",
       "evidence_artifacts": [
         "tests/conformance/support_semantic_overlay.v1.json"
       ]

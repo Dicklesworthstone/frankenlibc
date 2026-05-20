@@ -158,6 +158,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     xprt_register,
     xprt_unregister,
 };
+use frankenlibc_abi::stdio_abi::{fclose, tmpfile};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::ptr;
 
@@ -2048,33 +2049,61 @@ fn printf_fp_returns_negative() {
 }
 
 #[test]
-fn overflow_family_returns_enosys_defaults() {
-    let r = unsafe { __overflow(ptr::null_mut(), b'A' as i32) };
-    assert_eq!(r, libc::EOF);
-    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
+fn overflow_family_routes_through_native_stream_helpers() {
+    let stream = unsafe { tmpfile() };
+    assert!(
+        !stream.is_null(),
+        "tmpfile should create a native test stream"
+    );
 
-    let r = unsafe { __uflow(ptr::null_mut()) };
-    assert_eq!(r, libc::EOF);
-    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { __overflow(stream, b'A' as c_int) }, b'A' as c_int);
+    assert_eq!(unsafe { __overflow(stream, b'B' as c_int) }, b'B' as c_int);
+    assert_eq!(unsafe { __overflow(stream, libc::EOF) }, 0);
+    assert_eq!(unsafe { __fseeko64(stream, 0, libc::SEEK_SET) }, 0);
 
-    let r = unsafe { __underflow(ptr::null_mut()) };
-    assert_eq!(r, libc::EOF);
-    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { __underflow(stream) }, b'A' as c_int);
+    assert_eq!(unsafe { __uflow(stream) }, b'A' as c_int);
+    assert_eq!(unsafe { __uflow(stream) }, b'B' as c_int);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
 }
 
 #[test]
-fn wide_overflow_family_returns_wide_eof() {
+fn overflow_family_null_streams_fail_with_einval() {
+    unsafe { *__errno_location() = 0 };
+    let r = unsafe { __overflow(ptr::null_mut(), b'A' as c_int) };
+    assert_eq!(r, libc::EOF);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+
+    unsafe { *__errno_location() = 0 };
+    let r = unsafe { __uflow(ptr::null_mut()) };
+    assert_eq!(r, libc::EOF);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+
+    unsafe { *__errno_location() = 0 };
+    let r = unsafe { __underflow(ptr::null_mut()) };
+    assert_eq!(r, libc::EOF);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn wide_overflow_family_null_streams_fail_with_wide_eof() {
+    let wide_eof = usize::MAX as libc::wchar_t;
+
+    unsafe { *__errno_location() = 0 };
     let r = unsafe { __woverflow(ptr::null_mut(), 'A' as i32) };
-    assert_eq!(r, -1);
-    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
+    assert_eq!(r, wide_eof);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 
+    unsafe { *__errno_location() = 0 };
     let r = unsafe { __wuflow(ptr::null_mut()) };
-    assert_eq!(r, -1);
-    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
+    assert_eq!(r, wide_eof);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 
+    unsafe { *__errno_location() = 0 };
     let r = unsafe { __wunderflow(ptr::null_mut()) };
-    assert_eq!(r, -1);
-    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
+    assert_eq!(r, wide_eof);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 // ===========================================================================

@@ -128,9 +128,9 @@
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 3434,
-      "evidence": "Internal stdio vtable helpers are documented deterministic fallback stubs and set ENOSYS.",
-      "required_followup": "Separate link-compatibility from libio semantic parity and add fixture coverage for reachable _IO helper paths."
+      "source_line": 3499,
+      "evidence": "Narrow stdio vtable helpers bridge to native _IO file helpers for stream overflow and underflow; wide helpers still return deterministic WEOF fallbacks until the wide-stream vtable state is modeled.",
+      "required_followup": "Separate link-compatibility from libio semantic parity and add fixture coverage for the remaining wide _IO helper paths."
     },
     {
       "id": "sem-historical-linux-syscalls",

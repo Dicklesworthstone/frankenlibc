@@ -3496,12 +3496,14 @@ pub unsafe extern "C" fn __open64(pathname: *const c_char, flags: c_int) -> c_in
         }
     }
 }
-// __overflow: glibc stdio vtable helper — deterministic fallback stub
+// __overflow: glibc stdio vtable helper — native file overflow bridge
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
-    let _ = (fp, c);
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    libc::EOF
+    if fp.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return libc::EOF;
+    }
+    unsafe { crate::io_internal_abi::_IO_file_overflow(fp, c) }
 }
 // __poll: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4447,36 +4449,46 @@ pub unsafe extern "C" fn __x86_get_cpuid_feature_leaf(_leaf: c_uint, _info: *mut
 // __fentry__: GCC -pg function entry hook — no-op stub
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fentry__() {}
-// __uflow/__underflow/__w*flow: glibc stdio vtable helpers — deterministic fallback stubs
+// __uflow/__underflow/__w*flow: glibc stdio vtable helpers
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __uflow(fp: *mut c_void) -> c_int {
-    let _ = fp;
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    libc::EOF
+    if fp.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return libc::EOF;
+    }
+    unsafe { crate::io_internal_abi::_IO_default_uflow(fp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
-    let _ = fp;
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    libc::EOF
+    if fp.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return libc::EOF;
+    }
+    unsafe { crate::io_internal_abi::_IO_file_underflow(fp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __woverflow(fp: *mut c_void, wc: WcharT) -> WcharT {
-    let _ = (fp, wc);
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    usize::MAX as WcharT
+    if fp.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return usize::MAX as WcharT;
+    }
+    unsafe { crate::io_internal_abi::_IO_wfile_overflow(fp, wc as u32) as WcharT }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wuflow(fp: *mut c_void) -> WcharT {
-    let _ = fp;
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    usize::MAX as WcharT
+    if fp.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return usize::MAX as WcharT;
+    }
+    unsafe { crate::io_internal_abi::_IO_wdefault_uflow(fp) as WcharT }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wunderflow(fp: *mut c_void) -> WcharT {
-    let _ = fp;
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    usize::MAX as WcharT
+    if fp.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return usize::MAX as WcharT;
+    }
+    unsafe { crate::io_internal_abi::_IO_wfile_underflow(fp) as WcharT }
 }
 
 // Profiling — no-op stubs (profiling data is unused in frankenlibc)
