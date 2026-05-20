@@ -1484,21 +1484,21 @@
       "symbol": "argp_error",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp, dlsym delegate",
+      "notes": "GNU argp link-compatible no-op reporting helper until full argp state formatting",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_failure",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp, dlsym delegate",
+      "notes": "GNU argp link-compatible no-op reporting helper until full argp state formatting",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_help",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp, dlsym delegate",
+      "notes": "GNU argp phase-1 native literal usage/doc rendering; option tables and filters deferred",
       "module": "unistd_abi"
     },
     {
@@ -1512,14 +1512,14 @@
       "symbol": "argp_state_help",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp, dlsym delegate",
+      "notes": "GNU argp link-compatible no-op state helper until full argp state formatting",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_usage",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp, dlsym delegate",
+      "notes": "GNU argp link-compatible no-op usage helper until full argp state formatting",
       "module": "unistd_abi"
     },
     {

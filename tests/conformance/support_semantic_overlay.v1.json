@@ -179,9 +179,9 @@
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 21672,
-      "evidence": "Argp help/reporting helpers are documented no-op stubs.",
-      "required_followup": "Add argp parser/help fixtures or classify this family as link-compatible only."
+      "source_line": 21783,
+      "evidence": "argp_help renders bounded literal usage/doc strings to caller-provided streams while null-stream fixture rows remain deterministic no-ops; usage/error/failure/state helpers are still link-compatible no-op stubs.",
+      "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, state streams, and variadic diagnostics before claiming complete GNU argp parity."
     },
     {
       "id": "sem-nexttoward-long-double-direction",

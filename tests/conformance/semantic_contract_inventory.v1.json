@@ -251,14 +251,14 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 21672,
-      "line_marker": "No-op stub",
+      "source_line": 21783,
+      "line_marker": "bounded phase-1 argp help message",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
-      "contract_kind": "gnu_argp_noop",
-      "current_behavior": "Help and reporting helpers are accepted but do not print usage or diagnostics.",
-      "user_risk": "Command-line programs can lose user-facing help/error output while appearing link-compatible.",
-      "required_followup": "Add argp parser/help fixtures or classify this family as link-compatible only.",
+      "contract_kind": "gnu_argp_partial_help",
+      "current_behavior": "argp_help prints bounded literal usage/doc sections to supplied streams; null-stream fixture rows and usage/error/failure/state helpers remain deterministic no-op compatibility contracts.",
+      "user_risk": "Command-line programs can still lose option-table help, state-specific stream routing, parser diagnostics, and variadic formatted errors while appearing link-compatible.",
+      "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, state streams, and variadic diagnostics before claiming complete GNU argp parity.",
       "evidence_artifacts": [
         "tests/conformance/support_semantic_overlay.v1.json"
       ]

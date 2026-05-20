@@ -8,9 +8,10 @@
 #![allow(unsafe_code)]
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
+use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::process::ExitStatusExt;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Mutex, MutexGuard};
@@ -2604,6 +2605,46 @@ fn empty_argp_storage() -> [usize; 7] {
     [0; 7]
 }
 
+fn capture_argp_stream_output(
+    write: impl FnOnce(*mut libc::FILE),
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut fds = [0; 2];
+    let pipe_rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    assert_eq!(
+        pipe_rc,
+        0,
+        "pipe failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mode = CString::new("w")?;
+    let stream = unsafe { libc::fdopen(fds[1], mode.as_ptr()) };
+    assert!(
+        !stream.is_null(),
+        "fdopen failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    write(stream);
+    assert_eq!(
+        unsafe { libc::fflush(stream) },
+        0,
+        "fflush failed: {}",
+        std::io::Error::last_os_error()
+    );
+    assert_eq!(
+        unsafe { libc::fclose(stream) },
+        0,
+        "fclose failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut output = String::new();
+    let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    read_end.read_to_string(&mut output)?;
+    Ok(output)
+}
+
 #[test]
 fn abi_argp_parse_empty_argp_matches_glibc_index_contracts() {
     let argp_struct = empty_argp_storage();
@@ -2687,6 +2728,60 @@ fn abi_argp_parse_nonempty_argp_remains_explicitly_unsupported() {
     assert_eq!(rc, libc::EINVAL);
     assert_eq!(errno_value(), libc::EINVAL);
     assert_eq!(index, -1);
+}
+
+#[test]
+fn abi_argp_help_renders_literal_usage_and_doc_sections() {
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+    const ARGP_HELP_LONG: c_uint = 0x08;
+    const ARGP_HELP_PRE_DOC: c_uint = 0x10;
+    const ARGP_HELP_POST_DOC: c_uint = 0x20;
+
+    let args_doc = CString::new("INPUT [OUTPUT]").unwrap();
+    let doc = CString::new("before options\x0bafter options").unwrap();
+    let name = CString::new("argp-demo").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+    argp_struct[3] = doc.as_ptr() as usize;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            argp_struct.as_ptr().cast(),
+            stream,
+            ARGP_HELP_SHORT_USAGE | ARGP_HELP_LONG | ARGP_HELP_PRE_DOC | ARGP_HELP_POST_DOC,
+            name.as_ptr().cast_mut(),
+        )
+    })
+    .unwrap();
+
+    assert_eq!(
+        output,
+        "Usage: argp-demo INPUT [OUTPUT]\n\nbefore options\n\nafter options\n"
+    );
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_help_null_stream_preserves_fixture_noop_contract() {
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+
+    let args_doc = CString::new("INPUT").unwrap();
+    let name = CString::new("argp-demo").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+
+    clear_errno();
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            argp_struct.as_ptr().cast(),
+            std::ptr::null_mut(),
+            ARGP_HELP_SHORT_USAGE,
+            name.as_ptr().cast_mut(),
+        );
+    }
+
+    assert_eq!(errno_value(), 0);
 }
 
 // ---------------------------------------------------------------------------

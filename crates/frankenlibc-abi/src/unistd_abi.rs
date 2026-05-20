@@ -21653,6 +21653,103 @@ impl ArgpHeader {
     }
 }
 
+const ARGP_HELP_USAGE: c_uint = 0x01;
+const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+const ARGP_HELP_LONG: c_uint = 0x08;
+const ARGP_HELP_PRE_DOC: c_uint = 0x10;
+const ARGP_HELP_POST_DOC: c_uint = 0x20;
+const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
+const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
+
+#[inline]
+unsafe fn argp_read_text(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, Some(ARGP_TEXT_SCAN_LIMIT)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    Some(bytes.to_vec())
+}
+
+#[inline]
+unsafe fn argp_write_bytes(stream: *mut libc::FILE, bytes: &[u8]) -> bool {
+    bytes.is_empty()
+        || unsafe { crate::stdio_abi::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream.cast()) }
+            == bytes.len()
+}
+
+#[inline]
+unsafe fn argp_write_newline(stream: *mut libc::FILE) -> bool {
+    unsafe { argp_write_bytes(stream, b"\n") }
+}
+
+#[inline]
+unsafe fn argp_write_text_line(stream: *mut libc::FILE, bytes: &[u8]) -> bool {
+    (unsafe { argp_write_bytes(stream, bytes) })
+        && (bytes.ends_with(b"\n") || unsafe { argp_write_newline(stream) })
+}
+
+unsafe fn argp_write_usage(
+    header: &ArgpHeader,
+    stream: *mut libc::FILE,
+    name: *mut c_char,
+) -> bool {
+    let program_name = unsafe { argp_read_text(name.cast_const()) };
+    let args_doc = unsafe { argp_read_text(header.args_doc) };
+
+    let mut line = Vec::from(&b"Usage:"[..]);
+    if let Some(name) = program_name.as_deref().filter(|name| !name.is_empty()) {
+        line.push(b' ');
+        line.extend_from_slice(name);
+    }
+    if let Some(args) = args_doc.as_deref().filter(|args| !args.is_empty()) {
+        line.push(b' ');
+        line.extend_from_slice(args);
+    }
+    line.push(b'\n');
+
+    unsafe { argp_write_bytes(stream, &line) }
+}
+
+unsafe fn argp_write_doc(header: &ArgpHeader, stream: *mut libc::FILE, flags: c_uint) -> bool {
+    let Some(doc) = (unsafe { argp_read_text(header.doc) }) else {
+        return true;
+    };
+    let (pre_doc, post_doc) = match doc.iter().position(|&byte| byte == b'\x0b') {
+        Some(split) => (&doc[..split], &doc[split + 1..]),
+        None => (&doc[..], &[][..]),
+    };
+
+    let mut ok = true;
+    if flags & (ARGP_HELP_LONG | ARGP_HELP_PRE_DOC) != 0 && !pre_doc.is_empty() {
+        ok &= unsafe { argp_write_newline(stream) };
+        ok &= unsafe { argp_write_text_line(stream, pre_doc) };
+    }
+    if flags & ARGP_HELP_POST_DOC != 0 && !post_doc.is_empty() {
+        ok &= unsafe { argp_write_newline(stream) };
+        ok &= unsafe { argp_write_text_line(stream, post_doc) };
+    }
+    ok
+}
+
+unsafe fn argp_write_bug_address(stream: *mut libc::FILE) -> bool {
+    let bug_addr = unsafe { crate::glibc_internal_abi::argp_program_bug_address };
+    let Some(addr) = (unsafe { argp_read_text(bug_addr) }) else {
+        return true;
+    };
+    if addr.is_empty() {
+        return true;
+    }
+
+    let mut line = Vec::from(&b"\nReport bugs to "[..]);
+    line.extend_from_slice(&addr);
+    line.extend_from_slice(b".\n");
+    unsafe { argp_write_bytes(stream, &line) }
+}
+
 /// `argp_parse` — parse arguments using argp framework.
 ///
 /// Native phase-1 support handles the common zeroed `struct argp` case as a
@@ -21683,15 +21780,34 @@ pub unsafe extern "C" fn argp_parse(
     libc::EINVAL
 }
 
-/// `argp_help` — print argp help message. No-op stub.
+/// `argp_help` — print a bounded phase-1 argp help message.
+///
+/// This intentionally covers the literal `struct argp` text fields and a
+/// caller-provided stream. Option tables, child parsers, filters, and full
+/// argp state formatting remain explicit semantic-overlay follow-up work.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_help(
-    _argp: *const c_void,
-    _stream: *mut libc::FILE,
-    _flags: libc::c_uint,
-    _name: *mut c_char,
+    argp: *const c_void,
+    stream: *mut libc::FILE,
+    flags: libc::c_uint,
+    name: *mut c_char,
 ) {
-    // No-op: argp framework not available
+    if argp.is_null() || stream.is_null() || flags == 0 {
+        return;
+    }
+
+    let header = unsafe { &*(argp as *const ArgpHeader) };
+    let mut ok = true;
+    if flags & (ARGP_HELP_USAGE | ARGP_HELP_SHORT_USAGE) != 0 {
+        ok &= unsafe { argp_write_usage(header, stream, name) };
+    }
+    ok &= unsafe { argp_write_doc(header, stream, flags) };
+    if flags & ARGP_HELP_BUG_ADDR != 0 {
+        ok &= unsafe { argp_write_bug_address(stream) };
+    }
+    if !ok {
+        unsafe { set_abi_errno(libc::EIO) };
+    }
 }
 
 /// `argp_usage` — print usage and exit. No-op stub.
