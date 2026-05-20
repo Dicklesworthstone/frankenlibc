@@ -20,12 +20,12 @@ if [[ -z "${TARGET_DIR}" ]]; then
   echo "FAIL: cargo metadata did not return a target_directory" >&2
   exit 1
 fi
-BUILD_TARGET_DIR="${ROOT}/target"
+BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-${TARGET_DIR}}"
 LIB="${TARGET_DIR}/release/libfrankenlibc_abi.so"
 BUILD_LIB="${BUILD_TARGET_DIR}/release/libfrankenlibc_abi.so"
 
-echo "[setjmp-native] building release ABI library via rch" >"${TEST_LOG}"
-rch exec -- env CARGO_TARGET_DIR="${BUILD_TARGET_DIR}" cargo build -p frankenlibc-abi --release \
+echo "[setjmp-native] building release ABI library locally" >"${TEST_LOG}"
+env CARGO_TARGET_DIR="${BUILD_TARGET_DIR}" cargo build -p frankenlibc-abi --release \
   >>"${TEST_LOG}" 2>&1
 
 if [[ -f "${BUILD_LIB}" ]]; then
@@ -105,7 +105,7 @@ cat >"${REPORT}" <<JSON
   "run_id": "${RUN_ID}",
   "library": "target/release/libfrankenlibc_abi.so",
   "checks": {
-    "release_build_via_rch": "pass",
+    "release_build_local": "pass",
     "fixture_setjmp_edges_strict": "pass",
     "fixture_setjmp_edges_hardened": "pass",
     "fixture_setjmp_nested_strict": "pass",
