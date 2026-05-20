@@ -23,6 +23,52 @@ fn load_json(path: &Path) -> serde_json::Value {
     serde_json::from_str(&content).expect("json should parse")
 }
 
+fn output_text(output: &std::process::Output) -> String {
+    format!(
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+#[test]
+fn gate_script_locks_rch_execution_contract() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_setjmp_abi_wiring.sh");
+    let text = std::fs::read_to_string(&script).expect("script should be readable");
+
+    for required in [
+        "RUN_MODE=\"rch\"",
+        "--rch",
+        "--local",
+        "RCH_REQUIRE_REMOTE=1",
+        "rch exec --",
+        "run_cargo cargo test -p frankenlibc-abi setjmp_abi::tests -- --nocapture",
+        "cargo test -p frankenlibc-abi setjmp_abi::tests -- --nocapture",
+        "PASS: setjmp ABI wiring gate",
+    ] {
+        assert!(
+            text.contains(required),
+            "setjmp ABI wiring gate should contain contract fragment {required:?}"
+        );
+    }
+
+    let help = Command::new(&script)
+        .arg("--help")
+        .current_dir(&root)
+        .output()
+        .expect("failed to run setjmp ABI wiring gate help");
+    assert!(
+        help.status.success(),
+        "setjmp ABI wiring gate --help failed:\n{}",
+        output_text(&help)
+    );
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    assert!(help_text.contains("--rch"));
+    assert!(help_text.contains("--local"));
+    assert!(help_text.contains("default"));
+}
+
 #[test]
 fn gate_script_passes_and_emits_artifacts() {
     let root = workspace_root();
@@ -40,6 +86,7 @@ fn gate_script_passes_and_emits_artifacts() {
     }
 
     let output = Command::new(&script)
+        .arg("--local")
         .current_dir(&root)
         .output()
         .expect("failed to run setjmp ABI wiring gate");
@@ -126,12 +173,14 @@ fn gate_script_passes_and_emits_artifacts() {
             "trace_id should start with bd-24b6::"
         );
 
-        match row["outcome"].as_str() {
-            Some("pass") => saw_pass = true,
-            Some("deferred") => saw_deferred = true,
-            Some("deny") => saw_deny = true,
-            other => panic!("unexpected outcome: {:?}", other),
-        }
+        let outcome = row["outcome"].as_str();
+        assert!(
+            matches!(outcome, Some("pass" | "deferred" | "deny")),
+            "unexpected outcome: {outcome:?}"
+        );
+        saw_pass |= outcome == Some("pass");
+        saw_deferred |= outcome == Some("deferred");
+        saw_deny |= outcome == Some("deny");
     }
     assert!(saw_pass, "expected at least one pass row");
     assert!(saw_deferred, "expected at least one deferred row");

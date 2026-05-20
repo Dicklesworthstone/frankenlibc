@@ -5,6 +5,7 @@
 # report/log artifacts with strict+hardened coverage markers.
 set -euo pipefail
 
+RUN_MODE="rch"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT}/target/conformance"
 REPORT="${OUT_DIR}/setjmp_abi_wiring.report.json"
@@ -15,10 +16,52 @@ CVE_TRACE="${CVE_DIR}/trace.jsonl"
 CVE_INDEX="${CVE_DIR}/artifact_index.json"
 RUN_ID="setjmp-abi-wiring-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
+usage() {
+    cat <<'EOF'
+Usage: check_setjmp_abi_wiring.sh [--rch|--local]
+
+Validates setjmp ABI wiring and emits deterministic evidence artifacts.
+
+Modes:
+  --rch    Run cargo tests through remote rch execution (default).
+  --local  Run cargo tests directly. Use only inside an already-remote worker
+           or for deliberate local debugging.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --rch)
+            RUN_MODE="rch"
+            ;;
+        --local)
+            RUN_MODE="local"
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "FAIL: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
 mkdir -p "${OUT_DIR}" "${CVE_DIR}"
 
+run_cargo() {
+    if [[ "${RUN_MODE}" == "rch" ]]; then
+        RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" rch exec -- "$@"
+    else
+        "$@"
+    fi
+}
+
 run_tests() {
-    if ! cargo test -p frankenlibc-abi setjmp_abi::tests -- --nocapture >"${TEST_LOG}" 2>&1; then
+    if ! run_cargo cargo test -p frankenlibc-abi setjmp_abi::tests -- --nocapture >"${TEST_LOG}" 2>&1; then
         cat "${TEST_LOG}" >&2
         echo "FAIL: setjmp ABI wiring tests failed" >&2
         exit 1
