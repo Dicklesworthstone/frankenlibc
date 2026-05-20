@@ -114,10 +114,27 @@ fn conformance_getopt_basic_short_opts() {
     // No args
     assert_eq!(run_getopt_loop(&["prog"], "ab"), vec![]);
 
-    // Stop at first non-option
+    // glibc default mode permutes operands: options that appear after a
+    // non-option argument are still parsed (the operand moves to the tail).
     assert_eq!(
         run_getopt_loop(&["prog", "-a", "file", "-b"], "ab"),
+        vec![(b'a' as c_int, None), (b'b' as c_int, None)]
+    );
+
+    // A leading `+` in the optstring forces POSIX strict ordering — parsing
+    // stops at the first operand, with no permutation.
+    assert_eq!(
+        run_getopt_loop(&["prog", "-a", "file", "-b"], "+ab"),
         vec![(b'a' as c_int, None)]
+    );
+
+    // Permutation moves an option together with its separate argument.
+    assert_eq!(
+        run_getopt_loop(&["prog", "file", "-a", "val", "-b"], "a:b"),
+        vec![
+            (b'a' as c_int, Some("val".to_string())),
+            (b'b' as c_int, None)
+        ]
     );
 
     // Double-dash ends options

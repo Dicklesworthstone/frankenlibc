@@ -2570,17 +2570,94 @@ unsafe fn argv_byte_slices(argc: c_int, argv: *const *mut c_char) -> Option<Vec<
     Some(out)
 }
 
+/// An argv element is "option-like" — `-x`, `-abc`, `--`, `--long` — when it
+/// starts with `-` and has at least one following byte. A lone `-` and any
+/// operand are not option-like.
+fn getopt_is_option_like(elem: &[u8]) -> bool {
+    elem.len() >= 2 && elem[0] == b'-'
+}
+
+/// Whether the bundled short-option element `elem` consumes the *following*
+/// argv element as a separate argument: true iff walking the bundle reaches
+/// a `Required`-argument option with no attached text after it. Used by the
+/// permutation step so an option and its separate argument move together.
+fn getopt_block_takes_next_arg(elem: &[u8], optspec: &[u8]) -> bool {
+    let mut i = 1;
+    while i < elem.len() {
+        match getopt_core::getopt_arg_mode(optspec, elem[i]) {
+            None => return false,
+            Some(getopt_core::GetoptArgMode::None) => i += 1,
+            Some(getopt_core::GetoptArgMode::Required) => return i + 1 >= elem.len(),
+            Some(getopt_core::GetoptArgMode::Optional) => return false,
+        }
+    }
+    false
+}
+
 unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> c_int {
     if argc <= 0 || argv.is_null() {
         return -1;
     }
-    let argv_bytes = match unsafe { argv_byte_slices(argc, argv) } {
+    // Leading optstring mode flags: `+` forces POSIX strict ordering (stop at
+    // the first operand) and `-` selects RETURN_IN_ORDER; either is followed
+    // by an optional `:`. `POSIXLY_CORRECT` in the environment also forces
+    // strict ordering. The flag byte is stripped so it is never treated as a
+    // selectable option; a leading `:` stays for the colon/arg-mode helpers.
+    let mode_prefix = matches!(optspec.first(), Some(b'+' | b'-')) as usize;
+    let strict = mode_prefix == 1 || std::env::var_os("POSIXLY_CORRECT").is_some();
+    let effective = &optspec[mode_prefix..];
+
+    let mut argv_bytes = match unsafe { argv_byte_slices(argc, argv) } {
         Some(v) => v,
         None => {
             unsafe { set_abi_errno(errno::EINVAL) };
             return -1;
         }
     };
+    let argc_us = argc as usize;
+    let raw_optind = unsafe { libc_optind };
+    let optind = if raw_optind <= 0 {
+        1
+    } else {
+        raw_optind as usize
+    };
+    let mid_bundle = raw_optind > 0 && unsafe { GETOPT_NEXTCHAR }.is_some();
+
+    // Argument permutation (glibc default mode): when the element at `optind`
+    // is an operand, rotate the next option element — together with its
+    // separate argument, if any — in front of the run of operands, so options
+    // are reported in order and operands accumulate at the tail of argv.
+    if !strict
+        && !mid_bundle
+        && optind >= 1
+        && optind < argc_us
+        && !getopt_is_option_like(&argv_bytes[optind])
+    {
+        let mut k = optind + 1;
+        while k < argc_us && !getopt_is_option_like(&argv_bytes[k]) {
+            k += 1;
+        }
+        if k < argc_us {
+            let blk = if k + 1 < argc_us && getopt_block_takes_next_arg(&argv_bytes[k], effective) {
+                2
+            } else {
+                1
+            };
+            let end = k + blk;
+            argv_bytes[optind..end].rotate_right(blk);
+            // Mirror the rotation onto the caller's real argv pointer array
+            // so subsequent getopt() calls and the caller observe the
+            // permutation — exactly what glibc's getopt does.
+            let argv_mut = argv as *mut *mut c_char;
+            // SAFETY: argv has `argc` valid elements; `optind..end` is within
+            // `[0, argc)`, so the constructed slice stays in bounds.
+            unsafe {
+                std::slice::from_raw_parts_mut(argv_mut.add(optind), end - optind)
+                    .rotate_right(blk);
+            }
+        }
+    }
+
     let argv_slices: Vec<&[u8]> = argv_bytes.iter().map(Vec::as_slice).collect();
 
     let mut state = GetoptState {
@@ -2590,7 +2667,7 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
         optarg: None,
     };
 
-    let outcome = getopt_core::step_short(&argv_slices, optspec, &mut state);
+    let outcome = getopt_core::step_short(&argv_slices, effective, &mut state);
 
     unsafe {
         libc_optind = state.optind as c_int;
@@ -2810,12 +2887,9 @@ pub unsafe extern "C" fn getopt(
 }
 
 /// libbsd `bsd_getopt(nargc, nargv, options)` — thin BSD-flavored
-/// wrapper over POSIX [`getopt`]. The leading `+` or `-` of
-/// `options`, if present, is stripped before delegation: glibc
-/// uses those prefixes to toggle GNU-style argument permutation
-/// vs. POSIX strict ordering, but our getopt is unconditionally
-/// POSIX-strict so the prefix would otherwise be misparsed as an
-/// option spec.
+/// wrapper over POSIX [`getopt`]. It delegates straight through:
+/// [`getopt`] itself handles the leading `+`/`-` optstring mode
+/// flags, so no prefix stripping is needed here.
 ///
 /// `options == NULL` is forwarded as-is and inherits the NULL
 /// rejection from [`getopt`] (yielding `-1` with errno=EINVAL).
@@ -2832,24 +2906,7 @@ pub unsafe extern "C" fn bsd_getopt(
     nargv: *const *mut c_char,
     options: *const c_char,
 ) -> c_int {
-    let stripped = if options.is_null() {
-        options
-    } else {
-        let Some(option_bytes) = (unsafe { read_c_string_bytes(options) }) else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            return -1;
-        };
-        if matches!(option_bytes.first(), Some(b'+' | b'-')) {
-            // SAFETY: skipping past the prefix into the same string;
-            // the underlying buffer is at least one byte longer than
-            // a non-empty C string, and the resulting pointer is
-            // still NUL-terminated.
-            unsafe { options.add(1) }
-        } else {
-            options
-        }
-    };
-    unsafe { getopt(nargc, nargv, stripped) }
+    unsafe { getopt(nargc, nargv, options) }
 }
 
 /// GNU `getopt_long` — parse long command-line options.
