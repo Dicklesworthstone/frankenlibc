@@ -28,8 +28,8 @@ pub const EAI_OVERFLOW: i32 = -12;
 /// Canonical glibc message for a `getaddrinfo` error code.
 ///
 /// Returns `"Success"` for `0`, the matching message for each known
-/// `EAI_*` code, and `"Unknown getaddrinfo error"` for any other
-/// value.
+/// `EAI_*` code, and `"Unknown error"` for any other value — exactly
+/// what glibc's `gai_strerror` returns.
 pub fn gai_strerror_text(errcode: i32) -> &'static str {
     match errcode {
         0 => "Success",
@@ -59,17 +59,19 @@ pub const H_ERR_NO_DATA: i32 = 4;
 
 /// Canonical glibc message for a legacy resolver `h_errno` value.
 ///
-/// Returns the matching description for each documented code and
-/// `"Resolver internal error"` for any other value (including the 0
-/// "no error" case, since `hstrerror(0)` historically returned the
-/// internal-error fallback rather than success).
+/// Mirrors glibc's `hstrerror` exactly: negative codes are the
+/// `"Resolver internal error"` case, `0` is `"Resolver Error 0 (no
+/// error)"`, codes `1..=4` have their documented descriptions, and
+/// anything `>= 5` is `"Unknown resolver error"`.
 pub fn hstrerror_text(err: i32) -> &'static str {
     match err {
         H_ERR_HOST_NOT_FOUND => "Unknown host",
         H_ERR_TRY_AGAIN => "Host name lookup failure",
         H_ERR_NO_RECOVERY => "Unknown server error",
         H_ERR_NO_DATA => "No address associated with name",
-        _ => "Resolver internal error",
+        0 => "Resolver Error 0 (no error)",
+        n if n < 0 => "Resolver internal error",
+        _ => "Unknown resolver error",
     }
 }
 
@@ -158,13 +160,32 @@ mod tests {
     }
 
     #[test]
-    fn hstrerror_unknown_code_returns_fallback() {
-        // Including 0 — historical hstrerror(0) returns the internal-error fallback.
-        for code in [0, -1, 5, 99, i32::MIN, i32::MAX] {
+    fn hstrerror_zero_is_resolver_error_zero() {
+        // glibc `hstrerror(0)` is its own distinct string, not the
+        // negative-code internal-error fallback.
+        assert_eq!(hstrerror_text(0), "Resolver Error 0 (no error)");
+    }
+
+    #[test]
+    fn hstrerror_negative_codes_are_internal_error() {
+        for code in [-1, -2, -99, i32::MIN] {
             assert_eq!(
                 hstrerror_text(code),
                 "Resolver internal error",
-                "code {code} did not return fallback"
+                "negative code {code} should be the internal-error case"
+            );
+        }
+    }
+
+    #[test]
+    fn hstrerror_codes_above_four_are_unknown_resolver_error() {
+        // glibc returns "Unknown resolver error" for h_errno >= 5,
+        // distinct from the negative-code "Resolver internal error".
+        for code in [5, 6, 99, i32::MAX] {
+            assert_eq!(
+                hstrerror_text(code),
+                "Unknown resolver error",
+                "code {code} should be the unknown-resolver-error case"
             );
         }
     }
