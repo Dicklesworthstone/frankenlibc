@@ -559,7 +559,49 @@ fn apply_leading_whitespace_policy(input: &[u8], pos: usize, spec: &ScanSpec) ->
     }
 }
 
-/// Scan an integer with specified base. If `signed`, allow leading +/-.
+/// Clamp an unsigned magnitude (already saturated to `u64::MAX` on
+/// accumulator overflow) into the `i64` range, matching glibc's clamping of
+/// out-of-range integers to `LLONG_MAX` / `LLONG_MIN`.
+fn clamp_signed_magnitude(mag: u64, negative: bool, overflowed: bool) -> i64 {
+    if negative {
+        if overflowed || mag > i64::MAX as u64 {
+            i64::MIN
+        } else {
+            -(mag as i64)
+        }
+    } else if overflowed || mag > i64::MAX as u64 {
+        i64::MAX
+    } else {
+        mag as i64
+    }
+}
+
+/// Truncate a clamped signed value to the destination type selected by the
+/// length modifier. On the LP64 targets this libc supports, `long`,
+/// `long long`, `size_t`, `ptrdiff_t` and `intmax_t` are all 64-bit.
+fn narrow_signed(v: i64, length: LengthMod) -> i64 {
+    match length {
+        LengthMod::Hh => (v as i8) as i64,
+        LengthMod::H => (v as i16) as i64,
+        LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => v,
+        _ => (v as i32) as i64,
+    }
+}
+
+/// Truncate an unsigned value to the destination type selected by the
+/// length modifier (see [`narrow_signed`] for the 64-bit type set).
+fn narrow_unsigned(v: u64, length: LengthMod) -> u64 {
+    match length {
+        LengthMod::Hh => (v as u8) as u64,
+        LengthMod::H => (v as u16) as u64,
+        LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => v,
+        _ => (v as u32) as u64,
+    }
+}
+
+/// Scan an integer with specified base. If `signed`, the result is stored as
+/// a signed value; a leading `-`/`+` is accepted regardless (glibc accepts a
+/// leading `-` for unsigned conversions too, via `strtoul` negate-wrap).
 fn scan_int(
     input: &[u8],
     pos: usize,
@@ -576,23 +618,23 @@ fn scan_int(
     let mut i = pos;
     let mut chars_read = 0usize;
 
-    // Sign.
-    let negative = if signed && i < input.len() && chars_read < max_chars {
-        if input[i] == b'-' {
-            i += 1;
-            chars_read += 1;
-            true
-        } else if input[i] == b'+' {
-            i += 1;
-            chars_read += 1;
-            false
-        } else {
-            false
+    // Sign. A leading `-`/`+` is consumed for both signed and unsigned
+    // conversions; an unsigned conversion negates the magnitude modulo
+    // 2^width afterwards (strtoul semantics), matching glibc.
+    let negative = if i < input.len() && chars_read < max_chars {
+        match input[i] {
+            b'-' => {
+                i += 1;
+                chars_read += 1;
+                true
+            }
+            b'+' => {
+                i += 1;
+                chars_read += 1;
+                false
+            }
+            _ => false,
         }
-    } else if i < input.len() && chars_read < max_chars && input[i] == b'+' {
-        i += 1;
-        chars_read += 1;
-        false
     } else {
         false
     };
@@ -608,8 +650,10 @@ fn scan_int(
         chars_read += 2;
     }
 
-    // Digits.
+    // Digits. The accumulator saturates to u64::MAX on overflow; glibc
+    // clamps an out-of-range integer to its limit rather than wrapping.
     let mut val: u64 = 0;
+    let mut overflowed = false;
     let mut any_digit = false;
     while i < input.len() && chars_read < max_chars {
         let d = match digit_value(input[i], base) {
@@ -617,7 +661,16 @@ fn scan_int(
             None => break,
         };
         any_digit = true;
-        val = val.wrapping_mul(base as u64).wrapping_add(d as u64);
+        match val
+            .checked_mul(base as u64)
+            .and_then(|v| v.checked_add(d as u64))
+        {
+            Some(next) => val = next,
+            None => {
+                val = u64::MAX;
+                overflowed = true;
+            }
+        }
         i += 1;
         chars_read += 1;
     }
@@ -627,26 +680,19 @@ fn scan_int(
     }
 
     let value = if signed {
-        let signed_val = if negative { -(val as i64) } else { val as i64 };
-        // Apply overflow wrapping based on length modifier per glibc behavior.
-        let wrapped = match spec.length {
-            LengthMod::Hh => (signed_val as i8) as i64,
-            LengthMod::H => (signed_val as i16) as i64,
-            LengthMod::Ll | LengthMod::J => signed_val, // Full i64, no wrap
-            LengthMod::Z | LengthMod::T => signed_val,  // Platform isize, assume 64-bit
-            _ => (signed_val as i32) as i64,            // Default: int (32-bit)
-        };
-        ScanValue::SignedInt(wrapped)
+        let signed_val = clamp_signed_magnitude(val, negative, overflowed);
+        ScanValue::SignedInt(narrow_signed(signed_val, spec.length))
     } else {
-        // Apply overflow wrapping for unsigned types.
-        let wrapped = match spec.length {
-            LengthMod::Hh => (val as u8) as u64,
-            LengthMod::H => (val as u16) as u64,
-            LengthMod::Ll | LengthMod::J => val, // Full u64, no wrap
-            LengthMod::Z | LengthMod::T => val,  // Platform usize, assume 64-bit
-            _ => (val as u32) as u64,            // Default: unsigned int (32-bit)
+        let uval = if negative {
+            if overflowed {
+                u64::MAX
+            } else {
+                val.wrapping_neg()
+            }
+        } else {
+            val
         };
-        ScanValue::UnsignedInt(wrapped)
+        ScanValue::UnsignedInt(narrow_unsigned(uval, spec.length))
     };
 
     Some((Some(value), i))
@@ -697,8 +743,10 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
         10u32
     };
 
-    // Digits.
+    // Digits. The accumulator saturates to u64::MAX on overflow; glibc
+    // clamps an out-of-range integer to its limit rather than wrapping.
     let mut val: u64 = 0;
+    let mut overflowed = false;
     let mut any_digit = false;
     while i < input.len() && chars_read < max_chars {
         let d = match digit_value(input[i], base) {
@@ -706,31 +754,31 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
             None => break,
         };
         any_digit = true;
-        val = val.wrapping_mul(base as u64).wrapping_add(d as u64);
+        match val
+            .checked_mul(base as u64)
+            .and_then(|v| v.checked_add(d as u64))
+        {
+            Some(next) => val = next,
+            None => {
+                val = u64::MAX;
+                overflowed = true;
+            }
+        }
         i += 1;
         chars_read += 1;
     }
 
     if !any_digit {
-        // For 0x with no hex digits, the '0' itself is a valid result.
-        if base == 16 && i >= 2 && chars_read >= 2 {
-            // Back up past the 'x'.
-            return Some((Some(ScanValue::SignedInt(0)), i - 1));
-        }
+        // A bare "0x"/"0X" with no hex digit is a matching failure: glibc
+        // treats the prefix as committing to a hex literal.
         return None;
     }
 
-    let signed_val = if negative { -(val as i64) } else { val as i64 };
-    // Apply overflow wrapping based on length modifier per glibc behavior.
-    let wrapped = match spec.length {
-        LengthMod::Hh => (signed_val as i8) as i64,
-        LengthMod::H => (signed_val as i16) as i64,
-        LengthMod::Ll | LengthMod::J => signed_val, // Full i64, no wrap
-        LengthMod::Z | LengthMod::T => signed_val,  // Platform isize, assume 64-bit
-        _ => (signed_val as i32) as i64,            // Default: int (32-bit)
-    };
-
-    Some((Some(ScanValue::SignedInt(wrapped)), i))
+    let signed_val = clamp_signed_magnitude(val, negative, overflowed);
+    Some((
+        Some(ScanValue::SignedInt(narrow_signed(signed_val, spec.length))),
+        i,
+    ))
 }
 
 /// Convert a byte to a digit in the given base, or None.
@@ -1264,6 +1312,78 @@ mod tests {
         let result = scan_input(b"010", &dirs);
         assert_eq!(result.count, 1);
         assert!(matches!(result.values[0], ScanValue::SignedInt(8)));
+    }
+
+    #[test]
+    fn test_scan_long_modifier_is_64bit() {
+        // %ld must store a full 64-bit `long`, not truncate to 32 bits.
+        let dirs = parse_scanf_format(b"%ld");
+        let result = scan_input(b"5000000000", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(
+            result.values[0],
+            ScanValue::SignedInt(5_000_000_000)
+        ));
+    }
+
+    #[test]
+    fn test_scan_overflow_clamps_to_limit() {
+        // An out-of-range integer clamps to the type limit, like glibc:
+        // it must not wrap modulo 2^64 to an unrelated value.
+        let dirs = parse_scanf_format(b"%ld");
+        let result = scan_input(b"99999999999999999999999", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(i64::MAX)));
+
+        let dirs = parse_scanf_format(b"%lu");
+        let result = scan_input(b"99999999999999999999999", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::UnsignedInt(u64::MAX)));
+
+        let dirs = parse_scanf_format(b"%ld");
+        let result = scan_input(b"-99999999999999999999999", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(i64::MIN)));
+    }
+
+    #[test]
+    fn test_scan_i_bare_0x_is_matching_failure() {
+        // %i with a bare "0x"/"0xZ" (no hex digit) is a matching failure.
+        let dirs = parse_scanf_format(b"%i");
+        assert_eq!(scan_input(b"0x", &dirs).count, 0);
+        assert_eq!(scan_input(b"0xZ", &dirs).count, 0);
+        // Sanity: a real hex literal still scans.
+        assert_eq!(scan_input(b"0x1f", &dirs).count, 1);
+    }
+
+    #[test]
+    fn test_scan_unsigned_accepts_minus() {
+        // glibc accepts a leading '-' for %u (strtoul negate-wrap).
+        let dirs = parse_scanf_format(b"%u");
+        let result = scan_input(b"-5", &dirs);
+        assert_eq!(result.count, 1);
+        // (unsigned int)(-5) == UINT_MAX - 4
+        assert!(matches!(
+            result.values[0],
+            ScanValue::UnsignedInt(0xFFFF_FFFB)
+        ));
+
+        let dirs = parse_scanf_format(b"%lu");
+        let result = scan_input(b"-5", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(
+            result.values[0],
+            ScanValue::UnsignedInt(0xFFFF_FFFF_FFFF_FFFB)
+        ));
+
+        // A negative unsigned magnitude that overflows `unsigned long`
+        // clamps to ULONG_MAX, while exact -ULONG_MAX still negate-wraps.
+        let result = scan_input(b"-18446744073709551615", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::UnsignedInt(1)));
+        let result = scan_input(b"-18446744073709551616", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::UnsignedInt(u64::MAX)));
     }
 
     #[test]
