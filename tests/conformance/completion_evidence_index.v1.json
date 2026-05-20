@@ -1,0 +1,78 @@
+{
+  "schema_version": "completion_evidence_index.v1",
+  "bead": "bd-eu2ku.3",
+  "purpose": "DB-free index mapping completion beads to checked-in evidence artifacts, proof commands, and proof status so agents can resume proof or blocker work without relying on stale SQLite tracker state.",
+  "issues_source": ".beads/issues.jsonl",
+  "sqlite_access_policy": {
+    "sqlite_accessed": false,
+    "allowed_sources": [
+      ".beads/issues.jsonl",
+      "checked-in evidence manifests"
+    ]
+  },
+  "proof_status_values": [
+    "successful_proof",
+    "blocker_evidence"
+  ],
+  "required_entry_fields": [
+    "bead_id",
+    "artifact_path",
+    "proof_command",
+    "proof_status",
+    "last_checked_utc"
+  ],
+  "evidence_entries": [
+    {
+      "bead_id": "bd-eu2ku.4",
+      "artifact_path": "tests/conformance/tracker_jsonl_degraded_readiness.v1.json",
+      "proof_command": "bash scripts/check_tracker_jsonl_degraded_readiness.sh --validate-only",
+      "proof_status": "successful_proof",
+      "last_checked_utc": "2026-05-20T01:49:02Z"
+    },
+    {
+      "bead_id": "bd-eu2ku.2",
+      "artifact_path": "tests/conformance/rch_remote_admissibility_preflight.v1.json",
+      "proof_command": "RCH_REQUIRE_REMOTE=1 bash scripts/check_rch_remote_admissibility.sh \"cargo check -p frankenlibc-abi --features=standalone\"",
+      "proof_status": "blocker_evidence",
+      "last_checked_utc": "2026-05-20T02:01:15Z"
+    },
+    {
+      "bead_id": "bd-waaa6.4",
+      "artifact_path": "tests/conformance/completion_contract_rch_proof_manifest_lint.v1.json",
+      "proof_command": "bash scripts/check_completion_contract_rch_proof_manifest_lint.sh",
+      "proof_status": "successful_proof",
+      "last_checked_utc": "2026-05-19T21:59:00Z"
+    }
+  ],
+  "required_report_fields": [
+    "schema_version",
+    "bead",
+    "status",
+    "generated_at_utc",
+    "source_commit",
+    "report_path",
+    "log_path",
+    "issues_source",
+    "sqlite_accessed",
+    "summary",
+    "evidence_index",
+    "negative_controls",
+    "failures"
+  ],
+  "required_negative_controls": [
+    "missing_artifact_path_fails",
+    "missing_proof_command_fails",
+    "invalid_proof_status_fails",
+    "blocker_evidence_is_not_successful_proof"
+  ],
+  "validation_commands": [
+    "jq empty tests/conformance/completion_evidence_index.v1.json",
+    "bash -n scripts/check_completion_evidence_index.sh",
+    "bash scripts/check_completion_evidence_index.sh",
+    "jq empty target/conformance/completion_evidence_index.report.json",
+    "jq empty target/conformance/completion_evidence_index.log.jsonl",
+    "jq -e '.status == \"pass\" and .sqlite_accessed == false and .summary.entry_count >= 3 and .summary.successful_proof_count >= 2 and .summary.blocker_evidence_count >= 1 and (.negative_controls | all(.status == \"pass\"))' target/conformance/completion_evidence_index.report.json",
+    "jq -e 'all(.evidence_index[]; (.bead_id | type == \"string\") and (.artifact_path | type == \"string\") and .artifact_exists == true and (.proof_command | type == \"string\") and (.proof_status == \"successful_proof\" or .proof_status == \"blocker_evidence\") and (.last_checked_utc | type == \"string\"))' target/conformance/completion_evidence_index.report.json",
+    "git diff --check -- scripts/check_completion_evidence_index.sh tests/conformance/completion_evidence_index.v1.json .beads/issues.jsonl"
+  ]
+}
