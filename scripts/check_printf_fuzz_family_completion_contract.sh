@@ -14,6 +14,7 @@ python3 - "${ROOT}" "${CONTRACT}" "${REPORT}" "${LOG}" <<'PY'
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -96,6 +97,70 @@ def require_strings(value: Any, errors: list[str], context: str) -> list[str]:
         else:
             strings.append(item)
     return strings
+
+
+def command_contract_failures(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        return [f"command is not shell-tokenizable: {command}: {exc}"]
+    if "cargo" not in tokens:
+        return []
+    failures: list[str] = []
+    cargo_index = tokens.index("cargo")
+    try:
+        rch_index = tokens.index("rch")
+    except ValueError:
+        failures.append(f"cargo command must run through rch exec: {command}")
+        return failures
+    if rch_index > cargo_index:
+        failures.append(f"rch must appear before cargo: {command}")
+        return failures
+    if "RCH_REQUIRE_REMOTE=1" not in tokens[:rch_index]:
+        failures.append(f"cargo command must set RCH_REQUIRE_REMOTE=1 before rch: {command}")
+    if tokens[rch_index + 1 : rch_index + 3] != ["exec", "--"]:
+        failures.append(f"cargo command must use 'rch exec --': {command}")
+    payload = tokens[rch_index + 3 : cargo_index]
+    if not payload or payload[0] != "env":
+        failures.append(f"cargo command must place env assignments inside rch payload: {command}")
+    if not any(token.startswith("CARGO_TARGET_DIR=") for token in payload[1:]):
+        failures.append(f"cargo command must set CARGO_TARGET_DIR inside rch env payload: {command}")
+    return failures
+
+
+def validate_runtime_target(
+    contract: dict[str, Any],
+    errors: list[str],
+    rows: list[dict[str, Any]],
+) -> None:
+    runtime_target = contract.get("runtime_target")
+    if not isinstance(runtime_target, dict):
+        errors.append("runtime_target must be an object")
+        return
+    commands = require_strings(
+        runtime_target.get("allowed_command_prefixes"),
+        errors,
+        "runtime_target.allowed_command_prefixes",
+    )
+    cargo_command_count = 0
+    for command in commands:
+        failures = command_contract_failures(command)
+        if failures:
+            errors.extend(f"runtime target command contract failed: {failure}" for failure in failures)
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = []
+        if "cargo" in tokens:
+            cargo_command_count += 1
+    if cargo_command_count != 2:
+        errors.append(f"runtime_target must bind exactly 2 cargo proof commands, got {cargo_command_count}")
+    rows.append({
+        "event": "printf_fuzz_family.runtime_target",
+        "cargo_command_count": cargo_command_count,
+        "status": "pass" if cargo_command_count == 2 else "fail",
+        "timestamp": utc_now(),
+    })
 
 
 def validate_line_ref(ref: Any, errors: list[str], context: str) -> None:
@@ -333,6 +398,7 @@ def main() -> int:
             errors.append(f"bead must be {BEAD_ID}")
         if contract.get("completion_debt_bead") != COMPLETION_BEAD_ID:
             errors.append(f"completion_debt_bead must be {COMPLETION_BEAD_ID}")
+        validate_runtime_target(contract, errors, rows)
         validate_source_artifacts(contract, errors, rows)
         validate_missing_item_bindings(contract, errors)
         targets = validate_target_contracts(contract, errors, rows)

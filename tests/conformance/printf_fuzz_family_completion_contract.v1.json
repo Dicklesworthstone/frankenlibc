@@ -21,8 +21,8 @@
     "allowed_command_prefixes": [
       "bash scripts/check_printf_fuzz_family_completion_contract.sh",
       "bash scripts/fuzz_nightly.sh --target-group printf-family --list-targets",
-      "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test printf_fuzz_family_completion_contract_test",
-      "rch exec -- env CARGO_TARGET_DIR=<target> cargo check --manifest-path crates/frankenlibc-fuzz/Cargo.toml --bins"
+      "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test printf_fuzz_family_completion_contract_test",
+      "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo check --manifest-path crates/frankenlibc-fuzz/Cargo.toml --bins"
     ],
     "forbidden_command_substrings": [
       "cargo check",
@@ -126,15 +126,17 @@
       "kind": "completion_gate",
       "path": "scripts/check_printf_fuzz_family_completion_contract.sh",
       "required_line_refs": [
-        "scripts/check_printf_fuzz_family_completion_contract.sh:32",
-        "scripts/check_printf_fuzz_family_completion_contract.sh:121",
-        "scripts/check_printf_fuzz_family_completion_contract.sh:192",
-        "scripts/check_printf_fuzz_family_completion_contract.sh:228",
-        "scripts/check_printf_fuzz_family_completion_contract.sh:301",
-        "scripts/check_printf_fuzz_family_completion_contract.sh:323"
+        "scripts/check_printf_fuzz_family_completion_contract.sh:33",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:102",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:131",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:186",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:257",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:293",
+        "scripts/check_printf_fuzz_family_completion_contract.sh:366"
       ],
       "required_needles": [
         "REQUIRED_TARGETS",
+        "validate_runtime_target",
         "validate_source_artifacts",
         "validate_runner_targets",
         "validate_target_contracts",
@@ -146,16 +148,20 @@
       "kind": "unit_test",
       "path": "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs",
       "required_line_refs": [
-        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:94",
-        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:144",
-        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:180",
-        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:206",
-        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:233"
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:100",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:150",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:187",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:213",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:251",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:289",
+        "crates/frankenlibc-harness/tests/printf_fuzz_family_completion_contract_test.rs:316"
       ],
       "required_needles": [
         "manifest_binds_printf_fuzz_family_completion_items",
         "checker_validates_printf_fuzz_family_contract",
         "nightly_runner_lists_only_printf_family_targets",
+        "checker_rejects_rch_cargo_without_remote_requirement",
+        "checker_rejects_rch_cargo_without_target_dir",
         "checker_rejects_missing_runner_target_binding",
         "checker_rejects_missing_corpus_seed_binding"
       ]

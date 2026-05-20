@@ -166,6 +166,7 @@ fn checker_validates_printf_fuzz_family_contract() -> TestResult {
         .collect();
     for event in [
         "printf_fuzz_family.e2e_runner_list",
+        "printf_fuzz_family.runtime_target",
         "printf_fuzz_family.source_artifact",
         "printf_fuzz_family.target_contract",
     ] {
@@ -204,6 +205,82 @@ fn nightly_runner_lists_only_printf_family_targets() -> TestResult {
             "fuzz_printf_adversarial".to_string(),
             "fuzz_asprintf".to_string(),
         ]
+    );
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_rch_cargo_without_remote_requirement() -> TestResult {
+    let root = repo_root()?;
+    let out_dir = unique_out_dir(&root, "missing_rch_remote")?;
+    let mut manifest = read_json(&contract_path(&root))?;
+    let commands = manifest["runtime_target"]["allowed_command_prefixes"]
+        .as_array_mut()
+        .ok_or("allowed_command_prefixes should be mutable")?;
+    let command = commands
+        .iter_mut()
+        .find(|entry| {
+            entry
+                .as_str()
+                .is_some_and(|value| value.contains("cargo test"))
+        })
+        .ok_or("cargo test command should exist")?;
+    let command_text = command
+        .as_str()
+        .ok_or("cargo test command should be a string")?
+        .replacen("RCH_REQUIRE_REMOTE=1 ", "", 1);
+    *command = json!(command_text);
+
+    let mutated = out_dir.join("missing_rch_remote.contract.json");
+    write_json(&mutated, &manifest)?;
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(
+        !output.status.success(),
+        "checker should fail for non-remote rch cargo\n{}",
+        output_text(&output)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("RCH_REQUIRE_REMOTE=1"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_rch_cargo_without_target_dir() -> TestResult {
+    let root = repo_root()?;
+    let out_dir = unique_out_dir(&root, "missing_cargo_target_dir")?;
+    let mut manifest = read_json(&contract_path(&root))?;
+    let commands = manifest["runtime_target"]["allowed_command_prefixes"]
+        .as_array_mut()
+        .ok_or("allowed_command_prefixes should be mutable")?;
+    let command = commands
+        .iter_mut()
+        .find(|entry| {
+            entry
+                .as_str()
+                .is_some_and(|value| value.contains("cargo check"))
+        })
+        .ok_or("cargo check command should exist")?;
+    let command_text = command
+        .as_str()
+        .ok_or("cargo check command should be a string")?
+        .replacen("env CARGO_TARGET_DIR=<target> ", "", 1);
+    *command = json!(command_text);
+
+    let mutated = out_dir.join("missing_cargo_target_dir.contract.json");
+    write_json(&mutated, &manifest)?;
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(
+        !output.status.success(),
+        "checker should fail for rch cargo without target dir\n{}",
+        output_text(&output)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("CARGO_TARGET_DIR"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
 }
