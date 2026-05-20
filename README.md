@@ -170,9 +170,11 @@ Every repair is **deterministic** (replayable from the same input) and **audited
 
 ## Current State (2026-05-16)
 
+Source of truth: `support_matrix.json` for support taxonomy classification.
 Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
 Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, wraps_host_libc=0, glibc_call_through=0, stub=0.
 
+Declared replacement level: **L1 — Hardened Interpose**.
 Declared replacement level claim: **L1 — Hardened Interpose**.
 Total currently classified exports: **4119**.
 

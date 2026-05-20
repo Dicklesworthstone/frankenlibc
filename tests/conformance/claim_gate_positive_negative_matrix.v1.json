@@ -73,18 +73,18 @@
         "source_artifact": ["tests/conformance/feature_parity_claim_evidence_gate.v1.json"],
         "generated_artifact": ["tests/conformance/feature_parity_claim_evidence_gate.v1.json"],
         "user_visible_claim_type": ["readme", "feature_parity", "support_taxonomy", "replacement_level"],
-        "replacement_level": ["L0", "L1"],
+        "replacement_level": ["L1", "L2"],
         "runtime_mode": ["strict", "hardened"],
         "oracle_kind": ["claim_surface_binding", "support_taxonomy", "semantic_overlay"],
         "owner_bead": ["bd-bp8fl.3.4"]
       },
       "positive_tests": [
         {
-          "scenario_id": "current-readme-l0-bound-to-evidence",
-          "source_scenario_id": "current-readme-l0-bound-to-evidence",
+          "scenario_id": "current-readme-l1-bound-to-evidence",
+          "source_scenario_id": "current-readme-l1-bound-to-evidence",
           "expected_decision": "allow",
           "runtime_modes": ["strict", "hardened"],
-          "replacement_level": "L0",
+          "replacement_level": "L1",
           "evidence_refs": ["tests/conformance/replacement_levels.json", "support_matrix.json"],
           "freshness_state": "current"
         },
@@ -131,8 +131,8 @@
           "evidence_refs": ["tests/conformance/support_matrix_maintenance_report.v1.json"]
         },
         "insufficient_replacement_level": {
-          "scenario_id": "readme-l1-claim-without-replacement-promotion",
-          "source_scenario_id": "readme-l1-claim-without-replacement-promotion",
+          "scenario_id": "readme-l2-claim-without-replacement-promotion",
+          "source_scenario_id": "readme-l2-claim-without-replacement-promotion",
           "expected_decision": "block",
           "failure_signature": "claim_gate_insufficient_replacement_level",
           "evidence_refs": ["tests/conformance/replacement_levels.json"]
