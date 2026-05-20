@@ -44,7 +44,7 @@
       "crates/frankenlibc-harness/tests/evidence_compliance_test.rs:344",
       "crates/frankenlibc-harness/tests/evidence_compliance_test.rs:412",
       "scripts/check_evidence_compliance.sh:1",
-      "scripts/ci.sh:281",
+      "scripts/ci.sh:303",
       "scripts/check_evidence_compliance_completion_contract.sh:1",
       "tests/conformance/evidence_compliance_gate_completion_contract.v1.json:1",
       "crates/frankenlibc-harness/tests/evidence_compliance_completion_contract_test.rs:1"

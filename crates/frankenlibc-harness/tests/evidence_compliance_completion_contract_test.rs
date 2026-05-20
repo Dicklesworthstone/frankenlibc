@@ -30,6 +30,10 @@ fn checker_path(root: &Path) -> PathBuf {
     root.join("scripts/check_evidence_compliance_completion_contract.sh")
 }
 
+fn evidence_gate_path(root: &Path) -> PathBuf {
+    root.join("scripts/check_evidence_compliance.sh")
+}
+
 fn load_json(path: &Path) -> TestResult<Value> {
     let text = std::fs::read_to_string(path)?;
     Ok(serde_json::from_str(&text)?)
@@ -111,6 +115,47 @@ fn assert_file_line_ref_exists(root: &Path, file_line_ref: &str) -> TestResult {
         line_no <= line_count,
         "file-line ref outside file: {file_line_ref}"
     );
+    Ok(())
+}
+
+#[test]
+fn evidence_compliance_gate_script_locks_rch_execution_contract() -> TestResult {
+    let root = workspace_root()?;
+    let script = evidence_gate_path(&root);
+    let text = std::fs::read_to_string(&script)?;
+
+    for required in [
+        "RUN_MODE=\"rch\"",
+        "--rch",
+        "--local",
+        "RCH_REQUIRE_REMOTE=1",
+        "rch exec --",
+        "run_cargo cargo build -p frankenlibc-harness --bin harness",
+        "run_cargo cargo test -p frankenlibc-harness --test evidence_compliance_test -- --nocapture",
+        "cargo build -p frankenlibc-harness --bin harness",
+        "cargo test -p frankenlibc-harness --test evidence_compliance_test -- --nocapture",
+        "check_evidence_compliance: PASS",
+    ] {
+        assert!(
+            text.contains(required),
+            "evidence compliance gate script should contain contract fragment {required:?}"
+        );
+    }
+
+    let help = Command::new(&script)
+        .arg("--help")
+        .current_dir(&root)
+        .output()?;
+    assert!(
+        help.status.success(),
+        "evidence compliance gate --help failed:\n{}",
+        output_text(&help)
+    );
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    assert!(help_text.contains("--rch"));
+    assert!(help_text.contains("--local"));
+    assert!(help_text.contains("default"));
+
     Ok(())
 }
 
