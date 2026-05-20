@@ -88,6 +88,11 @@ LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls -la /tmp
 FRANKENLIBC_MODE=hardened \
 LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls -la /tmp
 
+# Hardened echo smoke path tracked by the release README workload gate
+# Hardened mode exists now and is exercised by the curated preload smoke battery
+FRANKENLIBC_MODE=hardened \
+LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/echo hardened
+
 # 5. Verify hardened-mode repair behavior end-to-end
 cargo run -p frankenlibc-harness --bin harness -- verify-membrane \
   --mode both \
@@ -171,6 +176,7 @@ Every repair is **deterministic** (replayable from the same input) and **audited
 ## Current State (2026-05-16)
 
 Source of truth: `support_matrix.json` for support taxonomy classification.
+Current source of truth: `support_matrix.json` plus `tests/conformance/reality_report.v1.json`.
 Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
 Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, wraps_host_libc=0, glibc_call_through=0, stub=0.
 
@@ -214,6 +220,11 @@ Canonical smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json`.
 | `hardened` | 29 | 0 | 3 | same battery with `FRANKENLIBC_MODE=hardened` |
 | **Total** | **58** | **0** | **6** | The 6 skips are the optional `sqlite3 :memory:`, `redis-cli --version`, and `nginx -v` probes when those binaries are not installed |
 
+| Workload family | Commands |
+|---|---|
+| Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/usr/bin/wc` |
+
+The checked curated preload smoke battery is green in both strict and hardened modes.
 Both runtime modes are green across the curated workloads. Broader production hardening, non-curated workload stability, and release-claim closure for L2/L3 replacement levels remain active work. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.
 
 ---
@@ -843,7 +854,7 @@ FrankenLibC focuses on failures that become visible at the libc boundary.
 | Kernel correctness | raw-syscall paths still rely on kernel behavior |
 | Bugs that never cross a libc path | if libc is never involved, the membrane never gets a chance to classify the event |
 | setuid/setgid binaries via `LD_PRELOAD` | the loader ignores `LD_PRELOAD` for setuid binaries (kernel security policy) |
-| Full standalone replacement today | remains a staged future milestone (L2/L3) |
+| Full standalone replacement today | Full standalone replacement remains planned; Host glibc is still part of the deployment story for the current interpose artifact |
 
 ---
 
