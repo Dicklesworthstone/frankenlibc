@@ -1128,16 +1128,30 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let width = resolve_width(spec);
     let pad_total = width.saturating_sub(content_len);
 
+    let hex_zero_prefix_len = if spec.flags.zero_pad
+        && spec
+            .raw_render_kind()
+            .is_some_and(|kind| kind == RawValueRenderKind::Float(FloatFormatKind::Hex))
+        && (body.starts_with("0x") || body.starts_with("0X"))
+    {
+        2
+    } else {
+        0
+    };
+
     if !spec.flags.left_justify && !spec.flags.zero_pad {
         pad(buf, b' ', pad_total);
     }
     if let Some(s) = sign {
         buf.push(s);
     }
+    if hex_zero_prefix_len > 0 {
+        buf.extend_from_slice(&body.as_bytes()[..hex_zero_prefix_len]);
+    }
     if !spec.flags.left_justify && spec.flags.zero_pad {
         pad(buf, b'0', pad_total);
     }
-    buf.extend_from_slice(body.as_bytes());
+    buf.extend_from_slice(&body.as_bytes()[hex_zero_prefix_len..]);
     if spec.flags.left_justify {
         pad(buf, b' ', pad_total);
     }
@@ -2262,6 +2276,44 @@ mod tests {
         buf.clear();
         format_float(1.9999999999999998, &spec, &mut buf);
         assert_eq!(&buf, b"0x2p+0");
+    }
+
+    #[test]
+    fn test_hex_float_zero_padding_keeps_prefix_before_zeroes() {
+        let mut spec = FormatSpec {
+            flags: FormatFlags {
+                zero_pad: true,
+                ..FormatFlags::default()
+            },
+            width: Width::Fixed(20),
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'a',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+
+        format_float(1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x000000000000001p+0");
+
+        buf.clear();
+        format_float(-1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"-0x00000000000001p+0");
+
+        buf.clear();
+        spec.flags.force_sign = true;
+        spec.conversion = b'A';
+        format_float(1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"+0X00000000000001P+0");
+
+        buf.clear();
+        spec.flags.force_sign = false;
+        spec.flags.alt_form = true;
+        spec.precision = Precision::Fixed(0);
+        spec.conversion = b'a';
+        format_float(0.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x00000000000000.p+0");
     }
 
     #[test]
