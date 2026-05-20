@@ -4,7 +4,7 @@
   "bead": "bd-rchk0.94",
   "generated_utc": "2026-05-19T21:54:00Z",
   "source_commit": "current",
-  "purpose": "No-cargo swarm guard for validation queues that may move between RCH-blocked and RCH-admissible states. The guard prevents agents from starting new cargo-backed Rust work when RCH is blocked and validation-dependent beads are already waiting, while allowing the current admissible/no-dependent state to pass without fabricating a blocker.",
+  "purpose": "No-cargo swarm guard for validation queues that may move between RCH-blocked and RCH-admissible states. The guard prevents agents from starting new cargo-backed Rust work when RCH is blocked and validation-dependent beads are already waiting, resumes the cargo validation queue only when RCH is admissible and validation dependents exist, and lets the current admissible/no-dependent state pass as no_guard_needed.",
   "inputs": {
     "tracker_jsonl": ".beads/issues.jsonl",
     "tracker_jsonl_degraded_readiness_checker": "scripts/check_tracker_jsonl_degraded_readiness.sh",
@@ -92,9 +92,14 @@
   },
   "negative_controls": [
     {
-      "control_id": "rch_admissible_changes_decision",
-      "mutation": "set rch status to admissible and clear failure signatures",
+      "control_id": "rch_admissible_with_dependents_changes_decision",
+      "mutation": "set rch status to admissible, clear failure signatures, and add one active validation dependent",
       "expected_decision": "resume_cargo_validation_queue"
+    },
+    {
+      "control_id": "rch_admissible_without_dependents_removes_guard",
+      "mutation": "set rch status to admissible, clear failure signatures, and remove all active validation dependents",
+      "expected_decision": "no_guard_needed"
     },
     {
       "control_id": "missing_report_field_fails",
@@ -143,7 +148,7 @@
       "jq empty tests/conformance/blocked_validation_work_guard.v1.json",
       "bash scripts/check_blocked_validation_work_guard.sh",
       "jq empty target/conformance/blocked_validation_work_guard.report.json",
-      "jq -e '.status == \"pass\" and (.dirty_validation_path_count | type == \"number\") and (.dirty_validation_paths | type == \"array\") and (.dirty_validation_blocked | type == \"boolean\") and any(.negative_controls[]; .control_id == \"dirty_validation_path_counted\" and .status == \"pass\")' target/conformance/blocked_validation_work_guard.report.json",
+      "jq -e '.status == \"pass\" and (if .rch_status == \"admissible\" and (.blocked_validation_issue_ids | length) == 0 and .safe_ready_count == 0 and .stale_in_progress_count == 0 then .decision == \"no_guard_needed\" else true end) and (.dirty_validation_path_count | type == \"number\") and (.dirty_validation_paths | type == \"array\") and (.dirty_validation_blocked | type == \"boolean\") and any(.negative_controls[]; .control_id == \"rch_admissible_with_dependents_changes_decision\" and .status == \"pass\") and any(.negative_controls[]; .control_id == \"rch_admissible_without_dependents_removes_guard\" and .status == \"pass\") and any(.negative_controls[]; .control_id == \"dirty_validation_path_counted\" and .status == \"pass\")' target/conformance/blocked_validation_work_guard.report.json",
       "git diff --check -- scripts/check_blocked_validation_work_guard.sh tests/conformance/blocked_validation_work_guard.v1.json .beads/issues.jsonl",
       "AGENT_NAME=DarkShore br dep cycles --json"
     ],

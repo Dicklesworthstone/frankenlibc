@@ -277,7 +277,7 @@ def decide(readiness, rch, dependents, guard):
         return guard.get("decision_when_stale_in_progress_exists")
     if safe_ready:
         return guard.get("decision_when_safe_ready_exists")
-    if rch_status == "admissible":
+    if rch_status == "admissible" and dependents:
         return guard.get("decision_when_rch_admissible")
     if rch_blocked and dependents:
         return guard.get("decision_when_rch_blocked_and_dependents_waiting")
@@ -359,11 +359,26 @@ for control in contract.get("negative_controls", []):
     mutated_dependents = copy.deepcopy(dependents)
     mutated_contract = copy.deepcopy(contract)
 
-    if control_id == "rch_admissible_changes_decision":
+    if control_id == "rch_admissible_with_dependents_changes_decision":
         mutated_readiness["safe_ready"] = []
         mutated_readiness["stale_in_progress"] = []
         mutated_rch["status"] = "admissible"
         mutated_rch["failure_signatures"] = []
+        mutated_dependents = [
+            {
+                "id": "bd-example-admissible-dependent",
+                "title": "synthetic validation work ready for admissible RCH",
+                "status": "open",
+                "priority": 1,
+                "assignee": None,
+            }
+        ]
+    elif control_id == "rch_admissible_without_dependents_removes_guard":
+        mutated_readiness["safe_ready"] = []
+        mutated_readiness["stale_in_progress"] = []
+        mutated_rch["status"] = "admissible"
+        mutated_rch["failure_signatures"] = []
+        mutated_dependents = []
     elif control_id == "output_path_mismatch_fails":
         mutated_contract.setdefault("report_contract", {})["output_path"] = "target/conformance/wrong_guard_path.json"
         observed_errors = report_contract_errors(mutated_contract, report_path, "pass")
