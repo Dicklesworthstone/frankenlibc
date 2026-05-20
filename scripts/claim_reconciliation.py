@@ -118,6 +118,13 @@ SMOKE_SUMMARY_CLAIM_RE = re.compile(
     re.MULTILINE,
 )
 
+COUNT_TOKEN = r"(\d[\d,]*)"
+
+
+def parse_count_token(token):
+    """Parse a README/FEATURE_PARITY count token that may use thousands separators."""
+    return int(token.replace(",", ""))
+
 
 def load_json(path):
     """Load JSON file, returning None if missing or unreadable."""
@@ -244,22 +251,23 @@ def extract_md_counts(text, label):
     for status in ("Implemented", "RawSyscall", "GlibcCallThrough", "Stub"):
         # Table row: | `Status` | NNN |
         m = re.search(
-            rf"[`\"]?{status}[`\"]?\s*[|:]\s*(\d+)", text
+            rf"[`\"]?{status}[`\"]?\s*[|:]\s*\*{{0,2}}{COUNT_TOKEN}\*{{0,2}}",
+            text,
         )
         if m:
-            counts[status] = int(m.group(1))
+            counts[status] = parse_count_token(m.group(1))
     # Also extract total
-    m = re.search(r"total[_ ]exported\s*[=:]\s*(\d+)", text, re.IGNORECASE)
+    m = re.search(rf"total[_ ]exported\s*[=:]\s*{COUNT_TOKEN}", text, re.IGNORECASE)
     if m:
-        counts["total"] = int(m.group(1))
+        counts["total"] = parse_count_token(m.group(1))
     else:
-        m = re.search(r"\*\*(\d+)\s*symbols?\*\*", text)
+        m = re.search(rf"\*\*\s*{COUNT_TOKEN}\s+(?:exported\s+)?symbols?\s*\*\*", text)
         if m:
-            counts["total"] = int(m.group(1))
+            counts["total"] = parse_count_token(m.group(1))
         else:
-            m = re.search(r"(\d+)\s*symbols", text)
+            m = re.search(rf"{COUNT_TOKEN}\s+(?:exported\s+)?symbols", text)
             if m:
-                counts["total"] = int(m.group(1))
+                counts["total"] = parse_count_token(m.group(1))
     return counts
 
 
