@@ -231,11 +231,13 @@ fn manifest_names_positive_completion_contracts_and_policy() -> TestResult {
         manifest["policy"]["fail_closed_remote_env"].as_str(),
         Some("RCH_REQUIRE_REMOTE=1")
     );
-    assert!(manifest["policy"]["legacy_remote_env_markers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|marker| marker.as_str() == Some("RCH_FORCE_REMOTE=true")));
+    assert!(
+        manifest["policy"]["legacy_remote_env_markers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|marker| marker.as_str() == Some("RCH_FORCE_REMOTE=true"))
+    );
     let fail_closed_contracts: Vec<&str> = manifest["fail_closed_contract_paths"]
         .as_array()
         .ok_or("fail_closed_contract_paths must be array")?
@@ -249,16 +251,20 @@ fn manifest_names_positive_completion_contracts_and_policy() -> TestResult {
             .any(|path| path.ends_with("completion_contract_rch_proof_manifest_lint.v1.json")),
         "manifest must lint its own current fail-closed RCH proof commands"
     );
-    assert!(manifest["policy"]["forbidden_proof_markers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|marker| marker.as_str() == Some("[RCH] local")));
-    assert!(manifest["policy"]["forbidden_proof_markers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|marker| marker.as_str() == Some("remote execution failed")));
+    assert!(
+        manifest["policy"]["forbidden_proof_markers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|marker| marker.as_str() == Some("[RCH] local"))
+    );
+    assert!(
+        manifest["policy"]["forbidden_proof_markers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|marker| marker.as_str() == Some("remote execution failed"))
+    );
     for required_code in [
         "missing_rch_exec_env",
         "shell_wrapped_cargo",

@@ -10,6 +10,11 @@
       "compatibility_intent": "Supported for strict+hardened fixtures and host-parity validation in iconv phase-1."
     },
     {
+      "canonical": "ASCII",
+      "aliases": ["usascii", "ansi_x3.4-1968", "iso646-us"],
+      "compatibility_intent": "Supported as a strict 7-bit single-byte codec; non-ASCII input or output fails with EILSEQ."
+    },
+    {
       "canonical": "ISO-8859-1",
       "aliases": ["latin1"],
       "compatibility_intent": "Supported as the phase-1 single-byte baseline for deterministic conversion/error semantics."

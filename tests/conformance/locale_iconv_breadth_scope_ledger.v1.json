@@ -84,6 +84,15 @@
       "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[UTF-32]",
       "expected_iconv_open_decision": "ok",
       "rationale": "Phase-1 32-bit wide-char baseline."
+    },
+    {
+      "row_id": "phase1-ascii",
+      "canonical": "ASCII",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[ASCII]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "Strict 7-bit single-byte subset with high-bit rejection parity."
     }
   ],
   "planned_breadth_codecs": [
@@ -113,15 +122,6 @@
       "fixture_obligation": "Endianness-explicit UTF-32 big-endian fixture pair.",
       "expected_iconv_open_decision": "ok_after_phase2",
       "rationale": "Disambiguates BOM-less UTF-32."
-    },
-    {
-      "row_id": "phase2-ascii",
-      "canonical": "ASCII",
-      "phase": "phase2",
-      "support_status": "planned",
-      "fixture_obligation": "ASCII -> UTF-8 round-trip plus high-bit rejection cases; share the ISO-8859-1 single-byte engine.",
-      "expected_iconv_open_decision": "ok_after_phase2",
-      "rationale": "Strict 7-bit subset; trivial extension of single-byte baseline."
     },
     {
       "row_id": "phase2-iso-8859-2",

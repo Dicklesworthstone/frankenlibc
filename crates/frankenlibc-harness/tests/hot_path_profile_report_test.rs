@@ -348,7 +348,9 @@ fn profile_records_are_ranked_proofed_and_actionable() -> TestResult {
     require(has_host_limit, "host comparison limits must be documented")?;
     require(
         tail_families.len() >= 2,
-        format!("expected at least two libc API families with p99 tail attribution, got {tail_families:?}"),
+        format!(
+            "expected at least two libc API families with p99 tail attribution, got {tail_families:?}"
+        ),
     )?;
     for mode in ["strict", "hardened"] {
         require(

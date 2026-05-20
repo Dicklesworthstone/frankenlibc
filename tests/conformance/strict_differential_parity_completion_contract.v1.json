@@ -82,7 +82,7 @@
       "expected_pass_rate_percent": 100.0
     },
     "iconv_scope": {
-      "included_codec_count": 4,
+      "included_codec_count": 5,
       "required_codec": "UTF-32",
       "required_checker_tokens": [
         "ICONV_PHASE1_INCLUDED_CODECS",
@@ -150,37 +150,37 @@
     {
       "kind": "conformance_wcschr_unit",
       "path": "crates/frankenlibc_conformance/src/lib.rs",
-      "line": 19017,
+      "line": 33282,
       "anchor": "execute_wcschr_case_reports_wchar_index_for_host_diff"
     },
     {
       "kind": "conformance_wcsstr_unit",
       "path": "crates/frankenlibc_conformance/src/lib.rs",
-      "line": 19030,
+      "line": 33295,
       "anchor": "execute_wcsstr_case_reports_wchar_index_for_host_diff"
     },
     {
       "kind": "conformance_wmemchr_unit",
       "path": "crates/frankenlibc_conformance/src/lib.rs",
-      "line": 19043,
+      "line": 33308,
       "anchor": "execute_wmemchr_case_reports_wchar_index_for_host_diff"
     },
     {
       "kind": "conformance_iconv_utf32_unit",
       "path": "crates/frankenlibc_conformance/src/lib.rs",
-      "line": 18431,
+      "line": 32696,
       "anchor": "execute_iconv_case_utf32_conversion_matches_host_shape"
     },
     {
       "kind": "core_iconv_utf32_codec",
       "path": "crates/frankenlibc-core/src/iconv/mod.rs",
-      "line": 151,
+      "line": 150,
       "anchor": "ICONV_PHASE1_INCLUDED_CODECS"
     },
     {
       "kind": "core_iconv_utf32_bom_unit",
       "path": "crates/frankenlibc-core/src/iconv/mod.rs",
-      "line": 759,
+      "line": 817,
       "anchor": "utf8_to_utf32_first_conversion_emits_bom"
     },
     {

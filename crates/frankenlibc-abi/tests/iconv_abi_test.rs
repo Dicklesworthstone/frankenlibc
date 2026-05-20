@@ -624,9 +624,65 @@ fn iconv_utf8_to_utf8_passthrough() {
 #[test]
 fn iconv_open_ascii_alias() {
     let cd = unsafe { iconv_open(c_str(b"ASCII\0"), c_str(b"UTF-8\0")) };
-    // ASCII may or may not be supported; just check we don't crash
-    if cd != iconv_error_handle() {
-        assert_eq!(unsafe { iconv_close(cd) }, 0);
+    assert_ne!(cd, iconv_error_handle());
+    assert_eq!(unsafe { iconv_close(cd) }, 0);
+}
+
+#[test]
+fn iconv_utf8_to_ascii_rejects_non_ascii_and_preserves_progress() {
+    unsafe {
+        let cd = iconv_open(c_str(b"ASCII\0"), c_str(b"UTF-8\0"));
+        assert_ne!(cd, iconv_error_handle());
+
+        let mut input = "é".as_bytes().to_vec();
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let in_start = in_ptr;
+        let mut in_left = input.len();
+
+        let mut output = [0u8; 8];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let out_start = out_ptr;
+        let mut out_left = output.len();
+
+        *__errno_location() = 0;
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        assert_eq!(rc, ICONV_ERROR);
+        assert_eq!(*__errno_location(), core_iconv::ICONV_EILSEQ);
+        assert_eq!(in_ptr, in_start, "unrepresentable input must not advance");
+        assert_eq!(in_left, input.len());
+        assert_eq!(out_ptr, out_start, "unrepresentable input must not write");
+        assert_eq!(out_left, output.len());
+
+        assert_eq!(iconv_close(cd), 0);
+    }
+}
+
+#[test]
+fn iconv_ascii_to_utf8_rejects_high_bit_input_and_preserves_progress() {
+    unsafe {
+        let cd = iconv_open(c_str(b"UTF-8\0"), c_str(b"ASCII\0"));
+        assert_ne!(cd, iconv_error_handle());
+
+        let mut input = vec![0x80u8];
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let in_start = in_ptr;
+        let mut in_left = input.len();
+
+        let mut output = [0u8; 8];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let out_start = out_ptr;
+        let mut out_left = output.len();
+
+        *__errno_location() = 0;
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        assert_eq!(rc, ICONV_ERROR);
+        assert_eq!(*__errno_location(), core_iconv::ICONV_EILSEQ);
+        assert_eq!(in_ptr, in_start, "invalid ASCII byte must not advance");
+        assert_eq!(in_left, input.len());
+        assert_eq!(out_ptr, out_start, "invalid ASCII byte must not write");
+        assert_eq!(out_left, output.len());
+
+        assert_eq!(iconv_close(cd), 0);
     }
 }
 

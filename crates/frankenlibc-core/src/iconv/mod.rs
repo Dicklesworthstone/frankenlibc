@@ -68,6 +68,7 @@ pub struct IconvOpenError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Encoding {
     Utf8,
+    Ascii,
     Latin1,
     Utf16Le,
     Utf32,
@@ -85,20 +86,18 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 4] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 5] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
         normalized: "UTF8",
-        // ASCII / US-ASCII / ANSI_X3.4-1968 / ISO646-US are all 7-bit
-        // codecs whose byte set is a strict subset of UTF-8. Aliasing them
-        // to UTF-8 means ASCII→UTF-8 passes through identically, and
-        // UTF-8→ASCII passes through any UTF-8-valid byte (including
-        // multi-byte sequences). The latter is more permissive than glibc's
-        // strict ASCII codec, which rejects non-ASCII with EILSEQ — that
-        // remains a parity gap (bd-b60b5d) until we implement a dedicated
-        // ASCII codec with proper rejection.
-        aliases: &["UTF8", "ASCII", "USASCII", "ANSIX341968", "ISO646US"],
+        aliases: &["UTF8"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ascii,
+        canonical: "ASCII",
+        normalized: "ASCII",
+        aliases: &["USASCII", "ANSIX3.41968", "ANSIX341968", "ISO646US"],
     },
     CodecSpec {
         encoding: Encoding::Latin1,
@@ -148,10 +147,17 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 4] = ["UTF-8", "ISO-8859-1", "UTF-16LE", "UTF-32"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 5] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32"];
 
 /// Canonical alias map for phase-1 supported codecs.
-pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 1] = [("LATIN1", "ISO-8859-1")];
+pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
+    ("LATIN1", "ISO-8859-1"),
+    ("USASCII", "ASCII"),
+    ("ANSIX3.41968", "ASCII"),
+    ("ANSIX341968", "ASCII"),
+    ("ISO646US", "ASCII"),
+];
 
 /// Known out-of-scope codec families for phase-1 implementation.
 pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 6] = [
@@ -391,6 +397,15 @@ fn decode_utf32(input: &[u8]) -> Result<(char, usize), DecodeError> {
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
+        Encoding::Ascii => {
+            if input.is_empty() {
+                Err(DecodeError::Incomplete)
+            } else if input[0] <= 0x7F {
+                Ok((char::from(input[0]), 1))
+            } else {
+                Err(DecodeError::Invalid)
+            }
+        }
         Encoding::Latin1 => {
             if input.is_empty() {
                 Err(DecodeError::Incomplete)
@@ -413,6 +428,17 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
             }
             out[..encoded.len()].copy_from_slice(encoded);
             Ok(encoded.len())
+        }
+        Encoding::Ascii => {
+            let cp = ch as u32;
+            if cp > 0x7F {
+                return Err(EncodeError::Unrepresentable);
+            }
+            if out.is_empty() {
+                return Err(EncodeError::NoSpace);
+            }
+            out[0] = cp as u8;
+            Ok(1)
         }
         Encoding::Latin1 => {
             let cp = ch as u32;
@@ -639,6 +665,8 @@ mod tests {
     fn iconv_open_recognizes_phase1_encodings() {
         assert!(iconv_open(b"UTF-8", b"ISO-8859-1").is_some());
         assert!(iconv_open(b"utf8", b"latin1").is_some());
+        assert!(iconv_open(b"ASCII", b"UTF-8").is_some());
+        assert!(iconv_open(b"UTF-8", b"US-ASCII").is_some());
         assert!(iconv_open(b"UTF16LE", b"UTF-8").is_some());
         assert!(iconv_open(b"UTF-32", b"UTF-8").is_some());
     }
@@ -715,6 +743,36 @@ mod tests {
         assert_eq!(res.in_consumed, 2);
         assert_eq!(res.out_written, 3);
         assert_eq!(&out[..3], "Hé".as_bytes());
+    }
+
+    #[test]
+    fn ascii_roundtrip_accepts_7_bit_bytes() {
+        let mut cd = iconv_open(b"ASCII", b"US-ASCII").unwrap();
+        let mut out = [0u8; 8];
+        let res = iconv(&mut cd, Some(b"Az09!?"), &mut out).unwrap();
+        assert_eq!(res.in_consumed, 6);
+        assert_eq!(res.out_written, 6);
+        assert_eq!(&out[..6], b"Az09!?");
+    }
+
+    #[test]
+    fn utf8_to_ascii_rejects_non_ascii_code_point() {
+        let mut cd = iconv_open(b"ASCII", b"UTF-8").unwrap();
+        let mut out = [0u8; 8];
+        let err = iconv(&mut cd, Some("é".as_bytes()), &mut out).unwrap_err();
+        assert_eq!(err.code, ICONV_EILSEQ);
+        assert_eq!(err.in_consumed, 0);
+        assert_eq!(err.out_written, 0);
+    }
+
+    #[test]
+    fn ascii_to_utf8_rejects_high_bit_input() {
+        let mut cd = iconv_open(b"UTF-8", b"ASCII").unwrap();
+        let mut out = [0u8; 8];
+        let err = iconv(&mut cd, Some(&[0x80]), &mut out).unwrap_err();
+        assert_eq!(err.code, ICONV_EILSEQ);
+        assert_eq!(err.in_consumed, 0);
+        assert_eq!(err.out_written, 0);
     }
 
     #[test]

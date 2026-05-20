@@ -61,7 +61,7 @@ fn iconv_scope_ledger_included_set_matches_phase1_contract() {
             )
         })
         .collect();
-    let expected: BTreeSet<String> = ["UTF-8", "ISO-8859-1", "UTF-16LE", "UTF-32"]
+    let expected: BTreeSet<String> = ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32"]
         .into_iter()
         .map(normalize_codec)
         .collect();
