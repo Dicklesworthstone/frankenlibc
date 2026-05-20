@@ -3,9 +3,22 @@
   "manifest_id": "strict-hardened-timing-side-channel-budget",
   "bead": "bd-juvqm.12",
   "generated_utc": "2026-05-09T00:00:00Z",
-  "source_commit": "4052e3a5f1b0414f74cce5027269f33df6ad30fa",
+  "source_commit": "6f993239cb17b815e34c72db2fde35e2d0ca94d5",
   "purpose": "Timing side-channel budget contract for representative pointer, allocator, string, stdio, and pthread paths across strict and hardened modes. Strict and hardened intentionally differ in validation depth and repair behavior; this manifest pins an upper bound on the *p99 timing delta* between the two modes so an input class that triggers a deeper validation path cannot leak that fact through an unbounded timing channel. NO production timing behavior changes are required by this bead — the manifest is the contract any future hardening/optimization bead must respect.",
   "anchored_baseline_manifest": "tests/conformance/high_core_tail_baseline.v1.json",
+  "source_commit_freshness": {
+    "require_no_tracked_source_changes_since_source_commit": true,
+    "failure_reason": "Refresh this manifest whenever the source roots behind strict/hardened timing budgets or the p99 delta helper change.",
+    "tracked_source_roots": [
+      "crates/frankenlibc-membrane/src",
+      "crates/frankenlibc-core/src/malloc",
+      "crates/frankenlibc-core/src/string",
+      "crates/frankenlibc-core/src/stdio",
+      "crates/frankenlibc-core/src/pthread",
+      "crates/frankenlibc-harness/src/tail_stats.rs",
+      "tests/conformance/high_core_tail_baseline.v1.json"
+    ]
+  },
   "tail_statistics_contract_owner": "bd-juvqm.11",
   "policy": {
     "default_decision": "block_advancement_until_delta_within_budget",

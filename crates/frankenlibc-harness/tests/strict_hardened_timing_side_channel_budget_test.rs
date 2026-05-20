@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -44,6 +45,87 @@ fn load_json(path: &Path) -> Result<Value, Box<dyn Error>> {
 
 fn manifest() -> Result<Value, Box<dyn Error>> {
     load_json(&manifest_path())
+}
+
+fn git_stdout(root: &Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|err| test_error(format!("run git {args:?}: {err}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(test_error(format!("git {args:?} failed: {stderr}")));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|err| test_error(format!("git {args:?} emitted non-utf8 stdout: {err}")))
+}
+
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn validate_manifest_source_commit_freshness(manifest: &Value) -> TestResult {
+    let source_commit = manifest["source_commit"]
+        .as_str()
+        .ok_or_else(|| test_error("source_commit must be a string"))?;
+    ensure(
+        is_hex_commit(source_commit),
+        "source_commit must be a 40-character git commit",
+    )?;
+
+    let policy = manifest["policy"]
+        .as_object()
+        .ok_or_else(|| test_error("policy must be object"))?;
+    ensure(
+        policy["fail_closed_when_source_commit_stale"]
+            .as_bool()
+            .unwrap_or(false),
+        "policy.fail_closed_when_source_commit_stale must be true",
+    )?;
+    ensure(
+        policy["stale_source_commit_freshness_target"].as_str() == Some("current git HEAD"),
+        "policy.stale_source_commit_freshness_target must be current git HEAD",
+    )?;
+
+    let freshness = manifest["source_commit_freshness"]
+        .as_object()
+        .ok_or_else(|| test_error("source_commit_freshness must be object"))?;
+    ensure(
+        freshness["require_no_tracked_source_changes_since_source_commit"]
+            .as_bool()
+            .unwrap_or(false),
+        "source_commit_freshness must require no tracked source changes",
+    )?;
+    let roots = freshness["tracked_source_roots"]
+        .as_array()
+        .ok_or_else(|| test_error("tracked_source_roots must be array"))?;
+    ensure(!roots.is_empty(), "tracked_source_roots must not be empty")?;
+    let root_strings: Vec<&str> = roots
+        .iter()
+        .map(|root| {
+            root.as_str()
+                .ok_or_else(|| test_error("tracked_source_roots entries must be strings"))
+        })
+        .collect::<Result<_, _>>()?;
+
+    let repo = workspace_root();
+    git_stdout(
+        &repo,
+        &["cat-file", "-e", &format!("{source_commit}^{{commit}}")],
+    )?;
+    let commit_range = format!("{source_commit}..HEAD");
+    let mut args = vec!["diff", "--name-only", commit_range.as_str(), "--"];
+    args.extend(root_strings);
+    let changed = git_stdout(&repo, &args)?;
+    let changed_paths: Vec<&str> = changed.lines().filter(|line| !line.is_empty()).collect();
+    ensure(
+        changed_paths.is_empty(),
+        format!(
+            "source_commit {source_commit} is stale for strict/hardened timing roots: {changed_paths:?}"
+        ),
+    )
 }
 
 #[test]
@@ -88,6 +170,36 @@ fn manifest_has_required_top_level_shape() -> TestResult {
         format!("amplification_threshold_ratio must be in [1.5, 10.0]; got {amp}"),
     )?;
     Ok(())
+}
+
+#[test]
+fn manifest_source_commit_is_fresh_for_timing_budget_roots() -> TestResult {
+    let m = manifest()?;
+    validate_manifest_source_commit_freshness(&m)
+}
+
+#[test]
+fn fixture_invalid_manifest_source_commit_is_rejected() -> TestResult {
+    let mut m = manifest()?;
+    m["source_commit"] = Value::String("0000000000000000000000000000000000000000".to_string());
+    let err = validate_manifest_source_commit_freshness(&m)
+        .expect_err("invalid manifest source_commit must be rejected");
+    ensure(
+        err.to_string().contains("cat-file") || err.to_string().contains("source_commit"),
+        format!("unexpected invalid source_commit error: {err}"),
+    )
+}
+
+#[test]
+fn fixture_stale_manifest_source_commit_is_rejected() -> TestResult {
+    let mut m = manifest()?;
+    m["source_commit"] = Value::String("4052e3a5f1b0414f74cce5027269f33df6ad30fa".to_string());
+    let err = validate_manifest_source_commit_freshness(&m)
+        .expect_err("stale manifest source_commit must be rejected");
+    ensure(
+        err.to_string().contains("stale") || err.to_string().contains("cat-file"),
+        format!("unexpected stale source_commit error: {err}"),
+    )
 }
 
 #[test]
