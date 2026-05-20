@@ -2985,6 +2985,71 @@ fn abi_argp_usage_null_state_preserves_noop_contract() {
     assert_eq!(errno_value(), 0);
 }
 
+#[test]
+fn abi_argp_error_renders_formatted_diagnostic_to_state_error_stream() {
+    let name = CString::new("diag-demo").unwrap();
+    let fmt = CString::new("bad %s %d").unwrap();
+    let option = CString::new("option").unwrap();
+    let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_error(
+            (&mut state as *mut FixtureArgpState).cast(),
+            fmt.as_ptr(),
+            option.as_ptr(),
+            7 as c_int,
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "diag-demo: bad option 7\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_failure_renders_formatted_diagnostic_and_errno_suffix() {
+    let name = CString::new("diag-demo").unwrap();
+    let fmt = CString::new("failed item %d").unwrap();
+    let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_failure(
+            (&mut state as *mut FixtureArgpState).cast(),
+            0,
+            libc::EINVAL,
+            fmt.as_ptr(),
+            5 as c_int,
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "diag-demo: failed item 5: Invalid argument\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_error_and_failure_null_state_preserve_fixture_noop_contract() {
+    let fmt = CString::new("ignored %d").unwrap();
+
+    clear_errno();
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_error(std::ptr::null_mut(), fmt.as_ptr(), 1 as c_int);
+        frankenlibc_abi::unistd_abi::argp_failure(
+            std::ptr::null_mut(),
+            0,
+            libc::EINVAL,
+            fmt.as_ptr(),
+            2 as c_int,
+        );
+    }
+
+    assert_eq!(errno_value(), 0);
+}
+
 // ---------------------------------------------------------------------------
 // SysV IPC surface tests
 // ---------------------------------------------------------------------------

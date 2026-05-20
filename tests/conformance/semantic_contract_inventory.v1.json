@@ -251,14 +251,14 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 21884,
-      "line_marker": "bounded phase-1 help from state",
+      "source_line": 21901,
+      "line_marker": "bounded formatted parsing diagnostic",
       "support_matrix_status": "Implemented",
       "semantic_class": "limited_bootstrap",
       "contract_kind": "gnu_argp_partial_help",
-      "current_behavior": "argp_help prints bounded literal usage/doc sections to supplied streams, argp_state_help bridges state.root_argp/name into the same renderer without process exit, and argp_usage renders standard usage through state.err_stream without process exit; argp_error/failure remain deterministic no-op compatibility contracts.",
-      "user_risk": "Command-line programs can still lose option-table help, state-specific stream routing, parser diagnostics, and variadic formatted errors while appearing link-compatible.",
-      "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, state stream selection, process-exit behavior, and variadic diagnostics before claiming complete GNU argp parity.",
+      "current_behavior": "argp_help prints bounded literal usage/doc sections to supplied streams, argp_state_help bridges state.root_argp/name into the same renderer without process exit, argp_usage renders standard usage through state.err_stream without process exit, and argp_error/failure render bounded printf-style diagnostics to state.err_stream/state.out_stream when a non-null state stream is available while null-state fixture rows remain deterministic no-ops.",
+      "user_risk": "Command-line programs can still lose option-table help, child-parser/filter behavior, full parser callback diagnostics, and argp-triggered process exits while appearing link-compatible.",
+      "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, complete state stream selection, and process-exit behavior before claiming complete GNU argp parity.",
       "evidence_artifacts": [
         "tests/conformance/support_semantic_overlay.v1.json"
       ]

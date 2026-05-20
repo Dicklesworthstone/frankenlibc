@@ -21794,6 +21794,54 @@ fn argp_state_stream(
     state.out_stream
 }
 
+#[inline]
+fn argp_diagnostic_stream_from_state(state: &ArgpStateHeader) -> *mut libc::FILE {
+    argp_state_stream(state, core::ptr::null_mut(), ARGP_HELP_EXIT_ERR)
+}
+
+unsafe fn argp_diagnostic_stream(state: *mut c_void) -> *mut libc::FILE {
+    if state.is_null() {
+        return core::ptr::null_mut();
+    }
+    let state = unsafe { &*(state as *const ArgpStateHeader) };
+    argp_diagnostic_stream_from_state(state)
+}
+
+unsafe fn argp_write_diagnostic(state: *mut c_void, message: &[u8], errnum: c_int) -> bool {
+    if state.is_null() || (message.is_empty() && errnum == 0) {
+        return true;
+    }
+
+    let state = unsafe { &*(state as *const ArgpStateHeader) };
+    let stream = argp_diagnostic_stream_from_state(state);
+    if stream.is_null() {
+        return true;
+    }
+
+    let mut line = Vec::with_capacity(message.len().saturating_add(64));
+    if let Some(name) = (unsafe { argp_read_text(state.name.cast_const()) })
+        && !name.is_empty()
+    {
+        line.extend_from_slice(&name);
+        line.extend_from_slice(b": ");
+    }
+    line.extend_from_slice(message);
+    if errnum != 0 {
+        if !message.is_empty() {
+            line.extend_from_slice(b": ");
+        }
+        let err_ptr = unsafe { crate::string_abi::strerror(errnum) };
+        if let Some(err_msg) = unsafe { argp_read_text(err_ptr) } {
+            line.extend_from_slice(&err_msg);
+        } else {
+            line.extend_from_slice(b"Unknown error");
+        }
+    }
+    line.push(b'\n');
+
+    unsafe { argp_write_bytes(stream, &line) }
+}
+
 /// `argp_parse` — parse arguments using argp framework.
 ///
 /// Native phase-1 support handles the common zeroed `struct argp` case as a
@@ -21863,22 +21911,52 @@ pub unsafe extern "C" fn argp_usage(state: *mut c_void) {
     unsafe { argp_state_help(state, core::ptr::null_mut(), ARGP_HELP_STD_USAGE_PHASE1) };
 }
 
-/// `argp_error` — report parsing error. No-op stub.
+/// `argp_error` — report a bounded formatted parsing diagnostic to state error stream.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn argp_error(_state: *mut c_void, _fmt: *const c_char, mut _args: ...) {
-    // No-op: argp framework not available
+pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut args: ...) {
+    if unsafe { argp_diagnostic_stream(state) }.is_null() {
+        return;
+    }
+    let Some(fmt_bytes) = (unsafe { argp_read_text(fmt) }) else {
+        return;
+    };
+    use frankenlibc_core::stdio::printf::parse_format_string;
+    let segments = parse_format_string(&fmt_bytes);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    if !unsafe { argp_write_diagnostic(state, &rendered, 0) } {
+        unsafe { set_abi_errno(libc::EIO) };
+    }
 }
 
-/// `argp_failure` — report failure during parsing. No-op stub.
+/// `argp_failure` — report a bounded formatted parsing failure diagnostic.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_failure(
-    _state: *mut c_void,
+    state: *mut c_void,
     _status: c_int,
-    _errnum: c_int,
-    _fmt: *const c_char,
-    mut _args: ...
+    errnum: c_int,
+    fmt: *const c_char,
+    mut args: ...
 ) {
-    // No-op: argp framework not available
+    if unsafe { argp_diagnostic_stream(state) }.is_null() {
+        return;
+    }
+    let rendered = if let Some(fmt_bytes) = unsafe { argp_read_text(fmt) } {
+        use frankenlibc_core::stdio::printf::parse_format_string;
+        let segments = parse_format_string(&fmt_bytes);
+        let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
+        let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+        extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
+        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) }
+    } else {
+        Vec::new()
+    };
+    if !unsafe { argp_write_diagnostic(state, &rendered, errnum) } {
+        unsafe { set_abi_errno(libc::EIO) };
+    }
 }
 
 /// `argp_state_help` — print bounded phase-1 help from state.
