@@ -3,6 +3,11 @@
 #
 # Runs the artifact-emitting Alien CS E2E matrix test and validates the report
 # and structured trace emitted under tests/conformance/.
+#
+# Modes:
+#   --validate-only  validate existing artifacts only (does not invoke cargo)
+#   --rch (default)  delegate the Rust E2E test to rch exec
+#   --local          run cargo locally (only for manual fallback)
 
 set -euo pipefail
 
@@ -10,10 +15,46 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT="${ROOT}/tests/conformance/alien_cs_e2e_report.v1.json"
 TRACE="${ROOT}/tests/conformance/alien_cs_e2e_trace.v1.jsonl"
 
+MODE="rch"
+case "${1:-}" in
+  ""|--rch)
+    MODE="rch"
+    ;;
+  --validate-only)
+    MODE="validate-only"
+    ;;
+  --local)
+    MODE="local"
+    ;;
+  -h|--help)
+    cat <<USAGE
+Usage: $0 [--rch | --validate-only | --local]
+  --rch (default)   Run the Rust E2E test via 'rch exec -- cargo test'.
+  --validate-only   Validate existing artifacts only; never invokes cargo.
+  --local           Run 'cargo test' locally for manual fallback.
+USAGE
+    exit 0
+    ;;
+  *)
+    echo "$0: unknown mode ${1:-}" >&2
+    exit 2
+    ;;
+esac
+
 cd "${ROOT}"
 
 echo "=== Alien CS E2E Gate (bd-1sp.10) ==="
-cargo test -p frankenlibc-membrane --test alien_cs_e2e_test alien_cs_e2e_matrix_emits_structured_artifacts -- --nocapture
+if [[ "${MODE}" == "rch" ]]; then
+  if ! command -v rch >/dev/null 2>&1; then
+    echo "rch not available; rerun with --local only for manual fallback" >&2
+    exit 2
+  fi
+  RCH_REQUIRE_REMOTE=1 \
+    RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" \
+    rch exec -- cargo test -p frankenlibc-membrane --test alien_cs_e2e_test alien_cs_e2e_matrix_emits_structured_artifacts -- --nocapture
+elif [[ "${MODE}" == "local" ]]; then
+  cargo test -p frankenlibc-membrane --test alien_cs_e2e_test alien_cs_e2e_matrix_emits_structured_artifacts -- --nocapture
+fi
 
 python3 - <<'PY'
 import json
