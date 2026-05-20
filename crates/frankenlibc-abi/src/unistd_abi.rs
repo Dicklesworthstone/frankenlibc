@@ -21684,6 +21684,8 @@ const ARGP_HELP_EXIT_OK: c_uint = 0x200;
 const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
 const ARGP_HELP_STATE_NON_RENDERING_FLAGS: c_uint =
     ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR | ARGP_HELP_EXIT_OK;
+const ARGP_HELP_STD_USAGE_PHASE1: c_uint =
+    ARGP_HELP_SHORT_USAGE | ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR;
 
 #[inline]
 unsafe fn argp_read_text(ptr: *const c_char) -> Option<Vec<u8>> {
@@ -21852,10 +21854,13 @@ pub unsafe extern "C" fn argp_help(
     }
 }
 
-/// `argp_usage` — print usage and exit. No-op stub.
+/// `argp_usage` — print bounded phase-1 usage from state.
+///
+/// The GNU standard-usage contract includes an exit flag; phase-1 renders and
+/// returns so tests and callers are not terminated before full argp support.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn argp_usage(_state: *mut c_void) {
-    // No-op: argp framework not available
+pub unsafe extern "C" fn argp_usage(state: *mut c_void) {
+    unsafe { argp_state_help(state, core::ptr::null_mut(), ARGP_HELP_STD_USAGE_PHASE1) };
 }
 
 /// `argp_error` — report parsing error. No-op stub.

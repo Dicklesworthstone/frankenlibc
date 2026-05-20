@@ -2956,6 +2956,35 @@ fn abi_argp_state_help_null_state_preserves_noop_contract() {
     assert_eq!(errno_value(), 0);
 }
 
+#[test]
+fn abi_argp_usage_renders_usage_to_state_error_stream_without_exiting() {
+    let args_doc = CString::new("INPUT").unwrap();
+    let name = CString::new("usage-demo").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+    let mut state = fixture_argp_state(argp_struct.as_ptr().cast(), name.as_ptr().cast_mut());
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_usage((&mut state as *mut FixtureArgpState).cast());
+    })
+    .unwrap();
+
+    assert_eq!(output, "Usage: usage-demo INPUT\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_usage_null_state_preserves_noop_contract() {
+    clear_errno();
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_usage(std::ptr::null_mut());
+    }
+
+    assert_eq!(errno_value(), 0);
+}
+
 // ---------------------------------------------------------------------------
 // SysV IPC surface tests
 // ---------------------------------------------------------------------------

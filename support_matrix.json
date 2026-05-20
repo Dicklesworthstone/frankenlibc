@@ -1519,7 +1519,7 @@
       "symbol": "argp_usage",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp link-compatible no-op usage helper until full argp state formatting",
+      "notes": "GNU argp phase-1 usage helper renders bounded state.root_argp/name usage to state err_stream; exit semantics deferred",
       "module": "unistd_abi"
     },
     {

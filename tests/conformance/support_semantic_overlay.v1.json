@@ -179,8 +179,8 @@
       "support_matrix_status": "Implemented",
       "semantic_class": "limited_bootstrap",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 21879,
-      "evidence": "argp_help renders bounded literal usage/doc strings to caller-provided streams while null-stream fixture rows remain deterministic no-ops; argp_state_help now bridges state.root_argp/name into the same bounded renderer without process exit; usage/error/failure are still link-compatible no-op stubs.",
+      "source_line": 21884,
+      "evidence": "argp_help renders bounded literal usage/doc strings to caller-provided streams while null-stream fixture rows remain deterministic no-ops; argp_state_help bridges state.root_argp/name into the same bounded renderer without process exit; argp_usage renders standard usage through state.err_stream without process exit; argp_error/failure are still link-compatible no-op stubs.",
       "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, state stream selection, process-exit behavior, and variadic diagnostics before claiming complete GNU argp parity."
     },
     {
