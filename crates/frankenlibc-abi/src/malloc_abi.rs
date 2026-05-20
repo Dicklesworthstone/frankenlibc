@@ -1214,6 +1214,9 @@ unsafe fn bootstrap_malloc_passthrough(size: usize) -> *mut c_void {
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_malloc(req) };
     fallback_insert_sized(out, req);
+    if !out.is_null() {
+        record_alloc_stats(req);
+    }
     out
 }
 
@@ -1222,7 +1225,11 @@ unsafe fn bootstrap_calloc_passthrough(nmemb: usize, size: usize) -> *mut c_void
     // SAFETY: early loader/bootstrap allocations must bypass runtime policy
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_calloc(nmemb, size) };
-    fallback_insert_sized(out, nmemb.saturating_mul(size).max(1));
+    let req = nmemb.saturating_mul(size).max(1);
+    fallback_insert_sized(out, req);
+    if !out.is_null() {
+        record_alloc_stats(req);
+    }
     out
 }
 
@@ -1239,18 +1246,26 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_realloc(ptr, size) };
     if !out.is_null() {
-        let _ = fallback_remove(ptr);
-        fallback_insert_sized(out, size.max(1));
+        let old_size = fallback_remove_sized(ptr);
+        let req = size.max(1);
+        fallback_insert_sized(out, req);
+        if let Some(old_size) = old_size {
+            record_free_stats(old_size);
+        }
+        record_alloc_stats(req);
     }
     out
 }
 
 #[inline]
 unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
-    let _ = fallback_remove(ptr);
+    let tracked_size = fallback_remove_sized(ptr);
     // SAFETY: early loader/bootstrap frees must bypass runtime policy and
     // return host-owned allocations through the native fallback path.
     unsafe { native_libc_free(ptr) };
+    if let Some(size) = tracked_size {
+        record_free_stats(size);
+    }
 }
 
 #[inline]

@@ -78,6 +78,14 @@ struct EtherAddr {
 }
 
 static SHM_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
+
+fn stdlib_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
 static MQ_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
 static GETOPT_TEST_GUARD: Mutex<()> = Mutex::new(());
 static SCHED_AFFINITY_TEST_GUARD: Mutex<()> = Mutex::new(());
@@ -689,6 +697,7 @@ fn floating_conversions_reject_tracked_unterminated_inputs() {
 
 #[test]
 fn clearenv_removes_newly_set_variable() {
+    let _guard = stdlib_env_lock();
     let name = c"FRANKENLIBC_CLEAR_TEST_VAR";
     let value = c"present";
 
@@ -716,6 +725,7 @@ fn getenv_rejects_tracked_unterminated_name() {
 
 #[test]
 fn setenv_rejects_unterminated_name_and_value() {
+    let _guard = stdlib_env_lock();
     let valid_name = c"FRANKENLIBC_SETENV_UNTERMINATED_VALUE";
     let value = c"present";
 
@@ -750,6 +760,7 @@ fn setenv_rejects_unterminated_name_and_value() {
 
 #[test]
 fn unsetenv_rejects_unterminated_name() {
+    let _guard = stdlib_env_lock();
     unsafe {
         let unterminated_name = b"FRANKENLIBC_UNSET_UNTERMINATED";
         let raw_name = frankenlibc_abi::malloc_abi::malloc(unterminated_name.len()).cast::<u8>();
@@ -770,6 +781,7 @@ fn unsetenv_rejects_unterminated_name() {
 
 #[test]
 fn putenv_rejects_unterminated_assignment() {
+    let _guard = stdlib_env_lock();
     let cleanup_name = c"FRANKENLIBC_PUTENV_UNTERMINATED";
     let assignment = b"FRANKENLIBC_PUTENV_UNTERMINATED=value";
 
@@ -789,6 +801,7 @@ fn putenv_rejects_unterminated_assignment() {
 
 #[test]
 fn system_inherits_environment() {
+    let _guard = stdlib_env_lock();
     let name = c"FRANKENLIBC_SYSTEM_ENV_TEST";
     let value = c"visible";
     let command = c"test \"$FRANKENLIBC_SYSTEM_ENV_TEST\" = visible";
@@ -6729,11 +6742,7 @@ fn getbsize_uses_default_for_tracked_unterminated_blocksize_value() {
 }
 
 fn getbsize_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
-    match LOCK.get_or_init(|| Mutex::new(())).lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
+    stdlib_env_lock()
 }
 
 // ---------------------------------------------------------------------------
@@ -8901,13 +8910,8 @@ fn strspct_negative_with_precision() {
 
 /// Serialize tests that touch the global env so concurrent test
 /// runs don't observe each other's setenv mutations.
-static GETENV_R_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn getenv_r_lock() -> std::sync::MutexGuard<'static, ()> {
-    match GETENV_R_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
+    stdlib_env_lock()
 }
 
 #[test]

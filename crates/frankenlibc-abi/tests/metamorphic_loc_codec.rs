@@ -180,16 +180,21 @@ fn metamorphic_invalid_version_byte_returns_error_string() {
 }
 
 #[test]
-fn metamorphic_aton_leading_whitespace_irrelevant() {
-    // Whitespace before/within the input shouldn't change the result.
+fn metamorphic_aton_internal_whitespace_irrelevant() {
+    // Extra whitespace between LOC fields should not change the result.
     let t1 = "42 21 54 N 71 06 18 W 24m";
-    let t2 = "  42 21 54 N 71 06 18 W 24m";
-    let t3 = "42  21  54  N  71  06  18  W  24m";
+    let t2 = "42  21  54  N  71  06  18  W  24m";
     let b1 = aton(t1).expect("base");
-    let b2 = aton(t2).expect("leading ws");
-    let b3 = aton(t3).expect("internal ws");
+    let b2 = aton(t2).expect("internal ws");
     assert_eq!(b1, b2);
-    assert_eq!(b1, b3);
+}
+
+#[test]
+fn metamorphic_aton_outer_whitespace_rejected() {
+    // glibc libresolv rejects leading outer whitespace for LOC text.
+    for text in ["  42 21 54 N 71 06 18 W 24m", "\t42 21 54 N 71 06 18 W 24m"] {
+        assert!(aton(text).is_none(), "outer whitespace accepted: {text:?}");
+    }
 }
 
 #[test]
@@ -223,6 +228,6 @@ fn metamorphic_precsize_format_matches_independent_decoder() {
 #[test]
 fn loc_codec_metamorphic_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libresolv loc_aton + loc_ntoa\",\"reference\":\"internal-invariants\",\"properties\":9,\"divergences\":0}}",
+        "{{\"family\":\"libresolv loc_aton + loc_ntoa\",\"reference\":\"internal-invariants\",\"properties\":10,\"divergences\":0}}",
     );
 }
