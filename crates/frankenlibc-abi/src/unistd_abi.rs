@@ -22283,17 +22283,14 @@ pub unsafe extern "C" fn swapcontext(
     // Save current context
     let rc = unsafe { getcontext(oucp) };
     if rc != 0 {
-        return rc;
+        return 0;
     }
-    // If we just returned from setcontext (via the saved RIP), getcontext returns 0
-    // and we should NOT call setcontext again. We use a flag in uc_mcontext to detect this.
-    // The trick: getcontext sets RAX=0 in the saved context. When setcontext restores it,
-    // getcontext appears to return 0 again. We need a sentinel to distinguish the two.
-    // Use a simple approach: check a flag we set after getcontext returns the first time.
-    static SWAP_SENTINEL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let ticket = SWAP_SENTINEL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // Store ticket in unused gregs field (REG_TRAPNO = 20)
-    unsafe { (*oucp).uc_mcontext.gregs[20] = (ticket.wrapping_add(1)) as i64 };
+    // When this saved context is later restored, execution resumes immediately
+    // after the getcontext call. Make that resumed call return non-zero so this
+    // wrapper can complete instead of switching back to `ucp` again.
+    unsafe {
+        (*oucp).uc_mcontext.gregs[libc::REG_RAX as usize] = 1;
+    }
 
     // Now switch to the new context
     unsafe { setcontext(ucp) };
