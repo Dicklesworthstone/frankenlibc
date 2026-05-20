@@ -1343,6 +1343,24 @@ fn wordexp_badchars_respect_quote_and_escape_context_like_host() {
 }
 
 #[test]
+fn wordexp_trailing_escape_matches_host_syntax_error() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for input in ["\\", "a\\", "\"a\\\""] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, 0) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, 0) };
+        assert_eq!(
+            abi, host,
+            "wordexp trailing-escape syntax mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
 fn wordexp_nocmd_respects_quote_context_like_host() {
     let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
         return;

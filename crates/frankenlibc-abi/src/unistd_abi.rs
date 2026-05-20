@@ -6355,6 +6355,10 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
         i += 1;
     }
 
+    if escaped {
+        scan.has_syntax_error = true;
+    }
+
     scan
 }
 
