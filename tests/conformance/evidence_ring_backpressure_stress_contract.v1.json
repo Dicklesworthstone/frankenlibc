@@ -3,7 +3,16 @@
   "manifest_id": "evidence-ring-backpressure-stress-contract",
   "bead": "bd-juvqm.7",
   "generated_utc": "2026-05-09T00:00:00Z",
-  "source_commit": "0bc4950f2b6917aa05057a2ac5f98e135b254713",
+  "source_commit": "4f99fce6001da6e7d72f103d81634ae263fedea6",
+  "source_commit_freshness": {
+    "require_no_tracked_source_changes_since_source_commit": true,
+    "tracked_source_roots": [
+      "crates/frankenlibc-harness/src/evidence_ring_backpressure.rs",
+      "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+      "tests/conformance/high_core_tail_baseline.v1.json",
+      "tests/conformance/evidence_ring_stress_cli_contract.v1.json"
+    ]
+  },
   "purpose": "Pin the contract any future evidence-ring stress harness must satisfy. Under high-core agent-swarm workloads the runtime evidence rings, stdio evidence rows, and membrane validation logs WILL exceed their bounded capacity in both strict and hardened modes; this contract requires that the resulting loss is intentional, bounded, monotone-counted, and deterministically serialized so downstream replay can distinguish a missing row from corruption. NO production ring geometry changes are required by this bead — the manifest gates the *shape* of the report any future stress run must produce.",
   "anchored_baseline_manifest": "tests/conformance/high_core_tail_baseline.v1.json",
   "tail_statistics_contract_owner": "bd-juvqm.11",

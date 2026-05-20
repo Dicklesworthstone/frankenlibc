@@ -16,6 +16,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use frankenlibc_harness::evidence_ring_backpressure::{
     ModelRing, REAL_RING_REPORT_REQUIRED_FIELDS, StressDriver, run_real_ring_stress,
@@ -77,6 +78,80 @@ fn json_bool(value: &Value, field: &str) -> TestResult<bool> {
     json_field(value, field)?
         .as_bool()
         .ok_or_else(|| format!("`{field}` must be a bool"))
+}
+
+fn git_stdout(root: &Path, args: &[&str]) -> TestResult<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|err| format!("run git {args:?}: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|err| format!("git {args:?} emitted non-utf8 stdout: {err}"))
+}
+
+fn is_hex_commit(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn validate_manifest_source_commit_freshness(manifest: &Value) -> TestResult {
+    let source_commit = json_string(manifest, "source_commit")?;
+    require(
+        is_hex_commit(source_commit),
+        "source_commit must be a 40-character git commit",
+    )?;
+
+    let policy = json_field(manifest, "policy")?;
+    require(
+        json_bool(policy, "fail_closed_when_source_commit_stale")?,
+        "policy.fail_closed_when_source_commit_stale must be true",
+    )?;
+    require(
+        json_string(policy, "stale_source_commit_freshness_target")? == "current git HEAD",
+        "policy.stale_source_commit_freshness_target must be current git HEAD",
+    )?;
+
+    let freshness = json_field(manifest, "source_commit_freshness")?;
+    require(
+        json_bool(
+            freshness,
+            "require_no_tracked_source_changes_since_source_commit",
+        )?,
+        "source_commit_freshness must require no tracked source changes",
+    )?;
+    let roots = json_array(freshness, "tracked_source_roots")?;
+    require(!roots.is_empty(), "tracked_source_roots must not be empty")?;
+    let root_strings: Vec<&str> = roots
+        .iter()
+        .map(|root| {
+            root.as_str()
+                .ok_or_else(|| "tracked_source_roots entries must be strings".to_string())
+        })
+        .collect::<Result<_, _>>()?;
+
+    let repo = workspace_root()?;
+    git_stdout(
+        &repo,
+        &["cat-file", "-e", &format!("{source_commit}^{{commit}}")],
+    )?;
+    let commit_range = format!("{source_commit}..HEAD");
+    let mut args = vec!["diff", "--name-only", commit_range.as_str(), "--"];
+    args.extend(root_strings);
+    let changed = git_stdout(&repo, &args)?;
+    let changed_paths: Vec<&str> = changed.lines().filter(|line| !line.is_empty()).collect();
+    require(
+        changed_paths.is_empty(),
+        format!(
+            "source_commit {source_commit} is stale for evidence ring backpressure roots: {changed_paths:?}"
+        ),
+    )
 }
 
 #[test]
@@ -211,6 +286,36 @@ fn policy_fails_closed_on_required_kinds() -> TestResult {
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn manifest_source_commit_is_fresh_for_evidence_ring_roots() -> TestResult {
+    let m = load_manifest()?;
+    validate_manifest_source_commit_freshness(&m)
+}
+
+#[test]
+fn fixture_invalid_manifest_source_commit_is_rejected() -> TestResult {
+    let mut m = load_manifest()?;
+    m["source_commit"] = Value::String("0000000000000000000000000000000000000000".to_string());
+    let err = validate_manifest_source_commit_freshness(&m)
+        .expect_err("invalid manifest source_commit must be rejected");
+    require(
+        err.contains("git") || err.contains("source_commit"),
+        format!("unexpected invalid source_commit error: {err}"),
+    )
+}
+
+#[test]
+fn fixture_stale_manifest_source_commit_is_rejected() -> TestResult {
+    let mut m = load_manifest()?;
+    m["source_commit"] = Value::String("0bc4950f2b6917aa05057a2ac5f98e135b254713".to_string());
+    let err = validate_manifest_source_commit_freshness(&m)
+        .expect_err("stale manifest source_commit must be rejected");
+    require(
+        err.contains("stale") || err.contains("evidence ring backpressure roots"),
+        format!("unexpected stale source_commit error: {err}"),
+    )
 }
 
 #[test]
