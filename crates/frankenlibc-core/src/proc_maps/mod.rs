@@ -58,26 +58,46 @@ fn parse_decimal_u64(field: &str) -> Option<u64> {
     field.parse::<u64>().ok()
 }
 
+/// Peel the five mandatory whitespace-separated fields off the front
+/// of `line`, returning them plus the verbatim path remainder (leading
+/// whitespace trimmed). Returns `None` if fewer than five fields are
+/// present.
+///
+/// The path is *not* tokenized: the kernel only escapes newlines in the
+/// pathname column, so a mapped file may legitimately contain spaces
+/// (`/tmp/my lib.so`) and a deleted/replaced backing file gets a
+/// ` (deleted)` suffix — both must survive as part of the path field.
+fn split_maps_fields(line: &str) -> Option<([&str; 5], &str)> {
+    const WS: [char; 2] = [' ', '\t'];
+    let mut rest = line;
+    let mut fields: [&str; 5] = [""; 5];
+    for slot in &mut fields {
+        rest = rest.trim_start_matches(WS);
+        let end = rest.find(WS).unwrap_or(rest.len());
+        if end == 0 {
+            // No more tokens where a mandatory field was expected.
+            return None;
+        }
+        *slot = &rest[..end];
+        rest = &rest[end..];
+    }
+    Some((fields, rest.trim_start_matches(WS)))
+}
+
 /// Parse one `/proc/self/maps` line.
 ///
 /// Returns `None` if any of the five mandatory fields is missing or
 /// malformed. The path is optional — anonymous mappings and `---p`
-/// regions have no trailing path.
+/// regions have no trailing path — and is returned verbatim, including
+/// any embedded spaces or trailing ` (deleted)` marker.
 pub fn parse_maps_line(line: &str) -> Option<MapsEntry<'_>> {
     let line = line.trim_end_matches(['\n', '\r']);
-    let mut parts = line.split_whitespace();
-    let range = parts.next()?;
-    let perms = parts.next()?;
-    let offset_s = parts.next()?;
-    let dev = parts.next()?;
-    let inode_s = parts.next()?;
-    let path = parts.next();
-    if parts.next().is_some() {
-        // Path with embedded spaces would arrive as multiple tokens; the
-        // kernel emits exactly one trailing field, so extra tokens mean
-        // the line is malformed for our purposes.
-        return None;
-    }
+    let ([range, perms, offset_s, dev, inode_s], path_field) = split_maps_fields(line)?;
+    let path = if path_field.is_empty() {
+        None
+    } else {
+        Some(path_field)
+    };
 
     let dash = range.find('-')?;
     let start = parse_hex_usize(&range[..dash])?;
@@ -214,10 +234,50 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_extra_trailing_tokens() {
-        // path with embedded space arrives as two tokens — we treat
-        // that as malformed (caller can re-parse if it needs to).
-        assert!(parse_maps_line("400000-401000 r--p 0 00:00 0 /tmp/file with space").is_none());
+    fn parse_keeps_path_with_embedded_spaces() {
+        // The kernel does not escape spaces in the pathname column, so
+        // a mapped file like `/tmp/my lib.so` is one valid path field,
+        // not malformed input.
+        let e = parse_maps_line("400000-401000 r--p 0 00:00 7 /tmp/file with space").unwrap();
+        assert_eq!(e.path, Some("/tmp/file with space"));
+        assert_eq!(e.inode, 7);
+    }
+
+    #[test]
+    fn parse_keeps_deleted_suffix_on_path() {
+        // A deleted/replaced backing file gets a ` (deleted)` suffix
+        // from the kernel; the whole string is the path field.
+        let e = parse_maps_line(
+            "7f1234500000-7f1234600000 r-xp 00010000 fd:01 12345 /usr/lib/libc.so.6 (deleted)",
+        )
+        .unwrap();
+        assert_eq!(e.path, Some("/usr/lib/libc.so.6 (deleted)"));
+        assert_eq!(e.start, 0x7f1234500000);
+        assert_eq!(e.inode, 12345);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn parses_every_line_of_real_proc_self_maps() {
+        // Conformance: whatever the running kernel emits for this very
+        // process must parse — exercises the real perms, device, inode,
+        // pseudo-path, spaced-path and ` (deleted)` shapes present.
+        let maps = std::fs::read_to_string("/proc/self/maps").expect("read /proc/self/maps");
+        let mut count = 0usize;
+        for line in maps.lines() {
+            let parsed = parse_maps_line(line);
+            assert!(parsed.is_some(), "failed to parse real maps line: {line:?}");
+            let e = parsed.expect("is_some checked above");
+            assert!(e.end >= e.start, "end < start in {line:?}");
+            assert_eq!(e.perms.len(), 4, "perms field not 4 chars in {line:?}");
+            assert_eq!(
+                parse_maps_range(line),
+                Some((e.start, e.end)),
+                "range shortcut disagreed with full parse for {line:?}"
+            );
+            count += 1;
+        }
+        assert!(count > 0, "/proc/self/maps was unexpectedly empty");
     }
 
     #[test]
