@@ -304,8 +304,84 @@ fn checker_rejects_non_rch_cargo_command() -> TestResult {
     let report = read_json(&out_dir.join("fpg_proof_core_safety_completion_contract.report.json"))?;
     assert_eq!(report["status"].as_str(), Some("fail"));
     assert!(
-        report["errors"].to_string().contains("non-rch cargo"),
+        report["errors"]
+            .to_string()
+            .contains("run through rch exec"),
         "report should cite non-rch command: {report}"
+    );
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_required_command_without_remote_requirement() -> TestResult {
+    let root = repo_root()?;
+    let out_dir = unique_out_dir(&root, "missing-rch-remote")?;
+    let mut manifest = read_json(&contract_path(&root))?;
+    let commands = manifest["completion_debt_evidence"]["unit_primary"]["required_commands"]
+        .as_array_mut()
+        .ok_or("unit_primary required_commands array")?;
+    let command = commands
+        .iter_mut()
+        .find(|entry| {
+            entry.as_str().is_some_and(|value| {
+                value.contains("fpg_proof_core_safety_completion_contract_test")
+            })
+        })
+        .ok_or("completion harness cargo command")?;
+    let command_text = command
+        .as_str()
+        .ok_or("completion harness command string")?
+        .replacen("RCH_REQUIRE_REMOTE=1 ", "", 1);
+    *command = json!(command_text);
+
+    let mutated = out_dir.join("fpg_proof_core_safety_missing_rch_remote.json");
+    write_json(&mutated, &manifest)?;
+
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert_checker_failed(&output);
+    let report = read_json(&out_dir.join("fpg_proof_core_safety_completion_contract.report.json"))?;
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert!(
+        report["errors"]
+            .to_string()
+            .contains("RCH_REQUIRE_REMOTE=1"),
+        "report should cite missing RCH_REQUIRE_REMOTE=1: {report}"
+    );
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_required_command_without_target_dir() -> TestResult {
+    let root = repo_root()?;
+    let out_dir = unique_out_dir(&root, "missing-cargo-target-dir")?;
+    let mut manifest = read_json(&contract_path(&root))?;
+    let commands = manifest["completion_debt_evidence"]["conformance_primary"]["required_commands"]
+        .as_array_mut()
+        .ok_or("conformance_primary required_commands array")?;
+    let command = commands
+        .iter_mut()
+        .find(|entry| {
+            entry
+                .as_str()
+                .is_some_and(|value| value.contains("fpg_proof_core_safety_gate_test"))
+        })
+        .ok_or("source gate cargo command")?;
+    let command_text = command
+        .as_str()
+        .ok_or("source gate cargo command string")?
+        .replacen("env CARGO_TARGET_DIR=<target> ", "", 1);
+    *command = json!(command_text);
+
+    let mutated = out_dir.join("fpg_proof_core_safety_missing_target_dir.json");
+    write_json(&mutated, &manifest)?;
+
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert_checker_failed(&output);
+    let report = read_json(&out_dir.join("fpg_proof_core_safety_completion_contract.report.json"))?;
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert!(
+        report["errors"].to_string().contains("CARGO_TARGET_DIR"),
+        "report should cite missing CARGO_TARGET_DIR: {report}"
     );
     Ok(())
 }

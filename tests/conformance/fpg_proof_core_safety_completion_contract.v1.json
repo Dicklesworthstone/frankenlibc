@@ -72,8 +72,8 @@
         }
       ],
       "required_commands": [
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_gate_test gate_artifact_is_well_formed",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_completion_contract_test -- --nocapture"
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_gate_test gate_artifact_is_well_formed",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_completion_contract_test -- --nocapture"
       ]
     },
     "conformance_primary": {
@@ -140,7 +140,7 @@
       "required_commands": [
         "jq empty tests/conformance/fpg_proof_core_safety_gate.v1.json",
         "bash scripts/check_fpg_proof_core_safety_gate.sh --validate-only",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_gate_test -- --nocapture"
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test fpg_proof_core_safety_gate_test -- --nocapture"
       ],
       "expected_report": "target/conformance/fpg_proof_core_safety_completion_contract.report.json",
       "expected_log": "target/conformance/fpg_proof_core_safety_completion_contract.log.jsonl"
