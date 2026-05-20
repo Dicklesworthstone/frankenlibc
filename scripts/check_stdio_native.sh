@@ -13,14 +13,15 @@ RUN_ID="stdio-native-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "${OUT_DIR}" "${BIN_DIR}"
 
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"
+BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-${TARGET_DIR}}"
 LIB_CANDIDATES=(
   "${TARGET_DIR}/release/libfrankenlibc_abi.so"
-  "${ROOT}/target/release/libfrankenlibc_abi.so"
+  "${BUILD_TARGET_DIR}/release/libfrankenlibc_abi.so"
 )
 LIB=""
 
-echo "[stdio-native] building release ABI library via rch" >"${TEST_LOG}"
-rch exec -- cargo build -p frankenlibc-abi --release >>"${TEST_LOG}" 2>&1
+echo "[stdio-native] building release ABI library locally" >"${TEST_LOG}"
+env CARGO_TARGET_DIR="${BUILD_TARGET_DIR}" cargo build -p frankenlibc-abi --release >>"${TEST_LOG}" 2>&1
 
 for candidate in "${LIB_CANDIDATES[@]}"; do
   if [[ -f "${candidate}" ]]; then
@@ -149,7 +150,7 @@ cat >"${REPORT}" <<JSON
   "run_id": "${RUN_ID}",
   "library": "target/release/libfrankenlibc_abi.so",
   "checks": {
-    "release_build_via_rch": "pass",
+    "release_build_local": "pass",
     "nm_stdio_alias_addresses": "pass",
     "fixture_stdio_printf_strict": "pass",
     "fixture_stdio_printf_hardened": "pass",
