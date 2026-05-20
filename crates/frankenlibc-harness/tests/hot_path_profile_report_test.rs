@@ -22,6 +22,7 @@ const REQUIRED_PROFILE_FIELDS: &[&str] = &[
     "coverage_state",
     "artifact_refs",
     "failure_signature",
+    "tail_attribution",
 ];
 
 const REQUIRED_LOG_FIELDS: &[&str] = &[
@@ -37,6 +38,24 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "source_commit",
     "target_dir",
     "failure_signature",
+    "tail_p99_ns",
+    "tail_artifact_path",
+    "validation_profile",
+];
+
+const REQUIRED_TAIL_ATTRIBUTION_FIELDS: &[&str] = &[
+    "measurement_state",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "validation_profile",
+    "artifact_path",
+    "proof_command",
+    "metric_unit",
+    "p50_ns",
+    "p95_ns",
+    "p99_ns",
+    "tail_source",
 ];
 
 fn workspace_root() -> TestResult<PathBuf> {
@@ -147,6 +166,16 @@ fn committed_profile_artifact_has_required_scope_and_contract() -> TestResult {
             format!("required log field missing from artifact: {field}"),
         )?;
     }
+    let tail_fields: HashSet<_> = json_array(&artifact, "required_tail_attribution_fields")?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    for field in REQUIRED_TAIL_ATTRIBUTION_FIELDS {
+        require(
+            tail_fields.contains(field),
+            format!("required tail attribution field missing from artifact: {field}"),
+        )?;
+    }
     Ok(())
 }
 
@@ -163,6 +192,8 @@ fn profile_records_are_ranked_proofed_and_actionable() -> TestResult {
     let mut has_host_comparison = false;
     let mut has_host_limit = false;
     let mut families = HashSet::new();
+    let mut tail_families = HashSet::new();
+    let mut tail_modes = HashSet::new();
 
     for record in records {
         for field in REQUIRED_PROFILE_FIELDS {
@@ -202,9 +233,81 @@ fn profile_records_are_ranked_proofed_and_actionable() -> TestResult {
             !json_array(record, "artifact_refs")?.is_empty(),
             format!("{profile_id}: artifact refs must be non-empty"),
         )?;
-
         let family = string_field(record, "api_family")?;
         families.insert(family.to_owned());
+        let tail = &record["tail_attribution"];
+        require(
+            tail.is_object(),
+            format!("{profile_id}: tail_attribution must be object"),
+        )?;
+        for field in REQUIRED_TAIL_ATTRIBUTION_FIELDS {
+            require(
+                tail.get(*field).is_some(),
+                format!("{profile_id}: tail attribution missing field {field}"),
+            )?;
+        }
+        require(
+            tail["api_family"] == record["api_family"],
+            format!("{profile_id}: tail api_family mismatch"),
+        )?;
+        require(
+            tail["symbol"] == record["symbol"],
+            format!("{profile_id}: tail symbol mismatch"),
+        )?;
+        require(
+            tail["runtime_mode"] == record["runtime_mode"],
+            format!("{profile_id}: tail runtime_mode mismatch"),
+        )?;
+        require(
+            tail["artifact_path"]
+                .as_str()
+                .is_some_and(|path| !path.is_empty()),
+            format!("{profile_id}: tail artifact path must be present"),
+        )?;
+        require(
+            tail["validation_profile"]
+                .as_str()
+                .is_some_and(|profile| !profile.is_empty()),
+            format!("{profile_id}: validation profile must be present"),
+        )?;
+        if record["coverage_state"].as_str() == Some("measured") {
+            let p50 = tail["p50_ns"]
+                .as_f64()
+                .ok_or_else(|| format!("{profile_id}: p50_ns must be numeric"))?;
+            let p95 = tail["p95_ns"]
+                .as_f64()
+                .ok_or_else(|| format!("{profile_id}: p95_ns must be numeric"))?;
+            let p99 = tail["p99_ns"]
+                .as_f64()
+                .ok_or_else(|| format!("{profile_id}: p99_ns must be numeric"))?;
+            require(
+                p50 <= p95 && p95 <= p99,
+                format!("{profile_id}: tail percentiles must satisfy p50 <= p95 <= p99"),
+            )?;
+            require(
+                tail["proof_command"]
+                    .as_str()
+                    .is_some_and(|command| !command.is_empty()),
+                format!("{profile_id}: measured rows need a proof command"),
+            )?;
+            let proof_command = tail["proof_command"].as_str().unwrap_or_default();
+            if proof_command.contains("cargo ") {
+                require(
+                    proof_command.contains("RCH_REQUIRE_REMOTE=1"),
+                    format!("{profile_id}: cargo proof commands must be remote-required"),
+                )?;
+            }
+            if record["api_family"].as_str() != Some("membrane") {
+                tail_families.insert(family.to_owned());
+            }
+            tail_modes.insert(mode.to_owned());
+        } else {
+            require(
+                tail["measurement_state"].as_str() == Some("missing_profile"),
+                format!("{profile_id}: missing rows need missing_profile tail state"),
+            )?;
+        }
+
         if family == "membrane" && string_field(record, "symbol")?.starts_with("validate_") {
             has_membrane_validate = true;
         }
@@ -243,6 +346,22 @@ fn profile_records_are_ranked_proofed_and_actionable() -> TestResult {
         "measured raw host comparisons must exist",
     )?;
     require(has_host_limit, "host comparison limits must be documented")?;
+    require(
+        tail_families.len() >= 2,
+        format!("expected at least two libc API families with p99 tail attribution, got {tail_families:?}"),
+    )?;
+    for mode in ["strict", "hardened"] {
+        require(
+            tail_modes.contains(mode),
+            format!("tail attribution missing mode {mode}"),
+        )?;
+    }
+    require(
+        artifact["summary"]["libc_tail_attributed_family_count"]
+            .as_u64()
+            .is_some_and(|count| count >= 2),
+        "summary must count at least two libc tail-attributed families",
+    )?;
     require(
         !json_array(&artifact, "optimization_beads_to_create")?.is_empty(),
         "optimization bead seeds must be present",

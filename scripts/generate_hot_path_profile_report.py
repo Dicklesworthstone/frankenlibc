@@ -55,6 +55,7 @@ REQUIRED_PROFILE_FIELDS = [
     "coverage_state",
     "artifact_refs",
     "failure_signature",
+    "tail_attribution",
 ]
 
 REQUIRED_LOG_FIELDS = [
@@ -70,6 +71,24 @@ REQUIRED_LOG_FIELDS = [
     "source_commit",
     "target_dir",
     "failure_signature",
+    "tail_p99_ns",
+    "tail_artifact_path",
+    "validation_profile",
+]
+
+REQUIRED_TAIL_ATTRIBUTION_FIELDS = [
+    "measurement_state",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "validation_profile",
+    "artifact_path",
+    "proof_command",
+    "metric_unit",
+    "p50_ns",
+    "p95_ns",
+    "p99_ns",
+    "tail_source",
 ]
 
 MODULE_FAMILIES = {
@@ -389,6 +408,105 @@ def host_comparison_available(record: dict[str, object]) -> bool:
     return isinstance(available, bool) and available
 
 
+def numeric_or_none(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return round(float(value), 3)
+    return None
+
+
+def p99_tail_ratio(p50: float | None, p99: float | None) -> float | None:
+    if p50 is None or p99 is None or p50 <= 0.0:
+        return None
+    return round(p99 / p50, 6)
+
+
+def remote_required_proof_command(command: str | None) -> str | None:
+    if not command:
+        return None
+    return command if "RCH_REQUIRE_REMOTE=1" in command else f"RCH_REQUIRE_REMOTE=1 {command}"
+
+
+def membrane_tail_attribution(record: dict[str, object], proof_command: str | None) -> dict[str, object]:
+    p50 = numeric_or_none(record.get("latency_ns"))
+    variance = record.get("variance", {})
+    p95_delta = None
+    p99_delta = None
+    variance_policy = None
+    if isinstance(variance, dict):
+        p95_delta = numeric_or_none(variance.get("p95_minus_p50_ns"))
+        p99_delta = numeric_or_none(variance.get("p99_minus_p50_ns"))
+        variance_policy = variance.get("policy")
+    p95 = round(p50 + p95_delta, 3) if p50 is not None and p95_delta is not None else None
+    p99 = round(p50 + p99_delta, 3) if p50 is not None and p99_delta is not None else None
+    mode = str(record.get("runtime_mode", "unknown"))
+    validation_path = str(record.get("validation_path", "unknown"))
+    symbol = str(record.get("benchmark", "unknown"))
+    return {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": symbol,
+        "runtime_mode": mode,
+        "validation_profile": f"{mode}:{validation_path}",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": remote_required_proof_command(proof_command),
+        "metric_unit": "ns/op",
+        "p50_ns": p50,
+        "p95_ns": p95,
+        "p99_ns": p99,
+        "p99_to_p50_ratio": p99_tail_ratio(p50, p99),
+        "tail_source": variance_policy or "criterion_percentile_spread",
+        "source_trace_id": record.get("trace_id"),
+    }
+
+
+def symbol_tail_attribution(
+    symbol_row: dict[str, object],
+    mode: str,
+    family: str,
+    symbol: str,
+) -> dict[str, object]:
+    baseline = symbol_row.get("baseline", {})
+    mode_data = baseline.get(mode, {}) if isinstance(baseline, dict) else {}
+    p50 = numeric_or_none(mode_data.get("p50_ns")) if isinstance(mode_data, dict) else None
+    p95 = numeric_or_none(mode_data.get("p95_ns")) if isinstance(mode_data, dict) else None
+    p99 = numeric_or_none(mode_data.get("p99_ns")) if isinstance(mode_data, dict) else None
+    source = mode_data.get("source") if isinstance(mode_data, dict) else None
+    return {
+        "measurement_state": "measured",
+        "api_family": family,
+        "symbol": symbol,
+        "runtime_mode": mode,
+        "validation_profile": f"{mode}:symbol_latency_capture:{family}",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": p50,
+        "p95_ns": p95,
+        "p99_ns": p99,
+        "p99_to_p50_ratio": p99_tail_ratio(p50, p99),
+        "tail_source": source or "tests/conformance/symbol_latency_samples.v1.log",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log",
+    }
+
+
+def missing_tail_attribution(row: dict[str, object], family: str, symbol: str, mode: str) -> dict[str, object]:
+    return {
+        "measurement_state": "missing_profile",
+        "api_family": family,
+        "symbol": symbol,
+        "runtime_mode": mode,
+        "validation_profile": f"{mode}:missing_profile_slot:{family}",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": None,
+        "metric_unit": "ns/op",
+        "p50_ns": None,
+        "p95_ns": None,
+        "p99_ns": None,
+        "p99_to_p50_ratio": None,
+        "tail_source": row.get("missing_benchmark_reason") or "missing_benchmark_target",
+    }
+
+
 def latency_baseline_artifact(symbol_row: dict[str, object], mode: str) -> dict[str, object]:
     mode_data = symbol_row["baseline"][mode]
     return {
@@ -404,6 +522,9 @@ def latency_baseline_artifact(symbol_row: dict[str, object], mode: str) -> dict[
 
 def membrane_profile_records(root: Path, membrane: dict[str, object]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    proof_commands = membrane.get("deterministic_benchmark_scripts", {})
+    if not isinstance(proof_commands, dict):
+        proof_commands = {}
     for record in membrane.get("benchmark_records", []):
         if not isinstance(record, dict):
             continue
@@ -452,6 +573,10 @@ def membrane_profile_records(root: Path, membrane: dict[str, object]) -> list[di
                 "coverage_state": "measured",
                 "artifact_refs": artifact_refs,
                 "failure_signature": record.get("failure_signature") or "none",
+                "tail_attribution": membrane_tail_attribution(
+                    record,
+                    proof_commands.get(mode) if isinstance(proof_commands.get(mode), str) else None,
+                ),
                 "rank_inputs": {
                     "decision": record.get("decision"),
                     "validation_path": record.get("validation_path"),
@@ -506,6 +631,7 @@ def symbol_profile_records(root: Path, latency: dict[str, object]) -> list[dict[
                     "coverage_state": "measured",
                     "artifact_refs": artifact_refs,
                     "failure_signature": "none",
+                    "tail_attribution": symbol_tail_attribution(symbol_row, mode, family, symbol),
                     "rank_inputs": {
                         "capture_priority_score": symbol_row.get("capture_priority_score"),
                         "perf_class": symbol_row.get("perf_class"),
@@ -555,6 +681,7 @@ def gap_profile_record(root: Path, row: dict[str, object]) -> dict[str, object]:
         "coverage_state": "missing_profile",
         "artifact_refs": artifact_refs,
         "failure_signature": row.get("failure_signature") or f"missing_profile:{family}:{symbol}:{mode}",
+        "tail_attribution": missing_tail_attribution(row, family, symbol, mode),
         "rank_inputs": {
             "missing_benchmark_reason": row.get("missing_benchmark_reason"),
             "user_workload_exposure": row.get("user_workload_exposure", {}),
@@ -668,6 +795,32 @@ def validate_profile_records(records: list[dict[str, object]]) -> None:
             errors.append(f"{profile_id}: sample_count must be a non-negative integer")
         if record.get("coverage_state") == "measured" and sample_count == 0:
             errors.append(f"{profile_id}: measured records need samples")
+        tail = record.get("tail_attribution")
+        if not isinstance(tail, dict):
+            errors.append(f"{profile_id}: tail_attribution must be an object")
+            continue
+        missing_tail_fields = [field for field in REQUIRED_TAIL_ATTRIBUTION_FIELDS if field not in tail]
+        if missing_tail_fields:
+            errors.append(f"{profile_id}: missing tail attribution fields {missing_tail_fields}")
+        for field in ("api_family", "symbol", "runtime_mode"):
+            if tail.get(field) != record.get(field):
+                errors.append(f"{profile_id}: tail_attribution.{field} must match profile record")
+        if not isinstance(tail.get("artifact_path"), str) or not tail.get("artifact_path"):
+            errors.append(f"{profile_id}: tail_attribution artifact_path must be present")
+        if not isinstance(tail.get("validation_profile"), str) or not tail.get("validation_profile"):
+            errors.append(f"{profile_id}: tail_attribution validation_profile must be present")
+        if record.get("coverage_state") == "measured":
+            if tail.get("measurement_state") != "measured":
+                errors.append(f"{profile_id}: measured rows require measured tail_attribution")
+            if not isinstance(tail.get("proof_command"), str) or not tail.get("proof_command"):
+                errors.append(f"{profile_id}: measured tail_attribution requires proof_command")
+            percentiles = [tail.get("p50_ns"), tail.get("p95_ns"), tail.get("p99_ns")]
+            if not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in percentiles):
+                errors.append(f"{profile_id}: measured tail_attribution requires numeric p50/p95/p99")
+            elif not (float(percentiles[0]) <= float(percentiles[1]) <= float(percentiles[2])):
+                errors.append(f"{profile_id}: measured tail percentiles must satisfy p50 <= p95 <= p99")
+        elif tail.get("measurement_state") != "missing_profile":
+            errors.append(f"{profile_id}: missing rows require missing_profile tail_attribution")
     if errors:
         raise HotPathProfileError("; ".join(errors))
 
@@ -697,6 +850,15 @@ def event_for_record(
         "elapsed_ns": elapsed_ns,
         "profile_tool": record["profile_tool"],
         "sample_count": record["sample_count"],
+        "tail_p99_ns": record["tail_attribution"].get("p99_ns")
+        if isinstance(record.get("tail_attribution"), dict)
+        else None,
+        "tail_artifact_path": record["tail_attribution"].get("artifact_path")
+        if isinstance(record.get("tail_attribution"), dict)
+        else None,
+        "validation_profile": record["tail_attribution"].get("validation_profile")
+        if isinstance(record.get("tail_attribution"), dict)
+        else None,
     }
 
 
@@ -722,6 +884,18 @@ def build_report(root: Path, target_dir: str) -> tuple[dict[str, object], list[d
     missing = [row for row in records if row["coverage_state"] == "missing_profile"]
     host_available = [row for row in records if host_comparison_available(row)]
     host_unavailable = [row for row in records if not host_comparison_available(row)]
+    tail_attributed = [
+        row
+        for row in measured
+        if isinstance(row.get("tail_attribution"), dict)
+        and isinstance(row["tail_attribution"].get("p99_ns"), (int, float))
+        and isinstance(row["tail_attribution"].get("artifact_path"), str)
+        and row["tail_attribution"].get("artifact_path")
+    ]
+    libc_tail_attributed = [row for row in tail_attributed if row["api_family"] != "membrane"]
+    tail_families = sorted({str(row["api_family"]) for row in tail_attributed})
+    libc_tail_families = sorted({str(row["api_family"]) for row in libc_tail_attributed})
+    tail_modes = sorted({str(row["runtime_mode"]) for row in tail_attributed})
     membrane_over_target = [
         row
         for row in records
@@ -742,6 +916,7 @@ def build_report(root: Path, target_dir: str) -> tuple[dict[str, object], list[d
         "input_digests": input_digests(root),
         "required_profile_fields": REQUIRED_PROFILE_FIELDS,
         "required_log_fields": REQUIRED_LOG_FIELDS,
+        "required_tail_attribution_fields": REQUIRED_TAIL_ATTRIBUTION_FIELDS,
         "summary": {
             "profile_record_count": len(records),
             "measured_profile_record_count": len(measured),
@@ -750,6 +925,11 @@ def build_report(root: Path, target_dir: str) -> tuple[dict[str, object], list[d
             "host_comparison_available_count": len(host_available),
             "host_comparison_limited_count": len(host_unavailable),
             "parity_proofed_record_count": sum(1 for row in records if row["parity_proof_refs"]),
+            "tail_attributed_profile_count": len(tail_attributed),
+            "tail_attributed_families": tail_families,
+            "tail_attributed_modes": tail_modes,
+            "libc_tail_attributed_family_count": len(libc_tail_families),
+            "libc_tail_attributed_families": libc_tail_families,
             "top_hotness_score": records[0]["hotness_score"] if records else 0.0,
             "top_hot_paths": [
                 {
@@ -759,6 +939,9 @@ def build_report(root: Path, target_dir: str) -> tuple[dict[str, object], list[d
                     "runtime_mode": row["runtime_mode"],
                     "hotness_score": row["hotness_score"],
                     "failure_signature": row["failure_signature"],
+                    "p99_ns": row["tail_attribution"].get("p99_ns")
+                    if isinstance(row.get("tail_attribution"), dict)
+                    else None,
                 }
                 for row in records[:10]
             ],
@@ -775,6 +958,13 @@ def build_report(root: Path, target_dir: str) -> tuple[dict[str, object], list[d
             "stale_rejection": "input_digests and normalized artifact comparison must match current source artifacts",
             "ranking": "descending hotness_score, then family, symbol, mode, profile_id",
             "parity_policy": "No optimization target is accepted without at least one fixture or proof reference.",
+        },
+        "tail_attribution_contract": {
+            "description": "Measured rows must bind p50/p95/p99 to an API family, runtime mode, validation profile, proof command, and source artifact path.",
+            "required_fields": REQUIRED_TAIL_ATTRIBUTION_FIELDS,
+            "measured_policy": "coverage_state=measured rows require numeric p50_ns, p95_ns, p99_ns and a non-empty proof_command.",
+            "missing_policy": "missing_profile rows keep null percentiles but still identify the artifact that owns the missing slot.",
+            "libc_family_floor": 2,
         },
         "host_comparison_limits": [
             {
@@ -879,6 +1069,20 @@ def fake_profile(profile_id: str, score: float = 1.0) -> dict[str, object]:
         "coverage_state": "measured",
         "artifact_refs": ["synthetic.json"],
         "failure_signature": "none",
+        "tail_attribution": {
+            "measurement_state": "measured",
+            "api_family": "string",
+            "symbol": profile_id,
+            "runtime_mode": "strict",
+            "validation_profile": "strict:synthetic:string",
+            "artifact_path": "synthetic.json",
+            "proof_command": "synthetic proof command",
+            "metric_unit": "ns/op",
+            "p50_ns": 1.0,
+            "p95_ns": 2.0,
+            "p99_ns": 3.0,
+            "tail_source": "synthetic",
+        },
     }
 
 
@@ -912,6 +1116,26 @@ def self_test() -> None:
             raise AssertionError("missing parity validation emitted the wrong error") from exc
     else:
         raise AssertionError("missing parity proof refs were not rejected")
+
+    missing_p99 = [fake_profile("missing-p99")]
+    missing_p99[0]["tail_attribution"]["p99_ns"] = None
+    try:
+        validate_profile_records(missing_p99)
+    except HotPathProfileError as exc:
+        if "p50/p95/p99" not in str(exc):
+            raise AssertionError("missing tail p99 validation emitted the wrong error") from exc
+    else:
+        raise AssertionError("missing tail p99 was not rejected")
+
+    missing_tail_artifact = [fake_profile("missing-tail-artifact")]
+    missing_tail_artifact[0]["tail_attribution"]["artifact_path"] = ""
+    try:
+        validate_profile_records(missing_tail_artifact)
+    except HotPathProfileError as exc:
+        if "artifact_path" not in str(exc):
+            raise AssertionError("missing tail artifact validation emitted the wrong error") from exc
+    else:
+        raise AssertionError("missing tail artifact path was not rejected")
 
     generated = {"schema_version": SCHEMA_VERSION, "input_digests": {"a": "new"}}
     attach_artifact_hash(generated)

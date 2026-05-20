@@ -56,6 +56,21 @@ expected_profile_fields = {
     "coverage_state",
     "artifact_refs",
     "failure_signature",
+    "tail_attribution",
+}
+expected_tail_fields = {
+    "measurement_state",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "validation_profile",
+    "artifact_path",
+    "proof_command",
+    "metric_unit",
+    "p50_ns",
+    "p95_ns",
+    "p99_ns",
+    "tail_source",
 }
 expected_log_fields = {
     "trace_id",
@@ -70,6 +85,9 @@ expected_log_fields = {
     "source_commit",
     "target_dir",
     "failure_signature",
+    "tail_p99_ns",
+    "tail_artifact_path",
+    "validation_profile",
 }
 
 if report.get("schema_version") != "v1":
@@ -96,10 +114,19 @@ if summary.get("host_comparison_limited_count", 0) <= 0:
     errors.append("host_comparison_limited_count must be positive")
 if summary.get("membrane_over_target_record_count", 0) <= 0:
     errors.append("membrane_over_target_record_count must be positive")
+if summary.get("tail_attributed_profile_count", 0) <= 0:
+    errors.append("tail_attributed_profile_count must be positive")
+if summary.get("libc_tail_attributed_family_count", 0) < 2:
+    errors.append("expected p99 tail attribution for at least two libc API families")
+if set(summary.get("tail_attributed_modes", [])) != {"hardened", "strict"}:
+    errors.append("tail attribution must cover strict and hardened modes")
 
 profile_fields = set(report.get("required_profile_fields", []))
 if profile_fields != expected_profile_fields:
     errors.append("required_profile_fields mismatch")
+tail_fields = set(report.get("required_tail_attribution_fields", []))
+if tail_fields != expected_tail_fields:
+    errors.append("required_tail_attribution_fields mismatch")
 log_fields = set(report.get("required_log_fields", []))
 if log_fields != expected_log_fields:
     errors.append("required_log_fields mismatch")
@@ -110,6 +137,7 @@ has_measured_host = False
 has_limited_host = False
 has_missing_gap = False
 has_membrane_validate = False
+libc_tail_families = set()
 for record in records:
     missing = expected_profile_fields - set(record)
     if missing:
@@ -141,6 +169,34 @@ for record in records:
         has_missing_gap = True
     if record.get("api_family") == "membrane" and str(record.get("symbol", "")).startswith("validate_"):
         has_membrane_validate = True
+    tail = record.get("tail_attribution")
+    if not isinstance(tail, dict):
+        errors.append(f"{profile_id}: tail_attribution must be object")
+        continue
+    missing_tail = expected_tail_fields - set(tail)
+    if missing_tail:
+        errors.append(f"{profile_id}: missing tail fields {sorted(missing_tail)}")
+    for field in ("api_family", "symbol", "runtime_mode"):
+        if tail.get(field) != record.get(field):
+            errors.append(f"{profile_id}: tail {field} mismatch")
+    if not tail.get("artifact_path"):
+        errors.append(f"{profile_id}: tail artifact_path missing")
+    if not tail.get("validation_profile"):
+        errors.append(f"{profile_id}: validation_profile missing")
+    if record.get("coverage_state") == "measured":
+        percentiles = [tail.get("p50_ns"), tail.get("p95_ns"), tail.get("p99_ns")]
+        if not all(isinstance(value, (int, float)) for value in percentiles):
+            errors.append(f"{profile_id}: measured tail requires p50/p95/p99")
+        elif not (percentiles[0] <= percentiles[1] <= percentiles[2]):
+            errors.append(f"{profile_id}: tail percentiles out of order")
+        if not tail.get("proof_command"):
+            errors.append(f"{profile_id}: tail proof_command missing")
+        if "cargo " in str(tail.get("proof_command")) and "RCH_REQUIRE_REMOTE=1" not in str(tail.get("proof_command")):
+            errors.append(f"{profile_id}: cargo proof_command must be remote-required")
+        if record.get("api_family") != "membrane":
+            libc_tail_families.add(record.get("api_family"))
+    elif tail.get("measurement_state") != "missing_profile":
+        errors.append(f"{profile_id}: missing rows require missing_profile tail state")
 
 if not has_measured_host:
     errors.append("expected at least one measured raw host comparison")
@@ -150,6 +206,8 @@ if not has_missing_gap:
     errors.append("expected missing profile gap rows")
 if not has_membrane_validate:
     errors.append("expected membrane validate_* profile rows")
+if len(libc_tail_families) < 2:
+    errors.append(f"expected at least two libc tail-attributed families, got {sorted(libc_tail_families)}")
 if not report.get("optimization_beads_to_create"):
     errors.append("optimization_beads_to_create must be non-empty")
 if not report.get("deterministic_profiling_scripts"):
@@ -177,6 +235,10 @@ for row in rows:
         errors.append("log row artifact_refs missing")
     if row.get("target_dir") is None:
         errors.append("log row target_dir missing")
+    if row.get("tail_artifact_path") is None:
+        errors.append("log row tail_artifact_path missing")
+    if row.get("validation_profile") is None:
+        errors.append("log row validation_profile missing")
 
 if errors:
     for error in errors:
@@ -188,5 +250,7 @@ print("Measured records:", summary.get("measured_profile_record_count"))
 print("Missing profile rows:", summary.get("missing_profile_record_count"))
 print("Host comparisons:", summary.get("host_comparison_available_count"))
 print("Host comparison limits:", summary.get("host_comparison_limited_count"))
+print("Tail-attributed profiles:", summary.get("tail_attributed_profile_count"))
+print("Libc tail families:", ",".join(summary.get("libc_tail_attributed_families", [])))
 print("check_hot_path_profile_report: PASS")
 PY

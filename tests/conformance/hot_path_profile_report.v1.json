@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.3",
-  "generated_at_utc": "2026-05-15T08:44:47Z",
-  "source_commit": "022fd88e",
+  "generated_at_utc": "2026-05-20T02:43:37Z",
+  "source_commit": "6f65f1a8",
   "purpose": "Rank the next optimization targets from measured hot-path profiles, host raw baselines, and missing profile slots.",
   "inputs": {
     "benchmark_coverage_inventory": "tests/conformance/benchmark_coverage_inventory.v1.json",
@@ -37,7 +37,8 @@
     "host_baseline",
     "coverage_state",
     "artifact_refs",
-    "failure_signature"
+    "failure_signature",
+    "tail_attribution"
   ],
   "required_log_fields": [
     "trace_id",
@@ -51,7 +52,24 @@
     "artifact_refs",
     "source_commit",
     "target_dir",
-    "failure_signature"
+    "failure_signature",
+    "tail_p99_ns",
+    "tail_artifact_path",
+    "validation_profile"
+  ],
+  "required_tail_attribution_fields": [
+    "measurement_state",
+    "api_family",
+    "symbol",
+    "runtime_mode",
+    "validation_profile",
+    "artifact_path",
+    "proof_command",
+    "metric_unit",
+    "p50_ns",
+    "p95_ns",
+    "p99_ns",
+    "tail_source"
   ],
   "summary": {
     "profile_record_count": 102,
@@ -67,6 +85,21 @@
     "host_comparison_available_count": 32,
     "host_comparison_limited_count": 70,
     "parity_proofed_record_count": 102,
+    "tail_attributed_profile_count": 52,
+    "tail_attributed_families": [
+      "membrane",
+      "pthread",
+      "string"
+    ],
+    "tail_attributed_modes": [
+      "hardened",
+      "strict"
+    ],
+    "libc_tail_attributed_family_count": 2,
+    "libc_tail_attributed_families": [
+      "pthread",
+      "string"
+    ],
     "top_hotness_score": 2980.216,
     "top_hot_paths": [
       {
@@ -75,7 +108,8 @@
         "symbol": "validate_foreign",
         "runtime_mode": "strict",
         "hotness_score": 2980.216,
-        "failure_signature": "target_exceeded_baseline_only"
+        "failure_signature": "target_exceeded_baseline_only",
+        "p99_ns": 4820.375
       },
       {
         "profile_id": "membrane:strict:validate_known",
@@ -83,7 +117,8 @@
         "symbol": "validate_known",
         "runtime_mode": "strict",
         "hotness_score": 2948.629,
-        "failure_signature": "target_exceeded_baseline_only"
+        "failure_signature": "target_exceeded_baseline_only",
+        "p99_ns": 5840.904
       },
       {
         "profile_id": "membrane:strict:validate_null",
@@ -91,7 +126,8 @@
         "symbol": "validate_null",
         "runtime_mode": "strict",
         "hotness_score": 2907.293,
-        "failure_signature": "target_exceeded_baseline_only"
+        "failure_signature": "target_exceeded_baseline_only",
+        "p99_ns": 4702.016
       },
       {
         "profile_id": "membrane:hardened:validate_foreign",
@@ -99,7 +135,8 @@
         "symbol": "validate_foreign",
         "runtime_mode": "hardened",
         "hotness_score": 885.622,
-        "failure_signature": "target_exceeded_baseline_only"
+        "failure_signature": "target_exceeded_baseline_only",
+        "p99_ns": 4714.344
       },
       {
         "profile_id": "membrane:hardened:validate_known",
@@ -107,7 +144,8 @@
         "symbol": "validate_known",
         "runtime_mode": "hardened",
         "hotness_score": 874.982,
-        "failure_signature": "target_exceeded_baseline_only"
+        "failure_signature": "target_exceeded_baseline_only",
+        "p99_ns": 4344.744
       },
       {
         "profile_id": "membrane:hardened:validate_null",
@@ -115,7 +153,8 @@
         "symbol": "validate_null",
         "runtime_mode": "hardened",
         "hotness_score": 860.906,
-        "failure_signature": "target_exceeded_baseline_only"
+        "failure_signature": "target_exceeded_baseline_only",
+        "p99_ns": 11762.0
       },
       {
         "profile_id": "pthread:hardened:pthread_detach",
@@ -123,7 +162,8 @@
         "symbol": "pthread_detach",
         "runtime_mode": "hardened",
         "hotness_score": 450.693,
-        "failure_signature": "none"
+        "failure_signature": "none",
+        "p99_ns": 409800347.0
       },
       {
         "profile_id": "pthread:hardened:pthread_create",
@@ -131,7 +171,8 @@
         "symbol": "pthread_create",
         "runtime_mode": "hardened",
         "hotness_score": 450.591,
-        "failure_signature": "none"
+        "failure_signature": "none",
+        "p99_ns": 409344903.0
       },
       {
         "profile_id": "pthread:hardened:pthread_join",
@@ -139,7 +180,8 @@
         "symbol": "pthread_join",
         "runtime_mode": "hardened",
         "hotness_score": 450.591,
-        "failure_signature": "none"
+        "failure_signature": "none",
+        "p99_ns": 409344903.0
       },
       {
         "profile_id": "pthread:strict:pthread_create",
@@ -147,7 +189,8 @@
         "symbol": "pthread_create",
         "runtime_mode": "strict",
         "hotness_score": 427.703,
-        "failure_signature": "none"
+        "failure_signature": "none",
+        "p99_ns": 309100493.0
       }
     ],
     "membrane_over_target_record_count": 8,
@@ -171,11 +214,32 @@
       "host_baseline",
       "coverage_state",
       "artifact_refs",
-      "failure_signature"
+      "failure_signature",
+      "tail_attribution"
     ],
     "stale_rejection": "input_digests and normalized artifact comparison must match current source artifacts",
     "ranking": "descending hotness_score, then family, symbol, mode, profile_id",
     "parity_policy": "No optimization target is accepted without at least one fixture or proof reference."
+  },
+  "tail_attribution_contract": {
+    "description": "Measured rows must bind p50/p95/p99 to an API family, runtime mode, validation profile, proof command, and source artifact path.",
+    "required_fields": [
+      "measurement_state",
+      "api_family",
+      "symbol",
+      "runtime_mode",
+      "validation_profile",
+      "artifact_path",
+      "proof_command",
+      "metric_unit",
+      "p50_ns",
+      "p95_ns",
+      "p99_ns",
+      "tail_source"
+    ],
+    "measured_policy": "coverage_state=measured rows require numeric p50_ns, p95_ns, p99_ns and a non-empty proof_command.",
+    "missing_policy": "missing_profile rows keep null percentiles but still identify the artifact that owns the missing slot.",
+    "libc_family_floor": 2
   },
   "host_comparison_limits": [
     {
@@ -294,6 +358,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "target_exceeded_baseline_only",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "validate_foreign",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:entrypoint_foreign_fast_path",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 4396.357,
+        "p95_ns": 4631.17,
+        "p99_ns": 4820.375,
+        "p99_to_p50_ratio": 1.096448,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::validate_foreign"
+      },
       "rank_inputs": {
         "decision": "captured_over_target_for_optimization",
         "validation_path": "entrypoint_foreign_fast_path",
@@ -345,6 +425,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "target_exceeded_baseline_only",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "validate_known",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:full_validation_path",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 4331.049,
+        "p95_ns": 5828.154,
+        "p99_ns": 5840.904,
+        "p99_to_p50_ratio": 1.348612,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::validate_known"
+      },
       "rank_inputs": {
         "decision": "captured_over_target_for_optimization",
         "validation_path": "full_validation_path",
@@ -396,6 +492,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "target_exceeded_baseline_only",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "validate_null",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:entrypoint_null_fast_exit",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 4274.183,
+        "p95_ns": 4445.877,
+        "p99_ns": 4702.016,
+        "p99_to_p50_ratio": 1.100097,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::validate_null"
+      },
       "rank_inputs": {
         "decision": "captured_over_target_for_optimization",
         "validation_path": "entrypoint_null_fast_exit",
@@ -447,6 +559,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "target_exceeded_baseline_only",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "validate_foreign",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:entrypoint_foreign_fast_path",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 3570.812,
+        "p95_ns": 4115.803,
+        "p99_ns": 4714.344,
+        "p99_to_p50_ratio": 1.320244,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::validate_foreign"
+      },
       "rank_inputs": {
         "decision": "captured_over_target_for_optimization",
         "validation_path": "entrypoint_foreign_fast_path",
@@ -498,6 +626,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "target_exceeded_baseline_only",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "validate_known",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:full_validation_path",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 3499.877,
+        "p95_ns": 3901.45,
+        "p99_ns": 4344.744,
+        "p99_to_p50_ratio": 1.241399,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::validate_known"
+      },
       "rank_inputs": {
         "decision": "captured_over_target_for_optimization",
         "validation_path": "full_validation_path",
@@ -549,6 +693,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "target_exceeded_baseline_only",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "validate_null",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:entrypoint_null_fast_exit",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 3406.037,
+        "p95_ns": 3937.145,
+        "p99_ns": 11762.0,
+        "p99_to_p50_ratio": 3.45328,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::validate_null"
+      },
       "rank_inputs": {
         "decision": "captured_over_target_for_optimization",
         "validation_path": "entrypoint_null_fast_exit",
@@ -607,6 +767,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_detach",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 409800347.0,
+        "p95_ns": 409800347.0,
+        "p99_ns": 409800347.0,
+        "p99_to_p50_ratio": 1.0,
+        "tail_source": "thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -661,6 +837,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_create",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 409344903.0,
+        "p95_ns": 409344903.0,
+        "p99_ns": 409344903.0,
+        "p99_to_p50_ratio": 1.0,
+        "tail_source": "thread_hotpath:symbol_latency_samples.v1.log:create_join_churn,thread_hotpath:symbol_latency_samples.v1.log:fanout_fanin_single,thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -715,6 +907,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_join",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 409344903.0,
+        "p95_ns": 409344903.0,
+        "p99_ns": 409344903.0,
+        "p99_to_p50_ratio": 1.0,
+        "tail_source": "thread_hotpath:symbol_latency_samples.v1.log:create_join_churn,thread_hotpath:symbol_latency_samples.v1.log:fanout_fanin_single,thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -769,6 +977,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_create",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 309100493.0,
+        "p95_ns": 309100493.0,
+        "p99_ns": 309100493.0,
+        "p99_to_p50_ratio": 1.0,
+        "tail_source": "thread_hotpath:symbol_latency_samples.v1.log:create_join_churn,thread_hotpath:symbol_latency_samples.v1.log:fanout_fanin_single,thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -823,6 +1047,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_detach",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 309100493.0,
+        "p95_ns": 309100493.0,
+        "p99_ns": 309100493.0,
+        "p99_to_p50_ratio": 1.0,
+        "tail_source": "thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -877,6 +1117,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_join",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 309100493.0,
+        "p95_ns": 309100493.0,
+        "p99_ns": 309100493.0,
+        "p99_to_p50_ratio": 1.0,
+        "tail_source": "thread_hotpath:symbol_latency_samples.v1.log:create_join_churn,thread_hotpath:symbol_latency_samples.v1.log:fanout_fanin_single,thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -931,6 +1187,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_broadcast",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 25135.171,
+        "p95_ns": 76797.927,
+        "p99_ns": 900898.5,
+        "p99_to_p50_ratio": 35.842147,
+        "tail_source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:broadcast_4_waiters,condvar_hotpath_bench:symbol_latency_samples.v1.log:broadcast_no_waiters",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -985,6 +1257,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_signal",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 5.561,
+        "p95_ns": 7.5,
+        "p99_ns": 36.787,
+        "p99_to_p50_ratio": 6.615177,
+        "tail_source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:signal_no_waiters",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1034,6 +1322,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "string",
+        "symbol": "memcmp",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:string",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 166.739,
+        "p95_ns": 183.859,
+        "p99_ns": 195.059,
+        "p99_to_p50_ratio": 1.169846,
+        "tail_source": "string_hotpath:symbol_latency_samples.v1.log:memcmp_1024,string_hotpath:symbol_latency_samples.v1.log:memcmp_16,string_hotpath:symbol_latency_samples.v1.log:memcmp_256,string_hotpath:symbol_latency_samples.v1.log:memcmp_4096,string_hotpath:symbol_latency_samples.v1.log:memcmp_64",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1081,6 +1385,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "target_exceeded_baseline_only",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_tls_cache_hit",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:tls_cache",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 7.885,
+        "p95_ns": 8.349,
+        "p99_ns": 20.0,
+        "p99_to_p50_ratio": 2.536462,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::stage_tls_cache_hit"
+      },
       "rank_inputs": {
         "decision": "captured_over_target_for_optimization",
         "validation_path": "tls_cache",
@@ -1139,6 +1459,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_broadcast",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 38938.5,
+        "p95_ns": 70649.1,
+        "p99_ns": 80167.5,
+        "p99_to_p50_ratio": 2.058824,
+        "tail_source": "condvar_perf:symbol_latency_samples.v1.log:broadcast_4_waiters,condvar_perf:symbol_latency_samples.v1.log:broadcast_no_waiters",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1186,6 +1522,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "target_exceeded_baseline_only",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_tls_cache_hit",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:tls_cache",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 5.37,
+        "p95_ns": 7.039,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 4.655493,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::stage_tls_cache_hit"
+      },
       "rank_inputs": {
         "decision": "captured_over_target_for_optimization",
         "validation_path": "tls_cache",
@@ -1239,6 +1591,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "string",
+        "symbol": "strlen",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:string",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 147.239,
+        "p95_ns": 199.485,
+        "p99_ns": 205.119,
+        "p99_to_p50_ratio": 1.393102,
+        "tail_source": "string_hotpath:symbol_latency_samples.v1.log:strlen_1024,string_hotpath:symbol_latency_samples.v1.log:strlen_16,string_hotpath:symbol_latency_samples.v1.log:strlen_256,string_hotpath:symbol_latency_samples.v1.log:strlen_4096,string_hotpath:symbol_latency_samples.v1.log:strlen_64",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1288,6 +1656,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "string",
+        "symbol": "strcmp",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:string",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 301.685,
+        "p95_ns": 438.788,
+        "p99_ns": 514.812,
+        "p99_to_p50_ratio": 1.706455,
+        "tail_source": "string_hotpath:symbol_latency_samples.v1.log:strcmp_1024,string_hotpath:symbol_latency_samples.v1.log:strcmp_16,string_hotpath:symbol_latency_samples.v1.log:strcmp_256,string_hotpath:symbol_latency_samples.v1.log:strcmp_4096,string_hotpath:symbol_latency_samples.v1.log:strcmp_64",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1337,6 +1721,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "string",
+        "symbol": "memcpy",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:string",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 13.226,
+        "p95_ns": 18.041,
+        "p99_ns": 55.25,
+        "p99_to_p50_ratio": 4.177378,
+        "tail_source": "string_hotpath:symbol_latency_samples.v1.log:memcpy_1024,string_hotpath:symbol_latency_samples.v1.log:memcpy_16,string_hotpath:symbol_latency_samples.v1.log:memcpy_256,string_hotpath:symbol_latency_samples.v1.log:memcpy_4096,string_hotpath:symbol_latency_samples.v1.log:memcpy_64,string_hotpath:symbol_latency_samples.v1.log:memcpy_65536",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1391,6 +1791,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_wait",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 1350.0,
+        "p95_ns": 1625.0,
+        "p99_ns": 1644.0,
+        "p99_to_p50_ratio": 1.217778,
+        "tail_source": "condvar_perf:symbol_latency_samples.v1.log:wait_signal_roundtrip",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1445,6 +1861,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_wait",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 366.408,
+        "p95_ns": 457.384,
+        "p99_ns": 1054.338,
+        "p99_to_p50_ratio": 2.877497,
+        "tail_source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:wait_signal_roundtrip",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1494,6 +1926,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "string",
+        "symbol": "strlen",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:string",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 91.912,
+        "p95_ns": 119.853,
+        "p99_ns": 140.879,
+        "p99_to_p50_ratio": 1.53276,
+        "tail_source": "string_hotpath:symbol_latency_samples.v1.log:strlen_1024,string_hotpath:symbol_latency_samples.v1.log:strlen_16,string_hotpath:symbol_latency_samples.v1.log:strlen_256,string_hotpath:symbol_latency_samples.v1.log:strlen_4096,string_hotpath:symbol_latency_samples.v1.log:strlen_64",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1543,6 +1991,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "string",
+        "symbol": "strcmp",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:string",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 111.001,
+        "p95_ns": 174.348,
+        "p99_ns": 189.629,
+        "p99_to_p50_ratio": 1.708354,
+        "tail_source": "string_hotpath:symbol_latency_samples.v1.log:strcmp_1024,string_hotpath:symbol_latency_samples.v1.log:strcmp_16,string_hotpath:symbol_latency_samples.v1.log:strcmp_256,string_hotpath:symbol_latency_samples.v1.log:strcmp_4096,string_hotpath:symbol_latency_samples.v1.log:strcmp_64",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1592,6 +2056,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "string",
+        "symbol": "memcmp",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:string",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 72.271,
+        "p95_ns": 99.4,
+        "p99_ns": 119.062,
+        "p99_to_p50_ratio": 1.647438,
+        "tail_source": "string_hotpath:symbol_latency_samples.v1.log:memcmp_1024,string_hotpath:symbol_latency_samples.v1.log:memcmp_16,string_hotpath:symbol_latency_samples.v1.log:memcmp_256,string_hotpath:symbol_latency_samples.v1.log:memcmp_4096,string_hotpath:symbol_latency_samples.v1.log:memcmp_64",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1650,6 +2130,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_create:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "pthread",
+        "symbol": "pthread_create",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:pthread",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_perf_baseline_spec_suite"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
         "user_workload_exposure": {
@@ -1732,6 +2227,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_create:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "pthread",
+        "symbol": "pthread_create",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:pthread",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_perf_baseline_spec_suite"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
         "user_workload_exposure": {
@@ -1810,6 +2320,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_destroy",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 3.3,
+        "p95_ns": 6.3,
+        "p99_ns": 35.0,
+        "p99_to_p50_ratio": 10.606061,
+        "tail_source": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1864,6 +2390,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_init",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 3.3,
+        "p95_ns": 6.3,
+        "p99_ns": 35.0,
+        "p99_to_p50_ratio": 10.606061,
+        "tail_source": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1918,6 +2460,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_trylock",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.328,
+        "p95_ns": 7.054,
+        "p99_ns": 161.0,
+        "p99_to_p50_ratio": 37.19963,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:try_lock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -1972,6 +2530,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_destroy",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 3.389,
+        "p95_ns": 5.0,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 7.376807,
+        "tail_source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2026,6 +2600,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_init",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 3.389,
+        "p95_ns": 5.0,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 7.376807,
+        "tail_source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2075,6 +2665,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "string",
+        "symbol": "memcpy",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:string",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 7.513,
+        "p95_ns": 8.274,
+        "p99_ns": 37.75,
+        "p99_to_p50_ratio": 5.024624,
+        "tail_source": "string_hotpath:symbol_latency_samples.v1.log:memcpy_1024,string_hotpath:symbol_latency_samples.v1.log:memcpy_16,string_hotpath:symbol_latency_samples.v1.log:memcpy_256,string_hotpath:symbol_latency_samples.v1.log:memcpy_4096,string_hotpath:symbol_latency_samples.v1.log:memcpy_64,string_hotpath:symbol_latency_samples.v1.log:memcpy_65536",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2133,6 +2739,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_lock:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_lock",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:pthread",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_perf_baseline_spec_suite"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
         "user_workload_exposure": {
@@ -2215,6 +2836,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_lock:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_lock",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:pthread",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_perf_baseline_spec_suite"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
         "user_workload_exposure": {
@@ -2293,6 +2929,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_timedwait",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 9601.132,
+        "p95_ns": 10696.0,
+        "p99_ns": 11325.04,
+        "p99_to_p50_ratio": 1.179553,
+        "tail_source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:timedwait_past_deadline",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 70,
         "perf_class": "coldpath",
@@ -2347,6 +2999,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_lock",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.193,
+        "p95_ns": 5.031,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 5.962318,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2401,6 +3069,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_unlock",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.193,
+        "p95_ns": 5.031,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 5.962318,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2455,6 +3139,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_signal",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 2.0,
+        "p95_ns": 3.1,
+        "p99_ns": 15.0,
+        "p99_to_p50_ratio": 7.5,
+        "tail_source": "condvar_perf:symbol_latency_samples.v1.log:signal_no_waiters",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2509,6 +3209,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_lock",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.244,
+        "p95_ns": 5.0,
+        "p99_ns": 15.0,
+        "p99_to_p50_ratio": 3.534402,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2563,6 +3279,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_unlock",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.244,
+        "p95_ns": 5.0,
+        "p99_ns": 15.0,
+        "p99_to_p50_ratio": 3.534402,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2617,6 +3349,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_trylock",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.153,
+        "p95_ns": 5.0,
+        "p99_ns": 15.0,
+        "p99_to_p50_ratio": 3.611847,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:try_lock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
@@ -2671,6 +3419,22 @@
         "tests/conformance/symbol_latency_capture_map.v1.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_timedwait",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 7545.0,
+        "p95_ns": 10634.0,
+        "p99_ns": 16707.0,
+        "p99_to_p50_ratio": 2.214314,
+        "tail_source": "condvar_perf:symbol_latency_samples.v1.log:timedwait_past_deadline",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
       "rank_inputs": {
         "capture_priority_score": 70,
         "perf_class": "coldpath",
@@ -2723,6 +3487,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:_Exit:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "_Exit",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -2798,6 +3577,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:_Exit:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "_Exit",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -2873,6 +3667,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:_Fork:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "_Fork",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -2948,6 +3757,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:_Fork:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "_Fork",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3023,6 +3847,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:__sched_rr_get_interval:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "__sched_rr_get_interval",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3098,6 +3937,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:__sched_rr_get_interval:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "__sched_rr_get_interval",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3173,6 +4027,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:__sched_setparam:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "__sched_setparam",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3248,6 +4117,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:__sched_setparam:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "__sched_setparam",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3323,6 +4207,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:__xpg_basename:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "__xpg_basename",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3398,6 +4297,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:__xpg_basename:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "__xpg_basename",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3473,6 +4387,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:adjtimex:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "adjtimex",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3548,6 +4477,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:adjtimex:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "adjtimex",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3623,6 +4567,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_cancel:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_cancel",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3698,6 +4657,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_cancel:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_cancel",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3773,6 +4747,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_error:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_error",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3848,6 +4837,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_error:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_error",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3923,6 +4927,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_fsync:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_fsync",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -3998,6 +5017,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_fsync:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_fsync",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4073,6 +5107,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_read:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_read",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4148,6 +5197,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_read:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_read",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4223,6 +5287,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_return:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_return",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4298,6 +5377,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_return:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_return",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4373,6 +5467,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_suspend:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_suspend",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4448,6 +5557,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_suspend:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_suspend",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4523,6 +5647,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_write:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_write",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4598,6 +5737,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:aio_write:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "aio_write",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4673,6 +5827,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:alarm:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "alarm",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4748,6 +5917,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:alarm:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "alarm",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4823,6 +6007,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:c8rtomb:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "c8rtomb",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4898,6 +6097,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:c8rtomb:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "c8rtomb",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -4973,6 +6187,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:chmod:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "chmod",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5048,6 +6277,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:chmod:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "chmod",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5123,6 +6367,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:chown:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "chown",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5198,6 +6457,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:chown:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "chown",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5273,6 +6547,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:creat:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "creat",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5348,6 +6637,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:creat:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "creat",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5423,6 +6727,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:ctermid:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "ctermid",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5498,6 +6817,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:ctermid:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "ctermid",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5573,6 +6907,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:eaccess:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "eaccess",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5648,6 +6997,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:eaccess:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "eaccess",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5723,6 +7087,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:endmntent:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "endmntent",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5798,6 +7177,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:endmntent:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "endmntent",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5873,6 +7267,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:endutent:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "endutent",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -5948,6 +7357,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_benchmark_target:syscall:endutent:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "endutent",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_benchmark_target",
         "user_workload_exposure": {
@@ -6023,6 +7447,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_symbol_specific_benchmark:malloc:aligned_alloc:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "malloc",
+        "symbol": "aligned_alloc",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:malloc",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_symbol_specific_benchmark"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_symbol_specific_benchmark",
         "user_workload_exposure": {
@@ -6106,6 +7545,21 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_symbol_specific_benchmark:string:argz_count:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "string",
+        "symbol": "argz_count",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:string",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_symbol_specific_benchmark"
+      },
       "rank_inputs": {
         "missing_benchmark_reason": "missing_symbol_specific_benchmark",
         "user_workload_exposure": {
@@ -6178,6 +7632,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_bloom_hit",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:bloom_filter",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 9.985,
+        "p95_ns": 13.462,
+        "p99_ns": 75.0,
+        "p99_to_p50_ratio": 7.511267,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::stage_bloom_hit"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "bloom_filter",
@@ -6229,6 +7699,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_bloom_hit",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:bloom_filter",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 9.174,
+        "p95_ns": 12.844,
+        "p99_ns": 60.0,
+        "p99_to_p50_ratio": 6.540222,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::stage_bloom_hit"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "bloom_filter",
@@ -6280,6 +7766,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_fingerprint_verify",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:fingerprint_check",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 14.382,
+        "p95_ns": 17.75,
+        "p99_ns": 86.105,
+        "p99_to_p50_ratio": 5.986998,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::stage_fingerprint_verify"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "fingerprint_check",
@@ -6331,6 +7833,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_fingerprint_verify",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:fingerprint_check",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 13.93,
+        "p95_ns": 15.951,
+        "p99_ns": 30.0,
+        "p99_to_p50_ratio": 2.153625,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::stage_fingerprint_verify"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "fingerprint_check",
@@ -6382,6 +7900,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_arena_lookup",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:arena_lookup",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 17.491,
+        "p95_ns": 21.375,
+        "p99_ns": 50.0,
+        "p99_to_p50_ratio": 2.858613,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::stage_arena_lookup"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "arena_lookup",
@@ -6433,6 +7967,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_null_check",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:null_check",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 0.515,
+        "p95_ns": 1.25,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 48.543689,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::stage_null_check"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "null_check",
@@ -6484,6 +8034,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_null_check",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:null_check",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 0.392,
+        "p95_ns": 1.562,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 63.77551,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::stage_null_check"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "null_check",
@@ -6535,6 +8101,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_arena_lookup",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:arena_lookup",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 10.258,
+        "p95_ns": 12.211,
+        "p99_ns": 45.0,
+        "p99_to_p50_ratio": 4.38682,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::stage_arena_lookup"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "arena_lookup",
@@ -6586,6 +8168,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_bounds_check",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:bounds_check",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 0.611,
+        "p95_ns": 0.938,
+        "p99_ns": 10.0,
+        "p99_to_p50_ratio": 16.366612,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::stage_bounds_check"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "bounds_check",
@@ -6637,6 +8235,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_bounds_check",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:bounds_check",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 0.589,
+        "p95_ns": 1.406,
+        "p99_ns": 25.5,
+        "p99_to_p50_ratio": 43.293718,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::stage_bounds_check"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "bounds_check",
@@ -6688,6 +8302,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_canary_verify",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:canary_check",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=strict FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_strict RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 0.507,
+        "p95_ns": 0.781,
+        "p99_ns": 15.0,
+        "p99_to_p50_ratio": 29.585799,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::strict::stage_canary_verify"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "canary_check",
@@ -6739,6 +8369,22 @@
         "tests/conformance/perf_baseline_spec.json"
       ],
       "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "membrane",
+        "symbol": "stage_canary_verify",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:canary_check",
+        "artifact_path": "tests/conformance/membrane_overhead_baseline.v1.json",
+        "proof_command": "RCH_REQUIRE_REMOTE=1 FRANKENLIBC_MODE=hardened FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_bd_bp8fl_8_2_stage_hardened RCH_ENV_ALLOWLIST=FRANKENLIBC_MODE,FRANKENLIBC_BENCH_PIN,CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --bench membrane_bench -- --noplot",
+        "metric_unit": "ns/op",
+        "p50_ns": 0.482,
+        "p95_ns": 1.562,
+        "p99_ns": 20.0,
+        "p99_to_p50_ratio": 41.493776,
+        "tail_source": "criterion_percentile_spread",
+        "source_trace_id": "bd-bp8fl.8.2::hardened::stage_canary_verify"
+      },
       "rank_inputs": {
         "decision": "pass",
         "validation_path": "canary_check",
@@ -6757,5 +8403,5 @@
     "target_report": "target/conformance/hot_path_profile_report.report.json",
     "target_log": "target/conformance/hot_path_profile_report.log.jsonl"
   },
-  "artifact_hash": "3939787d628a01b157afe6693d83a353b07f3ae43911525a2f834ebf7a4c6b47"
+  "artifact_hash": "b8bb010a51a7ec92973e51522e444dc571a7d64a7f9b7291b56ef4ca741a5049"
 }
