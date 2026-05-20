@@ -105,7 +105,7 @@ fn manifest_declares_fail_closed_reentrancy_census_policy() -> TestResult {
     }));
     assert!(surfaces.iter().any(|entry| {
         entry["path"].as_str() == Some("crates/frankenlibc-abi/src/unistd_abi.rs")
-            && entry["counts"]["thread_local_macro"].as_u64() == Some(25)
+            && entry["counts"]["thread_local_macro"].as_u64() == Some(24)
     }));
     Ok(())
 }
@@ -128,7 +128,7 @@ fn checker_accepts_current_census_and_emits_telemetry() -> TestResult {
     assert_eq!(report["classified_file_count"].as_u64(), Some(36));
     assert_eq!(
         report["actual_surface_totals"]["thread_local_macro"].as_u64(),
-        Some(82)
+        Some(78)
     );
 
     let log = fs::read_to_string(out_dir.join("events.jsonl"))

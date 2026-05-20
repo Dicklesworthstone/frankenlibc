@@ -2,7 +2,7 @@
   "schema_version": "abi_loader_reentrancy_lock_census.v1",
   "manifest_id": "abi-loader-reentrancy-lock-census",
   "bead": "bd-esbow",
-  "source_commit": "711d488044a309ce28f6a5633d8027e8983ff032",
+  "source_commit": "68e82a611a00116ee69817d5cbcdbb743e6aa8f8",
   "source_commit_freshness": {
     "require_no_scan_root_changes_since_source_commit": true,
     "failure_reason": "Refresh this manifest whenever ABI/startup source roots add, remove, or move loader-reentrancy primitives."
@@ -117,7 +117,7 @@
       "counts": {
         "once_lock_static": 2,
         "static_mutex": 3,
-        "thread_local_macro": 6
+        "thread_local_macro": 5
       }
     },
     {
@@ -217,8 +217,7 @@
         "bd-c51oi"
       ],
       "counts": {
-        "once_lock_static": 6,
-        "thread_local_macro": 3
+        "once_lock_static": 6
       }
     },
     {
@@ -296,7 +295,6 @@
         "bd-c51oi"
       ],
       "counts": {
-        "once_lock_static": 1,
         "static_mutex": 2,
         "std_env_var": 1,
         "thread_local_macro": 1
@@ -428,8 +426,8 @@
         "once_lock_static": 3,
         "static_condvar": 2,
         "static_mutex": 6,
-        "std_env_var": 3,
-        "thread_local_macro": 25
+        "std_env_var": 5,
+        "thread_local_macro": 24
       }
     },
     {
@@ -492,7 +490,7 @@
       ],
       "counts": {
         "std_env_var": 2,
-        "thread_local_macro": 1
+        "thread_local_macro": 2
       }
     }
   ]
