@@ -607,8 +607,11 @@ pub unsafe extern "C" fn nextafter(x: f64, y: f64) -> f64 {
 }
 
 /// C99 `nexttoward`: next representable f64 toward a long-double direction.
-/// On x86_64 the `long double` parameter arrives as f64 in our LD_PRELOAD ABI.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Non-x86_64 builds use the Rust test-time f64 direction approximation.
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nexttoward(x: f64, y: f64) -> f64 {
     frankenlibc_core::math::nexttoward(x, y)
 }
@@ -1379,9 +1382,55 @@ pub unsafe extern "C" fn nextafterf(x: f32, y: f32) -> f32 {
 }
 
 /// C99 `nexttowardf`: next representable f32 toward a long-double direction.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
 pub unsafe extern "C" fn nexttowardf(x: f32, y: f64) -> f32 {
     frankenlibc_core::math::nexttowardf(x, y)
+}
+
+#[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
+core::arch::global_asm!(
+    ".global nexttoward",
+    ".type nexttoward, @function",
+    "nexttoward:",
+    "  lea rdi, [rsp + 8]",
+    "  jmp __frankenlibc_nexttoward_x86_64",
+    ".size nexttoward, .-nexttoward",
+    ".global nexttowardf",
+    ".type nexttowardf, @function",
+    "nexttowardf:",
+    "  lea rdi, [rsp + 8]",
+    "  jmp __frankenlibc_nexttowardf_x86_64",
+    ".size nexttowardf, .-nexttowardf",
+);
+
+#[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
+unsafe fn read_x87_long_double_arg(slot: *const u8) -> [u8; 16] {
+    let mut bytes = [0u8; 16];
+    // SAFETY: x86_64 SysV passes `long double` arguments in 16-byte stack
+    // slots. The assembly shims pass the address of that caller-provided slot.
+    unsafe { std::ptr::copy_nonoverlapping(slot, bytes.as_mut_ptr(), bytes.len()) };
+    bytes
+}
+
+#[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __frankenlibc_nexttoward_x86_64(x: f64, y: *const u8) -> f64 {
+    // SAFETY: `y` points at the x86_64 SysV stack slot for the `long double`
+    // direction argument.
+    let y = unsafe { read_x87_long_double_arg(y) };
+    frankenlibc_core::math::nexttoward_long_double_bits(x, y)
+}
+
+#[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __frankenlibc_nexttowardf_x86_64(x: f32, y: *const u8) -> f32 {
+    // SAFETY: `y` points at the x86_64 SysV stack slot for the `long double`
+    // direction argument.
+    let y = unsafe { read_x87_long_double_arg(y) };
+    frankenlibc_core::math::nexttowardf_long_double_bits(x, y)
 }
 
 // ---------------------------------------------------------------------------
@@ -6990,6 +7039,63 @@ pub unsafe extern "C" fn __finitef128(x: f64) -> c_int {
 mod tests {
     use super::*;
 
+    const X87_INTEGER_BIT: u64 = 1u64 << 63;
+    const X87_EXP_BIAS: u16 = 16_383;
+
+    fn x87_pack(negative: bool, exponent_bits: u16, significand: u64) -> [u8; 16] {
+        let mut bytes = [0u8; 16];
+        let sign_exp = exponent_bits | if negative { 0x8000 } else { 0 };
+        bytes[..8].copy_from_slice(&significand.to_le_bytes());
+        bytes[8..10].copy_from_slice(&sign_exp.to_le_bytes());
+        bytes
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn call_nexttoward_symbol_with_x87_arg(x: f64, y: [u8; 16]) -> f64 {
+        let out: f64;
+        // SAFETY: The inline call builds the x86_64 SysV stack slot expected
+        // for a `long double` second argument, calls the exported assembly
+        // shim, and restores the stack pointer before returning to Rust.
+        unsafe {
+            std::arch::asm!(
+                "sub rsp, 16",
+                "mov rax, qword ptr [{y_ptr}]",
+                "mov qword ptr [rsp], rax",
+                "mov rax, qword ptr [{y_ptr} + 8]",
+                "mov qword ptr [rsp + 8], rax",
+                "call nexttoward",
+                "add rsp, 16",
+                y_ptr = in(reg) y.as_ptr(),
+                inout("xmm0") x => out,
+                clobber_abi("C"),
+            );
+        }
+        out
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn call_nexttowardf_symbol_with_x87_arg(x: f32, y: [u8; 16]) -> f32 {
+        let out: f32;
+        // SAFETY: The inline call builds the x86_64 SysV stack slot expected
+        // for a `long double` second argument, calls the exported assembly
+        // shim, and restores the stack pointer before returning to Rust.
+        unsafe {
+            std::arch::asm!(
+                "sub rsp, 16",
+                "mov rax, qword ptr [{y_ptr}]",
+                "mov qword ptr [rsp], rax",
+                "mov rax, qword ptr [{y_ptr} + 8]",
+                "mov qword ptr [rsp + 8], rax",
+                "call nexttowardf",
+                "add rsp, 16",
+                y_ptr = in(reg) y.as_ptr(),
+                inout("xmm0") x => out,
+                clobber_abi("C"),
+            );
+        }
+        out
+    }
+
     fn abi_errno() -> i32 {
         // SAFETY: `__errno_location` returns valid thread-local storage for this thread.
         // Use volatile read to match the volatile write in set_abi_errno,
@@ -7813,12 +7919,41 @@ mod tests {
         assert_eq!(unsafe { nexttoward(1.0, 1.0) }, 1.0);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn nexttoward_x86_64_symbol_reads_stack_long_double_direction() {
+        let one_plus_tiny = x87_pack(false, X87_EXP_BIAS, X87_INTEGER_BIT | 1);
+        let one_minus_tiny = x87_pack(false, X87_EXP_BIAS - 1, u64::MAX);
+
+        // SAFETY: The helper constructs the C ABI long-double stack slot.
+        let up = unsafe { call_nexttoward_symbol_with_x87_arg(1.0, one_plus_tiny) };
+        // SAFETY: The helper constructs the C ABI long-double stack slot.
+        let down = unsafe { call_nexttoward_symbol_with_x87_arg(1.0, one_minus_tiny) };
+
+        assert_eq!(up, frankenlibc_core::math::nextafter(1.0, f64::INFINITY));
+        assert_eq!(
+            down,
+            frankenlibc_core::math::nextafter(1.0, f64::NEG_INFINITY)
+        );
+    }
+
     #[test]
     fn nexttowardf_steps_and_propagates_nan() {
         // SAFETY: ABI entrypoints accept plain float inputs.
         let up = unsafe { nexttowardf(1.0f32, 2.0f64) };
         assert!(up > 1.0f32);
         assert!(unsafe { nexttowardf(f32::NAN, 1.0f64) }.is_nan());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn nexttowardf_x86_64_symbol_reads_stack_long_double_direction() {
+        let one_plus_tiny = x87_pack(false, X87_EXP_BIAS, X87_INTEGER_BIT | 1);
+
+        // SAFETY: The helper constructs the C ABI long-double stack slot.
+        let up = unsafe { call_nexttowardf_symbol_with_x87_arg(1.0, one_plus_tiny) };
+
+        assert_eq!(up, frankenlibc_core::math::nextafterf(1.0, f32::INFINITY));
     }
 
     // -----------------------------------------------------------------------

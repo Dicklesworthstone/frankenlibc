@@ -1,5 +1,7 @@
 //! Floating-point utility functions.
 
+use core::cmp::Ordering;
+
 #[inline]
 pub fn fabs(x: f64) -> f64 {
     libm::fabs(x)
@@ -156,16 +158,294 @@ pub fn nextafter(x: f64, y: f64) -> f64 {
 
 /// Return the next representable `f64` after `x` toward `y` (long double direction).
 ///
-/// In glibc, `y` is `long double` (80-bit extended on x86_64).  Since Rust has
-/// no native `long double`, we accept `f64` — the direction is determined solely
-/// by the comparison `x < y` / `x > y` / `x == y`, so truncation to `f64`
-/// preserves correctness for all finite values and special cases.
+/// This is the Rust test-time fallback for call sites that already normalized
+/// the direction to `f64`. x86_64 ABI exports use
+/// [`nexttoward_long_double_bits`] so 80-bit-only direction differences are not
+/// lost before the comparison.
 #[inline]
 pub fn nexttoward(x: f64, y: f64) -> f64 {
-    // C99 semantics: nexttoward(x, y) == nextafter(x, (double)y) when
-    // long double → double comparison preserves ordering, which it does for
-    // all finite values and ±Inf/NaN.
     libm::nextafter(x, y)
+}
+
+const X87_EXTENDED_LEN: usize = 16;
+const X87_INTEGER_BIT: u64 = 1u64 << 63;
+const X87_EXP_BIAS: i32 = 16_383;
+const X87_EXP_INF_NAN: u16 = 0x7fff;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BinaryFinite {
+    negative: bool,
+    significand: u64,
+    exponent: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BinaryClass {
+    Nan,
+    Infinite { negative: bool },
+    Zero { negative: bool },
+    Finite(BinaryFinite),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct X87Finite {
+    negative: bool,
+    exponent_bits: u16,
+    significand: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum X87Class {
+    Nan,
+    Infinite { negative: bool },
+    Zero { negative: bool },
+    Finite(X87Finite),
+}
+
+#[cfg(test)]
+fn x87_pack(negative: bool, exponent_bits: u16, significand: u64) -> [u8; X87_EXTENDED_LEN] {
+    let mut bytes = [0u8; X87_EXTENDED_LEN];
+    let sign_exp = exponent_bits | if negative { 0x8000 } else { 0 };
+    bytes[..8].copy_from_slice(&significand.to_le_bytes());
+    bytes[8..10].copy_from_slice(&sign_exp.to_le_bytes());
+    bytes
+}
+
+fn x87_classify(bytes: [u8; X87_EXTENDED_LEN]) -> X87Class {
+    let significand = u64::from_le_bytes(bytes[..8].try_into().expect("fixed x87 significand"));
+    let sign_exp = u16::from_le_bytes(bytes[8..10].try_into().expect("fixed x87 exponent"));
+    let negative = sign_exp & 0x8000 != 0;
+    let exponent_bits = sign_exp & 0x7fff;
+
+    if exponent_bits == X87_EXP_INF_NAN {
+        let fraction = significand & !X87_INTEGER_BIT;
+        return if significand & X87_INTEGER_BIT != 0 && fraction == 0 {
+            X87Class::Infinite { negative }
+        } else {
+            X87Class::Nan
+        };
+    }
+    if significand == 0 {
+        return X87Class::Zero { negative };
+    }
+    if exponent_bits != 0 && significand & X87_INTEGER_BIT == 0 {
+        return X87Class::Nan;
+    }
+
+    X87Class::Finite(X87Finite {
+        negative,
+        exponent_bits,
+        significand,
+    })
+}
+
+fn x87_to_binary(class: X87Class) -> BinaryClass {
+    match class {
+        X87Class::Nan => BinaryClass::Nan,
+        X87Class::Infinite { negative } => BinaryClass::Infinite { negative },
+        X87Class::Zero { negative } => BinaryClass::Zero { negative },
+        X87Class::Finite(finite) => {
+            let unbiased = if finite.exponent_bits == 0 {
+                1 - X87_EXP_BIAS
+            } else {
+                i32::from(finite.exponent_bits) - X87_EXP_BIAS
+            };
+            BinaryClass::Finite(BinaryFinite {
+                negative: finite.negative,
+                significand: finite.significand,
+                exponent: unbiased - 63,
+            })
+        }
+    }
+}
+
+fn f64_to_binary(x: f64) -> BinaryClass {
+    let bits = x.to_bits();
+    let negative = bits >> 63 != 0;
+    let exponent_bits = ((bits >> 52) & 0x7ff) as u16;
+    let fraction = bits & ((1u64 << 52) - 1);
+
+    if exponent_bits == 0x7ff {
+        return if fraction == 0 {
+            BinaryClass::Infinite { negative }
+        } else {
+            BinaryClass::Nan
+        };
+    }
+    if exponent_bits == 0 && fraction == 0 {
+        return BinaryClass::Zero { negative };
+    }
+    let (significand, exponent) = if exponent_bits == 0 {
+        (fraction, -1022 - 52)
+    } else {
+        (
+            (1u64 << 52) | fraction,
+            i32::from(exponent_bits) - 1023 - 52,
+        )
+    };
+    BinaryClass::Finite(BinaryFinite {
+        negative,
+        significand,
+        exponent,
+    })
+}
+
+fn f32_to_binary(x: f32) -> BinaryClass {
+    let bits = x.to_bits();
+    let negative = bits >> 31 != 0;
+    let exponent_bits = ((bits >> 23) & 0xff) as u16;
+    let fraction = u64::from(bits & ((1u32 << 23) - 1));
+
+    if exponent_bits == 0xff {
+        return if fraction == 0 {
+            BinaryClass::Infinite { negative }
+        } else {
+            BinaryClass::Nan
+        };
+    }
+    if exponent_bits == 0 && fraction == 0 {
+        return BinaryClass::Zero { negative };
+    }
+    let (significand, exponent) = if exponent_bits == 0 {
+        (fraction, -126 - 23)
+    } else {
+        ((1u64 << 23) | fraction, i32::from(exponent_bits) - 127 - 23)
+    };
+    BinaryClass::Finite(BinaryFinite {
+        negative,
+        significand,
+        exponent,
+    })
+}
+
+fn cmp_positive_finite_magnitude(a: BinaryFinite, b: BinaryFinite) -> Ordering {
+    let a_bits = 64 - a.significand.leading_zeros() as i32;
+    let b_bits = 64 - b.significand.leading_zeros() as i32;
+    let a_top = a.exponent + a_bits - 1;
+    let b_top = b.exponent + b_bits - 1;
+    if a_top != b_top {
+        return a_top.cmp(&b_top);
+    }
+
+    match a.exponent.cmp(&b.exponent) {
+        Ordering::Equal => a.significand.cmp(&b.significand),
+        Ordering::Less => {
+            let shift = (b.exponent - a.exponent) as u32;
+            (a.significand as u128).cmp(&((b.significand as u128) << shift))
+        }
+        Ordering::Greater => {
+            let shift = (a.exponent - b.exponent) as u32;
+            ((a.significand as u128) << shift).cmp(&(b.significand as u128))
+        }
+    }
+}
+
+fn cmp_binary_finite(a: BinaryFinite, b: BinaryFinite) -> Ordering {
+    if a.negative != b.negative {
+        return if a.negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
+    }
+
+    let magnitude = cmp_positive_finite_magnitude(a, b);
+    if a.negative {
+        magnitude.reverse()
+    } else {
+        magnitude
+    }
+}
+
+fn cmp_binary(a: BinaryClass, b: BinaryClass) -> Option<Ordering> {
+    match (a, b) {
+        (BinaryClass::Nan, _) | (_, BinaryClass::Nan) => None,
+        (BinaryClass::Zero { .. }, BinaryClass::Zero { .. }) => Some(Ordering::Equal),
+        (BinaryClass::Infinite { negative: an }, BinaryClass::Infinite { negative: bn }) => {
+            Some(match (an, bn) {
+                (true, true) | (false, false) => Ordering::Equal,
+                (true, false) => Ordering::Less,
+                (false, true) => Ordering::Greater,
+            })
+        }
+        (BinaryClass::Infinite { negative }, _) => Some(if negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }),
+        (_, BinaryClass::Infinite { negative }) => Some(if negative {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }),
+        (BinaryClass::Zero { .. }, BinaryClass::Finite(finite)) => Some(if finite.negative {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }),
+        (BinaryClass::Finite(finite), BinaryClass::Zero { .. }) => Some(if finite.negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }),
+        (BinaryClass::Finite(a), BinaryClass::Finite(b)) => Some(cmp_binary_finite(a, b)),
+    }
+}
+
+fn equal_x87_zero_f64(y: X87Class, fallback: f64) -> f64 {
+    match y {
+        X87Class::Zero { negative } => {
+            if negative {
+                -0.0
+            } else {
+                0.0
+            }
+        }
+        _ => fallback,
+    }
+}
+
+fn equal_x87_zero_f32(y: X87Class, fallback: f32) -> f32 {
+    match y {
+        X87Class::Zero { negative } => {
+            if negative {
+                -0.0
+            } else {
+                0.0
+            }
+        }
+        _ => fallback,
+    }
+}
+
+/// Return the next representable `f64` after `x` toward an x86 80-bit
+/// `long double` direction slot.
+#[inline]
+pub fn nexttoward_long_double_bits(x: f64, y: [u8; X87_EXTENDED_LEN]) -> f64 {
+    let y_class = x87_classify(y);
+    let Some(order) = cmp_binary(f64_to_binary(x), x87_to_binary(y_class)) else {
+        return f64::NAN;
+    };
+    match order {
+        Ordering::Less => libm::nextafter(x, f64::INFINITY),
+        Ordering::Equal => equal_x87_zero_f64(y_class, x),
+        Ordering::Greater => libm::nextafter(x, f64::NEG_INFINITY),
+    }
+}
+
+/// Return the next representable `f32` after `x` toward an x86 80-bit
+/// `long double` direction slot.
+#[inline]
+pub fn nexttowardf_long_double_bits(x: f32, y: [u8; X87_EXTENDED_LEN]) -> f32 {
+    let y_class = x87_classify(y);
+    let Some(order) = cmp_binary(f32_to_binary(x), x87_to_binary(y_class)) else {
+        return f32::NAN;
+    };
+    match order {
+        Ordering::Less => libm::nextafterf(x, f32::INFINITY),
+        Ordering::Equal => equal_x87_zero_f32(y_class, x),
+        Ordering::Greater => libm::nextafterf(x, f32::NEG_INFINITY),
+    }
 }
 
 /// Extract unbiased exponent as `i32` (FP_ILOGBNAN / FP_ILOGB0 for special values).
@@ -463,6 +743,38 @@ mod tests {
         // Step toward negative
         let down = nexttoward(1.0, 0.0);
         assert!(down < 1.0);
+    }
+
+    #[test]
+    fn test_nexttoward_long_double_bits_preserves_sub_f64_direction() {
+        let one_plus_tiny = x87_pack(false, X87_EXP_BIAS as u16, X87_INTEGER_BIT | 1);
+        let one_minus_tiny = x87_pack(false, (X87_EXP_BIAS - 1) as u16, u64::MAX);
+
+        assert_eq!(
+            nexttoward_long_double_bits(1.0, one_plus_tiny),
+            nextafter(1.0, f64::INFINITY)
+        );
+        assert_eq!(
+            nexttoward_long_double_bits(1.0, one_minus_tiny),
+            nextafter(1.0, f64::NEG_INFINITY)
+        );
+        assert_eq!(
+            nexttowardf_long_double_bits(1.0, one_plus_tiny),
+            libm::nextafterf(1.0, f32::INFINITY)
+        );
+    }
+
+    #[test]
+    fn test_nexttoward_long_double_bits_preserves_signed_zero_equality() {
+        let negative_zero = x87_pack(true, 0, 0);
+        assert_eq!(
+            nexttoward_long_double_bits(0.0, negative_zero).to_bits(),
+            (-0.0f64).to_bits()
+        );
+        assert_eq!(
+            nexttowardf_long_double_bits(0.0, negative_zero).to_bits(),
+            (-0.0f32).to_bits()
+        );
     }
 
     #[test]
