@@ -353,6 +353,46 @@ fn wide_file_jump_table_uses_wide_slots() {
 }
 
 #[test]
+fn wide_file_jump_table_stream_helpers_roundtrip_wide_chars() {
+    let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    assert!(
+        !stream.is_null(),
+        "tmpfile should create a native wide vtable test stream"
+    );
+
+    let wide_ptr = unsafe { _IO_wfile_jumps_get() };
+    let wide = unsafe { &*(wide_ptr.cast::<_IO_jump_t>()) };
+    let input: [libc::wchar_t; 2] = [b'R' as libc::wchar_t, b'S' as libc::wchar_t];
+    let wide_eof = -1;
+
+    assert_eq!(
+        unsafe { (wide.__overflow)(stream, b'Q' as c_int) },
+        b'Q' as c_int
+    );
+    assert_eq!(
+        unsafe { (wide.__xsputn)(stream, input.as_ptr().cast(), input.len()) },
+        input.len()
+    );
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) },
+        0
+    );
+
+    assert_eq!(unsafe { (wide.__underflow)(stream) }, b'Q' as c_int);
+    assert_eq!(unsafe { (wide.__uflow)(stream) }, b'Q' as c_int);
+
+    let mut output = [0 as libc::wchar_t; 3];
+    assert_eq!(
+        unsafe { (wide.__xsgetn)(stream, output.as_mut_ptr().cast(), output.len()) },
+        2
+    );
+    assert_eq!(&output[..2], &input);
+    assert_eq!(unsafe { (wide.__uflow)(stream) }, wide_eof);
+
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
+}
+
+#[test]
 fn vtable_struct_size() {
     assert_eq!(
         std::mem::size_of::<NativeFileVtable>(),

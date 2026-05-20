@@ -143,7 +143,7 @@
     {
       "id": "sem-stdio-vtable-helpers",
       "seed_overlay_id": "sem-stdio-vtable-helpers",
-      "surface": "glibc stdio vtable helper fallbacks",
+      "surface": "glibc stdio vtable helper bootstrap",
       "symbols": [
         "__overflow",
         "__uflow",
@@ -157,11 +157,11 @@
       "source_line": 3499,
       "line_marker": "native file overflow bridge",
       "support_matrix_status": "Implemented",
-      "semantic_class": "deterministic_fallback",
-      "contract_kind": "narrow_native_bridge_wide_eof_fallback",
-      "current_behavior": "Narrow libio-style vtable helpers route through native _IO file overflow and underflow paths; wide vtable helpers return deterministic WEOF fallbacks.",
-      "user_risk": "Wide _IO helper paths still fail instead of driving full glibc stream internals.",
-      "required_followup": "Separate link compatibility from libio semantic parity and add fixtures for the remaining wide _IO helper paths.",
+      "semantic_class": "limited_bootstrap",
+      "contract_kind": "native_stream_bridge_libio_model_limited",
+      "current_behavior": "Narrow libio-style helpers and public wide helper entrypoints route through native _IO/wide stream paths; full glibc FILE/_wide_data object-model semantics remain outside the phase-1 bridge.",
+      "user_risk": "Programs that rely on deep libio buffer internals, codecvt state, or indirect vtable behavior can still observe divergence even though the public helper roundtrips are native.",
+      "required_followup": "Gate full libio parity on FILE/_wide_data buffer-state, codecvt/locale, and indirect vtable fixture coverage beyond public helper roundtrips.",
       "evidence_artifacts": [
         "tests/conformance/support_semantic_overlay.v1.json"
       ]
@@ -454,8 +454,8 @@
     "new_entries": 8,
     "by_semantic_class": {
       "compat_noop": 4,
-      "deterministic_fallback": 4,
-      "limited_bootstrap": 6,
+      "deterministic_fallback": 3,
+      "limited_bootstrap": 7,
       "unsupported_platform_contract": 2,
       "abort_only": 1
     },

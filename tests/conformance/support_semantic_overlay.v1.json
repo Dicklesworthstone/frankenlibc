@@ -102,7 +102,7 @@
     },
     {
       "id": "sem-stdio-vtable-helpers",
-      "surface": "glibc stdio vtable helper fallbacks",
+      "surface": "glibc stdio vtable helper bootstrap",
       "symbols": [
         "__overflow",
         "__uflow",
@@ -112,11 +112,11 @@
         "__wunderflow"
       ],
       "support_matrix_status": "Implemented",
-      "semantic_class": "deterministic_fallback",
+      "semantic_class": "limited_bootstrap",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
       "source_line": 3499,
-      "evidence": "Narrow stdio vtable helpers bridge to native _IO file helpers for stream overflow and underflow; wide helpers still return deterministic WEOF fallbacks until the wide-stream vtable state is modeled.",
-      "required_followup": "Separate link-compatibility from libio semantic parity and add fixture coverage for the remaining wide _IO helper paths."
+      "evidence": "Narrow stdio vtable helpers and the public wide helper entrypoints bridge through native _IO/wide stream helpers. The remaining gap is full glibc libio object-model parity for internal FILE buffer state, codecvt, and indirect vtable behavior.",
+      "required_followup": "Keep link compatibility separate from full libio semantic parity; gate promotion on FILE/_wide_data buffer-state, codecvt/locale, and indirect vtable fixture coverage beyond public helper roundtrips."
     },
     {
       "id": "sem-historical-linux-syscalls",
@@ -174,8 +174,8 @@
     "entries": 9,
     "by_semantic_class": {
       "compat_noop": 3,
-      "deterministic_fallback": 2,
-      "limited_bootstrap": 3,
+      "deterministic_fallback": 1,
+      "limited_bootstrap": 4,
       "unsupported_platform_contract": 1,
       "proof_gap": 0,
       "full_semantics": 0

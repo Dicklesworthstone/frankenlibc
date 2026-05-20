@@ -3375,6 +3375,8 @@ pub unsafe extern "C" fn _IO_vsprintf(
 // Wide-character default vtable operations
 // ---------------------------------------------------------------------------
 
+const WEOF_U32: u32 = 0xFFFF_FFFF;
+
 /// `_IO_wdefault_doallocate` — default wide buffer allocation.
 ///
 /// Native: returns 0 (success) — wide buffer allocation is handled
@@ -3394,42 +3396,79 @@ pub unsafe extern "C" fn _IO_wdefault_finish(_fp: *mut c_void, _dummy: c_int) {
 
 /// `_IO_wdefault_pbackfail` — default wide putback failure.
 ///
-/// Native: returns WEOF to signal putback failure.
+/// Native: delegates to `ungetwc` via the public wide-stream layer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_wdefault_pbackfail(_fp: *mut c_void, _wch: u32) -> u32 {
-    0xFFFF_FFFF // WEOF
+pub unsafe extern "C" fn _IO_wdefault_pbackfail(fp: *mut c_void, wch: u32) -> u32 {
+    if fp.is_null() || wch == WEOF_U32 {
+        return WEOF_U32;
+    }
+    unsafe { crate::wchar_abi::ungetwc(wch, fp) }
 }
 
 /// `_IO_wdefault_uflow` — default wide underflow-then-advance.
 ///
-/// Native: returns WEOF to signal end of data.
+/// Native: delegates to `fgetwc` via the public wide-stream layer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_wdefault_uflow(_fp: *mut c_void) -> u32 {
-    0xFFFF_FFFF // WEOF
+pub unsafe extern "C" fn _IO_wdefault_uflow(fp: *mut c_void) -> u32 {
+    if fp.is_null() {
+        return WEOF_U32;
+    }
+    unsafe { crate::wchar_abi::fgetwc(fp) }
 }
 
-/// `_IO_wdefault_xsgetn` — default wide multi-byte read.
+/// `_IO_wdefault_xsgetn` — default wide multi-character read.
 ///
-/// Native: returns 0 (no data read) as the default wide read path.
+/// Native: fills a `wchar_t` buffer by repeatedly reading from `fgetwc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_wdefault_xsgetn(
-    _fp: *mut c_void,
-    _buf: *mut c_void,
-    _n: usize,
-) -> usize {
-    0
+pub unsafe extern "C" fn _IO_wdefault_xsgetn(fp: *mut c_void, buf: *mut c_void, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    if fp.is_null() || buf.is_null() {
+        return 0;
+    }
+
+    let out = buf.cast::<libc::wchar_t>();
+    let mut read = 0;
+    while read < n {
+        let wc = unsafe { crate::wchar_abi::fgetwc(fp) };
+        if wc == WEOF_U32 {
+            break;
+        }
+        unsafe {
+            *out.add(read) = wc as libc::wchar_t;
+        }
+        read += 1;
+    }
+    read
 }
 
-/// `_IO_wdefault_xsputn` — default wide multi-byte write.
+/// `_IO_wdefault_xsputn` — default wide multi-character write.
 ///
-/// Native: returns 0 (no data written) as the default wide write path.
+/// Native: writes a `wchar_t` buffer by repeatedly calling `fputwc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_wdefault_xsputn(
-    _fp: *mut c_void,
-    _buf: *const c_void,
-    _n: usize,
+    fp: *mut c_void,
+    buf: *const c_void,
+    n: usize,
 ) -> usize {
-    0
+    if n == 0 {
+        return 0;
+    }
+    if fp.is_null() || buf.is_null() {
+        return 0;
+    }
+
+    let input = buf.cast::<libc::wchar_t>();
+    let mut written = 0;
+    while written < n {
+        let wc = unsafe { *input.add(written) as u32 };
+        if unsafe { crate::wchar_abi::fputwc(wc, fp) } == WEOF_U32 {
+            break;
+        }
+        written += 1;
+    }
+    written
 }
 
 /// `_IO_wdo_write` — flush wide write buffer to fd.
@@ -3455,11 +3494,21 @@ pub unsafe extern "C" fn _IO_wdoallocbuf(_fp: *mut c_void) {
 
 /// `_IO_wfile_overflow` — handle wide write buffer overflow.
 ///
-/// Native: returns WEOF since wide file overflow requires internal
-/// wide-to-narrow conversion that is handled by our stdio layer.
+/// Native: flushes the file stream, then delegates the wide character write to
+/// the public wide-stream layer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_wfile_overflow(_fp: *mut c_void, _wch: u32) -> u32 {
-    0xFFFF_FFFF // WEOF
+pub unsafe extern "C" fn _IO_wfile_overflow(fp: *mut c_void, wch: u32) -> u32 {
+    if fp.is_null() {
+        return WEOF_U32;
+    }
+    if unsafe { stdio_abi::fflush(fp) } != 0 {
+        return WEOF_U32;
+    }
+    if wch == WEOF_U32 {
+        0
+    } else {
+        unsafe { crate::wchar_abi::fputwc(wch, fp) }
+    }
 }
 
 /// `_IO_wfile_seekoff` — seek on wide file.
@@ -3489,23 +3538,25 @@ pub unsafe extern "C" fn _IO_wfile_sync(fp: *mut c_void) -> c_int {
 
 /// `_IO_wfile_underflow` — handle wide read buffer underflow.
 ///
-/// Native: returns WEOF to signal end of data.
+/// Native: peeks by reading a wide character and pushing it back.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_wfile_underflow(_fp: *mut c_void) -> u32 {
-    0xFFFF_FFFF // WEOF
+pub unsafe extern "C" fn _IO_wfile_underflow(fp: *mut c_void) -> u32 {
+    if fp.is_null() {
+        return WEOF_U32;
+    }
+    let wc = unsafe { crate::wchar_abi::fgetwc(fp) };
+    if wc != WEOF_U32 {
+        let _ = unsafe { crate::wchar_abi::ungetwc(wc, fp) };
+    }
+    wc
 }
 
-/// `_IO_wfile_xsputn` — multi-byte write for wide file stream.
+/// `_IO_wfile_xsputn` — multi-character write for wide file stream.
 ///
-/// Native: returns 0 (no data written) — wide file writing at vtable
-/// level requires the full wide-to-multibyte conversion pipeline.
+/// Native: delegates to the default wide multi-character writer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_wfile_xsputn(
-    _fp: *mut c_void,
-    _buf: *const c_void,
-    _n: usize,
-) -> usize {
-    0
+pub unsafe extern "C" fn _IO_wfile_xsputn(fp: *mut c_void, buf: *const c_void, n: usize) -> usize {
+    unsafe { _IO_wdefault_xsputn(fp, buf, n) }
 }
 
 // ---------------------------------------------------------------------------

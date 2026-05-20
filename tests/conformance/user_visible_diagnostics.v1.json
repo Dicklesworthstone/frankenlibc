@@ -234,12 +234,12 @@
       "replacement_level": "L0",
       "support_status": "Implemented",
       "semantic_join_inventory_id": "sem-stdio-vtable-helpers",
-      "semantic_class": "deterministic_fallback",
-      "decision_path": "semantic_overlay>deterministic_fallback",
+      "semantic_class": "limited_bootstrap",
+      "decision_path": "semantic_overlay>limited_bootstrap",
       "healing_action": "None",
       "diagnostic_code": "FLC-DIAG-FALLBACK",
       "user_message_id": "diag.deterministic_fallback",
-      "user_message": "__overflow has a deterministic compatibility fallback and cannot advance full stdio semantic parity without targeted fixture evidence.",
+      "user_message": "__overflow is covered by the limited libio bootstrap contract; full stdio semantic parity still needs FILE wide-data and indirect vtable fixture evidence.",
       "support_claim": "never",
       "artifact_refs": [
         "tests/conformance/semantic_contract_symbol_join.v1.json",
@@ -247,8 +247,8 @@
       ],
       "evidence_status": "current",
       "source_commit": "HEAD",
-      "failure_signature": "semantic_fallback_blocks_full_claim",
-      "expected_output": "FLC-DIAG-FALLBACK __overflow strict L0: __overflow has a deterministic compatibility fallback and cannot advance full stdio semantic parity without targeted fixture evidence."
+      "failure_signature": "semantic_bootstrap_blocks_full_claim",
+      "expected_output": "FLC-DIAG-FALLBACK __overflow strict L0: __overflow is covered by the limited libio bootstrap contract; full stdio semantic parity still needs FILE wide-data and indirect vtable fixture evidence."
     },
     {
       "scenario_id": "diag_repair_memcpy_hardened",
@@ -371,7 +371,7 @@
       "scenario_id": "negative_fallback_claim",
       "record": "diag_deterministic_fallback_overflow_strict",
       "expected_result": "claim_blocked",
-      "failure_signature": "semantic_fallback_blocks_full_claim"
+      "failure_signature": "semantic_bootstrap_blocks_full_claim"
     },
     {
       "scenario_id": "negative_denial_claim",

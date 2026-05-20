@@ -65,8 +65,8 @@
     "by_semantic_class": {
       "abort_only": 1,
       "compat_noop": 4,
-      "deterministic_fallback": 4,
-      "limited_bootstrap": 6,
+      "deterministic_fallback": 3,
+      "limited_bootstrap": 7,
       "unsupported_platform_contract": 2
     }
   },
@@ -197,11 +197,11 @@
     },
     {
       "inventory_id": "sem-stdio-vtable-helpers",
-      "surface": "glibc stdio vtable helper fallbacks",
+      "surface": "glibc stdio vtable helper bootstrap",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
       "taxonomy_status": "Implemented",
-      "semantic_class": "deterministic_fallback",
-      "semantic_parity_status": "blocked_deterministic_fallback",
+      "semantic_class": "limited_bootstrap",
+      "semantic_parity_status": "blocked_limited_bootstrap",
       "taxonomy_status_is_semantic_parity": false,
       "symbol_refs": [
         "__overflow",

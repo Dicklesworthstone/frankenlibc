@@ -244,7 +244,7 @@
       "mode_semantics_family": "Stdio",
       "repair_deny_entry_ids": [],
       "named_unsupported_or_fallback_cases": [
-        "glibc libio vtable helpers return EOF or -1 with ENOSYS",
+        "full glibc libio FILE wide-data and indirect vtable state remain limited-bootstrap coverage",
         "stdio invalid stream paths are safe-default fallbacks",
         "buffer overflow paths are bounded under hardened repair policy"
       ],

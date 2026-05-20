@@ -2163,6 +2163,34 @@ fn overflow_family_routes_through_native_stream_helpers() {
 }
 
 #[test]
+fn wide_overflow_family_routes_through_native_stream_helpers() {
+    let stream = unsafe { tmpfile() };
+    assert!(
+        !stream.is_null(),
+        "tmpfile should create a native wide test stream"
+    );
+    let wide_eof = usize::MAX as libc::wchar_t;
+
+    assert_eq!(
+        unsafe { __woverflow(stream, b'W' as libc::wchar_t) },
+        b'W' as libc::wchar_t
+    );
+    assert_eq!(
+        unsafe { __woverflow(stream, b'X' as libc::wchar_t) },
+        b'X' as libc::wchar_t
+    );
+    assert_eq!(unsafe { __woverflow(stream, wide_eof) }, 0);
+    assert_eq!(unsafe { __fseeko64(stream, 0, libc::SEEK_SET) }, 0);
+
+    assert_eq!(unsafe { __wunderflow(stream) }, b'W' as libc::wchar_t);
+    assert_eq!(unsafe { __wuflow(stream) }, b'W' as libc::wchar_t);
+    assert_eq!(unsafe { __wuflow(stream) }, b'X' as libc::wchar_t);
+    assert_eq!(unsafe { __wuflow(stream) }, wide_eof);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
 fn overflow_family_null_streams_fail_with_einval() {
     unsafe { *__errno_location() = 0 };
     let r = unsafe { __overflow(ptr::null_mut(), b'A' as c_int) };
