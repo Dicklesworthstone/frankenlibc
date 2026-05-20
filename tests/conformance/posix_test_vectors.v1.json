@@ -266,10 +266,10 @@
   },
   "coverage_summary": {
     "families_covered": 5,
-    "functions_with_vectors": 20,
-    "total_positive_vectors": 57,
-    "total_boundary_vectors": 32,
+    "functions_with_vectors": 23,
+    "total_positive_vectors": 63,
+    "total_boundary_vectors": 40,
     "total_error_vectors": 12,
-    "total_undefined_documented": 3
+    "total_undefined_documented": 2
   }
 }
