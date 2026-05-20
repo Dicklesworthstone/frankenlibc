@@ -141,14 +141,34 @@ fn l1_dashboard_fixture(generated_utc: &str, source_commit: &str, include_perf: 
 
 #[test]
 fn current_l0_release_policy_passes_without_l1_evidence() -> TestResult {
+    let levels = unique_output_path("current-l0-levels")?;
+    let readme = unique_output_path("current-l0-readme")?;
     let report = unique_output_path("current-l0-report")?;
     let log = unique_output_path("current-l0-log")?;
-    let output = run_gate(&[
-        "--report".to_owned(),
-        path_arg(&report),
-        "--log".to_owned(),
-        path_arg(&log),
-    ])?;
+    let mut levels_json =
+        read_report(&workspace_root()?.join("tests/conformance/replacement_levels.json"))?;
+    levels_json["current_level"] = serde_json::json!("L0");
+    levels_json["release_tag_policy"]["current_release_level"] = serde_json::json!("L0");
+    levels_json["release_tag_policy"]["current_release_tag_example"] =
+        serde_json::json!("v0.1.0-L0");
+    write_file(
+        &levels,
+        &(serde_json::to_string_pretty(&levels_json)? + "\n"),
+    )?;
+    write_file(&readme, "Declared replacement level claim: **L0**\n")?;
+
+    let output = run_gate_with_env(
+        &[
+            "--report".to_owned(),
+            path_arg(&report),
+            "--log".to_owned(),
+            path_arg(&log),
+        ],
+        &[
+            ("FRANKENLIBC_REPLACEMENT_LEVELS", path_arg(&levels)),
+            ("FRANKENLIBC_README", path_arg(&readme)),
+        ],
+    )?;
 
     assert!(
         output.status.success(),
@@ -160,6 +180,57 @@ fn current_l0_release_policy_passes_without_l1_evidence() -> TestResult {
     let report_json = read_report(&report)?;
     assert_eq!(report_json["status"].as_str(), Some("pass"));
     assert_eq!(report_json["current_release_level"].as_str(), Some("L0"));
+    Ok(())
+}
+
+#[test]
+fn current_l1_release_policy_passes_with_objective_evidence_bundle() -> TestResult {
+    let report = unique_output_path("current-l1-report")?;
+    let log = unique_output_path("current-l1-log")?;
+    let output = run_gate(&[
+        "--report".to_owned(),
+        path_arg(&report),
+        "--log".to_owned(),
+        path_arg(&log),
+    ])?;
+
+    assert!(
+        output.status.success(),
+        "current L1 release policy must pass with objective evidence\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = read_report(&report)?;
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["current_release_level"].as_str(), Some("L1"));
+    let claim = &report_json["claims"][0];
+    let present = claim["present_evidence"]
+        .as_array()
+        .ok_or("present_evidence must be array")?;
+    for required_ref in [
+        "support_matrix.json",
+        "tests/conformance/claim_reconciliation_report.v1.json",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+    ] {
+        assert!(
+            present
+                .iter()
+                .any(|value| value.as_str() == Some(required_ref)),
+            "current L1 claim should cite {required_ref}: {claim}"
+        );
+    }
+    let required = claim["required_evidence"]
+        .as_array()
+        .ok_or("required_evidence must be array")?;
+    assert!(
+        !required.iter().any(|value| {
+            value.as_str() == Some("tests/conformance/l1_dry_run_readiness_dashboard.v1.json")
+        }),
+        "plain L1 release policy should not require standalone-readiness dashboard rows: {claim}"
+    );
     Ok(())
 }
 

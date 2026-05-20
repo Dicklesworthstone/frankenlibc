@@ -153,11 +153,11 @@ fn manifest_binds_release_claim_control_completion_items() -> TestResult {
     let release = &manifest["required_release_control_contract"];
     assert_eq!(
         release["replacement_levels"]["current_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         release["replacement_levels"]["current_release_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         release["support_matrix_maintenance"]["native_coverage_pct"].as_f64(),
@@ -203,7 +203,7 @@ fn checker_validates_release_claim_control_contract_and_emits_report_log() -> Te
     );
     assert_eq!(
         report["release_control_summary"]["replacement_levels"]["current_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         report["release_control_summary"]["support_matrix_maintenance"]["status_counts"]
@@ -216,7 +216,7 @@ fn checker_validates_release_claim_control_contract_and_emits_report_log() -> Te
         Some("pass")
     );
     assert_eq!(
-        report["source_gate_results"]["release_claim_current_l0"]["status"].as_str(),
+        report["source_gate_results"]["release_claim_current_policy"]["status"].as_str(),
         Some("pass")
     );
 
@@ -232,7 +232,7 @@ fn checker_validates_release_claim_control_contract_and_emits_report_log() -> Te
         "release_dossier_policy_bound",
         "claim_reconciliation_bound",
         "closure_protocol_bound",
-        "release_claim_current_l0_replayed",
+        "release_claim_current_policy_replayed",
         "release_claim_control_completion_contract_pass",
     ] {
         assert!(events.contains(event), "missing event {event}");
@@ -259,7 +259,7 @@ fn checker_validates_release_claim_control_contract_and_emits_report_log() -> Te
         &out_dir.join("release_claim_control_completion_contract.current_claim.report.json"),
     )?;
     assert_eq!(current_claim["status"].as_str(), Some("pass"));
-    assert_eq!(current_claim["current_release_level"].as_str(), Some("L0"));
+    assert_eq!(current_claim["current_release_level"].as_str(), Some("L1"));
 
     Ok(())
 }
@@ -325,7 +325,7 @@ fn checker_rejects_wrong_current_level_expectation() -> TestResult {
     let out_dir = unique_out_dir(&root, "wrong-level")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_release_control_contract"]["replacement_levels"]["current_level"] =
-        json!("L1");
+        json!("L0");
     let mutated = out_dir.join("release_claim_control_wrong_level.json");
     write_json(&mutated, &manifest)?;
 

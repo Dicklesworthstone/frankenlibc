@@ -29,7 +29,7 @@
   "missing_item_bindings": [
     {
       "id": "tests.unit.primary",
-      "description": "Unit evidence pins replacement-level claim drift, support-matrix maintenance schema, current L0 release policy, and this completion manifest binding.",
+      "description": "Unit evidence pins replacement-level claim drift, support-matrix maintenance schema, legacy L0 fixture behavior, current L1 release policy, and this completion manifest binding.",
       "required_test_refs": [
         {
           "source": "replacement_levels_test",
@@ -46,6 +46,10 @@
         {
           "source": "release_claim_harness",
           "name": "current_l0_release_policy_passes_without_l1_evidence"
+        },
+        {
+          "source": "release_claim_harness",
+          "name": "current_l1_release_policy_passes_with_objective_evidence_bundle"
         },
         {
           "source": "completion_harness_test",
@@ -96,12 +100,12 @@
     "replacement_levels": {
       "schema_version": 1,
       "bead": "bd-2bu",
-      "current_level": "L0",
-      "current_release_level": "L0",
-      "current_release_tag_example": "v0.1.0-L0",
+      "current_level": "L1",
+      "current_release_level": "L1",
+      "current_release_tag_example": "v0.1.0-L1",
       "level_status": {
         "L0": "achieved",
-        "L1": "in_progress",
+        "L1": "achieved",
         "L2": "planned",
         "L3": "roadmap"
       },
@@ -125,8 +129,8 @@
         "status_validated": 4119,
         "status_invalid": 0,
         "status_valid_pct": 100.0,
-        "fixture_linked": 403,
-        "fixture_unlinked": 3716
+        "fixture_linked": 1160,
+        "fixture_unlinked": 2959
       },
       "status_counts": {
         "Implemented": 3705,
@@ -179,7 +183,7 @@
       "bead": "bd-bp8fl.6.4",
       "current_status": "pass",
       "current_release_claim_id": "current-release-policy",
-      "current_release_level": "L0",
+      "current_release_level": "L1",
       "current_actual_decision": "claim_allowed",
       "current_expected_decision": "claim_allowed",
       "required_log_fields": [
@@ -235,7 +239,7 @@
       "release_dossier_policy_bound",
       "claim_reconciliation_bound",
       "closure_protocol_bound",
-      "release_claim_current_l0_replayed",
+      "release_claim_current_policy_replayed",
       "release_claim_control_completion_contract_pass"
     ],
     "forbidden_pass_events": [

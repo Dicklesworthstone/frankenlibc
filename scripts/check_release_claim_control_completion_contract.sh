@@ -48,6 +48,7 @@ REQUIRED_TEST_REFS_BY_ITEM = {
         "claim_drift_guard_consistent_with_readme_and_release_policy",
         "maintenance_report_schema_complete",
         "current_l0_release_policy_passes_without_l1_evidence",
+        "current_l1_release_policy_passes_with_objective_evidence_bundle",
         "manifest_binds_release_claim_control_completion_items",
     },
     "tests.e2e.primary": {
@@ -74,7 +75,7 @@ REQUIRED_EVENTS = {
     "release_dossier_policy_bound",
     "claim_reconciliation_bound",
     "closure_protocol_bound",
-    "release_claim_current_l0_replayed",
+    "release_claim_current_policy_replayed",
     "release_claim_control_completion_contract_pass",
 }
 FAIL_EVENT = "release_claim_control_completion_contract_fail"
@@ -311,13 +312,13 @@ def run_current_release_claim_gate() -> dict[str, Any]:
         "exit_code": result.returncode,
         "stdout_tail": result.stdout[-2000:],
         "stderr_tail": result.stderr[-2000:],
-        "validation_mode": "executed_current_l0",
+        "validation_mode": "executed_current_policy",
         "report": rel(CURRENT_CLAIM_REPORT),
         "log": rel(CURRENT_CLAIM_LOG),
     }
-    source_gate_results["release_claim_current_l0"] = gate
+    source_gate_results["release_claim_current_policy"] = gate
     if result.returncode != 0:
-        err("release claim current L0 gate failed")
+        err("release claim current policy gate failed")
     return gate
 
 
@@ -584,8 +585,8 @@ release_control_summary["release_claim_gate"] = {
     "current_expected_decision": current_claim.get("expected_decision"),
 }
 append_event(
-    "release_claim_current_l0_replayed",
-    "pass" if source_gate_results.get("release_claim_current_l0", {}).get("status") == "pass" else "fail",
+    "release_claim_current_policy_replayed",
+    "pass" if source_gate_results.get("release_claim_current_policy", {}).get("status") == "pass" else "fail",
     [rel(CURRENT_CLAIM_REPORT), rel(CURRENT_CLAIM_LOG)],
     release_control_summary["release_claim_gate"],
 )

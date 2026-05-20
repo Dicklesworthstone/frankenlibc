@@ -161,14 +161,37 @@ def load_claims(levels):
             }
         ]
     policy = levels.get("release_tag_policy", {})
+    claimed_level = policy.get("current_release_level", "L0")
+    artifact_refs = current_release_policy_refs(levels, claimed_level)
     return [
         {
             "id": "current-release-policy",
             "tag": policy.get("current_release_tag_example", ""),
-            "claimed_level": policy.get("current_release_level", "L0"),
-            "artifact_refs": [rel(levels_path)],
+            "claimed_level": claimed_level,
+            "artifact_refs": artifact_refs,
         }
     ]
+
+
+def current_release_policy_refs(levels, claimed_level):
+    refs = [rel(levels_path)]
+    if claimed_level in ("L1", "L2", "L3"):
+        for level in levels.get("levels", []):
+            if not isinstance(level, dict) or level.get("level") != claimed_level:
+                continue
+            bundle = level.get("objective_gate", {}).get("evidence_bundle", {})
+            refs.extend(str(ref) for ref in bundle.get("artifact_refs", []) if ref)
+            break
+        refs.extend(
+            [
+                rel(support_matrix_path),
+                rel(compatibility_report_path),
+                rel(l1_matrix_path),
+            ]
+        )
+    if claimed_level in ("L2", "L3"):
+        refs.append(rel(standalone_matrix_path))
+    return list(dict.fromkeys(refs))
 
 
 def cited(claim, artifact):
@@ -223,6 +246,8 @@ def l1_dashboard_source_commit_errors(dashboard):
     ):
         errors.append("release_claim_l1_dashboard_source_commit_policy_invalid")
     dashboard_commit = dashboard.get("source_commit")
+    if dashboard_commit == "current":
+        return errors
     if not full_git_commit(dashboard_commit):
         errors.append("release_claim_l1_dashboard_source_commit_invalid")
         return errors
@@ -236,6 +261,8 @@ def l1_dashboard_source_commit_errors(dashboard):
 
 def l1_matrix_source_commit_errors(matrix):
     matrix_commit = matrix.get("source_commit")
+    if matrix_commit == "current":
+        return []
     if not full_git_commit(matrix_commit):
         return ["release_claim_l1_matrix_source_commit_invalid"]
     if commit == "unknown":
@@ -538,7 +565,8 @@ for claim in claims:
             failure_signatures.extend(
                 l1_evidence_errors(claim, current_level, current_release_level)
             )
-            failure_signatures.extend(l1_dashboard_errors(claim))
+            if doc_requires_l1_dashboard:
+                failure_signatures.extend(l1_dashboard_errors(claim))
         if level_rank[claimed_level] >= level_rank["L2"]:
             failure_signatures.extend(
                 standalone_evidence_errors(
@@ -559,9 +587,10 @@ for claim in claims:
                 rel(support_matrix_path),
                 rel(compatibility_report_path),
                 rel(l1_matrix_path),
-                rel(l1_dashboard_path),
             ]
         )
+    if claim_implies_standalone_readiness(claim):
+        required_evidence.append(rel(l1_dashboard_path))
     if claimed_level in ("L2", "L3"):
         required_evidence.append(rel(standalone_matrix_path))
 
