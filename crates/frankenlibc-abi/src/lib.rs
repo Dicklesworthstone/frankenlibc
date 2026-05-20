@@ -1,6 +1,6 @@
 #![feature(c_variadic)]
-#![feature(rtm_target_feature)]
-#![feature(stdarch_x86_rtm)]
+#![cfg_attr(target_arch = "x86_64", feature(rtm_target_feature))]
+#![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_rtm))]
 #![feature(thread_local)]
 #![allow(unused_features)]
 // All extern "C" ABI exports accept raw pointers from C callers; the membrane

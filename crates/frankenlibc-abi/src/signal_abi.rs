@@ -448,14 +448,17 @@ fn is_default_or_ignore_handler(handler: usize) -> bool {
     handler == libc::SIG_DFL || handler == libc::SIG_IGN
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn signal_handler_trampoline_addr() -> usize {
     signal_handler_trampoline as *const () as usize
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn signal_siginfo_trampoline_addr() -> usize {
     signal_siginfo_trampoline as *const () as usize
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn is_signal_trampoline(handler: usize) -> bool {
     handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
 }
@@ -611,6 +614,7 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     unsafe { dispatch_registered_handler(signum, info, context) };
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn rewrite_old_sigaction(oldact_ref: &mut libc::sigaction, prev_handler: usize, prev_flags: usize) {
     if is_signal_trampoline(oldact_ref.sa_sigaction) && prev_handler != 0 {
         let kernel_flags = oldact_ref.sa_flags;
@@ -1225,104 +1229,111 @@ pub unsafe extern "C" fn sigaction(
         return -1;
     }
 
-    // Linux `rt_sigaction` expects the kernel sigset size (`sizeof(unsigned long)`),
-    // not libc's userspace `sigset_t` size.
-    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
-    let mut kernel_act = KernelSigaction::zeroed();
-    let mut kernel_oldact = KernelSigaction::zeroed();
-    let kernel_act_ptr = if act.is_null() {
-        std::ptr::null()
-    } else {
-        // SAFETY: act was supplied by the caller for this syscall wrapper.
-        kernel_act = user_to_kernel_sigaction(unsafe { &*act });
-        let user_handler = kernel_act.sa_handler;
-        if !is_default_or_ignore_handler(user_handler) {
-            if kernel_act.sa_flags & libc::SA_SIGINFO as usize != 0 {
-                kernel_act.sa_handler = signal_siginfo_trampoline_addr();
-            } else {
-                kernel_act.sa_handler = signal_handler_trampoline_addr();
-            }
-            if kernel_act.sa_flags & SA_RESTORER_FLAG as usize == 0 || kernel_act.sa_restorer == 0 {
-                kernel_act.sa_flags |= SA_RESTORER_FLAG as usize;
-                kernel_act.sa_restorer = signal_restorer_trampoline_addr();
-            }
-        }
-        &kernel_act as *const KernelSigaction
-    };
-    let kernel_oldact_ptr = if oldact.is_null() {
-        std::ptr::null_mut()
-    } else {
-        &mut kernel_oldact as *mut KernelSigaction
-    };
-    let (prev_handler, prev_flags) = signal_slot(signum)
-        .map(|slot| {
-            (
-                slot.handler.load(Ordering::Relaxed),
-                slot.flags.load(Ordering::Relaxed),
-            )
-        })
-        .unwrap_or((0, 0));
-
-    // Pre-compute the user handler+flags that the trampoline will dispatch
-    // for this signal, then write them into our per-signal slot BEFORE
-    // installing the kernel-level trampoline. The kernel trampoline reads
-    // the slot on every delivery; if the slot were updated AFTER the
-    // syscall, a signal arriving in the window between the syscall and
-    // the slot store would either invoke the previous handler (stale
-    // entry) or be silently dropped (zero entry). Writing first ensures
-    // the slot is always at-least as current as what the kernel will use.
-    // (REVIEW round 2: sigaction handler-install TOCTOU.)
-    let (new_handler, new_flags) = if act.is_null() {
-        (prev_handler, prev_flags)
-    } else {
-        let raw_handler = kernel_act.sa_handler;
-        if is_default_or_ignore_handler(raw_handler) {
-            (raw_handler, kernel_act.sa_flags)
-        } else {
-            // SAFETY: act is non-null in this branch.
-            let user_act = unsafe { &*act };
-            (user_act.sa_sigaction, user_act.sa_flags as usize)
-        }
-    };
-    if !act.is_null()
-        && let Some(slot) = signal_slot(signum)
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
-        slot.handler.store(new_handler, Ordering::Relaxed);
-        slot.flags.store(new_flags, Ordering::Relaxed);
+        let _ = (act, oldact);
+        unsafe { set_abi_errno(errno::ENOSYS) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
+        -1
     }
 
-    let rc = match unsafe {
-        raw_syscall::sys_rt_sigaction(
-            signum,
-            kernel_act_ptr as *const u8,
-            kernel_oldact_ptr as *mut u8,
-            kernel_sigset_size,
-        )
-    } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    };
-    let adverse = rc != 0;
-    if adverse {
-        // Roll back the slot to its pre-call state so the trampoline never
-        // dispatches a handler that the kernel never accepted.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        // Linux `rt_sigaction` expects the kernel sigset size (`sizeof(unsigned long)`),
+        // not libc's userspace `sigset_t` size.
+        let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+        let mut kernel_act = KernelSigaction::zeroed();
+        let mut kernel_oldact = KernelSigaction::zeroed();
+        let kernel_act_ptr = if act.is_null() {
+            std::ptr::null()
+        } else {
+            // SAFETY: act was supplied by the caller for this syscall wrapper.
+            kernel_act = user_to_kernel_sigaction(unsafe { &*act });
+            let user_handler = kernel_act.sa_handler;
+            if !is_default_or_ignore_handler(user_handler) {
+                if kernel_act.sa_flags & libc::SA_SIGINFO as usize != 0 {
+                    kernel_act.sa_handler = signal_siginfo_trampoline_addr();
+                } else {
+                    kernel_act.sa_handler = signal_handler_trampoline_addr();
+                }
+                if kernel_act.sa_flags & SA_RESTORER_FLAG as usize == 0
+                    || kernel_act.sa_restorer == 0
+                {
+                    kernel_act.sa_flags |= SA_RESTORER_FLAG as usize;
+                    kernel_act.sa_restorer = signal_restorer_trampoline_addr();
+                }
+            }
+            &kernel_act as *const KernelSigaction
+        };
+        let kernel_oldact_ptr = if oldact.is_null() {
+            std::ptr::null_mut()
+        } else {
+            &mut kernel_oldact as *mut KernelSigaction
+        };
+        let (prev_handler, prev_flags) = signal_slot(signum)
+            .map(|slot| {
+                (
+                    slot.handler.load(Ordering::Relaxed),
+                    slot.flags.load(Ordering::Relaxed),
+                )
+            })
+            .unwrap_or((0, 0));
+
+        // Pre-compute the user handler+flags that the trampoline will dispatch
+        // before installing the kernel-level trampoline, so delivery cannot see
+        // a stale handler slot.
+        let (new_handler, new_flags) = if act.is_null() {
+            (prev_handler, prev_flags)
+        } else {
+            let raw_handler = kernel_act.sa_handler;
+            if is_default_or_ignore_handler(raw_handler) {
+                (raw_handler, kernel_act.sa_flags)
+            } else {
+                // SAFETY: act is non-null in this branch.
+                let user_act = unsafe { &*act };
+                (user_act.sa_sigaction, user_act.sa_flags as usize)
+            }
+        };
         if !act.is_null()
             && let Some(slot) = signal_slot(signum)
         {
-            slot.handler.store(prev_handler, Ordering::Relaxed);
-            slot.flags.store(prev_flags, Ordering::Relaxed);
+            slot.handler.store(new_handler, Ordering::Relaxed);
+            slot.flags.store(new_flags, Ordering::Relaxed);
         }
-    } else if !oldact.is_null() {
-        let mut user_oldact = kernel_to_user_sigaction(&kernel_oldact);
-        rewrite_old_sigaction(&mut user_oldact, prev_handler, prev_flags);
-        // SAFETY: oldact is caller-provided writable storage.
-        unsafe { *oldact = user_oldact };
+
+        let rc = match unsafe {
+            raw_syscall::sys_rt_sigaction(
+                signum,
+                kernel_act_ptr as *const u8,
+                kernel_oldact_ptr as *mut u8,
+                kernel_sigset_size,
+            )
+        } {
+            Ok(()) => 0,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+        let adverse = rc != 0;
+        if adverse {
+            // Roll back the slot to its pre-call state so the trampoline never
+            // dispatches a handler that the kernel never accepted.
+            if !act.is_null()
+                && let Some(slot) = signal_slot(signum)
+            {
+                slot.handler.store(prev_handler, Ordering::Relaxed);
+                slot.flags.store(prev_flags, Ordering::Relaxed);
+            }
+        } else if !oldact.is_null() {
+            let mut user_oldact = kernel_to_user_sigaction(&kernel_oldact);
+            rewrite_old_sigaction(&mut user_oldact, prev_handler, prev_flags);
+            // SAFETY: oldact is caller-provided writable storage.
+            unsafe { *oldact = user_oldact };
+        }
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+        rc
     }
-    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
-    rc
 }
 
 // ---------------------------------------------------------------------------

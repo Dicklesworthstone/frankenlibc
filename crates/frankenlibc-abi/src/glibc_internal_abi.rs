@@ -24,7 +24,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 type c_uint = u32;
 type c_long = i64;
 type c_ulong = u64;
-type WcharT = i32;
+type WcharT = libc::wchar_t;
 type SizeT = usize;
 type SSizeT = isize;
 
@@ -3061,6 +3061,7 @@ pub unsafe extern "C" fn __bsd_getpgrp(pid: c_int) -> c_int {
 // __clone: glibc-compatible clone wrapper (must be asm — child runs on different stack).
 // Signature: __clone(fn, child_stack, flags, arg) -> pid_t or -1
 // x86_64 C ABI: rdi=fn, rsi=child_stack, edx=flags, rcx=arg
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[unsafe(naked)]
 pub unsafe extern "C" fn __clone(
@@ -3126,6 +3127,18 @@ pub unsafe extern "C" fn __clone(
         "mov eax, -1",
         "ret",
     )
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __clone(
+    _fn: *mut c_void,
+    _stack: *mut c_void,
+    _flags: c_int,
+    _arg: *mut c_void,
+) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
 }
 // __close: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3493,13 +3506,7 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
 // __poll: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __poll(fds: *mut c_void, nfds: c_ulong, timeout: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_poll(fds as *mut u8, nfds as usize, timeout) } {
-        Ok(n) => n,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::poll_abi::poll(fds.cast::<libc::pollfd>(), nfds as libc::nfds_t, timeout) }
 }
 // __posix_getopt → getopt (POSIX semantics — same as getopt)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3650,20 +3657,14 @@ pub unsafe extern "C" fn __select(
     exceptfds: *mut c_void,
     timeout: *mut c_void,
 ) -> c_int {
-    match unsafe {
-        raw_syscall::sys_select(
+    unsafe {
+        crate::poll_abi::select(
             nfds,
-            readfds as *mut u8,
-            writefds as *mut u8,
-            exceptfds as *mut u8,
-            timeout as *mut u8,
+            readfds.cast::<libc::fd_set>(),
+            writefds.cast::<libc::fd_set>(),
+            exceptfds.cast::<libc::fd_set>(),
+            timeout.cast::<libc::timeval>(),
         )
-    } {
-        Ok(n) => n,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
     }
 }
 // __send: native syscall
@@ -4261,7 +4262,7 @@ pub static mut h_nerr: c_int = 5;
 // Use static mut since raw pointers are not Sync
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut sys_sigabbrev: [*const c_char; 32] = {
-    const fn s(b: &[u8]) -> *const i8 {
+    const fn s(b: &[u8]) -> *const c_char {
         b.as_ptr().cast()
     }
     [
@@ -4413,6 +4414,7 @@ pub unsafe extern "C" fn _toupper(c: c_int) -> c_int {
     unsafe { *crate::ctype_abi::toupper_table_ptr().offset(c as isize) }
 }
 // __x86_get_cpuid_feature_leaf: native cpuid instruction
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __x86_get_cpuid_feature_leaf(leaf: c_uint, info: *mut c_void) -> c_int {
     if info.is_null() {
@@ -4436,6 +4438,12 @@ pub unsafe extern "C" fn __x86_get_cpuid_feature_leaf(leaf: c_uint, info: *mut c
     }
     1
 }
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __x86_get_cpuid_feature_leaf(_leaf: c_uint, _info: *mut c_void) -> c_int {
+    0
+}
 // __fentry__: GCC -pg function entry hook — no-op stub
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fentry__() {}
@@ -4456,19 +4464,19 @@ pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
 pub unsafe extern "C" fn __woverflow(fp: *mut c_void, wc: WcharT) -> WcharT {
     let _ = (fp, wc);
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    usize::MAX as WcharT
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wuflow(fp: *mut c_void) -> WcharT {
     let _ = fp;
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    usize::MAX as WcharT
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wunderflow(fp: *mut c_void) -> WcharT {
     let _ = fp;
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    usize::MAX as WcharT
 }
 
 // Profiling — no-op stubs (profiling data is unused in frankenlibc)
@@ -9596,7 +9604,7 @@ pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
         if c == 0 {
             break;
         }
-        has_newline = c == b'\n' as i8;
+        has_newline = c == b'\n' as c_char;
         len += 1;
     }
 

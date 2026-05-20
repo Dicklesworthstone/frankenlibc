@@ -81,6 +81,7 @@ fn zeroed_fenv() -> FenvT {
 // ---------------------------------------------------------------------------
 
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 unsafe fn read_x87_cw() -> u16 {
     let mut cw: u16 = 0;
     unsafe {
@@ -94,6 +95,13 @@ unsafe fn read_x87_cw() -> u16 {
 }
 
 #[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn read_x87_cw() -> u16 {
+    X87_DEFAULT_CW
+}
+
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
 unsafe fn write_x87_cw(cw: u16) {
     unsafe {
         core::arch::asm!(
@@ -105,6 +113,11 @@ unsafe fn write_x87_cw(cw: u16) {
 }
 
 #[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn write_x87_cw(_cw: u16) {}
+
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
 unsafe fn read_x87_sw() -> u16 {
     let mut sw: u16 = 0;
     unsafe {
@@ -118,6 +131,13 @@ unsafe fn read_x87_sw() -> u16 {
 }
 
 #[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn read_x87_sw() -> u16 {
+    0
+}
+
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
 unsafe fn read_mxcsr() -> u32 {
     let mut mxcsr: u32 = 0;
     unsafe {
@@ -131,6 +151,13 @@ unsafe fn read_mxcsr() -> u32 {
 }
 
 #[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn read_mxcsr() -> u32 {
+    MXCSR_DEFAULT
+}
+
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
 unsafe fn write_mxcsr(mxcsr: u32) {
     unsafe {
         core::arch::asm!(
@@ -141,8 +168,13 @@ unsafe fn write_mxcsr(mxcsr: u32) {
     }
 }
 
+#[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn write_mxcsr(_mxcsr: u32) {}
+
 /// `fnstenv` stores the full x87 environment (28 bytes) and masks all exceptions.
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 unsafe fn store_x87_env(env: *mut FenvT) {
     unsafe {
         core::arch::asm!(
@@ -153,8 +185,17 @@ unsafe fn store_x87_env(env: *mut FenvT) {
     }
 }
 
+#[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn store_x87_env(env: *mut FenvT) {
+    if !env.is_null() {
+        unsafe { *env = zeroed_fenv() };
+    }
+}
+
 /// `fldenv` loads the full x87 environment (28 bytes).
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 unsafe fn load_x87_env(env: *const FenvT) {
     unsafe {
         core::arch::asm!(
@@ -164,6 +205,10 @@ unsafe fn load_x87_env(env: *const FenvT) {
         );
     }
 }
+
+#[inline(always)]
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn load_x87_env(_env: *const FenvT) {}
 
 // ---------------------------------------------------------------------------
 // Rounding mode control
@@ -328,6 +373,7 @@ pub unsafe extern "C" fn fesetenv(envp: *const c_void) -> c_int {
     if envp as usize == FE_DFL_ENV_SENTINEL {
         // Reset to default: fninit resets x87, then set default MXCSR
         unsafe {
+            #[cfg(target_arch = "x86_64")]
             core::arch::asm!("fninit", options(nostack));
             write_x87_cw(X87_DEFAULT_CW);
             write_mxcsr(MXCSR_DEFAULT);
@@ -365,6 +411,7 @@ pub unsafe extern "C" fn feholdexcept(envp: *mut c_void) -> c_int {
         (*envp).mxcsr = read_mxcsr();
 
         // Clear pending x87 exceptions
+        #[cfg(target_arch = "x86_64")]
         core::arch::asm!("fnclex", options(nostack, preserves_flags));
 
         // Clear MXCSR exception flags, set all exception masks

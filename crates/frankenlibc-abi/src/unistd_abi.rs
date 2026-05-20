@@ -19606,6 +19606,7 @@ pub unsafe extern "C" fn syscall(number: c_long, mut args: ...) -> c_long {
     let ret: c_long;
     // SAFETY: Direct syscall with caller-provided number and arguments.
     unsafe {
+        #[cfg(target_arch = "x86_64")]
         std::arch::asm!(
             "syscall",
             inlateout("rax") number => ret,
@@ -19617,6 +19618,19 @@ pub unsafe extern "C" fn syscall(number: c_long, mut args: ...) -> c_long {
             in("r9") a6,
             lateout("rcx") _,
             lateout("r11") _,
+            options(nostack),
+        );
+
+        #[cfg(target_arch = "aarch64")]
+        std::arch::asm!(
+            "svc 0",
+            in("x8") number,
+            inlateout("x0") a1 => ret,
+            in("x1") a2,
+            in("x2") a3,
+            in("x3") a4,
+            in("x4") a5,
+            in("x5") a6,
             options(nostack),
         );
     }
@@ -21798,6 +21812,7 @@ pub unsafe extern "C" fn obstack_vprintf(
 
 /// `getcontext` — save current execution context (x86_64 native).
 /// Saves all callee-saved registers, signal mask, and return address into ucontext_t.
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getcontext(ucp: *mut libc::ucontext_t) -> c_int {
     if ucp.is_null() {
@@ -21860,6 +21875,7 @@ pub unsafe extern "C" fn getcontext(ucp: *mut libc::ucontext_t) -> c_int {
 
 /// `setcontext` — restore execution context (x86_64 native).
 /// Restores registers and jumps to saved return address. Does not return on success.
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setcontext(ucp: *const libc::ucontext_t) -> c_int {
     if ucp.is_null() {
@@ -21908,6 +21924,7 @@ pub unsafe extern "C" fn setcontext(ucp: *const libc::ucontext_t) -> c_int {
 /// Sets up the context to call `func` with `argc` integer arguments on the
 /// stack pointed to by `uc_stack`. When `func` returns, execution continues
 /// at `uc_link` (if set) or the process exits.
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn makecontext(
     ucp: *mut libc::ucontext_t,
@@ -21981,6 +21998,7 @@ pub unsafe extern "C" fn makecontext(
 
 /// Trampoline called when the function passed to `makecontext` returns.
 /// Switches to `uc_link` if set, otherwise exits the process.
+#[cfg(target_arch = "x86_64")]
 unsafe extern "C" fn ucontext_trampoline() {
     // r12 holds the uc_link pointer (set by makecontext)
     let uc_link: u64;
@@ -21995,6 +22013,7 @@ unsafe extern "C" fn ucontext_trampoline() {
 }
 
 /// `swapcontext` — save current context and switch to new context (x86_64 native).
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn swapcontext(
     oucp: *mut libc::ucontext_t,
@@ -22022,6 +22041,40 @@ pub unsafe extern "C" fn swapcontext(
     // Now switch to the new context
     unsafe { setcontext(ucp) };
     // setcontext does not return on success
+    -1
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getcontext(_ucp: *mut libc::ucontext_t) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setcontext(_ucp: *const libc::ucontext_t) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn makecontext(
+    _ucp: *mut libc::ucontext_t,
+    _func: Option<unsafe extern "C" fn()>,
+    _argc: c_int,
+    mut _args: ...
+) {
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn swapcontext(
+    _oucp: *mut libc::ucontext_t,
+    _ucp: *const libc::ucontext_t,
+) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
     -1
 }
 
@@ -23531,6 +23584,7 @@ pub unsafe extern "C" fn mbrtoc8(
 // ===========================================================================
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
     // Read PKRU register via RDPKRU
     // Fallback: use the syscall interface
@@ -23550,6 +23604,7 @@ pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
     let mut pkru: u32;
     let edx: u32;
@@ -23575,6 +23630,20 @@ pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
         );
     }
     0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(not(target_arch = "x86_64"))]
+pub unsafe extern "C" fn pkey_get(_pkey: c_int) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(not(target_arch = "x86_64"))]
+pub unsafe extern "C" fn pkey_set(_pkey: c_int, _rights: c_int) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
 }
 
 // ===========================================================================
@@ -24404,8 +24473,8 @@ pub unsafe extern "C" fn logout(line: *const c_char) -> c_int {
     };
     let _ =
         unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
-    entry.ut_tv.tv_sec = ts.tv_sec as i32;
-    entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
+    entry.ut_tv.tv_sec = ts.tv_sec as _;
+    entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as _;
 
     // Write back
     unsafe { pututxline(entry as *const libc::utmpx) };
@@ -24494,8 +24563,8 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
     };
     let _ =
         unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
-    entry.ut_tv.tv_sec = ts.tv_sec as i32;
-    entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
+    entry.ut_tv.tv_sec = ts.tv_sec as _;
+    entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as _;
 
     unsafe {
         updwtmp(

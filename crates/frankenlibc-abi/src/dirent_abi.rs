@@ -71,8 +71,8 @@ fn write_dirent(dst: *mut libc::dirent, entry: &dirent_core::DirEntry, d_reclen:
         (*dst).d_type = entry.d_type;
         let name_dst = &mut (&mut (*dst).d_name)[..];
         let copy_len = entry.d_name.len().min(name_dst.len().saturating_sub(1));
-        for (i, &b) in entry.d_name[..copy_len].iter().enumerate() {
-            name_dst[i] = b as i8;
+        for (dst_slot, &b) in name_dst.iter_mut().take(copy_len).zip(entry.d_name.iter()) {
+            *dst_slot = b as libc::c_char;
         }
         if let Some(last) = name_dst.get_mut(copy_len) {
             *last = 0;
