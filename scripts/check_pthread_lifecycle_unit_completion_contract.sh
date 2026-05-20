@@ -15,6 +15,7 @@ import hashlib
 import json
 import pathlib
 import re
+import shlex
 import sys
 from collections import Counter
 from typing import Any
@@ -196,11 +197,43 @@ def string_list(value: Any, context: str) -> list[str]:
     return list(value)
 
 
+def command_contract_failures(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        return [f"command is not shell-tokenizable: {command}: {exc}"]
+    if "cargo" not in tokens:
+        return []
+
+    failures: list[str] = []
+    cargo_index = tokens.index("cargo")
+    try:
+        rch_index = tokens.index("rch")
+    except ValueError:
+        failures.append(f"cargo command must run through rch exec: {command}")
+        return failures
+
+    if rch_index > cargo_index:
+        failures.append(f"rch must appear before cargo: {command}")
+        return failures
+    if "RCH_REQUIRE_REMOTE=1" not in tokens[:rch_index]:
+        failures.append(f"cargo command must set RCH_REQUIRE_REMOTE=1 before rch: {command}")
+    if tokens[rch_index + 1 : rch_index + 3] != ["exec", "--"]:
+        failures.append(f"cargo command must use 'rch exec --': {command}")
+
+    payload = tokens[rch_index + 3 : cargo_index]
+    if not payload or payload[0] != "env":
+        failures.append(f"cargo command must place env assignments inside rch payload: {command}")
+    if not any(token.startswith("CARGO_TARGET_DIR=") for token in payload[1:]):
+        failures.append(f"cargo command must set CARGO_TARGET_DIR inside rch env payload: {command}")
+    return failures
+
+
 def validate_rch_commands(section: dict[str, Any], section_name: str) -> list[str]:
     commands = string_list(section.get("required_commands"), f"{section_name}.required_commands")
     for command in commands:
-        if "cargo " in command:
-            require(command.startswith("rch exec --"), f"non-rch cargo validation command: {command}")
+        for failure in command_contract_failures(command):
+            err(f"{section_name}.required_commands contract failed: {failure}")
     return commands
 
 

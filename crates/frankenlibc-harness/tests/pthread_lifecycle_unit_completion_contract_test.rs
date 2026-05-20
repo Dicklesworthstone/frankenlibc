@@ -297,8 +297,66 @@ fn checker_rejects_non_rch_cargo_validation_command() -> TestResult {
         errors.iter().any(|error| error
             .as_str()
             .unwrap_or_default()
-            .contains("non-rch cargo validation command")),
+            .contains("cargo command must run through rch exec")),
         "expected non-rch command error in {errors:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_required_command_without_remote_requirement() -> TestResult {
+    let root = repo_root()?;
+    let out_dir = unique_out_dir(&root, "missing_rch_remote")?;
+    let mut manifest = read_json(&contract_path(&root))?;
+    let command = manifest["completion_debt_evidence"]["unit_primary"]["required_commands"][0]
+        .as_str()
+        .ok_or("unit primary command")?
+        .replacen("RCH_REQUIRE_REMOTE=1 ", "", 1);
+    manifest["completion_debt_evidence"]["unit_primary"]["required_commands"][0] = json!(command);
+    let mutated = out_dir.join("missing_rch_remote.json");
+    write_json(&mutated, &manifest)?;
+
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert_checker_failed(&output);
+    let report =
+        read_json(&out_dir.join("pthread_lifecycle_unit_completion_contract.report.json"))?;
+    let errors = json_array(&report["errors"], "report errors")?;
+    assert!(
+        errors.iter().any(|error| error
+            .as_str()
+            .unwrap_or_default()
+            .contains("RCH_REQUIRE_REMOTE=1")),
+        "expected missing RCH_REQUIRE_REMOTE=1 error in {errors:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_required_command_without_target_dir() -> TestResult {
+    let root = repo_root()?;
+    let out_dir = unique_out_dir(&root, "missing_cargo_target_dir")?;
+    let mut manifest = read_json(&contract_path(&root))?;
+    let command = manifest["completion_debt_evidence"]["unit_primary"]["required_commands"][0]
+        .as_str()
+        .ok_or("unit primary command")?
+        .replacen("env CARGO_TARGET_DIR=<target> ", "", 1);
+    manifest["completion_debt_evidence"]["unit_primary"]["required_commands"][0] = json!(command);
+    let mutated = out_dir.join("missing_cargo_target_dir.json");
+    write_json(&mutated, &manifest)?;
+
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert_checker_failed(&output);
+    let report =
+        read_json(&out_dir.join("pthread_lifecycle_unit_completion_contract.report.json"))?;
+    let errors = json_array(&report["errors"], "report errors")?;
+    assert!(
+        errors.iter().any(|error| error
+            .as_str()
+            .unwrap_or_default()
+            .contains("CARGO_TARGET_DIR")),
+        "expected missing CARGO_TARGET_DIR error in {errors:?}"
     );
 
     Ok(())

@@ -351,17 +351,17 @@
         }
       ],
       "required_commands": [
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_mutex_core_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_cond_core_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_rwlock_core_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_rwlock_trylock_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_once_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_tsd_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_create_join_parallel_batch_stress -- --ignored --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-core --test pthread_mutex_contract_matrix_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test bd1f35_thread_stress_artifacts_test -- --nocapture",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test pthread_lifecycle_unit_completion_contract_test -- --nocapture"
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_mutex_core_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_cond_core_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_rwlock_core_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_rwlock_trylock_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_once_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_tsd_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_create_join_parallel_batch_stress -- --ignored --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-core --test pthread_mutex_contract_matrix_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test bd1f35_thread_stress_artifacts_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test pthread_lifecycle_unit_completion_contract_test -- --nocapture"
       ]
     }
   }
