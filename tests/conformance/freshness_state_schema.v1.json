@@ -1,0 +1,89 @@
+{
+  "schema_version": "freshness_state_schema.v1",
+  "bead_id": "bd-3yr14.1",
+  "artifact_field": "freshness_state",
+  "applies_to": "canonical_conformance_artifact",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-20T23:20:00Z",
+    "source_commit": "b98f14e5d2e82707d12d79167dce11f9abae0d4d",
+    "generator_command": "cargo test -p frankenlibc-harness --test freshness_state_schema_test",
+    "tool_version": "frankenlibc-harness 0.1.0",
+    "chain_hash": "15694b99216cc19a2942993b6b5055ac68aa58217efcb6be71b17cdb0f6da3d3"
+  },
+  "required_fields": [
+    {
+      "name": "generated_at_utc",
+      "type": "utc_timestamp",
+      "required": true,
+      "failure_signature": "missing_freshness_state_generated_at_utc"
+    },
+    {
+      "name": "source_commit",
+      "type": "git_commit_hex40",
+      "required": true,
+      "failure_signature": "missing_freshness_state_source_commit"
+    },
+    {
+      "name": "generator_command",
+      "type": "non_empty_string",
+      "required": true,
+      "failure_signature": "missing_freshness_state_generator_command"
+    },
+    {
+      "name": "tool_version",
+      "type": "non_empty_string",
+      "required": true,
+      "failure_signature": "missing_freshness_state_tool_version"
+    },
+    {
+      "name": "chain_hash",
+      "type": "hex64",
+      "required": true,
+      "failure_signature": "missing_freshness_state_chain_hash"
+    }
+  ],
+  "gate_contract": {
+    "validator": "frankenlibc_harness::freshness_state::validate_freshness_state",
+    "passes_when": "freshness_state is an object and all required fields are present with valid shapes",
+    "fails_when": "freshness_state is absent, not an object, missing a required field, or contains an invalid source_commit/generated_at_utc/chain_hash shape",
+    "migration_scope": "WS-0 follow-up beads apply this schema to every existing canonical conformance artifact and ledger entry"
+  },
+  "positive_fixture": {
+    "schema_version": "example_canonical_artifact.v1",
+    "artifact_id": "freshness_state_schema_positive_fixture",
+    "freshness_state": {
+      "generated_at_utc": "2026-05-20T23:20:00Z",
+      "source_commit": "1111111111111111111111111111111111111111",
+      "generator_command": "cargo run -p frankenlibc-harness -- freshness-state-demo",
+      "tool_version": "frankenlibc-harness 0.1.0",
+      "chain_hash": "15694b99216cc19a2942993b6b5055ac68aa58217efcb6be71b17cdb0f6da3d3"
+    }
+  },
+  "negative_fixtures": [
+    {
+      "name": "missing_generated_at_utc",
+      "remove_field": "generated_at_utc",
+      "failure_signature": "missing_freshness_state_generated_at_utc"
+    },
+    {
+      "name": "missing_source_commit",
+      "remove_field": "source_commit",
+      "failure_signature": "missing_freshness_state_source_commit"
+    },
+    {
+      "name": "missing_generator_command",
+      "remove_field": "generator_command",
+      "failure_signature": "missing_freshness_state_generator_command"
+    },
+    {
+      "name": "missing_tool_version",
+      "remove_field": "tool_version",
+      "failure_signature": "missing_freshness_state_tool_version"
+    },
+    {
+      "name": "missing_chain_hash",
+      "remove_field": "chain_hash",
+      "failure_signature": "missing_freshness_state_chain_hash"
+    }
+  ]
+}
