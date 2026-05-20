@@ -661,6 +661,10 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
         // sign was already consumed; `start` marks where sign (or first digit) began.
         let negative = start < slice.len() && slice[start] == b'-';
         i += 2; // skip "0x" / "0X"
+        // Index just past the leading '0'. Used to rewind if no hex digits
+        // follow the prefix — `i` may be advanced further (e.g. past a '.')
+        // before the `has_digits` check, so `i - 1` is not reliable there.
+        let zero_end = i - 1;
 
         // Parse integer part of hex significand
         let mut significand: f64 = 0.0;
@@ -686,15 +690,19 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
 
         if !has_digits {
             // No hex digits after "0x" — the "0" before "x" is a valid
-            // decimal number. Rewind past the 'x'/'X' so the consumed
-            // count covers only the leading '0' (and any sign/whitespace).
-            // i was advanced by 2 for "0x", so i-1 points at the 'x'.
-            return (0.0, i - 1);
+            // decimal number. Rewind to just past the leading '0' so the
+            // consumed count covers only that '0' (and any sign/whitespace),
+            // not the 'x'/'X' or a following '.'.
+            return (0.0, zero_end);
         }
 
         // Parse binary exponent (p/P followed by optional sign and decimal digits)
         let mut bin_exp: i32 = 0;
         if i < slice.len() && (slice[i] == b'p' || slice[i] == b'P') {
+            // A 'p'/'P' with no exponent digits is a malformed exponent: the
+            // 'p' (and any sign) is not part of the number, so rewind to it —
+            // mirroring the decimal 'e'/'E' exponent handling below.
+            let saved_i = i;
             i += 1;
             let mut exp_neg = false;
             if i < slice.len() && slice[i] == b'+' {
@@ -703,13 +711,17 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
                 exp_neg = true;
                 i += 1;
             }
+            let mut has_exp_digits = false;
             while i < slice.len() && slice[i].is_ascii_digit() {
+                has_exp_digits = true;
                 bin_exp = bin_exp
                     .saturating_mul(10)
                     .saturating_add((slice[i] - b'0') as i32);
                 i += 1;
             }
-            if exp_neg {
+            if !has_exp_digits {
+                i = saved_i;
+            } else if exp_neg {
                 bin_exp = -bin_exp;
             }
         }
@@ -1152,6 +1164,37 @@ mod tests {
         let (val, consumed) = strtod(b"0xGHI\0");
         assert_eq!(val, 0.0);
         assert_eq!(consumed, 1, "no hex digits after 0x → parse '0' only");
+    }
+
+    #[test]
+    fn test_strtod_0x_dot_without_hex_digits() {
+        // "0x." has no hex digits: only the leading '0' is a valid number;
+        // the consumed count must not swallow the 'x' or the '.'.
+        let (val, consumed) = strtod(b"0x.\0");
+        assert_eq!(val, 0.0);
+        assert_eq!(consumed, 1, "should consume only the '0'");
+    }
+
+    #[test]
+    fn test_strtod_hex_float_p_without_exponent_digits() {
+        // A 'p' with no exponent digits is a malformed exponent: glibc
+        // parses "0x1" = 1.0 and rewinds to the 'p'.
+        let (val, consumed) = strtod(b"0x1p\0");
+        assert_eq!(val, 1.0);
+        assert_eq!(consumed, 3, "the 'p' must not be consumed");
+
+        let (val, consumed) = strtod(b"0x1p+\0");
+        assert_eq!(val, 1.0);
+        assert_eq!(consumed, 3, "neither the 'p' nor the '+' is consumed");
+
+        let (val, consumed) = strtod(b"0x2pZ\0");
+        assert_eq!(val, 2.0);
+        assert_eq!(consumed, 3);
+
+        // A well-formed exponent still works.
+        let (val, consumed) = strtod(b"0x1p4\0");
+        assert_eq!(val, 16.0);
+        assert_eq!(consumed, 5);
     }
 
     proptest! {

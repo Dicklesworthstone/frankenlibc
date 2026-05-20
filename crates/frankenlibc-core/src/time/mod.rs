@@ -454,8 +454,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             b'C' => {
                 // %C is the bare-decimal century (year / 100). glibc uses
                 // `%d` with no width: year 0 → "0", year 200 → "2",
-                // year 99999 → "999".
-                let century = (bd.tm_year as i64 + 1900) / 100;
+                // year 99999 → "999". The division floors toward negative
+                // infinity (glibc behavior), so year -50 → -1 and year
+                // -101 → -2; this keeps %C consistent with %y (which uses a
+                // positive 0–99 modulus) so %C%y reconstructs negative years.
+                let century = (bd.tm_year as i64 + 1900).div_euclid(100);
                 push_dec!(century, 0);
             }
             b'd' => {
@@ -628,8 +631,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_str!(b"+0000");
             }
             b'Z' => {
-                // Timezone name: UTC
-                push_str!(b"UTC");
+                // Timezone name. glibc's gmtime() sets tm_zone = "GMT", and
+                // strftime("%Z") of a gmtime-derived broken-down time prints
+                // "GMT" — not "UTC". Match that for ABI compatibility.
+                push_str!(b"GMT");
             }
             b'%' => {
                 push!(b'%');
@@ -893,6 +898,34 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = format_strftime(b"%s", &bd, &mut buf);
         assert_eq!(&buf[..n], b"1704067200");
+    }
+
+    #[test]
+    fn strftime_century_floors_for_negative_years() {
+        // %C floors year/100 (glibc behavior): year -50 -> -1, -101 -> -2.
+        let mut bd = epoch_to_broken_down(0);
+        let mut buf = [0u8; 64];
+
+        bd.tm_year = -1950; // year -50
+        let n = format_strftime(b"%C", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"-1");
+
+        bd.tm_year = -2001; // year -101
+        let n = format_strftime(b"%C", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"-2");
+
+        bd.tm_year = 100; // year 2000
+        let n = format_strftime(b"%C", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"20");
+    }
+
+    #[test]
+    fn strftime_zone_name_is_gmt() {
+        // glibc's gmtime() sets tm_zone = "GMT"; strftime("%Z") prints "GMT".
+        let bd = epoch_to_broken_down(1_704_067_200);
+        let mut buf = [0u8; 64];
+        let n = format_strftime(b"%Z", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"GMT");
     }
 
     #[test]

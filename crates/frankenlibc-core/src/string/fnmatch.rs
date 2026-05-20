@@ -5,9 +5,10 @@
 //! the abi layer adapts NUL-terminated C strings via
 //! `CStr::to_bytes()`.
 //!
-//! Supported pattern syntax: literal bytes, `?`, `*`, bracket classes
-//! with optional ranges and `!`/`^` negation, and `\X` escapes unless
-//! [`FnmatchFlags::NOESCAPE`] is set.
+//! Supported pattern syntax: literal bytes, `?`, `*`, bracket expressions
+//! with optional ranges and `!`/`^` negation, POSIX character classes
+//! (`[:alpha:]` …), collating elements (`[.x.]`) and equivalence classes
+//! (`[=x=]`), and `\X` escapes unless [`FnmatchFlags::NOESCAPE`] is set.
 //!
 //! Flag bits match POSIX/glibc `<fnmatch.h>` so the abi layer can pass
 //! the user's `c_int` flags through unchanged.
@@ -101,6 +102,94 @@ fn classify_bracket(pat: &[u8], pi: usize) -> BracketShape {
         content_count += 1;
         scan += 1;
     }
+}
+
+/// ASCII case-swap (`A`↔`a`); other bytes are returned unchanged. Used so
+/// [`posix_class_match`] can honor [`FnmatchFlags::CASEFOLD`] for the
+/// `[:upper:]` / `[:lower:]` classes.
+fn swap_ascii_case(c: u8) -> u8 {
+    if c.is_ascii_uppercase() {
+        c.to_ascii_lowercase()
+    } else if c.is_ascii_lowercase() {
+        c.to_ascii_uppercase()
+    } else {
+        c
+    }
+}
+
+/// Test `c` against a POSIX named character class. Returns `None` when
+/// `name` is not one of the twelve POSIX classes — the caller then treats
+/// the enclosing `[` as a literal byte.
+fn posix_class_match(name: &[u8], c: u8) -> Option<bool> {
+    let hit = match name {
+        b"alpha" => c.is_ascii_alphabetic(),
+        b"digit" => c.is_ascii_digit(),
+        b"alnum" => c.is_ascii_alphanumeric(),
+        b"upper" => c.is_ascii_uppercase(),
+        b"lower" => c.is_ascii_lowercase(),
+        // POSIX `space`: ' ' \t \n \v \f \r  (0x20 and 0x09..=0x0d).
+        b"space" => c == b' ' || (b'\t'..=b'\r').contains(&c),
+        b"blank" => c == b' ' || c == b'\t',
+        b"print" => c.is_ascii_graphic() || c == b' ',
+        b"graph" => c.is_ascii_graphic(),
+        b"cntrl" => c.is_ascii_control(),
+        b"punct" => c.is_ascii_punctuation(),
+        b"xdigit" => c.is_ascii_hexdigit(),
+        _ => return None,
+    };
+    Some(hit)
+}
+
+/// Parse a POSIX bracket sub-expression that begins at `pat[open] == b'['`
+/// with `pat[open + 1] == kind` — `:` (character class), `.` (collating
+/// element), or `=` (equivalence class).
+///
+/// On success returns `(next_pi, member)` where `next_pi` is the index just
+/// past the closing `]` and `member` reports whether `c` belongs to the
+/// sub-expression. Returns `None` only when the sub-expression is not even
+/// structurally closed (no `kind]` terminator); the caller then treats the
+/// leading `[` as an ordinary literal byte. A structurally-closed but
+/// unrecognized sub-expression (unknown class name, multi-byte collating
+/// element) is consumed and matches nothing — as glibc rejects it too.
+fn parse_bracket_subexpr(
+    pat: &[u8],
+    open: usize,
+    kind: u8,
+    c: u8,
+    casefold: bool,
+) -> Option<(usize, bool)> {
+    let content_start = open + 2;
+    let mut j = content_start;
+    loop {
+        let b = *pat.get(j)?;
+        if b == kind && pat.get(j + 1) == Some(&b']') {
+            break;
+        }
+        j += 1;
+    }
+    let content = &pat[content_start..j];
+    let next_pi = j + 2; // index just past `kind` and `]`
+    let member = match kind {
+        // Character class. An unrecognized class name is a well-formed
+        // sub-expression that matches nothing.
+        b':' => match posix_class_match(content, c) {
+            Some(true) => true,
+            Some(false) => casefold && posix_class_match(content, swap_ascii_case(c)) == Some(true),
+            None => false,
+        },
+        // Collating element / equivalence class. The C locale has only
+        // single-byte elements; anything else matches nothing.
+        b'.' | b'=' => {
+            content.len() == 1
+                && if casefold {
+                    content[0].eq_ignore_ascii_case(&c)
+                } else {
+                    content[0] == c
+                }
+        }
+        _ => return None,
+    };
+    Some((next_pi, member))
 }
 
 /// Match `text` against `pattern` per POSIX fnmatch semantics + the
@@ -272,6 +361,23 @@ fn fnmatch_inner(
                             break;
                         }
                         first = false;
+
+                        // POSIX bracket sub-expressions: `[:class:]`,
+                        // `[.collating.]`, `[=equivalence=]`. A `[` followed
+                        // by `:`/`.`/`=` introduces one; anything else
+                        // (including a literal `[`) falls through below.
+                        if bc == b'['
+                            && let Some(&kind) = pat.get(pi + 1)
+                            && matches!(kind, b':' | b'.' | b'=')
+                            && let Some((next_pi, member)) =
+                                parse_bracket_subexpr(pat, pi, kind, c, casefold)
+                        {
+                            if member {
+                                matched = true;
+                            }
+                            pi = next_pi;
+                            continue;
+                        }
 
                         let mut low = bc;
                         pi += 1;
@@ -528,5 +634,60 @@ mod tests {
         assert!(m("[]ab]", "]", FnmatchFlags::NONE));
         assert!(m("[]ab]", "a", FnmatchFlags::NONE));
         assert!(!m("[]ab]", "c", FnmatchFlags::NONE));
+    }
+
+    #[test]
+    fn posix_character_classes() {
+        let none = FnmatchFlags::NONE;
+        assert!(m("[[:digit:]]", "5", none));
+        assert!(!m("[[:digit:]]", "a", none));
+        assert!(m("[[:alpha:]]", "Z", none));
+        assert!(!m("[[:alpha:]]", "5", none));
+        assert!(m("[[:alnum:]]", "x", none));
+        assert!(m("[[:space:]]", " ", none));
+        assert!(m("[[:space:]]", "\t", none));
+        assert!(m("[[:xdigit:]]", "f", none));
+        assert!(!m("[[:xdigit:]]", "g", none));
+        assert!(m("[[:upper:]]", "A", none));
+        assert!(!m("[[:upper:]]", "a", none));
+        assert!(m("[[:lower:]]", "a", none));
+        assert!(m("[[:punct:]]", "!", none));
+        assert!(m("[[:cntrl:]]", "\x07", none));
+        // A class combined with literals / ranges in the same bracket.
+        assert!(m("[[:digit:]abc]", "b", none));
+        assert!(m("[[:digit:]abc]", "7", none));
+        assert!(!m("[[:digit:]abc]", "z", none));
+        assert!(m("[[:digit:]A-F]", "D", none));
+        assert!(m("x[[:digit:]]y", "x4y", none));
+        assert!(!m("x[[:digit:]]y", "xZy", none));
+        // Negated class.
+        assert!(m("[![:digit:]]", "a", none));
+        assert!(!m("[![:digit:]]", "3", none));
+        assert!(m("[^[:space:]]", "q", none));
+        // An unknown class name is a recognized form that matches nothing.
+        assert!(!m("[[:bogus:]]", "[", none));
+        assert!(!m("[[:bogus:]]", "x", none));
+    }
+
+    #[test]
+    fn posix_class_casefold() {
+        let f = FnmatchFlags::CASEFOLD;
+        // [:upper:] / [:lower:] fold under FNM_CASEFOLD.
+        assert!(m("[[:upper:]]", "a", f));
+        assert!(m("[[:lower:]]", "A", f));
+        assert!(m("[[:digit:]]", "5", f));
+        assert!(!m("[[:digit:]]", "x", f));
+    }
+
+    #[test]
+    fn collating_and_equivalence_elements() {
+        let none = FnmatchFlags::NONE;
+        assert!(m("[[.a.]]", "a", none));
+        assert!(!m("[[.a.]]", "b", none));
+        assert!(m("[[=e=]]", "e", none));
+        assert!(!m("[[=e=]]", "f", none));
+        // Mixed with ordinary members.
+        assert!(m("[[.a.]xyz]", "y", none));
+        assert!(m("[[.a.]xyz]", "a", none));
     }
 }

@@ -1314,53 +1314,30 @@ fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
         let zeros: String = core::iter::repeat_n('0', precision).collect();
         return alloc::format!("0.{zeros}{e_char}+00");
     }
-    // Use log10 + floor to compute the exponent, then correct for rounding
-    // edge cases (e.g., log10(1e15) might yield 14.999… instead of 15).
-    let mut exp = value.log10().floor() as i32;
-    let mut mantissa = if exp.abs() > 300 {
-        let mut m = value;
-        if exp > 0 {
-            for _ in 0..exp {
-                m /= 10.0;
-            }
-        } else {
-            for _ in 0..(-exp) {
-                m *= 10.0;
-            }
-        }
-        m
-    } else {
-        value / 10_f64.powi(exp)
-    };
-    // Correct log10 imprecision: mantissa should be in [1.0, 10.0).
-    if mantissa >= 10.0 {
-        mantissa /= 10.0;
-        exp += 1;
-    } else if mantissa < 1.0 && mantissa > 0.0 {
-        mantissa *= 10.0;
-        exp -= 1;
-    }
-    // Handle rounding carry: rounding the formatted mantissa may push it to 10.
-    // Use round_ties_even for IEEE 754 banker's rounding compliance.
-    let scale = 10_f64.powi(precision as i32);
-    let rounded_mantissa = (mantissa * scale).round_ties_even() / scale;
-    if rounded_mantissa >= 10.0 {
-        mantissa = rounded_mantissa / 10.0;
-        exp += 1;
-    }
+    // Rust's `{:e}` formatting is correctly rounded (round-half-to-even) at
+    // any precision. Dividing `value` by a power of 10 to recover the
+    // mantissa loses low-order bits, so digits past ~15 significant figures
+    // came out wrong; render with `{:e}` directly and only translate the
+    // exponent into C's `e±dd` form (explicit sign, minimum two digits).
+    let raw = alloc::format!("{:.prec$e}", value, prec = precision);
+    let e_pos = raw
+        .bytes()
+        .position(|b| b == b'e')
+        .expect("Rust scientific formatting always contains 'e'");
+    let mantissa = &raw[..e_pos];
+    let exp: i32 = raw[e_pos + 1..]
+        .parse()
+        .expect("Rust scientific exponent is always a valid integer");
     let sign = if exp < 0 { '-' } else { '+' };
     let abs_exp = exp.unsigned_abs();
-    if precision == 0 {
-        let digit = mantissa.round_ties_even() as u64;
-        let dot = if alt_form { "." } else { "" };
-        alloc::format!("{digit}{dot}{e_char}{sign}{abs_exp:02}")
+    // With `#` (alt_form) the result must always carry a decimal point, even
+    // at precision 0 where the mantissa is a single bare digit.
+    let dot = if alt_form && !mantissa.contains('.') {
+        "."
     } else {
-        alloc::format!(
-            "{:.prec$}{e_char}{sign}{abs_exp:02}",
-            mantissa,
-            prec = precision
-        )
-    }
+        ""
+    };
+    alloc::format!("{mantissa}{dot}{e_char}{sign}{abs_exp:02}")
 }
 
 /// `%g` / `%G` formatting: shortest of `%f` or `%e`.
@@ -1399,7 +1376,13 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
         if int_digits > p {
             // Fall through to %e style below.
         } else {
-            if !alt_form {
+            if alt_form {
+                // C11 7.21.6.1: `#` requires the result to always contain a
+                // decimal point — append one when precision yielded none.
+                if !s.contains('.') {
+                    s.push('.');
+                }
+            } else {
                 strip_trailing_zeros(&mut s);
             }
             return s;
@@ -2383,6 +2366,44 @@ mod tests {
         assert_eq!(format_g(9999.5, 6, false, false), "9999.5");
         // Uppercase variant.
         assert_eq!(format_g(999999.5, 6, true, false), "1E+06");
+    }
+
+    // Regression for the %e digit-accuracy bug: the mantissa was recomputed
+    // as value / 10^exp, which lost low-order bits. High-precision %e must
+    // emit the same correctly-rounded digits glibc does.
+    #[test]
+    fn test_e_high_precision_exact_digits() {
+        assert_eq!(
+            format_e(123456789.0, 17, false, false),
+            "1.23456789000000000e+08"
+        );
+        assert_eq!(
+            format_e(0.1, 20, false, false),
+            "1.00000000000000005551e-01"
+        );
+        // Basic cases and exponent formatting still hold.
+        assert_eq!(format_e(0.0, 2, false, false), "0.00e+00");
+        assert_eq!(format_e(1.0, 0, false, false), "1e+00");
+        assert_eq!(format_e(1.5e300, 1, false, false), "1.5e+300");
+        assert_eq!(format_e(2.0e-9, 0, true, false), "2E-09");
+        // Rounding carry across a decade (9.99 -> 1.0e1).
+        assert_eq!(format_e(9.96, 1, false, false), "1.0e+01");
+        // alt_form keeps a decimal point at precision 0.
+        assert_eq!(format_e(7.0, 0, false, true), "7.e+00");
+    }
+
+    // Regression for the %#g decimal-point bug: C11 7.21.6.1 requires the
+    // alternate form to always keep a decimal point even when the precision
+    // leaves zero fractional digits.
+    #[test]
+    fn test_hash_g_keeps_decimal_point() {
+        assert_eq!(format_g(3.0, 0, false, true), "3.");
+        assert_eq!(format_g(3.0, 1, false, true), "3.");
+        assert_eq!(format_g(100.0, 3, false, true), "100.");
+        // Without alt_form trailing zeros are still stripped.
+        assert_eq!(format_g(3.0, 1, false, false), "3");
+        // alt_form with fractional digits keeps the trailing zeros too.
+        assert_eq!(format_g(3.0, 3, false, true), "3.00");
     }
 
     // Regression for bd-h7ede. Rust's core::fmt stores precision as u16 and
