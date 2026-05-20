@@ -2,7 +2,9 @@
 //! Structure-aware fuzz target for FrankenLibC inet address functions.
 //!
 //! Exercises `inet_addr`, `inet_pton`, `inet_ntop`, `inet_aton`,
-//! `parse_ipv4`, `parse_ipv6`, byte-order helpers, and round-trips.
+//! `parse_ipv4`, `parse_ipv6`, byte-order helpers, the libresolv
+//! `inet_net_pton`/`inet_net_ntop` CIDR codec, the `inet_nsap_addr`/
+//! `inet_nsap_ntoa` NSAP hex codec, and round-trips.
 //!
 //! Invariants:
 //! - No function panics on any input
@@ -10,6 +12,8 @@
 //! - inet_pton(AF_INET6, inet_ntop(AF_INET6, x)) round-trips
 //! - htons/ntohs and htonl/ntohl are inverses
 //! - parse_ipv4 and inet_addr agree
+//! - net_pton parse is deterministic; format→parse round-trips the prefix
+//! - nsap parse is deterministic and bounded; format→parse round-trips bytes
 //!
 //! Bead: bd-2hh.4
 
@@ -59,13 +63,15 @@ fn fuzz_inet(input: InetFuzzInput) {
         return;
     }
 
-    match input.op % 6 {
+    match input.op % 8 {
         0 => fuzz_inet_addr(&input),
         1 => fuzz_pton_ipv4(&input),
         2 => fuzz_pton_ipv6(&input),
         3 => fuzz_ntop_roundtrip(&input),
         4 => fuzz_byte_order(&input),
         5 => fuzz_parse_consistency(&input),
+        6 => fuzz_net_pton(&input),
+        7 => fuzz_nsap(&input),
         _ => unreachable!(),
     }
 }
@@ -77,7 +83,8 @@ fn fuzz_inet(input: InetFuzzInput) {
 /// <address-text>
 /// ```
 ///
-/// The op is one of `addr`, `pton4`, `pton6`, `ntop`, `order`, or `parse`.
+/// The op is one of `addr`, `pton4`, `pton6`, `ntop`, `order`, `parse`,
+/// `net`, or `nsap`.
 /// Legacy libFuzzer corpus bytes still use the `Arbitrary` struct path.
 fn directed_input(data: &[u8]) -> Option<InetFuzzInput> {
     let rest = data.strip_prefix(DIRECTED_PREFIX)?;
@@ -110,6 +117,8 @@ fn directed_op(op_name: &[u8]) -> Option<u8> {
         b"ntop" => Some(3),
         b"order" => Some(4),
         b"parse" => Some(5),
+        b"net" => Some(6),
+        b"nsap" => Some(7),
         _ => None,
     }
 }
@@ -297,4 +306,96 @@ fn fuzz_parse_consistency(input: &InetFuzzInput) {
             "parse_ipv4_bsd failed but inet_addr succeeded"
         );
     }
+}
+
+/// Fuzz the libresolv `inet_net_pton` / `inet_net_ntop` CIDR codec.
+fn fuzz_net_pton(input: &InetFuzzInput) {
+    use inet::net_pton::{self, NetPtonError};
+
+    // parse must never panic for any input / destination size and must
+    // be deterministic in both its result and the bytes it writes.
+    for dst_len in [0usize, 1, 4, 8, 32] {
+        let mut a = vec![0u8; dst_len];
+        let mut b = vec![0u8; dst_len];
+        let ra = net_pton::parse(&input.data, &mut a);
+        let rb = net_pton::parse(&input.data, &mut b);
+        assert_eq!(ra, rb, "net_pton::parse result not deterministic");
+        assert_eq!(a, b, "net_pton::parse output not deterministic");
+    }
+
+    // A zero-length destination can never satisfy a successful parse:
+    // every accepted grammar supplies at least one octet.
+    let mut empty: [u8; 0] = [];
+    assert!(
+        net_pton::parse(&input.data, &mut empty).is_err(),
+        "net_pton::parse must fail into a zero-length buffer"
+    );
+
+    // On success, a prefix that `format` accepts (<= 32 bits) must
+    // round-trip through format → parse.
+    let mut dst = [0u8; 64];
+    if let Ok(bits) = net_pton::parse(&input.data, &mut dst)
+        && bits <= 32
+    {
+        let used = (bits as usize).div_ceil(8);
+        if let Ok(text) = net_pton::format(&dst[..used], bits) {
+            assert!(
+                text.iter()
+                    .all(|&c| c.is_ascii_digit() || c == b'.' || c == b'/'),
+                "net_pton::format emitted a non-CIDR byte: {text:?}"
+            );
+            let mut rt = [0u8; 8];
+            assert_eq!(
+                net_pton::parse(&text, &mut rt),
+                Ok(bits),
+                "net_pton format → parse prefix round-trip failed"
+            );
+        }
+    }
+
+    // format must never panic, and prefixes above 32 are always rejected.
+    let _ = net_pton::format(&input.ipv4_bytes, input.val32 % 40);
+    assert_eq!(
+        net_pton::format(&input.ipv4_bytes, 33),
+        Err(NetPtonError::Invalid),
+        "net_pton::format must reject prefix > 32"
+    );
+}
+
+/// Fuzz the libresolv `inet_nsap_addr` / `inet_nsap_ntoa` hex codec.
+fn fuzz_nsap(input: &InetFuzzInput) {
+    use inet::nsap;
+
+    // parse must never panic, must be deterministic, and must never
+    // report writing more bytes than the destination holds.
+    for dst_len in [0usize, 1, 8, 32] {
+        let mut a = vec![0u8; dst_len];
+        let mut b = vec![0u8; dst_len];
+        let na = nsap::parse_nsap_addr(&input.data, &mut a);
+        let nb = nsap::parse_nsap_addr(&input.data, &mut b);
+        assert_eq!(na, nb, "parse_nsap_addr result not deterministic");
+        assert_eq!(a, b, "parse_nsap_addr output not deterministic");
+        assert!(na <= dst_len, "parse_nsap_addr reported writing past dst");
+    }
+
+    // format output is uppercase-hex / dot only and is deterministic.
+    let formatted = nsap::format_nsap_addr(&input.ipv6_bytes);
+    assert!(
+        formatted
+            .iter()
+            .all(|&c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c) || c == b'.'),
+        "format_nsap_addr emitted an unexpected byte: {formatted:?}"
+    );
+    assert_eq!(
+        formatted,
+        nsap::format_nsap_addr(&input.ipv6_bytes),
+        "format_nsap_addr not deterministic"
+    );
+
+    // format → parse round-trips every byte (16-byte input is well
+    // under glibc's 255-byte clamp).
+    let mut rt = [0u8; 16];
+    let n = nsap::parse_nsap_addr(&formatted, &mut rt);
+    assert_eq!(n, input.ipv6_bytes.len(), "nsap format → parse length");
+    assert_eq!(&rt[..n], &input.ipv6_bytes, "nsap format → parse bytes");
 }
