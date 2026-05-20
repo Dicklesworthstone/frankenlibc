@@ -2607,7 +2607,7 @@ pub unsafe extern "C" fn _IO_file_overflow(fp: *mut c_void, ch: c_int) -> c_int 
         // Write the extra character directly to the now-empty buffer or fd.
         let byte = ch as u8;
         if unsafe { stdio_abi::fwrite((&byte) as *const u8 as *const c_void, 1, 1, fp) } == 1 {
-            ch
+            byte as c_int
         } else {
             libc::EOF
         }

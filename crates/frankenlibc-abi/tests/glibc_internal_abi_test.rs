@@ -2058,12 +2058,16 @@ fn overflow_family_routes_through_native_stream_helpers() {
 
     assert_eq!(unsafe { __overflow(stream, b'A' as c_int) }, b'A' as c_int);
     assert_eq!(unsafe { __overflow(stream, b'B' as c_int) }, b'B' as c_int);
+    assert_eq!(unsafe { __overflow(stream, 0x123) }, 0x23);
+    assert_eq!(unsafe { __overflow(stream, -2) }, 0xFE);
     assert_eq!(unsafe { __overflow(stream, libc::EOF) }, 0);
     assert_eq!(unsafe { __fseeko64(stream, 0, libc::SEEK_SET) }, 0);
 
     assert_eq!(unsafe { __underflow(stream) }, b'A' as c_int);
     assert_eq!(unsafe { __uflow(stream) }, b'A' as c_int);
     assert_eq!(unsafe { __uflow(stream) }, b'B' as c_int);
+    assert_eq!(unsafe { __uflow(stream) }, 0x23);
+    assert_eq!(unsafe { __uflow(stream) }, 0xFE);
 
     assert_eq!(unsafe { fclose(stream) }, 0);
 }
