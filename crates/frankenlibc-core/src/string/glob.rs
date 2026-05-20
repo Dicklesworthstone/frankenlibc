@@ -7,6 +7,8 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
+use super::fnmatch;
+
 // ---------------------------------------------------------------------------
 // POSIX glob constants (must match <glob.h> on glibc x86_64)
 // ---------------------------------------------------------------------------
@@ -101,114 +103,23 @@ fn split_pattern(pat: &[u8]) -> (&[u8], &[u8]) {
 }
 
 // ---------------------------------------------------------------------------
-// fnmatch (simplified, matching only single path component)
+// fnmatch (single path component)
 // ---------------------------------------------------------------------------
 
-/// Simple fnmatch for a single component (no '/' in string).
+/// Match a single path component against `pat`.
+///
+/// Delegates to the shared POSIX fnmatch engine so bracket expressions —
+/// ranges, `!`/`^` negation, `[[:alpha:]]` character classes, `[.x.]`
+/// collating elements, and `\` escapes — all behave per POSIX. Path
+/// components never contain `/`, and leading-`.` handling is performed by
+/// the directory walk, so no `FNM_PATHNAME` / `FNM_PERIOD` flags are needed.
 fn fnmatch_component(pat: &[u8], name: &[u8], noescape: bool) -> bool {
-    fn do_match(pat: &[u8], pi: usize, name: &[u8], ni: usize, noescape: bool) -> bool {
-        if pi >= pat.len() {
-            return ni >= name.len();
-        }
-
-        match pat[pi] {
-            b'*' => {
-                // Skip consecutive *'s
-                let mut p = pi;
-                while p < pat.len() && pat[p] == b'*' {
-                    p += 1;
-                }
-                // Try matching against rest
-                let mut n = ni;
-                loop {
-                    if do_match(pat, p, name, n, noescape) {
-                        return true;
-                    }
-                    if n >= name.len() {
-                        break;
-                    }
-                    n += 1;
-                }
-                false
-            }
-            b'?' => {
-                if ni >= name.len() {
-                    return false;
-                }
-                do_match(pat, pi + 1, name, ni + 1, noescape)
-            }
-            b'[' => {
-                if ni >= name.len() {
-                    return false;
-                }
-                let ch = name[ni];
-                let (matched, end) = bracket_match(pat, pi + 1, ch);
-                if !matched || end > pat.len() {
-                    return false;
-                }
-                do_match(pat, end, name, ni + 1, noescape)
-            }
-            b'\\' if !noescape => {
-                if pi + 1 >= pat.len() {
-                    return false;
-                }
-                if ni >= name.len() || pat[pi + 1] != name[ni] {
-                    return false;
-                }
-                do_match(pat, pi + 2, name, ni + 1, noescape)
-            }
-            c => {
-                if ni >= name.len() || c != name[ni] {
-                    return false;
-                }
-                do_match(pat, pi + 1, name, ni + 1, noescape)
-            }
-        }
-    }
-
-    do_match(pat, 0, name, 0, noescape)
-}
-
-/// Match a character against a bracket expression [...]
-/// Returns (matched, position after closing ']')
-fn bracket_match(pat: &[u8], start: usize, ch: u8) -> (bool, usize) {
-    let mut negated = false;
-    let mut i = start;
-
-    if i < pat.len() && (pat[i] == b'!' || pat[i] == b'^') {
-        negated = true;
-        i += 1;
-    }
-
-    // First char after [ or [! can be ]
-    let mut found = false;
-    let mut first = true;
-
-    while i < pat.len() {
-        if pat[i] == b']' && !first {
-            let result = if negated { !found } else { found };
-            return (result, i + 1);
-        }
-        first = false;
-
-        let lo = pat[i];
-        if i + 2 < pat.len() && pat[i + 1] == b'-' && pat[i + 2] != b']' {
-            // Range expression
-            let hi = pat[i + 2];
-            if ch >= lo && ch <= hi {
-                found = true;
-            }
-            i += 3;
-        } else {
-            if ch == lo {
-                found = true;
-            }
-            i += 1;
-        }
-    }
-
-    // No closing bracket found
-    (false, i)
+    let flags = if noescape {
+        fnmatch::FnmatchFlags::NOESCAPE
+    } else {
+        fnmatch::FnmatchFlags::NONE
+    };
+    fnmatch::fnmatch_match(pat, name, flags)
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +393,25 @@ mod tests {
         // With noescape, backslash is literal
         assert!(!fnmatch_component(b"\\*", b"*", true));
         assert!(fnmatch_component(b"\\*", b"\\anything", true));
+    }
+
+    #[test]
+    fn test_fnmatch_component_posix_classes() {
+        // POSIX character classes inside bracket expressions (bd-u1358).
+        assert!(fnmatch_component(b"[[:digit:]]", b"7", false));
+        assert!(!fnmatch_component(b"[[:digit:]]", b"x", false));
+        assert!(fnmatch_component(
+            b"file[[:digit:]].txt",
+            b"file3.txt",
+            false
+        ));
+        assert!(!fnmatch_component(
+            b"file[[:digit:]].txt",
+            b"filex.txt",
+            false
+        ));
+        assert!(fnmatch_component(b"[[:alpha:]]*", b"hello", false));
+        assert!(!fnmatch_component(b"[[:alpha:]]*", b"1abc", false));
     }
 
     #[test]

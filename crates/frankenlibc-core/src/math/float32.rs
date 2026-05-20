@@ -338,15 +338,30 @@ pub fn sincosf(x: f32) -> (f32, f32) {
     libm::sincosf(x)
 }
 
-/// Generate a quiet NaN (f32 variant).
+/// Generate a quiet NaN (f32 variant), encoding the `tag` payload like
+/// C `nanf(tagp)`. See [`crate::math::float::nan`] for the tag grammar;
+/// here the payload occupies the f32 mantissa's low 22 bits.
 #[inline]
-pub fn nanf(_tag: &[u8]) -> f32 {
-    f32::NAN
+pub fn nanf(tag: &[u8]) -> f32 {
+    // Quiet NaN: exponent all-ones + the quiet bit (mantissa bit 22).
+    const QUIET_NAN: u32 = 0x7fc0_0000;
+    // The tag payload occupies mantissa bits 0..=21.
+    const PAYLOAD_MASK: u32 = 0x003f_ffff;
+    // Reuse the f64 tag parser; the payload lives in the low bits.
+    let payload = crate::math::float::nan(tag).to_bits() as u32;
+    f32::from_bits(QUIET_NAN | (payload & PAYLOAD_MASK))
 }
 
 /// GNU extension: base-10 exponential (f32 variant).
 #[inline]
 pub fn exp10f(x: f32) -> f32 {
+    // Integer exponents in [-10, 10] yield powers of ten that `powi`
+    // returns exactly (positive) or correctly rounded (negative); the
+    // `expf(x * ln10)` form double-rounds, so exp10f(3) would otherwise
+    // come out slightly off 1000.0.
+    if x.is_finite() && x == x.trunc() && (-10.0..=10.0).contains(&x) {
+        return 10.0_f32.powi(x as i32);
+    }
     libm::expf(x * core::f32::consts::LN_10)
 }
 
@@ -613,13 +628,23 @@ mod tests {
     #[test]
     fn nanf_sanity() {
         assert!(nanf(b"").is_nan());
+        assert!(nanf(b"1").is_nan());
+        // The tag payload is encoded into the low mantissa bits (glibc parity).
+        assert_eq!(nanf(b"").to_bits(), 0x7fc0_0000);
+        assert_eq!(nanf(b"1").to_bits(), 0x7fc0_0001);
+        assert_eq!(nanf(b"0xff").to_bits(), 0x7fc0_00ff);
+        assert_eq!(nanf(b"abc").to_bits(), 0x7fc0_0000);
     }
 
     #[test]
     fn exp10f_sanity() {
-        assert!((exp10f(0.0) - 1.0).abs() < 1e-5);
-        assert!((exp10f(1.0) - 10.0).abs() < 1e-3);
-        assert!((exp10f(2.0) - 100.0).abs() < 0.1);
+        // Integer exponents yield exact powers of ten (glibc parity).
+        assert_eq!(exp10f(0.0), 1.0);
+        assert_eq!(exp10f(1.0), 10.0);
+        assert_eq!(exp10f(2.0), 100.0);
+        assert_eq!(exp10f(3.0), 1000.0);
+        // Non-integer exponents take the transcendental path.
+        assert!((exp10f(0.5) - 10.0_f32.sqrt()).abs() < 1e-3);
     }
 
     #[test]

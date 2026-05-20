@@ -203,13 +203,51 @@ pub fn sincos(x: f64) -> (f64, f64) {
     libm::sincos(x)
 }
 
-/// Generate a quiet NaN.
-///
-/// The `_tag` argument is parsed as an unsigned integer to set NaN payload bits,
-/// but the common case (empty string or "0") returns a plain quiet NaN.
+/// Parse a `nan()` tag string into a mantissa payload, matching glibc:
+/// the tag is read as a base-0 integer (`0x` hex, leading `0` octal, else
+/// decimal) and is only used when it consumes the *entire* tag; any other
+/// tag (empty, non-numeric, trailing junk) yields a payload of 0.
+fn nan_payload(tag: &[u8]) -> u64 {
+    if tag.is_empty() {
+        return 0;
+    }
+    let (digits, base): (&[u8], u64) =
+        if let Some(rest) = tag.strip_prefix(b"0x").or_else(|| tag.strip_prefix(b"0X")) {
+            (rest, 16)
+        } else if tag.len() > 1 && tag[0] == b'0' {
+            (&tag[1..], 8)
+        } else {
+            (tag, 10)
+        };
+    if digits.is_empty() {
+        return 0;
+    }
+    let mut acc: u64 = 0;
+    for &b in digits {
+        let d = match b {
+            b'0'..=b'9' => (b - b'0') as u64,
+            b'a'..=b'f' => (b - b'a' + 10) as u64,
+            b'A'..=b'F' => (b - b'A' + 10) as u64,
+            _ => return 0, // non-numeric tail → glibc uses payload 0
+        };
+        if d >= base {
+            return 0;
+        }
+        acc = acc.wrapping_mul(base).wrapping_add(d);
+    }
+    acc
+}
+
+/// Generate a quiet NaN, encoding the `tag` payload like C `nan(tagp)`
+/// (equivalent to `strtod("NAN(tag)", NULL)`): `nan(b"1")` yields the bit
+/// pattern `0x7ff8000000000001`, distinct from `nan(b"")`.
 #[inline]
-pub fn nan(_tag: &[u8]) -> f64 {
-    f64::NAN
+pub fn nan(tag: &[u8]) -> f64 {
+    // Quiet NaN: exponent all-ones + the quiet bit (mantissa bit 51).
+    const QUIET_NAN: u64 = 0x7ff8_0000_0000_0000;
+    // The tag payload occupies mantissa bits 0..=50.
+    const PAYLOAD_MASK: u64 = 0x0007_ffff_ffff_ffff;
+    f64::from_bits(QUIET_NAN | (nan_payload(tag) & PAYLOAD_MASK))
 }
 
 /// BSD/SUSv2 `finite()`: returns non-zero if `x` is neither infinite nor NaN.
@@ -247,7 +285,14 @@ pub fn significand(x: f64) -> f64 {
 /// GNU extension: base-10 exponential `10^x`.
 #[inline]
 pub fn exp10(x: f64) -> f64 {
-    // 10^x = 2^(x * log2(10)) = exp(x * ln(10))
+    // Integer exponents in [-22, 22] yield powers of ten that are exactly
+    // representable in f64; `powi` returns them exactly. `exp(x * ln10)`
+    // double-rounds (the product and the exp each round), so e.g. exp10(3)
+    // would come out as 1000.0000000000007 — glibc returns exactly 1000.0.
+    if x.is_finite() && x == x.trunc() && (-22.0..=22.0).contains(&x) {
+        return 10.0_f64.powi(x as i32);
+    }
+    // 10^x = exp(x * ln(10)) for non-integer / out-of-range exponents.
     libm::exp(x * core::f64::consts::LN_10)
 }
 
@@ -447,8 +492,17 @@ mod tests {
 
     #[test]
     fn test_nan() {
-        let v = nan(b"");
-        assert!(v.is_nan());
+        assert!(nan(b"").is_nan());
+        assert!(nan(b"1").is_nan());
+        // The tag payload is encoded into the low mantissa bits (glibc parity).
+        assert_eq!(nan(b"").to_bits(), 0x7ff8_0000_0000_0000);
+        assert_eq!(nan(b"1").to_bits(), 0x7ff8_0000_0000_0001);
+        assert_eq!(nan(b"255").to_bits(), 0x7ff8_0000_0000_00ff);
+        assert_eq!(nan(b"0x1ff").to_bits(), 0x7ff8_0000_0000_01ff);
+        assert_eq!(nan(b"010").to_bits(), 0x7ff8_0000_0000_0008); // octal
+        // Non-numeric or malformed tags fall back to a zero payload.
+        assert_eq!(nan(b"abc").to_bits(), 0x7ff8_0000_0000_0000);
+        assert_eq!(nan(b"12x").to_bits(), 0x7ff8_0000_0000_0000);
     }
 
     #[test]
@@ -486,10 +540,20 @@ mod tests {
 
     #[test]
     fn test_exp10() {
-        assert!((exp10(0.0) - 1.0).abs() < 1e-12);
-        assert!((exp10(1.0) - 10.0).abs() < 1e-10);
-        assert!((exp10(2.0) - 100.0).abs() < 1e-8);
-        assert!((exp10(3.0) - 1000.0).abs() < 1e-6);
+        // Integer exponents yield exact powers of ten (glibc parity) — not
+        // the double-rounded 1000.0000000000007 that exp(x*ln10) produces.
+        assert_eq!(exp10(0.0), 1.0);
+        assert_eq!(exp10(1.0), 10.0);
+        assert_eq!(exp10(2.0), 100.0);
+        assert_eq!(exp10(3.0), 1000.0);
+        assert_eq!(exp10(22.0), 1e22);
+        assert_eq!(exp10(-1.0), 0.1);
+        assert_eq!(exp10(-3.0), 0.001);
+        // Non-integer exponents take the transcendental path.
+        assert!((exp10(0.5) - 10.0_f64.sqrt()).abs() < 1e-12);
+        // Out-of-fast-path-range integers still behave sanely.
+        assert!(exp10(400.0).is_infinite());
+        assert_eq!(exp10(-400.0), 0.0);
     }
 
     #[test]

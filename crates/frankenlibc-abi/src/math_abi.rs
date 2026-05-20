@@ -665,8 +665,14 @@ pub unsafe extern "C" fn sincos(x: f64, sin_out: *mut f64, cos_out: *mut f64) {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nan(_tagp: *const std::ffi::c_char) -> f64 {
-    f64::NAN
+pub unsafe extern "C" fn nan(tagp: *const std::ffi::c_char) -> f64 {
+    let tag: &[u8] = if tagp.is_null() {
+        b""
+    } else {
+        // SAFETY: per the C contract `tagp` is a valid NUL-terminated string.
+        unsafe { std::ffi::CStr::from_ptr(tagp) }.to_bytes()
+    };
+    frankenlibc_core::math::nan(tag)
 }
 
 // ---------------------------------------------------------------------------
@@ -1409,8 +1415,14 @@ pub unsafe extern "C" fn sincosf(x: f32, sin_out: *mut f32, cos_out: *mut f32) {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nanf(_tagp: *const std::ffi::c_char) -> f32 {
-    f32::NAN
+pub unsafe extern "C" fn nanf(tagp: *const std::ffi::c_char) -> f32 {
+    let tag: &[u8] = if tagp.is_null() {
+        b""
+    } else {
+        // SAFETY: per the C contract `tagp` is a valid NUL-terminated string.
+        unsafe { std::ffi::CStr::from_ptr(tagp) }.to_bytes()
+    };
+    frankenlibc_core::math::nanf(tag)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
