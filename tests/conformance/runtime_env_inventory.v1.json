@@ -206,7 +206,7 @@
       "write_count": 3
     },
     {
-      "access_count": 33,
+      "access_count": 37,
       "accesses": [
         {
           "line": 35,
@@ -256,6 +256,34 @@
           "path": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_E2E_SEED\", seed)"
+        },
+        {
+          "line": 125,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/shadow_run_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "\"seed_key\": \"FRANKENLIBC_E2E_SEED\","
+        },
+        {
+          "line": 126,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/shadow_run_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "\"env_keys\": [\"FRANKENLIBC_E2E_SEED\"],"
+        },
+        {
+          "line": 163,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/shadow_run_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "\"seed_key\": \"FRANKENLIBC_E2E_SEED\","
+        },
+        {
+          "line": 164,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/shadow_run_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "\"env_keys\": [\"FRANKENLIBC_E2E_SEED\", \"FRANKENLIBC_MODE\", \"LD_PRELOAD\"],"
         },
         {
           "line": 173,
@@ -453,7 +481,7 @@
         "safety_impact": "low"
       },
       "read_count": 1,
-      "reference_count": 23,
+      "reference_count": 27,
       "write_count": 9
     },
     {
@@ -501,14 +529,14 @@
           "snippet": "require(\"FRANKENLIBC_EXTENDED_GATES\" in ci_script, \"ci.sh must keep extended gate switch\")"
         },
         {
-          "line": 50,
+          "line": 72,
           "operation": "read",
           "path": "scripts/ci.sh",
           "scope": "scripts",
           "snippet": "if [[ \"${FRANKENLIBC_EXTENDED_GATES:-0}\" == \"1\" ]]; then"
         },
         {
-          "line": 554,
+          "line": 576,
           "operation": "write",
           "path": "scripts/ci.sh",
           "scope": "scripts",
@@ -703,7 +731,7 @@
           "snippet": "assert!(required_keys.contains(\"FRANKENLIBC_LOG\"));"
         },
         {
-          "line": 298,
+          "line": 332,
           "operation": "read",
           "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
           "scope": "membrane",
@@ -1005,101 +1033,136 @@
       "write_count": 8
     },
     {
-      "access_count": 192,
+      "access_count": 205,
       "accesses": [
         {
-          "line": 141,
+          "line": 157,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "const KEY_EQ: &[u8] = b\"FRANKENLIBC_MODE=\";"
         },
         {
-          "line": 1762,
+          "line": 1982,
           "operation": "read",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "let previous = std::env::var_os(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 1766,
+          "line": 1986,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", v);"
         },
         {
-          "line": 1768,
+          "line": 1988,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 1780,
+          "line": 2000,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", previous);"
         },
         {
-          "line": 1782,
+          "line": 2002,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 1890,
+          "line": 2110,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 1910,
+          "line": 2130,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 1974,
+          "line": 2192,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 2024,
+          "line": 2239,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "scope": "abi",
+          "snippet": "let exact_key = CString::new(\"FRANKENLIBC_MODE=\").expect(\"exact key row\");"
+        },
+        {
+          "line": 2243,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "scope": "abi",
+          "snippet": "assert!(!cstr_has_byte_prefix(empty.as_ptr(), b\"FRANKENLIBC_MODE=\"));"
+        },
+        {
+          "line": 2246,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "scope": "abi",
+          "snippet": "b\"FRANKENLIBC_MODE=\""
+        },
+        {
+          "line": 2250,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "scope": "abi",
+          "snippet": "b\"FRANKENLIBC_MODE=\""
+        },
+        {
+          "line": 2254,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "scope": "abi",
+          "snippet": "b\"FRANKENLIBC_MODE=\""
+        },
+        {
+          "line": 2267,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"bogus\");"
         },
         {
-          "line": 916,
+          "line": 973,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/grp_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::set_var(\"FRANKENLIBC_MODE\", mode) };"
         },
         {
-          "line": 919,
+          "line": 976,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/grp_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::remove_var(\"FRANKENLIBC_MODE\") };"
         },
         {
-          "line": 931,
+          "line": 988,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/grp_abi_test.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", mode);"
         },
         {
-          "line": 937,
+          "line": 994,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/grp_abi_test.rs",
           "scope": "abi",
@@ -1120,28 +1183,28 @@
           "snippet": "unsafe { std::env::remove_var(\"FRANKENLIBC_MODE\") };"
         },
         {
-          "line": 1113,
+          "line": 1208,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::set_var(\"FRANKENLIBC_MODE\", mode) };"
         },
         {
-          "line": 1116,
+          "line": 1211,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::remove_var(\"FRANKENLIBC_MODE\") };"
         },
         {
-          "line": 1128,
+          "line": 1223,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", mode);"
         },
         {
-          "line": 1134,
+          "line": 1229,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
           "scope": "abi",
@@ -1225,7 +1288,7 @@
           "snippet": "match std::env::var(\"FRANKENLIBC_MODE\").ok().as_deref() {"
         },
         {
-          "line": 87,
+          "line": 152,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_c11threads.rs",
           "scope": "other",
@@ -1288,7 +1351,7 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 77,
+          "line": 146,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf_adversarial.rs",
           "scope": "other",
@@ -1302,7 +1365,7 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 105,
+          "line": 247,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_keys.rs",
           "scope": "other",
@@ -1365,42 +1428,42 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 1710,
+          "line": 2679,
           "operation": "read",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": "let startup_frankenlibc_mode = std::env::var(\"FRANKENLIBC_MODE\").ok();"
         },
         {
-          "line": 1881,
+          "line": 5196,
           "operation": "write",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_MODE\", mode)"
         },
         {
-          "line": 1961,
+          "line": 5276,
           "operation": "write",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": "\"runtime_mode_startup_mismatch: expected FRANKENLIBC_MODE={mode}, child observed {observed_mode}\""
         },
         {
-          "line": 2003,
+          "line": 5318,
           "operation": "write",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_MODE\", mode)"
         },
         {
-          "line": 2258,
+          "line": 5573,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": "\"env_key\": \"FRANKENLIBC_MODE\","
         },
         {
-          "line": 2269,
+          "line": 5584,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
@@ -1428,6 +1491,34 @@
           "snippet": "env.insert(\"FRANKENLIBC_MODE\".to_string(), mode.to_string());"
         },
         {
+          "line": 81,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_env_set_var_test.rs",
+          "scope": "harness",
+          "snippet": "\"_var(\\\"FRANKENLIBC_MODE\\\", \\\"hardened\\\");\","
+        },
+        {
+          "line": 94,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_env_set_var_test.rs",
+          "scope": "harness",
+          "snippet": "\"let var_name = \\\"FRANKENLIBC_MODE\\\";\""
+        },
+        {
+          "line": 106,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/conformance_matrix_case_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "cmd.env(\"FRANKENLIBC_MODE\", env_mode);"
+        },
+        {
+          "line": 108,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/conformance_matrix_case_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "cmd.env_remove(\"FRANKENLIBC_MODE\");"
+        },
+        {
           "line": 263,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_completion_contract_test.rs",
@@ -1435,14 +1526,14 @@
           "snippet": "assert!(required_keys.contains(\"FRANKENLIBC_MODE\"));"
         },
         {
-          "line": 132,
+          "line": 134,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/tests/dual_mode_unit_integrity_completion_contract_test.rs",
           "scope": "harness",
           "snippet": "Some(\"FRANKENLIBC_MODE\")"
         },
         {
-          "line": 227,
+          "line": 229,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/tests/dual_mode_unit_integrity_completion_contract_test.rs",
           "scope": "harness",
@@ -1456,7 +1547,28 @@
           "snippet": "\"FRANKENLIBC_MODE\""
         },
         {
-          "line": 218,
+          "line": 118,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/kernel_regression_mode_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "cmd.env_remove(\"FRANKENLIBC_MODE\");"
+        },
+        {
+          "line": 120,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/kernel_regression_mode_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "cmd.env(\"FRANKENLIBC_MODE\", em);"
+        },
+        {
+          "line": 309,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/kernel_regression_mode_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "\"harness must exit non-zero when FRANKENLIBC_MODE != --mode\","
+        },
+        {
+          "line": 219,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/tests/mode_contract_lock_completion_contract_test.rs",
           "scope": "harness",
@@ -1505,11 +1617,18 @@
           "snippet": "Some(\"FRANKENLIBC_MODE\")"
         },
         {
-          "line": 133,
+          "line": 150,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/setjmp_nested_edges_conformance_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_MODE\", mode)"
+        },
+        {
+          "line": 164,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/shadow_run_cli_contract_test.rs",
+          "scope": "harness",
+          "snippet": "\"env_keys\": [\"FRANKENLIBC_E2E_SEED\", \"FRANKENLIBC_MODE\", \"LD_PRELOAD\"],"
         },
         {
           "line": 184,
@@ -2371,8 +2490,8 @@
         "safety_impact": "high"
       },
       "read_count": 30,
-      "reference_count": 114,
-      "write_count": 53
+      "reference_count": 120,
+      "write_count": 60
     },
     {
       "access_count": 2,
@@ -3057,7 +3176,7 @@
           "snippet": ".env(\"FRANKENLIBC_RELEASE_SIMULATE_FAIL_GATE\", \"unit\")"
         },
         {
-          "line": 185,
+          "line": 252,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/release_gate_dag_test.rs",
           "scope": "harness",
@@ -3138,21 +3257,42 @@
       "write_count": 0
     },
     {
-      "access_count": 2,
+      "access_count": 5,
       "accesses": [
         {
-          "line": 391,
+          "line": 426,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+          "scope": "abi",
+          "snippet": "unsafe { cstr_has_byte_prefix(ptr, b\"FRANKENLIBC_STARTUP_PHASE0=\") }"
+        },
+        {
+          "line": 437,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/startup_abi.rs",
           "scope": "abi",
           "snippet": "const KEY_EQ: &[u8] = b\"FRANKENLIBC_STARTUP_PHASE0=\";"
         },
         {
-          "line": 138,
+          "line": 142,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
           "scope": "abi",
           "snippet": "let key = \"FRANKENLIBC_STARTUP_PHASE0\";"
+        },
+        {
+          "line": 173,
+          "operation": "reference",
+          "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+          "scope": "abi",
+          "snippet": "let short_key = CString::new(\"FRANKENLIBC_STARTUP_PHASE0\").expect(\"short env row\");"
+        },
+        {
+          "line": 174,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+          "scope": "abi",
+          "snippet": "let exact_key = CString::new(\"FRANKENLIBC_STARTUP_PHASE0=\").expect(\"exact key row\");"
         }
       ],
       "env_key": "FRANKENLIBC_STARTUP_PHASE0",
@@ -3169,8 +3309,8 @@
         "safety_impact": "high"
       },
       "read_count": 0,
-      "reference_count": 1,
-      "write_count": 1
+      "reference_count": 2,
+      "write_count": 3
     },
     {
       "access_count": 2,
