@@ -42,6 +42,10 @@ pub const REG_ERANGE: i32 = 11;
 pub const REG_ESPACE: i32 = 12;
 pub const REG_BADRPT: i32 = 13;
 
+/// POSIX `RE_DUP_MAX`: the largest permitted interval (`{n,m}`) bound.
+/// A bound exceeding this is rejected with `REG_BADBR` per POSIX.2.
+pub const RE_DUP_MAX: u32 = 32767;
+
 // ---------------------------------------------------------------------------
 // regmatch_t equivalent
 // ---------------------------------------------------------------------------
@@ -595,7 +599,15 @@ impl<'a> Parser<'a> {
 
     fn parse_brace_quantifier(&mut self, atom: Ast) -> Result<Ast, i32> {
         self.advance(); // skip {
-        let min = self.parse_decimal()?;
+        // Lower bound. `{,m}` (leading comma) is the GNU extension for
+        // `{0,m}`; an empty `{}` is bad content; anything else that is not a
+        // digit makes the brace itself malformed.
+        let min = match self.peek() {
+            Some(b',') => 0,
+            Some(c) if c.is_ascii_digit() => self.parse_decimal()?,
+            Some(b'}') => return Err(REG_BADBR),
+            _ => return Err(REG_EBRACE),
+        };
         let max;
 
         match self.peek() {
@@ -620,6 +632,10 @@ impl<'a> Parser<'a> {
         if self.advance() != Some(b'}') {
             return Err(REG_EBRACE);
         }
+        // POSIX.2: an interval bound larger than RE_DUP_MAX is REG_BADBR.
+        if min > RE_DUP_MAX || max.is_some_and(|m| m > RE_DUP_MAX) {
+            return Err(REG_BADBR);
+        }
 
         Ok(Ast::Repeat {
             inner: Box::new(atom),
@@ -629,7 +645,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_bre_brace_quantifier(&mut self, atom: Ast) -> Result<Ast, i32> {
-        let min = self.parse_decimal()?;
+        // `\{,m\}` (leading comma) is the GNU extension for `\{0,m\}`.
+        let min = if self.peek() == Some(b',') {
+            0
+        } else {
+            self.parse_decimal()?
+        };
         let max;
 
         match self.peek() {
@@ -662,6 +683,10 @@ impl<'a> Parser<'a> {
             self.pos += 2;
         } else {
             return Err(REG_EBRACE);
+        }
+        // POSIX.2: an interval bound larger than RE_DUP_MAX is REG_BADBR.
+        if min > RE_DUP_MAX || max.is_some_and(|m| m > RE_DUP_MAX) {
+            return Err(REG_BADBR);
         }
 
         Ok(Ast::Repeat {
@@ -696,12 +721,33 @@ impl<'a> Parser<'a> {
         match self.peek() {
             None => Err(REG_BADPAT),
             Some(b'^') => {
+                // ERE: `^` is always an anchor. BRE: only at the start of the
+                // RE or right after `\(` / `\|`; elsewhere it is a literal.
+                let anchored = self.extended
+                    || self.pos == 0
+                    || self.pat[..self.pos].ends_with(b"\\(")
+                    || self.pat[..self.pos].ends_with(b"\\|");
                 self.advance();
-                Ok(Ast::Anchor(AnchorKind::Start))
+                if anchored {
+                    Ok(Ast::Anchor(AnchorKind::Start))
+                } else {
+                    Ok(Ast::Literal(b'^'))
+                }
             }
             Some(b'$') => {
+                // ERE: `$` is always an anchor. BRE: only at the end of the
+                // RE or right before `\)` / `\|`; elsewhere it is a literal.
+                let rest = &self.pat[self.pos + 1..];
+                let anchored = self.extended
+                    || rest.is_empty()
+                    || rest.starts_with(b"\\)")
+                    || rest.starts_with(b"\\|");
                 self.advance();
-                Ok(Ast::Anchor(AnchorKind::End))
+                if anchored {
+                    Ok(Ast::Anchor(AnchorKind::End))
+                } else {
+                    Ok(Ast::Literal(b'$'))
+                }
             }
             Some(b'.') => {
                 self.advance();
@@ -1611,6 +1657,39 @@ mod tests {
         assert!(compile_and_match("hello", "hello", 0));
         assert!(compile_and_match("h.llo", "hello", 0));
         assert!(compile_and_match("ab*c", "abbc", 0));
+    }
+
+    #[test]
+    fn bre_caret_dollar_are_literal_when_not_anchoring() {
+        // POSIX BRE: `^`/`$` are literals except at anchor positions.
+        assert!(compile_and_match("a^b", "a^b", 0));
+        assert!(compile_and_match("a$b", "a$b", 0));
+        assert!(!compile_and_match("a^b", "axb", 0));
+        // Still anchors at the ends of the BRE.
+        assert!(compile_and_match("^ab", "abc", 0));
+        assert!(compile_and_match("bc$", "abc", 0));
+        // Anchor positions inside subexpressions.
+        assert!(compile_and_match("\\(^a\\)", "abc", 0));
+        // In ERE, `^`/`$` are always anchors, so `a^b` cannot match.
+        assert!(!compile_and_match("a^b", "a^b", REG_EXTENDED));
+    }
+
+    #[test]
+    fn brace_interval_edges() {
+        // GNU extension: `{,m}` means `{0,m}` — the longest match is "aaa".
+        let (ok, subs) = compile_and_submatch("a{,3}", "aaaaa", REG_EXTENDED);
+        assert!(ok);
+        assert_eq!(subs[0], (0, 3));
+        assert!(compile_and_match("a{,3}", "", REG_EXTENDED));
+        // A malformed brace is REG_EBRACE; empty `{}` is REG_BADBR.
+        assert_eq!(regex_compile(b"a{", REG_EXTENDED).unwrap_err(), REG_EBRACE);
+        assert_eq!(regex_compile(b"a{}", REG_EXTENDED).unwrap_err(), REG_BADBR);
+        // An interval bound past RE_DUP_MAX is rejected (REG_BADBR).
+        assert_eq!(
+            regex_compile(b"a{32768}", REG_EXTENDED).unwrap_err(),
+            REG_BADBR
+        );
+        assert!(regex_compile(b"a{32767}", REG_EXTENDED).is_ok());
     }
 
     #[test]
