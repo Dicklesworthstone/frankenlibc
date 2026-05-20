@@ -280,8 +280,8 @@ fn manifest_binds_unit_integration_e2e_and_migration_evidence() -> TestResult {
     }
 
     let truth = &evidence["required_surface_truth"];
-    assert_eq!(truth["current_level"].as_str(), Some("L0"));
-    assert_eq!(truth["current_release_level"].as_str(), Some("L0"));
+    assert_eq!(truth["current_level"].as_str(), Some("L1"));
+    assert_eq!(truth["current_release_level"].as_str(), Some("L1"));
     assert_eq!(
         levels["current_level"].as_str(),
         truth["current_level"].as_str()
@@ -353,7 +353,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
     );
     assert_eq!(
         report["surface_summary"]["replacement_levels"]["current_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         report["surface_summary"]["callthrough_census"]["summary"]["symbol_count"].as_u64(),
@@ -387,7 +387,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 }
 
 #[test]
-fn checker_replays_replacement_gates_and_preserves_l0_claim_control() -> TestResult {
+fn checker_replays_replacement_gates_and_preserves_l1_claim_control() -> TestResult {
     let root = workspace_root()?;
     let out_dir = run_passing_checker(&root, "gates")?;
     let report = read_json(&out_dir.join("replacement_surface_completion_contract.report.json"))?;
@@ -401,13 +401,18 @@ fn checker_replays_replacement_gates_and_preserves_l0_claim_control() -> TestRes
     )?;
 
     assert_eq!(levels_report["status"].as_str(), Some("pass"));
-    assert_eq!(levels_report["current_level"].as_str(), Some("L0"));
-    assert!(
+    assert_eq!(levels_report["current_level"].as_str(), Some("L1"));
+    assert_eq!(
+        levels_report["summary"]["objective_outcomes"]["pass"].as_u64(),
+        Some(8),
+        "L1 objective gate should report all current obligations passing"
+    );
+    assert_eq!(
         levels_report["summary"]["objective_outcomes"]["blocked"]
             .as_u64()
-            .unwrap_or_default()
-            >= 2,
-        "L1 promotion blockers must remain represented"
+            .unwrap_or_default(),
+        0,
+        "L1 objective blockers should be cleared in current L1 state"
     );
     assert_eq!(
         callthrough_report["summary"]["symbol_count"].as_u64(),

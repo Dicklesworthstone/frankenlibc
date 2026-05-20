@@ -69,8 +69,8 @@
       "completion_harness": "crates/frankenlibc-harness/tests/replacement_surface_completion_contract_test.rs"
     },
     "required_surface_truth": {
-      "current_level": "L0",
-      "current_release_level": "L0",
+      "current_level": "L1",
+      "current_release_level": "L1",
       "support_status_counts": {
         "WrapsHostLibc": 0,
         "GlibcCallThrough": 0
@@ -88,9 +88,9 @@
         "claim_status": "replacement_callthrough_blockers_cleared"
       },
       "replacement_level_claim_control": {
-        "l0_remains_current": true,
-        "l1_objective_gate_status": "blocked",
-        "l1_blocked_objective_count_min": 2
+        "l1_remains_current": true,
+        "l1_objective_gate_status": "pass",
+        "l1_blocked_objective_count_min": 0
       }
     },
     "unit_primary": {
@@ -117,7 +117,7 @@
         {"source": "residual_harness", "name": "checker_passes_with_live_replacement_guard_reports"},
         {"source": "residual_harness", "name": "checker_rejects_nonzero_replacement_report"},
         {"source": "residual_harness", "name": "checker_rejects_nonzero_interpose_report"},
-        {"source": "completion_harness", "name": "checker_replays_replacement_gates_and_preserves_l0_claim_control"}
+        {"source": "completion_harness", "name": "checker_replays_replacement_gates_and_preserves_l1_claim_control"}
       ],
       "required_commands": [
         "bash scripts/check_residual_replacement_callthrough_blockers.sh --validate-only",

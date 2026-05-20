@@ -353,10 +353,16 @@ def validate_replacement_levels(expected: dict[str, Any]) -> dict[str, Any]:
     if report.get("status") != "pass":
         err("replacement levels gate report status must be pass")
     if report.get("current_level") != expected.get("current_level"):
-        err("replacement levels gate report must preserve current_level L0")
+        err(f"replacement levels gate report must preserve current_level {expected.get('current_level')}")
     objective_outcomes = report.get("summary", {}).get("objective_outcomes", {})
     blocked = int(objective_outcomes.get("blocked", 0) or 0)
-    min_blocked = int(expected.get("replacement_level_claim_control", {}).get("l1_blocked_objective_count_min", 1))
+    claim_control = expected.get("replacement_level_claim_control", {})
+    expected_gate_status = claim_control.get("l1_objective_gate_status")
+    if expected_gate_status:
+        actual_gate_status = "blocked" if blocked > 0 else "pass"
+        if actual_gate_status != expected_gate_status:
+            err(f"replacement levels L1 objective gate status must be {expected_gate_status}, got {actual_gate_status}")
+    min_blocked = int(claim_control.get("l1_blocked_objective_count_min", 0))
     if blocked < min_blocked:
         err(f"replacement levels gate must preserve at least {min_blocked} blocked L1 objectives")
     return {
