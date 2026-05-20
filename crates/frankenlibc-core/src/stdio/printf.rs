@@ -2317,6 +2317,39 @@ mod tests {
     }
 
     #[test]
+    fn test_hex_float_glibc_edge_cases() {
+        let mut spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'a',
+            None,
+        );
+        let mut buf = Vec::new();
+
+        format_float(-0.0, &spec, &mut buf);
+        assert_eq!(&buf, b"-0x0p+0");
+
+        buf.clear();
+        format_float(f64::from_bits(1), &spec, &mut buf);
+        assert_eq!(&buf, b"0x0.0000000000001p-1022");
+
+        buf.clear();
+        spec.precision = Precision::Fixed(0);
+        format_float(f64::from_bits(1), &spec, &mut buf);
+        assert_eq!(&buf, b"0x0p-1022");
+
+        buf.clear();
+        format_float(f64::MIN_POSITIVE, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1p-1022");
+
+        buf.clear();
+        format_float(f64::from_bits(0x7fefffffffffffff), &spec, &mut buf);
+        assert_eq!(&buf, b"0x2p+1023");
+    }
+
+    #[test]
     fn test_format_float_bankers_rounding() {
         // IEEE 754 round-half-to-even (banker's rounding) test.
         // 2.5 -> 2 (nearest even), 3.5 -> 4 (nearest even), 1.5 -> 2 (nearest even)
