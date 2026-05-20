@@ -839,8 +839,6 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
     }
 
     // Check for hex float (0x prefix).
-    // Per C11/strtod, if we see "0x" but hex parsing fails (e.g., "0xyz" has no
-    // hex digits after 0x), we fall back to decimal parsing which will parse "0".
     if chars_read + 2 <= max_chars
         && i + 1 < input.len()
         && input[i] == b'0'
@@ -849,8 +847,15 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
     {
         return Some(result);
     }
-    // If hex prefix was seen but parsing failed, we fall through to decimal
-    // parsing. This handles cases like "0xyz" where we should parse "0" as decimal.
+    // If a hex prefix was seen but parsing failed, the conversion is a
+    // matching failure rather than a decimal fallback.
+    if chars_read + 2 <= max_chars
+        && i + 1 < input.len()
+        && input[i] == b'0'
+        && (input[i + 1] == b'x' || input[i + 1] == b'X')
+    {
+        return None;
+    }
 
     // Decimal float: digits, decimal point, exponent.
     let mut buf = Vec::with_capacity(64);
@@ -919,10 +924,12 @@ fn scan_hex_float(
     let mut frac_digits: i32 = 0;
     let mut any_hex_digit = false;
     let mut in_fraction = false;
+    let mut saw_decimal_point = false;
 
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
         if c == b'.' && !in_fraction {
+            saw_decimal_point = true;
             in_fraction = true;
             i += 1;
             chars_read += 1;
@@ -950,16 +957,18 @@ fn scan_hex_float(
     }
 
     if !any_hex_digit {
-        // No hex digits after 0x - "0" itself is valid, reparse from start.
-        // Back up to just after sign (or start) and let decimal parser handle "0".
+        // glibc accepts `0x.` as a zero hex-float token but rejects `0x`
+        // or `0xyz` as matching failures.
+        if saw_decimal_point {
+            let val = if negative { -0.0 } else { 0.0 };
+            return Some((Some(ScanValue::Float(val)), i));
+        }
         return None;
     }
 
     // Parse binary exponent (p/P followed by optional sign and decimal digits).
     let mut bin_exp: i32 = 0;
     if i < input.len() && chars_read < max_chars && (input[i] == b'p' || input[i] == b'P') {
-        let saved_i = i;
-        let saved_chars_read = chars_read;
         i += 1;
         chars_read += 1;
 
@@ -990,11 +999,10 @@ fn scan_hex_float(
         }
 
         if !any_exp_digit {
-            // 'p' without exponent digits - back up past 'p' and sign.
-            // Per C11, if 'p' is present, exponent digits are required.
-            // Restore position and treat as if we never saw the 'p'.
-            i = saved_i;
-            let _ = saved_chars_read; // chars_read logically restored but unused after this point
+            // A `p` exponent marker after actual hex digits commits to a
+            // binary exponent. Without following exponent digits, glibc
+            // reports a matching failure rather than accepting the prefix.
+            return None;
         } else if exp_negative {
             bin_exp = -bin_exp;
         }
@@ -1660,62 +1668,56 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_hex_float_invalid_fallback() {
-        // "0xyz" should parse "0" as decimal (hex parsing fails, falls back)
+    fn test_scan_hex_float_invalid_prefix_is_matching_failure() {
         let dirs = parse_scanf_format(b"%a");
-        let result = scan_input(b"0xyz", &dirs);
+        assert_eq!(scan_input(b"0xyz", &dirs).count, 0);
+        assert_eq!(scan_input(b"0x", &dirs).count, 0);
+
+        // glibc accepts `0x.` as a zero hex-float token and consumes through
+        // the dot, while leaving a later `p` for the next directive because no
+        // real hex digit committed to a binary exponent.
+        let result = scan_input(b"0x.", &dirs);
         assert_eq!(result.count, 1);
         if let ScanValue::Float(v) = result.values[0] {
             assert!(v == 0.0, "expected 0.0, got {}", v);
         } else {
             panic!("expected Float");
         }
-    }
 
-    #[test]
-    fn test_scan_hex_float_p_without_digits() {
-        // "0x1.0p" should parse "0x1.0" (= 1.0) and leave 'p' unconsumed.
-        // Per C11, 'p' without following digits is not a valid exponent.
-        let dirs = parse_scanf_format(b"%a");
-        let result = scan_input(b"0x1.0p", &dirs);
-        assert_eq!(result.count, 1);
-        if let ScanValue::Float(v) = result.values[0] {
-            assert!((v - 1.0).abs() < 1e-10, "expected 1.0, got {}", v);
+        let dirs = parse_scanf_format(b"%a%s");
+        let result = scan_input(b"0x.p1", &dirs);
+        assert_eq!(result.count, 2);
+        if let ScanValue::String(ref s) = result.values[1] {
+            assert_eq!(s.as_slice(), b"p1");
         } else {
-            panic!("expected Float");
+            panic!("expected trailing string");
         }
     }
 
     #[test]
-    fn test_scan_hex_float_p_sign_without_digits() {
-        // "0x1.0p-" should parse "0x1.0" (= 1.0) and leave "p-" unconsumed.
+    fn test_scan_hex_float_p_without_digits_is_matching_failure() {
+        // Host glibc treats a p/P marker after actual hex digits as a
+        // committed binary exponent; missing exponent digits fail the whole
+        // conversion.
         let dirs = parse_scanf_format(b"%a");
-        let result = scan_input(b"0x1.0p-", &dirs);
-        assert_eq!(result.count, 1);
-        if let ScanValue::Float(v) = result.values[0] {
-            assert!((v - 1.0).abs() < 1e-10, "expected 1.0, got {}", v);
-        } else {
-            panic!("expected Float");
-        }
+        assert_eq!(scan_input(b"0x1.0p", &dirs).count, 0);
+        assert_eq!(scan_input(b"0x1.0P", &dirs).count, 0);
+        assert_eq!(scan_input(b"0x.0p", &dirs).count, 0);
     }
 
     #[test]
-    fn test_scan_hex_float_p_sign_then_text() {
-        // "0x2p-foo" should parse "0x2" (= 2.0) leaving "p-foo" unconsumed.
+    fn test_scan_hex_float_p_sign_without_digits_is_matching_failure() {
+        let dirs = parse_scanf_format(b"%a");
+        assert_eq!(scan_input(b"0x1.0p-", &dirs).count, 0);
+        assert_eq!(scan_input(b"0x1.0p+", &dirs).count, 0);
+        assert_eq!(scan_input(b"0x.0p-", &dirs).count, 0);
+    }
+
+    #[test]
+    fn test_scan_hex_float_p_sign_then_text_is_matching_failure() {
         let dirs = parse_scanf_format(b"%a%s");
         let result = scan_input(b"0x2p-foo", &dirs);
-        assert_eq!(result.count, 2, "should parse float then string");
-        if let ScanValue::Float(v) = result.values[0] {
-            assert!((v - 2.0).abs() < 1e-10, "expected 2.0, got {}", v);
-        } else {
-            panic!("expected Float");
-        }
-        // The remaining "p-foo" should be captured by %s
-        if let ScanValue::String(ref s) = result.values[1] {
-            assert_eq!(s.as_slice(), b"p-foo", "expected 'p-foo', got {:?}", s);
-        } else {
-            panic!("expected String for second value");
-        }
+        assert_eq!(result.count, 0);
     }
 
     #[test]
