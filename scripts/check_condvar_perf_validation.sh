@@ -10,28 +10,43 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ARTIFACT="${FRANKENLIBC_CONDVAR_PERF_ARTIFACT_PATH:-${ROOT}/tests/conformance/condvar_perf_validation.v1.json}"
-OUT_DIR="${ROOT}/target/conformance"
-REPORT="${OUT_DIR}/condvar_perf_validation.report.json"
-LOG="${OUT_DIR}/condvar_perf_validation.log.jsonl"
+MODE="default"
+if [[ $# -gt 1 ]]; then
+  echo "usage: $0 [--validate-only]" >&2
+  exit 2
+fi
+if [[ $# -eq 1 ]]; then
+  if [[ "$1" != "--validate-only" ]]; then
+    echo "usage: $0 [--validate-only]" >&2
+    exit 2
+  fi
+  MODE="validate-only"
+fi
 
-TRACE_ID="bd-2nzx::run-$(date -u +%Y%m%dT%H%M%SZ)-$$::001"
+ARTIFACT="${FRANKENLIBC_CONDVAR_PERF_ARTIFACT_PATH:-${ROOT}/tests/conformance/condvar_perf_validation.v1.json}"
+OUT_DIR="${FRANKENLIBC_CONDVAR_PERF_OUT_DIR:-${ROOT}/target/conformance}"
+REPORT="${FRANKENLIBC_CONDVAR_PERF_REPORT:-${OUT_DIR}/condvar_perf_validation.report.json}"
+LOG="${FRANKENLIBC_CONDVAR_PERF_LOG:-${OUT_DIR}/condvar_perf_validation.log.jsonl}"
+
+TRACE_ID="${FRANKENLIBC_CONDVAR_PERF_TRACE_ID:-bd-2nzx::run-$(date -u +%Y%m%dT%H%M%SZ)-$$::001}"
 START_NS="$(python3 -c 'import time; print(time.time_ns())')"
 
-mkdir -p "${OUT_DIR}"
+mkdir -p "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 if [[ ! -f "${ARTIFACT}" ]]; then
   echo "FAIL: required file missing: ${ARTIFACT}" >&2
   exit 1
 fi
 
-python3 - "${ARTIFACT}" "${REPORT}" <<'PY'
+set +e
+python3 - "${ARTIFACT}" "${REPORT}" "${MODE}" <<'PY'
 import json
 import pathlib
 import sys
 
 artifact_path = pathlib.Path(sys.argv[1])
 report_path = pathlib.Path(sys.argv[2])
+mode = sys.argv[3]
 
 with open(artifact_path) as f:
     data = json.load(f)
@@ -107,7 +122,10 @@ if not regression.get("all_condvar_tests_pass"):
 
 # Build report
 report = {
+    "report_schema": "condvar_perf_validation.report.v1",
     "bead": "bd-2nzx",
+    "gate": "condvar_perf_validation",
+    "mode": mode,
     "artifact": str(artifact_path),
     "baselines_total": total_baselines,
     "baselines_within_budget": within_budget_count,
@@ -117,6 +135,8 @@ report = {
     "optimization_selected": selected,
     "errors": errors,
     "warnings": warnings,
+    "outcome": "pass" if not errors else "fail",
+    "failure_signature": "none" if not errors else errors[0].split(":", 1)[0],
     "pass": len(errors) == 0,
 }
 
@@ -139,6 +159,7 @@ print(f"PASS: condvar perf validation ({total_baselines} baselines, "
 PY
 
 RESULT=$?
+set -e
 
 END_NS="$(python3 -c 'import time; print(time.time_ns())')"
 DURATION_MS=$(( (END_NS - START_NS) / 1000000 ))
@@ -150,8 +171,10 @@ log_entry = {
     'trace_id': '${TRACE_ID}',
     'bead': 'bd-2nzx',
     'gate': 'condvar_perf_validation',
+    'mode': '${MODE}',
     'artifact': '${ARTIFACT}',
     'result': 'PASS' if ${RESULT} == 0 else 'FAIL',
+    'outcome': 'pass' if ${RESULT} == 0 else 'fail',
     'duration_ms': ${DURATION_MS},
     'report': '${REPORT}',
 }
