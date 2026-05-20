@@ -1,0 +1,165 @@
+{
+  "schema_version": "cxx_abi_fail_stop_completion_contract.v1",
+  "manifest_id": "bd-cxafv.1-cxx-abi-fail-stop-completion-contract",
+  "generated_utc": "2026-05-20T21:58:00Z",
+  "description": "Completion-contract evidence binding for the bd-cxafv C++ ABI fail-stop subprocess fixtures.",
+  "bead": "bd-cxafv",
+  "completion_debt_bead": "bd-cxafv.1",
+  "source_artifacts": {
+    "implementation": "crates/frankenlibc-abi/src/unistd_abi.rs",
+    "unistd_abi_tests": "crates/frankenlibc-abi/tests/unistd_abi_test.rs",
+    "completion_gate": "scripts/check_cxx_abi_fail_stop_completion_contract.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/cxx_abi_fail_stop_completion_contract_test.rs",
+    "semantic_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "semantic_symbol_join": "tests/conformance/semantic_contract_symbol_join.v1.json"
+  },
+  "completion_debt_evidence": {
+    "bead": "bd-cxafv.1",
+    "original_bead": "bd-cxafv",
+    "covered_symbols": [
+      "__cxa_pure_virtual",
+      "__cxa_deleted_virtual"
+    ],
+    "tracked_but_not_completion_bound_symbols": [
+      "__cxa_throw_bad_array_new_length",
+      "__cxa_call_unexpected"
+    ],
+    "implementation_refs": [
+      "crates/frankenlibc-abi/src/unistd_abi.rs:16221",
+      "crates/frankenlibc-abi/src/unistd_abi.rs:16222",
+      "crates/frankenlibc-abi/src/unistd_abi.rs:16292",
+      "crates/frankenlibc-abi/src/unistd_abi.rs:16293",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8865",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8910",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8914",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8926",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8929",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8930",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8993",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8996",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8997",
+      "scripts/check_cxx_abi_fail_stop_completion_contract.sh:1",
+      "crates/frankenlibc-harness/tests/cxx_abi_fail_stop_completion_contract_test.rs:1",
+      "tests/conformance/cxx_abi_fail_stop_completion_contract.v1.json:1"
+    ],
+    "test_sources": {
+      "unistd_abi_tests": "crates/frankenlibc-abi/tests/unistd_abi_test.rs",
+      "completion_harness": "crates/frankenlibc-harness/tests/cxx_abi_fail_stop_completion_contract_test.rs"
+    },
+    "required_source_invariants": [
+      {
+        "id": "cxx-fail-stop-implementation-exports-covered-hooks",
+        "source": "implementation",
+        "must_contain": [
+          "pub unsafe extern \"C\" fn __cxa_pure_virtual() -> !",
+          "b\"pure virtual method called\\n\"",
+          "pub unsafe extern \"C\" fn __cxa_deleted_virtual() -> !",
+          "b\"deleted virtual method called\\n\"",
+          "crate::stdlib_abi::abort();"
+        ],
+        "must_not_contain": []
+      },
+      {
+        "id": "cxx-fail-stop-process-helper-captures-stderr",
+        "source": "unistd_abi_tests",
+        "must_contain": [
+          "fn assert_cxa_fail_stop_hook_aborts_with_stderr(",
+          "libc::pipe(fds.as_mut_ptr())",
+          "libc::dup2(fds[1], libc::STDERR_FILENO)",
+          "read_to_end(&mut stderr_bytes)",
+          "stderr.contains(expected_stderr)"
+        ],
+        "must_not_contain": []
+      },
+      {
+        "id": "cxx-fail-stop-pure-virtual-stderr-fixture",
+        "source": "unistd_abi_tests",
+        "must_contain": [
+          "fn cxa_pure_virtual_aborts_child_process()",
+          "\"__cxa_pure_virtual\"",
+          "\"pure virtual method called\"",
+          "__cxa_pure_virtual,"
+        ],
+        "must_not_contain": []
+      },
+      {
+        "id": "cxx-fail-stop-deleted-virtual-stderr-fixture",
+        "source": "unistd_abi_tests",
+        "must_contain": [
+          "fn cxa_deleted_virtual_aborts_child_process()",
+          "\"__cxa_deleted_virtual\"",
+          "\"deleted virtual method called\"",
+          "__cxa_deleted_virtual,"
+        ],
+        "must_not_contain": []
+      },
+      {
+        "id": "cxx-fail-stop-fixtures-prove-sigabrt",
+        "source": "unistd_abi_tests",
+        "must_contain": [
+          "libc::WIFSIGNALED(status)",
+          "libc::WTERMSIG(status)",
+          "libc::SIGABRT"
+        ],
+        "must_not_contain": []
+      },
+      {
+        "id": "cxx-fail-stop-semantic-contract-remains-abort-only",
+        "source": "semantic_symbol_join",
+        "must_contain": [
+          "\"inventory_id\": \"sem-cxx-abi-fail-stop\"",
+          "\"semantic_parity_status\": \"blocked_abort_only\"",
+          "\"__cxa_pure_virtual\"",
+          "\"__cxa_deleted_virtual\"",
+          "\"__cxa_throw_bad_array_new_length\"",
+          "\"__cxa_call_unexpected\""
+        ],
+        "must_not_contain": [
+          "\"semantic_parity_status\": \"implemented\""
+        ]
+      }
+    ],
+    "conformance_primary": {
+      "missing_item_id": "tests.conformance.primary",
+      "next_audit_score_threshold": 800,
+      "required_test_refs": [
+        {"source": "unistd_abi_tests", "name": "assert_cxa_fail_stop_hook_aborts_with_stderr"},
+        {"source": "unistd_abi_tests", "name": "cxa_pure_virtual_aborts_child_process"},
+        {"source": "unistd_abi_tests", "name": "cxa_deleted_virtual_aborts_child_process"},
+        {"source": "completion_harness", "name": "manifest_binds_cxx_abi_fail_stop_completion_evidence"},
+        {"source": "completion_harness", "name": "checker_accepts_current_cxx_abi_fail_stop_evidence"},
+        {"source": "completion_harness", "name": "checker_rejects_missing_deleted_virtual_stderr_probe"}
+      ],
+      "required_commands": [
+        "bash scripts/check_cxx_abi_fail_stop_completion_contract.sh",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-abi --test unistd_abi_test cxa_ -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test cxx_abi_fail_stop_completion_contract_test -- --nocapture",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo check -p frankenlibc-harness --test cxx_abi_fail_stop_completion_contract_test",
+        "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo clippy -p frankenlibc-harness --test cxx_abi_fail_stop_completion_contract_test -- -D warnings"
+      ],
+      "forbidden_output_markers": [
+        "[RCH] local (remote execution failed)",
+        "local fallback"
+      ],
+      "required_events": [
+        "cxx_abi_fail_stop_completion_contract_validated",
+        "cxx_abi_fail_stop_source_invariant"
+      ],
+      "required_fields": [
+        "timestamp",
+        "trace_id",
+        "event",
+        "level",
+        "bead_id",
+        "completion_debt_bead",
+        "original_bead",
+        "status",
+        "source_commit",
+        "missing_item",
+        "source_invariant_id",
+        "artifact_refs",
+        "failure_signature"
+      ]
+    }
+  }
+}
