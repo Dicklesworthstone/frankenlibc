@@ -4,6 +4,10 @@
   "purpose": "Fail-closed lint for completion-contract validation commands that claim Rust proof via cargo. Cargo proof commands must be remote-only rch executions with isolated target dirs and targeted test/check/clippy lanes.",
   "policy": {
     "required_remote_env": "RCH_FORCE_REMOTE=true",
+    "fail_closed_remote_env": "RCH_REQUIRE_REMOTE=1",
+    "legacy_remote_env_markers": [
+      "RCH_FORCE_REMOTE=true"
+    ],
     "required_launcher_tokens": [
       "rch",
       "exec"
@@ -46,6 +50,12 @@
     "raw_syscall_veneer_completion_contract",
     "math_core_diff_completion_contract"
   ],
+  "fail_closed_contract_paths": [
+    "tests/conformance/completion_contract_rch_proof_manifest_lint.v1.json"
+  ],
+  "expected_fail_closed_contracts": [
+    "completion_contract_rch_proof_manifest_lint"
+  ],
   "required_failure_signatures": [
     "bare_cargo_command",
     "missing_remote_env",
@@ -53,6 +63,8 @@
     "missing_rch_exec_env",
     "shell_wrapped_cargo",
     "missing_isolated_target_dir",
+    "missing_fail_closed_remote_env",
+    "legacy_remote_env_marker",
     "missing_targeted_test_lane",
     "missing_targeted_check_lane",
     "missing_targeted_clippy_lane",
@@ -89,8 +101,8 @@
     "jq empty target/conformance/completion_contract_rch_proof_manifest_lint.report.json",
     "jq empty target/conformance/completion_contract_rch_proof_manifest_lint.log.jsonl",
     "jq -e '.contract_status == \"pass\" and .status == \"pass\" and .report_path == \"target/conformance/completion_contract_rch_proof_manifest_lint.report.json\"' target/conformance/completion_contract_rch_proof_manifest_lint.report.json",
-    "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_icywaterfall_rch_proof_lint_test cargo test -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test -- --nocapture",
-    "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_icywaterfall_rch_proof_lint_check cargo check -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test",
-    "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_icywaterfall_rch_proof_lint_clippy cargo clippy -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test -- -D warnings"
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_goldbeaver_rch_proof_lint_test cargo test -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test -- --nocapture",
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_goldbeaver_rch_proof_lint_check cargo check -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test",
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_goldbeaver_rch_proof_lint_clippy cargo clippy -p frankenlibc-harness --test completion_contract_rch_proof_manifest_lint_test -- -D warnings"
   ]
 }

@@ -227,21 +227,44 @@ fn manifest_names_positive_completion_contracts_and_policy() -> TestResult {
         manifest["policy"]["required_remote_env"].as_str(),
         Some("RCH_FORCE_REMOTE=true")
     );
-    assert!(
-        manifest["policy"]["forbidden_proof_markers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|marker| marker.as_str() == Some("[RCH] local"))
+    assert_eq!(
+        manifest["policy"]["fail_closed_remote_env"].as_str(),
+        Some("RCH_REQUIRE_REMOTE=1")
     );
+    assert!(manifest["policy"]["legacy_remote_env_markers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|marker| marker.as_str() == Some("RCH_FORCE_REMOTE=true")));
+    let fail_closed_contracts: Vec<&str> = manifest["fail_closed_contract_paths"]
+        .as_array()
+        .ok_or("fail_closed_contract_paths must be array")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(fail_closed_contracts.len(), 1);
     assert!(
-        manifest["policy"]["forbidden_proof_markers"]
-            .as_array()
-            .unwrap()
+        fail_closed_contracts
             .iter()
-            .any(|marker| marker.as_str() == Some("remote execution failed"))
+            .any(|path| path.ends_with("completion_contract_rch_proof_manifest_lint.v1.json")),
+        "manifest must lint its own current fail-closed RCH proof commands"
     );
-    for required_code in ["missing_rch_exec_env", "shell_wrapped_cargo"] {
+    assert!(manifest["policy"]["forbidden_proof_markers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|marker| marker.as_str() == Some("[RCH] local")));
+    assert!(manifest["policy"]["forbidden_proof_markers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|marker| marker.as_str() == Some("remote execution failed")));
+    for required_code in [
+        "missing_rch_exec_env",
+        "shell_wrapped_cargo",
+        "missing_fail_closed_remote_env",
+        "legacy_remote_env_marker",
+    ] {
         assert!(
             manifest["required_failure_signatures"]
                 .as_array()
@@ -270,18 +293,22 @@ fn checker_accepts_positive_contracts_and_emits_structured_artifacts() -> TestRe
         Some("completion_contract_rch_proof_manifest_lint.report.v1")
     );
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["contract_count"].as_u64(), Some(7));
+    assert_eq!(report["summary"]["contract_count"].as_u64(), Some(8));
     assert_eq!(report["summary"]["strict_contract_count"].as_u64(), Some(5));
     assert_eq!(
         report["summary"]["launcher_only_contract_count"].as_u64(),
         Some(2)
+    );
+    assert_eq!(
+        report["summary"]["fail_closed_contract_count"].as_u64(),
+        Some(1)
     );
     assert_eq!(report["summary"]["failed_contracts"].as_u64(), Some(0));
     assert!(
         report["summary"]["cargo_command_count"]
             .as_u64()
             .unwrap_or(0)
-            >= 31
+            >= 34
     );
 
     let log = std::fs::read_to_string(
@@ -291,7 +318,7 @@ fn checker_accepts_positive_contracts_and_emits_structured_artifacts() -> TestRe
         .lines()
         .map(serde_json::from_str)
         .collect::<Result<_, _>>()?;
-    assert_eq!(rows.len(), 7);
+    assert_eq!(rows.len(), 8);
     for (index, line) in log.lines().enumerate() {
         validate_log_line(line, index + 1).map_err(|errors| {
             std::io::Error::other(format!("structured log validation failed: {errors:?}"))
@@ -343,6 +370,42 @@ fn checker_rejects_missing_remote_env() -> TestResult {
     let report =
         read_json(&out_dir.join("completion_contract_rch_proof_manifest_lint.report.json"))?;
     assert_failure_signature(&report, "missing_remote_env");
+    Ok(())
+}
+
+#[test]
+fn checker_rejects_legacy_remote_marker_for_fail_closed_contracts() -> TestResult {
+    let root = repo_root();
+    let out_dir = unique_out_dir(&root, "legacy_fail_closed_remote")?;
+    let mutated = out_dir.join("legacy_fail_closed_manifest.v1.json");
+    let mut manifest = read_json(&manifest_path(&root))?;
+    manifest["fail_closed_contract_paths"] =
+        serde_json::json!([mutated.to_string_lossy().to_string()]);
+
+    let mut changed = false;
+    let commands = manifest["required_validation_commands"]
+        .as_array_mut()
+        .ok_or("required_validation_commands must be array")?;
+    for command in commands {
+        let Some(text) = command.as_str() else {
+            continue;
+        };
+        if !changed && text.contains("RCH_REQUIRE_REMOTE=1") && text.contains("cargo test") {
+            *command = Value::String(text.replace("RCH_REQUIRE_REMOTE=1", "RCH_FORCE_REMOTE=true"));
+            changed = true;
+        }
+    }
+    assert!(
+        changed,
+        "test must mutate a fail-closed cargo proof command"
+    );
+    write_json(&mutated, &manifest)?;
+
+    let output = run_checker(&root, &mutated, &out_dir)?;
+    assert!(!output.status.success(), "{}", output_text(&output));
+    let report =
+        read_json(&out_dir.join("completion_contract_rch_proof_manifest_lint.report.json"))?;
+    assert_failure_signature(&report, "legacy_remote_env_marker");
     Ok(())
 }
 

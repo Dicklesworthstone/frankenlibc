@@ -137,6 +137,24 @@ def all_strings(value: Any) -> list[str]:
     return []
 
 
+def proof_marker_strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(proof_marker_strings(item))
+        return result
+    if isinstance(value, dict):
+        result: list[str] = []
+        for key, item in value.items():
+            if key == "forbidden_proof_markers":
+                continue
+            result.extend(proof_marker_strings(item))
+        return result
+    return []
+
+
 def command_strings(value: Any) -> list[str]:
     if isinstance(value, dict):
         result: list[str] = []
@@ -280,12 +298,43 @@ def validate_remote_command(
     return signatures
 
 
+def validate_fail_closed_remote_command(
+    contract_path: str,
+    command: str,
+    required_remote_env: str,
+    legacy_remote_markers: set[str],
+    forbidden_target_values: set[str],
+) -> list[str]:
+    signatures: list[str] = []
+    if required_remote_env not in command:
+        add_error(
+            contract_path,
+            "missing_fail_closed_remote_env",
+            f"cargo command lacks fail-closed remote env {required_remote_env}: {command}",
+        )
+        signatures.append("missing_fail_closed_remote_env")
+    for marker in sorted(legacy_remote_markers):
+        if marker and marker in command:
+            add_error(
+                contract_path,
+                "legacy_remote_env_marker",
+                f"cargo command uses legacy remote marker {marker}: {command}",
+            )
+            signatures.append("legacy_remote_env_marker")
+    signatures.extend(
+        validate_remote_command(contract_path, command, required_remote_env, forbidden_target_values)
+    )
+    return signatures
+
+
 def primary_signature(signatures: list[str]) -> str:
     priority = [
         "malformed_json",
         "malformed_manifest",
         "missing_contract",
         "local_fallback_marker",
+        "legacy_remote_env_marker",
+        "missing_fail_closed_remote_env",
         "bare_cargo_command",
         "missing_remote_env",
         "missing_rch_exec",
@@ -340,22 +389,30 @@ if not isinstance(policy, dict):
 required_remote_env = str(policy.get("required_remote_env", "RCH_FORCE_REMOTE=true"))
 forbidden_target_values = set(as_str_list(policy.get("forbidden_target_dir_values", []), "policy.forbidden_target_dir_values"))
 forbidden_markers = as_str_list(policy.get("forbidden_proof_markers", ["[RCH] local"]), "policy.forbidden_proof_markers")
+fail_closed_remote_env = str(policy.get("fail_closed_remote_env", "RCH_REQUIRE_REMOTE=1"))
+legacy_remote_markers = set(as_str_list(policy.get("legacy_remote_env_markers", []), "policy.legacy_remote_env_markers"))
 completion_lanes = set(as_str_list(policy.get("required_completion_test_lanes", []), "policy.required_completion_test_lanes"))
 contract_paths = as_str_list(manifest.get("contract_paths", []), "contract_paths")
 launcher_only_contract_paths = as_str_list(
     manifest.get("launcher_only_contract_paths", []),
     "launcher_only_contract_paths",
 )
+fail_closed_contract_paths = as_str_list(
+    manifest.get("fail_closed_contract_paths", []),
+    "fail_closed_contract_paths",
+)
 
 contract_reports: list[dict[str, Any]] = []
 total_cargo_commands = 0
 total_rust_surfaces = 0
 
-contract_specs = [(contract_path, True) for contract_path in contract_paths] + [
-    (contract_path, False) for contract_path in launcher_only_contract_paths
+contract_specs = [(contract_path, True, False) for contract_path in contract_paths] + [
+    (contract_path, False, False) for contract_path in launcher_only_contract_paths
+] + [
+    (contract_path, False, True) for contract_path in fail_closed_contract_paths
 ]
 
-for contract_path_text, enforce_lane_matrix in contract_specs:
+for contract_path_text, enforce_lane_matrix, enforce_fail_closed_remote in contract_specs:
     contract_path = resolve(contract_path_text)
     contract_errors_before = len(errors)
     contract_signatures: list[str] = []
@@ -368,8 +425,9 @@ for contract_path_text, enforce_lane_matrix in contract_specs:
         contract = load_json(contract_path, "contract")
         strings = all_strings(contract)
 
+    marker_strings = proof_marker_strings(contract)
     for marker in forbidden_markers:
-        if any(marker in text for text in strings):
+        if any(marker in text for text in marker_strings):
             add_error(contract_path_text, "local_fallback_marker", f"contract text contains forbidden proof marker {marker}")
             contract_signatures.append("local_fallback_marker")
 
@@ -385,9 +443,20 @@ for contract_path_text, enforce_lane_matrix in contract_specs:
         target = test_target(command)
         if kind is not None and target is not None:
             command_index.setdefault((kind, target), []).append(command)
-        contract_signatures.extend(
-            validate_remote_command(contract_path_text, command, required_remote_env, forbidden_target_values)
-        )
+        if enforce_fail_closed_remote:
+            contract_signatures.extend(
+                validate_fail_closed_remote_command(
+                    contract_path_text,
+                    command,
+                    fail_closed_remote_env,
+                    legacy_remote_markers,
+                    forbidden_target_values,
+                )
+            )
+        else:
+            contract_signatures.extend(
+                validate_remote_command(contract_path_text, command, required_remote_env, forbidden_target_values)
+            )
 
     if enforce_lane_matrix:
         for surface in rust_surfaces:
@@ -410,6 +479,7 @@ for contract_path_text, enforce_lane_matrix in contract_specs:
         "completion_targets": completion_targets,
         "cargo_command_count": len(cargo_commands),
         "enforce_lane_matrix": enforce_lane_matrix,
+        "enforce_fail_closed_remote": enforce_fail_closed_remote,
         "targeted_lanes": sorted(f"{kind}:{target}" for (kind, target) in command_index),
         "error_count": len(new_errors),
     }
@@ -429,6 +499,7 @@ summary = {
     "contract_count": len(contract_specs),
     "strict_contract_count": len(contract_paths),
     "launcher_only_contract_count": len(launcher_only_contract_paths),
+    "fail_closed_contract_count": len(fail_closed_contract_paths),
     "passed_contracts": sum(1 for row in contract_reports if row["status"] == "pass"),
     "failed_contracts": sum(1 for row in contract_reports if row["status"] == "fail"),
     "rust_surface_count": total_rust_surfaces,
@@ -442,7 +513,14 @@ report = {
     "policy": policy,
     "contract_reports": contract_reports,
     "errors": errors,
-    "artifact_refs": [rel(MANIFEST), *contract_paths, rel(REPORT), rel(LOG)],
+    "artifact_refs": [
+        rel(MANIFEST),
+        *contract_paths,
+        *launcher_only_contract_paths,
+        *fail_closed_contract_paths,
+        rel(REPORT),
+        rel(LOG),
+    ],
     "source_commit": SOURCE_COMMIT,
     "report_path": rel(REPORT),
     "log_path": rel(LOG),
