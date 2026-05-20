@@ -26,6 +26,68 @@ fn load_json(path: &Path) -> TestResult<serde_json::Value> {
     Ok(serde_json::from_str(&content)?)
 }
 
+fn load_text(path: &Path) -> TestResult<String> {
+    Ok(std::fs::read_to_string(path)?)
+}
+
+#[test]
+fn gate_script_locks_rch_and_local_mode_contract() -> TestResult {
+    let root = workspace_root()?;
+    let script = root.join("scripts/check_setjmp_phase1_core.sh");
+    let text = load_text(&script)?;
+
+    for required in [
+        "RUN_MODE=\"rch\"",
+        "--rch",
+        "--local",
+        "RCH_REQUIRE_REMOTE=1",
+        "rch exec -- cargo test -p frankenlibc-core phase1_ -- --nocapture",
+        "cargo test -p frankenlibc-core phase1_ -- --nocapture",
+        "bd-146t",
+        "target/conformance/setjmp_phase1_core.report.json",
+        "target/conformance/setjmp_phase1_core.log.jsonl",
+        "target/conformance/setjmp_phase1_core.test_output.log",
+        "tests/cve_arena/results/bd-146t/trace.jsonl",
+        "tests/cve_arena/results/bd-146t/artifact_index.json",
+    ] {
+        assert!(
+            text.contains(required),
+            "gate script should contain contract fragment {required:?}"
+        );
+    }
+
+    for test_name in [
+        "phase1_capture_and_restore_roundtrip_in_strict_mode",
+        "phase1_longjmp_zero_normalizes_to_one",
+        "phase1_nested_capture_assigns_distinct_context_ids",
+        "phase1_hardened_rejects_corrupted_context",
+        "phase1_rejects_mode_mismatch_between_capture_and_restore",
+        "phase1_rejects_foreign_thread_restore_attempts",
+    ] {
+        assert!(
+            text.contains(test_name),
+            "gate script should assert required unit test output {test_name}"
+        );
+    }
+
+    let help = Command::new(&script)
+        .arg("--help")
+        .current_dir(&root)
+        .output()?;
+    assert!(
+        help.status.success(),
+        "setjmp phase-1 core gate --help failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&help.stdout),
+        String::from_utf8_lossy(&help.stderr)
+    );
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    assert!(help_text.contains("--rch"));
+    assert!(help_text.contains("--local"));
+    assert!(help_text.contains("default"));
+
+    Ok(())
+}
+
 #[test]
 fn gate_script_passes_and_emits_artifacts() -> TestResult {
     let root = workspace_root()?;
@@ -42,7 +104,10 @@ fn gate_script_passes_and_emits_artifacts() -> TestResult {
         );
     }
 
-    let output = Command::new(&script).current_dir(&root).output()?;
+    let output = Command::new(&script)
+        .arg("--local")
+        .current_dir(&root)
+        .output()?;
     assert!(
         output.status.success(),
         "setjmp phase-1 core gate failed:\nstdout={}\nstderr={}",

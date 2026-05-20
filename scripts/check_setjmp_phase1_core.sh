@@ -14,13 +14,54 @@ CVE_DIR="${ROOT}/tests/cve_arena/results/bd-146t"
 CVE_TRACE="${CVE_DIR}/trace.jsonl"
 CVE_INDEX="${CVE_DIR}/artifact_index.json"
 RUN_ID="setjmp-phase1-core-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_MODE="rch"
 
 mkdir -p "${OUT_DIR}" "${CVE_DIR}"
 
+usage() {
+    cat <<'EOF'
+Usage: check_setjmp_phase1_core.sh [--rch|--local]
+
+Runs deterministic phase-1 setjmp core tests and emits report/log artifacts.
+
+Modes:
+  --rch    Run cargo tests through remote rch execution (default).
+  --local  Run cargo tests directly. Use only inside an already-remote worker
+           or for deliberate local debugging.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --rch)
+            RUN_MODE="rch"
+            ;;
+        --local)
+            RUN_MODE="local"
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "FAIL: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
 run_tests() {
-    if ! cargo test -p frankenlibc-core phase1_ -- --nocapture >"${TEST_LOG}" 2>&1; then
+    if [[ "${RUN_MODE}" == "rch" ]]; then
+        if ! RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" rch exec -- cargo test -p frankenlibc-core phase1_ -- --nocapture >"${TEST_LOG}" 2>&1; then
+            cat "${TEST_LOG}" >&2
+            echo "FAIL: phase-1 setjmp core tests failed via rch" >&2
+            exit 1
+        fi
+    elif ! cargo test -p frankenlibc-core phase1_ -- --nocapture >"${TEST_LOG}" 2>&1; then
         cat "${TEST_LOG}" >&2
-        echo "FAIL: phase-1 setjmp core tests failed" >&2
+        echo "FAIL: phase-1 setjmp core tests failed via local cargo" >&2
         exit 1
     fi
 
