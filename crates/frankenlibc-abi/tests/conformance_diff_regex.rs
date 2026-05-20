@@ -140,6 +140,9 @@ fn diff_regex_basic_match_match() {
         ("a.c", "abc", 0, true),
         ("a.c", "ac", 0, false),
         ("a*", "aaa", 0, true),
+        ("\\(a\\)\\1", "aa", 0, true),
+        ("\\(a\\)\\1", "ab", 0, false),
+        ("\\(ab*\\)c\\1", "zzabbcabb", 0, true),
         ("[0-9]+", "abc 123 def", REG_EXTENDED, true),
         ("(foo|bar)", "barbaz", REG_EXTENDED, true),
         ("HELLO", "hello", REG_ICASE, true),
@@ -262,6 +265,8 @@ fn diff_regex_invalid_patterns() {
         ("[", 0),            // unclosed bracket
         ("(", REG_EXTENDED), // unclosed group in ERE
         ("\\", 0),           // dangling backslash
+        ("\\1", 0),          // backreference without a captured subexpression
+        ("\\(a\\)\\2", 0),   // backreference past the captured subexpression count
     ];
     for (pat, cflags) in cases {
         let cpat = CString::new(*pat).unwrap();

@@ -8,6 +8,8 @@
 //! 1. Parse regex pattern into an AST
 //! 2. Compile AST to an NFA (Thompson construction)
 //! 3. Simulate NFA with tagged transitions for submatch extraction
+//! 4. Use a bounded backtracking path for BRE backreferences, which are not
+//!    regular and cannot be represented by Thompson NFA transitions.
 //!
 //! Uses POSIX leftmost-longest match semantics.
 
@@ -84,6 +86,7 @@ enum Ast {
         index: usize, // 1-based
         inner: Box<Ast>,
     },
+    BackRef(usize),
     Concat(Vec<Ast>),
     Alternate(Box<Ast>, Box<Ast>),
     Repeat {
@@ -114,6 +117,7 @@ pub enum RegexRiskReason {
     NestedUnboundedRepeat,
     NullableRepeatedTerm,
     AmbiguousRepeatedAlternation,
+    BackReference,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,6 +275,11 @@ fn analyze_ast(ast: &Ast) -> AstAnalysis {
         }
         Ast::Anchor(_) => AstAnalysis::linear(true, FirstByteSet::empty()),
         Ast::Group { inner, .. } => analyze_ast(inner),
+        Ast::BackRef(_) => {
+            let mut out = AstAnalysis::linear(true, FirstByteSet::any());
+            out.mark_super_linear(RegexRiskReason::BackReference);
+            out
+        }
         Ast::Concat(items) => {
             let mut out = AstAnalysis::linear(true, FirstByteSet::empty());
             let mut prefix_nullable = true;
@@ -347,6 +356,47 @@ fn analyze_ast(ast: &Ast) -> AstAnalysis {
     }
 }
 
+fn ast_contains_backref(ast: &Ast) -> bool {
+    match ast {
+        Ast::BackRef(_) => true,
+        Ast::Group { inner, .. } => ast_contains_backref(inner),
+        Ast::Concat(items) => items.iter().any(ast_contains_backref),
+        Ast::Alternate(left, right) => ast_contains_backref(left) || ast_contains_backref(right),
+        Ast::Repeat { inner, .. } => ast_contains_backref(inner),
+        Ast::Literal(_) | Ast::AnyChar | Ast::CharClass { .. } | Ast::Anchor(_) => false,
+    }
+}
+
+fn estimate_nfa_states(ast: &Ast) -> usize {
+    match ast {
+        Ast::Literal(_)
+        | Ast::AnyChar
+        | Ast::CharClass { .. }
+        | Ast::Anchor(_)
+        | Ast::BackRef(_) => 1,
+        Ast::Group { inner, .. } => estimate_nfa_states(inner).saturating_add(2),
+        Ast::Concat(items) => items.iter().fold(0usize, |sum, item| {
+            sum.saturating_add(estimate_nfa_states(item))
+        }),
+        Ast::Alternate(left, right) => estimate_nfa_states(left)
+            .saturating_add(estimate_nfa_states(right))
+            .saturating_add(2),
+        Ast::Repeat { inner, min, max } => {
+            let inner_states = estimate_nfa_states(inner);
+            let required = inner_states.saturating_mul(*min as usize);
+            match max {
+                None => required.saturating_add(inner_states).saturating_add(2),
+                Some(max_count) => {
+                    let optional_count = max_count.saturating_sub(*min) as usize;
+                    required.saturating_add(
+                        optional_count.saturating_mul(inner_states.saturating_add(1)),
+                    )
+                }
+            }
+        }
+    }
+}
+
 fn build_complexity_certificate(
     pattern: &[u8],
     ast: &Ast,
@@ -403,8 +453,11 @@ enum MatchKind {
 #[derive(Debug)]
 pub struct CompiledRegex {
     nfa: Vec<NfaInstr>,
+    backtrack_ast: Option<Ast>,
     num_groups: usize,
     nosub: bool,
+    icase: bool,
+    newline: bool,
     complexity_certificate: RegexComplexityCertificate,
 }
 
@@ -790,6 +843,14 @@ impl<'a> Parser<'a> {
                             inner: Box::new(inner),
                         })
                     }
+                    Some(ch @ b'1'..=b'9') if !self.extended => {
+                        self.advance();
+                        let idx = (ch - b'0') as usize;
+                        if idx > self.group_count {
+                            return Err(REG_ESUBREG);
+                        }
+                        Ok(Ast::BackRef(idx))
+                    }
                     Some(ch) => {
                         self.advance();
                         // Escaped metacharacter becomes literal
@@ -986,6 +1047,7 @@ impl Compiler {
                 self.compile(inner);
                 self.emit(NfaInstr::Save(close_slot));
             }
+            Ast::BackRef(_) => unreachable!("backreferences use the backtracking regex engine"),
             Ast::Alternate(left, right) => {
                 let split_idx = self.emit(NfaInstr::Split(0, 0)); // placeholder
                 self.compile(left);
@@ -1312,6 +1374,323 @@ impl<'a> PikeVm<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// Backreference execution — bounded backtracking for non-regular BREs
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+struct BacktrackState {
+    pos: usize,
+    slots: Vec<i32>,
+}
+
+#[derive(Clone, Copy)]
+struct RepeatBounds {
+    min: u32,
+    max: Option<u32>,
+}
+
+struct BacktrackVm<'a> {
+    ast: &'a Ast,
+    input: &'a [u8],
+    num_slots: usize,
+    icase: bool,
+    newline: bool,
+    eflags: i32,
+}
+
+impl<'a> BacktrackVm<'a> {
+    const MAX_DEPTH: usize = 512;
+    const MAX_STATES: usize = 4096;
+
+    fn new(
+        ast: &'a Ast,
+        input: &'a [u8],
+        num_slots: usize,
+        icase: bool,
+        newline: bool,
+        eflags: i32,
+    ) -> Self {
+        Self {
+            ast,
+            input,
+            num_slots,
+            icase,
+            newline,
+            eflags,
+        }
+    }
+
+    fn execute(&self) -> Option<Vec<i32>> {
+        for start in 0..=self.input.len() {
+            let mut slots = vec![-1i32; self.num_slots];
+            slots[0] = start as i32;
+
+            let mut best: Option<BacktrackState> = None;
+            for state in self.match_ast(self.ast, start, slots, 0) {
+                if best.as_ref().is_none_or(|current| state.pos > current.pos) {
+                    best = Some(state);
+                }
+            }
+
+            if let Some(mut state) = best {
+                state.slots[1] = state.pos as i32;
+                return Some(state.slots);
+            }
+        }
+        None
+    }
+
+    fn match_ast(
+        &self,
+        ast: &Ast,
+        pos: usize,
+        slots: Vec<i32>,
+        depth: usize,
+    ) -> Vec<BacktrackState> {
+        if depth > Self::MAX_DEPTH {
+            return Vec::new();
+        }
+
+        match ast {
+            Ast::Literal(byte) => {
+                if self.byte_matches(*byte, pos) {
+                    vec![BacktrackState {
+                        pos: pos + 1,
+                        slots,
+                    }]
+                } else {
+                    Vec::new()
+                }
+            }
+            Ast::AnyChar => {
+                if pos < self.input.len() && !(self.newline && self.input[pos] == b'\n') {
+                    vec![BacktrackState {
+                        pos: pos + 1,
+                        slots,
+                    }]
+                } else {
+                    Vec::new()
+                }
+            }
+            Ast::CharClass { ranges, negated } => {
+                if self.char_class_matches(ranges, *negated, pos) {
+                    vec![BacktrackState {
+                        pos: pos + 1,
+                        slots,
+                    }]
+                } else {
+                    Vec::new()
+                }
+            }
+            Ast::Anchor(AnchorKind::Start) => {
+                if self.check_anchor_start(pos) {
+                    vec![BacktrackState { pos, slots }]
+                } else {
+                    Vec::new()
+                }
+            }
+            Ast::Anchor(AnchorKind::End) => {
+                if self.check_anchor_end(pos) {
+                    vec![BacktrackState { pos, slots }]
+                } else {
+                    Vec::new()
+                }
+            }
+            Ast::Group { index, inner } => {
+                let mut group_slots = slots;
+                let open_slot = index * 2;
+                let close_slot = open_slot + 1;
+                if close_slot >= group_slots.len() {
+                    return Vec::new();
+                }
+                group_slots[open_slot] = pos as i32;
+                let mut out = Vec::new();
+                for mut state in self.match_ast(inner, pos, group_slots, depth + 1) {
+                    state.slots[close_slot] = state.pos as i32;
+                    Self::push_state(&mut out, state);
+                }
+                out
+            }
+            Ast::BackRef(index) => self.match_backref(*index, pos, slots),
+            Ast::Concat(items) => {
+                let mut states = vec![BacktrackState { pos, slots }];
+                for item in items {
+                    let mut next = Vec::new();
+                    for state in states {
+                        for matched in self.match_ast(item, state.pos, state.slots, depth + 1) {
+                            Self::push_state(&mut next, matched);
+                        }
+                    }
+                    if next.is_empty() {
+                        return Vec::new();
+                    }
+                    states = next;
+                }
+                states
+            }
+            Ast::Alternate(left, right) => {
+                let mut out = self.match_ast(left, pos, slots.clone(), depth + 1);
+                for state in self.match_ast(right, pos, slots, depth + 1) {
+                    Self::push_state(&mut out, state);
+                }
+                out
+            }
+            Ast::Repeat { inner, min, max } => {
+                let mut out = Vec::new();
+                self.collect_repeat(
+                    inner,
+                    BacktrackState { pos, slots },
+                    0,
+                    RepeatBounds {
+                        min: *min,
+                        max: *max,
+                    },
+                    depth + 1,
+                    &mut out,
+                );
+                out
+            }
+        }
+    }
+
+    fn collect_repeat(
+        &self,
+        inner: &Ast,
+        state: BacktrackState,
+        count: u32,
+        bounds: RepeatBounds,
+        depth: usize,
+        out: &mut Vec<BacktrackState>,
+    ) {
+        if depth > Self::MAX_DEPTH || out.len() >= Self::MAX_STATES {
+            return;
+        }
+        if count >= bounds.min {
+            Self::push_state(out, state.clone());
+        }
+        if bounds.max.is_some_and(|limit| count >= limit) {
+            return;
+        }
+
+        for next in self.match_ast(inner, state.pos, state.slots, depth + 1) {
+            if next.pos == state.pos {
+                if count + 1 >= bounds.min {
+                    Self::push_state(out, next);
+                }
+                continue;
+            }
+            self.collect_repeat(inner, next, count + 1, bounds, depth + 1, out);
+            if out.len() >= Self::MAX_STATES {
+                return;
+            }
+        }
+    }
+
+    fn match_backref(&self, index: usize, pos: usize, slots: Vec<i32>) -> Vec<BacktrackState> {
+        let open_slot = index * 2;
+        let close_slot = open_slot + 1;
+        if close_slot >= slots.len() {
+            return Vec::new();
+        }
+
+        let start = slots[open_slot];
+        let end = slots[close_slot];
+        if start < 0 || end < start {
+            return Vec::new();
+        }
+
+        let start = start as usize;
+        let end = end as usize;
+        let captured = &self.input[start..end];
+        if pos + captured.len() > self.input.len() {
+            return Vec::new();
+        }
+
+        let candidate = &self.input[pos..pos + captured.len()];
+        if self.slices_equal(captured, candidate) {
+            vec![BacktrackState {
+                pos: pos + captured.len(),
+                slots,
+            }]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn byte_matches(&self, expected: u8, pos: usize) -> bool {
+        if pos >= self.input.len() {
+            return false;
+        }
+        let actual = self.input[pos];
+        if self.icase && expected.is_ascii_alphabetic() {
+            actual.eq_ignore_ascii_case(&expected)
+        } else {
+            actual == expected
+        }
+    }
+
+    fn char_class_matches(&self, ranges: &[(u8, u8)], negated: bool, pos: usize) -> bool {
+        if pos >= self.input.len() {
+            return false;
+        }
+        let ch = self.input[pos];
+        let mut found = false;
+        for &(lo, hi) in ranges {
+            if self.icase {
+                let ch_lo = ch.to_ascii_lowercase();
+                for range_ch in lo..=hi {
+                    if ch_lo == range_ch.to_ascii_lowercase() {
+                        found = true;
+                        break;
+                    }
+                }
+            } else if ch >= lo && ch <= hi {
+                found = true;
+            }
+            if found {
+                break;
+            }
+        }
+        if negated { !found } else { found }
+    }
+
+    fn slices_equal(&self, left: &[u8], right: &[u8]) -> bool {
+        if left.len() != right.len() {
+            return false;
+        }
+        left.iter().zip(right.iter()).all(|(a, b)| {
+            if self.icase && a.is_ascii_alphabetic() {
+                a.eq_ignore_ascii_case(b)
+            } else {
+                a == b
+            }
+        })
+    }
+
+    fn check_anchor_start(&self, pos: usize) -> bool {
+        let notbol = self.eflags & REG_NOTBOL != 0;
+        if pos == 0 {
+            return !notbol;
+        }
+        self.newline && self.input[pos - 1] == b'\n'
+    }
+
+    fn check_anchor_end(&self, pos: usize) -> bool {
+        let noteol = self.eflags & REG_NOTEOL != 0;
+        if pos == self.input.len() {
+            return !noteol;
+        }
+        self.newline && pos < self.input.len() && self.input[pos] == b'\n'
+    }
+
+    fn push_state(out: &mut Vec<BacktrackState>, state: BacktrackState) {
+        if out.len() < Self::MAX_STATES {
+            out.push(state);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1337,19 +1716,30 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
     let icase = cflags & REG_ICASE != 0;
     let newline = cflags & REG_NEWLINE != 0;
     let nosub = cflags & REG_NOSUB != 0;
+    let has_backref = ast_contains_backref(&ast);
 
-    let mut compiler = Compiler::new(icase, newline);
-    // Wrap entire pattern in group 0
-    compiler.emit(NfaInstr::Save(0));
-    compiler.compile(&ast);
-    compiler.emit(NfaInstr::Save(1));
-    let nfa = compiler.finish();
-    let complexity_certificate = build_complexity_certificate(pat, &ast, nfa.len());
+    let (nfa, estimated_states) = if has_backref {
+        (Vec::new(), estimate_nfa_states(&ast))
+    } else {
+        let mut compiler = Compiler::new(icase, newline);
+        // Wrap entire pattern in group 0
+        compiler.emit(NfaInstr::Save(0));
+        compiler.compile(&ast);
+        compiler.emit(NfaInstr::Save(1));
+        let nfa = compiler.finish();
+        let estimated_states = nfa.len();
+        (nfa, estimated_states)
+    };
+    let complexity_certificate = build_complexity_certificate(pat, &ast, estimated_states);
+    let backtrack_ast = if has_backref { Some(ast) } else { None };
 
     Ok(Box::new(CompiledRegex {
         nfa,
+        backtrack_ast,
         num_groups,
         nosub,
+        icase,
+        newline,
         complexity_certificate,
     }))
 }
@@ -1447,6 +1837,18 @@ fn regex_exec_cstring_slots(
 
 fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> Option<Vec<i32>> {
     let num_slots = compiled.num_slots();
+    if let Some(ast) = compiled.backtrack_ast.as_ref() {
+        let vm = BacktrackVm::new(
+            ast,
+            input,
+            num_slots,
+            compiled.icase,
+            compiled.newline,
+            eflags,
+        );
+        return vm.execute();
+    }
+
     let vm = PikeVm::new(&compiled.nfa, input, num_slots, eflags);
 
     vm.execute()
@@ -1657,6 +2059,23 @@ mod tests {
         assert!(compile_and_match("hello", "hello", 0));
         assert!(compile_and_match("h.llo", "hello", 0));
         assert!(compile_and_match("ab*c", "abbc", 0));
+    }
+
+    #[test]
+    fn bre_backreferences_match_captured_text() {
+        let (matched, subs) = compile_and_submatch("\\(ab*\\)c\\1", "zzabbcabb", 0);
+        assert!(matched);
+        assert_eq!(subs[0], (2, 9));
+        assert_eq!(subs[1], (2, 5));
+
+        assert!(compile_and_match("\\(a\\)\\1", "aa", 0));
+        assert!(!compile_and_match("\\(a\\)\\1", "ab", 0));
+    }
+
+    #[test]
+    fn bre_invalid_backreferences_fail_at_compile_time() {
+        assert_eq!(regex_compile(b"\\1", 0).unwrap_err(), REG_ESUBREG);
+        assert_eq!(regex_compile(b"\\(a\\)\\2", 0).unwrap_err(), REG_ESUBREG);
     }
 
     #[test]
