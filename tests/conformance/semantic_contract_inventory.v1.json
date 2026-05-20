@@ -141,28 +141,6 @@
       ]
     },
     {
-      "id": "sem-obstack-printf-chk",
-      "seed_overlay_id": "sem-obstack-printf-chk",
-      "surface": "obstack fortified printf helpers",
-      "symbols": [
-        "__obstack_printf_chk",
-        "__obstack_vprintf_chk"
-      ],
-      "module": "frankenlibc-abi::glibc_internal_abi",
-      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 2147,
-      "line_marker": "variadic, return ENOSYS",
-      "support_matrix_status": "Implemented",
-      "semantic_class": "deterministic_fallback",
-      "contract_kind": "enosys_fallback",
-      "current_behavior": "Both fortified obstack printf helpers set ENOSYS and return -1.",
-      "user_risk": "Fortified obstack formatting links but does not produce output.",
-      "required_followup": "Add obstack layout and formatting fixtures or reclassify these rows away from full semantic parity.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
-    },
-    {
       "id": "sem-stdio-vtable-helpers",
       "seed_overlay_id": "sem-stdio-vtable-helpers",
       "surface": "glibc stdio vtable helper fallbacks",
@@ -495,20 +473,20 @@
     }
   ],
   "summary": {
-    "entry_count": 19,
-    "seed_overlay_entries": 11,
-    "seed_overlay_covered": 11,
+    "entry_count": 18,
+    "seed_overlay_entries": 10,
+    "seed_overlay_covered": 10,
     "new_entries": 8,
     "by_semantic_class": {
       "compat_noop": 4,
-      "deterministic_fallback": 5,
+      "deterministic_fallback": 4,
       "limited_bootstrap": 6,
       "unsupported_platform_contract": 2,
       "abort_only": 1,
       "proof_gap": 1
     },
     "by_source_path": {
-      "crates/frankenlibc-abi/src/glibc_internal_abi.rs": 7,
+      "crates/frankenlibc-abi/src/glibc_internal_abi.rs": 6,
       "crates/frankenlibc-abi/src/unistd_abi.rs": 8,
       "crates/frankenlibc-abi/src/pthread_abi.rs": 1,
       "crates/frankenlibc-abi/src/setjmp_abi.rs": 1,

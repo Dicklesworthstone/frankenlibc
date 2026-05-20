@@ -1,3 +1,4 @@
+#![feature(c_variadic)]
 #![cfg(target_os = "linux")]
 
 //! Integration tests for glibc_internal_abi entrypoints.
@@ -52,6 +53,8 @@ use frankenlibc_abi::glibc_internal_abi::{
     __nss_hosts_lookup,
     __nss_next,
     __nss_passwd_lookup,
+    __obstack_printf_chk,
+    __obstack_vprintf_chk,
     __overflow,
     __pread64,
     __pread64_nocancel,
@@ -1970,6 +1973,41 @@ unsafe extern "C" {
     fn free(ptr: *mut std::ffi::c_void);
 }
 
+#[repr(C)]
+struct ObstackTestView {
+    chunk_size: i64,
+    chunk: *mut c_void,
+    object_base: *mut u8,
+    next_free: *mut u8,
+    chunk_limit: *mut u8,
+    temp: i64,
+    alignment_mask: i32,
+    chunkfun: *mut c_void,
+    freefun: *mut c_void,
+    extra_arg: *mut c_void,
+    flags: u32,
+}
+
+unsafe extern "C" fn call_obstack_vprintf_chk(
+    h: *mut c_void,
+    flag: c_int,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe { __obstack_vprintf_chk(h, flag, fmt, std::ptr::addr_of_mut!(args).cast()) }
+}
+
+unsafe fn obstack_current_object_bytes(h: *mut c_void) -> Vec<u8> {
+    let h = h as *const ObstackTestView;
+    unsafe {
+        assert!(!(*h).object_base.is_null());
+        assert!(!(*h).next_free.is_null());
+        let len = (*h).next_free.offset_from((*h).object_base);
+        assert!(len >= 0, "obstack next_free should not precede object_base");
+        std::slice::from_raw_parts((*h).object_base, len as usize).to_vec()
+    }
+}
+
 #[test]
 fn obstack_begin_and_allocated_p() {
     // struct obstack contains pointers, needs 8-byte alignment
@@ -2023,6 +2061,58 @@ fn obstack_newchunk_grows() {
     let mem = unsafe { _obstack_memory_used(h) };
     assert!(mem >= 256, "memory should be at least 256 after newchunk");
 
+    unsafe { _obstack_free(h, ptr::null_mut()) };
+}
+
+#[test]
+fn obstack_printf_chk_formats_into_current_object() {
+    let mut obstack_buf = [0u64; 16];
+    let h = obstack_buf.as_mut_ptr() as *mut c_void;
+    let result = unsafe { _obstack_begin(h, 4096, 8, malloc as *mut c_void, free as *mut c_void) };
+    assert_eq!(result, 1);
+
+    let label = CString::new("ok").unwrap();
+    let ret = unsafe { __obstack_printf_chk(h, 2, c"chk-%d:%s".as_ptr(), 7i32, label.as_ptr()) };
+    assert_eq!(ret, 8);
+    let bytes = unsafe { obstack_current_object_bytes(h) };
+    assert_eq!(bytes, b"chk-7:ok");
+
+    unsafe { _obstack_free(h, ptr::null_mut()) };
+}
+
+#[test]
+fn obstack_vprintf_chk_delegates_to_native_formatter() {
+    let mut obstack_buf = [0u64; 16];
+    let h = obstack_buf.as_mut_ptr() as *mut c_void;
+    let result = unsafe { _obstack_begin(h, 4096, 8, malloc as *mut c_void, free as *mut c_void) };
+    assert_eq!(result, 1);
+
+    let label = CString::new("vp").unwrap();
+    let ret = unsafe { call_obstack_vprintf_chk(h, 1, c"v-%u:%s".as_ptr(), 42u32, label.as_ptr()) };
+    assert_eq!(ret, 7);
+    let bytes = unsafe { obstack_current_object_bytes(h) };
+    assert_eq!(bytes, b"v-42:vp");
+
+    unsafe { _obstack_free(h, ptr::null_mut()) };
+}
+
+#[test]
+fn obstack_printf_chk_rejects_null_inputs() {
+    assert_eq!(
+        unsafe { __obstack_printf_chk(ptr::null_mut(), 0, c"ignored".as_ptr()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { call_obstack_vprintf_chk(ptr::null_mut(), 0, c"ignored".as_ptr()) },
+        -1
+    );
+
+    let mut obstack_buf = [0u64; 16];
+    let h = obstack_buf.as_mut_ptr() as *mut c_void;
+    let result = unsafe { _obstack_begin(h, 4096, 8, malloc as *mut c_void, free as *mut c_void) };
+    assert_eq!(result, 1);
+    assert_eq!(unsafe { __obstack_printf_chk(h, 0, ptr::null()) }, -1);
+    assert_eq!(unsafe { call_obstack_vprintf_chk(h, 0, ptr::null()) }, -1);
     unsafe { _obstack_free(h, ptr::null_mut()) };
 }
 

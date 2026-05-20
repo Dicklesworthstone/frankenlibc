@@ -101,20 +101,6 @@
       "required_followup": "Gate NSS maturity on nsswitch, module ordering, backend fallthrough, concurrency, and cache-coherence fixtures."
     },
     {
-      "id": "sem-obstack-printf-chk",
-      "surface": "obstack fortified printf helpers",
-      "symbols": [
-        "__obstack_printf_chk",
-        "__obstack_vprintf_chk"
-      ],
-      "support_matrix_status": "Implemented",
-      "semantic_class": "deterministic_fallback",
-      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 2147,
-      "evidence": "The variadic obstack helpers set ENOSYS rather than implementing obstack formatting semantics.",
-      "required_followup": "Add obstack layout and formatting fixtures or reclassify these rows away from full semantic parity."
-    },
-    {
       "id": "sem-stdio-vtable-helpers",
       "surface": "glibc stdio vtable helper fallbacks",
       "symbols": [
@@ -200,10 +186,10 @@
     }
   ],
   "audited_summary": {
-    "entries": 11,
+    "entries": 10,
     "by_semantic_class": {
       "compat_noop": 3,
-      "deterministic_fallback": 3,
+      "deterministic_fallback": 2,
       "limited_bootstrap": 3,
       "unsupported_platform_contract": 1,
       "proof_gap": 1,

@@ -2187,31 +2187,28 @@ pub unsafe extern "C" fn _obstack_memory_used(h: *mut c_void) -> SizeT {
     total
 }
 
-// __obstack_printf_chk: printf to obstack with overflow checking — variadic, return ENOSYS
+// __obstack_printf_chk: fortified printf to obstack. The flag is fortify
+// metadata; obstack growth is bounds-checked by the native obstack path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __obstack_printf_chk(
-    _h: *mut c_void,
+    h: *mut c_void,
     _flag: c_int,
-    _fmt: *const c_char,
+    fmt: *const c_char,
+    mut args: ...
 ) -> c_int {
-    // Variadic function — cannot forward args portably.
-    // Applications should use obstack_printf macro which calls obstack_vprintf.
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    let ap = (&mut args) as *mut _ as *mut c_void;
+    unsafe { super::unistd_abi::obstack_vprintf(h, fmt, ap) }
 }
 
 // __obstack_vprintf_chk: vprintf to obstack with overflow checking
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __obstack_vprintf_chk(
-    _h: *mut c_void,
+    h: *mut c_void,
     _flag: c_int,
-    _fmt: *const c_char,
-    _ap: *mut c_void,
+    fmt: *const c_char,
+    ap: *mut c_void,
 ) -> c_int {
-    // The va_list format is platform-specific. For now, return ENOSYS.
-    // Applications rarely call this directly; they use obstack_printf macro.
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    unsafe { super::unistd_abi::obstack_vprintf(h, fmt, ap) }
 }
 
 // obstack globals

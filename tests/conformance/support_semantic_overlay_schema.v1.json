@@ -176,10 +176,10 @@
     }
   ],
   "expected_current_summary": {
-    "audited_entry_count": 11,
-    "normalized_claim_row_count": 41,
-    "symbol_reference_count": 40,
-    "exact_symbol_reference_count": 36,
+    "audited_entry_count": 10,
+    "normalized_claim_row_count": 39,
+    "symbol_reference_count": 38,
+    "exact_symbol_reference_count": 34,
     "wildcard_symbol_reference_count": 4,
     "duplicate_symbol_version_count": 0,
     "stale_source_ref_count": 0
