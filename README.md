@@ -172,7 +172,7 @@ Every repair is **deterministic** (replayable from the same input) and **audited
 
 Source of truth: `support_matrix.json` and `tests/conformance/reality_report.v1.json`.
 
-Declared replacement level: **L1 — Hardened Interpose**.
+Declared replacement level claim: **L1 — Hardened Interpose**.
 
 | Status | Count | % | Meaning |
 |---|---:|---:|---|
