@@ -70,10 +70,10 @@
       "anchor": "\"level\": \"L3\""
     },
     {
-      "kind": "current_level_l0",
+      "kind": "current_level_l1",
       "path": "tests/conformance/replacement_levels.json",
-      "line": 266,
-      "anchor": "\"current_level\": \"L0\""
+      "line": 263,
+      "anchor": "\"current_level\": \"L1\""
     },
     {
       "kind": "current_assessment_zero_residual",
@@ -240,9 +240,9 @@
   ],
   "source_anchors": {
     "replacement_levels": [
-      "\"current_level\": \"L0\"",
-      "\"current_release_level\": \"L0\"",
-      "\"status\": \"in_progress\"",
+      "\"current_level\": \"L1\"",
+      "\"current_release_level\": \"L1\"",
+      "\"status\": \"achieved\"",
       "\"status\": \"planned\"",
       "\"status\": \"roadmap\"",
       "Standalone artifact packaging/deployment proof remains pending",
@@ -275,11 +275,11 @@
         "L2",
         "L3"
       ],
-      "current_level": "L0",
-      "current_release_level": "L0",
+      "current_level": "L1",
+      "current_release_level": "L1",
       "expected_status_by_level": {
         "L0": "achieved",
-        "L1": "in_progress",
+        "L1": "achieved",
         "L2": "planned",
         "L3": "roadmap"
       },
@@ -287,10 +287,9 @@
         "callthrough": 0,
         "stub": 0
       },
-      "l1_objective_gate_status": "blocked",
+      "l1_objective_gate_status": "pass",
       "l1_required_objective_outcomes": [
-        "pass",
-        "blocked"
+        "pass"
       ],
       "l2_required_blocker_substring": "Standalone artifact packaging/deployment proof remains pending",
       "stale_blocker_forbidden_substrings": [
@@ -303,9 +302,9 @@
       "bead_id": "bd-gtf.4",
       "gate_id": "replacement_levels_l1_gate",
       "status": "pass",
-      "current_level": "L0",
-      "objective_gate_status": "blocked",
-      "script_check_count": 7,
+      "current_level": "L1",
+      "objective_gate_status": "pass",
+      "script_check_count": 8,
       "script_failure_count": 0,
       "min_l1_crt_proof_rows": 11
     },
@@ -380,7 +379,7 @@
     {
       "missing_item_id": "tests.e2e.primary",
       "status": "covered",
-      "description": "E2E coverage replays the replacement-level gate into deterministic target reports/logs and proves current L0 claim-control blocks L1/L2/L3 overclaim paths.",
+      "description": "E2E coverage replays the replacement-level gate into deterministic target reports/logs and proves current L1 claim-control is evidence-backed while L2/L3 overclaim paths remain blocked.",
       "implementation_refs": [
         "l1_objective_gate",
         "l1_objective_obligations",

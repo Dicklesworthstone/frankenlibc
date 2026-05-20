@@ -458,7 +458,7 @@ fn checker_replays_replacement_level_gate_and_emits_report() -> TestResult {
     );
     assert_eq!(
         report["summary"]["gate_summary"]["current_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         report["summary"]["gate_summary"]["script_failure_count"].as_u64(),
@@ -477,7 +477,7 @@ fn checker_replays_replacement_level_gate_and_emits_report() -> TestResult {
         Some("replacement_levels_l1_gate")
     );
     assert_eq!(gate_report["status"].as_str(), Some("pass"));
-    assert_eq!(gate_report["current_level"].as_str(), Some("L0"));
+    assert_eq!(gate_report["current_level"].as_str(), Some("L1"));
 
     let gate_rows = read_jsonl(&out_dir.join("replacement_levels_l1_gate.log.jsonl"))?;
     assert!(
