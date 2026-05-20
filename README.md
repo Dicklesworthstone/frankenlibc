@@ -170,20 +170,37 @@ Every repair is **deterministic** (replayable from the same input) and **audited
 
 ## Current State (2026-05-16)
 
-Source of truth: `support_matrix.json` and `tests/conformance/reality_report.v1.json`.
+Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
+Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, wraps_host_libc=0, glibc_call_through=0, stub=0.
 
 Declared replacement level claim: **L1 — Hardened Interpose**.
+Total currently classified exports: **4119**.
 
 | Status | Count | % | Meaning |
 |---|---:|---:|---|
-| `Implemented` | **3,705** | **90.0%** | Native ABI-backed Rust-owned behavior |
-| `RawSyscall` | **414** | **10.0%** | ABI path delegates directly to Linux syscalls |
-| `WrapsHostLibc` | 0 | 0.0% | None remaining — every native wrapper has been promoted |
-| `GlibcCallThrough` | 0 | 0.0% | None remaining — no host-glibc symbol call-through in the classified surface |
-| `Stub` | 0 | 0.0% | None — semantic no-op / fallback / bootstrap contracts are tracked separately in the semantic overlay |
-| **Total classified** | **4,119** | **100.0%** | Native coverage = `Implemented + RawSyscall` |
+| `Implemented` | 3705 | 90% | Native ABI-backed Rust-owned behavior |
+| `RawSyscall` | 414 | 10% | ABI path delegates directly to Linux syscalls |
+| `WrapsHostLibc` | 0 | 0% | None remaining — every native wrapper has been promoted |
+| `GlibcCallThrough` | 0 | 0% | None remaining — no host-glibc symbol call-through in the classified surface |
+| `Stub` | 0 | 0% | None — semantic no-op / fallback / bootstrap contracts are tracked separately in the semantic overlay |
+| **Total classified** | 4119 | 100% | Native coverage = `Implemented + RawSyscall` |
 
-The classified surface is fully native. The shipping artifact is the interpose-first preload library (`libfrankenlibc_abi.so`); the staged path to a fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by the L1 / L2 / L3 replacement-level promotion contracts.
+The classified surface is fully native at the support-taxonomy layer. The shipping artifact is the interpose-first preload library (`libfrankenlibc_abi.so`); it is not a full standalone libc replacement. The staged path to a fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by the L1 / L2 / L3 replacement-level promotion contracts.
+
+### Claim Field Contract
+
+User-facing support and replacement claims must keep these fields separate:
+
+| Field | Source of truth |
+|---|---|
+| `symbol_status` | `support_matrix.json` |
+| `semantic_parity_status` | `tests/conformance/semantic_contract_symbol_join.v1.json` |
+| `oracle_kind` | `tests/conformance/oracle_precedence_divergence.v1.json` |
+| `replacement_level` | `tests/conformance/replacement_levels.json` |
+| `evidence_artifact` | Generated reports, fixtures, matrices, or gate logs |
+| `freshness_state` | `source_commit`, generated timestamp, or freshness predicate |
+| `known_limitation` | Explicit blocker, unsupported contract, proof gap, or deferred behavior |
+| `user_recommendation` | L0-only, unsupported, blocked, degraded, or narrow-workload-ready guidance |
 
 ### Curated LD_PRELOAD Smoke Battery
 
