@@ -2249,6 +2249,12 @@ mod tests {
         assert_eq!(&buf, b"0x1.0p+0");
 
         buf.clear();
+        spec.conversion = b'A';
+        format_float(0.1, &spec, &mut buf);
+        assert_eq!(&buf, b"0X1.AP-4");
+
+        buf.clear();
+        spec.conversion = b'a';
         spec.precision = Precision::Fixed(0);
         format_float(1.5, &spec, &mut buf);
         assert_eq!(&buf, b"0x2p+0");
