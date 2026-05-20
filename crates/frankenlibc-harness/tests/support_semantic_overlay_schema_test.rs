@@ -213,11 +213,11 @@ fn gate_passes_current_overlay_and_emits_report_log_and_normalized_rows() {
     assert_eq!(report["summary"]["audited_entry_count"].as_u64(), Some(10));
     assert_eq!(
         report["summary"]["normalized_claim_row_count"].as_u64(),
-        Some(39)
+        Some(37)
     );
     assert_eq!(
         report["summary"]["exact_symbol_reference_count"].as_u64(),
-        Some(34)
+        Some(32)
     );
     assert_eq!(
         report["summary"]["wildcard_symbol_reference_count"].as_u64(),

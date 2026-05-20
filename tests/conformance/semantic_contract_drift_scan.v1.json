@@ -161,8 +161,8 @@
     ]
   },
   "expected_current_summary": {
-    "tracked_inventory_entries": 19,
-    "semantic_parity_blocker_count": 19,
+    "tracked_inventory_entries": 18,
+    "semantic_parity_blocker_count": 18,
     "untracked_contract_annotation_count": 0,
     "allowed_false_positive_count": 0,
     "support_matrix_stub_count": 0,

@@ -171,18 +171,16 @@
     },
     {
       "id": "sem-nexttoward-long-double-direction",
-      "surface": "C99 nexttoward long-double direction semantics",
+      "surface": "C99 nexttowardl long-double direction and result semantics",
       "symbols": [
-        "nexttoward",
-        "nexttowardf",
         "nexttowardl"
       ],
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
       "source_path": "crates/frankenlibc-abi/src/math_abi.rs",
-      "source_line": 609,
-      "evidence": "The ABI accepts the direction argument as f64 and delegates through nextafter-style f64 paths, so long-double-only direction differences are not represented.",
-      "required_followup": "Keep nexttoward-family replacement claims blocked until 80-bit long-double ABI plumbing and directed fixtures cover long-double direction values that round to x in f64."
+      "source_line": 4544,
+      "evidence": "nexttoward and nexttowardf now use x86_64 stack-slot shims plus x87 byte classification tests for long-double-only direction differences; nexttowardl still models x, y, and the result as f64 and delegates through nextafter.",
+      "required_followup": "Keep nexttowardl replacement claims blocked until 80-bit long-double argument/result ABI plumbing and directed fixtures cover values that round together in f64."
     }
   ],
   "audited_summary": {
