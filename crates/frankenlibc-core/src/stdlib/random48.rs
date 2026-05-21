@@ -17,9 +17,11 @@ const DEFAULT_A: u64 = 0x5DEECE66D;
 const DEFAULT_C: u64 = 0xB;
 /// 48-bit mask.
 const MASK_48: u64 = (1u64 << 48) - 1;
+/// Process startup state before any `srand48`, `seed48`, or `lcong48` call.
+const DEFAULT_INITIAL_STATE: u64 = 0;
 
 /// Global 48-bit state, packed into low 48 bits of a u64.
-static STATE: AtomicU64 = AtomicU64::new(0x330E_0000_0001);
+static STATE: AtomicU64 = AtomicU64::new(DEFAULT_INITIAL_STATE);
 
 /// Global multiplier (can be changed by lcong48).
 static MULTIPLIER: AtomicU64 = AtomicU64::new(DEFAULT_A);
@@ -163,6 +165,21 @@ mod tests {
         RANDOM48_TEST_LOCK
             .lock()
             .expect("random48 test lock should not be poisoned")
+    }
+
+    #[test]
+    fn test_default_startup_state_matches_glibc_sequence() {
+        let first = step(DEFAULT_INITIAL_STATE, DEFAULT_A, DEFAULT_C);
+        assert_eq!(first, 0xB);
+        assert_eq!(first as f64 / (1u64 << 48) as f64, 3.907985046680551e-14);
+
+        let second = step(first, DEFAULT_A, DEFAULT_C);
+        assert_eq!(second, 0x40942DE6BA);
+        assert_eq!((second >> 17) as i64, 2_116_118);
+
+        let third = step(second, DEFAULT_A, DEFAULT_C);
+        assert_eq!(third, 0xAA8544E593D);
+        assert_eq!(((third >> 16) as i32) as i64, 178_803_790);
     }
 
     #[test]
