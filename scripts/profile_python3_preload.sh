@@ -12,19 +12,77 @@ OUT_DIR="$REPO_ROOT/target/perf/python3_preload_profile"
 PRELOAD_LIB="${FRANKENLIBC_LIB:-$REPO_ROOT/target/release/libfrankenlibc_abi.so}"
 TRACE_ID="bd-35hjg.1-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 TOP_N="${PROFILE_TOP_N:-50}"
+TIMEOUT_SEC="${PROFILE_TIMEOUT_SEC:-10}"
 
 PYTHON_CMD="${PYTHON_CMD:-python3 -c 'print(1)'}"
 
 mkdir -p "$OUT_DIR"
 
-# Check prerequisites
-if [[ ! -f "$PRELOAD_LIB" ]]; then
-    echo "Building frankenlibc-abi..."
-    cargo build -p frankenlibc-abi --release 2>&1 | tail -5
-fi
+read_python_argv() {
+    python3 - "$PYTHON_CMD" <<'PY'
+import shlex
+import sys
+
+try:
+    argv = shlex.split(sys.argv[1])
+except ValueError as exc:
+    print(f"invalid PYTHON_CMD: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+if not argv:
+    print("PYTHON_CMD parsed to an empty argv", file=sys.stderr)
+    raise SystemExit(2)
+
+for arg in argv:
+    print(arg)
+PY
+}
 
 if ! command -v perf &>/dev/null; then
     echo "FAIL: perf not found"
+    exit 1
+fi
+
+PYTHON_ARGV_TEXT="$(read_python_argv)"
+mapfile -t PYTHON_ARGV <<<"$PYTHON_ARGV_TEXT"
+
+build_preload_lib() {
+    if ! command -v rch >/dev/null 2>&1; then
+        echo "FAIL: preload library missing and rch is not available" >&2
+        echo "Build with: RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo build -p frankenlibc-abi --release" >&2
+        exit 1
+    fi
+
+    local target_dir="${CARGO_TARGET_DIR:-/data/tmp/rch_target_frankenlibc_profile_python3_preload_${USER:-agent}}"
+    local build_log="$OUT_DIR/rch_build.log"
+    local allowlist="${RCH_ENV_ALLOWLIST:-}"
+    case ",${allowlist}," in
+        *,CARGO_TARGET_DIR,*)
+            ;;
+        *)
+            allowlist="${allowlist:+${allowlist},}CARGO_TARGET_DIR"
+            ;;
+    esac
+
+    echo "Building frankenlibc-abi through rch..."
+    CARGO_TARGET_DIR="$target_dir" RCH_ENV_ALLOWLIST="$allowlist" \
+        rch exec -- cargo build -p frankenlibc-abi --release >"$build_log" 2>&1
+
+    if grep -q '\[RCH\] local' "$build_log"; then
+        echo "FAIL: refusing local rch fallback; see $build_log" >&2
+        exit 1
+    fi
+
+    PRELOAD_LIB="$target_dir/release/libfrankenlibc_abi.so"
+}
+
+# Check prerequisites
+if [[ ! -f "$PRELOAD_LIB" ]]; then
+    build_preload_lib
+fi
+
+if [[ ! -f "$PRELOAD_LIB" ]]; then
+    echo "FAIL: preload library not found after build: $PRELOAD_LIB" >&2
     exit 1
 fi
 
@@ -32,6 +90,10 @@ echo "=== Python3 Preload Profiling Harness (bd-35hjg.1) ==="
 echo "Trace ID: $TRACE_ID"
 echo "Output: $OUT_DIR"
 echo "Top N symbols: $TOP_N"
+echo "Timeout: ${TIMEOUT_SEC}s"
+printf 'Command:'
+printf ' %q' "${PYTHON_ARGV[@]}"
+printf '\n'
 echo ""
 
 profile_run() {
@@ -44,21 +106,24 @@ profile_run() {
 
     echo "--- Profiling: $label ---"
 
-    local env_prefix=""
+    local env_cmd=()
     case "$mode" in
         baseline)
-            env_prefix=""
             ;;
         strict)
-            env_prefix="FRANKENLIBC_MODE=strict LD_PRELOAD=$PRELOAD_LIB"
+            env_cmd=(FRANKENLIBC_MODE=strict LD_PRELOAD="$PRELOAD_LIB")
             ;;
         hardened)
-            env_prefix="FRANKENLIBC_MODE=hardened LD_PRELOAD=$PRELOAD_LIB"
+            env_cmd=(FRANKENLIBC_MODE=hardened LD_PRELOAD="$PRELOAD_LIB")
             ;;
     esac
 
     # Warm-up run to ensure caches are populated
-    eval "$env_prefix $PYTHON_CMD" >/dev/null 2>&1 || true
+    if [[ "$mode" == "baseline" ]]; then
+        timeout "$TIMEOUT_SEC" "${PYTHON_ARGV[@]}" >/dev/null 2>&1 || true
+    else
+        timeout "$TIMEOUT_SEC" env "${env_cmd[@]}" "${PYTHON_ARGV[@]}" >/dev/null 2>&1 || true
+    fi
 
     # Timed run
     local start_ns
@@ -66,10 +131,11 @@ profile_run() {
 
     # Profile with perf
     # Use -g for call graph, --call-graph dwarf for better stack traces
+    local profile_rc=0
     if [[ "$mode" == "baseline" ]]; then
-        perf record -g -o "$perf_data" -- $PYTHON_CMD >/dev/null 2>&1 || true
+        timeout "$TIMEOUT_SEC" perf record -g -o "$perf_data" -- "${PYTHON_ARGV[@]}" >/dev/null 2>&1 || profile_rc=$?
     else
-        eval "perf record -g -o \"$perf_data\" -- env $env_prefix $PYTHON_CMD" >/dev/null 2>&1 || true
+        timeout "$TIMEOUT_SEC" perf record -g -o "$perf_data" -- env "${env_cmd[@]}" "${PYTHON_ARGV[@]}" >/dev/null 2>&1 || profile_rc=$?
     fi
 
     local end_ns
@@ -78,6 +144,9 @@ profile_run() {
     local duration_ms=$((duration_ns / 1000000))
 
     echo "  Duration: ${duration_ms}ms"
+    if [[ "$profile_rc" -ne 0 ]]; then
+        echo "  Profile exit: ${profile_rc}"
+    fi
 
     # Generate report
     if [[ -f "$perf_data" ]]; then
