@@ -91,22 +91,40 @@ fi
 FRESH_REPORT="${LATEST_SMOKE_DIR}/abi_compat_report.json"
 log "Fresh report: ${FRESH_REPORT}"
 
-extract_summary() {
-  local file="$1"
-  jq -c '{passes: .summary.passes, fails: .summary.fails, skips: .summary.skips}' "${file}" 2>/dev/null || echo '{"error":"parse_failed"}'
+# Extract .summary.<key> as a raw token: a numeric string when present,
+# "MISSING" when the field is absent, or "JQERR" when the file is not
+# parseable JSON.
+extract_count() {
+  jq -r --arg k "$2" '.summary[$k] // "MISSING"' "$1" 2>/dev/null || echo "JQERR"
 }
 
-COMMITTED_STATS="$(extract_summary "${COMMITTED_SUMMARY}")"
-FRESH_STATS="$(jq -c '{passes: .summary.passes, fails: .summary.fails, skips: .summary.skips}' "${FRESH_REPORT}" 2>/dev/null || echo '{"error":"parse_failed"}')"
+# Fail closed on a load-bearing count. A summary or report that does not
+# yield a real numeric pass/fail count is an infrastructure error (exit 2)
+# — never a silent 0, which would let a genuine divergence slip through the
+# comparison below as a PASS. (Before this guard, an unparseable summary
+# collapsed both sides to 0/0 and the lane reported PASS.)
+require_count() {
+  [[ "$2" =~ ^[0-9]+$ ]] \
+    || die "$1 is not a numeric count (got '$2') — summary unparseable or missing its .summary field; failing closed"
+}
 
-log "Committed: ${COMMITTED_STATS}"
-log "Fresh:     ${FRESH_STATS}"
-log_json "comparison" "committed" "${COMMITTED_STATS}" "fresh" "${FRESH_STATS}"
+COMMITTED_PASSES="$(extract_count "${COMMITTED_SUMMARY}" passes)"
+COMMITTED_FAILS="$(extract_count "${COMMITTED_SUMMARY}" fails)"
+COMMITTED_SKIPS="$(extract_count "${COMMITTED_SUMMARY}" skips)"
+FRESH_PASSES="$(extract_count "${FRESH_REPORT}" passes)"
+FRESH_FAILS="$(extract_count "${FRESH_REPORT}" fails)"
+FRESH_SKIPS="$(extract_count "${FRESH_REPORT}" skips)"
 
-COMMITTED_PASSES="$(echo "${COMMITTED_STATS}" | jq -r '.passes // 0')"
-COMMITTED_FAILS="$(echo "${COMMITTED_STATS}" | jq -r '.fails // 0')"
-FRESH_PASSES="$(echo "${FRESH_STATS}" | jq -r '.passes // 0')"
-FRESH_FAILS="$(echo "${FRESH_STATS}" | jq -r '.fails // 0')"
+require_count "committed pass count" "${COMMITTED_PASSES}"
+require_count "committed fail count" "${COMMITTED_FAILS}"
+require_count "fresh pass count" "${FRESH_PASSES}"
+require_count "fresh fail count" "${FRESH_FAILS}"
+
+log "Committed: passes=${COMMITTED_PASSES} fails=${COMMITTED_FAILS} skips=${COMMITTED_SKIPS}"
+log "Fresh:     passes=${FRESH_PASSES} fails=${FRESH_FAILS} skips=${FRESH_SKIPS}"
+log_json "comparison" "committed_passes" "${COMMITTED_PASSES}" "committed_fails" "${COMMITTED_FAILS}" \
+  "committed_skips" "${COMMITTED_SKIPS}" "fresh_passes" "${FRESH_PASSES}" "fresh_fails" "${FRESH_FAILS}" \
+  "fresh_skips" "${FRESH_SKIPS}"
 
 DIVERGED=false
 if [[ "${COMMITTED_PASSES}" != "${FRESH_PASSES}" ]]; then
@@ -116,6 +134,17 @@ fi
 if [[ "${COMMITTED_FAILS}" != "${FRESH_FAILS}" ]]; then
   log "DIVERGENCE: fail count differs (committed=${COMMITTED_FAILS}, fresh=${FRESH_FAILS})"
   DIVERGED=true
+fi
+# The lane's contract is to fail on ANY divergence; the skip count is part
+# of that. Compared only when both sides expose a numeric skip count, so a
+# report without a skip field cannot newly hard-fail the lane.
+if [[ "${COMMITTED_SKIPS}" =~ ^[0-9]+$ && "${FRESH_SKIPS}" =~ ^[0-9]+$ ]]; then
+  if [[ "${COMMITTED_SKIPS}" != "${FRESH_SKIPS}" ]]; then
+    log "DIVERGENCE: skip count differs (committed=${COMMITTED_SKIPS}, fresh=${FRESH_SKIPS})"
+    DIVERGED=true
+  fi
+else
+  log "NOTE: skip counts not both numeric (committed=${COMMITTED_SKIPS}, fresh=${FRESH_SKIPS}); skip-divergence check omitted"
 fi
 
 if [[ "${DIVERGED}" == "true" ]]; then
@@ -140,7 +169,7 @@ if [[ "${DIVERGED}" == "true" ]]; then
     "total_cases": $((FRESH_PASSES + FRESH_FAILS)),
     "passes": ${FRESH_PASSES},
     "fails": ${FRESH_FAILS},
-    "skips": $(echo "${FRESH_STATS}" | jq -r '.skips // 0'),
+    "skips": $([[ "${FRESH_SKIPS}" =~ ^[0-9]+$ ]] && echo "${FRESH_SKIPS}" || echo 0),
     "signature_guard_failures": 0,
     "perf_failures": 0,
     "valgrind_failures": 0,
