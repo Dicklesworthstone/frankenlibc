@@ -8,9 +8,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUT_DIR="$REPO_ROOT/target/perf/python3_preload_profile"
 PRELOAD_LIB="${FRANKENLIBC_LIB:-$REPO_ROOT/target/release/libfrankenlibc_abi.so}"
 TRACE_ID="bd-35hjg.1-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+OUT_ROOT="$REPO_ROOT/target/perf/python3_preload_profile"
+OUT_DIR="$OUT_ROOT/$TRACE_ID"
 TOP_N="${PROFILE_TOP_N:-50}"
 TIMEOUT_SEC="${PROFILE_TIMEOUT_SEC:-10}"
 
@@ -53,7 +54,7 @@ build_preload_lib() {
         exit 1
     fi
 
-    local target_dir="${CARGO_TARGET_DIR:-/data/tmp/rch_target_frankenlibc_profile_python3_preload_${USER:-agent}}"
+    local target_dir="${CARGO_TARGET_DIR:-/data/tmp/rch_target_frankenlibc_profile_python3_preload_${USER:-agent}_${TRACE_ID}}"
     local build_log="$OUT_DIR/rch_build.log"
     local allowlist="${RCH_ENV_ALLOWLIST:-}"
     case ",${allowlist}," in
