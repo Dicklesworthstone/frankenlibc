@@ -267,7 +267,7 @@ fn run_case_from_execution(
         family = fixture_set.family,
         symbol = case.function,
         mode = active_mode,
-        case_name = case.name
+        case_name = case_name
     );
 
     let input_hex = serde_json::to_vec(&case.inputs)
@@ -588,6 +588,19 @@ mod tests {
                 .iter()
                 .any(|row| row.case_name == "len_a [hardened]"),
             "hardened row should be disambiguated even when fixture mode has whitespace"
+        );
+        assert!(
+            report
+                .cases
+                .iter()
+                .any(|row| row.trace_id == "unit::string/strlen::strlen::strict::len_a [strict]"),
+            "trace_id should use the same disambiguated case name as the row"
+        );
+        assert!(
+            report.cases.iter().any(
+                |row| row.trace_id == "unit::string/strlen::strlen::hardened::len_a [hardened]"
+            ),
+            "trace_id should use the same disambiguated case name as the row"
         );
         Ok(())
     }
