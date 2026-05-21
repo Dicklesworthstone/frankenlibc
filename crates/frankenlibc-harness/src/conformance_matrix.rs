@@ -401,8 +401,8 @@ fn ratio_percent(numerator: u64, denominator: u64) -> f64 {
 }
 
 fn mode_matches(active_mode: &str, case_mode: &str) -> bool {
-    let active = active_mode.to_ascii_lowercase();
-    let case = case_mode.to_ascii_lowercase();
+    let active = active_mode.trim().to_ascii_lowercase();
+    let case = case_mode.trim().to_ascii_lowercase();
     case == active || case == "both"
 }
 
@@ -507,6 +507,43 @@ mod tests {
         assert_eq!(report.cases.len(), 1);
         assert_eq!(report.cases[0].symbol, "strlen");
         assert!(report.cases[0].duration_ms.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn matrix_trims_fixture_mode_labels() -> TestResult {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"string/strlen",
+                "captured_at":"2026-02-13T00:00:00Z",
+                "cases":[
+                    {"name":"len_a","function":"strlen","spec_section":"POSIX strlen","inputs":{"s":[97,0]},"expected_output":"1","expected_errno":0,"mode":" strict \n"}
+                ]
+            }"#,
+        )?;
+
+        let report = build_conformance_matrix_with_executor(
+            &[fixture],
+            MatrixMode::Strict,
+            "unit",
+            |_, _, active_mode| {
+                assert_eq!(active_mode, "strict");
+                CaseExecution::Completed(DifferentialExecution {
+                    host_output: "1".to_string(),
+                    impl_output: "1".to_string(),
+                    host_parity: true,
+                    note: None,
+                })
+            },
+        );
+
+        assert_eq!(
+            report.summary.total_cases, 1,
+            "whitespace-padded fixture modes should not silently drop cases"
+        );
+        assert_eq!(report.summary.passed, 1);
+        assert_eq!(report.cases[0].mode, "strict");
         Ok(())
     }
 
