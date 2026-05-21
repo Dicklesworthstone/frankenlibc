@@ -185,7 +185,7 @@ def detect_host_calls(function: FunctionInfo, root: Path) -> list[HostCall]:
     calls: list[HostCall] = []
     path = rel(root, function.path)
     for line_no, raw_line in function.lines:
-        if line_no <= function.body_start_line:
+        if line_no < function.body_start_line:
             continue
         line = strip_comments(raw_line)
         if not line.strip():
@@ -280,7 +280,7 @@ def alias_callsites(function: FunctionInfo, targets: set[str], root: Path) -> li
     calls: list[HostCall] = []
     path = rel(root, function.path)
     for line_no, raw_line in function.lines:
-        if line_no <= function.body_start_line:
+        if line_no < function.body_start_line:
             continue
         line = strip_comments(raw_line)
         for target in sorted(targets):

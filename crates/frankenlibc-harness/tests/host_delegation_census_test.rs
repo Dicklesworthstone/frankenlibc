@@ -45,6 +45,17 @@ fn unique_output_path(root: &Path, label: &str, extension: &str) -> PathBuf {
     ))
 }
 
+fn unique_synthetic_source_dir(root: &Path, label: &str) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    root.join("target/conformance").join(format!(
+        "host-delegation-census-{label}-{}-{stamp}",
+        std::process::id()
+    ))
+}
+
 fn artifact(root: &Path) -> PathBuf {
     root.join("tests/conformance/host_delegation_census.v1.json")
 }
@@ -180,6 +191,64 @@ fn generator_check_mode_rederives_artifact() -> TestResult {
         "generator check failed\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn generator_detects_host_calls_on_opening_brace_line() -> TestResult {
+    let root = workspace_root();
+    let source_dir = unique_synthetic_source_dir(&root, "same-line-source");
+    std::fs::create_dir_all(&source_dir)?;
+    let source_path = source_dir.join("same_line_abi.rs");
+    std::fs::write(
+        &source_path,
+        r#"
+pub extern "C" fn direct_same_line() -> i32 { let _ = resolve_host_symbol_raw("direct_same_line"); 0 }
+pub extern "C" fn helper_same_line() -> i32 { let _ = resolve_host_symbol_raw("helper_same_line"); 0 }
+pub extern "C" fn alias_same_line() -> i32 { helper_same_line() }
+"#,
+    )?;
+    let output_path = unique_output_path(&root, "same-line-output", "json");
+
+    let output = Command::new("python3")
+        .arg("scripts/generate_host_delegation_census.py")
+        .arg("--abi-source-dir")
+        .arg(&source_dir)
+        .arg("--output")
+        .arg(&output_path)
+        .current_dir(&root)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "generator failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let data = load_json(&output_path)?;
+    let symbols = data["symbol_census"]
+        .as_array()
+        .expect("symbol census should be an array");
+    let direct = symbols
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("direct_same_line"))
+        .expect("same-line direct host call should be detected");
+    assert_eq!(direct["callsite_count"].as_u64(), Some(1));
+
+    let alias = symbols
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("alias_same_line"))
+        .expect("same-line alias to host-delegating symbol should be detected");
+    let kinds: BTreeSet<_> = alias["delegation_kinds"]
+        .as_array()
+        .expect("delegation kinds should be array")
+        .iter()
+        .filter_map(|row| row.as_str())
+        .collect();
+    assert!(
+        kinds.contains("alias_to_host_delegating_symbol"),
+        "alias callsite on the opening-brace line should be recorded"
     );
     Ok(())
 }
