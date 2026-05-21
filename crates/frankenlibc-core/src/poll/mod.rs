@@ -72,10 +72,14 @@ pub const fn valid_nfds(nfds: u64) -> bool {
     nfds <= 1_048_576
 }
 
-/// Returns true if `nfds` is within FD_SETSIZE for select.
+/// Returns true if `nfds` is non-negative for select.
+///
+/// `FD_SETSIZE` is the size of libc's fixed `fd_set` helper type, not a hard
+/// kernel limit on `nfds`. glibc forwards larger `nfds` values to the kernel;
+/// callers with non-null fd_sets must still provide enough backing storage.
 #[must_use]
 pub const fn valid_select_nfds(nfds: i32) -> bool {
-    nfds >= 0 && nfds <= FD_SETSIZE
+    nfds >= 0
 }
 
 /// Returns true if the poll timeout is not absurdly large (> 24h).
@@ -91,16 +95,10 @@ pub const fn clamp_poll_nfds(nfds: u64) -> u64 {
     if nfds > 1_048_576 { 1_048_576 } else { nfds }
 }
 
-/// Clamp nfds for select to FD_SETSIZE.
+/// Clamp invalid select nfds values for hardened repair paths.
 #[must_use]
 pub const fn clamp_select_nfds(nfds: i32) -> i32 {
-    if nfds < 0 {
-        0
-    } else if nfds > FD_SETSIZE {
-        FD_SETSIZE
-    } else {
-        nfds
-    }
+    if nfds < 0 { 0 } else { nfds }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +149,8 @@ mod tests {
         assert!(valid_select_nfds(0));
         assert!(valid_select_nfds(1));
         assert!(valid_select_nfds(FD_SETSIZE));
-        assert!(!valid_select_nfds(FD_SETSIZE + 1));
+        assert!(valid_select_nfds(FD_SETSIZE + 1));
+        assert!(valid_select_nfds(i32::MAX));
         assert!(!valid_select_nfds(-1));
     }
 
@@ -176,6 +175,6 @@ mod tests {
     fn clamp_select_nfds_check() {
         assert_eq!(clamp_select_nfds(-5), 0);
         assert_eq!(clamp_select_nfds(512), 512);
-        assert_eq!(clamp_select_nfds(2000), FD_SETSIZE);
+        assert_eq!(clamp_select_nfds(2000), 2000);
     }
 }

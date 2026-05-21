@@ -205,6 +205,30 @@ fn select_timeout_zero() {
 }
 
 #[test]
+fn select_accepts_large_nfds_when_fd_sets_are_null() {
+    use frankenlibc_abi::poll_abi::select;
+
+    let mut tv = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+    clear_errno();
+
+    let rc = unsafe {
+        select(
+            frankenlibc_core::poll::FD_SETSIZE + 1,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut tv,
+        )
+    };
+
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
 fn select_detects_readable() {
     use frankenlibc_abi::poll_abi::select;
     let (r, w) = pipe_pair();
@@ -735,6 +759,31 @@ fn pselect_timeout_zero() {
         close(r);
         close(w);
     }
+}
+
+#[test]
+fn pselect_accepts_large_nfds_when_fd_sets_are_null() {
+    use frankenlibc_abi::poll_abi::pselect;
+
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    clear_errno();
+
+    let rc = unsafe {
+        pselect(
+            frankenlibc_core::poll::FD_SETSIZE + 1,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &ts,
+            ptr::null(),
+        )
+    };
+
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), 0);
 }
 
 #[test]
