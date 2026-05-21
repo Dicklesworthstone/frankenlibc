@@ -11,8 +11,10 @@
 //! sequence of variadic conversion specifiers, where each specifier
 //! is normalized to a [`ConvShape`] capturing its type-class and
 //! length-modifier class. The body of the format (literal text,
-//! flags, width, precision) doesn't matter — only the **types** of
-//! arguments the format consumes from `va_arg`.
+//! flags, fixed width, and fixed precision don't matter — only the
+//! **types** of arguments the format consumes from `va_arg`. Dynamic
+//! width/precision (`*` / `.*`) are included because each consumes an
+//! `int` before the conversion value.
 //!
 //! ### Equivalence classes
 //!
@@ -52,6 +54,8 @@ pub enum ConvShape {
     Pointer,
     /// `n` — store count via int*.
     StoreCount(LenClass),
+    /// Dynamic width or precision (`*` / `.*`) — consumes an `int`.
+    DynamicInt,
 }
 
 /// Length-modifier equivalence class.
@@ -108,13 +112,25 @@ impl LenClass {
 /// Walk `fmt`, collecting the [`ConvShape`] of each
 /// variadic-consuming specifier in order.
 pub fn shape_list(fmt: &[u8]) -> Vec<ConvShape> {
-    parse_format_string(fmt)
-        .iter()
-        .filter_map(|seg| match seg {
-            FormatSegment::Spec(spec) => ConvShape::from_spec(spec),
-            _ => None,
-        })
-        .collect()
+    let mut shapes = Vec::new();
+    for seg in parse_format_string(fmt) {
+        if let FormatSegment::Spec(spec) = seg {
+            push_spec_shapes(&spec, &mut shapes);
+        }
+    }
+    shapes
+}
+
+fn push_spec_shapes(spec: &FormatSpec, out: &mut Vec<ConvShape>) {
+    if spec.width.uses_arg() {
+        out.push(ConvShape::DynamicInt);
+    }
+    if spec.precision.uses_arg() {
+        out.push(ConvShape::DynamicInt);
+    }
+    if let Some(shape) = ConvShape::from_spec(spec) {
+        out.push(shape);
+    }
 }
 
 /// Returns `true` iff `user` and `default_fmt` declare exactly the
@@ -128,13 +144,21 @@ pub fn compatible(user: &[u8], default_fmt: &[u8]) -> bool {
 /// `fmt`. Coarser than [`shape_list`] (only Gp vs Fp), but useful
 /// for callers that only care about the va_list register class.
 pub fn arg_kind_list(fmt: &[u8]) -> Vec<ValueArgKind> {
-    parse_format_string(fmt)
-        .iter()
-        .filter_map(|seg| match seg {
-            FormatSegment::Spec(spec) => spec.value_arg_kind(),
-            _ => None,
-        })
-        .collect()
+    let mut kinds = Vec::new();
+    for seg in parse_format_string(fmt) {
+        if let FormatSegment::Spec(spec) = seg {
+            if spec.width.uses_arg() {
+                kinds.push(ValueArgKind::Gp);
+            }
+            if spec.precision.uses_arg() {
+                kinds.push(ValueArgKind::Gp);
+            }
+            if let Some(kind) = spec.value_arg_kind() {
+                kinds.push(kind);
+            }
+        }
+    }
+    kinds
 }
 
 #[cfg(test)]
@@ -228,6 +252,26 @@ mod tests {
     }
 
     #[test]
+    fn shape_includes_dynamic_width_and_precision_args() {
+        assert_eq!(
+            shape_list(b"%*s"),
+            vec![ConvShape::DynamicInt, ConvShape::String_(LenClass::Default),]
+        );
+        assert_eq!(
+            shape_list(b"%.*f"),
+            vec![ConvShape::DynamicInt, ConvShape::Float(LenClass::Default),]
+        );
+        assert_eq!(
+            shape_list(b"%*.*s"),
+            vec![
+                ConvShape::DynamicInt,
+                ConvShape::DynamicInt,
+                ConvShape::String_(LenClass::Default),
+            ]
+        );
+    }
+
+    #[test]
     fn shape_handles_multiple_conversions_in_order() {
         let s = shape_list(b"%d %s %f");
         assert_eq!(
@@ -317,6 +361,20 @@ mod tests {
     }
 
     #[test]
+    fn incompatible_when_dynamic_width_or_precision_args_differ() {
+        assert!(!compatible(b"%*s", b"%s"));
+        assert!(!compatible(b"%s", b"%*s"));
+        assert!(!compatible(b"%.*f", b"%f"));
+        assert!(!compatible(b"%*.*s", b"%*s"));
+    }
+
+    #[test]
+    fn compatible_when_dynamic_width_precision_arg_shapes_match() {
+        assert!(compatible(b"%*s", b"%.*s"));
+        assert!(compatible(b"%*.*s", b"%*.*s"));
+    }
+
+    #[test]
     fn incompatible_reordered_conversions() {
         assert!(!compatible(b"%d %s", b"%s %d"));
     }
@@ -391,7 +449,7 @@ mod tests {
     fn arg_kind_list_matches_shape_projection() {
         use ValueArgKind::*;
 
-        let fmt = b"literal %d %Lf %p %% %zd %a %n";
+        let fmt = b"literal %*d %.*Lf %p %% %zd %a %n";
         let projected: Vec<ValueArgKind> = shape_list(fmt)
             .into_iter()
             .map(|shape| match shape {
