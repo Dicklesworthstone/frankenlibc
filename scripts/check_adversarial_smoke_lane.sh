@@ -75,6 +75,7 @@ SMOKE_OUT="${ROOT}/target/adversarial_smoke/${RUN_ID}"
 mkdir -p "${SMOKE_OUT}"
 
 export TIMEOUT_SECONDS
+export FRANKENLIBC_SMOKE_RUN_ID="${RUN_ID}"
 log_json "smoke_start" "timeout" "${TIMEOUT_SECONDS}"
 
 SMOKE_RC=0
@@ -86,13 +87,13 @@ else
 fi
 log_json "smoke_done" "exit_code" "${SMOKE_RC}"
 
-LATEST_SMOKE_DIR="$(ls -td "${ROOT}"/target/ld_preload_smoke/20* 2>/dev/null | head -1)"
-if [[ -z "${LATEST_SMOKE_DIR}" ]] || [[ ! -f "${LATEST_SMOKE_DIR}/abi_compat_report.json" ]]; then
+SMOKE_REPORT_DIR="${ROOT}/target/ld_preload_smoke/${RUN_ID}"
+if [[ ! -f "${SMOKE_REPORT_DIR}/abi_compat_report.json" ]]; then
   log_json "smoke_no_report" "reason" "missing_output"
   die "Smoke run did not produce abi_compat_report.json"
 fi
 
-FRESH_REPORT="${LATEST_SMOKE_DIR}/abi_compat_report.json"
+FRESH_REPORT="${SMOKE_REPORT_DIR}/abi_compat_report.json"
 log "Fresh report: ${FRESH_REPORT}"
 
 # Extract .summary.<key> as a raw token: a numeric string when present,
