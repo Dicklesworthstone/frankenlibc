@@ -585,12 +585,13 @@ def validate_contract(contract: dict[str, Any]) -> None:
             errors.append(f"contract.policies.{field} must be true")
 
 
-def validate_trace(trace_rows: list[dict[str, Any]], cases: list[dict[str, Any]]) -> None:
+def validate_trace(trace_rows: list[dict[str, Any]], cases: list[dict[str, Any]], expected_run_id: str) -> None:
     indexed: set[tuple[str, str, str]] = set()
     for index, row in enumerate(trace_rows):
         row_mode = row.get("mode")
         row_case = row.get("case")
         row_status = row.get("status")
+        row_run_id = row.get("run_id")
         event = row.get("event")
         if event in {"case_pass", "case_fail", "case_skip_optional_binary_missing"}:
             if isinstance(row_mode, str) and isinstance(row_case, str) and isinstance(row_status, str):
@@ -598,6 +599,12 @@ def validate_trace(trace_rows: list[dict[str, Any]], cases: list[dict[str, Any]]
         for field in ["timestamp", "event", "mode", "case", "status", "run_id"]:
             if field not in row:
                 errors.append(f"trace[{index}].{field} missing")
+        if not isinstance(row_run_id, str) or not row_run_id:
+            errors.append(f"trace[{index}].run_id must be non-empty string")
+        elif row_run_id != expected_run_id:
+            errors.append(
+                f"trace[{index}].run_id={row_run_id!r} does not match smoke_report.run_id={expected_run_id!r}"
+            )
     for case in cases:
         key = (str(case.get("mode")), str(case.get("case")), str(case.get("status")))
         if key not in indexed:
@@ -658,7 +665,8 @@ trace_rows = load_jsonl(smoke_trace_path, "trace") if smoke_trace_path.exists() 
 if not smoke_trace_path.exists():
     errors.append(f"trace unreadable: {rel(smoke_trace_path)}: file not found")
 else:
-    validate_trace(trace_rows, cases)
+    expected_trace_run_id = str(smoke_report.get("run_id", run_id_arg)) if smoke_report else run_id_arg
+    validate_trace(trace_rows, cases, expected_trace_run_id)
 
 drift = compare_projection(canonical, projection) if projection else []
 if drift:
