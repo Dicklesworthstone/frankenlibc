@@ -245,10 +245,26 @@ hardened_ms = hardened_timing.get("duration_ms", 1)
 strict_ratio = strict_ms / max(baseline_ms, 1)
 hardened_ratio = hardened_ms / max(baseline_ms, 1)
 
-# Find symbols unique to preload modes (potential hot spots)
-baseline_syms = {s["symbol"] for s in baseline.get("symbols", [])}
-strict_syms = {s["symbol"]: s for s in strict.get("symbols", [])}
-hardened_syms = {s["symbol"]: s for s in hardened.get("symbols", [])}
+def symbol_rows(profile):
+    rows = []
+    for row in profile.get("symbols", []):
+        if not isinstance(row, dict):
+            continue
+        symbol = row.get("symbol")
+        if isinstance(symbol, str) and symbol:
+            rows.append(row)
+    return rows
+
+
+# Find symbols unique to preload modes (potential hot spots). A failed perf
+# capture emits an error row without a symbol; keep those per-mode files intact
+# but do not let them abort summary generation.
+baseline_rows = symbol_rows(baseline)
+strict_rows = symbol_rows(strict)
+hardened_rows = symbol_rows(hardened)
+baseline_syms = {s["symbol"] for s in baseline_rows}
+strict_syms = {s["symbol"]: s for s in strict_rows}
+hardened_syms = {s["symbol"]: s for s in hardened_rows}
 
 # Symbols in strict but not baseline (membrane overhead)
 strict_only = []
