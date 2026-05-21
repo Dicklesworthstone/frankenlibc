@@ -381,14 +381,19 @@ fn build_error_row(
         spec_section: case.spec_section.clone(),
         input_hex,
         expected_output: case.expected_output.clone(),
-        actual_output: actual_output.clone(),
+        actual_output,
         host_output: None,
         host_parity: None,
         note,
         status: status.to_string(),
         passed: false,
         error,
-        diff_offset: first_diff_offset(&case.expected_output, &actual_output),
+        // Error/timeout/crash cases produced no impl output; `actual_output`
+        // here is a synthetic diagnostic string ("unsupported:..", "timeout:..",
+        // "crash:.."), so a byte-diff offset against it would be meaningless
+        // evidence (almost always offset 0). Leave it unset, matching the
+        // null diff_offset that error rows carry in report.rs.
+        diff_offset: None,
         duration_ms: Some(duration_ms),
     }
 }
@@ -693,6 +698,11 @@ mod tests {
         );
         assert!(report.cases.iter().any(|row| row.status == "timeout"));
         assert!(report.cases.iter().any(|row| row.status == "crash"));
+        assert!(
+            report.cases.iter().all(|row| row.diff_offset.is_none()),
+            "error-class rows produced no impl output, so diff_offset must stay \
+             unset rather than report a byte diff against a diagnostic string"
+        );
         Ok(())
     }
 
