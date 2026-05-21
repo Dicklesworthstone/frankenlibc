@@ -108,6 +108,11 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.host_version_requirement_rows",
     "artifact_state.dependency_breakdown.loader_needed",
+    "artifact_state.dependency_breakdown.soname",
+    "artifact_state.dependency_breakdown.rpath",
+    "artifact_state.dependency_breakdown.runpath",
+    "artifact_state.dependency_breakdown.dynamic_shape_valid",
+    "artifact_state.dependency_breakdown.dynamic_shape_errors",
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
@@ -127,6 +132,9 @@ REQUIRED_REPORT_FIELDS = [
     "artifact_state.status",
     "artifact_state.failure_signature",
     "artifact_state.host_glibc_dependency",
+    "artifact_state.elf_header.type",
+    "artifact_state.elf_header.entry_point",
+    "artifact_state.elf_header.entry_point_zero",
     "artifact_state.path",
     "artifact_state.sha256",
     "artifact_state.mtime",
@@ -160,6 +168,7 @@ REQUIRED_EVIDENCE_FILES = [
     "build.stdout.txt",
     "build.stderr.txt",
     "artifact.sha256",
+    "artifact.readelf.header.txt",
     "artifact.readelf.dynamic.txt",
     "artifact.readelf.symbols.txt",
     "artifact.readelf.version.txt",
@@ -446,6 +455,7 @@ EXPECTED_FAILURE_CLASSIFICATIONS = {
     "wrong_artifact_profile": "claim_blocked",
     "non_elf_artifact": "fail",
     "host_glibc_dependency": "claim_blocked",
+    "artifact_dynamic_shape_invalid": "claim_blocked",
     "artifact_dependency_inspection_failed": "claim_blocked",
     "symbol_evidence_missing": "claim_blocked",
     "rch_local_fallback": "claim_blocked",
@@ -915,6 +925,11 @@ def empty_dependency_breakdown():
         "host_version_requirements": [],
         "host_version_requirement_rows": [],
         "loader_needed": False,
+        "soname": None,
+        "rpath": [],
+        "runpath": [],
+        "dynamic_shape_valid": None,
+        "dynamic_shape_errors": [],
         "libc_needed": False,
         "libgcc_needed": False,
         "blocking_reasons": [],
@@ -923,11 +938,62 @@ def empty_dependency_breakdown():
     }
 
 
+def empty_elf_header():
+    return {
+        "type": None,
+        "entry_point": None,
+        "entry_point_zero": None,
+    }
+
+
+def parse_elf_header(readelf_header_text):
+    header = empty_elf_header()
+    for line in readelf_header_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Type:"):
+            header["type"] = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("Entry point address:"):
+            header["entry_point"] = stripped.split(":", 1)[1].strip()
+    entry = header["entry_point"]
+    if isinstance(entry, str) and entry:
+        try:
+            header["entry_point_zero"] = int(entry, 16) == 0
+        except ValueError:
+            header["entry_point_zero"] = False
+    return header
+
+
 def parse_needed_libraries(readelf_dynamic_text):
     return unique_sorted(
         match.group(1)
         for match in re.finditer(r"Shared library:\s*\[([^\]]+)\]", readelf_dynamic_text)
     )
+
+
+def parse_dynamic_tag_values(readelf_dynamic_text, tag):
+    return unique_sorted(
+        match.group(1)
+        for match in re.finditer(
+            rf"\({re.escape(tag)}\)\s+[^\[]*\[([^\]]*)\]",
+            readelf_dynamic_text,
+        )
+    )
+
+
+def dynamic_shape_errors(elf_header, soname, rpath, runpath):
+    errors = []
+    header_type = elf_header.get("type")
+    if not isinstance(header_type, str) or "DYN" not in header_type:
+        errors.append("elf_header.type must be DYN shared object")
+    if elf_header.get("entry_point_zero") is not True:
+        errors.append("elf_header.entry_point must be 0x0 for a libc shared object")
+    if soname not in {None, "", "libfrankenlibc_replace.so"}:
+        errors.append("dynamic SONAME must be absent or libfrankenlibc_replace.so")
+    if rpath:
+        errors.append("dynamic section must not contain RPATH")
+    if runpath:
+        errors.append("dynamic section must not contain RUNPATH")
+    return errors
 
 
 def parse_ldd_libraries(ldd_text):
@@ -1482,9 +1548,15 @@ def build_blocker_action_rows(
     return rows
 
 
-def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd):
+def build_dependency_breakdown(readelf_header, readelf_dynamic, readelf_version, nm_dynamic, ldd):
     breakdown = empty_dependency_breakdown()
+    elf_header = parse_elf_header(readelf_header["stdout"] + "\n" + readelf_header["stderr"])
     needed_libraries = parse_needed_libraries(readelf_dynamic["stdout"])
+    sonames = parse_dynamic_tag_values(readelf_dynamic["stdout"], "SONAME")
+    soname = sonames[0] if sonames else None
+    rpath = parse_dynamic_tag_values(readelf_dynamic["stdout"], "RPATH")
+    runpath = parse_dynamic_tag_values(readelf_dynamic["stdout"], "RUNPATH")
+    shape_errors = dynamic_shape_errors(elf_header, soname, rpath, runpath)
     ldd_text = ldd["stdout"] + "\n" + ldd["stderr"]
     ldd_libraries = parse_ldd_libraries(ldd_text)
     ldd_resolution_paths = parse_ldd_resolution_paths(ldd_text)
@@ -1589,6 +1661,11 @@ def build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd
                 blocking_reasons,
             ),
             "loader_needed": loader_needed,
+            "soname": soname,
+            "rpath": rpath,
+            "runpath": runpath,
+            "dynamic_shape_valid": not shape_errors,
+            "dynamic_shape_errors": shape_errors,
             "libc_needed": libc_needed,
             "libgcc_needed": libgcc_needed,
             "blocking_reasons": blocking_reasons,
@@ -2125,6 +2202,7 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
             "mtime": None,
             "failure_signature": "standalone_artifact_missing",
             "host_glibc_dependency": None,
+            "elf_header": empty_elf_header(),
             "sampled_symbols_present": False,
             "dependency_breakdown": empty_dependency_breakdown(),
             "refs": refs,
@@ -2144,17 +2222,20 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
             "mtime": int(artifact.stat().st_mtime),
             "failure_signature": "wrong_artifact_profile",
             "host_glibc_dependency": None,
+            "elf_header": empty_elf_header(),
             "sampled_symbols_present": False,
             "dependency_breakdown": empty_dependency_breakdown(),
             "refs": refs,
         }
 
+    readelf_header = run_command(["readelf", "-h", str(artifact)], timeout=inspection_timeout)
     readelf_dynamic = run_command(["readelf", "-d", str(artifact)], timeout=inspection_timeout)
     readelf_symbols = run_command(["readelf", "-Ws", str(artifact)], timeout=inspection_timeout)
     readelf_version = run_command(["readelf", "--version-info", str(artifact)], timeout=inspection_timeout)
     nm_dynamic = run_command(["nm", "-D", str(artifact)], timeout=inspection_timeout)
     ldd = run_command(["ldd", str(artifact)], timeout=inspection_timeout)
     evidence_commands = {
+        "artifact.readelf.header.txt": readelf_header,
         "artifact.readelf.dynamic.txt": readelf_dynamic,
         "artifact.readelf.symbols.txt": readelf_symbols,
         "artifact.readelf.version.txt": readelf_version,
@@ -2173,7 +2254,11 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
         }
 
     mtime = int(artifact.stat().st_mtime)
-    dependency_breakdown = build_dependency_breakdown(readelf_dynamic, readelf_version, nm_dynamic, ldd)
+    dependency_breakdown = build_dependency_breakdown(readelf_header, readelf_dynamic, readelf_version, nm_dynamic, ldd)
+    elf_header = parse_elf_header(readelf_header["stdout"] + "\n" + readelf_header["stderr"])
+    readelf_header_execution_failed = (
+        readelf_header["timed_out"] or readelf_header.get("execution_error", False)
+    )
     readelf_dynamic_execution_failed = (
         readelf_dynamic["timed_out"] or readelf_dynamic.get("execution_error", False)
     )
@@ -2181,7 +2266,7 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
         result["returncode"] != 0 or result["timed_out"]
         for filename, result in evidence_commands.items()
         if filename != "artifact.readelf.dynamic.txt"
-    ) or readelf_dynamic_execution_failed
+    ) or readelf_dynamic_execution_failed or readelf_header_execution_failed
     if head_epoch and mtime < head_epoch:
         return {
             "status": "stale",
@@ -2190,11 +2275,17 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
             "mtime": mtime,
             "failure_signature": "standalone_artifact_stale",
             "host_glibc_dependency": None,
+            "elf_header": elf_header,
             "sampled_symbols_present": False,
             "dependency_breakdown": dependency_breakdown,
             "refs": refs,
         }
-    if readelf_dynamic["returncode"] != 0 and not readelf_dynamic_execution_failed:
+    if (
+        readelf_header["returncode"] != 0
+        and not readelf_header_execution_failed
+        or readelf_dynamic["returncode"] != 0
+        and not readelf_dynamic_execution_failed
+    ):
         return {
             "status": "non_elf",
             "path": str(artifact),
@@ -2202,6 +2293,7 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
             "mtime": mtime,
             "failure_signature": "non_elf_artifact",
             "host_glibc_dependency": None,
+            "elf_header": elf_header,
             "sampled_symbols_present": False,
             "dependency_breakdown": dependency_breakdown,
             "refs": refs,
@@ -2214,6 +2306,7 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
             "mtime": mtime,
             "failure_signature": "artifact_dependency_inspection_failed",
             "host_glibc_dependency": None,
+            "elf_header": elf_header,
             "sampled_symbols_present": False,
             "dependency_breakdown": dependency_breakdown,
             "refs": refs,
@@ -2229,7 +2322,9 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
     samples = manifest.get("symbol_samples", [])
     present = {symbol: (symbol in symbol_text) for symbol in samples}
     sampled_symbols_present = all(present.values()) if samples else True
-    if host_glibc_dependency:
+    if not dependency_breakdown.get("dynamic_shape_valid", False):
+        failure = "artifact_dynamic_shape_invalid"
+    elif host_glibc_dependency:
         failure = "host_glibc_dependency"
     elif not sampled_symbols_present:
         failure = "symbol_evidence_missing"
@@ -2243,6 +2338,7 @@ def inspect_artifact(artifact, *, evidence_out_dir=out_dir, tool_evidence_sink=N
         "mtime": mtime,
         "failure_signature": failure,
         "host_glibc_dependency": host_glibc_dependency,
+        "elf_header": elf_header,
         "sampled_symbols_present": sampled_symbols_present,
         "dependency_breakdown": dependency_breakdown,
         "symbol_samples": present,
@@ -2720,6 +2816,7 @@ else:
 artifact_state.setdefault("sampled_symbols_present", False)
 artifact_state.setdefault("symbol_samples", empty_symbol_samples())
 artifact_state.setdefault("host_glibc_dependency", None)
+artifact_state.setdefault("elf_header", empty_elf_header())
 artifact_state.setdefault("path", None)
 artifact_state.setdefault("sha256", None)
 artifact_state.setdefault("mtime", None)

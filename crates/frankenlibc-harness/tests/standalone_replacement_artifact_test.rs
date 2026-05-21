@@ -35,6 +35,11 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.host_version_requirement_rows",
     "artifact_state.dependency_breakdown.loader_needed",
+    "artifact_state.dependency_breakdown.soname",
+    "artifact_state.dependency_breakdown.rpath",
+    "artifact_state.dependency_breakdown.runpath",
+    "artifact_state.dependency_breakdown.dynamic_shape_valid",
+    "artifact_state.dependency_breakdown.dynamic_shape_errors",
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
@@ -54,6 +59,9 @@ const REQUIRED_REPORT_FIELDS: &[&str] = &[
     "artifact_state.status",
     "artifact_state.failure_signature",
     "artifact_state.host_glibc_dependency",
+    "artifact_state.elf_header.type",
+    "artifact_state.elf_header.entry_point",
+    "artifact_state.elf_header.entry_point_zero",
     "artifact_state.path",
     "artifact_state.sha256",
     "artifact_state.mtime",
@@ -85,6 +93,7 @@ const REQUIRED_EVIDENCE_FILES: &[&str] = &[
     "build.stdout.txt",
     "build.stderr.txt",
     "artifact.sha256",
+    "artifact.readelf.header.txt",
     "artifact.readelf.dynamic.txt",
     "artifact.readelf.symbols.txt",
     "artifact.readelf.version.txt",
@@ -324,6 +333,14 @@ fn fake_dependency_probe_path(temp: &Path) -> OsString {
     std::fs::write(
         fake_bin.join("readelf"),
         r#"#!/bin/sh
+if [ "$1" = "-h" ]; then
+  cat <<'EOF'
+ELF Header:
+  Type:                              DYN (Shared object file)
+  Entry point address:               0x0
+EOF
+  exit 0
+fi
 if [ "$1" = "-d" ]; then
   cat <<'EOF'
 Dynamic section at offset 0x1000 contains 3 entries:
@@ -433,6 +450,14 @@ fn fake_zero_dependency_probe_path(temp: &Path) -> OsString {
     std::fs::write(
         fake_bin.join("readelf"),
         r#"#!/bin/sh
+if [ "$1" = "-h" ]; then
+  cat <<'EOF'
+ELF Header:
+  Type:                              DYN (Shared object file)
+  Entry point address:               0x0
+EOF
+  exit 0
+fi
 if [ "$1" = "-d" ]; then
   cat <<'EOF'
 Dynamic section at offset 0x1000 contains 1 entry:
@@ -489,12 +514,67 @@ EOF
     path
 }
 
+fn fake_bad_dynamic_shape_probe_path(temp: &Path) -> OsString {
+    let path = fake_zero_dependency_probe_path(temp);
+    let fake_bin = temp.join("fake-probe-bin");
+    std::fs::write(
+        fake_bin.join("readelf"),
+        r#"#!/bin/sh
+if [ "$1" = "-h" ]; then
+  cat <<'EOF'
+ELF Header:
+  Type:                              EXEC (Executable file)
+  Entry point address:               0x401000
+EOF
+  exit 0
+fi
+if [ "$1" = "-d" ]; then
+  cat <<'EOF'
+Dynamic section at offset 0x1000 contains 3 entries:
+ 0x000000000000000e (SONAME)             Library soname: [libfrankenlibc_abi.so]
+ 0x000000000000000f (RPATH)              Library rpath: [/tmp/host-lib]
+ 0x0000000000000000 (NULL)               0x0
+EOF
+  exit 0
+fi
+if [ "$1" = "-Ws" ]; then
+  cat <<'EOF'
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     1: 0000000000001000     1 FUNC    GLOBAL DEFAULT   10 __libc_start_main
+     2: 0000000000001001     1 FUNC    GLOBAL DEFAULT   10 malloc
+     3: 0000000000001002     1 FUNC    GLOBAL DEFAULT   10 free
+     4: 0000000000001003     1 FUNC    GLOBAL DEFAULT   10 printf
+     5: 0000000000001004     1 FUNC    GLOBAL DEFAULT   10 pthread_create
+     6: 0000000000001005     1 FUNC    GLOBAL DEFAULT   10 getaddrinfo
+EOF
+  exit 0
+fi
+if [ "$1" = "--version-info" ]; then
+  echo 'No version information found in this file.'
+  exit 0
+fi
+echo unexpected readelf invocation "$@" >&2
+exit 2
+"#,
+    )
+    .expect("write bad-dynamic-shape fake readelf");
+    path
+}
+
 fn fake_regression_dependency_probe_path(temp: &Path) -> OsString {
     let path = fake_dependency_probe_path(temp);
     let fake_bin = temp.join("fake-probe-bin");
     std::fs::write(
         fake_bin.join("readelf"),
         r#"#!/bin/sh
+if [ "$1" = "-h" ]; then
+  cat <<'EOF'
+ELF Header:
+  Type:                              DYN (Shared object file)
+  Entry point address:               0x0
+EOF
+  exit 0
+fi
 if [ "$1" = "-d" ]; then
   cat <<'EOF'
 Dynamic section at offset 0x1000 contains 4 entries:
@@ -594,6 +674,14 @@ fn fake_missing_sample_probe_path(temp: &Path) -> OsString {
     std::fs::write(
         fake_bin.join("readelf"),
         r#"#!/bin/sh
+if [ "$1" = "-h" ]; then
+  cat <<'EOF'
+ELF Header:
+  Type:                              DYN (Shared object file)
+  Entry point address:               0x0
+EOF
+  exit 0
+fi
 if [ "$1" = "-d" ]; then
   cat <<'EOF'
 Dynamic section at offset 0x1000 contains 1 entry:
@@ -649,6 +737,18 @@ fn fake_inspection_probe_failure_path(temp: &Path, failing_probe: &str) -> OsStr
         fake_bin.join("readelf"),
         format!(
             r#"#!/bin/sh
+if [ "$1" = "-h" ]; then
+  if [ "{failing_probe}" = "readelf-header" ]; then
+    echo readelf header probe failed >&2
+    exit 46
+  fi
+  cat <<'EOF'
+ELF Header:
+  Type:                              DYN (Shared object file)
+  Entry point address:               0x0
+EOF
+  exit 0
+fi
 if [ "$1" = "-d" ]; then
   cat <<'EOF'
 Dynamic section at offset 0x1000 contains 1 entry:
@@ -783,6 +883,14 @@ fn fake_missing_inspection_tool_path(temp: &Path, missing_tool: &str) -> Option<
         write_executable(
             &fake_bin.join("readelf"),
             r#"#!/bin/sh
+if [ "$1" = "-h" ]; then
+  cat <<'EOF'
+ELF Header:
+  Type:                              DYN (Shared object file)
+  Entry point address:               0x0
+EOF
+  exit 0
+fi
 if [ "$1" = "-d" ]; then
   cat <<'EOF'
 Dynamic section at offset 0x1000 contains 1 entry:
@@ -845,6 +953,17 @@ fn fake_timeout_inspection_probe_path(temp: &Path, timeout_probe: &str) -> OsStr
         fake_bin.join("readelf"),
         format!(
             r#"#!/bin/sh
+if [ "$1" = "-h" ]; then
+  if [ "{timeout_probe}" = "readelf-header" ]; then
+    sleep 2
+  fi
+  cat <<'EOF'
+ELF Header:
+  Type:                              DYN (Shared object file)
+  Entry point address:               0x0
+EOF
+  exit 0
+fi
 if [ "$1" = "-d" ]; then
   if [ "{timeout_probe}" = "readelf-dynamic" ]; then
     sleep 2
@@ -1231,6 +1350,7 @@ fn manifest_matches_forge_contract() {
             ("wrong_artifact_profile", "claim_blocked"),
             ("non_elf_artifact", "fail"),
             ("host_glibc_dependency", "claim_blocked"),
+            ("artifact_dynamic_shape_invalid", "claim_blocked"),
             ("artifact_dependency_inspection_failed", "claim_blocked"),
             ("symbol_evidence_missing", "claim_blocked"),
             ("rch_local_fallback", "claim_blocked"),
@@ -1242,6 +1362,7 @@ fn manifest_matches_forge_contract() {
         "wrong_artifact_profile",
         "non_elf_artifact",
         "host_glibc_dependency",
+        "artifact_dynamic_shape_invalid",
         "artifact_dependency_inspection_failed",
         "symbol_evidence_missing",
         "rch_local_fallback",
@@ -2191,9 +2312,9 @@ fn forge_mode_stamps_materialized_artifact_from_old_source() {
 }
 
 #[test]
-fn forge_mode_reports_host_dependency_breakdown() {
+fn forge_mode_reports_host_dependency_breakdown() -> Result<(), String> {
     if Command::new("cc").arg("--version").output().is_err() {
-        return;
+        return Ok(());
     }
 
     let root = workspace_root();
@@ -2214,7 +2335,7 @@ fn forge_mode_reports_host_dependency_breakdown() {
         .output()
         .expect("cc should run");
     if !cc_output.status.success() {
-        return;
+        return Ok(());
     }
 
     let out_dir = temp.join("out");
@@ -2312,7 +2433,7 @@ fn forge_mode_reports_host_dependency_breakdown() {
     for library in &host_direct_needed {
         let row = direct_row_by_library
             .get(library.as_str())
-            .unwrap_or_else(|| panic!("missing direct provider row for {library}"));
+            .ok_or_else(|| format!("missing direct provider row for {library}"))?;
         assert_eq!(
             row["owner_surface"].as_str(),
             Some("direct_dynamic_dependencies")
@@ -2393,7 +2514,7 @@ fn forge_mode_reports_host_dependency_breakdown() {
     for library in &host_resolved {
         let row = resolved_row_by_library
             .get(library.as_str())
-            .unwrap_or_else(|| panic!("missing ldd-resolved provider row for {library}"));
+            .ok_or_else(|| format!("missing ldd-resolved provider row for {library}"))?;
         assert_eq!(row["owner_surface"].as_str(), Some("loader_resolution"));
         assert_eq!(
             row["primary_probe_id"].as_str(),
@@ -2498,7 +2619,7 @@ fn forge_mode_reports_host_dependency_breakdown() {
     for symbol in &undefined {
         let row = symbol_row_by_symbol
             .get(symbol.as_str())
-            .unwrap_or_else(|| panic!("missing undefined symbol row for {symbol}"));
+            .ok_or_else(|| format!("missing undefined symbol row for {symbol}"))?;
         assert_eq!(
             row["primary_probe_id"].as_str(),
             Some("nm_dynamic_undefined_symbols")
@@ -2597,7 +2718,7 @@ fn forge_mode_reports_host_dependency_breakdown() {
     for requirement in &host_versions {
         let row = version_row_by_id
             .get(requirement.as_str())
-            .unwrap_or_else(|| panic!("missing host version requirement row for {requirement}"));
+            .ok_or_else(|| format!("missing host version requirement row for {requirement}"))?;
         assert_eq!(
             row["primary_probe_id"].as_str(),
             Some("readelf_version_needs")
@@ -2794,7 +2915,7 @@ fn forge_mode_reports_host_dependency_breakdown() {
     for reason in &reasons {
         let row = action_row_by_reason
             .get(reason.as_str())
-            .unwrap_or_else(|| panic!("missing blocker action row for {reason}"));
+            .ok_or_else(|| format!("missing blocker action row for {reason}"))?;
         assert_eq!(row["promotion_allowed"].as_bool(), Some(false));
         assert!(
             row["owner_surface"]
@@ -2919,6 +3040,7 @@ fn forge_mode_reports_host_dependency_breakdown() {
             .is_some_and(|message| message.contains("blocker_delta regression"))),
         "expected blocker_delta regression error: {errors:?}"
     );
+    Ok(())
 }
 
 #[test]
@@ -3101,6 +3223,40 @@ fn forge_mode_accepts_zero_host_dependency_snapshot_without_refresh_note() {
         "version_needs should remain empty for the zero-host synthetic forge"
     );
     assert_eq!(
+        report_json["artifact_state"]["elf_header"]["type"].as_str(),
+        Some("DYN (Shared object file)")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["elf_header"]["entry_point"].as_str(),
+        Some("0x0")
+    );
+    assert_eq!(
+        report_json["artifact_state"]["elf_header"]["entry_point_zero"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(breakdown["soname"].as_str(), None);
+    assert!(
+        breakdown["rpath"].as_array().is_some_and(Vec::is_empty),
+        "zero-host synthetic forge should not contain RPATH"
+    );
+    assert!(
+        breakdown["runpath"].as_array().is_some_and(Vec::is_empty),
+        "zero-host synthetic forge should not contain RUNPATH"
+    );
+    assert_eq!(breakdown["dynamic_shape_valid"].as_bool(), Some(true));
+    assert!(
+        breakdown["dynamic_shape_errors"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "zero-host synthetic forge should have no dynamic-shape errors"
+    );
+    assert!(
+        report_json["tool_evidence"]["artifact.readelf.header.txt"]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("artifact.readelf.header.txt")),
+        "forge should record readelf header evidence"
+    );
+    assert_eq!(
         report_json["blocker_delta"]["delta_classification"].as_str(),
         Some("unchanged")
     );
@@ -3112,6 +3268,82 @@ fn forge_mode_accepts_zero_host_dependency_snapshot_without_refresh_note() {
         report_json["blocker_delta"]["refresh_required"].as_bool(),
         Some(false)
     );
+}
+
+#[test]
+fn forge_mode_blocks_artifact_when_dynamic_shape_is_invalid() {
+    if Command::new("cc").arg("--version").output().is_err() {
+        return;
+    }
+
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-artifact-bad-dynamic-shape");
+    let source_c = temp.join("sample.c");
+    let source_so = temp.join("libfrankenlibc_abi.so");
+    std::fs::write(&source_c, "int __libc_start_main(void) { return 0; }\n")
+        .expect("write sample source");
+    let cc_output = Command::new("cc")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg(&source_c)
+        .arg("-o")
+        .arg(&source_so)
+        .output()
+        .expect("cc should run");
+    if !cc_output.status.success() {
+        return;
+    }
+
+    let report = temp.join("bad-dynamic-shape.report.json");
+    let output = Command::new(root.join("scripts/check_standalone_replacement_artifact.sh"))
+        .arg("--forge")
+        .current_dir(&root)
+        .env("PATH", fake_bad_dynamic_shape_probe_path(&temp))
+        .env("STANDALONE_REPLACEMENT_OUT_DIR", temp.join("bad-shape-out"))
+        .env(
+            "STANDALONE_REPLACEMENT_CARGO_TARGET_DIR",
+            temp.join("bad-shape-cargo-target"),
+        )
+        .env("STANDALONE_REPLACEMENT_REPORT", &report)
+        .env(
+            "STANDALONE_REPLACEMENT_LOG",
+            temp.join("bad-shape.log.jsonl"),
+        )
+        .env("STANDALONE_REPLACEMENT_SOURCE_LIB", &source_so)
+        .env("STANDALONE_REPLACEMENT_SKIP_BUILD", "1")
+        .env_remove("LD_PRELOAD")
+        .output()
+        .expect("forge mode should run");
+    assert!(
+        output.status.success(),
+        "bad dynamic shape should keep the gate pass/claim blocked:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_json = load_json(&report);
+    assert_eq!(report_json["status"].as_str(), Some("pass"));
+    assert_eq!(report_json["claim_status"].as_str(), Some("claim_blocked"));
+    assert_eq!(
+        report_json["artifact_state"]["failure_signature"].as_str(),
+        Some("artifact_dynamic_shape_invalid")
+    );
+    let header = &report_json["artifact_state"]["elf_header"];
+    assert_eq!(header["type"].as_str(), Some("EXEC (Executable file)"));
+    assert_eq!(header["entry_point"].as_str(), Some("0x401000"));
+    assert_eq!(header["entry_point_zero"].as_bool(), Some(false));
+    let breakdown = &report_json["artifact_state"]["dependency_breakdown"];
+    assert_eq!(breakdown["soname"].as_str(), Some("libfrankenlibc_abi.so"));
+    assert!(
+        string_set(&breakdown["rpath"]).contains("/tmp/host-lib"),
+        "RPATH evidence should be preserved"
+    );
+    assert_eq!(breakdown["dynamic_shape_valid"].as_bool(), Some(false));
+    let shape_errors = string_set(&breakdown["dynamic_shape_errors"]);
+    assert!(shape_errors.contains("elf_header.type must be DYN shared object"));
+    assert!(shape_errors.contains("elf_header.entry_point must be 0x0 for a libc shared object"));
+    assert!(shape_errors.contains("dynamic SONAME must be absent or libfrankenlibc_replace.so"));
+    assert!(shape_errors.contains("dynamic section must not contain RPATH"));
 }
 
 #[test]
@@ -3406,6 +3638,7 @@ fn forge_mode_blocks_artifact_when_required_inspection_probe_times_out() {
     }
 
     for (probe, evidence_file) in [
+        ("readelf-header", "artifact.readelf.header.txt"),
         ("readelf-dynamic", "artifact.readelf.dynamic.txt"),
         ("readelf-symbols", "artifact.readelf.symbols.txt"),
         ("readelf-version", "artifact.readelf.version.txt"),

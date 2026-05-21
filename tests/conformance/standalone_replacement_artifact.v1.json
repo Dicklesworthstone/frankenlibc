@@ -140,6 +140,11 @@
     "artifact_state.dependency_breakdown.host_version_requirements",
     "artifact_state.dependency_breakdown.host_version_requirement_rows",
     "artifact_state.dependency_breakdown.loader_needed",
+    "artifact_state.dependency_breakdown.soname",
+    "artifact_state.dependency_breakdown.rpath",
+    "artifact_state.dependency_breakdown.runpath",
+    "artifact_state.dependency_breakdown.dynamic_shape_valid",
+    "artifact_state.dependency_breakdown.dynamic_shape_errors",
     "artifact_state.dependency_breakdown.blocking_reasons",
     "blocking_reasons",
     "artifact_state.dependency_breakdown.blocker_catalog",
@@ -159,6 +164,9 @@
     "artifact_state.status",
     "artifact_state.failure_signature",
     "artifact_state.host_glibc_dependency",
+    "artifact_state.elf_header.type",
+    "artifact_state.elf_header.entry_point",
+    "artifact_state.elf_header.entry_point_zero",
     "artifact_state.path",
     "artifact_state.sha256",
     "artifact_state.mtime",
@@ -189,6 +197,7 @@
     "build.stdout.txt",
     "build.stderr.txt",
     "artifact.sha256",
+    "artifact.readelf.header.txt",
     "artifact.readelf.dynamic.txt",
     "artifact.readelf.symbols.txt",
     "artifact.readelf.version.txt",
@@ -228,6 +237,11 @@
       "failure_signature": "host_glibc_dependency",
       "expected_result": "claim_blocked",
       "description": "The artifact was produced, but dependency evidence still shows host libc linkage."
+    },
+    {
+      "failure_signature": "artifact_dynamic_shape_invalid",
+      "expected_result": "claim_blocked",
+      "description": "The artifact was produced, but ELF header or dynamic-section evidence is not shaped like a primary libc shared object."
     },
     {
       "failure_signature": "artifact_dependency_inspection_failed",
