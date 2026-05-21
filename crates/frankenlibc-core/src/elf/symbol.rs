@@ -224,13 +224,31 @@ impl Elf64Symbol {
 
 /// Parse all symbols from a symbol table section.
 pub fn parse_symbols(data: &[u8], offset: u64, size: u64) -> ElfResult<Vec<Elf64Symbol>> {
-    let offset = offset as usize;
-    let size = size as usize;
+    let offset = usize::try_from(offset).map_err(|_| ElfError::InvalidOffset {
+        kind: "symbol table",
+        offset,
+    })?;
+    let size = usize::try_from(size).map_err(|_| ElfError::InvalidOffset {
+        kind: "symbol table size",
+        offset: size,
+    })?;
 
-    if offset.saturating_add(size) > data.len() {
+    let end = offset.checked_add(size).ok_or(ElfError::InvalidOffset {
+        kind: "symbol table",
+        offset: offset as u64,
+    })?;
+
+    if end > data.len() {
         return Err(ElfError::BufferTooSmall {
-            needed: offset + size,
+            needed: end,
             available: data.len(),
+        });
+    }
+
+    if size % Elf64Symbol::SIZE != 0 {
+        return Err(ElfError::InvalidOffset {
+            kind: "symbol table size",
+            offset: size as u64,
         });
     }
 
@@ -328,6 +346,31 @@ mod tests {
         assert_eq!(get_string(strtab, 1).unwrap(), "hello");
         assert_eq!(get_string(strtab, 7).unwrap(), "world");
         assert!(get_string(strtab, 100).is_err());
+    }
+
+    #[test]
+    fn parse_symbols_rejects_overflowing_range_without_panicking() {
+        let err = parse_symbols(&[], usize::MAX as u64, 1).unwrap_err();
+        assert!(matches!(
+            err,
+            ElfError::InvalidOffset {
+                kind: "symbol table",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_symbols_rejects_partial_entry() {
+        let data = [0u8; Elf64Symbol::SIZE + 1];
+        let err = parse_symbols(&data, 0, data.len() as u64).unwrap_err();
+        assert!(matches!(
+            err,
+            ElfError::InvalidOffset {
+                kind: "symbol table size",
+                ..
+            }
+        ));
     }
 
     #[test]
