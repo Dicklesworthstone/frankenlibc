@@ -581,7 +581,7 @@ scenario_unit_tests() {
         "regenerate_then_diff unit present but not auto-run (it git-checkouts a tracked artifact); covered by the regression scenario"
 
     if command -v rch >/dev/null 2>&1 && (( ${#cargo_targets[@]} > 0 )); then
-        local target_dir="${CARGO_TARGET_DIR:-/data/tmp/rch_target_frankenlibc_eik_e2e}"
+        local target_dir="${CARGO_TARGET_DIR:-/data/tmp/rch_target_frankenlibc_eik_e2e_${SANDBOX_TRACE}_$$}"
         observe cargo-start "running WS-0 cargo unit tests via rch" \
             targets="${#cargo_targets[@]}" target_dir="$target_dir"
         set +e
