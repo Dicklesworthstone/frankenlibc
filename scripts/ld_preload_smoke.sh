@@ -16,6 +16,19 @@ case "${RUN_ID}" in
 esac
 RUN_DIR="${OUT_ROOT}/${RUN_ID}"
 BIN_DIR="${RUN_DIR}/bin"
+: "${CARGO_TARGET_DIR:=${TMPDIR:-/tmp}/rch_target_frankenlibc_ld_preload_smoke_${RUN_ID}}"
+export CARGO_TARGET_DIR
+case ",${RCH_ENV_ALLOWLIST:-}," in
+  *,CARGO_TARGET_DIR,*)
+    ;;
+  ,)
+    export RCH_ENV_ALLOWLIST="CARGO_TARGET_DIR"
+    ;;
+  *)
+    export RCH_ENV_ALLOWLIST="${RCH_ENV_ALLOWLIST},CARGO_TARGET_DIR"
+    ;;
+esac
+export RCH_REQUIRE_REMOTE=1
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"
 STRESS_ITERS="${STRESS_ITERS:-5}"
 ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES:-strict}"
@@ -34,13 +47,10 @@ LIB_CANDIDATES=(
   "${ROOT}/target/release/libfrankenlibc_abi.so"
   "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
-# Honour caller-supplied CARGO_TARGET_DIR (bd-gilq3).
-if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
-  LIB_CANDIDATES+=(
-    "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
-    "${CARGO_TARGET_DIR}/debug/libfrankenlibc_abi.so"
-  )
-fi
+LIB_CANDIDATES+=(
+  "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
+  "${CARGO_TARGET_DIR}/debug/libfrankenlibc_abi.so"
+)
 
 LIB_PATH=""
 for candidate in "${LIB_CANDIDATES[@]}"; do

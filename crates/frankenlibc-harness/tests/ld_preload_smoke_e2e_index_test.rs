@@ -257,3 +257,35 @@ fn ld_preload_smoke_default_run_id_is_process_unique() -> TestResult {
         "ld_preload_smoke.sh must validate caller-supplied smoke run ids before using them as paths",
     )
 }
+
+#[test]
+fn ld_preload_smoke_rch_build_is_remote_and_target_isolated() -> TestResult {
+    let root = workspace_root()?;
+    let script_path = root.join("scripts").join("ld_preload_smoke.sh");
+    let src =
+        std::fs::read_to_string(&script_path).map_err(|e| format!("ld_preload_smoke.sh: {e}"))?;
+    require(
+        src.contains(
+            ": \"${CARGO_TARGET_DIR:=${TMPDIR:-/tmp}/rch_target_frankenlibc_ld_preload_smoke_${RUN_ID}}\"",
+        ),
+        "ld_preload_smoke.sh must default to a per-run isolated Cargo target dir",
+    )?;
+    require(
+        src.contains("case \",${RCH_ENV_ALLOWLIST:-},\" in"),
+        "ld_preload_smoke.sh must inspect RCH_ENV_ALLOWLIST as comma-delimited tokens",
+    )?;
+    require(
+        src.contains("export RCH_ENV_ALLOWLIST=\"${RCH_ENV_ALLOWLIST},CARGO_TARGET_DIR\""),
+        "ld_preload_smoke.sh must forward CARGO_TARGET_DIR through rch",
+    )?;
+    let remote_required = src
+        .find("export RCH_REQUIRE_REMOTE=1")
+        .ok_or_else(|| "ld_preload_smoke.sh must require remote rch execution".to_string())?;
+    let rch_build = src
+        .find("rch exec -- cargo build -p frankenlibc-abi --release")
+        .ok_or_else(|| "ld_preload_smoke.sh must build frankenlibc-abi through rch".to_string())?;
+    require(
+        remote_required < rch_build,
+        "ld_preload_smoke.sh must require remote rch before invoking cargo build",
+    )
+}
