@@ -277,13 +277,19 @@ fn run_case_from_execution(
     match execution {
         CaseExecution::Completed(run) => {
             let match_kind = expected_output_match(&case.expected_output, &run.impl_output);
-            let passed = match_kind.is_some();
+            let output_matches = match_kind.is_some();
+            let host_oracle_defined = run.host_output != "UB";
+            let host_matches = run.host_parity || !host_oracle_defined;
+            let passed = output_matches && host_matches;
             let diff_offset = if passed {
                 None
             } else {
                 first_diff_offset(&case.expected_output, &run.impl_output)
             };
-            let note = append_match_notes(run.note, match_kind);
+            let mut note = append_match_notes(run.note, match_kind);
+            if !host_matches {
+                append_note(&mut note, "host_parity=false");
+            }
             ConformanceCaseRow {
                 trace_id,
                 family: fixture_set.family.clone(),
@@ -575,6 +581,84 @@ mod tests {
         assert_eq!(report.summary.errors, 0);
         assert!(report.cases.iter().any(|row| row.status == "timeout"));
         assert!(report.cases.iter().any(|row| row.status == "crash"));
+        Ok(())
+    }
+
+    #[test]
+    fn matrix_fails_defined_host_parity_mismatch() -> TestResult {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"string/strlen",
+                "captured_at":"2026-02-13T00:00:00Z",
+                "cases":[
+                    {"name":"host_mismatch","function":"strlen","spec_section":"POSIX strlen","inputs":{"s":[97,0]},"expected_output":"1","expected_errno":0,"mode":"strict"}
+                ]
+            }"#,
+        )?;
+
+        let report = build_conformance_matrix_with_executor(
+            &[fixture],
+            MatrixMode::Strict,
+            "unit",
+            |_, _, _| {
+                CaseExecution::Completed(DifferentialExecution {
+                    host_output: "2".to_string(),
+                    impl_output: "1".to_string(),
+                    host_parity: false,
+                    note: None,
+                })
+            },
+        );
+
+        assert_eq!(report.summary.total_cases, 1);
+        assert_eq!(report.summary.passed, 0);
+        assert_eq!(report.summary.failed, 1);
+        let row = report.cases.first().ok_or("missing matrix row")?;
+        assert_eq!(row.status, "fail");
+        assert!(!row.passed);
+        assert_eq!(row.actual_output, "1");
+        assert_eq!(row.host_output.as_deref(), Some("2"));
+        assert_eq!(row.host_parity, Some(false));
+        assert_eq!(row.note.as_deref(), Some("host_parity=false"));
+        Ok(())
+    }
+
+    #[test]
+    fn matrix_does_not_require_parity_for_undefined_host_oracle() -> TestResult {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"string/strlen",
+                "captured_at":"2026-02-13T00:00:00Z",
+                "cases":[
+                    {"name":"unterminated_hardened","function":"strlen","spec_section":"POSIX strlen","inputs":{"s":[97]},"expected_output":"1","expected_errno":0,"mode":"hardened"}
+                ]
+            }"#,
+        )?;
+
+        let report = build_conformance_matrix_with_executor(
+            &[fixture],
+            MatrixMode::Hardened,
+            "unit",
+            |_, _, _| {
+                CaseExecution::Completed(DifferentialExecution {
+                    host_output: "UB".to_string(),
+                    impl_output: "1".to_string(),
+                    host_parity: false,
+                    note: None,
+                })
+            },
+        );
+
+        assert_eq!(report.summary.total_cases, 1);
+        assert_eq!(report.summary.passed, 1);
+        assert_eq!(report.summary.failed, 0);
+        let row = report.cases.first().ok_or("missing matrix row")?;
+        assert_eq!(row.status, "pass");
+        assert!(row.passed);
+        assert_eq!(row.host_output.as_deref(), Some("UB"));
+        assert_eq!(row.host_parity, Some(false));
         Ok(())
     }
 }
