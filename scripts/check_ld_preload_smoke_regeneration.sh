@@ -284,8 +284,14 @@ def str_field(value: Any, context: str) -> str:
     return ""
 
 
-def status_for_counts(fails: int, guard_failures: int, perf_failures: int, valgrind_failures: int) -> str:
-    return "red" if fails or guard_failures or perf_failures or valgrind_failures else "green"
+def status_for_counts(
+    fails: int,
+    guard_failures: int,
+    perf_failures: int,
+    valgrind_failures: int,
+    parity_failures: int = 0,
+) -> str:
+    return "red" if fails or guard_failures or perf_failures or valgrind_failures or parity_failures else "green"
 
 
 def optional_skip_binaries(cases: list[dict[str, Any]]) -> list[str]:
@@ -362,7 +368,13 @@ def summary_from_cases(cases: list[dict[str, Any]], report: dict[str, Any]) -> d
             "strict_parity_failures": mode_strict_parity_failures,
             "perf_failures": mode_perf_failures,
             "valgrind_failures": mode_valgrind_failures,
-            "status": status_for_counts(mode_fails, mode_signature_guard, mode_perf_failures, mode_valgrind_failures),
+            "status": status_for_counts(
+                mode_fails,
+                mode_signature_guard,
+                mode_perf_failures,
+                mode_valgrind_failures,
+                mode_strict_parity_failures,
+            ),
         }
     signature_guard = sum(1 for case in cases if case.get("signature_guard_triggered"))
     perf_failures = sum(1 for case in cases if case.get("perf_required") and not case.get("perf_pass"))
@@ -447,16 +459,27 @@ def validate_canonical_summary(canonical: dict[str, Any]) -> None:
         if not isinstance(raw_mode, dict):
             errors.append(f"canonical.modes.{mode} must be object")
             continue
-        for field in ["total_cases", "passes", "fails", "skips"]:
+        mode_counts: dict[str, int] = {}
+        for field in MODE_REPORT_FIELDS:
             value = raw_mode.get(field)
             if not isinstance(value, int) or value < 0:
                 errors.append(f"canonical.modes.{mode}.{field} must be non-negative int")
                 value = 0
+            mode_counts[field] = value
             mode_totals[field] += value
-        expected_status = "green" if raw_mode.get("fails") == 0 else "red"
+        expected_status = status_for_counts(
+            mode_counts["fails"],
+            mode_counts["signature_guard_failures"],
+            mode_counts["perf_failures"],
+            mode_counts["valgrind_failures"],
+            mode_counts["strict_parity_failures"],
+        )
         if raw_mode.get("status") != expected_status:
             errors.append(f"canonical.modes.{mode}.status must be {expected_status}")
     for field in ["total_cases", "passes", "fails", "skips"]:
+        if summary.get(field) != mode_totals[field]:
+            errors.append(f"canonical.summary.{field} must equal strict+hardened mode totals")
+    for field in ["signature_guard_failures", "perf_failures", "valgrind_failures"]:
         if summary.get(field) != mode_totals[field]:
             errors.append(f"canonical.summary.{field} must equal strict+hardened mode totals")
     expected_failed = bool(
@@ -497,7 +520,7 @@ def compare_projection(canonical: dict[str, Any], projection: dict[str, Any]) ->
         if committed != regenerated:
             drift.append({"field": f"summary.{field}", "committed": committed, "regenerated": regenerated})
     for mode in ("strict", "hardened"):
-        for field in ["total_cases", "passes", "fails", "skips", "status"]:
+        for field in [*MODE_REPORT_FIELDS, "status"]:
             committed = canonical.get("modes", {}).get(mode, {}).get(field)
             regenerated = projection.get("modes", {}).get(mode, {}).get(field)
             if committed != regenerated:

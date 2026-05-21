@@ -24,6 +24,10 @@
       "passes": 22,
       "fails": 8,
       "skips": 2,
+      "signature_guard_failures": 4,
+      "strict_parity_failures": 0,
+      "perf_failures": 4,
+      "valgrind_failures": 0,
       "status": "red"
     },
     "hardened": {
@@ -31,6 +35,10 @@
       "passes": 18,
       "fails": 12,
       "skips": 2,
+      "signature_guard_failures": 8,
+      "strict_parity_failures": 0,
+      "perf_failures": 4,
+      "valgrind_failures": 0,
       "status": "red"
     }
   },
