@@ -150,11 +150,55 @@ profile_run() {
     fi
 
     # Generate report
+    local perf_data_bytes=0
     if [[ -f "$perf_data" ]]; then
-        perf report -i "$perf_data" --stdio --no-children --percent-limit 0.1 > "$report_txt" 2>/dev/null || true
+        perf_data_bytes="$(wc -c < "$perf_data" | tr -d '[:space:]')"
+    fi
 
-        # Extract hot symbols as JSON
-        python3 - "$report_txt" "$hot_symbols" "$TOP_N" "$label" "$duration_ms" "$TRACE_ID" <<'PY'
+    write_hot_symbol_error() {
+        local error_message="$1"
+        local perf_report_rc="$2"
+        python3 - "$hot_symbols" "$TOP_N" "$label" "$duration_ms" "$TRACE_ID" "$profile_rc" "$perf_data_bytes" "$error_message" "$perf_report_rc" <<'PY'
+import json
+import sys
+
+output_path = sys.argv[1]
+top_n = int(sys.argv[2])
+label = sys.argv[3]
+duration_ms = int(sys.argv[4])
+trace_id = sys.argv[5]
+profile_rc = int(sys.argv[6])
+perf_data_bytes = int(sys.argv[7])
+error_message = sys.argv[8]
+perf_report_rc = int(sys.argv[9])
+
+row = {
+    "error": error_message,
+    "profile_exit": profile_rc,
+    "perf_data_bytes": perf_data_bytes,
+}
+if perf_report_rc:
+    row["perf_report_exit"] = perf_report_rc
+
+result = {
+    "trace_id": trace_id,
+    "label": label,
+    "duration_ms": duration_ms,
+    "top_n": top_n,
+    "symbol_count": 0,
+    "symbols": [row],
+}
+
+with open(output_path, "w") as f:
+    json.dump(result, f, indent=2)
+PY
+    }
+
+    if [[ -s "$perf_data" ]]; then
+        local perf_report_rc=0
+        if perf report -i "$perf_data" --stdio --no-children --percent-limit 0.1 > "$report_txt" 2>"${report_txt}.stderr"; then
+            # Extract hot symbols as JSON
+            python3 - "$report_txt" "$hot_symbols" "$TOP_N" "$label" "$duration_ms" "$TRACE_ID" <<'PY'
 import json
 import re
 import sys
@@ -208,37 +252,15 @@ result = {
 with open(output_path, 'w') as f:
     json.dump(result, f, indent=2)
 PY
-        echo "  Hot symbols: $hot_symbols"
+            echo "  Hot symbols: $hot_symbols"
+        else
+            perf_report_rc=$?
+            echo "  Warning: perf report failed (${perf_report_rc})"
+            write_hot_symbol_error "perf report failed" "$perf_report_rc"
+        fi
     else
-        echo "  Warning: perf data not captured"
-        python3 - "$hot_symbols" "$TOP_N" "$label" "$duration_ms" "$TRACE_ID" "$profile_rc" <<'PY'
-import json
-import sys
-
-output_path = sys.argv[1]
-top_n = int(sys.argv[2])
-label = sys.argv[3]
-duration_ms = int(sys.argv[4])
-trace_id = sys.argv[5]
-profile_rc = int(sys.argv[6])
-
-result = {
-    "trace_id": trace_id,
-    "label": label,
-    "duration_ms": duration_ms,
-    "top_n": top_n,
-    "symbol_count": 0,
-    "symbols": [
-        {
-            "error": "perf data not captured",
-            "profile_exit": profile_rc,
-        }
-    ],
-}
-
-with open(output_path, "w") as f:
-    json.dump(result, f, indent=2)
-PY
+        echo "  Warning: perf data not captured or empty"
+        write_hot_symbol_error "perf data not captured or empty" 0
     fi
 
     # Write timing JSON
