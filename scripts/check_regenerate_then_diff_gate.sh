@@ -26,6 +26,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_DIR="$REPO_ROOT/target/conformance/regenerate_then_diff"
 LOG_FILE="$OUT_DIR/regenerate_then_diff.log.jsonl"
 TRACE_ID="bd-3yr14.5-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_DIR="$OUT_DIR/$TRACE_ID"
+GENERATED_ARTIFACT=""
 
 REGENERATE=false
 TARGET_ARTIFACT=""
@@ -47,7 +49,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR" "$RUN_DIR"
 
 emit_event() {
     local level="$1"
@@ -79,7 +81,7 @@ check_artifact() {
     local name="$1"
     local committed="$2"
     local regenerate_cmd="$3"
-    local generated="$OUT_DIR/${name}.generated.json"
+    local generated="$RUN_DIR/${name}.generated.json"
 
     echo "--- Checking $name ---"
 
@@ -90,13 +92,12 @@ check_artifact() {
     fi
 
     echo "Regenerating $name from source..."
-    local regen_output="$OUT_DIR/${name}.regen.log"
-    # Delete any stale generated artifact left in this persistent OUT_DIR by
-    # a previous run. If the regenerator exits 0 without actually writing
-    # "$generated" (wrong --output path, a no-op rch invocation, etc.), a
-    # leftover copy must NOT be diffed as if it were fresh output: that would
-    # mask a non-running regenerator and let a stale committed artifact PASS.
-    rm -f "$generated"
+    local regen_output="$RUN_DIR/${name}.regen.log"
+    # Use a trace-specific generated path instead of clearing a persistent
+    # filename. If a regenerator exits 0 without writing "$generated" (wrong
+    # --output path, no-op rch invocation, etc.), no stale artifact can be
+    # diffed as fresh output, and the no-output failure below fires.
+    GENERATED_ARTIFACT="$generated"
     if ! eval "$regenerate_cmd" > "$regen_output" 2>&1; then
         echo "FAIL: regeneration command failed for $name"
         cat "$regen_output" | head -20
@@ -108,7 +109,7 @@ check_artifact() {
     if [[ ! -f "$generated" ]]; then
         # Try to use the output as the generated file
         if [[ -s "$regen_output" ]]; then
-            mv "$regen_output" "$generated"
+            cp "$regen_output" "$generated"
         fi
     fi
 
@@ -119,8 +120,8 @@ check_artifact() {
     fi
 
     # Normalize JSON for comparison (sort keys, consistent formatting, strip timestamps)
-    local committed_normalized="$OUT_DIR/${name}.committed.normalized.json"
-    local generated_normalized="$OUT_DIR/${name}.generated.normalized.json"
+    local committed_normalized="$RUN_DIR/${name}.committed.normalized.json"
+    local generated_normalized="$RUN_DIR/${name}.generated.normalized.json"
 
     # Normalize: sort keys, strip generated_at timestamps (metadata, not derived from source)
     python3 - "$committed" "$committed_normalized" <<'NORM'
@@ -187,22 +188,22 @@ regenerate_reality_report() {
     rch exec -- cargo run --quiet -p frankenlibc-harness --bin harness -- \
         reality-report \
         --support-matrix "$REPO_ROOT/support_matrix.json" \
-        --output "$OUT_DIR/reality_report.generated.json" 2>&1
+        --output "$GENERATED_ARTIFACT" 2>&1
 }
 
 regenerate_maintenance_report() {
     python3 "$SCRIPT_DIR/generate_support_matrix_maintenance.py" \
-        -o "$OUT_DIR/maintenance_report.generated.json" 2>&1
+        -o "$GENERATED_ARTIFACT" 2>&1
 }
 
 regenerate_hard_parts_truth() {
     python3 "$SCRIPT_DIR/generate_hard_parts_truth_table.py" \
-        -o "$OUT_DIR/hard_parts_truth.generated.json" 2>&1
+        -o "$GENERATED_ARTIFACT" 2>&1
 }
 
 regenerate_proof_obligations() {
     python3 "$SCRIPT_DIR/generate_proof_obligations_binder.py" \
-        -o "$OUT_DIR/proof_obligations.generated.json" 2>&1
+        -o "$GENERATED_ARTIFACT" 2>&1
 }
 
 FAILED=0
