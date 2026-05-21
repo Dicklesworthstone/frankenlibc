@@ -956,7 +956,10 @@ pub unsafe extern "C" fn __res_mkquery(
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     };
-    let qname = frankenlibc_core::resolv::dns::encode_domain_name(&name_bytes);
+    let Some(qname) = frankenlibc_core::resolv::dns::encode_domain_name(&name_bytes) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+        return -1;
+    };
     let needed = 12 + qname.len() + 4; // header + qname + qtype + qclass
     let effective_buflen = effective_output_len(buf, buflen as usize);
     if effective_buflen < needed {

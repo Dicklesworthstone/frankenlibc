@@ -19,6 +19,7 @@
 //! +---------------------+
 //! ```
 
+use super::dns_name::{NS_MAXCDNAME, name_pton};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 // ---------------------------------------------------------------------------
@@ -172,21 +173,21 @@ pub struct DnsQuestion {
 
 impl DnsQuestion {
     /// Create a new A record question for the given hostname.
-    pub fn a_record(hostname: &[u8]) -> Self {
-        Self {
-            qname: encode_domain_name(hostname),
+    pub fn a_record(hostname: &[u8]) -> Option<Self> {
+        Some(Self {
+            qname: encode_domain_name(hostname)?,
             qtype: qtype::A,
             qclass: qclass::IN,
-        }
+        })
     }
 
     /// Create a new AAAA record question for the given hostname.
-    pub fn aaaa_record(hostname: &[u8]) -> Self {
-        Self {
-            qname: encode_domain_name(hostname),
+    pub fn aaaa_record(hostname: &[u8]) -> Option<Self> {
+        Some(Self {
+            qname: encode_domain_name(hostname)?,
             qtype: qtype::AAAA,
             qclass: qclass::IN,
-        }
+        })
     }
 
     /// Encode the question to bytes.
@@ -321,18 +322,18 @@ pub struct DnsMessage {
 
 impl DnsMessage {
     /// Create a new query message for the given hostname and record type.
-    pub fn new_query(id: u16, hostname: &[u8], qtype: u16) -> Self {
-        Self {
+    pub fn new_query(id: u16, hostname: &[u8], qtype: u16) -> Option<Self> {
+        Some(Self {
             header: DnsHeader::new_query(id),
             questions: vec![DnsQuestion {
-                qname: encode_domain_name(hostname),
+                qname: encode_domain_name(hostname)?,
                 qtype,
                 qclass: qclass::IN,
             }],
             answers: Vec::new(),
             authorities: Vec::new(),
             additionals: Vec::new(),
-        }
+        })
     }
 
     /// Encode the message to bytes.
@@ -396,25 +397,11 @@ impl DnsMessage {
 /// Encode a domain name in DNS wire format.
 ///
 /// Converts "example.com" to "\x07example\x03com\x00"
-pub fn encode_domain_name(name: &[u8]) -> Vec<u8> {
-    let mut result = Vec::with_capacity(name.len() + 2);
-
-    for label in name.split(|&b| b == b'.') {
-        if label.is_empty() {
-            continue;
-        }
-        if label.len() > 63 {
-            // Label too long, truncate
-            result.push(63);
-            result.extend_from_slice(&label[..63]);
-        } else {
-            result.push(label.len() as u8);
-            result.extend_from_slice(label);
-        }
-    }
-
-    result.push(0); // Root label
-    result
+pub fn encode_domain_name(name: &[u8]) -> Option<Vec<u8>> {
+    let mut result = vec![0u8; NS_MAXCDNAME];
+    let len = name_pton(name, &mut result).ok()?;
+    result.truncate(len);
+    Some(result)
 }
 
 /// Maximum number of compression pointer hops allowed before aborting.
@@ -589,20 +576,26 @@ mod tests {
 
     #[test]
     fn test_encode_domain_name() {
-        let encoded = encode_domain_name(b"example.com");
+        let encoded = encode_domain_name(b"example.com").unwrap();
         assert_eq!(encoded, b"\x07example\x03com\x00");
     }
 
     #[test]
     fn test_encode_domain_name_single_label() {
-        let encoded = encode_domain_name(b"localhost");
+        let encoded = encode_domain_name(b"localhost").unwrap();
         assert_eq!(encoded, b"\x09localhost\x00");
     }
 
     #[test]
     fn test_encode_domain_name_trailing_dot() {
-        let encoded = encode_domain_name(b"example.com.");
+        let encoded = encode_domain_name(b"example.com.").unwrap();
         assert_eq!(encoded, b"\x07example\x03com\x00");
+    }
+
+    #[test]
+    fn test_encode_domain_name_rejects_invalid_labels() {
+        assert!(encode_domain_name(&[b'a'; 64]).is_none());
+        assert!(encode_domain_name(b"example..com").is_none());
     }
 
     #[test]
@@ -628,7 +621,7 @@ mod tests {
 
     #[test]
     fn test_dns_question_encode() {
-        let q = DnsQuestion::a_record(b"example.com");
+        let q = DnsQuestion::a_record(b"example.com").unwrap();
         let mut buf = [0u8; 64];
         let len = q.encode(&mut buf).unwrap();
         // 13 (name) + 4 (type + class) = 17
@@ -637,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_dns_message_encode_decode_query() {
-        let msg = DnsMessage::new_query(0x5678, b"test.example.com", qtype::A);
+        let msg = DnsMessage::new_query(0x5678, b"test.example.com", qtype::A).unwrap();
         let mut buf = [0u8; 512];
         let len = msg.encode(&mut buf).unwrap();
 
@@ -721,7 +714,9 @@ mod tests {
         fn fuzz_encode_domain_name_ends_with_root_label(
             bytes in proptest::collection::vec(any::<u8>(), 0..1024),
         ) {
-            let out = encode_domain_name(&bytes);
+            let Some(out) = encode_domain_name(&bytes) else {
+                return Ok(());
+            };
             prop_assert!(!out.is_empty(), "output must be non-empty");
             prop_assert_eq!(
                 *out.last().unwrap(),
@@ -738,7 +733,9 @@ mod tests {
         fn fuzz_encode_domain_name_length_prefixes_under_64(
             bytes in proptest::collection::vec(any::<u8>(), 0..1024),
         ) {
-            let out = encode_domain_name(&bytes);
+            let Some(out) = encode_domain_name(&bytes) else {
+                return Ok(());
+            };
             let mut i = 0;
             while i < out.len() {
                 let len = out[i] as usize;
@@ -769,7 +766,9 @@ mod tests {
         fn fuzz_encode_domain_name_output_is_bounded(
             bytes in proptest::collection::vec(any::<u8>(), 0..1024),
         ) {
-            let out = encode_domain_name(&bytes);
+            let Some(out) = encode_domain_name(&bytes) else {
+                return Ok(());
+            };
             // Max non-empty labels = input.len() / 1 + 1 (worst case:
             // "a.a.a...a" with n 1-char labels uses n length prefixes
             // for n characters, plus 1 terminator).

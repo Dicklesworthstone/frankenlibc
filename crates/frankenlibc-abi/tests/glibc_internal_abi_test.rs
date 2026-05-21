@@ -2476,6 +2476,34 @@ fn res_mkquery_buffer_too_small_returns_error() {
 }
 
 #[test]
+fn res_mkquery_rejects_invalid_domain_names() {
+    let invalid_domains = [
+        String::from_utf8(vec![b'a'; 64]).unwrap(),
+        "a..b".to_owned(),
+    ];
+    for invalid in invalid_domains {
+        let name = CString::new(invalid.as_str()).unwrap();
+        let mut buf = [0u8; 512];
+        clear_errno();
+        let len = unsafe {
+            __res_mkquery(
+                0,
+                name.as_ptr(),
+                1,
+                1,
+                ptr::null(),
+                0,
+                ptr::null(),
+                buf.as_mut_ptr().cast(),
+                512,
+            )
+        };
+        assert_eq!(len, -1, "invalid domain {invalid:?} should fail");
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+    }
+}
+
+#[test]
 fn res_send_null_msg_returns_error() {
     let r = unsafe { __res_send(ptr::null(), 0, ptr::null_mut(), 0) };
     assert_eq!(r, -1);

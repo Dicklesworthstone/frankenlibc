@@ -13247,7 +13247,10 @@ unsafe fn dns_query_raw(
     let mut header = DnsHeader::new_query(tx_id);
     header.qdcount = 1;
 
-    let qname = frankenlibc_core::resolv::dns::encode_domain_name(dname);
+    let Some(qname) = frankenlibc_core::resolv::dns::encode_domain_name(dname) else {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        return -1;
+    };
 
     // Build query packet: header + question (qname + qtype + qclass)
     let query_len = 12 + qname.len() + 4;

@@ -1255,7 +1255,12 @@ fn udp_dns_query(
     };
 
     // Encode query
-    let msg = DnsMessage::new_query(id, hostname, qtype_val);
+    let Some(msg) = DnsMessage::new_query(id, hostname, qtype_val) else {
+        DNS_METRICS
+            .queries_parse_error
+            .fetch_add(1, AtomicOrdering::Relaxed);
+        return None;
+    };
     let mut send_buf = [0u8; DNS_MAX_UDP_SIZE];
     let Some(send_len) = msg.encode(&mut send_buf) else {
         DNS_METRICS
