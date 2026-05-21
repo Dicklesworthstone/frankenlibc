@@ -323,13 +323,31 @@ pub fn compute_relocation(
 
 /// Parse all RELA entries from a relocation section.
 pub fn parse_relocations(data: &[u8], offset: u64, size: u64) -> ElfResult<Vec<Elf64Rela>> {
-    let offset = offset as usize;
-    let size = size as usize;
+    let offset = usize::try_from(offset).map_err(|_| ElfError::InvalidOffset {
+        kind: "relocation section",
+        offset,
+    })?;
+    let size = usize::try_from(size).map_err(|_| ElfError::InvalidOffset {
+        kind: "relocation section size",
+        offset: size,
+    })?;
 
-    if offset.saturating_add(size) > data.len() {
+    let end = offset.checked_add(size).ok_or(ElfError::InvalidOffset {
+        kind: "relocation section",
+        offset: offset as u64,
+    })?;
+
+    if end > data.len() {
         return Err(ElfError::BufferTooSmall {
-            needed: offset + size,
+            needed: end,
             available: data.len(),
+        });
+    }
+
+    if size % Elf64Rela::SIZE != 0 {
+        return Err(ElfError::InvalidOffset {
+            kind: "relocation section size",
+            offset: size as u64,
         });
     }
 
@@ -413,6 +431,31 @@ mod tests {
         let (value, size) = compute_relocation(&reloc, symbol_value, &ctx).unwrap();
         assert_eq!(size, 8);
         assert_eq!(value, symbol_value);
+    }
+
+    #[test]
+    fn parse_relocations_rejects_overflowing_range_without_panicking() {
+        let err = parse_relocations(&[], usize::MAX as u64, 1).unwrap_err();
+        assert!(matches!(
+            err,
+            ElfError::InvalidOffset {
+                kind: "relocation section",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_relocations_rejects_partial_entry() {
+        let data = [0u8; Elf64Rela::SIZE + 1];
+        let err = parse_relocations(&data, 0, data.len() as u64).unwrap_err();
+        assert!(matches!(
+            err,
+            ElfError::InvalidOffset {
+                kind: "relocation section size",
+                ..
+            }
+        ));
     }
 
     #[test]
