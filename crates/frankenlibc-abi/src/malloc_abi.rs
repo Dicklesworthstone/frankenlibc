@@ -85,6 +85,7 @@ const NATIVE_REENTRY_MEMALIGN: u8 = 1 << 4;
 
 struct AllocatorReentrySlot {
     tid: AtomicI32,
+    thread_key: AtomicUsize,
     native_guard_bits: AtomicU8,
     allocator_depth: AtomicU32,
 }
@@ -93,6 +94,7 @@ impl AllocatorReentrySlot {
     const fn new() -> Self {
         Self {
             tid: AtomicI32::new(0),
+            thread_key: AtomicUsize::new(0),
             native_guard_bits: AtomicU8::new(0),
             allocator_depth: AtomicU32::new(0),
         }
@@ -106,12 +108,9 @@ static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_CO
 // Stores (tid << 32) | slot_index. Zero means "cache empty".
 //
 // SAFETY: For single-threaded programs (like Python startup), this provides O(1) lookup
-// with zero syscalls after the first allocation. For multi-threaded programs, the worst
-// case is returning the wrong thread's slot, which causes false-positive reentry detection
-// (bump allocator used unnecessarily). True reentry detection relies on per-thread state
-// in the slot, so multi-threaded correctness is preserved at the cost of occasional
-// performance degradation. This tradeoff is acceptable because the primary use case
-// (Python/Ruby/Node startup) is single-threaded.
+// with zero syscalls after the first allocation. Multi-threaded callers must still prove
+// that the cached slot belongs to the current thread before reusing it; otherwise a
+// concurrent thread can inherit another thread's reentry/depth guards.
 static LAST_THREAD_CACHE: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
@@ -119,7 +118,72 @@ fn allocator_reentry_slot_start(tid: i32) -> usize {
     (tid as usize).wrapping_mul(0x9e37_79b1_85eb_ca87) & ALLOCATOR_REENTRY_SLOT_MASK
 }
 
-fn allocator_reentry_slot_for_tid(tid: i32) -> Option<&'static AllocatorReentrySlot> {
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn current_thread_key() -> Option<usize> {
+    let key: usize;
+    unsafe {
+        // SAFETY: reading fs:0 is a register-relative load of the Linux x86_64
+        // thread-control-block self pointer. It does not call into libc or touch
+        // allocator/TLS initialization machinery.
+        core::arch::asm!(
+            "mov {}, qword ptr fs:[0]",
+            lateout(reg) key,
+            options(nostack, preserves_flags, readonly)
+        );
+    }
+    (key != 0).then_some(key)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn current_thread_key() -> Option<usize> {
+    let key: usize;
+    unsafe {
+        // SAFETY: tpidr_el0 is the userspace thread-pointer register on Linux
+        // aarch64. Reading it is side-effect free and does not invoke libc.
+        core::arch::asm!(
+            "mrs {out}, tpidr_el0",
+            out = lateout(reg) key,
+            options(nostack, preserves_flags, readonly)
+        );
+    }
+    (key != 0).then_some(key)
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[inline]
+fn current_thread_key() -> Option<usize> {
+    None
+}
+
+#[inline]
+fn slot_matches_thread_key(slot: &AllocatorReentrySlot, thread_key: Option<usize>) -> bool {
+    let Some(thread_key) = thread_key else {
+        return false;
+    };
+    thread_key != 0 && slot.thread_key.load(Ordering::Acquire) == thread_key
+}
+
+#[inline]
+fn bind_slot_to_thread_key(slot: &AllocatorReentrySlot, thread_key: Option<usize>) {
+    let Some(thread_key) = thread_key else {
+        return;
+    };
+    if thread_key == 0 {
+        return;
+    }
+    let previous = slot.thread_key.swap(thread_key, Ordering::AcqRel);
+    if previous != 0 && previous != thread_key {
+        slot.native_guard_bits.store(0, Ordering::Release);
+        slot.allocator_depth.store(0, Ordering::Release);
+    }
+}
+
+fn allocator_reentry_slot_for_tid(
+    tid: i32,
+    thread_key: Option<usize>,
+) -> Option<&'static AllocatorReentrySlot> {
     if tid <= 0 {
         return None;
     }
@@ -128,6 +192,7 @@ fn allocator_reentry_slot_for_tid(tid: i32) -> Option<&'static AllocatorReentryS
         let slot = &ALLOCATOR_REENTRY_SLOTS[(start + offset) & ALLOCATOR_REENTRY_SLOT_MASK];
         let observed = slot.tid.load(Ordering::Acquire);
         if observed == tid {
+            bind_slot_to_thread_key(slot, thread_key);
             return Some(slot);
         }
         if observed == 0 {
@@ -135,8 +200,14 @@ fn allocator_reentry_slot_for_tid(tid: i32) -> Option<&'static AllocatorReentryS
                 .tid
                 .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
             {
-                Ok(_) => return Some(slot),
-                Err(actual) if actual == tid => return Some(slot),
+                Ok(_) => {
+                    bind_slot_to_thread_key(slot, thread_key);
+                    return Some(slot);
+                }
+                Err(actual) if actual == tid => {
+                    bind_slot_to_thread_key(slot, thread_key);
+                    return Some(slot);
+                }
                 Err(_) => {}
             }
         }
@@ -157,19 +228,18 @@ fn allocator_reentry_slot_for_tid(tid: i32) -> Option<&'static AllocatorReentryS
 /// fixing the ~650x Python startup regression (bd-35hjg).
 #[inline]
 fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
-    // Fast path: check last-thread cache WITHOUT syscall
+    let thread_key = current_thread_key();
+
+    // Fast path: check last-thread cache WITHOUT syscall. The cached slot is
+    // accepted only when its no-syscall thread key matches the current thread.
     let cached = LAST_THREAD_CACHE.load(Ordering::Relaxed);
     if cached != 0 {
-        let cached_tid = (cached >> 32) as i32;
         let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
         if cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
             let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
-            // Check if slot's stored TID matches cached TID (without syscall!)
-            // If they match, the slot is valid and we're likely the same thread.
-            if slot.tid.load(Ordering::Acquire) == cached_tid {
+            if slot_matches_thread_key(slot, thread_key) {
                 return Some(slot);
             }
-            // Slot was reassigned to different thread - fall through to syscall path
         }
     }
 
@@ -180,7 +250,7 @@ fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     }
 
     // Look up or create slot for this TID
-    let slot = allocator_reentry_slot_for_tid(tid)?;
+    let slot = allocator_reentry_slot_for_tid(tid, thread_key)?;
 
     // Update global cache for next fast-path lookup
     let slot_idx = (slot as *const _ as usize - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
