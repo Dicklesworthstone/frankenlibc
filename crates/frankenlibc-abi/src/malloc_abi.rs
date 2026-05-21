@@ -108,10 +108,52 @@ static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_CO
 // Stores (tid << 32) | slot_index. Zero means "cache empty".
 //
 // SAFETY: For single-threaded programs (like Python startup), this provides O(1) lookup
-// with zero syscalls after the first allocation. Multi-threaded callers must still prove
-// that the cached slot belongs to the current thread before reusing it; otherwise a
-// concurrent thread can inherit another thread's reentry/depth guards.
+// with zero syscalls after the first allocation. The syscall-free fast path keys on the
+// glibc TCB self pointer alone, which is conclusive only while the process is
+// single-threaded; once `MULTI_THREADED` latches, the fast path is bypassed and the live
+// kernel tid is verified instead (see `current_allocator_reentry_slot`).
 static LAST_THREAD_CACHE: AtomicU64 = AtomicU64::new(0);
+
+// Soundness latch for the syscall-free fast path (bd-35hjg.3.1).
+//
+// `current_allocator_reentry_slot`'s fast path accepts a cached slot purely on a glibc
+// TCB self-pointer match (`current_thread_key`). That is conclusive only while the
+// process has never had more than one thread: the kernel can only recycle a tid, and
+// glibc can only recycle a TCB address, *after* the owning thread has exited, so a
+// single-threaded process can never alias one thread's reentry slot onto another. Once a
+// second thread is seen, a freshly created thread can inherit an exited thread's recycled
+// TCB address (matching the cached slot by key) while the kernel independently recycles
+// the exited thread's tid for a third thread. The fast path must then fall back to
+// verifying the kernel tid, which is unique among concurrently live threads.
+//
+// `MULTI_THREADED` is a one-way latch: set the first time two distinct tids reach the
+// slot machinery and never cleared. `FIRST_OBSERVED_TID` records the first tid seen.
+static MULTI_THREADED: AtomicBool = AtomicBool::new(false);
+static FIRST_OBSERVED_TID: AtomicI32 = AtomicI32::new(0);
+
+/// Reports whether `tid` is the second distinct tid recorded in `first`, which proves the
+/// process is (or has been) multi-threaded. The first non-zero tid is stored; a later
+/// different tid returns `true`. Non-positive tids are ignored.
+#[inline]
+fn observe_distinct_tid(first: &AtomicI32, tid: i32) -> bool {
+    if tid <= 0 {
+        return false;
+    }
+    match first.compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => false,
+        Err(previous) => previous != tid,
+    }
+}
+
+/// Latches `MULTI_THREADED` once a second distinct tid reaches the reentry-slot
+/// machinery, after which kernel tids and glibc TCB addresses may have been recycled and
+/// the thread-key-only fast path is no longer sound on its own.
+#[inline]
+fn note_thread_tid(tid: i32) {
+    if observe_distinct_tid(&FIRST_OBSERVED_TID, tid) {
+        MULTI_THREADED.store(true, Ordering::SeqCst);
+    }
+}
 
 #[inline]
 fn allocator_reentry_slot_start(tid: i32) -> usize {
@@ -218,11 +260,15 @@ fn allocator_reentry_slot_for_tid(
 /// Get the reentry slot for the current thread. Uses a global last-thread cache
 /// to eliminate gettid syscalls for single-threaded programs.
 ///
-/// Fast path (no syscall): Check if the cached slot's stored TID matches the cached TID.
-/// If so, we're likely the same thread and can return the slot directly.
+/// Fast path (no syscall): while the process is single-threaded, a cached slot whose
+/// stored glibc TCB self pointer matches this thread is returned directly. Tids and TCB
+/// addresses cannot have been recycled with only one thread, so the key match is
+/// conclusive.
 ///
-/// Slow path (one syscall): On cache miss or slot/TID mismatch, do gettid, probe for
-/// the slot, and update the cache.
+/// Slow path (one syscall): on a cache miss, a key mismatch, or once the process has gone
+/// multi-threaded (`MULTI_THREADED`), do gettid, probe for the slot keyed by the kernel
+/// tid, and update the cache. The kernel tid is unique among concurrently live threads,
+/// so it disambiguates threads that share a recycled TCB address (bd-35hjg.3.1).
 ///
 /// This reduces gettid syscalls from O(allocations) to O(1) for single-threaded programs,
 /// fixing the ~650x Python startup regression (bd-35hjg).
@@ -230,14 +276,19 @@ fn allocator_reentry_slot_for_tid(
 fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     let thread_key = current_thread_key();
 
-    // Fast path: check last-thread cache WITHOUT syscall. The cached slot is
-    // accepted only when its no-syscall thread key matches the current thread.
+    // Fast path: check last-thread cache WITHOUT syscall. The cached slot is accepted
+    // only when its no-syscall thread key matches the current thread AND the process is
+    // still single-threaded. Once `MULTI_THREADED` latches, a recycled glibc TCB can give
+    // a freshly created thread the same key as an exited thread, so a key match alone is
+    // no longer sound and we fall through to verify the live kernel tid (bd-35hjg.3.1).
     let cached = LAST_THREAD_CACHE.load(Ordering::Relaxed);
     if cached != 0 {
         let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
         if cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
             let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
-            if slot_matches_thread_key(slot, thread_key) {
+            if slot_matches_thread_key(slot, thread_key)
+                && !MULTI_THREADED.load(Ordering::Relaxed)
+            {
                 return Some(slot);
             }
         }
@@ -248,6 +299,10 @@ fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     if tid <= 0 {
         return None;
     }
+
+    // Record this tid so a second distinct thread latches `MULTI_THREADED` and disables
+    // the syscall-free fast path before tid/TCB recycling can alias slots.
+    note_thread_tid(tid);
 
     // Look up or create slot for this TID
     let slot = allocator_reentry_slot_for_tid(tid, thread_key)?;
@@ -1244,6 +1299,27 @@ pub fn malloc_restore_reentry_depth_for_tests(previous: u32) {
     if let Some(slot) = current_allocator_reentry_slot() {
         slot.allocator_depth.store(previous, Ordering::Release);
     }
+}
+
+/// Test hook (bd-35hjg.3.1): returns the allocator reentry-slot index bound to
+/// the calling thread, exercising the full `current_allocator_reentry_slot`
+/// fast/slow path. Two concurrently live threads must never observe the same
+/// index, and the index is stable for the lifetime of a live thread.
+#[doc(hidden)]
+pub fn malloc_current_reentry_slot_index_for_tests() -> Option<usize> {
+    current_allocator_reentry_slot().map(|slot| {
+        (slot as *const AllocatorReentrySlot as usize
+            - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
+            / std::mem::size_of::<AllocatorReentrySlot>()
+    })
+}
+
+/// Test hook (bd-35hjg.3.1): reports whether a second distinct thread has been
+/// observed, which latches off the syscall-free thread-key-only fast path in
+/// `current_allocator_reentry_slot` so every lookup verifies the live tid.
+#[doc(hidden)]
+pub fn malloc_reentry_multithreaded_latched_for_tests() -> bool {
+    MULTI_THREADED.load(Ordering::SeqCst)
 }
 
 #[doc(hidden)]

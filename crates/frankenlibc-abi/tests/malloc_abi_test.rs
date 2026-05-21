@@ -8,16 +8,18 @@ use frankenlibc_abi::htm_fast_path::{
 };
 use frankenlibc_abi::malloc_abi::{
     __libc_freeres, aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc,
-    malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests, malloc_info,
-    malloc_known_remaining_for_tests, malloc_restore_reentry_depth_for_tests, malloc_stats,
-    malloc_stats_init_for_tests, malloc_swap_reentry_depth_for_tests, malloc_trim,
-    malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
+    malloc_current_reentry_slot_index_for_tests, malloc_htm_reset_for_tests,
+    malloc_htm_snapshot_for_tests, malloc_info, malloc_known_remaining_for_tests,
+    malloc_reentry_multithreaded_latched_for_tests, malloc_restore_reentry_depth_for_tests,
+    malloc_stats, malloc_stats_init_for_tests, malloc_swap_reentry_depth_for_tests,
+    malloc_trim, malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
     signal_runtime_ready_for_tests, take_last_decision_gate_for_tests, valloc,
 };
 use frankenlibc_abi::unistd_abi::mprobe;
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Barrier, Mutex, OnceLock};
 
 fn test_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -789,4 +791,87 @@ fn test_calloc_zeroed_memory() {
         "calloc memory must be zero-initialized"
     );
     unsafe { free(p) };
+}
+
+// ---------------------------------------------------------------------------
+// Allocator reentry-slot soundness (bd-35hjg.3.1)
+// ---------------------------------------------------------------------------
+
+/// The reentry slot a live thread resolves must be stable across repeated
+/// lookups: nested allocator calls re-derive the slot and must observe the same
+/// per-thread reentry/depth accounting.
+#[test]
+fn reentry_slot_index_is_stable_for_a_live_thread() {
+    let first = malloc_current_reentry_slot_index_for_tests()
+        .expect("a live thread must resolve a reentry slot");
+    for _ in 0..256 {
+        let again = malloc_current_reentry_slot_index_for_tests()
+            .expect("reentry slot must remain resolvable");
+        assert_eq!(
+            first, again,
+            "a live thread must keep resolving the same reentry-slot index"
+        );
+    }
+}
+
+/// Regression guard for bd-35hjg.3.1: under heavy thread churn — which forces
+/// the kernel to recycle tids and glibc to recycle TCB addresses across thread
+/// lifecycles — no two concurrently-live threads may resolve the same allocator
+/// reentry slot. A shared slot lets one thread mutate another's reentry/depth
+/// accounting, which can pin a thread permanently in-reentry.
+#[test]
+fn reentry_slots_stay_single_owner_under_thread_churn() {
+    const WAVE: usize = 8;
+    const WAVES: usize = 64;
+
+    for _wave in 0..WAVES {
+        let barrier = Arc::new(Barrier::new(WAVE));
+        let owners: Arc<Mutex<Vec<(usize, usize)>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::with_capacity(WAVE);
+
+        for worker in 0..WAVE {
+            let barrier = Arc::clone(&barrier);
+            let owners = Arc::clone(&owners);
+            handles.push(std::thread::spawn(move || {
+                // Rendezvous so every worker in this wave is concurrently live
+                // while it resolves and re-resolves its reentry slot.
+                barrier.wait();
+                let idx = malloc_current_reentry_slot_index_for_tests()
+                    .expect("worker must resolve a reentry slot");
+                let idx_again = malloc_current_reentry_slot_index_for_tests()
+                    .expect("worker must re-resolve its reentry slot");
+                assert_eq!(
+                    idx, idx_again,
+                    "reentry slot must stay stable within one live worker thread"
+                );
+                owners.lock().expect("owners lock").push((idx, worker));
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("worker thread joined");
+        }
+
+        // All WAVE workers were concurrently live between the barrier and the
+        // join, so each must own a distinct reentry slot.
+        let owners = owners.lock().expect("owners lock");
+        let mut seen: HashMap<usize, usize> = HashMap::new();
+        for &(idx, worker) in owners.iter() {
+            if let Some(&other) = seen.get(&idx) {
+                panic!(
+                    "reentry slot {idx} shared by concurrently-live workers \
+                     {other} and {worker} (bd-35hjg.3.1)"
+                );
+            }
+            seen.insert(idx, worker);
+        }
+        assert_eq!(owners.len(), WAVE, "every worker must report a slot");
+    }
+
+    // Spawning worker threads must have latched the process into multi-threaded
+    // mode, which disables the syscall-free thread-key-only fast path so every
+    // lookup verifies the live kernel tid.
+    assert!(
+        malloc_reentry_multithreaded_latched_for_tests(),
+        "thread churn must latch the allocator multi-threaded mode"
+    );
 }
