@@ -281,10 +281,12 @@ fn run_case_from_execution(
             let host_oracle_defined = run.host_output != "UB";
             let host_matches = run.host_parity || !host_oracle_defined;
             let passed = output_matches && host_matches;
-            let diff_offset = if passed {
-                None
-            } else {
+            let diff_offset = if !output_matches {
                 first_diff_offset(&case.expected_output, &run.impl_output)
+            } else if !host_matches && host_oracle_defined {
+                first_diff_offset(&run.host_output, &run.impl_output)
+            } else {
+                None
             };
             let mut note = append_match_notes(run.note, match_kind);
             if !host_matches {
@@ -621,6 +623,11 @@ mod tests {
         assert_eq!(row.host_output.as_deref(), Some("2"));
         assert_eq!(row.host_parity, Some(false));
         assert_eq!(row.note.as_deref(), Some("host_parity=false"));
+        assert_eq!(
+            row.diff_offset,
+            Some(0),
+            "host-parity-only failures should report the host-vs-actual divergence offset"
+        );
         Ok(())
     }
 
