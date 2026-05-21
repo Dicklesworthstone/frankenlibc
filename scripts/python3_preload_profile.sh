@@ -8,11 +8,14 @@
 #
 # Handles timeout/abort scenarios common when preload causes hangs.
 # Outputs deterministic top-N hot-symbol lists for regression detection.
-# Artifact: target/perf/python3_preload_profile/
+# Artifact: target/perf/python3_preload_profile/<trace-id>/
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="${ROOT}/target/perf/python3_preload_profile"
+OUT_ROOT="${ROOT}/target/perf/python3_preload_profile"
+TRACE_ID_RAW="${FRANKENLIBC_PYTHON3_PRELOAD_PROFILE_TRACE_ID:-bd-35hjg.1-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+TRACE_ID="${TRACE_ID_RAW//[^A-Za-z0-9_.-]/_}"
+OUT_DIR="${OUT_ROOT}/${TRACE_ID}"
 TOP_N="${TOP_N:-20}"
 PERF_FREQ="${PERF_FREQ:-997}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-5}"
@@ -64,8 +67,6 @@ capture_profile() {
   local timing_txt="${OUT_DIR}/${label}.timing.txt"
 
   log "Profiling: ${label}"
-
-  rm -f "${perf_data}" "${symbols_txt}" "${strace_txt}" "${timing_txt}"
 
   local env_cmd=()
   [[ -n "${ld_preload}" ]] && env_cmd+=(LD_PRELOAD="${ld_preload}")
@@ -177,6 +178,7 @@ SUMMARY_JSON="${OUT_DIR}/profile_summary.json"
 cat > "${SUMMARY_JSON}" <<EOF
 {
   "meta": {
+    "trace_id": "${TRACE_ID}",
     "generated_at": "${RUN_TS}",
     "git_commit": "${GIT_COMMIT}",
     "library_path": "${LIB_PATH}",
