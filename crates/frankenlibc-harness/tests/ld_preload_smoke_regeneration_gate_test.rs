@@ -336,6 +336,16 @@ fn default_run_id_is_process_unique() {
 }
 
 #[test]
+fn run_mode_forwards_gate_run_id_to_smoke_runner() {
+    let root = workspace_root();
+    let script = std::fs::read_to_string(root.join(GATE_SCRIPT)).expect("gate script readable");
+    assert!(
+        script.contains("FRANKENLIBC_SMOKE_RUN_ID=\"${RUN_ID}\""),
+        "run mode must bind the child smoke report/trace run id to the gate run id"
+    );
+}
+
+#[test]
 fn legacy_adversarial_gate_requires_numeric_skip_counts() {
     let root = workspace_root();
     let script = std::fs::read_to_string(root.join(LEGACY_ADVERSARIAL_GATE_SCRIPT))

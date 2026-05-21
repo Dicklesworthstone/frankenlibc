@@ -108,6 +108,7 @@ if [[ "${MODE}" == "run" ]]; then
   echo "check_ld_preload_smoke_regeneration: running LD_PRELOAD smoke battery"
   set +e
   TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}" \
+    FRANKENLIBC_SMOKE_RUN_ID="${RUN_ID}" \
     FRANKENLIBC_SMOKE_LIB_PATH="${fresh_lib}" \
     "${ROOT}/scripts/ld_preload_smoke.sh" > "${SMOKE_LOG}" 2>&1
   smoke_rc=$?
