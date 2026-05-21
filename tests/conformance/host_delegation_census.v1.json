@@ -1,0 +1,2768 @@
+{
+  "bead": "bd-smp21.1",
+  "broader_source_references": [
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:73",
+      "line": 73,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "pub(crate) unsafe fn dlvsym_next(symbol: *const c_char, version: *const c_char) -> *mut c_void {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:75",
+      "line": 75,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "unsafe { crate::host_resolve::host_dlvsym_next_raw(symbol, version) }"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:175",
+      "line": 175,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "unsafe fn host_dlsym(handle: *mut c_void, symbol: *const c_char) -> Option<*mut c_void> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:177",
+      "line": 177,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let addr = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\")?;"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:179",
+      "line": 179,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore \u2014 host symbol ABI resolved, pointer cast is deliberate"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:180",
+      "line": 180,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "Some(unsafe { host_dlsym(handle, symbol) })"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:183",
+      "line": 183,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "unsafe fn host_dlvsym("
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:189",
+      "line": 189,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let addr = crate::host_resolve::resolve_host_symbol_raw(\"dlvsym\")?;"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:191",
+      "line": 191,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let host_dlvsym: DlvsymFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore \u2014 host symbol ABI resolved, pointer cast is deliberate"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:192",
+      "line": 192,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "Some(unsafe { host_dlvsym(handle, symbol, version) })"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:200",
+      "line": 200,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol) }.unwrap_or(std::ptr::null_mut())"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:215",
+      "line": 215,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "unsafe { host_dlvsym(libc::RTLD_DEFAULT, symbol, version) }.unwrap_or(std::ptr::null_mut())"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:264",
+      "line": 264,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:334",
+      "line": 334,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:387",
+      "line": 387,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let sym = unsafe { host_dlsym(host_handle, symbol) }.unwrap_or(std::ptr::null_mut());"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:424",
+      "line": 424,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "// host_dlsym(symbol)/CStr::from_ptr(symbol) \u2014 both unbounded reads of"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:439",
+      "line": 439,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let sym = unsafe { host_dlsym(host_handle, symbol) }.unwrap_or_else(|| {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:459",
+      "line": 459,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:461",
+      "line": 461,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore \u2014 host symbol ABI resolved, pointer cast is deliberate"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:462",
+      "line": 462,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let sym = unsafe { host_dlsym(handle, symbol) };"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:521",
+      "line": 521,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let sym = unsafe { host_dlvsym(host_handle, symbol, version) }"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:585",
+      "line": 585,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let sym = unsafe { host_dlvsym(host_handle, symbol, version) }.unwrap_or_else(|| {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:604",
+      "line": 604,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let sym = unsafe { host_dlvsym(handle, symbol, version) }.unwrap_or(std::ptr::null_mut());"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:656",
+      "line": 656,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlclose\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:691",
+      "line": 691,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlclose\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:763",
+      "line": 763,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "/// into resolve_host_symbol_raw."
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:776",
+      "line": 776,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "let host_addr = crate::host_resolve::host_dl_iterate_phdr_cached().or_else(|| {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:778",
+      "line": 778,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "crate::host_resolve::host_dl_iterate_phdr_cached()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:798",
+      "line": 798,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "text": "if let Some(host_addr) = crate::host_resolve::host_dladdr_cached() {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4851",
+      "line": 4851,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "text": "if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlinfo\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4881",
+      "line": 4881,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "text": "if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlinfo\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:41",
+      "line": 41,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) unsafe fn host_dlvsym_next_raw("
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:46",
+      "line": 46,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "ensure_host_dlvsym();"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:55",
+      "line": 55,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "let host_dlvsym: DlvsymFn = unsafe { core::mem::transmute(addr) };"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:56",
+      "line": 56,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "return unsafe { host_dlvsym(libc::RTLD_NEXT, symbol, version) };"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:135",
+      "line": 135,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "let host_dl_iterate = host_dl_iterate_phdr_cached()?;"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:406",
+      "line": 406,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "/// Early-resolve the host dlvsym so that subsequent host_dlvsym_next_raw calls"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:407",
+      "line": 407,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "/// bypass our interposed dlvsym. Must be called before delegate_to_host_libc_start_main."
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:408",
+      "line": 408,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn ensure_host_dlvsym() {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:412",
+      "line": 412,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "if let Some(addr) = resolve_host_symbol_raw(\"dlvsym\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:444",
+      "line": 444,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "let a = resolve_host_symbol_raw(symbol).unwrap_or(0);"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:455",
+      "line": 455,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn resolve_host_symbol_raw(symbol: &str) -> Option<usize> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:462",
+      "line": 462,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn resolve_host_symbol_cached("
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:466",
+      "line": 466,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "let ptr = *slot.get_or_init(|| resolve_host_symbol_raw(symbol).unwrap_or(0));"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:477",
+      "line": 477,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_create_raw() -> Option<"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:488",
+      "line": 488,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_cancel_raw() -> Option<unsafe extern \"C\" fn(libc::pthread_t) -> i32> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:492",
+      "line": 492,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_setcancelstate_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:497",
+      "line": 497,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_setcanceltype_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:502",
+      "line": 502,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_testcancel_raw() -> Option<unsafe extern \"C\" fn()> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:506",
+      "line": 506,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_join_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:511",
+      "line": 511,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_detach_raw() -> Option<unsafe extern \"C\" fn(libc::pthread_t) -> i32> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:515",
+      "line": 515,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_exit_raw() -> Option<unsafe extern \"C\" fn(*mut c_void) -> !> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:519",
+      "line": 519,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_self_raw() -> Option<unsafe extern \"C\" fn() -> libc::pthread_t> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:523",
+      "line": 523,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_tryjoin_np_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:528",
+      "line": 528,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_timedjoin_np_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:533",
+      "line": 533,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_clockjoin_np_raw() -> Option<"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:539",
+      "line": 539,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_condattr_getclock_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:545",
+      "line": 545,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_pthread_equal_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:586",
+      "line": 586,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_dl_iterate_phdr_cached() -> Option<usize> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/host_resolve.rs:600",
+      "line": 600,
+      "module": "host_resolve",
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "text": "pub(crate) fn host_dladdr_cached() -> Option<usize> {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/io_internal_abi.rs:2104",
+      "line": 2104,
+      "module": "io_internal_abi",
+      "path": "crates/frankenlibc-abi/src/io_internal_abi.rs",
+      "text": "if let Some(ptr) = crate::host_resolve::resolve_host_symbol_raw(\"_IO_list_all\") {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/malloc_abi.rs:463",
+      "line": 463,
+      "module": "malloc_abi",
+      "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "text": "crate::host_resolve::resolve_host_symbol_raw(symbol)"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/malloc_abi.rs:495",
+      "line": 495,
+      "module": "malloc_abi",
+      "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "text": "// SAFETY: called after dynamic linker init; dlvsym_next is safe."
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:44",
+      "line": 44,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_cancel_raw as resolved_thread_cancel_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:45",
+      "line": 45,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_clockjoin_np_raw as resolved_thread_clockjoin_np_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:46",
+      "line": 46,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_condattr_getclock_raw as resolved_thread_condattr_getclock_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:47",
+      "line": 47,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_create_raw as resolved_thread_create_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:48",
+      "line": 48,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_detach_raw as resolved_thread_detach_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:49",
+      "line": 49,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_exit_raw as resolved_thread_exit_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:50",
+      "line": 50,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_join_raw as resolved_thread_join_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:51",
+      "line": 51,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_self_raw as resolved_thread_self_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:52",
+      "line": 52,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_setcancelstate_raw as resolved_thread_setcancelstate_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:53",
+      "line": 53,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_setcanceltype_raw as resolved_thread_setcanceltype_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:54",
+      "line": 54,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_testcancel_raw as resolved_thread_testcancel_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:55",
+      "line": 55,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_timedjoin_np_raw as resolved_thread_timedjoin_np_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:56",
+      "line": 56,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "host_pthread_tryjoin_np_raw as resolved_thread_tryjoin_np_raw,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:364",
+      "line": 364,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "unsafe fn resolve_host_symbol_nocache(name: &'static [u8]) -> *mut c_void {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:373",
+      "line": 373,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "crate::dlfcn_abi::dlvsym_next("
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:381",
+      "line": 381,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "crate::dlfcn_abi::dlvsym_next("
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:390",
+      "line": 390,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "crate::dlfcn_abi::dlvsym_next("
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:399",
+      "line": 399,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol)"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:407",
+      "line": 407,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_void {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:414",
+      "line": 414,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "crate::host_resolve::resolve_host_symbol_raw(symbol)"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:419",
+      "line": 419,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_void {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:422",
+      "line": 422,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "let ptr = unsafe { resolve_host_symbol_via_libc_handle(name) };"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:427",
+      "line": 427,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "let ptr = unsafe { resolve_host_symbol_nocache(name) };"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:439",
+      "line": 439,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "let ptr = *slot.get_or_init(|| unsafe { resolve_host_symbol_with_aliases(names) as usize });"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:971",
+      "line": 971,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "if let Some(host_self) = resolved_thread_self_raw() {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2281",
+      "line": 2281,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "if !force_native && let Some(host_create) = resolved_thread_create_raw() {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2301",
+      "line": 2301,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(host_join) = resolved_thread_join_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2313",
+      "line": 2313,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(host_detach) = resolved_thread_detach_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2696",
+      "line": 2696,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "let Some(host_getclock) = resolved_thread_condattr_getclock_raw() else {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4045",
+      "line": 4045,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(host_cancel) = resolved_thread_cancel_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4079",
+      "line": 4079,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(host_setcancelstate) = resolved_thread_setcancelstate_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4108",
+      "line": 4108,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(host_setcanceltype) = resolved_thread_setcanceltype_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4161",
+      "line": 4161,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(host_testcancel) = resolved_thread_testcancel_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:5818",
+      "line": 5818,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:5912",
+      "line": 5912,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:5981",
+      "line": 5981,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6195",
+      "line": 6195,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "text": "&& let Some(host_exit) = resolved_thread_exit_raw()"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:165",
+      "line": 165,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "FallbackHost = 3,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:187",
+      "line": 187,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "HostDelegateUnavailable = 8,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:239",
+      "line": 239,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "x if x == StartupPolicyDecision::FallbackHost as u8 => StartupPolicyDecision::FallbackHost,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:273",
+      "line": 273,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "x if x == StartupFailureReason::HostDelegateUnavailable as u8 => {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:274",
+      "line": 274,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "StartupFailureReason::HostDelegateUnavailable"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:317",
+      "line": 317,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "x if x == StartupCheckpoint::FallbackHost as u8 => StartupCheckpoint::FallbackHost,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:499",
+      "line": 499,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "unsafe fn delegate_to_host_libc_start_main("
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:538",
+      "line": 538,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "let ptr = crate::host_resolve::resolve_host_symbol_raw(\"__libc_start_main\")"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:839",
+      "line": 839,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "delegate_to_host_libc_start_main("
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:845",
+      "line": 845,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "StartupPolicyDecision::FallbackHost,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:850",
+      "line": 850,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "StartupCheckpoint::FallbackHost,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:862",
+      "line": 862,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "StartupFailureReason::HostDelegateUnavailable,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:865",
+      "line": 865,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "StartupCheckpoint::FallbackHost,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:876",
+      "line": 876,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "delegate_to_host_libc_start_main(main, argc, ubp_av, init, fini, rtld_fini, stack_end)"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:879",
+      "line": 879,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "StartupPolicyDecision::FallbackHost,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:884",
+      "line": 884,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "StartupCheckpoint::FallbackHost,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:1182",
+      "line": 1182,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "text": "crate::host_resolve::resolve_host_symbol_raw(\"__cxa_thread_atexit_impl\").unwrap_or(0);"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_helpers.rs:41",
+      "line": 41,
+      "module": "startup_helpers",
+      "path": "crates/frankenlibc-abi/src/startup_helpers.rs",
+      "text": "FallbackHost = 24,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_helpers.rs:72",
+      "line": 72,
+      "module": "startup_helpers",
+      "path": "crates/frankenlibc-abi/src/startup_helpers.rs",
+      "text": "Self::FallbackHost => \"FallbackHost\","
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_helpers.rs:192",
+      "line": 192,
+      "module": "startup_helpers",
+      "path": "crates/frankenlibc-abi/src/startup_helpers.rs",
+      "text": "(StartupCheckpoint::Entry, StartupCheckpoint::FallbackHost),"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/startup_helpers.rs:503",
+      "line": 503,
+      "module": "startup_helpers",
+      "path": "crates/frankenlibc-abi/src/startup_helpers.rs",
+      "text": "StartupCheckpoint::FallbackHost,"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:460",
+      "line": 460,
+      "module": "stdio_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "text": "crate::host_resolve::resolve_host_symbol_cached(slot, symbol)"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:1001",
+      "line": 1001,
+      "module": "stdio_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "text": "let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") else {"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:1005",
+      "line": 1005,
+      "module": "stdio_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "text": "let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) };"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:1007",
+      "line": 1007,
+      "module": "stdio_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "text": "let mut resolved_cell = unsafe { host_dlsym(std::ptr::null_mut(), symbol.as_ptr()) };"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:1009",
+      "line": 1009,
+      "module": "stdio_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "text": "resolved_cell = unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };"
+    },
+    {
+      "evidence": "crates/frankenlibc-abi/src/unistd_abi.rs:18065",
+      "line": 18065,
+      "module": "unistd_abi",
+      "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "text": "crate::host_resolve::resolve_host_symbol_cached(slot, symbol)"
+    }
+  ],
+  "callsite_census": [
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/c11threads_abi.rs:323",
+      "exported_symbol": "cnd_init",
+      "expression": "pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_init(cond, std::ptr::null()) })",
+      "helper_function": "cnd_init",
+      "host_symbol": "pthread_cond_init",
+      "id": "cnd_init:001",
+      "line": 323,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/c11threads_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2696",
+      "exported_symbol": "cnd_init",
+      "expression": "let Some(host_getclock) = resolved_thread_condattr_getclock_raw() else {",
+      "helper_function": "pthread_cond_init",
+      "host_symbol": "pthread_condattr_getclock",
+      "id": "cnd_init:002",
+      "line": 2696,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/c11threads_abi.rs:118",
+      "exported_symbol": "thrd_create",
+      "expression": "crate::pthread_abi::pthread_create(thr, std::ptr::null(), Some(trampoline), ctx_ptr)",
+      "helper_function": "thrd_create",
+      "host_symbol": "pthread_create",
+      "id": "thrd_create:001",
+      "line": 118,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/c11threads_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2281",
+      "exported_symbol": "thrd_create",
+      "expression": "if !force_native && let Some(host_create) = resolved_thread_create_raw() {",
+      "helper_function": "pthread_create",
+      "host_symbol": "pthread_create",
+      "id": "thrd_create:002",
+      "line": 2281,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/c11threads_abi.rs:147",
+      "exported_symbol": "thrd_detach",
+      "expression": "pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_detach(thr) })",
+      "helper_function": "thrd_detach",
+      "host_symbol": "pthread_detach",
+      "id": "thrd_detach:001",
+      "line": 147,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/c11threads_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2313",
+      "exported_symbol": "thrd_detach",
+      "expression": "&& let Some(host_detach) = resolved_thread_detach_raw()",
+      "helper_function": "pthread_detach",
+      "host_symbol": "pthread_detach",
+      "id": "thrd_detach:002",
+      "line": 2313,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/c11threads_abi.rs:156",
+      "exported_symbol": "thrd_exit",
+      "expression": "unsafe { crate::pthread_abi::pthread_exit(res as usize as *mut c_void) }",
+      "helper_function": "thrd_exit",
+      "host_symbol": "pthread_exit",
+      "id": "thrd_exit:001",
+      "line": 156,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/c11threads_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6195",
+      "exported_symbol": "thrd_exit",
+      "expression": "&& let Some(host_exit) = resolved_thread_exit_raw()",
+      "helper_function": "pthread_exit",
+      "host_symbol": "pthread_exit",
+      "id": "thrd_exit:002",
+      "line": 6195,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/c11threads_abi.rs:134",
+      "exported_symbol": "thrd_join",
+      "expression": "let rc = unsafe { crate::pthread_abi::pthread_join(thr, &mut retval) };",
+      "helper_function": "thrd_join",
+      "host_symbol": "pthread_join",
+      "id": "thrd_join:001",
+      "line": 134,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/c11threads_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2301",
+      "exported_symbol": "thrd_join",
+      "expression": "&& let Some(host_join) = resolved_thread_join_raw()",
+      "helper_function": "pthread_join",
+      "host_symbol": "pthread_join",
+      "id": "thrd_join:002",
+      "line": 2301,
+      "module": "c11threads_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:849",
+      "exported_symbol": "__libc_dlclose",
+      "expression": "unsafe { dlclose(handle) }",
+      "helper_function": "__libc_dlclose",
+      "host_symbol": "dlclose",
+      "id": "__libc_dlclose:001",
+      "line": 849,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:656",
+      "exported_symbol": "__libc_dlclose",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlclose\") {",
+      "helper_function": "dlclose",
+      "host_symbol": "dlclose",
+      "id": "__libc_dlclose:002",
+      "line": 656,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:691",
+      "exported_symbol": "__libc_dlclose",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlclose\") {",
+      "helper_function": "dlclose",
+      "host_symbol": "dlclose",
+      "id": "__libc_dlclose:003",
+      "line": 691,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:827",
+      "exported_symbol": "__libc_dlopen_mode",
+      "expression": "unsafe { dlopen(filename, mode) }",
+      "helper_function": "__libc_dlopen_mode",
+      "host_symbol": "dlopen",
+      "id": "__libc_dlopen_mode:001",
+      "line": 827,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:264",
+      "exported_symbol": "__libc_dlopen_mode",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
+      "helper_function": "dlopen",
+      "host_symbol": "dlopen",
+      "id": "__libc_dlopen_mode:002",
+      "line": 264,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:334",
+      "exported_symbol": "__libc_dlopen_mode",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
+      "helper_function": "dlopen",
+      "host_symbol": "dlopen",
+      "id": "__libc_dlopen_mode:003",
+      "line": 334,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:838",
+      "exported_symbol": "__libc_dlsym",
+      "expression": "unsafe { dlsym(handle, name) }",
+      "helper_function": "__libc_dlsym",
+      "host_symbol": "dlsym",
+      "id": "__libc_dlsym:001",
+      "line": 838,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:387",
+      "exported_symbol": "__libc_dlsym",
+      "expression": "let sym = unsafe { host_dlsym(host_handle, symbol) }.unwrap_or(std::ptr::null_mut());",
+      "helper_function": "dlsym",
+      "host_symbol": "dlsym",
+      "id": "__libc_dlsym:002",
+      "line": 387,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:439",
+      "exported_symbol": "__libc_dlsym",
+      "expression": "let sym = unsafe { host_dlsym(host_handle, symbol) }.unwrap_or_else(|| {",
+      "helper_function": "dlsym",
+      "host_symbol": "dlsym",
+      "id": "__libc_dlsym:003",
+      "line": 439,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:459",
+      "exported_symbol": "__libc_dlsym",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") {",
+      "helper_function": "dlsym",
+      "host_symbol": "dlsym",
+      "id": "__libc_dlsym:004",
+      "line": 459,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:462",
+      "exported_symbol": "__libc_dlsym",
+      "expression": "let sym = unsafe { host_dlsym(handle, symbol) };",
+      "helper_function": "dlsym",
+      "host_symbol": "dlsym",
+      "id": "__libc_dlsym:005",
+      "line": 462,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "cached_host_loader_symbol",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:776",
+      "exported_symbol": "dl_iterate_phdr",
+      "expression": "let host_addr = crate::host_resolve::host_dl_iterate_phdr_cached().or_else(|| {",
+      "helper_function": "dl_iterate_phdr",
+      "host_symbol": "dl_iterate_phdr",
+      "id": "dl_iterate_phdr:001",
+      "line": 776,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "cached_host_loader_symbol",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:778",
+      "exported_symbol": "dl_iterate_phdr",
+      "expression": "crate::host_resolve::host_dl_iterate_phdr_cached()",
+      "helper_function": "dl_iterate_phdr",
+      "host_symbol": "dl_iterate_phdr",
+      "id": "dl_iterate_phdr:002",
+      "line": 778,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "cached_host_loader_symbol",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:798",
+      "exported_symbol": "dladdr",
+      "expression": "if let Some(host_addr) = crate::host_resolve::host_dladdr_cached() {",
+      "helper_function": "dladdr",
+      "host_symbol": "dladdr",
+      "id": "dladdr:001",
+      "line": 798,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:656",
+      "exported_symbol": "dlclose",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlclose\") {",
+      "helper_function": "dlclose",
+      "host_symbol": "dlclose",
+      "id": "dlclose:001",
+      "line": 656,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:691",
+      "exported_symbol": "dlclose",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlclose\") {",
+      "helper_function": "dlclose",
+      "host_symbol": "dlclose",
+      "id": "dlclose:002",
+      "line": 691,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:264",
+      "exported_symbol": "dlopen",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
+      "helper_function": "dlopen",
+      "host_symbol": "dlopen",
+      "id": "dlopen:001",
+      "line": 264,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:334",
+      "exported_symbol": "dlopen",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
+      "helper_function": "dlopen",
+      "host_symbol": "dlopen",
+      "id": "dlopen:002",
+      "line": 334,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:387",
+      "exported_symbol": "dlsym",
+      "expression": "let sym = unsafe { host_dlsym(host_handle, symbol) }.unwrap_or(std::ptr::null_mut());",
+      "helper_function": "dlsym",
+      "host_symbol": "dlsym",
+      "id": "dlsym:001",
+      "line": 387,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:439",
+      "exported_symbol": "dlsym",
+      "expression": "let sym = unsafe { host_dlsym(host_handle, symbol) }.unwrap_or_else(|| {",
+      "helper_function": "dlsym",
+      "host_symbol": "dlsym",
+      "id": "dlsym:002",
+      "line": 439,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:459",
+      "exported_symbol": "dlsym",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") {",
+      "helper_function": "dlsym",
+      "host_symbol": "dlsym",
+      "id": "dlsym:003",
+      "line": 459,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:462",
+      "exported_symbol": "dlsym",
+      "expression": "let sym = unsafe { host_dlsym(handle, symbol) };",
+      "helper_function": "dlsym",
+      "host_symbol": "dlsym",
+      "id": "dlsym:004",
+      "line": 462,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlvsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:521",
+      "exported_symbol": "dlvsym",
+      "expression": "let sym = unsafe { host_dlvsym(host_handle, symbol, version) }",
+      "helper_function": "dlvsym",
+      "host_symbol": "dlvsym",
+      "id": "dlvsym:001",
+      "line": 521,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlvsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:585",
+      "exported_symbol": "dlvsym",
+      "expression": "let sym = unsafe { host_dlvsym(host_handle, symbol, version) }.unwrap_or_else(|| {",
+      "helper_function": "dlvsym",
+      "host_symbol": "dlvsym",
+      "id": "dlvsym:002",
+      "line": 585,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "host_dlvsym_helper",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:604",
+      "exported_symbol": "dlvsym",
+      "expression": "let sym = unsafe { host_dlvsym(handle, symbol, version) }.unwrap_or(std::ptr::null_mut());",
+      "helper_function": "dlvsym",
+      "host_symbol": "dlvsym",
+      "id": "dlvsym:003",
+      "line": 604,
+      "module": "dlfcn_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:3311",
+      "exported_symbol": "__getdelim",
+      "expression": "unsafe { super::stdio_abi::getdelim(lineptr, n, delim, stream) }",
+      "helper_function": "__getdelim",
+      "host_symbol": "getdelim",
+      "id": "__getdelim:001",
+      "line": 3311,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+    },
+    {
+      "delegation_kind": "cached_host_allocator_symbol",
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:5511",
+      "exported_symbol": "__getdelim",
+      "expression": "let new_buf = if let Some(host_realloc) = crate::host_resolve::host_realloc_raw() {",
+      "helper_function": "getdelim",
+      "host_symbol": "realloc",
+      "id": "__getdelim:002",
+      "line": 5511,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4745",
+      "exported_symbol": "dladdr1",
+      "expression": "unsafe { crate::dlfcn_abi::dladdr(addr, info) }",
+      "helper_function": "dladdr1",
+      "host_symbol": "dladdr",
+      "id": "dladdr1:001",
+      "line": 4745,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+    },
+    {
+      "delegation_kind": "cached_host_loader_symbol",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:798",
+      "exported_symbol": "dladdr1",
+      "expression": "if let Some(host_addr) = crate::host_resolve::host_dladdr_cached() {",
+      "helper_function": "dladdr",
+      "host_symbol": "dladdr",
+      "id": "dladdr1:002",
+      "line": 798,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4851",
+      "exported_symbol": "dlinfo",
+      "expression": "if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlinfo\") {",
+      "helper_function": "dlinfo",
+      "host_symbol": "dlinfo",
+      "id": "dlinfo:001",
+      "line": 4851,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4881",
+      "exported_symbol": "dlinfo",
+      "expression": "if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlinfo\") {",
+      "helper_function": "dlinfo",
+      "host_symbol": "dlinfo",
+      "id": "dlinfo:002",
+      "line": 4881,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4906",
+      "exported_symbol": "dlmopen",
+      "expression": "unsafe { crate::dlfcn_abi::dlopen(filename, flags) }",
+      "helper_function": "dlmopen",
+      "host_symbol": "dlopen",
+      "id": "dlmopen:001",
+      "line": 4906,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:264",
+      "exported_symbol": "dlmopen",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
+      "helper_function": "dlopen",
+      "host_symbol": "dlopen",
+      "id": "dlmopen:002",
+      "line": 264,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "resolve_host_symbol_raw_literal",
+      "evidence": "crates/frankenlibc-abi/src/dlfcn_abi.rs:334",
+      "exported_symbol": "dlmopen",
+      "expression": "if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
+      "helper_function": "dlopen",
+      "host_symbol": "dlopen",
+      "id": "dlmopen:003",
+      "line": 334,
+      "module": "glibc_internal_abi",
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2734",
+      "exported_symbol": "__pthread_cond_init",
+      "expression": "unsafe { pthread_cond_init(cond, attr) }",
+      "helper_function": "__pthread_cond_init",
+      "host_symbol": "pthread_cond_init",
+      "id": "__pthread_cond_init:001",
+      "line": 2734,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2696",
+      "exported_symbol": "__pthread_cond_init",
+      "expression": "let Some(host_getclock) = resolved_thread_condattr_getclock_raw() else {",
+      "helper_function": "pthread_cond_init",
+      "host_symbol": "pthread_condattr_getclock",
+      "id": "__pthread_cond_init:002",
+      "line": 2696,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2333",
+      "exported_symbol": "__pthread_create",
+      "expression": "unsafe { pthread_create(thread_out, attr, start_routine, arg) }",
+      "helper_function": "__pthread_create",
+      "host_symbol": "pthread_create",
+      "id": "__pthread_create:001",
+      "line": 2333,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2281",
+      "exported_symbol": "__pthread_create",
+      "expression": "if !force_native && let Some(host_create) = resolved_thread_create_raw() {",
+      "helper_function": "pthread_create",
+      "host_symbol": "pthread_create",
+      "id": "__pthread_create:002",
+      "line": 2281,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2356",
+      "exported_symbol": "__pthread_detach",
+      "expression": "unsafe { pthread_detach(thread) }",
+      "helper_function": "__pthread_detach",
+      "host_symbol": "pthread_detach",
+      "id": "__pthread_detach:001",
+      "line": 2356,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2313",
+      "exported_symbol": "__pthread_detach",
+      "expression": "&& let Some(host_detach) = resolved_thread_detach_raw()",
+      "helper_function": "pthread_detach",
+      "host_symbol": "pthread_detach",
+      "id": "__pthread_detach:002",
+      "line": 2313,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6210",
+      "exported_symbol": "__pthread_exit",
+      "expression": "unsafe { pthread_exit(retval) }",
+      "helper_function": "__pthread_exit",
+      "host_symbol": "pthread_exit",
+      "id": "__pthread_exit:001",
+      "line": 6210,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6195",
+      "exported_symbol": "__pthread_exit",
+      "expression": "&& let Some(host_exit) = resolved_thread_exit_raw()",
+      "helper_function": "pthread_exit",
+      "host_symbol": "pthread_exit",
+      "id": "__pthread_exit:002",
+      "line": 6195,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2346",
+      "exported_symbol": "__pthread_join",
+      "expression": "unsafe { pthread_join(thread, retval) }",
+      "helper_function": "__pthread_join",
+      "host_symbol": "pthread_join",
+      "id": "__pthread_join:001",
+      "line": 2346,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2301",
+      "exported_symbol": "__pthread_join",
+      "expression": "&& let Some(host_join) = resolved_thread_join_raw()",
+      "helper_function": "pthread_join",
+      "host_symbol": "pthread_join",
+      "id": "__pthread_join:002",
+      "line": 2301,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4144",
+      "exported_symbol": "__pthread_setcancelstate",
+      "expression": "unsafe { pthread_setcancelstate(state, oldstate) }",
+      "helper_function": "__pthread_setcancelstate",
+      "host_symbol": "pthread_setcancelstate",
+      "id": "__pthread_setcancelstate:001",
+      "line": 4144,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4079",
+      "exported_symbol": "__pthread_setcancelstate",
+      "expression": "&& let Some(host_setcancelstate) = resolved_thread_setcancelstate_raw()",
+      "helper_function": "pthread_setcancelstate",
+      "host_symbol": "pthread_setcancelstate",
+      "id": "__pthread_setcancelstate:002",
+      "line": 4079,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4154",
+      "exported_symbol": "__pthread_setcanceltype",
+      "expression": "unsafe { pthread_setcanceltype(typ, oldtype) }",
+      "helper_function": "__pthread_setcanceltype",
+      "host_symbol": "pthread_setcanceltype",
+      "id": "__pthread_setcanceltype:001",
+      "line": 4154,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4108",
+      "exported_symbol": "__pthread_setcanceltype",
+      "expression": "&& let Some(host_setcanceltype) = resolved_thread_setcanceltype_raw()",
+      "helper_function": "pthread_setcanceltype",
+      "host_symbol": "pthread_setcanceltype",
+      "id": "__pthread_setcanceltype:002",
+      "line": 4108,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4045",
+      "exported_symbol": "pthread_cancel",
+      "expression": "&& let Some(host_cancel) = resolved_thread_cancel_raw()",
+      "helper_function": "pthread_cancel",
+      "host_symbol": "pthread_cancel",
+      "id": "pthread_cancel:001",
+      "line": 4045,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:5981",
+      "exported_symbol": "pthread_clockjoin_np",
+      "expression": "if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {",
+      "helper_function": "pthread_clockjoin_np",
+      "host_symbol": "pthread_clockjoin_np",
+      "id": "pthread_clockjoin_np:001",
+      "line": 5981,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2696",
+      "exported_symbol": "pthread_cond_init",
+      "expression": "let Some(host_getclock) = resolved_thread_condattr_getclock_raw() else {",
+      "helper_function": "pthread_cond_init",
+      "host_symbol": "pthread_condattr_getclock",
+      "id": "pthread_cond_init:001",
+      "line": 2696,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2281",
+      "exported_symbol": "pthread_create",
+      "expression": "if !force_native && let Some(host_create) = resolved_thread_create_raw() {",
+      "helper_function": "pthread_create",
+      "host_symbol": "pthread_create",
+      "id": "pthread_create:001",
+      "line": 2281,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2313",
+      "exported_symbol": "pthread_detach",
+      "expression": "&& let Some(host_detach) = resolved_thread_detach_raw()",
+      "helper_function": "pthread_detach",
+      "host_symbol": "pthread_detach",
+      "id": "pthread_detach:001",
+      "line": 2313,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:6195",
+      "exported_symbol": "pthread_exit",
+      "expression": "&& let Some(host_exit) = resolved_thread_exit_raw()",
+      "helper_function": "pthread_exit",
+      "host_symbol": "pthread_exit",
+      "id": "pthread_exit:001",
+      "line": 6195,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:2301",
+      "exported_symbol": "pthread_join",
+      "expression": "&& let Some(host_join) = resolved_thread_join_raw()",
+      "helper_function": "pthread_join",
+      "host_symbol": "pthread_join",
+      "id": "pthread_join:001",
+      "line": 2301,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4079",
+      "exported_symbol": "pthread_setcancelstate",
+      "expression": "&& let Some(host_setcancelstate) = resolved_thread_setcancelstate_raw()",
+      "helper_function": "pthread_setcancelstate",
+      "host_symbol": "pthread_setcancelstate",
+      "id": "pthread_setcancelstate:001",
+      "line": 4079,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4108",
+      "exported_symbol": "pthread_setcanceltype",
+      "expression": "&& let Some(host_setcanceltype) = resolved_thread_setcanceltype_raw()",
+      "helper_function": "pthread_setcanceltype",
+      "host_symbol": "pthread_setcanceltype",
+      "id": "pthread_setcanceltype:001",
+      "line": 4108,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:4161",
+      "exported_symbol": "pthread_testcancel",
+      "expression": "&& let Some(host_testcancel) = resolved_thread_testcancel_raw()",
+      "helper_function": "pthread_testcancel",
+      "host_symbol": "pthread_testcancel",
+      "id": "pthread_testcancel:001",
+      "line": 4161,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:5818",
+      "exported_symbol": "pthread_timedjoin_np",
+      "expression": "if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {",
+      "helper_function": "pthread_timedjoin_np",
+      "host_symbol": "pthread_timedjoin_np",
+      "id": "pthread_timedjoin_np:001",
+      "line": 5818,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "resolved_thread_raw_accessor",
+      "evidence": "crates/frankenlibc-abi/src/pthread_abi.rs:5912",
+      "exported_symbol": "pthread_tryjoin_np",
+      "expression": "&& let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()",
+      "helper_function": "pthread_tryjoin_np",
+      "host_symbol": "pthread_tryjoin_np",
+      "id": "pthread_tryjoin_np:001",
+      "line": 5912,
+      "module": "pthread_abi",
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs"
+    },
+    {
+      "delegation_kind": "startup_host_delegate",
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:839",
+      "exported_symbol": "__libc_start_main",
+      "expression": "delegate_to_host_libc_start_main(",
+      "helper_function": "__libc_start_main",
+      "host_symbol": "__libc_start_main",
+      "id": "__libc_start_main:001",
+      "line": 839,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs"
+    },
+    {
+      "delegation_kind": "startup_host_delegate",
+      "evidence": "crates/frankenlibc-abi/src/startup_abi.rs:876",
+      "exported_symbol": "__libc_start_main",
+      "expression": "delegate_to_host_libc_start_main(main, argc, ubp_av, init, fini, rtld_fini, stack_end)",
+      "helper_function": "__libc_start_main",
+      "host_symbol": "__libc_start_main",
+      "id": "__libc_start_main:002",
+      "line": 876,
+      "module": "startup_abi",
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs"
+    },
+    {
+      "delegation_kind": "cached_host_allocator_symbol",
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:5511",
+      "exported_symbol": "getdelim",
+      "expression": "let new_buf = if let Some(host_realloc) = crate::host_resolve::host_realloc_raw() {",
+      "helper_function": "getdelim",
+      "host_symbol": "realloc",
+      "id": "getdelim:001",
+      "line": 5511,
+      "module": "stdio_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
+    },
+    {
+      "delegation_kind": "alias_to_host_delegating_symbol",
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:5565",
+      "exported_symbol": "getline",
+      "expression": "unsafe { getdelim(lineptr, n, b'\\n' as c_int, stream) }",
+      "helper_function": "getline",
+      "host_symbol": "getdelim",
+      "id": "getline:001",
+      "line": 5565,
+      "module": "stdio_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
+    },
+    {
+      "delegation_kind": "cached_host_allocator_symbol",
+      "evidence": "crates/frankenlibc-abi/src/stdio_abi.rs:5511",
+      "exported_symbol": "getline",
+      "expression": "let new_buf = if let Some(host_realloc) = crate::host_resolve::host_realloc_raw() {",
+      "helper_function": "getdelim",
+      "host_symbol": "realloc",
+      "id": "getline:002",
+      "line": 5511,
+      "module": "stdio_abi",
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs"
+    }
+  ],
+  "description": "Source-derived census of exported ABI symbols whose default path reaches host libc/dynamic-loader resolver or delegate primitives.",
+  "detector": {
+    "abi_source_dir": "crates/frankenlibc-abi/src",
+    "source_file_count": 51,
+    "source_tree_sha256": "e422f95ac31bf3b68729d3376a6ea279b22b44edb7b5f9631de0ddf7ddd248e2",
+    "version": 1
+  },
+  "module_census": [
+    {
+      "host_delegating_symbol_count": 5,
+      "module": "c11threads_abi"
+    },
+    {
+      "host_delegating_symbol_count": 9,
+      "module": "dlfcn_abi"
+    },
+    {
+      "host_delegating_symbol_count": 4,
+      "module": "glibc_internal_abi"
+    },
+    {
+      "host_delegating_symbol_count": 19,
+      "module": "pthread_abi"
+    },
+    {
+      "host_delegating_symbol_count": 1,
+      "module": "startup_abi"
+    },
+    {
+      "host_delegating_symbol_count": 2,
+      "module": "stdio_abi"
+    }
+  ],
+  "policy": {
+    "host_delegation_needles": [
+      "resolve_host_symbol_raw",
+      "resolve_host_symbol_cached",
+      "resolved_thread_*_raw",
+      "delegate_to_host_libc_start_main",
+      "host_dlsym",
+      "host_dlvsym",
+      "host_dl_iterate_phdr_cached",
+      "host_dladdr_cached"
+    ],
+    "required_anchor_symbols": [
+      "__libc_start_main",
+      "dladdr",
+      "dlclose",
+      "dl_iterate_phdr",
+      "dlopen",
+      "dlsym",
+      "pthread_create",
+      "pthread_detach",
+      "pthread_join"
+    ]
+  },
+  "required_anchor_symbols": [
+    {
+      "present": true,
+      "symbol": "__libc_start_main"
+    },
+    {
+      "present": true,
+      "symbol": "dladdr"
+    },
+    {
+      "present": true,
+      "symbol": "dlclose"
+    },
+    {
+      "present": true,
+      "symbol": "dl_iterate_phdr"
+    },
+    {
+      "present": true,
+      "symbol": "dlopen"
+    },
+    {
+      "present": true,
+      "symbol": "dlsym"
+    },
+    {
+      "present": true,
+      "symbol": "pthread_create"
+    },
+    {
+      "present": true,
+      "symbol": "pthread_detach"
+    },
+    {
+      "present": true,
+      "symbol": "pthread_join"
+    }
+  ],
+  "schema_version": "host_delegation_census.v1",
+  "source_file_hashes": [
+    {
+      "path": "crates/frankenlibc-abi/src/c11threads_abi.rs",
+      "sha256": "6887fd476b448ab210d16dc401c5b40d00d8a417fa061b4c46ee11ed92be0711"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/ctype_abi.rs",
+      "sha256": "62825f2d36f048315f87e3587ee641c98b13f585c0b2d448242a5ad2f69fbee3"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/dirent_abi.rs",
+      "sha256": "26e1c0a3c50186ff4b9869bbd6ee2587403bd7e2597ef7fa3aad4624bc073b9f"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "sha256": "72f8103301852e97c46b1d70151ef2c87ebaa7075d0c3a7e0c2578fef134538c"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/efun_abi.rs",
+      "sha256": "a83689cb48c5e9fd5e558fe9034ba7c94f59d72751d13191ef8a214da31b4c42"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/err_abi.rs",
+      "sha256": "79a7d1cb8b72cb85924ae2e3996abdebd1c55e0ce13020018228abe111d1cf26"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/errno_abi.rs",
+      "sha256": "e933bd845ae7c655a26c7dbe402a66b86612b642541ff233ff73004bd7ba8133"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/fenv_abi.rs",
+      "sha256": "a9791ee105b2625212a36cbda454a5b9211122c339164fceaf9311252b8eb3c0"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/fortify_abi.rs",
+      "sha256": "5146edb25b7c68ed1b1539092d015204b744a802319ccbd4cb3af7e92ea0e16f"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "sha256": "1e824a1c178ae185559fed0d4a8ab029112ffad3354e82d06b0e9f26412231e0"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/grp_abi.rs",
+      "sha256": "1a3a5797af7e05e1632862e0b3d05891195b9232af4dd99806a56411c5a9fa33"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+      "sha256": "88e332ade24f6e751175a8d200e04a6ce2fbbd86733403dbd3f406728a6b582e"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/htm_fast_path.rs",
+      "sha256": "1d7a689c02e9f8e0e47c560260f00b6894a2bf35e8e25c52c14673674029565e"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/iconv_abi.rs",
+      "sha256": "64f6268e2c55d4f0a77c5468ad90ce1d6b834a56b59f495d9a3d7513758cc8c3"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/inet_abi.rs",
+      "sha256": "cfcbc03342210b550609a7b1af0689373614a6a83a41a1b37150ca5f6ba81b86"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/io_abi.rs",
+      "sha256": "8071f13ae66e31c71a586935254e80c505d1f6f4e9b0063a2c9b6d8e13306887"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/io_internal_abi.rs",
+      "sha256": "7dd053e875728b53fdf98f06d2304b9b1bd5c05624558abbf93c3c7ae43db270"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/isoc_abi.rs",
+      "sha256": "18fe257280caf7573024760b454012c27ad7a4facc18c0468b9809e465ec9712"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/lib.rs",
+      "sha256": "8bf0874522150ce828234854708055b337a7e5e5455a505f7723c00cec3043fc"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/locale_abi.rs",
+      "sha256": "5e4cef09f5583f923b480ad4eeb43fce827396bd0973bcf161baacf8ef5fbdfe"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/macros.rs",
+      "sha256": "ec3ecc46856e14d86d3a80f3fb9c7471d650c8830430aa15da734d3642d8ae05"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "sha256": "130de1c05ecd51883610f4c0e7274ebecf6a894a68d407a6ea292f9f06f1aec2"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/math_abi.rs",
+      "sha256": "3764a70ab2a956a180fff5f03c6e37a3efb5ba92a00b734cd251a5c4ad6525e2"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/membrane_state.rs",
+      "sha256": "6e58153138c3acc3280cba1b6b02168ce422baafa5bb8c54a78f21689e688bd8"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/mmap_abi.rs",
+      "sha256": "9d8754b2d1df4d2f2699d1f189b2460feb2729aafa958ed78d06a4d30c2204ff"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/nlist_abi.rs",
+      "sha256": "5ed6c57e38ac62a60deba3ca0f9167f67581aeb484fa16f9585351557313c71a"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/owned_tls_cache.rs",
+      "sha256": "d255006c7dbecc24f30dd99036fe5153b76a2da37c6b6f391c8ea7b31e71bec4"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+      "sha256": "69c0fde08c2ed644955b701a3cba65af9fee7ce9307ffab217d396976cc59099"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/poll_abi.rs",
+      "sha256": "70163310eecb81a556c8fc3396321aa899c158373790a67bf5ed5b8c64fa6cd0"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/process_abi.rs",
+      "sha256": "82b77a2dab8526e258db1c75556c34777dca7395a54dda9d848c5b0956d87e12"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "sha256": "b6832486781973c16a46fbc6cfb01b24d663faf073642734a49d7935346a58d6"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/pwd_abi.rs",
+      "sha256": "e8c2712cb3aced599b9cb1e03385f648a538c1a0e31eda58773fe49c9b97b67f"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/resolv_abi.rs",
+      "sha256": "10850beb8ef3840b39cc5af82beb75abaf2a75790f326ffeb916b81bb9d24f7e"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/resource_abi.rs",
+      "sha256": "31abd73e65e34e10f37825404492c3e5294cda303de2212918e9dad389474962"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/rpc_abi.rs",
+      "sha256": "d5c5c60d3f891f2f666bb955cc189ba28d7242d10e7eb38ca5368f8698940bed"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "sha256": "90259e4ec5e4e449877fad6ade8ab4958a4d71d2e8f3e34bc622965613dfeb23"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/search_abi.rs",
+      "sha256": "d27a0b3408d89d1dc3cd24fe2dcb4a0d89d256a74aa8e67ef8f771491431a378"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/setjmp_abi.rs",
+      "sha256": "0bb0a5da17a33d84080aa3ae9ce28c16b7a3281eac36106df6ecd803cdc69554"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/signal_abi.rs",
+      "sha256": "cdb694c4f39746237970e832b02e7fb8ebb4a1fe751fa0bf170cc0d8774098c6"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/socket_abi.rs",
+      "sha256": "93c3fc1d0c7365bd681c842ff2b4ecc1b3b6f478dc66efc13d5af44ea4cddba4"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+      "sha256": "b08fa131b718db6796031c99e694c9a5c94cab738427aa14503952b7a3e989a3"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/startup_helpers.rs",
+      "sha256": "abe5abb2c919c33160c134bc7262559c34874baa2f67f7c37a229510a3be821e"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/stdbit_abi.rs",
+      "sha256": "31040f26f9a7a95895b1b8bc7bd0af664ab1f8c9d6c4ad97837ccac8be740aed"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "sha256": "a20a864a04e60b1b516de003e3d300873bf6d0c56c47289001fae9e6e6fec1ee"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
+      "sha256": "541ac60392b4ee4c3f28af86c55599863dba74aa92bfe8fb4d6f86cfa0ce1efa"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/string_abi.rs",
+      "sha256": "c6f09350193c17dd0aa81854884dba2a0014fda3f449a548d0d4f51487b41c98"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/termios_abi.rs",
+      "sha256": "34b1fdba9276da2a31dcf34f5ff3ba67dee128851019ae27c4a8cc32fd724e07"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/time_abi.rs",
+      "sha256": "6136d548c701c8ff2e66e18dcd5d4529920bf7dfac57e50e5ee3975b0527a836"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "sha256": "09d8ebf5d06901decdebd3456294f0eca4ed49c3859e33e88f9d2be087810fd0"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/util.rs",
+      "sha256": "8579cd3655a72453688615aceb33af5b44ded433801e0b55c41449a45abf2a75"
+    },
+    {
+      "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
+      "sha256": "b7c6593e4832b214445a957940a25a886b8d326bfc271bfc9c594fbd79728cdc"
+    }
+  ],
+  "summary": {
+    "broader_source_reference_count": 127,
+    "exported_symbol_count": 3652,
+    "host_delegating_symbol_count": 40,
+    "host_delegation_callsite_count": 75,
+    "module_count": 6,
+    "required_anchor_count": 9,
+    "required_anchor_present_count": 9
+  },
+  "symbol_census": [
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "cnd_init:001",
+        "cnd_init:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_cond_init",
+        "pthread_condattr_getclock"
+      ],
+      "module": "c11threads_abi",
+      "source": "crates/frankenlibc-abi/src/c11threads_abi.rs:319",
+      "symbol": "cnd_init"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "thrd_create:001",
+        "thrd_create:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_create"
+      ],
+      "module": "c11threads_abi",
+      "source": "crates/frankenlibc-abi/src/c11threads_abi.rs:86",
+      "symbol": "thrd_create"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "thrd_detach:001",
+        "thrd_detach:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_detach"
+      ],
+      "module": "c11threads_abi",
+      "source": "crates/frankenlibc-abi/src/c11threads_abi.rs:146",
+      "symbol": "thrd_detach"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "thrd_exit:001",
+        "thrd_exit:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_exit"
+      ],
+      "module": "c11threads_abi",
+      "source": "crates/frankenlibc-abi/src/c11threads_abi.rs:155",
+      "symbol": "thrd_exit"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "thrd_join:001",
+        "thrd_join:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_join"
+      ],
+      "module": "c11threads_abi",
+      "source": "crates/frankenlibc-abi/src/c11threads_abi.rs:132",
+      "symbol": "thrd_join"
+    },
+    {
+      "callsite_count": 3,
+      "callsite_ids": [
+        "__libc_dlclose:001",
+        "__libc_dlclose:002",
+        "__libc_dlclose:003"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolve_host_symbol_raw_literal"
+      ],
+      "host_symbols": [
+        "dlclose"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:848",
+      "symbol": "__libc_dlclose"
+    },
+    {
+      "callsite_count": 3,
+      "callsite_ids": [
+        "__libc_dlopen_mode:001",
+        "__libc_dlopen_mode:002",
+        "__libc_dlopen_mode:003"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolve_host_symbol_raw_literal"
+      ],
+      "host_symbols": [
+        "dlopen"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:826",
+      "symbol": "__libc_dlopen_mode"
+    },
+    {
+      "callsite_count": 5,
+      "callsite_ids": [
+        "__libc_dlsym:001",
+        "__libc_dlsym:002",
+        "__libc_dlsym:003",
+        "__libc_dlsym:004",
+        "__libc_dlsym:005"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "host_dlsym_helper",
+        "resolve_host_symbol_raw_literal"
+      ],
+      "host_symbols": [
+        "dlsym"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:837",
+      "symbol": "__libc_dlsym"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "dl_iterate_phdr:001",
+        "dl_iterate_phdr:002"
+      ],
+      "delegation_kinds": [
+        "cached_host_loader_symbol"
+      ],
+      "host_symbols": [
+        "dl_iterate_phdr"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:765",
+      "symbol": "dl_iterate_phdr"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "dladdr:001"
+      ],
+      "delegation_kinds": [
+        "cached_host_loader_symbol"
+      ],
+      "host_symbols": [
+        "dladdr"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:792",
+      "symbol": "dladdr"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "dlclose:001",
+        "dlclose:002"
+      ],
+      "delegation_kinds": [
+        "resolve_host_symbol_raw_literal"
+      ],
+      "host_symbols": [
+        "dlclose"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:635",
+      "symbol": "dlclose"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "dlopen:001",
+        "dlopen:002"
+      ],
+      "delegation_kinds": [
+        "resolve_host_symbol_raw_literal"
+      ],
+      "host_symbols": [
+        "dlopen"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:242",
+      "symbol": "dlopen"
+    },
+    {
+      "callsite_count": 4,
+      "callsite_ids": [
+        "dlsym:001",
+        "dlsym:002",
+        "dlsym:003",
+        "dlsym:004"
+      ],
+      "delegation_kinds": [
+        "host_dlsym_helper",
+        "resolve_host_symbol_raw_literal"
+      ],
+      "host_symbols": [
+        "dlsym"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:366",
+      "symbol": "dlsym"
+    },
+    {
+      "callsite_count": 3,
+      "callsite_ids": [
+        "dlvsym:001",
+        "dlvsym:002",
+        "dlvsym:003"
+      ],
+      "delegation_kinds": [
+        "host_dlvsym_helper"
+      ],
+      "host_symbols": [
+        "dlvsym"
+      ],
+      "module": "dlfcn_abi",
+      "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:490",
+      "symbol": "dlvsym"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__getdelim:001",
+        "__getdelim:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "cached_host_allocator_symbol"
+      ],
+      "host_symbols": [
+        "getdelim",
+        "realloc"
+      ],
+      "module": "glibc_internal_abi",
+      "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:3305",
+      "symbol": "__getdelim"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "dladdr1:001",
+        "dladdr1:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "cached_host_loader_symbol"
+      ],
+      "host_symbols": [
+        "dladdr"
+      ],
+      "module": "glibc_internal_abi",
+      "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4736",
+      "symbol": "dladdr1"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "dlinfo:001",
+        "dlinfo:002"
+      ],
+      "delegation_kinds": [
+        "resolve_host_symbol_raw_literal"
+      ],
+      "host_symbols": [
+        "dlinfo"
+      ],
+      "module": "glibc_internal_abi",
+      "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4829",
+      "symbol": "dlinfo"
+    },
+    {
+      "callsite_count": 3,
+      "callsite_ids": [
+        "dlmopen:001",
+        "dlmopen:002",
+        "dlmopen:003"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolve_host_symbol_raw_literal"
+      ],
+      "host_symbols": [
+        "dlopen"
+      ],
+      "module": "glibc_internal_abi",
+      "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:4901",
+      "symbol": "dlmopen"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__pthread_cond_init:001",
+        "__pthread_cond_init:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_cond_init",
+        "pthread_condattr_getclock"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:2730",
+      "symbol": "__pthread_cond_init"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__pthread_create:001",
+        "__pthread_create:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_create"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:2327",
+      "symbol": "__pthread_create"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__pthread_detach:001",
+        "__pthread_detach:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_detach"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:2355",
+      "symbol": "__pthread_detach"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__pthread_exit:001",
+        "__pthread_exit:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_exit"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6209",
+      "symbol": "__pthread_exit"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__pthread_join:001",
+        "__pthread_join:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_join"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:2342",
+      "symbol": "__pthread_join"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__pthread_setcancelstate:001",
+        "__pthread_setcancelstate:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_setcancelstate"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4143",
+      "symbol": "__pthread_setcancelstate"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__pthread_setcanceltype:001",
+        "__pthread_setcanceltype:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_setcanceltype"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4153",
+      "symbol": "__pthread_setcanceltype"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_cancel:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_cancel"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4038",
+      "symbol": "pthread_cancel"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_clockjoin_np:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_clockjoin_np"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:5971",
+      "symbol": "pthread_clockjoin_np"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_cond_init:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_condattr_getclock"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:2676",
+      "symbol": "pthread_cond_init"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_create:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_create"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:2264",
+      "symbol": "pthread_create"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_detach:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_detach"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:2310",
+      "symbol": "pthread_detach"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_exit:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_exit"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6188",
+      "symbol": "pthread_exit"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_join:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_join"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:2298",
+      "symbol": "pthread_join"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_setcancelstate:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_setcancelstate"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4072",
+      "symbol": "pthread_setcancelstate"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_setcanceltype:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_setcanceltype"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4101",
+      "symbol": "pthread_setcanceltype"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_testcancel:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_testcancel"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4158",
+      "symbol": "pthread_testcancel"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_timedjoin_np:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_timedjoin_np"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:5809",
+      "symbol": "pthread_timedjoin_np"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "pthread_tryjoin_np:001"
+      ],
+      "delegation_kinds": [
+        "resolved_thread_raw_accessor"
+      ],
+      "host_symbols": [
+        "pthread_tryjoin_np"
+      ],
+      "module": "pthread_abi",
+      "source": "crates/frankenlibc-abi/src/pthread_abi.rs:5906",
+      "symbol": "pthread_tryjoin_np"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "__libc_start_main:001",
+        "__libc_start_main:002"
+      ],
+      "delegation_kinds": [
+        "startup_host_delegate"
+      ],
+      "host_symbols": [
+        "__libc_start_main"
+      ],
+      "module": "startup_abi",
+      "source": "crates/frankenlibc-abi/src/startup_abi.rs:816",
+      "symbol": "__libc_start_main"
+    },
+    {
+      "callsite_count": 1,
+      "callsite_ids": [
+        "getdelim:001"
+      ],
+      "delegation_kinds": [
+        "cached_host_allocator_symbol"
+      ],
+      "host_symbols": [
+        "realloc"
+      ],
+      "module": "stdio_abi",
+      "source": "crates/frankenlibc-abi/src/stdio_abi.rs:5450",
+      "symbol": "getdelim"
+    },
+    {
+      "callsite_count": 2,
+      "callsite_ids": [
+        "getline:001",
+        "getline:002"
+      ],
+      "delegation_kinds": [
+        "alias_to_host_delegating_symbol",
+        "cached_host_allocator_symbol"
+      ],
+      "host_symbols": [
+        "getdelim",
+        "realloc"
+      ],
+      "module": "stdio_abi",
+      "source": "crates/frankenlibc-abi/src/stdio_abi.rs:5543",
+      "symbol": "getline"
+    }
+  ]
+}
