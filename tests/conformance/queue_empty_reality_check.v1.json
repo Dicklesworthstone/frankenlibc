@@ -1,0 +1,123 @@
+{
+  "schema_version": "queue_empty_reality_check.v1",
+  "purpose": "RC-WS9.2 anti-recurrence trigger. An empty bead queue is a Goodhart proxy: zero open work does not mean the project vision is delivered. This contract documents the automated trigger that fires when the bead queue empties so the swarm cannot silently resolve an empty queue to a 'done' state. The trigger is satisfied only by a reality-check attestation pinned to the current commit and queue state, so a stale or pre-existing attestation cannot discharge a fresh empty-queue condition.",
+  "bead": "bd-iu3fb.2",
+  "workstream": "anti-recurrence",
+  "issues_source": ".beads/issues.jsonl",
+  "forbidden_sources": [
+    ".beads/beads.db",
+    ".beads/issues.db",
+    "br",
+    "bv"
+  ],
+  "queue_empty_definition": {
+    "active_statuses": [
+      "open",
+      "in_progress"
+    ],
+    "empty_when_active_count": 0,
+    "rationale": "Open and in_progress beads are the only states that represent outstanding work. A queue with zero of both is 'empty' and triggers the mandatory reality check."
+  },
+  "trigger": {
+    "name": "queue_empty_mandatory_reality_check",
+    "fires_when": "active bead count == 0",
+    "dormant_when": "active bead count > 0",
+    "queue_empty_resolves_to_done_without_reality_check": false,
+    "satisfied_by": "a reality-check attestation in the ledger whose source_commit equals the current HEAD and whose queue_state_hash equals the current empty-queue hash"
+  },
+  "trigger_states": {
+    "queue_not_empty": "outstanding work remains; the trigger is dormant; the gate passes",
+    "reality_check_required": "the queue is empty and no matching attestation exists; the trigger has fired and the mandatory reality check is outstanding; the gate fails under --gate",
+    "reality_check_satisfied": "the queue is empty and a commit-and-state-pinned attestation exists; the gate passes and the milestone becomes eligible for the WS-9.3 sequential stopping rule"
+  },
+  "attestation_ledger": "tests/conformance/queue_empty_reality_check.ledger.jsonl",
+  "attestation_schema": {
+    "kind": "reality_check_attestation",
+    "required_fields": [
+      "kind",
+      "generated_at_utc",
+      "source_commit",
+      "queue_state_hash",
+      "verdict",
+      "evidence",
+      "attested_by"
+    ],
+    "verdicts": [
+      "vision_incomplete",
+      "vision_delivered"
+    ],
+    "evidence_min_count": 1,
+    "freshness": {
+      "commit_pinned": true,
+      "queue_state_pinned": true,
+      "rationale": "A stale attestation from an earlier commit, or one recorded against a different queue state, cannot satisfy a new empty-queue condition. This is the WS-0 no-stale-evidence rule applied to queue-empty closure."
+    }
+  },
+  "queue_state_hash": {
+    "algorithm": "sha256",
+    "preimage": "newline-joined sorted 'id\\tstatus' rows for every active (open or in_progress) bead",
+    "empty_queue_preimage": "the empty string"
+  },
+  "modes": {
+    "--validate-only": "validate this contract and run the embedded negative-control self-tests; the live queue trigger state is reported but does not drive the exit code",
+    "--gate": "live enforcement: additionally exit non-zero when the live queue is empty and the mandatory reality check is unsatisfied",
+    "--attest": "append a well-formed reality-check attestation pinned to the current HEAD and queue state"
+  },
+  "exit_codes": {
+    "0": "--validate-only with a valid contract and passing self-tests, or --gate with queue_not_empty or reality_check_satisfied, or a successful --attest",
+    "1": "a contract or self-test failure, or --gate with reality_check_required",
+    "2": "usage error"
+  },
+  "ci_invocation": "bash scripts/check_queue_empty_reality_check.sh --gate",
+  "required_report_fields": [
+    "schema_version",
+    "status",
+    "mode",
+    "generated_at_utc",
+    "source_commit",
+    "report_path",
+    "log_path",
+    "data_sources",
+    "forbidden_sources",
+    "db_accessed",
+    "queue_snapshot",
+    "trigger",
+    "stdout_summary",
+    "negative_controls",
+    "failures"
+  ],
+  "stdout_summary_fields": [
+    "trigger_state",
+    "trigger_fired",
+    "queue_empty",
+    "active_bead_count",
+    "open_count",
+    "in_progress_count",
+    "closed_count",
+    "queue_state_hash",
+    "mandatory_reality_check_outstanding",
+    "queue_empty_resolves_to_done",
+    "satisfying_attestation",
+    "recommended_next_action"
+  ],
+  "required_negative_controls": [
+    "empty_queue_fires_trigger",
+    "empty_queue_does_not_resolve_to_done",
+    "nonempty_queue_keeps_trigger_dormant",
+    "in_progress_bead_counts_as_active",
+    "matching_attestation_satisfies_trigger",
+    "stale_commit_attestation_does_not_satisfy",
+    "wrong_queue_hash_attestation_does_not_satisfy",
+    "attestation_missing_evidence_is_rejected",
+    "attestation_invalid_verdict_is_rejected",
+    "gate_mode_fails_when_reality_check_required"
+  ],
+  "validation_commands": [
+    "jq empty tests/conformance/queue_empty_reality_check.v1.json",
+    "bash -n scripts/check_queue_empty_reality_check.sh",
+    "bash scripts/check_queue_empty_reality_check.sh --validate-only",
+    "bash scripts/check_queue_empty_reality_check.sh --validate-only | jq -e '(.trigger_state | type == \"string\") and (.queue_empty | type == \"boolean\") and (.trigger_fired | type == \"boolean\") and (.active_bead_count | type == \"number\") and (.queue_empty_resolves_to_done == false) and (.recommended_next_action.decision | type == \"string\")'",
+    "jq -e '.status == \"pass\" and (.negative_controls | all(.status == \"pass\")) and .trigger.queue_empty_resolves_to_done_without_reality_check == false' target/conformance/queue_empty_reality_check.report.json",
+    "git diff --check -- scripts/check_queue_empty_reality_check.sh tests/conformance/queue_empty_reality_check.v1.json"
+  ]
+}
