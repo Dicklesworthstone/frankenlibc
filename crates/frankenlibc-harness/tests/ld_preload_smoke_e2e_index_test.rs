@@ -259,6 +259,26 @@ fn ld_preload_smoke_default_run_id_is_process_unique() -> TestResult {
 }
 
 #[test]
+fn ld_preload_smoke_validates_numeric_runtime_knobs() -> TestResult {
+    let root = workspace_root()?;
+    let script_path = root.join("scripts").join("ld_preload_smoke.sh");
+    let src =
+        std::fs::read_to_string(&script_path).map_err(|e| format!("ld_preload_smoke.sh: {e}"))?;
+    require(
+        src.contains("require_positive_integer \"TIMEOUT_SECONDS\" \"${TIMEOUT_SECONDS}\""),
+        "ld_preload_smoke.sh must reject malformed or zero TIMEOUT_SECONDS before running timeout",
+    )?;
+    require(
+        src.contains("require_non_negative_integer \"STRESS_ITERS\" \"${STRESS_ITERS}\""),
+        "ld_preload_smoke.sh must reject malformed STRESS_ITERS before using seq/report JSON",
+    )?;
+    require(
+        src.contains("require_positive_integer \"PERF_RATIO_MAX_PPM\" \"${PERF_RATIO_MAX_PPM}\""),
+        "ld_preload_smoke.sh must reject malformed or zero PERF_RATIO_MAX_PPM before perf checks",
+    )
+}
+
+#[test]
 fn ld_preload_smoke_rch_build_is_remote_and_target_isolated() -> TestResult {
     let root = workspace_root()?;
     let script_path = root.join("scripts").join("ld_preload_smoke.sh");

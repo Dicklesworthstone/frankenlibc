@@ -35,6 +35,27 @@ ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES:-strict}"
 ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES:-strict}"
 PERF_RATIO_MAX_PPM="${PERF_RATIO_MAX_PPM:-2000000}"
 VALGRIND_POLICY="${VALGRIND_POLICY:-auto}" # auto|off|required
+
+require_non_negative_integer() {
+  local name="$1" value="$2"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+    echo "ld_preload_smoke: ${name} must be a non-negative integer, got '${value}'" >&2
+    exit 2
+  fi
+}
+
+require_positive_integer() {
+  local name="$1" value="$2"
+  require_non_negative_integer "${name}" "${value}"
+  if [[ "$((10#${value}))" -le 0 ]]; then
+    echo "ld_preload_smoke: ${name} must be a positive integer, got '${value}'" >&2
+    exit 2
+  fi
+}
+
+require_positive_integer "TIMEOUT_SECONDS" "${TIMEOUT_SECONDS}"
+require_non_negative_integer "STRESS_ITERS" "${STRESS_ITERS}"
+require_positive_integer "PERF_RATIO_MAX_PPM" "${PERF_RATIO_MAX_PPM}"
 TRACE_FILE="${RUN_DIR}/trace.jsonl"
 CASE_TSV="${RUN_DIR}/abi_compat_cases.tsv"
 REPORT_FILE="${RUN_DIR}/abi_compat_report.json"
