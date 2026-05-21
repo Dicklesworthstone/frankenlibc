@@ -40,6 +40,13 @@ find_lib() {
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+require_positive_integer() {
+  local name="$1" value="$2"
+  if [[ ! "${value}" =~ ^[0-9]+$ || "${value}" =~ ^0+$ ]]; then
+    die "${name} must be a positive integer, got '${value}'"
+  fi
+}
+
 json_string() {
   python3 - "$1" <<'PY'
 import json
@@ -48,6 +55,10 @@ import sys
 print(json.dumps(sys.argv[1]))
 PY
 }
+
+require_positive_integer "TOP_N" "${TOP_N}"
+require_positive_integer "PERF_FREQ" "${PERF_FREQ}"
+require_positive_integer "TIMEOUT_SEC" "${TIMEOUT_SEC}"
 
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 command -v perf >/dev/null 2>&1 || die "perf not found"
