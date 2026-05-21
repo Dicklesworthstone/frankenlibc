@@ -17,6 +17,17 @@ TIMEOUT_SEC="${PROFILE_TIMEOUT_SEC:-10}"
 
 PYTHON_CMD="${PYTHON_CMD:-python3 -c 'print(1)'}"
 
+require_positive_integer() {
+    local name="$1" value="$2"
+    if [[ ! "$value" =~ ^[0-9]+$ || "$value" =~ ^0+$ ]]; then
+        echo "FAIL: ${name} must be a positive integer, got '${value}'" >&2
+        exit 2
+    fi
+}
+
+require_positive_integer "PROFILE_TOP_N" "$TOP_N"
+require_positive_integer "PROFILE_TIMEOUT_SEC" "$TIMEOUT_SEC"
+
 mkdir -p "$OUT_DIR"
 
 read_python_argv() {

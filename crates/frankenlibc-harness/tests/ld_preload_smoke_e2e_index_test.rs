@@ -279,6 +279,22 @@ fn ld_preload_smoke_validates_numeric_runtime_knobs() -> TestResult {
 }
 
 #[test]
+fn python3_preload_profile_validates_numeric_runtime_knobs() -> TestResult {
+    let root = workspace_root()?;
+    let script_path = root.join("scripts").join("profile_python3_preload.sh");
+    let src = std::fs::read_to_string(&script_path)
+        .map_err(|e| format!("profile_python3_preload.sh: {e}"))?;
+    require(
+        src.contains("require_positive_integer \"PROFILE_TOP_N\" \"$TOP_N\""),
+        "profile_python3_preload.sh must reject malformed or zero PROFILE_TOP_N before profiling",
+    )?;
+    require(
+        src.contains("require_positive_integer \"PROFILE_TIMEOUT_SEC\" \"$TIMEOUT_SEC\""),
+        "profile_python3_preload.sh must reject malformed or zero PROFILE_TIMEOUT_SEC before timeout/perf work",
+    )
+}
+
+#[test]
 fn ld_preload_smoke_rch_build_is_remote_and_target_isolated() -> TestResult {
     let root = workspace_root()?;
     let script_path = root.join("scripts").join("ld_preload_smoke.sh");
