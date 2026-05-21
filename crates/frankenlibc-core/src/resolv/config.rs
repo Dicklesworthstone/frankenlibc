@@ -147,6 +147,7 @@ impl ResolverConfig {
                     && let Ok(s) = core::str::from_utf8(name)
                 {
                     self.domain = Some(s.to_string());
+                    self.search.clear();
                 }
             }
             b"search" => {
@@ -319,6 +320,14 @@ mod tests {
         assert_eq!(config.search.len(), 2);
         assert_eq!(config.search[0], "local.domain");
         assert_eq!(config.search[1], "example.com");
+    }
+
+    #[test]
+    fn test_domain_after_search_replaces_effective_search_list() {
+        let config =
+            ResolverConfig::parse(b"search stale.example old.example\ndomain corp.example\n");
+        assert_eq!(config.domain, Some("corp.example".to_string()));
+        assert_eq!(config.search, vec!["corp.example".to_string()]);
     }
 
     #[test]
@@ -536,6 +545,12 @@ options ndots:2 timeout:3 attempts:2 rotate
             spec_ref: "resolver(5) ¶domain — single local domain name",
             input: b"domain example.com\n",
             assertion: ResolvConfAssertion::DomainEquals(Some("example.com")),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-DOMAIN-002",
+            spec_ref: "resolver(5) ¶domain/search — later domain overrides prior search",
+            input: b"search stale.example old.example\ndomain corp.example\n",
+            assertion: ResolvConfAssertion::SearchEquals(&["corp.example"]),
         },
         // ---- comments and blank lines ----
         ResolvConfCase {
