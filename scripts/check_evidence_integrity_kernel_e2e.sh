@@ -358,8 +358,17 @@ PY
 scenario_tamper() {
     begin_scenario tamper "hand-editing a past ledger entry breaks chain verification"
 
+    # Start from a freshly re-anchored ledger so the ONLY integrity defect is
+    # the hand-edit below. This isolates the tamper failure signature from any
+    # unrelated real-ledger drift -- catching that drift is the standalone
+    # check_evidence_ledger.sh CI gate's job, not this gate-logic scenario.
+    local clean="$SANDBOX/tamper_clean_ledger.jsonl"
+    local count
+    count="$(build_reanchored_ledger "$REAL_LEDGER" "$clean" 0)"
+    observe tamper-baseline "re-anchored clean ledger as the tamper baseline" entries="$count"
+
     local tampered="$SANDBOX/tampered_ledger.jsonl"
-    python3 - "$REAL_LEDGER" "$tampered" <<'PY'
+    python3 - "$clean" "$tampered" <<'PY'
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 # Hand-edit a chain-bound field of the FIRST (past) entry, leaving its stored
