@@ -255,7 +255,7 @@ fn run_case_from_execution(
     execution: CaseExecution,
     duration_ms: u64,
 ) -> ConformanceCaseRow {
-    let case_name = if case.mode.eq_ignore_ascii_case("both") {
+    let case_name = if case.mode.trim().eq_ignore_ascii_case("both") {
         format!("{} [{}]", case.name, active_mode)
     } else {
         case.name.clone()
@@ -544,6 +544,51 @@ mod tests {
         );
         assert_eq!(report.summary.passed, 1);
         assert_eq!(report.cases[0].mode, "strict");
+        Ok(())
+    }
+
+    #[test]
+    fn matrix_trims_both_mode_before_disambiguating_case_names() -> TestResult {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"string/strlen",
+                "captured_at":"2026-02-13T00:00:00Z",
+                "cases":[
+                    {"name":"len_a","function":"strlen","spec_section":"POSIX strlen","inputs":{"s":[97,0]},"expected_output":"1","expected_errno":0,"mode":" both \n"}
+                ]
+            }"#,
+        )?;
+
+        let report = build_conformance_matrix_with_executor(
+            &[fixture],
+            MatrixMode::Both,
+            "unit",
+            |_, _, _| {
+                CaseExecution::Completed(DifferentialExecution {
+                    host_output: "1".to_string(),
+                    impl_output: "1".to_string(),
+                    host_parity: true,
+                    note: None,
+                })
+            },
+        );
+
+        assert_eq!(report.summary.total_cases, 2);
+        assert!(
+            report
+                .cases
+                .iter()
+                .any(|row| row.case_name == "len_a [strict]"),
+            "strict row should be disambiguated even when fixture mode has whitespace"
+        );
+        assert!(
+            report
+                .cases
+                .iter()
+                .any(|row| row.case_name == "len_a [hardened]"),
+            "hardened row should be disambiguated even when fixture mode has whitespace"
+        );
         Ok(())
     }
 
