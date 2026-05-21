@@ -665,15 +665,37 @@ run_suite_for_mode hardened || overall_failed=1
 emit_trace "info" "suite_end" "all" "all" "$([[ "${overall_failed}" -eq 0 ]] && echo "pass" || echo "fail")" \
   "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
 
-python3 - <<PY
+export LD_PRELOAD_SMOKE_BEAD_ID="${BEAD_ID}"
+export LD_PRELOAD_SMOKE_CASE_TSV="${CASE_TSV}"
+export LD_PRELOAD_SMOKE_ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES}"
+export LD_PRELOAD_SMOKE_ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES}"
+export LD_PRELOAD_SMOKE_FAILS="${fails}"
+export LD_PRELOAD_SMOKE_FAILURE_SIGNATURE_DENYLIST="${FAILURE_SIGNATURE_DENYLIST}"
+export LD_PRELOAD_SMOKE_LIB_PATH="${LIB_PATH}"
+export LD_PRELOAD_SMOKE_OVERALL_FAILED="${overall_failed}"
+export LD_PRELOAD_SMOKE_PASSES="${passes}"
+export LD_PRELOAD_SMOKE_PERF_RATIO_MAX_PPM="${PERF_RATIO_MAX_PPM}"
+export LD_PRELOAD_SMOKE_REPORT_FILE="${REPORT_FILE}"
+export LD_PRELOAD_SMOKE_RUN_ID="${RUN_ID}"
+export LD_PRELOAD_SMOKE_SKIPS="${skips}"
+export LD_PRELOAD_SMOKE_STRESS_ITERS="${STRESS_ITERS}"
+export LD_PRELOAD_SMOKE_TIMEOUT_SECONDS="${TIMEOUT_SECONDS}"
+export LD_PRELOAD_SMOKE_TRACE_FILE="${TRACE_FILE}"
+export LD_PRELOAD_SMOKE_TROUBLESHOOT_FILE="${TROUBLESHOOT_FILE}"
+export LD_PRELOAD_SMOKE_VALGRIND_POLICY="${VALGRIND_POLICY}"
+
+python3 - <<'PY'
 import csv
 import json
+import os
 from collections import Counter
 from pathlib import Path
 
 cases = []
-with open("${CASE_TSV}", "r", encoding="utf-8") as fh:
-    reader = csv.DictReader(fh, delimiter="\\t")
+env = os.environ
+
+with open(env["LD_PRELOAD_SMOKE_CASE_TSV"], "r", encoding="utf-8") as fh:
+    reader = csv.DictReader(fh, delimiter="\t")
     for row in reader:
         cases.append(
             {
@@ -736,35 +758,45 @@ failure_signature_counts = Counter(
 
 payload = {
     "schema_version": "v1",
-    "bead_id": "${BEAD_ID}",
-    "run_id": "${RUN_ID}",
-    "lib_path": "${LIB_PATH}",
-    "timeout_seconds": int("${TIMEOUT_SECONDS}"),
-    "stress_iters": int("${STRESS_ITERS}"),
-    "enforce_parity_modes": [m.strip() for m in "${ENFORCE_PARITY_MODES}".split(",") if m.strip()],
-    "enforce_perf_modes": [m.strip() for m in "${ENFORCE_PERF_MODES}".split(",") if m.strip()],
-    "perf_ratio_max_ppm": int("${PERF_RATIO_MAX_PPM}"),
-    "valgrind_policy": "${VALGRIND_POLICY}",
+    "bead_id": env["LD_PRELOAD_SMOKE_BEAD_ID"],
+    "run_id": env["LD_PRELOAD_SMOKE_RUN_ID"],
+    "lib_path": env["LD_PRELOAD_SMOKE_LIB_PATH"],
+    "timeout_seconds": int(env["LD_PRELOAD_SMOKE_TIMEOUT_SECONDS"]),
+    "stress_iters": int(env["LD_PRELOAD_SMOKE_STRESS_ITERS"]),
+    "enforce_parity_modes": [
+        m.strip()
+        for m in env["LD_PRELOAD_SMOKE_ENFORCE_PARITY_MODES"].split(",")
+        if m.strip()
+    ],
+    "enforce_perf_modes": [
+        m.strip()
+        for m in env["LD_PRELOAD_SMOKE_ENFORCE_PERF_MODES"].split(",")
+        if m.strip()
+    ],
+    "perf_ratio_max_ppm": int(env["LD_PRELOAD_SMOKE_PERF_RATIO_MAX_PPM"]),
+    "valgrind_policy": env["LD_PRELOAD_SMOKE_VALGRIND_POLICY"],
     "summary": {
         "total_cases": len(cases),
-        "passes": int("${passes}"),
-        "fails": int("${fails}"),
-        "skips": int("${skips}"),
+        "passes": int(env["LD_PRELOAD_SMOKE_PASSES"]),
+        "fails": int(env["LD_PRELOAD_SMOKE_FAILS"]),
+        "skips": int(env["LD_PRELOAD_SMOKE_SKIPS"]),
         "signature_guard_failures": sum(1 for c in cases if c["signature_guard_triggered"]),
         "perf_failures": sum(1 for c in cases if c["perf_required"] and not c["perf_pass"]),
         "valgrind_failures": sum(1 for c in cases if c["valgrind_checked"] and not c["valgrind_pass"]),
         "failure_signature_counts": dict(failure_signature_counts),
-        "overall_failed": bool(int("${overall_failed}")),
+        "overall_failed": bool(int(env["LD_PRELOAD_SMOKE_OVERALL_FAILED"])),
     },
     "modes": modes,
     "cases": cases,
 }
 
-Path("${REPORT_FILE}").write_text(json.dumps(payload, indent=2) + "\\n", encoding="utf-8")
+Path(env["LD_PRELOAD_SMOKE_REPORT_FILE"]).write_text(
+    json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+)
 
 denylist = {
     token.strip()
-    for token in "${FAILURE_SIGNATURE_DENYLIST}".split(",")
+    for token in env["LD_PRELOAD_SMOKE_FAILURE_SIGNATURE_DENYLIST"].split(",")
     if token.strip()
 }
 guidance = {
@@ -785,11 +817,11 @@ failing_cases = [c for c in cases if c["status"] == "fail"]
 lines = []
 lines.append(f"# Startup Troubleshooting ({'FAIL' if failing_cases else 'PASS'})")
 lines.append("")
-lines.append(f"- bead_id: ${BEAD_ID}")
-lines.append(f"- run_id: ${RUN_ID}")
-lines.append(f"- report_json: {Path('${REPORT_FILE}').name}")
-lines.append(f"- trace_jsonl: {Path('${TRACE_FILE}').name}")
-lines.append(f"- case_tsv: {Path('${CASE_TSV}').name}")
+lines.append(f"- bead_id: {env['LD_PRELOAD_SMOKE_BEAD_ID']}")
+lines.append(f"- run_id: {env['LD_PRELOAD_SMOKE_RUN_ID']}")
+lines.append(f"- report_json: {Path(env['LD_PRELOAD_SMOKE_REPORT_FILE']).name}")
+lines.append(f"- trace_jsonl: {Path(env['LD_PRELOAD_SMOKE_TRACE_FILE']).name}")
+lines.append(f"- case_tsv: {Path(env['LD_PRELOAD_SMOKE_CASE_TSV']).name}")
 lines.append("")
 
 if not failing_cases:
@@ -825,7 +857,9 @@ else:
             lines.append(f"- ... and {len(affected) - 8} more case(s)")
         lines.append("")
 
-Path("${TROUBLESHOOT_FILE}").write_text("\\n".join(lines).rstrip() + "\\n", encoding="utf-8")
+Path(env["LD_PRELOAD_SMOKE_TROUBLESHOOT_FILE"]).write_text(
+    "\n".join(lines).rstrip() + "\n", encoding="utf-8"
+)
 PY
 
 {

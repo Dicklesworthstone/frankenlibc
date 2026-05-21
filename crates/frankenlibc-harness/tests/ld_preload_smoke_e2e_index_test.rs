@@ -291,6 +291,46 @@ fn ld_preload_smoke_rch_build_is_remote_and_target_isolated() -> TestResult {
 }
 
 #[test]
+fn ld_preload_smoke_report_writer_treats_shell_values_as_data() -> TestResult {
+    let root = workspace_root()?;
+    let script_path = root.join("scripts").join("ld_preload_smoke.sh");
+    let src =
+        std::fs::read_to_string(&script_path).map_err(|e| format!("ld_preload_smoke.sh: {e}"))?;
+    require(
+        src.contains("export LD_PRELOAD_SMOKE_LIB_PATH=\"${LIB_PATH}\""),
+        "ld_preload_smoke.sh must pass LIB_PATH to the report writer through the environment",
+    )?;
+    require(
+        src.contains("python3 - <<'PY'"),
+        "ld_preload_smoke.sh report writer heredoc must be single-quoted",
+    )?;
+    require(
+        src.contains("env = os.environ"),
+        "ld_preload_smoke.sh report writer must read shell inputs from os.environ",
+    )?;
+    require(
+        src.contains("delimiter=\"\\t\""),
+        "ld_preload_smoke.sh report writer must keep the TSV delimiter as a single tab character",
+    )?;
+    require(
+        !src.contains("delimiter=\"\\\\t\""),
+        "ld_preload_smoke.sh report writer must not pass a two-character delimiter to csv.DictReader",
+    )?;
+    require(
+        src.contains("\"lib_path\": env[\"LD_PRELOAD_SMOKE_LIB_PATH\"]"),
+        "ld_preload_smoke.sh report JSON must not interpolate LIB_PATH as Python source",
+    )?;
+    require(
+        !src.contains("\"lib_path\": \"${LIB_PATH}\""),
+        "ld_preload_smoke.sh must not embed raw LIB_PATH inside the Python report source",
+    )?;
+    require(
+        !src.contains("Path(\"${REPORT_FILE}\")"),
+        "ld_preload_smoke.sh must not embed raw report paths inside the Python report source",
+    )
+}
+
+#[test]
 fn ld_preload_smoke_valgrind_wraps_the_preloaded_target_only() -> TestResult {
     let root = workspace_root()?;
     let script_path = root.join("scripts").join("ld_preload_smoke.sh");
