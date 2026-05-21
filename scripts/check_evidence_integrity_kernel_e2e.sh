@@ -260,7 +260,7 @@ scenario_happy() {
     count="$(build_reanchored_ledger "$REAL_LEDGER" "$ledger" 0)"
     observe reanchor "re-anchored committed ledger from current disk artifacts" entries="$count"
 
-    run_gate "$OUT_DIR/happy_ledger.out" \
+    run_gate "$SANDBOX/happy_ledger.out" \
         "FRANKENLIBC_EVIDENCE_LEDGER=$ledger" \
         "FRANKENLIBC_EVIDENCE_LEDGER_REPORT=$SANDBOX/happy_ledger.report.json" \
         -- bash "$LEDGER_GATE"
@@ -268,7 +268,7 @@ scenario_happy() {
     expect ledger-status "ledger report status is pass" pass \
         "$(report_field "$SANDBOX/happy_ledger.report.json" status)"
 
-    run_gate "$OUT_DIR/happy_freshness.out" \
+    run_gate "$SANDBOX/happy_freshness.out" \
         "FRANKENLIBC_EVIDENCE_LEDGER=$ledger" \
         "FRANKENLIBC_EVIDENCE_FRESHNESS_REPORT=$SANDBOX/happy_freshness.report.json" \
         -- bash "$FRESHNESS_GATE"
@@ -276,7 +276,7 @@ scenario_happy() {
     expect freshness-state "freshness e-process state is normal" normal \
         "$(report_field "$SANDBOX/happy_freshness.report.json" state)"
 
-    run_gate "$OUT_DIR/happy_drift.out" \
+    run_gate "$SANDBOX/happy_drift.out" \
         "FRANKENLIBC_GATE_DRIFT_SERIES=$CANON_SERIES" \
         "FRANKENLIBC_GATE_DRIFT_REPORT=$SANDBOX/happy_drift.report.json" \
         -- bash "$DRIFT_GATE"
@@ -284,7 +284,7 @@ scenario_happy() {
     expect drift-status "gate-drift report status is pass" pass \
         "$(report_field "$SANDBOX/happy_drift.report.json" status)"
 
-    run_gate "$OUT_DIR/happy_bead.out" -- bash "$BEAD_GATE" --self-test
+    run_gate "$SANDBOX/happy_bead.out" -- bash "$BEAD_GATE" --self-test
     expect bead-selftest "bead-closure freshness self-test passes" 0 "$RC"
 
     end_scenario
@@ -370,7 +370,7 @@ with open(sys.argv[2], "w") as fh:
 PY
     observe tamper-edit "appended [TAMPERED] to entry[0].generator_command without re-deriving its chain_hash"
 
-    run_gate "$OUT_DIR/tamper_ledger.out" \
+    run_gate "$SANDBOX/tamper_ledger.out" \
         "FRANKENLIBC_EVIDENCE_LEDGER=$tampered" \
         "FRANKENLIBC_EVIDENCE_LEDGER_REPORT=$SANDBOX/tamper_ledger.report.json" \
         -- bash "$LEDGER_GATE"
@@ -410,7 +410,7 @@ for index in range(4):
 with open(sys.argv[1], "w") as fh:
     fh.write("\n".join(json.dumps(r, sort_keys=True) for r in rows) + "\n")
 PY
-    run_gate "$OUT_DIR/freshness_alarm.out" \
+    run_gate "$SANDBOX/freshness_alarm.out" \
         "FRANKENLIBC_EVIDENCE_LEDGER=$divergent" \
         "FRANKENLIBC_EVIDENCE_FRESHNESS_REPORT=$SANDBOX/freshness_alarm.report.json" \
         -- bash "$FRESHNESS_GATE"
@@ -464,7 +464,7 @@ series = {
 }
 json.dump(series, open(sys.argv[1], "w"), indent=2, sort_keys=True)
 PY
-    run_gate "$OUT_DIR/drift_flagged.out" \
+    run_gate "$SANDBOX/drift_flagged.out" \
         "FRANKENLIBC_GATE_DRIFT_SERIES=$series" \
         "FRANKENLIBC_GATE_DRIFT_REPORT=$SANDBOX/drift_flagged.report.json" \
         -- bash "$DRIFT_GATE"
@@ -495,7 +495,7 @@ scenario_edge() {
     # Empty ledger: nothing to anchor -> must fail closed.
     local empty="$SANDBOX/empty_ledger.jsonl"
     : > "$empty"
-    run_gate "$OUT_DIR/edge_empty.out" \
+    run_gate "$SANDBOX/edge_empty.out" \
         "FRANKENLIBC_EVIDENCE_LEDGER=$empty" \
         "FRANKENLIBC_EVIDENCE_LEDGER_REPORT=$SANDBOX/edge_empty.report.json" \
         -- bash "$LEDGER_GATE"
@@ -508,7 +508,7 @@ scenario_edge() {
     local count
     count="$(build_reanchored_ledger "$REAL_LEDGER" "$first" 1)"
     expect edge-first-rows "first-ever-entry ledger has exactly one row" 1 "$count"
-    run_gate "$OUT_DIR/edge_first.out" \
+    run_gate "$SANDBOX/edge_first.out" \
         "FRANKENLIBC_EVIDENCE_LEDGER=$first" \
         "FRANKENLIBC_EVIDENCE_LEDGER_REPORT=$SANDBOX/edge_first.report.json" \
         -- bash "$LEDGER_GATE"
@@ -518,7 +518,7 @@ scenario_edge() {
 
     # TTL boundary: the bead-closure freshness gate self-test covers in-window,
     # on-the-boundary, and expired completion-contract freshness cases.
-    run_gate "$OUT_DIR/edge_ttl.out" -- bash "$BEAD_GATE" --self-test
+    run_gate "$SANDBOX/edge_ttl.out" -- bash "$BEAD_GATE" --self-test
     expect edge-ttl "bead-closure TTL-boundary self-test passes" 0 "$RC"
 
     end_scenario
@@ -560,7 +560,7 @@ scenario_unit_tests() {
     fi
 
     # bead-closure self-test (fast, no build).
-    run_gate "$OUT_DIR/unit_bead.out" -- bash "$BEAD_GATE" --self-test
+    run_gate "$SANDBOX/unit_bead.out" -- bash "$BEAD_GATE" --self-test
     expect run-bead_closure "bead-closure self-test unit passes" 0 "$RC"
 
     # The regenerate-then-diff unit script (test_regenerate_then_diff_gate.sh)
@@ -578,7 +578,7 @@ scenario_unit_tests() {
         set +e
         ( cd "$ROOT" && CARGO_TARGET_DIR="$target_dir" RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR \
             rch exec -- cargo test -p frankenlibc-harness "${cargo_targets[@]}" ) \
-            > "$OUT_DIR/unit_cargo.out" 2>&1
+            > "$SANDBOX/unit_cargo.out" 2>&1
         RC=$?
         set -e
         expect run-cargo-units "WS-0 cargo unit tests pass" 0 "$RC"
