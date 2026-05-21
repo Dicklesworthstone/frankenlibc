@@ -62,7 +62,7 @@ This file tracks the current staged parity profile, not a full replacement profi
 
 - Deterministic matrix artifact: `tests/conformance/hardened_repair_deny_matrix.v1.json`
 - Gate script + harness integration: `scripts/check_hardened_repair_deny_matrix.sh` and `crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs`
-- Proof narrative + mapping: `docs/proofs/hardened_mode_safety.md` and `docs/proofs/repair_posix_mapping.md`
+- Proof notes + mapping: `docs/proofs/hardened_mode_safety.md` and `docs/proofs/repair_posix_mapping.md`
 - Current matrix coverage is expanded but still bounded to currently fixture-backed invalid-input classes/families; additional membrane-gated families continue to be onboarded as hardened fixtures land.
 
 ## Symbol Coverage by ABI Module (Taxonomy)
@@ -239,7 +239,9 @@ Current semantic fallback/no-op/bootstrap contracts:
 
 ## Proof and Math Matrix
 
-| Obligation | Evidence Artifact | Status |
+RC-WS7 proof-program status: no machine-checked formal proof artifacts are committed yet. The current `docs/proofs/` corpus is proof notes and invariant rationale, and `tests/conformance/proof_obligations_binder.v1.json` tracks obligation status for future mechanization.
+
+| Obligation | Current or Target Evidence | Status |
 |---|---|---|
 | strict refinement theorem | SMT/proof notes + differential fixtures | PLANNED |
 | hardened safety theorem | invariant checks + policy proof notes | IN_PROGRESS |

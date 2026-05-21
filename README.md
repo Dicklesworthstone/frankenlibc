@@ -48,7 +48,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind a glibc-shaped A
 | Interposition is usable on real workloads today | Curated smoke battery: **58 passes / 0 fails / 6 skips** across strict + hardened modes |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
-| Verification is first-class | Harness CLI, 40+ fixture families, **258 completion-contract artifacts**, **68 CLI-contract manifests** subject to ~50 meta-gates each, **66 `cargo-fuzz` targets**, 9 formal proofs |
+| Verification is first-class | Harness CLI, 40+ fixture families, **258 completion-contract artifacts**, **68 CLI-contract manifests** subject to ~50 meta-gates each, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings |
 | Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 active control kernels**, not just design docs |
 | Build-time formal infrastructure | SOS polynomial certificates synthesized and verified at build; per-file atomic-barrier coverage audit |
 
@@ -281,7 +281,8 @@ Both runtime modes are green across the curated workloads. Broader production ha
               │ tests/conformance/  (258 completion-contract JSONs +    │
               │                     68 CLI-contract manifests)         │
               │ scripts/  (554 shell scripts: gates, smoke, perf)       │
-              │ docs/proofs/  (9 formal proofs)                         │
+              │ docs/proofs/  (9 proof notes; obligation mappings)      │
+              │ no machine-checked proof artifacts committed yet         │
               └────────────────────────────────────────────────────────┘
 ```
 
@@ -325,7 +326,7 @@ Support claims, mode semantics, fixture coverage, drift checks, smoke runs, and 
 
 ### 6. Developer transparency
 
-Contributors write normal Rust APIs, tests, and policy tables. The runtime math machinery (conformal risk, sequential e-processes, Galois maps, sheaf consistency, SOS certificates) compiles down to compact deterministic guards in the hot path. The heavy theorem machinery lives in offline synthesis and proof artifacts, not in runtime call stacks.
+Contributors write normal Rust APIs, tests, and policy tables. The runtime math machinery (conformal risk, sequential e-processes, Galois maps, sheaf consistency, SOS certificates) compiles down to compact deterministic guards in the hot path. The heavy theorem machinery lives in offline synthesis, proof notes, and future proof artifacts, not in runtime call stacks.
 
 ---
 
@@ -357,7 +358,7 @@ These invariants are maintained as the codebase grows:
 | Host-glibc dependency in classified surface | N/A | No | Yes | **No** |
 | Raw syscall fallback paths | Internal | Internal | No | Explicit taxonomy: 414 `RawSyscall` |
 | Auditable structured verification artifacts | Limited | Limited | Limited | Core workflow — 258 completion contracts + 68 CLI contracts |
-| Formal proof catalog | No | No | No | 9 proofs under `docs/proofs/` |
+| Machine-checked proof catalog | No | No | No | Not yet; `docs/proofs/` currently holds proof notes and obligation mappings |
 | Build-time SOS / barrier audit | No | No | No | Yes — `crates/frankenlibc-membrane/build.rs` |
 
 ---
@@ -398,7 +399,7 @@ The Galois connection in `crates/frankenlibc-membrane/src/galois.rs` formalizes 
 - **Gamma (concretization):** maps the abstract safety state back into a `ConcreteAction` (`Proceed`, `Heal`, `Deny`)
 - **Soundness:** `gamma(alpha(c)) ≥ c` for all C operations; the safe interpretation is always at least as permissive as what a correct program needs
 
-The Galois proofs live under `docs/proofs/galois_monotonic_probability_bounds.md` and are part of the formal-property catalog below.
+The Galois proof notes live under `docs/proofs/galois_monotonic_probability_bounds.md` and are part of the proof-obligation catalog below. They are not yet machine-checked proof artifacts.
 
 ---
 
@@ -1263,11 +1264,11 @@ These catch failures that escape direct fixture comparison because the metamorph
 | SOS certificate validity | Fragmentation, thread safety, size-class invariants | Verified at build time via Cholesky decomposition |
 | Memory model barrier coverage | Minimum atomic site counts per source file | Enforced at build time by `build.rs` audit |
 
-### Formal Proof Catalog
+### Proof Notes and Obligations Catalog
 
-`docs/proofs/` contains 9 formal proofs spanning the algebraic, probabilistic, and operational properties:
+`docs/proofs/` contains 9 proof notes spanning the algebraic, probabilistic, and operational properties. They are design/proof narratives and obligation mappings, not completed machine-checked proof artifacts.
 
-| Proof | Property |
+| Proof note | Property |
 |---|---|
 | `galois_monotonic_probability_bounds.md` | Galois connection soundness + probability bounds on undetected unsafety |
 | `strict_mode_refinement.md` | Strict mode preserves compatibility-relevant semantics of host glibc |
@@ -1409,7 +1410,7 @@ Qualitative summary; numeric truth lives in `support_matrix.json` and the mainte
 | `iconv` | Phase 1 | UTF-8 ↔ ISO-8859-1 / UTF-16LE / UTF-32; deterministic strict + hardened fixtures; locked scope ledger | Full `iconvdata` breadth |
 | `loader / dlfcn` | Phase-1 native | `dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, `dl_iterate_phdr` | Broader dynamic-loader story for replacement |
 | `startup` | Phase-0 native | `__libc_start_main`, init/fini array order proofs, errno TLS isolation proof, atexit order proof | Full `csu`/TLS init-order hardening for replacement |
-| `runtime_math` | Extensive live code | ~71 controllers, build-time SOS certificates, snapshot goldens, linkage proofs | Continued integration and proof-quality closure |
+| `runtime_math` | Extensive live code | ~71 controllers, build-time SOS certificates, snapshot goldens, linkage checks | Continued integration and proof-quality closure |
 
 ### Hard-Parts Truth Table
 
@@ -1555,7 +1556,7 @@ Yes. The architecture and implementation are spec-first and verification-driven,
 
 ### Is the runtime math real code or just naming theater?
 
-Real code. `crates/frankenlibc-membrane/src/runtime_math/` is ~71 controller modules with live execution paths, snapshot goldens, linkage proofs, and decision recordings. The heavy theorem machinery (SOS synthesis, Cholesky verification, proof artifacts) runs at build time, not in the hot path.
+Real code. `crates/frankenlibc-membrane/src/runtime_math/` is ~71 controller modules with live execution paths, snapshot goldens, linkage checks, and decision recordings. The heavy theorem machinery (SOS synthesis, Cholesky verification, proof notes, and future proof artifacts) runs outside the hot path.
 
 ### Should I trust the README or the generated reports?
 
@@ -2152,9 +2153,9 @@ Tests in this repo come in four distinct *kinds*. They are not interchangeable.
 | **Snapshot / golden** | A generated artifact (runtime-math kernel output, fixture pack, evidence ledger) hasn't drifted | `tests/runtime_math/golden/` + `scripts/snapshot_gate.sh` |
 | **Closure / release gate** | Top-level project claims remain internally coherent | `scripts/check_release_gate.sh`, `scripts/check_closure_contract.sh` |
 | **Meta-gate** | A CLI contract manifest itself is well-formed and matches its paired test | ~50 pinned Rust tests under `crates/frankenlibc-harness/tests/cli_contract_*` |
-| **Formal proof** | A mathematical property holds by construction | `docs/proofs/*.md` (9 proofs) |
+| **Proof note / obligation** | A mathematical property is specified with rationale, evidence hooks, and pending mechanization scope | `docs/proofs/*.md` (9 proof notes) + `tests/conformance/proof_obligations_binder.v1.json` |
 
-Each kind has a different cost / signal trade-off. Cheap kinds (unit, property) run on every commit; expensive kinds (fuzz, formal-proof regeneration, full preload smoke) run on schedule or on demand.
+Each kind has a different cost / signal trade-off. Cheap kinds (unit, property) run on every commit; expensive kinds (fuzz, proof-note / obligation regeneration, full preload smoke) run on schedule or on demand.
 
 ---
 
@@ -2308,7 +2309,7 @@ Most "safer libc" projects are either (a) a wrapper that you must adopt by chang
 - **Auditable.** Every repair, every denial, every fast-path decision is emittable as a structured evidence record. Nothing is "magic that just happened."
 - **Mode-coherent.** Strict mode preserves compatibility-relevant behavior; hardened mode adds repairs that are deterministic refinements of the underlying POSIX contract. Neither mode introduces undocumented behavior.
 
-The math underneath (Galois maps, sheaf consistency, conformal risk, Thompson sampling, SOS certificates, …) is *not* in the call path that contributors see. Contributors write normal Rust, add a fixture, run the gates. The math machinery either compiled down to a few branchless instructions in the hot path, or runs at build time, or runs in the offline proof artifacts. That's what the "developer-transparency contract" in `AGENTS.md` is about.
+The math underneath (Galois maps, sheaf consistency, conformal risk, Thompson sampling, SOS certificates, …) is *not* in the call path that contributors see. Contributors write normal Rust, add a fixture, run the gates. The math machinery either compiled down to a few branchless instructions in the hot path, runs at build time, or is tracked in offline proof notes and future proof artifacts. That's what the "developer-transparency contract" in `AGENTS.md` is about.
 
 ---
 
@@ -2612,7 +2613,7 @@ A symbol with `status: "Implemented"` could be:
 - **Fallback** — Implements a documented degraded contract (e.g., `__cyg_profile_func_enter` returns success but doesn't profile)
 - **Bootstrap** — Implements the minimum required for process startup, deferred broader coverage (e.g., phase-1 iconv; phase-0 startup)
 - **Unsupported** — Exported but always returns an error (e.g., features that are POSIX but not supported on Linux)
-- **Proof-gap** — Implemented but lacks a formal-proof entry (a tracked debt)
+- **Proof-gap** — Implemented but lacks a proof-note / obligation entry or future mechanized artifact (a tracked debt)
 
 These five buckets live in `tests/conformance/support_semantic_overlay.v1.json`. The `docs_semantic_claims.v1.json` contract prevents prose in this README or `FEATURE_PARITY.md` from promoting taxonomy ownership to full semantic parity by accident.
 
@@ -3291,7 +3292,7 @@ A safety-critical libc must be deterministically replayable. The mechanisms:
 6. **Deterministic fixture-pack format.** Fixtures are JSON with stable key ordering; capture is rerun-stable.
 7. **No `HashMap` iteration in test-relevant paths.** Where ordering matters for reproducibility, `BTreeMap` is used.
 
-The `deterministic_replay.md` formal proof captures the property: same inputs + same evidence + same controllers → same outputs.
+The `deterministic_replay.md` proof note captures the intended property: same inputs + same evidence + same controllers → same outputs.
 
 ---
 
@@ -3800,7 +3801,7 @@ fn gamma(abs: PointerAbstraction, op: Operation) -> ConcreteAction {
 
 The soundness condition `γ(α(c)) ≥ c` says: for any concrete C operation, the action γ-returns is at least as permissive as what a correct program needs. "Permissive" is defined by the lattice ordering on actions (`Proceed > Heal > Deny`), and "correct program" is one whose actual access stays within the bounds we've recorded.
 
-The proof in `docs/proofs/galois_monotonic_probability_bounds.md` works through this for each operation type. The formal property isn't decoration; it's the reason the membrane is *transparent*. A correct program never sees a different observable behavior under the membrane than it would under plain glibc.
+The proof note in `docs/proofs/galois_monotonic_probability_bounds.md` works through this for each operation type. The stated property isn't decoration; it's the reason the membrane is intended to be *transparent*. A correct program should not see a different observable behavior under the membrane than it would under plain glibc.
 
 ---
 
@@ -3998,7 +3999,7 @@ As of 2026-05-16:
 | `tests/conformance/fixtures/` | Host-libc fixture corpus |
 | `tests/integration/` | C integration fixtures linked against `libfrankenlibc_abi.so` |
 | `tests/runtime_math/golden/` | Runtime-math golden snapshots |
-| `docs/proofs/` | 9 formal proofs (Galois, lattice, refinement, SOS, HJI, sheaf, CPOMDP, replay, repair mapping) |
+| `docs/proofs/` | 9 proof notes / obligation narratives (Galois, lattice, refinement, SOS, HJI, sheaf, CPOMDP, replay, repair mapping); no machine-checked proof artifacts yet |
 | `scripts/check_support_matrix_maintenance.sh` | High-signal drift gate |
 | `scripts/ld_preload_smoke.sh` | Curated smoke battery |
 | `scripts/check_release_gate.sh` | Release-claim coherence |
