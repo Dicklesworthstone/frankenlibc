@@ -41,6 +41,17 @@ const FAILURE_THRESHOLD: f64 = 0.85;
 /// EWMA smoothing factor for coverage tracking.
 const EWMA_ALPHA: f64 = 0.02;
 
+/// Sentinel used for malformed nonconformity scores.
+const NONFINITE_SCORE_SENTINEL: f64 = f64::MAX;
+
+fn sanitize_score(score: f64) -> f64 {
+    if score.is_finite() {
+        score
+    } else {
+        NONFINITE_SCORE_SENTINEL
+    }
+}
+
 /// Coverage state of the conformal risk controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConformalState {
@@ -120,6 +131,7 @@ impl ConformalRiskController {
     /// 6. Recomputes conformal threshold from the updated window
     /// 7. Updates state based on coverage_ewma vs thresholds
     pub fn observe(&mut self, score: f64) {
+        let score = sanitize_score(score);
         self.total_observations += 1;
 
         // Step 2: compute conformal p-value against current calibration window.
@@ -455,5 +467,50 @@ mod tests {
             "after fully overwriting the calibration window, stale high scores should no longer influence the threshold"
         );
         assert_eq!(ctrl.fill, WINDOW_SIZE);
+    }
+
+    #[test]
+    fn non_finite_scores_are_fail_closed_without_poisoning_window() {
+        let mut ctrl = ConformalRiskController::new();
+
+        for _ in 0..200 {
+            ctrl.observe(1.0);
+        }
+
+        let violations_before = ctrl.summary().violation_count;
+        ctrl.observe(f64::NAN);
+        ctrl.observe(f64::INFINITY);
+        ctrl.observe(f64::NEG_INFINITY);
+
+        let s = ctrl.summary();
+        assert_eq!(s.violation_count, violations_before + 3);
+        assert!(s.empirical_coverage.is_finite());
+        assert!((0.0..=1.0).contains(&s.empirical_coverage));
+        assert!(s.conformal_threshold.is_finite());
+        assert!(
+            ctrl.scores[..ctrl.fill]
+                .iter()
+                .all(|score| score.is_finite())
+        );
+    }
+
+    #[test]
+    fn all_non_finite_window_still_has_finite_threshold() {
+        let mut ctrl = ConformalRiskController::new();
+
+        for i in 0..WINDOW_SIZE {
+            let score = match i % 3 {
+                0 => f64::NAN,
+                1 => f64::INFINITY,
+                _ => f64::NEG_INFINITY,
+            };
+            ctrl.observe(score);
+        }
+
+        let s = ctrl.summary();
+        assert_eq!(ctrl.fill, WINDOW_SIZE);
+        assert!(s.conformal_threshold.is_finite());
+        assert_eq!(s.conformal_threshold, NONFINITE_SCORE_SENTINEL);
+        assert!(ctrl.scores.iter().all(|score| score.is_finite()));
     }
 }
