@@ -305,6 +305,24 @@ fn gate_script_is_executable() {
 }
 
 #[test]
+fn run_mode_forwards_target_dir_without_clobbering_rch_allowlist() {
+    let root = workspace_root();
+    let script = std::fs::read_to_string(root.join(GATE_SCRIPT)).expect("gate script readable");
+    assert!(
+        script.contains("case \",${RCH_ENV_ALLOWLIST:-},\" in"),
+        "run mode should inspect RCH_ENV_ALLOWLIST as a comma-delimited token list"
+    );
+    assert!(
+        script.contains("*,CARGO_TARGET_DIR,*)"),
+        "run mode should detect an existing CARGO_TARGET_DIR token"
+    );
+    assert!(
+        script.contains("export RCH_ENV_ALLOWLIST=\"${RCH_ENV_ALLOWLIST},CARGO_TARGET_DIR\""),
+        "run mode should append CARGO_TARGET_DIR instead of clobbering a pre-existing allowlist"
+    );
+}
+
+#[test]
 fn validate_only_accepts_report_matching_committed_summary() -> TestResult {
     let root = workspace_root();
     let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));

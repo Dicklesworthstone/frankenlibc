@@ -69,7 +69,16 @@ if [[ "${MODE}" == "run" ]]; then
   BUILD_LOG="${RUN_DIR}/rch_build.log"
   SMOKE_LOG="${RUN_DIR}/ld_preload_smoke.stdout.stderr.log"
   export CARGO_TARGET_DIR="${RUN_DIR}/cargo-target"
-  export RCH_ENV_ALLOWLIST="${RCH_ENV_ALLOWLIST:-CARGO_TARGET_DIR}"
+  case ",${RCH_ENV_ALLOWLIST:-}," in
+    *,CARGO_TARGET_DIR,*)
+      ;;
+    ,)
+      export RCH_ENV_ALLOWLIST="CARGO_TARGET_DIR"
+      ;;
+    *)
+      export RCH_ENV_ALLOWLIST="${RCH_ENV_ALLOWLIST},CARGO_TARGET_DIR"
+      ;;
+  esac
   echo "check_ld_preload_smoke_regeneration: building frankenlibc-abi through rch"
   set +e
   rch exec -- cargo build -p frankenlibc-abi --release > "${BUILD_LOG}" 2>&1
