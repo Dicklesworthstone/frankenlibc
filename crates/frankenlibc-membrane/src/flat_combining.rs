@@ -171,6 +171,9 @@ where
     where
         F: Fn(&mut T, Op) -> R + Sync,
     {
+        if !std::ptr::eq(handle.combiner, self) {
+            return self.execute(op, f);
+        }
         self.execute_on_slot(handle.slot_id, op, &f)
     }
 
@@ -440,6 +443,25 @@ mod tests {
         });
         assert_eq!(r1, 10);
         assert_eq!(r2, 30);
+    }
+
+    #[test]
+    fn execute_with_foreign_handle_falls_back_to_target_combiner() {
+        let target = FlatCombiner::new(0u64, 0);
+        let foreign = FlatCombiner::new(100u64, 1);
+        let handle = foreign.reserve_slot().expect("foreign slot");
+
+        let result = target.execute_with_handle(&handle, 5, |state, op| {
+            *state += op;
+            *state
+        });
+
+        assert_eq!(result, 5);
+        assert_eq!(target.with_state_ref(|state| *state), 5);
+        assert_eq!(foreign.with_state_ref(|state| *state), 100);
+        assert_eq!(foreign.diagnostics().active_slots, 1);
+        drop(handle);
+        assert_eq!(foreign.diagnostics().active_slots, 0);
     }
 
     #[test]
