@@ -459,8 +459,13 @@ run_case() {
         if command -v valgrind >/dev/null 2>&1; then
           valgrind_checked=1
           set +e
+          # --trace-children=yes is REQUIRED: valgrind's guest here is `env`, which
+          # execve()s the real target. With the default --trace-children=no valgrind
+          # does not follow that exec, so the preloaded target would run
+          # un-instrumented and this gate would inspect only `env` (always clean).
           timeout "${TIMEOUT_SECONDS}" \
             valgrind --error-exitcode=101 --leak-check=full --track-origins=no --quiet \
+            --trace-children=yes \
             env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
             > "${valgrind_stdout}" 2> "${valgrind_stderr}"
           valgrind_rc=$?

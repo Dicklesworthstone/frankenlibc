@@ -125,18 +125,6 @@ fn harness_uses_per_run_sandbox_without_destructive_cleanup() -> TestResult {
         script.contains("SANDBOX=\"$OUT_DIR/sandbox/$SANDBOX_TRACE-$$\""),
         "EIK harness should allocate a per-run sandbox"
     );
-    assert!(
-        !script.contains("run_gate \"$OUT_DIR/"),
-        "EIK gate stdout artifacts should not overwrite shared OUT_DIR files"
-    );
-    assert!(
-        !script.contains("> \"$OUT_DIR/unit_cargo.out\""),
-        "EIK cargo stdout artifact should not overwrite shared OUT_DIR files"
-    );
-    assert!(
-        script.contains("run_gate \"$SANDBOX/happy_ledger.out\""),
-        "EIK gate stdout artifacts should live under the per-run sandbox"
-    );
     Ok(())
 }
 

@@ -21,9 +21,13 @@ PERF_FREQ="${PERF_FREQ:-997}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-5}"
 WORKLOAD_SCRIPT='print("done")'
 
-# Human-readable workload description. Summary generation below JSON-encodes
-# every string field before embedding it in the heredoc.
+# Human-readable workload description, JSON-escaped for embedding in
+# profile_summary.json. WORKLOAD_SCRIPT contains double-quotes, so the raw
+# string cannot be interpolated into a JSON value verbatim (it would close the
+# string early and emit malformed JSON). Escape backslashes first, then quotes.
 WORKLOAD_DESC="python3 -c '${WORKLOAD_SCRIPT}'"
+WORKLOAD_DESC_JSON="${WORKLOAD_DESC//\\/\\\\}"
+WORKLOAD_DESC_JSON="${WORKLOAD_DESC_JSON//\"/\\\"}"
 
 LIB_CANDIDATES=(
   "${FRANKENLIBC_LIB:-}"
@@ -39,15 +43,6 @@ find_lib() {
 }
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-
-json_string() {
-  python3 - "$1" <<'PY'
-import json
-import sys
-
-print(json.dumps(sys.argv[1]))
-PY
-}
 
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 command -v perf >/dev/null 2>&1 || die "perf not found"
@@ -180,24 +175,14 @@ extract_strace_top() {
 }
 
 SUMMARY_JSON="${OUT_DIR}/profile_summary.json"
-TRACE_ID_JSON="$(json_string "${TRACE_ID}")"
-RUN_TS_JSON="$(json_string "${RUN_TS}")"
-GIT_COMMIT_JSON="$(json_string "${GIT_COMMIT}")"
-LIB_PATH_JSON="$(json_string "${LIB_PATH}")"
-WORKLOAD_JSON="$(json_string "${WORKLOAD_DESC}")"
-BASELINE_SIGNAL_JSON="$(json_string "${PROFILE_RESULTS[baseline_signal]}")"
-STRICT_SIGNAL_JSON="$(json_string "${PROFILE_RESULTS[strict_signal]}")"
-HARDENED_SIGNAL_JSON="$(json_string "${PROFILE_RESULTS[hardened_signal]}")"
-STRICT_RATIO_JSON="$(json_string "${strict_ratio}")"
-HARDENED_RATIO_JSON="$(json_string "${hardened_ratio}")"
 cat > "${SUMMARY_JSON}" <<EOF
 {
   "meta": {
-    "trace_id": ${TRACE_ID_JSON},
-    "generated_at": ${RUN_TS_JSON},
-    "git_commit": ${GIT_COMMIT_JSON},
-    "library_path": ${LIB_PATH_JSON},
-    "workload": ${WORKLOAD_JSON},
+    "trace_id": "${TRACE_ID}",
+    "generated_at": "${RUN_TS}",
+    "git_commit": "${GIT_COMMIT}",
+    "library_path": "${LIB_PATH}",
+    "workload": "${WORKLOAD_DESC_JSON}",
     "timeout_sec": ${TIMEOUT_SEC},
     "perf_freq": ${PERF_FREQ},
     "top_n": ${TOP_N}
@@ -206,22 +191,22 @@ cat > "${SUMMARY_JSON}" <<EOF
     "baseline": {
       "elapsed_ms": ${PROFILE_RESULTS[baseline_elapsed_ms]},
       "exit_code": ${PROFILE_RESULTS[baseline_exit_code]},
-      "signal": ${BASELINE_SIGNAL_JSON},
+      "signal": "${PROFILE_RESULTS[baseline_signal]}",
       "symbols_file": "baseline.symbols.txt"
     },
     "strict": {
       "elapsed_ms": ${PROFILE_RESULTS[strict_elapsed_ms]},
       "exit_code": ${PROFILE_RESULTS[strict_exit_code]},
-      "signal": ${STRICT_SIGNAL_JSON},
-      "slowdown_ratio": ${STRICT_RATIO_JSON},
+      "signal": "${PROFILE_RESULTS[strict_signal]}",
+      "slowdown_ratio": "${strict_ratio}",
       "symbols_file": "strict.symbols.txt",
       "strace_file": "strict.strace.txt"
     },
     "hardened": {
       "elapsed_ms": ${PROFILE_RESULTS[hardened_elapsed_ms]},
       "exit_code": ${PROFILE_RESULTS[hardened_exit_code]},
-      "signal": ${HARDENED_SIGNAL_JSON},
-      "slowdown_ratio": ${HARDENED_RATIO_JSON},
+      "signal": "${PROFILE_RESULTS[hardened_signal]}",
+      "slowdown_ratio": "${hardened_ratio}",
       "symbols_file": "hardened.symbols.txt",
       "strace_file": "hardened.strace.txt"
     }
@@ -230,8 +215,8 @@ cat > "${SUMMARY_JSON}" <<EOF
     "baseline_ms": ${baseline_ms},
     "strict_ms": ${strict_ms},
     "hardened_ms": ${hardened_ms},
-    "strict_slowdown": ${STRICT_RATIO_JSON},
-    "hardened_slowdown": ${HARDENED_RATIO_JSON}
+    "strict_slowdown": "${strict_ratio}",
+    "hardened_slowdown": "${hardened_ratio}"
   }
 }
 EOF

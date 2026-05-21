@@ -359,5 +359,17 @@ fn ld_preload_smoke_valgrind_wraps_the_preloaded_target_only() -> TestResult {
     require(
         target_env > 0,
         "ld_preload_smoke.sh must place the preload env after valgrind options",
+    )?;
+    // valgrind's guest is `env`, which execve()s the real target. Without
+    // --trace-children=yes valgrind does not follow that exec, so the preloaded
+    // target runs un-instrumented and the gate would inspect only `env`.
+    let trace_children = valgrind_tail.find("--trace-children=yes").ok_or_else(|| {
+        "ld_preload_smoke.sh valgrind invocation must pass --trace-children=yes so valgrind \
+         follows env's exec into the preloaded target"
+            .to_string()
+    })?;
+    require(
+        trace_children < target_env,
+        "ld_preload_smoke.sh must pass --trace-children=yes before the env target",
     )
 }

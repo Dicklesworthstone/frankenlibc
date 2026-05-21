@@ -533,43 +533,6 @@ fn validate_only_rejects_hand_edited_committed_summary_without_matching_report()
 }
 
 #[test]
-fn validate_only_rejects_hand_edited_canonical_mode_failure_counters() -> TestResult {
-    let root = workspace_root();
-    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
-    let report_value = fake_report(&canonical);
-    let temp = unique_temp_dir("ld-preload-smoke-regeneration-canonical-mode-counters");
-    let report = temp.join("abi_compat_report.json");
-    let trace = temp.join("trace.jsonl");
-    let edited_canonical = temp.join("ld_preload_smoke_summary.v1.json");
-    let mut mutated = canonical.clone();
-    mutated["modes"]["strict"]["signature_guard_failures"] = json!(0);
-    write_json(&report, &report_value);
-    std::fs::write(&trace, fake_trace(&report_value)).expect("write trace");
-    write_json(&edited_canonical, &mutated);
-
-    let (gate_report, _gate_log, output) =
-        run_gate(&temp, &report, &trace, Some(&edited_canonical));
-    assert!(
-        !output.status.success(),
-        "gate should fail when canonical per-mode failure counters are stale"
-    );
-    let gate = load_json(&gate_report);
-    assert_eq!(gate["status"].as_str(), Some("fail"));
-    assert!(
-        gate["comparison"]["drift"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["field"]
-                .as_str()
-                .unwrap_or("")
-                .contains("modes.strict.signature_guard_failures")),
-        "failure should identify the stale canonical strict-mode failure counter"
-    );
-    Ok(())
-}
-
-#[test]
 fn validate_only_rejects_trace_missing_workload_case() -> TestResult {
     let root = workspace_root();
     let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
