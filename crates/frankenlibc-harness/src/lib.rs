@@ -20,6 +20,7 @@ pub mod diff;
 pub mod evidence_compliance;
 pub mod evidence_decode;
 pub mod evidence_decode_render;
+pub mod evidence_freshness;
 pub mod evidence_ring_backpressure;
 pub mod explain_dossier;
 pub mod explainability_workbench;
