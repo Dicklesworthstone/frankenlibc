@@ -13,6 +13,19 @@ pub enum ConversionStatus {
 // Concrete Implementations
 // ----------------------------------------------------------------------------
 
+/// Whitespace test matching C's `isspace` in the C locale, which the
+/// C standard cites for the leading whitespace skipped by `strtol`,
+/// `strtod`, and friends. The set is `' '` plus `\t \n \v \f \r`
+/// (0x09..=0x0D).
+///
+/// Rust's `u8::is_ascii_whitespace` deliberately omits the vertical
+/// tab `\v` (0x0B), so using it here would make `strtol("\x0b42")`
+/// stop before the digits while glibc parses `42`.
+#[inline]
+const fn is_c_space(b: u8) -> bool {
+    b == b' ' || (b >= b'\t' && b <= b'\r')
+}
+
 pub fn atoi(s: &[u8]) -> i32 {
     let (val, _, _) = strtol_impl(s, 10);
     // POSIX SUSv4: atoi(str) ≡ (int) strtol(str, NULL, 10). The cast
@@ -39,7 +52,7 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
     let mut i = 0;
     let len = s.len();
 
-    while i < len && s[i].is_ascii_whitespace() {
+    while i < len && is_c_space(s[i]) {
         i += 1;
     }
     if i == len {
@@ -168,7 +181,7 @@ pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
     let mut i = 0;
     let len = s.len();
 
-    while i < len && s[i].is_ascii_whitespace() {
+    while i < len && is_c_space(s[i]) {
         i += 1;
     }
     if i == len {
@@ -608,7 +621,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
     let slice = &s[..len];
 
     let mut i = 0;
-    while i < slice.len() && slice[i].is_ascii_whitespace() {
+    while i < slice.len() && is_c_space(slice[i]) {
         i += 1;
     }
     if i >= slice.len() {
@@ -784,7 +797,7 @@ pub fn strtod(s: &[u8]) -> (f64, usize) {
 fn parse_decimal_f32_prefix(slice: &[u8], consumed: usize) -> Option<f32> {
     let consumed = consumed.min(slice.len());
     let mut start = 0;
-    while start < consumed && slice[start].is_ascii_whitespace() {
+    while start < consumed && is_c_space(slice[start]) {
         start += 1;
     }
     if start >= consumed {
@@ -1013,6 +1026,34 @@ mod tests {
         let (val, consumed) = strtod(b"  42.0\0");
         assert!((val - 42.0).abs() < 1e-10);
         assert_eq!(consumed, 6);
+    }
+
+    #[test]
+    fn leading_c_isspace_set_matches_glibc() {
+        // The C standard cites isspace() for the leading whitespace
+        // skipped by strtol/strtoul/strtod. The C-locale isspace set
+        // includes the vertical tab \x0b and form feed \x0c, which
+        // Rust's u8::is_ascii_whitespace omits / includes inconsistently.
+        // Verified against host glibc: strtol("\x0b\x0b42") == 42.
+        for &ws in &[b' ', b'\t', b'\n', 0x0b, 0x0c, b'\r'] {
+            let buf = [ws, ws, b'4', b'2'];
+            let (v, consumed, status) = strtol_impl(&buf, 10);
+            assert_eq!(v, 42, "strtol must skip leading {ws:#04x}");
+            assert_eq!(consumed, 4);
+            assert_eq!(status, ConversionStatus::Success);
+
+            let (uv, uconsumed, _) = strtoul_impl(&buf, 10);
+            assert_eq!(uv, 42, "strtoul must skip leading {ws:#04x}");
+            assert_eq!(uconsumed, 4);
+
+            let fbuf = [ws, b'4', b'2', b'.', b'0', 0];
+            let (fv, fconsumed) = strtod(&fbuf);
+            assert!((fv - 42.0).abs() < 1e-10, "strtod must skip {ws:#04x}");
+            assert_eq!(fconsumed, 5);
+        }
+        // A non-isspace control byte must NOT be skipped.
+        let (v, consumed, _) = strtol_impl(&[0x0e, b'4', b'2'], 10);
+        assert_eq!((v, consumed), (0, 0), "0x0e is not whitespace");
     }
 
     #[test]
