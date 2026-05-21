@@ -152,34 +152,62 @@ After fixing the `gettid` storm, the crash may resolve. If not:
 4. Verify `python3 -c 'print("done")'` completes without SIGABRT
 5. Benchmark against baseline for acceptable overhead (< 2x)
 
-## Implementation Notes (bd-35hjg.3 COMPLETE)
+## Implementation Notes (bd-35hjg.3 — PARTIAL, NOT CLOSED)
 
 ### Fix Applied
 
-A global `LAST_THREAD_CACHE` was added in `malloc_abi.rs` that stores the
-last (tid, slot_index) pair. The fast path checks if the cached slot's
-stored TID matches the cached TID WITHOUT calling gettid. This works because:
+`malloc_abi.rs` now derives a syscall-free thread key from the thread-control-
+block self pointer (`fs:0` on x86_64, `tpidr_el0` on aarch64) and memoizes the
+last `(tid, slot_index)` pair in a global `LAST_THREAD_CACHE`. The fast path
+returns the cached slot only after `slot_matches_thread_key()` confirms the
+cached slot is still owned by the current thread, so repeat lookups skip
+`gettid` without the cross-thread slot-confusion bug of the first attempt.
+Commits: `0e08e22a`, `52533362`, `97848ecf`.
 
-1. Single-threaded programs (like Python startup) always hit the cache
-2. Multi-threaded programs may return the wrong slot, but this only causes
-   false-positive reentry detection (bump allocator used unnecessarily)
-3. The slot's atomic TID field ensures correctness for thread exit/reuse
+### Verified Results (2026-05-21, HEAD with `97848ecf`, agent RedMill)
 
-### Results
+Re-verified directly: release `libfrankenlibc_abi.so` built via `rch`,
+workload `python3 -c 'print("done")'`, min of 5 runs, `strace -f -c` for the
+syscall breakdown.
 
-- **Strict mode**: gettid calls reduced from 61,726 to 1,065 (58x reduction)
-- **Hardened mode**: gettid calls reduced from 47,525 to 617 (77x reduction)
-- **Timing**: Now matches baseline (~210ms vs previous timeouts)
+| Metric              | Baseline | Strict        | Hardened        |
+|---------------------|----------|---------------|-----------------|
+| Wall time (min ms)  | 21       | 6559          | 29287           |
+| Ratio vs baseline   | 1.0x     | **312x**      | **1394x**       |
+| `latency_ratio_ppm` | —        | **312000000** | **1394000000**  |
+| Exit code / signal  | 0        | 0 (no SIGABRT)| 0 (no SIGABRT)  |
+| stdout              | `done`   | `done`        | `done`          |
 
-### Remaining gettid Calls
+**What the fix achieved:** the SIGABRT crash is gone — python3 now completes
+correctly under both modes (behavior proof: stdout `done`, exit 0). The
+`gettid` storm is cut from 61,726 to ~2,850 calls in strict mode.
 
-The remaining ~1000 gettid calls come from other modules:
-- `util.rs:179` - `AbiReentrantMutex` lock/unlock operations
-- `io_internal_abi.rs:1515` - IO operations
-- `owned_tls_cache.rs:35` - TLS cache access
+**What the fix did NOT achieve:** the bd-35hjg.3 acceptance test — strict-mode
+perf ratio within the `2000000` ppm smoke budget — **fails by 156x** (strict
+312000000 ppm) and 697x (hardened 1394000000 ppm). The earlier claim that
+timing "matches baseline (~210ms)" was wrong: it compared against the *pre-fix
+crashed run* (SIGABRT at 109ms), which never executed the full python3 startup.
+Once python3 actually completes, the real cost is visible.
 
-These can be optimized with similar caching if needed, but the 58-77x
-reduction in the allocator hot path resolves the primary regression.
+### Where the residual cost is — NOT syscalls
+
+`strace -f -c` of the strict run shows total syscall time of only ~4.8ms across
+3,831 calls. The ~6.5s strict wall time is therefore **userspace membrane
+overhead**, not syscalls. The original RCA pinned `gettid` (92% of a *crashed*
+run's syscall time) as the dominant cost; that figure was an artifact of
+profiling an incomplete run. The dominant cost of a *completed* python3 startup
+under the membrane is per-libc-call validation overhead.
+
+### Remaining work (bd-35hjg.3 stays OPEN)
+
+bd-35hjg.3 as scoped ("algorithmic fix to the hot kernel named by the RCA") is
+satisfied for the named `gettid` kernel, but the parent epic goal (650x → within
+budget) is **not** met. Closing WS-1 requires a follow-up that profiles and
+reduces the membrane per-libc-call userspace overhead — a different problem from
+the `gettid` storm. The residual `gettid` callers (`util.rs:179`
+`AbiReentrantMutex`, `io_internal_abi.rs:1515`, `owned_tls_cache.rs:35`) are now
+a rounding error (<5ms total) and not worth optimizing until the userspace
+overhead is addressed.
 
 ## References
 
