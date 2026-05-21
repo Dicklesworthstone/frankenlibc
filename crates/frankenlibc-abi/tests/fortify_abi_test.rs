@@ -210,6 +210,70 @@ fn strncat_chk_shorter_src() {
     assert_eq!(&dest[..3], b"AB\0");
 }
 
+/// Regression: `__strncat_chk` must not read `src` past the `n` bytes that
+/// `strncat` is permitted to read. It previously sized the append with an
+/// unbounded `strlen(src)`, so a caller passing a non-terminated `src` with
+/// only `n` readable bytes (legal per POSIX) could fault.
+///
+/// `src` fills a whole readable page with non-NUL bytes, immediately followed
+/// by a `PROT_NONE` guard page. The append point sits 64 bytes before the
+/// guard, so the bounded fix touches only `src[0..n]` — well clear of the
+/// guard — while the old unbounded `strlen(src)` scans the rest of the page
+/// looking for a NUL and faults on the guard. A regression therefore segfaults
+/// the test binary (a loud, unmistakable signal); with the fix the test runs
+/// clean. Done in-process: forking from the multithreaded test harness and
+/// then entering membrane code can deadlock on a lock held across `fork()`.
+#[test]
+fn strncat_chk_does_not_overread_src_past_n() {
+    unsafe {
+        let page = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+        let region = libc::mmap(
+            std::ptr::null_mut(),
+            page * 2,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        );
+        assert_ne!(region, libc::MAP_FAILED, "mmap failed");
+        let base = region as *mut u8;
+        // Second page is unreadable: any read into it faults.
+        assert_eq!(
+            libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE),
+            0,
+            "mprotect failed"
+        );
+        // Fill the whole first page with non-NUL bytes — no terminator anywhere,
+        // so an unbounded scan runs straight off the end into the guard page.
+        for i in 0..page {
+            *base.add(i) = b'Z';
+        }
+
+        // Append point: 64 bytes before the guard. The bounded scan reads only
+        // src[0..n]; the old unbounded strlen(src) walks to the guard and dies.
+        let n = 16usize;
+        let src = base.add(page - 64);
+
+        let mut dest = [0u8; 64];
+        dest[0] = b'A';
+        dest[1] = 0;
+        __strncat_chk(dest.as_mut_ptr().cast(), src.cast::<c_char>(), n, dest.len());
+
+        assert_eq!(dest[0], b'A');
+        assert!(
+            dest[1..=n].iter().all(|&b| b == b'Z'),
+            "expected {n} appended 'Z' bytes"
+        );
+        assert_eq!(dest[1 + n], 0, "result must be NUL-terminated");
+
+        assert_eq!(
+            libc::munmap(region, page * 2),
+            0,
+            "munmap failed"
+        );
+    }
+}
+
 #[test]
 fn stpcpy_chk_returns_end() {
     let src = CString::new("test").unwrap();

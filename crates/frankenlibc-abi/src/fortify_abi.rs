@@ -264,10 +264,13 @@ pub unsafe extern "C" fn __strncat_chk(
     destlen: usize,
 ) -> *mut c_char {
     let dlen = unsafe { crate::string_abi::strlen(dest) };
-    let slen = {
-        let full = unsafe { crate::string_abi::strlen(src) };
-        if full < n { full } else { n }
-    };
+    // `strncat` reads at most `n` bytes of `src`, so a caller may legitimately
+    // pass a `src` holding only `n` readable bytes with no NUL. Use the bounded
+    // `strnlen` here: an unbounded `strlen(src)` would over-read past `n` and
+    // could fault on an otherwise-correct caller. `strnlen` yields the same
+    // `min(strlen(src), n)` value glibc's `__strncat_chk` computes via
+    // `strnlen(s2, n)`.
+    let slen = unsafe { crate::string_abi::strnlen(src, n) };
     if destlen != usize::MAX && dlen + slen + 1 > destlen {
         unsafe { __chk_fail() }
     }
