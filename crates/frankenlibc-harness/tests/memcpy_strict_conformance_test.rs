@@ -4,6 +4,7 @@
 //! Run: cargo test -p frankenlibc-harness --test memcpy_strict_conformance_test
 
 use serde::Deserialize;
+use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -73,7 +74,7 @@ fn load_fixture(name: &str) -> Result<FixtureFile, String> {
 
 fn execute_case_via_harness(
     function: &str,
-    inputs: &serde_json::Value,
+    inputs: &Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_harness"))
@@ -120,6 +121,44 @@ fn execute_case_via_harness(
             .unwrap_or_else(|| String::from("missing error payload from harness subprocess"))),
         other => Err(format!("unknown harness subprocess payload kind: {other}")),
     }
+}
+
+fn case_by_name<'a>(fixture: &'a FixtureFile, name: &str) -> Result<&'a FixtureCase, String> {
+    fixture
+        .cases
+        .iter()
+        .find(|case| case.name == name)
+        .ok_or_else(|| format!("missing fixture case {name}"))
+}
+
+fn inputs_object(case: &FixtureCase) -> Result<Map<String, Value>, String> {
+    case.inputs
+        .as_object()
+        .cloned()
+        .ok_or_else(|| format!("case {} inputs must be a JSON object", case.name))
+}
+
+fn input_usize(case: &FixtureCase, field: &str) -> Result<usize, String> {
+    let raw = case
+        .inputs
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("case {} missing numeric input `{field}`", case.name))?;
+    usize::try_from(raw).map_err(|_| format!("case {} input `{field}` exceeds usize", case.name))
+}
+
+fn input_bytes(case: &FixtureCase, field: &str) -> Result<Vec<u8>, String> {
+    let value = case
+        .inputs
+        .get(field)
+        .ok_or_else(|| format!("case {} missing byte-array input `{field}`", case.name))?;
+    serde_json::from_value(value.clone())
+        .map_err(|err| format!("case {} invalid byte-array `{field}`: {err}", case.name))
+}
+
+fn parse_output_bytes(case_name: &str, output: &str) -> Result<Vec<u8>, String> {
+    serde_json::from_str(output)
+        .map_err(|err| format!("case {case_name} produced non-byte-array output {output:?}: {err}"))
 }
 
 #[test]
@@ -297,5 +336,77 @@ fn memcpy_strict_fixture_executes_via_isolated_harness() -> Result<(), String> {
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn memcpy_strict_metamorphic_relations_hold_without_golden_outputs() -> Result<(), String> {
+    let fixture = load_fixture("memcpy_strict")?;
+
+    let full = case_by_name(&fixture, "copy_full_8")?;
+    assert_eq!(
+        input_usize(full, "n")?,
+        input_bytes(full, "src")?.len(),
+        "full-copy relation requires n to match src length"
+    );
+    let base = execute_case_via_harness(&full.function, &full.inputs, "strict")?;
+    let base_bytes = parse_output_bytes(&full.name, &base.impl_output)?;
+
+    let suffix = vec![251_u8, 0, 17];
+    let mut extended_src = input_bytes(full, "src")?;
+    extended_src.extend_from_slice(&suffix);
+    let mut extended_inputs = inputs_object(full)?;
+    extended_inputs.insert(String::from("src"), serde_json::json!(extended_src));
+    extended_inputs.insert(
+        String::from("n"),
+        serde_json::json!(input_usize(full, "n")? + suffix.len()),
+    );
+    extended_inputs.insert(
+        String::from("dst_len"),
+        serde_json::json!(input_usize(full, "dst_len")? + suffix.len()),
+    );
+    let extended_input = Value::Object(extended_inputs);
+    let extended = execute_case_via_harness(&full.function, &extended_input, "strict")?;
+    let extended_bytes = parse_output_bytes("copy_full_8_extended", &extended.impl_output)?;
+    assert_eq!(
+        extended_bytes
+            .get(..base_bytes.len())
+            .ok_or_else(|| String::from("extended memcpy output shorter than base output"))?,
+        base_bytes.as_slice(),
+        "extending src/n/dst_len must preserve the original full-copy prefix"
+    );
+    assert_eq!(
+        extended_bytes
+            .get(base_bytes.len()..)
+            .ok_or_else(|| String::from("extended memcpy output missing appended suffix"))?,
+        suffix.as_slice(),
+        "extended full-copy output suffix must come from the appended input suffix"
+    );
+    assert!(
+        base.host_parity && extended.host_parity,
+        "metamorphic relation must run against host-parity executions"
+    );
+
+    let zero = case_by_name(&fixture, "copy_zero")?;
+    assert_eq!(
+        input_usize(zero, "n")?,
+        0,
+        "zero-copy relation requires n=0"
+    );
+    let zero_base = execute_case_via_harness(&zero.function, &zero.inputs, "strict")?;
+    let mut zero_mutated_inputs = inputs_object(zero)?;
+    zero_mutated_inputs.insert(String::from("src"), serde_json::json!([9, 8, 7, 6, 5, 4]));
+    let zero_mutated_input = Value::Object(zero_mutated_inputs);
+    let zero_mutated = execute_case_via_harness(&zero.function, &zero_mutated_input, "strict")?;
+    assert_eq!(
+        parse_output_bytes(&zero.name, &zero_base.impl_output)?,
+        parse_output_bytes("copy_zero_mutated_source", &zero_mutated.impl_output)?,
+        "n=0 memcpy output must be invariant under source-byte changes"
+    );
+    assert!(
+        zero_base.host_parity && zero_mutated.host_parity,
+        "zero-copy relation must run against host-parity executions"
+    );
+
     Ok(())
 }
