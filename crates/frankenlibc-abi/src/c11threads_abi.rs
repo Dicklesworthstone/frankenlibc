@@ -88,7 +88,7 @@ pub unsafe extern "C" fn thrd_create(
     func: Option<ThrdStartT>,
     arg: *mut c_void,
 ) -> c_int {
-    if thr.is_null() {
+    if !tracked_required_object_fits(thr) {
         return THRD_ERROR;
     }
     let func = match func {
@@ -130,6 +130,10 @@ pub unsafe extern "C" fn thrd_create(
 /// C11 `thrd_join` — wait for thread termination.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn thrd_join(thr: ThrdT, res: *mut c_int) -> c_int {
+    if !tracked_optional_object_fits(res) {
+        return THRD_ERROR;
+    }
+
     let mut retval: *mut c_void = std::ptr::null_mut();
     let rc = unsafe { crate::pthread_abi::pthread_join(thr, &mut retval) };
     if rc == 0 && !res.is_null() {
@@ -219,7 +223,7 @@ pub extern "C" fn thrd_yield() {
 /// C11 `mtx_init` — create a mutex.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_init(mtx: *mut MtxT, typ: c_int) -> c_int {
-    if mtx.is_null() {
+    if !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
     if typ & !(MTX_TIMED | MTX_RECURSIVE) != 0 {
@@ -254,7 +258,7 @@ pub unsafe extern "C" fn mtx_init(mtx: *mut MtxT, typ: c_int) -> c_int {
 /// C11 `mtx_lock` — lock a mutex.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_lock(mtx: *mut MtxT) -> c_int {
-    if mtx.is_null() {
+    if !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_lock(mtx) })
@@ -266,7 +270,7 @@ pub unsafe extern "C" fn mtx_lock(mtx: *mut MtxT) -> c_int {
 /// C11 `mtx_trylock` — try to lock a mutex without blocking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_trylock(mtx: *mut MtxT) -> c_int {
-    if mtx.is_null() {
+    if !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_trylock(mtx) })
@@ -278,7 +282,7 @@ pub unsafe extern "C" fn mtx_trylock(mtx: *mut MtxT) -> c_int {
 /// C11 `mtx_timedlock` — lock a mutex with timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_timedlock(mtx: *mut MtxT, ts: *const libc::timespec) -> c_int {
-    if mtx.is_null() || ts.is_null() {
+    if !tracked_required_object_fits(mtx) || !tracked_required_object_fits(ts) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_timedlock(mtx, ts) })
@@ -290,7 +294,7 @@ pub unsafe extern "C" fn mtx_timedlock(mtx: *mut MtxT, ts: *const libc::timespec
 /// C11 `mtx_unlock` — unlock a mutex.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_unlock(mtx: *mut MtxT) -> c_int {
-    if mtx.is_null() {
+    if !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_unlock(mtx) })
@@ -302,7 +306,7 @@ pub unsafe extern "C" fn mtx_unlock(mtx: *mut MtxT) -> c_int {
 /// C11 `mtx_destroy` — destroy a mutex.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_destroy(mtx: *mut MtxT) {
-    if !mtx.is_null() {
+    if tracked_required_object_fits(mtx) {
         unsafe { crate::pthread_abi::pthread_mutex_destroy(mtx) };
     }
 }
@@ -317,7 +321,7 @@ pub unsafe extern "C" fn mtx_destroy(mtx: *mut MtxT) {
 /// C11 `cnd_init` — create a condition variable.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cnd_init(cond: *mut CndT) -> c_int {
-    if cond.is_null() {
+    if !tracked_required_object_fits(cond) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_init(cond, std::ptr::null()) })
@@ -329,7 +333,7 @@ pub unsafe extern "C" fn cnd_init(cond: *mut CndT) -> c_int {
 /// C11 `cnd_signal` — wake one thread waiting on a condition variable.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cnd_signal(cond: *mut CndT) -> c_int {
-    if cond.is_null() {
+    if !tracked_required_object_fits(cond) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_signal(cond) })
@@ -341,7 +345,7 @@ pub unsafe extern "C" fn cnd_signal(cond: *mut CndT) -> c_int {
 /// C11 `cnd_broadcast` — wake all threads waiting on a condition variable.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cnd_broadcast(cond: *mut CndT) -> c_int {
-    if cond.is_null() {
+    if !tracked_required_object_fits(cond) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_broadcast(cond) })
@@ -353,7 +357,7 @@ pub unsafe extern "C" fn cnd_broadcast(cond: *mut CndT) -> c_int {
 /// C11 `cnd_wait` — wait on a condition variable.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cnd_wait(cond: *mut CndT, mtx: *mut MtxT) -> c_int {
-    if cond.is_null() || mtx.is_null() {
+    if !tracked_required_object_fits(cond) || !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_wait(cond, mtx) })
@@ -369,7 +373,10 @@ pub unsafe extern "C" fn cnd_timedwait(
     mtx: *mut MtxT,
     ts: *const libc::timespec,
 ) -> c_int {
-    if cond.is_null() || mtx.is_null() || ts.is_null() {
+    if !tracked_required_object_fits(cond)
+        || !tracked_required_object_fits(mtx)
+        || !tracked_required_object_fits(ts)
+    {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_timedwait(cond, mtx, ts) })
@@ -381,7 +388,7 @@ pub unsafe extern "C" fn cnd_timedwait(
 /// C11 `cnd_destroy` — destroy a condition variable.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cnd_destroy(cond: *mut CndT) {
-    if !cond.is_null() {
+    if tracked_required_object_fits(cond) {
         unsafe { crate::pthread_abi::pthread_cond_destroy(cond) };
     }
 }
@@ -396,7 +403,7 @@ pub unsafe extern "C" fn cnd_destroy(cond: *mut CndT) {
 /// C11 `tss_create` — create thread-specific storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tss_create(key: *mut TssT, dtor: Option<TssDtorT>) -> c_int {
-    if key.is_null() {
+    if !tracked_required_object_fits(key) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_key_create(key, dtor) })
@@ -439,7 +446,7 @@ pub unsafe extern "C" fn tss_delete(key: TssT) {
 /// C11 `call_once` — execute a callable exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn call_once(flag: *mut OnceFlag, func: Option<extern "C" fn()>) {
-    if flag.is_null() || func.is_none() {
+    if !tracked_required_object_fits(flag) || func.is_none() {
         return;
     }
     // C11 call_once returns void (unlike pthread_once which returns int).

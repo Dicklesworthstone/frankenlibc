@@ -20,6 +20,7 @@ const THRD_BUSY: c_int = 1;
 const MTX_RECURSIVE: c_int = 1;
 
 static C11_THREAD_SELF_SNAPSHOT: AtomicUsize = AtomicUsize::new(0);
+static C11_TRACKED_SHORT_STARTS: AtomicUsize = AtomicUsize::new(0);
 
 fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
     assert!(len > 0);
@@ -51,6 +52,11 @@ fn assert_known_short(raw: *const c_void, required: usize) {
 unsafe extern "C" fn simple_thread_func(arg: *mut c_void) -> c_int {
     let val = arg as usize as c_int;
     val + 10
+}
+
+unsafe extern "C" fn tracked_short_start_probe(_arg: *mut c_void) -> c_int {
+    C11_TRACKED_SHORT_STARTS.fetch_add(1, Ordering::SeqCst);
+    0
 }
 
 #[test]
@@ -124,6 +130,30 @@ fn test_thrd_create_null_returns_error() {
 }
 
 #[test]
+fn test_thrd_create_rejects_tracked_short_thread_output() {
+    let required = std::mem::size_of::<libc::pthread_t>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    assert_known_short(raw, required);
+    C11_TRACKED_SHORT_STARTS.store(0, Ordering::SeqCst);
+
+    let rc = unsafe {
+        thrd_create(
+            raw.cast::<libc::pthread_t>(),
+            Some(tracked_short_start_probe),
+            std::ptr::null_mut(),
+        )
+    };
+
+    assert_ne!(rc, THRD_SUCCESS);
+    assert_eq!(
+        C11_TRACKED_SHORT_STARTS.load(Ordering::SeqCst),
+        0,
+        "invalid output storage must be rejected before spawning"
+    );
+    free_tracked(raw);
+}
+
+#[test]
 fn test_thrd_current_equal() {
     let tid = thrd_current();
     assert_ne!(tid, 0, "thrd_current should return non-zero");
@@ -180,6 +210,18 @@ fn test_mtx_init_lock_unlock_destroy() {
         assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
         mtx_destroy(&mut mtx);
     }
+}
+
+#[test]
+fn test_mtx_init_rejects_tracked_short_mutex() {
+    let required = std::mem::size_of::<libc::pthread_mutex_t>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    assert_known_short(raw, required);
+
+    let rc = unsafe { mtx_init(raw.cast::<libc::pthread_mutex_t>(), 0) };
+
+    assert_ne!(rc, THRD_SUCCESS);
+    free_tracked(raw);
 }
 
 #[test]
@@ -252,6 +294,18 @@ fn test_cnd_init_signal_destroy() {
         assert_eq!(cnd_broadcast(&mut cond), THRD_SUCCESS);
         cnd_destroy(&mut cond);
     }
+}
+
+#[test]
+fn test_cnd_init_rejects_tracked_short_condition() {
+    let required = std::mem::size_of::<libc::pthread_cond_t>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    assert_known_short(raw, required);
+
+    let rc = unsafe { cnd_init(raw.cast::<libc::pthread_cond_t>()) };
+
+    assert_ne!(rc, THRD_SUCCESS);
+    free_tracked(raw);
 }
 
 #[test]
@@ -375,6 +429,18 @@ fn test_tss_create_null_key_returns_error() {
         let rc = tss_create(std::ptr::null_mut(), None);
         assert_ne!(rc, THRD_SUCCESS, "tss_create with null key should fail");
     }
+}
+
+#[test]
+fn test_tss_create_rejects_tracked_short_key() {
+    let required = std::mem::size_of::<libc::pthread_key_t>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    assert_known_short(raw, required);
+
+    let rc = unsafe { tss_create(raw.cast::<libc::pthread_key_t>(), None) };
+
+    assert_ne!(rc, THRD_SUCCESS);
+    free_tracked(raw);
 }
 
 // ===========================================================================
