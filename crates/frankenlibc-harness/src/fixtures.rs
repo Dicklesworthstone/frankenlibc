@@ -87,8 +87,24 @@ pub struct FixtureSet {
     pub family: String,
     /// UTC timestamp of capture.
     pub captured_at: String,
+    /// Host identity used while refreshing strict host-glibc outputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_host: Option<CaptureHost>,
     /// Individual test cases.
     pub cases: Vec<FixtureCase>,
+}
+
+/// Stable host fingerprint recorded on captured fixture sets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureHost {
+    /// Kernel release observed on the capture host.
+    pub kernel: String,
+    /// Host glibc version used as the strict-mode oracle.
+    pub glibc_version: String,
+    /// Rust target architecture for the capture host.
+    pub arch: String,
+    /// Stable composite fingerprint for byte-identical rerun checks.
+    pub fingerprint: String,
 }
 
 impl FixtureSet {
@@ -143,6 +159,8 @@ struct StructuredFixtureSet {
     schema_version: String,
     family: String,
     captured_at: String,
+    #[serde(default)]
+    capture_host: Option<CaptureHost>,
     #[serde(default)]
     program_scenarios: Vec<StructuredProgramScenario>,
     #[serde(default)]
@@ -203,6 +221,7 @@ impl StructuredFixtureSet {
             version,
             family: self.family,
             captured_at: self.captured_at,
+            capture_host: self.capture_host,
             cases,
         }
     }

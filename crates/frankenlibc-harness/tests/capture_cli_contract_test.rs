@@ -7,6 +7,8 @@ use serde_json::Value;
 
 type TestResult<T = ()> = Result<T, String>;
 
+const PINNED_CAPTURE_TIMESTAMP: &str = "2026-05-21T08:45:30Z";
+
 fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -54,6 +56,16 @@ fn json_array<'a>(value: &'a Value, field: &str) -> TestResult<&'a Vec<Value>> {
         .get(field)
         .and_then(Value::as_array)
         .ok_or_else(|| format!("missing or non-array `{field}`"))
+}
+
+fn json_object<'a>(
+    value: &'a Value,
+    field: &str,
+) -> TestResult<&'a serde_json::Map<String, Value>> {
+    value
+        .get(field)
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("missing or non-object `{field}`"))
 }
 
 fn cargo_target_dir_for_bin() -> PathBuf {
@@ -197,6 +209,10 @@ fn run_capture(
         .arg(output)
         .arg("--family")
         .arg(family)
+        .env(
+            "FRANKENLIBC_CAPTURE_TIMESTAMP_UTC",
+            PINNED_CAPTURE_TIMESTAMP,
+        )
         .output()
         .map_err(|e| format!("spawn harness capture: {e}"))
 }
@@ -216,10 +232,7 @@ fn manifest_anchors_to_capture_subcommand() -> TestResult {
         json_string(&m, "manifest_id")? == "capture-cli-contract",
         "manifest_id mismatch",
     )?;
-    require(
-        json_string(&m, "bead")? == "pending-tracker-capture-cli-contract",
-        "bead mismatch",
-    )?;
+    require(json_string(&m, "bead")? == "bd-zt1pq.1", "bead mismatch")?;
     require(
         json_string(&m, "subcommand_name")? == "capture",
         "subcommand_name mismatch",
@@ -244,6 +257,9 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         "must_refresh_strict_cases_from_host_output",
         "must_refresh_mode_both_cases_from_host_output",
         "must_preserve_hardened_only_expected_output",
+        "must_stamp_real_capture_timestamp",
+        "must_stamp_capture_host_kernel_glibc_arch",
+        "must_reproduce_byte_identical_when_timestamp_pinned",
         "must_report_unsupported_cases_as_skipped_warnings",
         "must_fail_closed_when_no_templates_match",
         "must_preserve_original_fixture_filename",
@@ -260,6 +276,8 @@ fn manifest_underlying_lib_functions_are_pinned() -> TestResult {
     let functions = json_array(&m, "underlying_lib_functions")?;
     for expected in [
         "frankenlibc_harness::capture::capture_family_fixtures",
+        "frankenlibc_harness::capture::capture_timestamp_utc",
+        "frankenlibc_harness::capture::detect_capture_host",
         "frankenlibc_harness::FixtureSet::from_file",
         "frankenlibc_harness::FixtureSet::to_json",
         "frankenlibc_fixture_exec::execute_fixture_case",
@@ -343,6 +361,30 @@ fn cli_refreshes_strict_and_both_cases_while_preserving_hardened_only() -> TestR
         "capture must not write unmatched family templates",
     )?;
     let fixture = load_json(&output)?;
+    require(
+        json_string(&fixture, "captured_at")? == PINNED_CAPTURE_TIMESTAMP,
+        "capture must stamp the run timestamp instead of preserving a placeholder",
+    )?;
+    let capture_host = json_object(&fixture, "capture_host")?;
+    for field in ["kernel", "glibc_version", "arch", "fingerprint"] {
+        require(
+            capture_host
+                .get(field)
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty()),
+            format!("capture_host.{field} must be non-empty"),
+        )?;
+    }
+    let fingerprint = capture_host
+        .get("fingerprint")
+        .and_then(Value::as_str)
+        .ok_or("missing capture_host.fingerprint")?;
+    require(
+        fingerprint.contains("kernel=")
+            && fingerprint.contains("glibc=")
+            && fingerprint.contains("arch="),
+        "capture_host.fingerprint must bind kernel, glibc, and arch",
+    )?;
     let cases = json_array(&fixture, "cases")?;
     require(
         cases.len() == 3,
@@ -368,6 +410,24 @@ fn cli_refreshes_strict_and_both_cases_while_preserving_hardened_only() -> TestR
             .and_then(Value::as_str)
             == Some("keep-hardened"),
         "hardened-only expected output must be preserved",
+    )?;
+
+    let second_output_dir = dir.join("second").join("captured");
+    let second = run_capture(&bin, &template_dir, &second_output_dir, "string")?;
+    if !second.status.success() {
+        return Err(format!(
+            "second capture command failed: status={:?} stderr={}",
+            second.status,
+            String::from_utf8_lossy(&second.stderr)
+        ));
+    }
+    let first_body = std::fs::read_to_string(output_dir.join("string_alpha.json"))
+        .map_err(|e| format!("read first captured fixture: {e}"))?;
+    let second_body = std::fs::read_to_string(second_output_dir.join("string_alpha.json"))
+        .map_err(|e| format!("read second captured fixture: {e}"))?;
+    require(
+        first_body == second_body,
+        "rerunning with a pinned capture timestamp must reproduce byte-identical fixtures",
     )
 }
 

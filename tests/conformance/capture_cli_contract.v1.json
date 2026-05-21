@@ -1,10 +1,10 @@
 {
   "schema_version": "v1",
   "manifest_id": "capture-cli-contract",
-  "bead": "bd-yjz2d",
+  "bead": "bd-zt1pq.1",
   "generated_utc": "2026-05-14T00:00:00Z",
   "source_commit": "6d01eaf299a017ff35c8fbb8e2e2238cd5b00d12",
-  "purpose": "Pin the harness binary `capture` subcommand that refreshes fixture templates from host-glibc observations before later verification. The command must read fixture JSON templates, filter by family or filename stem, create the output directory, refresh strict and mode=both cases from host capture, preserve hardened-only cases, write refreshed fixture JSON with the original filename, emit deterministic summary diagnostics, surface unsupported-case warnings, and fail closed when no valid templates match.",
+  "purpose": "Pin the harness binary `capture` subcommand that refreshes fixture templates from host-glibc observations before later verification. The command must read fixture JSON templates, filter by family or filename stem, create the output directory, refresh strict and mode=both cases from host capture, stamp the run capture timestamp plus capture-host fingerprint, preserve hardened-only cases, write refreshed fixture JSON with the original filename, emit deterministic summary diagnostics, surface unsupported-case warnings, and fail closed when no valid templates match.",
   "subcommand_name": "capture",
   "binary_target": "harness",
   "required_flags": [
@@ -16,6 +16,8 @@
   "io_pattern": "fixture_template_directory_to_refreshed_fixture_directory",
   "underlying_lib_functions": [
     "frankenlibc_harness::capture::capture_family_fixtures",
+    "frankenlibc_harness::capture::capture_timestamp_utc",
+    "frankenlibc_harness::capture::detect_capture_host",
     "frankenlibc_harness::FixtureSet::from_file",
     "frankenlibc_harness::FixtureSet::to_json",
     "frankenlibc_fixture_exec::execute_fixture_case"
@@ -27,7 +29,14 @@
       "version",
       "family",
       "captured_at",
+      "capture_host",
       "cases"
+    ],
+    "required_capture_host_fields": [
+      "kernel",
+      "glibc_version",
+      "arch",
+      "fingerprint"
     ],
     "required_case_fields": [
       "name",
@@ -48,6 +57,9 @@
     "must_refresh_strict_cases_from_host_output": true,
     "must_refresh_mode_both_cases_from_host_output": true,
     "must_preserve_hardened_only_expected_output": true,
+    "must_stamp_real_capture_timestamp": true,
+    "must_stamp_capture_host_kernel_glibc_arch": true,
+    "must_reproduce_byte_identical_when_timestamp_pinned": true,
     "must_report_unsupported_cases_as_skipped_warnings": true,
     "must_fail_closed_when_no_templates_match": true,
     "must_preserve_original_fixture_filename": true
@@ -58,13 +70,16 @@
     "hardened_only_case_refreshed",
     "strict_case_left_stale",
     "mode_both_case_left_stale",
+    "placeholder_midnight_timestamp_preserved",
+    "capture_host_fingerprint_missing",
+    "capture_rerun_not_byte_identical_with_pinned_timestamp",
     "unsupported_case_silently_dropped",
     "missing_warning_summary",
     "no_matching_templates_accepted",
     "output_filename_changed"
   ],
   "summary": {
-    "bead": "pending-tracker-capture-cli-contract",
+    "bead": "bd-zt1pq.1",
     "subcommand": "capture",
     "report_only": true,
     "claim_status": "code_only_pending_tracker_closeout"

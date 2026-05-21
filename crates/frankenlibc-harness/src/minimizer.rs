@@ -158,6 +158,7 @@ pub fn minimize_fixture_set(
         version: set.version.clone(),
         family: set.family.clone(),
         captured_at: set.captured_at.clone(),
+        capture_host: set.capture_host.clone(),
         cases: result.cases.clone(),
     };
     (minimized_set, result)
@@ -293,6 +294,7 @@ mod tests {
             version: "v1".into(),
             family: "string/ops".into(),
             captured_at: "2026-01-01T00:00:00Z".into(),
+            capture_host: None,
             cases: vec![make_case("a"), make_case("b"), make_case("c")],
         };
         let pred = FnPredicate(|c: &[FixtureCase]| {
