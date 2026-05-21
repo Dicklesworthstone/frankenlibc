@@ -21,7 +21,7 @@ export CARGO_TARGET_DIR
 case ",${RCH_ENV_ALLOWLIST:-}," in
   *,CARGO_TARGET_DIR,*)
     ;;
-  ,)
+  ,,)
     export RCH_ENV_ALLOWLIST="CARGO_TARGET_DIR"
     ;;
   *)
