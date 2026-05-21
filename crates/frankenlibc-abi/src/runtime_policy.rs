@@ -1605,10 +1605,31 @@ fn note_cross_family_overlap(
     let _ = kernel.note_overlap(family_idx, peer_idx, witness);
 }
 
-/// Global startup guard.  Set to 1 after kernel initialization completes.
-/// Until then, `decide()` returns passthrough to avoid deadlocks during
-/// early startup when TLS, heap, and runtime state are not yet ready.
-static RUNTIME_READY: AtomicU8 = AtomicU8::new(0);
+const RUNTIME_STATE_BOOTSTRAP: u8 = 0;
+const RUNTIME_STATE_ARMING: u8 = 1;
+const RUNTIME_STATE_ACTIVE: u8 = 2;
+
+/// Global startup guard.  It remains in bootstrap passthrough until a caller
+/// observes the startup-sensitive window is closed, then moves through an
+/// explicit arming state before activation.  `decide()` treats both bootstrap
+/// and arming as passthrough so reentrant calls during the transition cannot
+/// deadlock inside the membrane.
+static RUNTIME_READY: AtomicU8 = AtomicU8::new(RUNTIME_STATE_BOOTSTRAP);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeReadyObservation {
+    StartupWindowOpen,
+    StartupWindowClosed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeReadyTransition {
+    DeferredStartupWindowOpen,
+    DeferredReentrantPolicyContext,
+    ArmingInProgress,
+    AlreadyActive,
+    Armed,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AbiRuntimePhase {
@@ -1620,7 +1641,7 @@ pub(crate) enum AbiRuntimePhase {
 /// validation can safely use TLS, locks, and the heap.
 #[inline]
 pub(crate) fn is_runtime_ready() -> bool {
-    RUNTIME_READY.load(AtomicOrdering::Relaxed) != 0
+    RUNTIME_READY.load(AtomicOrdering::Acquire) == RUNTIME_STATE_ACTIVE
 }
 
 /// Shared bootstrap/runtime contract for ABI families.
@@ -1638,11 +1659,42 @@ pub(crate) fn bootstrap_passthrough_active() -> bool {
     matches!(abi_runtime_phase(), AbiRuntimePhase::BootstrapPassthrough)
 }
 
+pub(crate) fn try_signal_runtime_ready(
+    observation: RuntimeReadyObservation,
+) -> RuntimeReadyTransition {
+    // The constrained-POMDP design collapses on the hot path to this observed
+    // bit: if the startup-sensitive window is still open, arming is forbidden.
+    if matches!(observation, RuntimeReadyObservation::StartupWindowOpen) {
+        return RuntimeReadyTransition::DeferredStartupWindowOpen;
+    }
+
+    if in_policy_reentry_context() {
+        return RuntimeReadyTransition::DeferredReentrantPolicyContext;
+    }
+
+    match RUNTIME_READY.compare_exchange(
+        RUNTIME_STATE_BOOTSTRAP,
+        RUNTIME_STATE_ARMING,
+        AtomicOrdering::AcqRel,
+        AtomicOrdering::Acquire,
+    ) {
+        Ok(_) => {
+            let _ = ensure_ffi_pcc_verified();
+            RUNTIME_READY.store(RUNTIME_STATE_ACTIVE, AtomicOrdering::Release);
+            MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
+            push_mode_event("info", "runtime_ready_armed", mode(), None);
+            RuntimeReadyTransition::Armed
+        }
+        Err(RUNTIME_STATE_ACTIVE) => RuntimeReadyTransition::AlreadyActive,
+        Err(RUNTIME_STATE_ARMING) => RuntimeReadyTransition::ArmingInProgress,
+        Err(_) => RuntimeReadyTransition::ArmingInProgress,
+    }
+}
+
 /// Signal that the dynamic linker's init phase is complete and the
 /// membrane can safely use TLS, locks, and the heap.
 pub(crate) fn signal_runtime_ready() {
-    let _ = ensure_ffi_pcc_verified();
-    RUNTIME_READY.store(1, AtomicOrdering::Release);
+    let _ = try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed);
 }
 
 #[inline]
@@ -1665,7 +1717,7 @@ pub(crate) fn decide(
 ) -> (SafetyLevel, RuntimeDecision) {
     // Fast passthrough during early startup to prevent deadlocks.
     // The full decide path is only available after kernel init completes.
-    if RUNTIME_READY.load(AtomicOrdering::Relaxed) == 0 {
+    if !is_runtime_ready() {
         let mode = u8_to_mode(MODE_STATE.load(AtomicOrdering::Relaxed));
         return (mode, passthrough_decision());
     }
@@ -2031,8 +2083,12 @@ mod tests {
     }
 
     fn enable_runtime_kernel_for_tests() -> RuntimeReadyGuard {
+        set_runtime_ready_state_for_tests(RUNTIME_STATE_ACTIVE)
+    }
+
+    fn set_runtime_ready_state_for_tests(state: u8) -> RuntimeReadyGuard {
         let lock = runtime_policy_test_lock();
-        let previous_ready = RUNTIME_READY.swap(1, AtomicOrdering::SeqCst);
+        let previous_ready = RUNTIME_READY.swap(state, AtomicOrdering::SeqCst);
         let previous_mode_log_ready = MODE_LOG_READY.swap(1, AtomicOrdering::SeqCst);
         RuntimeReadyGuard {
             _lock: lock,
@@ -2285,6 +2341,77 @@ mod tests {
             check_ordering(ApiFamily::Locale, true, true),
             PASSTHROUGH_ORDERING
         );
+    }
+
+    #[test]
+    fn runtime_ready_arms_only_after_startup_window_closes() {
+        reset_ffi_pcc_state_for_tests();
+        clear_mode_event_log();
+        let _runtime_ready = set_runtime_ready_state_for_tests(RUNTIME_STATE_BOOTSTRAP);
+
+        assert_eq!(
+            try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowOpen),
+            RuntimeReadyTransition::DeferredStartupWindowOpen
+        );
+        assert!(
+            !is_runtime_ready(),
+            "open startup window must keep the runtime in passthrough"
+        );
+        assert!(
+            export_mode_event_log_jsonl().is_empty(),
+            "deferred startup arming must not emit a ready event"
+        );
+
+        assert_eq!(
+            try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed),
+            RuntimeReadyTransition::Armed
+        );
+        assert!(
+            is_runtime_ready(),
+            "closed startup window should arm runtime"
+        );
+        assert!(
+            export_mode_event_log_jsonl().contains("\"event\":\"runtime_ready_armed\""),
+            "arming transition should be structured-log visible"
+        );
+    }
+
+    #[test]
+    fn runtime_ready_arming_keeps_decide_on_passthrough() {
+        let _runtime_ready = set_runtime_ready_state_for_tests(RUNTIME_STATE_ARMING);
+
+        let (_, decision) = decide(ApiFamily::Process, 0x4444, 16, true, false, 0);
+        assert_eq!(
+            decision,
+            passthrough_decision(),
+            "calls made while the runtime is arming must not enter the kernel"
+        );
+        assert!(
+            !is_runtime_ready(),
+            "arming state is not active until the transition publishes active"
+        );
+    }
+
+    #[test]
+    fn runtime_ready_signal_defers_inside_policy_reentry_context() {
+        let _runtime_ready = set_runtime_ready_state_for_tests(RUNTIME_STATE_BOOTSTRAP);
+        let guard = enter_policy_reentry_guard().expect("outer policy guard should enter");
+
+        assert_eq!(
+            try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed),
+            RuntimeReadyTransition::DeferredReentrantPolicyContext
+        );
+        assert!(
+            !is_runtime_ready(),
+            "reentrant arming attempt should stay in bootstrap passthrough"
+        );
+
+        drop(guard);
+        assert_eq!(
+            try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed),
+            RuntimeReadyTransition::Armed
+        );
+        assert!(is_runtime_ready());
     }
 
     #[test]
