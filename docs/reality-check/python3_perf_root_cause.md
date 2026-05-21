@@ -152,8 +152,42 @@ After fixing the `gettid` storm, the crash may resolve. If not:
 4. Verify `python3 -c 'print("done")'` completes without SIGABRT
 5. Benchmark against baseline for acceptable overhead (< 2x)
 
+## Implementation Notes (bd-35hjg.3 WIP)
+
+### Current State
+
+A TID-to-slot cache was added in `malloc_abi.rs` to skip the slot probe on
+cache hit. However, the gettid syscall itself cannot be avoided with the
+current architecture because thread identity is required for correctness.
+
+The cache uses a 256-entry array indexed by (TID mod 256), storing
+(tid << 32 | slot_index). This saves the O(probe_length) slot lookup on
+cache hit, but the syscall remains.
+
+### Why TLS Caching Failed
+
+Attempted approaches that didn't work:
+1. **`thread_local!` macro**: Uses `__tls_get_addr` which our library intercepts,
+   causing issues during LD_PRELOAD initialization
+2. **Raw `#[thread_local]`**: Requires TLS segment to be initialized, which
+   happens after allocator bootstrap - chicken-and-egg problem
+
+### Required for Full Fix
+
+To eliminate the gettid syscall entirely, one of:
+1. **Linux rseq**: Provides per-thread storage accessible without syscall
+   (kernel 4.18+, complex setup via `__rseq_abi`)
+2. **ELF TLS initial-exec model**: Pre-allocated TLS slot, but requires
+   static linking or special linker flags
+3. **vDSO gettid**: Some future glibc versions may provide vDSO-accelerated
+   gettid (check `libc::gettid()` availability)
+
+The current partial fix should be committed and the full syscall elimination
+tracked as a follow-up.
+
 ## References
 
 - Profiling harness: `scripts/python3_preload_profile.sh` (bd-35hjg.1)
 - Profile artifacts: `target/perf/python3_preload_profile/`
 - Parent bead: bd-35hjg (WS-1 P0 regression fix)
+- Fix attempt: `malloc_abi.rs` TID-to-slot cache (bd-35hjg.3 WIP)

@@ -102,6 +102,14 @@ impl AllocatorReentrySlot {
 static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_COUNT] =
     [const { AllocatorReentrySlot::new() }; ALLOCATOR_REENTRY_SLOT_COUNT];
 
+// Per-CPU TID cache to reduce gettid syscalls. Each entry stores (tid << 32) | slot_index.
+// Zero means "cache empty". This gives O(CPUs) syscalls instead of O(allocations),
+// which is a huge win for single-threaded workloads like Python startup.
+// 256 entries cover most server configurations; index is masked for larger counts.
+const CPU_TID_CACHE_SIZE: usize = 256;
+static CPU_TID_CACHE: [AtomicU64; CPU_TID_CACHE_SIZE] =
+    [const { AtomicU64::new(0) }; CPU_TID_CACHE_SIZE];
+
 #[inline]
 fn allocator_reentry_slot_start(tid: i32) -> usize {
     (tid as usize).wrapping_mul(0x9e37_79b1_85eb_ca87) & ALLOCATOR_REENTRY_SLOT_MASK
@@ -132,9 +140,50 @@ fn allocator_reentry_slot_for_tid(tid: i32) -> Option<&'static AllocatorReentryS
     None
 }
 
+/// Get the reentry slot for the current thread. Uses a TID-to-slot cache to
+/// skip the slot probe on cache hit. We still need gettid for thread identity,
+/// but avoid the O(probe_length) slot lookup when cached.
+///
+/// The cache is indexed by (TID mod cache_size). On hit, we directly return
+/// the cached slot. On miss or stale entry, we do the full probe and update cache.
+///
+/// This reduces the cost from (gettid + probe) to just (gettid) on cache hit.
 #[inline]
 fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
-    allocator_reentry_slot_for_tid(raw_syscall::sys_gettid())
+    // gettid is unavoidable for correct thread identity
+    let tid = raw_syscall::sys_gettid();
+    if tid <= 0 {
+        return None;
+    }
+
+    // Use TID directly as cache index (better distribution than CPU for multi-threaded)
+    let cache_idx = (tid as usize) & (CPU_TID_CACHE_SIZE - 1);
+
+    // Try cache: packed as (tid << 32) | slot_index
+    let cached = CPU_TID_CACHE[cache_idx].load(Ordering::Relaxed);
+    if cached != 0 {
+        let cached_tid = (cached >> 32) as i32;
+        let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
+        if cached_tid == tid && cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
+            let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
+            // Verify slot still belongs to this TID (handles TID reuse after thread exit)
+            if slot.tid.load(Ordering::Acquire) == tid {
+                return Some(slot);
+            }
+            // Slot was reassigned - fall through to re-acquire
+        }
+    }
+
+    // Cache miss or stale: do full probe
+    let slot = allocator_reentry_slot_for_tid(tid)?;
+
+    // Update cache
+    let slot_idx = (slot as *const _ as usize - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
+        / std::mem::size_of::<AllocatorReentrySlot>();
+    let packed = ((tid as u64) << 32) | (slot_idx as u64);
+    CPU_TID_CACHE[cache_idx].store(packed, Ordering::Relaxed);
+
+    Some(slot)
 }
 
 struct NativeAllocatorReentryGuard {
