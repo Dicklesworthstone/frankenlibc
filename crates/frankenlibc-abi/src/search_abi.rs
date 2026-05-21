@@ -31,6 +31,17 @@ pub enum Action {
     ENTER = 1,
 }
 
+impl Action {
+    #[inline]
+    fn from_c_int(action: c_int) -> Option<Self> {
+        match action {
+            0 => Some(Self::FIND),
+            1 => Some(Self::ENTER),
+            _ => None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Global hash table (non-reentrant API)
 // ---------------------------------------------------------------------------
@@ -117,7 +128,11 @@ pub unsafe extern "C" fn hcreate(nel: usize) -> c_int {
 
 /// POSIX `hsearch` — search or insert into the global hash table.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn hsearch(item: Entry, action: Action) -> *mut Entry {
+pub unsafe extern "C" fn hsearch(item: Entry, action: c_int) -> *mut Entry {
+    let Some(action) = Action::from_c_int(action) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
     if !hash_key_valid(item.key) {
         return std::ptr::null_mut();
     }
@@ -170,6 +185,16 @@ pub struct HsearchData {
     filled: c_uint,
 }
 
+impl Default for HsearchData {
+    fn default() -> Self {
+        Self {
+            table: std::ptr::null_mut(),
+            size: 0,
+            filled: 0,
+        }
+    }
+}
+
 /// POSIX `hcreate_r` — create a reentrant hash table.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hcreate_r(nel: usize, htab: *mut HsearchData) -> c_int {
@@ -193,13 +218,20 @@ pub unsafe extern "C" fn hcreate_r(nel: usize, htab: *mut HsearchData) -> c_int 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hsearch_r(
     item: Entry,
-    action: Action,
+    action: c_int,
     retval: *mut *mut Entry,
     htab: *mut HsearchData,
 ) -> c_int {
     if htab.is_null() || retval.is_null() {
         return 0;
     }
+    let Some(action) = Action::from_c_int(action) else {
+        unsafe {
+            *retval = std::ptr::null_mut();
+            set_abi_errno(libc::EINVAL);
+        }
+        return 0;
+    };
     if !hash_key_valid(item.key) {
         unsafe { *retval = std::ptr::null_mut() };
         return 0;

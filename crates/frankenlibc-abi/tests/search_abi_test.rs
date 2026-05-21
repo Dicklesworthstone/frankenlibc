@@ -44,6 +44,10 @@ fn htab_size(htab: &HsearchData) -> usize {
     unsafe { (*(htab as *const HsearchData).cast::<HsearchDataView>()).size as usize }
 }
 
+fn action_code(action: Action) -> c_int {
+    action as c_int
+}
+
 #[test]
 fn hsearch_data_test_view_matches_abi_layout() {
     assert_eq!(
@@ -84,10 +88,10 @@ fn hash_global_api() {
         data: 42usize as *mut c_void,
     };
 
-    let result = unsafe { hsearch(item, Action::ENTER) };
+    let result = unsafe { hsearch(item, action_code(Action::ENTER)) };
     assert!(!result.is_null(), "ENTER should succeed");
 
-    let found = unsafe { hsearch(item, Action::FIND) };
+    let found = unsafe { hsearch(item, action_code(Action::FIND)) };
     assert!(!found.is_null(), "FIND should locate inserted key");
     assert_eq!(unsafe { (*found).data } as usize, 42);
 
@@ -103,7 +107,7 @@ fn hash_global_api() {
     };
 
     unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
-    let found = unsafe { hsearch(item, Action::FIND) };
+    let found = unsafe { hsearch(item, action_code(Action::FIND)) };
     assert!(found.is_null(), "FIND on missing key should return null");
     assert_eq!(errno_value(), libc::ESRCH);
 
@@ -121,7 +125,7 @@ fn hash_global_api() {
             key: key.as_ptr() as *mut _,
             data: (i + 100) as *mut c_void,
         };
-        let result = unsafe { hsearch(item, Action::ENTER) };
+        let result = unsafe { hsearch(item, action_code(Action::ENTER)) };
         assert!(!result.is_null(), "ENTER key{i} should succeed");
     }
 
@@ -130,7 +134,7 @@ fn hash_global_api() {
             key: key.as_ptr() as *mut _,
             data: std::ptr::null_mut(),
         };
-        let found = unsafe { hsearch(item, Action::FIND) };
+        let found = unsafe { hsearch(item, action_code(Action::FIND)) };
         assert!(!found.is_null(), "FIND key{i} should succeed");
         assert_eq!(unsafe { (*found).data } as usize, i + 100);
     }
@@ -145,7 +149,7 @@ fn hash_global_api() {
         key: raw_key,
         data: 123usize as *mut c_void,
     };
-    let inserted = unsafe { hsearch(item, Action::ENTER) };
+    let inserted = unsafe { hsearch(item, action_code(Action::ENTER)) };
     assert!(
         inserted.is_null(),
         "ENTER with an unterminated tracked key should fail"
@@ -166,7 +170,7 @@ fn hash_global_api() {
             key: key.as_ptr() as *mut _,
             data: (idx + 1) as *mut c_void,
         };
-        let inserted = unsafe { hsearch(item, Action::ENTER) };
+        let inserted = unsafe { hsearch(item, action_code(Action::ENTER)) };
         assert!(
             !inserted.is_null(),
             "hcreate(4) should accept glibc's rounded fifth slot"
@@ -178,7 +182,7 @@ fn hash_global_api() {
         data: 6usize as *mut c_void,
     };
     unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
-    let inserted = unsafe { hsearch(item, Action::ENTER) };
+    let inserted = unsafe { hsearch(item, action_code(Action::ENTER)) };
     assert!(inserted.is_null(), "sixth insert should fail");
     assert_eq!(errno_value(), libc::ENOMEM);
 
@@ -192,7 +196,7 @@ fn hash_global_api() {
         key: key.as_ptr() as *mut _,
         data: 100usize as *mut c_void,
     };
-    let r1 = unsafe { hsearch(item1, Action::ENTER) };
+    let r1 = unsafe { hsearch(item1, action_code(Action::ENTER)) };
     assert!(!r1.is_null());
 
     // Insert same key again with different data
@@ -200,13 +204,19 @@ fn hash_global_api() {
         key: key.as_ptr() as *mut _,
         data: 200usize as *mut c_void,
     };
-    let r2 = unsafe { hsearch(item2, Action::ENTER) };
+    let r2 = unsafe { hsearch(item2, action_code(Action::ENTER)) };
     assert!(!r2.is_null());
     assert_eq!(
         unsafe { (*r2).data } as usize,
         100,
         "duplicate ENTER should keep the original payload"
     );
+
+    // --- invalid C action code should fail closed without relying on Rust enum validity ---
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+    let invalid = unsafe { hsearch(item1, 99) };
+    assert!(invalid.is_null(), "invalid action code should fail");
+    assert_eq!(errno_value(), libc::EINVAL);
 
     unsafe { hdestroy() };
 }
@@ -231,7 +241,7 @@ fn hash_reentrant_reports_glibc_prime_capacity() {
         (100, 101),
     ];
     for (requested, expected) in cases {
-        let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+        let mut htab = HsearchData::default();
         assert_eq!(
             unsafe { hcreate_r(requested, &mut htab) },
             1,
@@ -245,7 +255,7 @@ fn hash_reentrant_reports_glibc_prime_capacity() {
 
 #[test]
 fn hash_reentrant_full_table_sets_enomem_after_rounded_capacity() {
-    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab = HsearchData::default();
     assert_eq!(unsafe { hcreate_r(4, &mut htab) }, 1);
     assert_eq!(htab_size(&htab), 5);
 
@@ -260,7 +270,7 @@ fn hash_reentrant_full_table_sets_enomem_after_rounded_capacity() {
         };
         let mut result: *mut Entry = std::ptr::null_mut();
         assert_eq!(
-            unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) },
+            unsafe { hsearch_r(item, action_code(Action::ENTER), &mut result, &mut htab) },
             1
         );
         assert!(!result.is_null());
@@ -274,7 +284,7 @@ fn hash_reentrant_full_table_sets_enomem_after_rounded_capacity() {
     };
     let mut result: *mut Entry = std::ptr::dangling_mut();
     unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
-    let rc = unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) };
+    let rc = unsafe { hsearch_r(item, action_code(Action::ENTER), &mut result, &mut htab) };
     assert_eq!(rc, 0);
     assert!(result.is_null());
     assert_eq!(errno_value(), libc::ENOMEM);
@@ -290,7 +300,7 @@ fn hash_reentrant_full_table_sets_enomem_after_rounded_capacity() {
 #[test]
 fn hash_reentrant_lifecycle() {
     // POSIX: callers zero-initialize hsearch_data before hcreate_r
-    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab = HsearchData::default();
 
     let rc = unsafe { hcreate_r(16, &mut htab) };
     assert_eq!(rc, 1, "hcreate_r should succeed");
@@ -302,7 +312,7 @@ fn hash_reentrant_lifecycle() {
     };
 
     let mut result: *mut Entry = std::ptr::null_mut();
-    let rc = unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) };
+    let rc = unsafe { hsearch_r(item, action_code(Action::ENTER), &mut result, &mut htab) };
     assert_eq!(rc, 1);
     assert!(!result.is_null());
     assert_eq!(
@@ -312,7 +322,7 @@ fn hash_reentrant_lifecycle() {
     );
 
     let mut found: *mut Entry = std::ptr::null_mut();
-    let rc = unsafe { hsearch_r(item, Action::FIND, &mut found, &mut htab) };
+    let rc = unsafe { hsearch_r(item, action_code(Action::FIND), &mut found, &mut htab) };
     assert_eq!(rc, 1);
     assert!(!found.is_null());
     assert_eq!(unsafe { (*found).data } as usize, 99);
@@ -337,8 +347,35 @@ fn hash_reentrant_null_safety() {
 }
 
 #[test]
+fn hash_reentrant_rejects_invalid_action_code() {
+    let mut htab = HsearchData::default();
+    assert_eq!(unsafe { hcreate_r(16, &mut htab) }, 1);
+
+    let key = CString::new("invalid-action").unwrap();
+    let item = Entry {
+        key: key.as_ptr() as *mut _,
+        data: std::ptr::null_mut(),
+    };
+    let mut result: *mut Entry = std::ptr::dangling_mut();
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+
+    let rc = unsafe { hsearch_r(item, 99, &mut result, &mut htab) };
+
+    assert_eq!(rc, 0, "invalid action code should fail");
+    assert!(result.is_null(), "invalid action code should clear retval");
+    assert_eq!(errno_value(), libc::EINVAL);
+    assert_eq!(
+        htab_filled(&htab),
+        0,
+        "invalid action must not mutate table accounting"
+    );
+
+    unsafe { hdestroy_r(&mut htab) };
+}
+
+#[test]
 fn hash_reentrant_second_create_preserves_existing_table() {
-    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab = HsearchData::default();
     assert_eq!(unsafe { hcreate_r(16, &mut htab) }, 1);
 
     let key = CString::new("stable-key").unwrap();
@@ -348,7 +385,7 @@ fn hash_reentrant_second_create_preserves_existing_table() {
     };
     let mut result: *mut Entry = std::ptr::null_mut();
     assert_eq!(
-        unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) },
+        unsafe { hsearch_r(item, action_code(Action::ENTER), &mut result, &mut htab) },
         1
     );
     assert!(!result.is_null());
@@ -373,7 +410,7 @@ fn hash_reentrant_second_create_preserves_existing_table() {
 
     let mut found: *mut Entry = std::ptr::null_mut();
     assert_eq!(
-        unsafe { hsearch_r(item, Action::FIND, &mut found, &mut htab) },
+        unsafe { hsearch_r(item, action_code(Action::FIND), &mut found, &mut htab) },
         1
     );
     assert!(!found.is_null());
@@ -388,7 +425,7 @@ fn hash_reentrant_second_create_preserves_existing_table() {
 
 #[test]
 fn hsearch_r_rejects_tracked_unterminated_key() {
-    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab = HsearchData::default();
     assert_eq!(unsafe { hcreate_r(16, &mut htab) }, 1);
 
     let raw_key = unsafe { malloc_tracked_unterminated(b"unterminated-rkey") };
@@ -397,7 +434,7 @@ fn hsearch_r_rejects_tracked_unterminated_key() {
         data: 321usize as *mut c_void,
     };
     let mut result: *mut Entry = std::ptr::null_mut();
-    let rc = unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) };
+    let rc = unsafe { hsearch_r(item, action_code(Action::ENTER), &mut result, &mut htab) };
 
     assert_eq!(rc, 0);
     assert!(result.is_null());
@@ -819,8 +856,8 @@ fn remque_null_safety() {
 #[test]
 fn hash_reentrant_multiple_tables() {
     // Two independent reentrant tables
-    let mut htab1: HsearchData = unsafe { std::mem::zeroed() };
-    let mut htab2: HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab1 = HsearchData::default();
+    let mut htab2 = HsearchData::default();
 
     assert_eq!(unsafe { hcreate_r(16, &mut htab1) }, 1);
     assert_eq!(unsafe { hcreate_r(16, &mut htab2) }, 1);
@@ -832,7 +869,7 @@ fn hash_reentrant_multiple_tables() {
     };
     let mut result: *mut Entry = std::ptr::null_mut();
     assert_eq!(
-        unsafe { hsearch_r(item1, Action::ENTER, &mut result, &mut htab1) },
+        unsafe { hsearch_r(item1, action_code(Action::ENTER), &mut result, &mut htab1) },
         1
     );
 
@@ -843,14 +880,14 @@ fn hash_reentrant_multiple_tables() {
     };
     let mut result2: *mut Entry = std::ptr::null_mut();
     assert_eq!(
-        unsafe { hsearch_r(item2, Action::ENTER, &mut result2, &mut htab2) },
+        unsafe { hsearch_r(item2, action_code(Action::ENTER), &mut result2, &mut htab2) },
         1
     );
 
     // Key from table1 should not be found in table2
     let mut found: *mut Entry = std::ptr::null_mut();
     unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
-    let rc = unsafe { hsearch_r(item1, Action::FIND, &mut found, &mut htab2) };
+    let rc = unsafe { hsearch_r(item1, action_code(Action::FIND), &mut found, &mut htab2) };
     assert_eq!(rc, 0, "table1's key should not be in table2");
     assert!(found.is_null());
     assert_eq!(errno_value(), libc::ESRCH);
@@ -863,7 +900,7 @@ fn hash_reentrant_multiple_tables() {
 
 #[test]
 fn hash_reentrant_find_nonexistent() {
-    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab = HsearchData::default();
     unsafe { hcreate_r(16, &mut htab) };
 
     let key = CString::new("nope").unwrap();
@@ -873,7 +910,7 @@ fn hash_reentrant_find_nonexistent() {
     };
     let mut found: *mut Entry = std::ptr::dangling_mut();
     unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
-    let rc = unsafe { hsearch_r(item, Action::FIND, &mut found, &mut htab) };
+    let rc = unsafe { hsearch_r(item, action_code(Action::FIND), &mut found, &mut htab) };
     assert_eq!(rc, 0, "FIND on empty table should fail");
     assert!(found.is_null());
     assert_eq!(errno_value(), libc::ESRCH);
@@ -883,7 +920,7 @@ fn hash_reentrant_find_nonexistent() {
 
 #[test]
 fn hash_reentrant_filled_tracks_unique_entries() {
-    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab = HsearchData::default();
     assert_eq!(unsafe { hcreate_r(16, &mut htab) }, 1);
     assert_eq!(htab_filled(&htab), 0);
 
@@ -895,7 +932,7 @@ fn hash_reentrant_filled_tracks_unique_entries() {
     let mut result: *mut Entry = std::ptr::null_mut();
 
     assert_eq!(
-        unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) },
+        unsafe { hsearch_r(item, action_code(Action::ENTER), &mut result, &mut htab) },
         1
     );
     assert!(!result.is_null());
@@ -907,7 +944,7 @@ fn hash_reentrant_filled_tracks_unique_entries() {
 
     result = std::ptr::null_mut();
     assert_eq!(
-        unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) },
+        unsafe { hsearch_r(item, action_code(Action::ENTER), &mut result, &mut htab) },
         1
     );
     assert!(!result.is_null());
@@ -928,7 +965,7 @@ fn hash_reentrant_filled_tracks_unique_entries() {
     };
     result = std::ptr::null_mut();
     assert_eq!(
-        unsafe { hsearch_r(updated, Action::ENTER, &mut result, &mut htab) },
+        unsafe { hsearch_r(updated, action_code(Action::ENTER), &mut result, &mut htab) },
         1
     );
     assert!(!result.is_null());

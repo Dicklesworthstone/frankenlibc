@@ -59,8 +59,22 @@ struct HostHsearchData {
     filled: c_uint,
 }
 
+impl Default for HostHsearchData {
+    fn default() -> Self {
+        Self {
+            table: std::ptr::null_mut(),
+            size: 0,
+            filled: 0,
+        }
+    }
+}
+
 const ENTER: c_int = 1;
 const FIND: c_int = 0;
+
+fn fl_action_code(action: fl::Action) -> c_int {
+    action as c_int
+}
 
 // Hash table is process-global; serialize.
 static HSEARCH_LOCK: Mutex<()> = Mutex::new(());
@@ -292,7 +306,7 @@ fn diff_hsearch_fl_then_lc_find() {
             key: ck.as_ptr() as *mut c_char,
             data: *v as *mut c_void,
         };
-        let _ = unsafe { fl::hsearch(item, fl::Action::ENTER) };
+        let _ = unsafe { fl::hsearch(item, fl_action_code(fl::Action::ENTER)) };
         keys.push(ck);
     }
     // Find via fl
@@ -303,7 +317,7 @@ fn diff_hsearch_fl_then_lc_find() {
             key: ck.as_ptr() as *mut c_char,
             data: std::ptr::null_mut(),
         };
-        let r = unsafe { fl::hsearch(item, fl::Action::FIND) };
+        let r = unsafe { fl::hsearch(item, fl_action_code(fl::Action::FIND)) };
         if !r.is_null() {
             found_fl += 1;
         }
@@ -358,7 +372,7 @@ fn diff_hsearch_find_missing() {
         data: std::ptr::null_mut(),
     };
     set_fl_errno(0);
-    let r_fl = unsafe { fl::hsearch(item_fl, fl::Action::FIND) };
+    let r_fl = unsafe { fl::hsearch(item_fl, fl_action_code(fl::Action::FIND)) };
     let errno_fl = fl_errno();
     unsafe { fl::hdestroy() };
 
@@ -390,7 +404,7 @@ fn diff_hsearch_find_missing() {
 fn diff_hsearch_r_find_missing_sets_esrch() {
     let ck = CString::new("not_inserted_r").unwrap();
 
-    let mut htab_fl: fl::HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab_fl = fl::HsearchData::default();
     assert_eq!(unsafe { fl::hcreate_r(64, &mut htab_fl) }, 1);
     let item_fl = fl::Entry {
         key: ck.as_ptr() as *mut c_char,
@@ -398,11 +412,18 @@ fn diff_hsearch_r_find_missing_sets_esrch() {
     };
     let mut result_fl: *mut fl::Entry = std::ptr::dangling_mut();
     set_fl_errno(0);
-    let rc_fl = unsafe { fl::hsearch_r(item_fl, fl::Action::FIND, &mut result_fl, &mut htab_fl) };
+    let rc_fl = unsafe {
+        fl::hsearch_r(
+            item_fl,
+            fl_action_code(fl::Action::FIND),
+            &mut result_fl,
+            &mut htab_fl,
+        )
+    };
     let errno_fl = fl_errno();
     unsafe { fl::hdestroy_r(&mut htab_fl) };
 
-    let mut htab_lc: HostHsearchData = unsafe { std::mem::zeroed() };
+    let mut htab_lc = HostHsearchData::default();
     assert_eq!(unsafe { hcreate_r(64, &mut htab_lc) }, 1);
     let item_lc = HsearchEntry {
         key: ck.as_ptr() as *mut c_char,
@@ -721,7 +742,7 @@ fn fl_hsearch_capacity_full_returns_null() {
             key: c.as_ptr() as *mut c_char,
             data: (idx + 1) as *mut c_void,
         };
-        let r = unsafe { fl::hsearch(item, fl::Action::ENTER) };
+        let r = unsafe { fl::hsearch(item, fl_action_code(fl::Action::ENTER)) };
         fl_outcomes.push(!r.is_null());
     }
     unsafe { fl::hdestroy() };
