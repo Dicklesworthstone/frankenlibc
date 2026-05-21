@@ -72,12 +72,52 @@ fn smoke_case(mode: &str, case: &str, status: &str) -> Value {
     })
 }
 
+fn failing_smoke_case(
+    mode: &str,
+    case: &str,
+    signature_guard_triggered: bool,
+    perf_failure: bool,
+) -> Value {
+    let mut case = smoke_case(mode, case, "fail");
+    case["failure_signature"] = json!(if signature_guard_triggered {
+        "signature_guard"
+    } else {
+        "perf_regression"
+    });
+    case["signature_guard_triggered"] = json!(signature_guard_triggered);
+    case["perf_required"] = json!(perf_failure);
+    case["perf_pass"] = json!(!perf_failure);
+    case["preload_rc"] = json!(if signature_guard_triggered { 134 } else { 0 });
+    case["latency_ratio_ppm"] = json!(if perf_failure { 3_000_000 } else { 1_000_000 });
+    case
+}
+
 fn fake_cases(canonical: &Value) -> Vec<Value> {
     let mut cases = Vec::new();
     for mode in ["strict", "hardened"] {
         let passes = canonical["modes"][mode]["passes"]
             .as_u64()
             .expect("canonical passes") as usize;
+        let fails = canonical["modes"][mode]["fails"]
+            .as_u64()
+            .expect("canonical fails") as usize;
+        let skips = canonical["modes"][mode]["skips"]
+            .as_u64()
+            .expect("canonical skips") as usize;
+        let (signature_guard_failures, perf_failures) = match mode {
+            "strict" => (4, 4),
+            "hardened" => (8, 4),
+            _ => unreachable!("mode list is fixed"),
+        };
+        assert_eq!(
+            fails,
+            signature_guard_failures + perf_failures,
+            "synthetic failure split must match canonical {mode} fail count"
+        );
+        assert_eq!(
+            skips, 2,
+            "canonical synthetic smoke fixture expects two optional skips per mode"
+        );
         for index in 0..passes {
             cases.push(smoke_case(
                 mode,
@@ -85,7 +125,23 @@ fn fake_cases(canonical: &Value) -> Vec<Value> {
                 "pass",
             ));
         }
-        for case in ["sqlite_memory_select", "redis_cli_version", "nginx_version"] {
+        for index in 0..signature_guard_failures {
+            cases.push(failing_smoke_case(
+                mode,
+                &format!("synthetic_signature_guard_fail_{index:02}"),
+                true,
+                false,
+            ));
+        }
+        for index in 0..perf_failures {
+            cases.push(failing_smoke_case(
+                mode,
+                &format!("synthetic_perf_fail_{index:02}"),
+                false,
+                true,
+            ));
+        }
+        for case in ["redis_cli_version", "nginx_version"] {
             cases.push(smoke_case(mode, case, "skip"));
         }
     }
@@ -112,9 +168,9 @@ fn fake_report(canonical: &Value) -> Value {
                 "passes": canonical["modes"]["strict"]["passes"],
                 "fails": canonical["modes"]["strict"]["fails"],
                 "skips": canonical["modes"]["strict"]["skips"],
-                "signature_guard_failures": 0,
+                "signature_guard_failures": 4,
                 "strict_parity_failures": 0,
-                "perf_failures": 0,
+                "perf_failures": 4,
                 "valgrind_failures": 0,
                 "failure_signature_counts": {}
             },
@@ -123,9 +179,9 @@ fn fake_report(canonical: &Value) -> Value {
                 "passes": canonical["modes"]["hardened"]["passes"],
                 "fails": canonical["modes"]["hardened"]["fails"],
                 "skips": canonical["modes"]["hardened"]["skips"],
-                "signature_guard_failures": 0,
+                "signature_guard_failures": 8,
                 "strict_parity_failures": 0,
-                "perf_failures": 0,
+                "perf_failures": 4,
                 "valgrind_failures": 0,
                 "failure_signature_counts": {}
             }
