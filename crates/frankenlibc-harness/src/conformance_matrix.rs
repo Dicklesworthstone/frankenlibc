@@ -278,7 +278,7 @@ fn run_case_from_execution(
         CaseExecution::Completed(run) => {
             let match_kind = expected_output_match(&case.expected_output, &run.impl_output);
             let output_matches = match_kind.is_some();
-            let host_oracle_defined = run.host_output != "UB";
+            let host_oracle_defined = !host_oracle_is_undefined(&run.host_output);
             let host_matches = run.host_parity || !host_oracle_defined;
             let passed = output_matches && host_matches;
             let diff_offset = if !output_matches {
@@ -404,6 +404,10 @@ fn mode_matches(active_mode: &str, case_mode: &str) -> bool {
     let active = active_mode.to_ascii_lowercase();
     let case = case_mode.to_ascii_lowercase();
     case == active || case == "both"
+}
+
+fn host_oracle_is_undefined(host_output: &str) -> bool {
+    host_output.trim().eq_ignore_ascii_case("UB")
 }
 
 fn deterministic_generated_at_utc(fixture_sets: &[FixtureSet]) -> String {
@@ -633,39 +637,41 @@ mod tests {
 
     #[test]
     fn matrix_does_not_require_parity_for_undefined_host_oracle() -> TestResult {
-        let fixture = FixtureSet::from_json(
-            r#"{
-                "version":"v1",
-                "family":"string/strlen",
-                "captured_at":"2026-02-13T00:00:00Z",
-                "cases":[
-                    {"name":"unterminated_hardened","function":"strlen","spec_section":"POSIX strlen","inputs":{"s":[97]},"expected_output":"1","expected_errno":0,"mode":"hardened"}
-                ]
-            }"#,
-        )?;
+        for host_output in ["UB", "ub", " UB\n"] {
+            let fixture = FixtureSet::from_json(
+                r#"{
+                    "version":"v1",
+                    "family":"string/strlen",
+                    "captured_at":"2026-02-13T00:00:00Z",
+                    "cases":[
+                        {"name":"unterminated_hardened","function":"strlen","spec_section":"POSIX strlen","inputs":{"s":[97]},"expected_output":"1","expected_errno":0,"mode":"hardened"}
+                    ]
+                }"#,
+            )?;
 
-        let report = build_conformance_matrix_with_executor(
-            &[fixture],
-            MatrixMode::Hardened,
-            "unit",
-            |_, _, _| {
-                CaseExecution::Completed(DifferentialExecution {
-                    host_output: "UB".to_string(),
-                    impl_output: "1".to_string(),
-                    host_parity: false,
-                    note: None,
-                })
-            },
-        );
+            let report = build_conformance_matrix_with_executor(
+                &[fixture],
+                MatrixMode::Hardened,
+                "unit",
+                |_, _, _| {
+                    CaseExecution::Completed(DifferentialExecution {
+                        host_output: host_output.to_string(),
+                        impl_output: "1".to_string(),
+                        host_parity: false,
+                        note: None,
+                    })
+                },
+            );
 
-        assert_eq!(report.summary.total_cases, 1);
-        assert_eq!(report.summary.passed, 1);
-        assert_eq!(report.summary.failed, 0);
-        let row = report.cases.first().ok_or("missing matrix row")?;
-        assert_eq!(row.status, "pass");
-        assert!(row.passed);
-        assert_eq!(row.host_output.as_deref(), Some("UB"));
-        assert_eq!(row.host_parity, Some(false));
+            assert_eq!(report.summary.total_cases, 1);
+            assert_eq!(report.summary.passed, 1);
+            assert_eq!(report.summary.failed, 0);
+            let row = report.cases.first().ok_or("missing matrix row")?;
+            assert_eq!(row.status, "pass");
+            assert!(row.passed);
+            assert_eq!(row.host_output.as_deref(), Some(host_output));
+            assert_eq!(row.host_parity, Some(false));
+        }
         Ok(())
     }
 }
