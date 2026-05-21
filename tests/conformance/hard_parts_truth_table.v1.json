@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-8sho",
-  "generated_at": "2026-03-23T23:30:00Z",
+  "generated_at": "2026-05-21T08:05:09Z",
   "sources": {
     "readme": "README.md",
     "feature_parity": "FEATURE_PARITY.md",
@@ -9,7 +9,7 @@
     "reality_report": "tests/conformance/reality_report.v1.json"
   },
   "reality_snapshot": {
-    "generated_at_utc": "2026-02-18T04:49:26Z",
+    "generated_at_utc": "2026-05-21T08:05:09Z",
     "total_exported": 4119,
     "counts": {
       "implemented": 3705,
@@ -53,7 +53,9 @@
           {
             "module": "pthread_abi",
             "status": "Implemented",
-            "min_count": 1
+            "min_count": 1,
+            "implemented_count": 141,
+            "total_count": 141
           }
         ]
       },

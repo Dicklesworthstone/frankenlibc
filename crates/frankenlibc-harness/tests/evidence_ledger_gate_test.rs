@@ -136,10 +136,33 @@ fn evidence_ledger_rows_bind_existing_artifacts() -> TestResult {
 }
 
 #[test]
+fn evidence_ledger_anchors_ws0_regenerated_artifacts() -> TestResult {
+    let root = workspace_root()?;
+    let rows = load_ledger_rows(&ledger_path(&root))?;
+    let artifact_paths: BTreeSet<_> = rows
+        .iter()
+        .filter_map(|row| row["artifact_path"].as_str())
+        .collect();
+    for required in [
+        "tests/conformance/reality_report.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/proof_obligations_binder.v1.json",
+        "tests/conformance/hard_parts_truth_table.v1.json",
+    ] {
+        assert!(
+            artifact_paths.contains(required),
+            "ledger must anchor regenerated WS-0 artifact {required}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn checker_accepts_canonical_evidence_ledger() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "positive")?;
     let report_path = out_dir.join("report.json");
+    let rows = load_ledger_rows(&ledger_path(&root))?;
     let output = run_checker(&root, &ledger_path(&root), &report_path)?;
     assert!(output.status.success(), "{}", output_text(&output));
     assert!(
@@ -152,7 +175,10 @@ fn checker_accepts_canonical_evidence_ledger() -> TestResult {
     assert_eq!(report["schema_version"], "evidence_ledger_check_report.v1");
     assert_eq!(report["status"], "pass");
     assert_eq!(report["failure_signature"], "none");
-    assert_eq!(report["checked_entry_count"].as_u64(), Some(1));
+    assert_eq!(
+        report["checked_entry_count"].as_u64(),
+        Some(rows.len() as u64)
+    );
     Ok(())
 }
 
