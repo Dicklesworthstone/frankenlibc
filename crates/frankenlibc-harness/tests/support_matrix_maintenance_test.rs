@@ -18,22 +18,16 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 fn load_json(path: &Path) -> serde_json::Value {
-    let content = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
-    serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+    let content = std::fs::read_to_string(path).expect("failed to read JSON file");
+    serde_json::from_str(&content).expect("invalid JSON file")
 }
 
 fn load_jsonl(path: &Path) -> Vec<serde_json::Value> {
-    let content = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+    let content = std::fs::read_to_string(path).expect("failed to read JSONL file");
     content
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            serde_json::from_str(line)
-                .unwrap_or_else(|e| panic!("Invalid JSONL line in {}: {}", path.display(), e))
-        })
+        .map(|line| serde_json::from_str(line).expect("invalid JSONL line"))
         .collect()
 }
 
@@ -44,8 +38,7 @@ fn canonical_report_path() -> std::path::PathBuf {
 fn unique_generated_report_path(tag: &str) -> std::path::PathBuf {
     let root = repo_root();
     let out_dir = root.join("target/conformance");
-    std::fs::create_dir_all(&out_dir)
-        .unwrap_or_else(|e| panic!("Failed to create {}: {}", out_dir.display(), e));
+    std::fs::create_dir_all(&out_dir).expect("failed to create target/conformance");
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after unix epoch")
@@ -89,7 +82,7 @@ fn stable_report_sections(report: &serde_json::Value) -> serde_json::Value {
             key.to_owned(),
             report
                 .get(key)
-                .unwrap_or_else(|| panic!("report missing stable section `{key}`"))
+                .expect("report missing stable section")
                 .clone(),
         );
     }
@@ -155,6 +148,16 @@ const IO_INTERNAL_NATIVE_SYMBOLS: &[&str] = &[
     "_IO_ungetc",
     "_IO_vfprintf",
     "_IO_vsprintf",
+];
+
+const HOST_WRAPPED_SYMBOLS: &[&str] = &[
+    "__libc_start_main",
+    "malloc",
+    "pthread_create",
+    "dlopen",
+    "_IO_flockfile",
+    "_IO_funlockfile",
+    "_IO_ftrylockfile",
 ];
 
 #[test]
@@ -344,6 +347,54 @@ fn maintenance_report_marks_io_internal_native_symbols_implemented() {
 }
 
 #[test]
+fn maintenance_report_reclassifies_host_delegating_symbols() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
+    let data = load_json(&report_path);
+    let symbol_status_map = data["symbol_status_map"]
+        .as_object()
+        .expect("symbol_status_map should be an object");
+
+    let wraps_count = data["coverage_dashboard"]["status_counts"]["WrapsHostLibc"]
+        .as_u64()
+        .expect("WrapsHostLibc count should be numeric");
+    assert!(
+        wraps_count > 0,
+        "support matrix should expose a non-empty host-backed taxonomy bucket"
+    );
+
+    for symbol in HOST_WRAPPED_SYMBOLS {
+        let status = symbol_status_map
+            .get(*symbol)
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(
+            status,
+            Some("WrapsHostLibc"),
+            "expected {symbol} to be reclassified out of Implemented"
+        );
+    }
+
+    let issues = data["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+    let implemented_host_delegation: Vec<&serde_json::Value> = issues
+        .iter()
+        .filter(|issue| issue["status"].as_str() == Some("Implemented"))
+        .filter(|issue| {
+            issue["findings"].as_array().is_some_and(|findings| {
+                findings.iter().any(|finding| {
+                    finding.as_str() == Some("Implemented but host delegation detected")
+                })
+            })
+        })
+        .collect();
+    assert!(
+        implemented_host_delegation.is_empty(),
+        "Implemented rows must not delegate to host libc: {implemented_host_delegation:?}"
+    );
+}
+
+#[test]
 fn maintenance_gate_emits_structured_logs_with_required_fields() {
     let _guard = gate_test_lock();
     let output = run_support_matrix_gate(false);
@@ -461,8 +512,7 @@ fn maintenance_gate_trace_flag_emits_symbol_status_snapshot_events() {
 fn maintenance_gate_does_not_rewrite_canonical_report() {
     let _guard = gate_test_lock();
     let canonical_path = canonical_report_path();
-    let before = std::fs::read_to_string(&canonical_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", canonical_path.display(), e));
+    let before = std::fs::read_to_string(&canonical_path).expect("failed to read canonical report");
 
     let output = run_support_matrix_gate(false);
     assert!(
@@ -470,8 +520,8 @@ fn maintenance_gate_does_not_rewrite_canonical_report() {
         "Gate process terminated without an exit code"
     );
 
-    let after = std::fs::read_to_string(&canonical_path)
-        .unwrap_or_else(|e| panic!("Failed to re-read {}: {}", canonical_path.display(), e));
+    let after =
+        std::fs::read_to_string(&canonical_path).expect("failed to re-read canonical report");
     assert_eq!(
         before, after,
         "support matrix maintenance gate must not rewrite the canonical maintenance report"
@@ -492,13 +542,7 @@ fn maintenance_gate_fails_on_canonical_stable_section_drift() {
         &mutated_canonical_path,
         serde_json::to_vec_pretty(&mutated).expect("mutated canonical report should serialize"),
     )
-    .unwrap_or_else(|e| {
-        panic!(
-            "Failed to write {}: {}",
-            mutated_canonical_path.display(),
-            e
-        )
-    });
+    .expect("failed to write mutated canonical report");
 
     let output = run_support_matrix_gate_with_canonical(false, Some(&mutated_canonical_path));
     assert!(

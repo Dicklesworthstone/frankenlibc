@@ -145,7 +145,7 @@
     },
     {
       "symbol": "__cxa_thread_atexit_impl",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "startup_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Register thread-local destructor",
@@ -470,42 +470,42 @@
     {
       "symbol": "__isoc99_fscanf",
       "header": "<stdio.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "C99 fscanf alias",
       "module": "stdio_abi"
     },
     {
       "symbol": "__isoc99_scanf",
       "header": "<stdio.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "C99 scanf alias",
       "module": "stdio_abi"
     },
     {
       "symbol": "__isoc99_sscanf",
       "header": "<stdio.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "C99 sscanf alias",
       "module": "stdio_abi"
     },
     {
       "symbol": "__isoc99_vfscanf",
       "header": "<stdio.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "C99 vfscanf alias",
       "module": "stdio_abi"
     },
     {
       "symbol": "__isoc99_vscanf",
       "header": "<stdio.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "C99 vscanf alias",
       "module": "stdio_abi"
     },
     {
       "symbol": "__isoc99_vsscanf",
       "header": "<stdio.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "C99 vsscanf alias",
       "module": "stdio_abi"
     },
@@ -529,7 +529,7 @@
     },
     {
       "symbol": "__libc_start_main",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "startup_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Phase-0 startup skeleton for controlled fixtures; validates argc/argv/envp and captures auxv/secure-mode invariants",
@@ -1430,7 +1430,7 @@
     },
     {
       "symbol": "aligned_alloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
@@ -1569,7 +1569,7 @@
     },
     {
       "symbol": "argz_create_sep",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Create argz from string split by separator",
@@ -1823,7 +1823,7 @@
     },
     {
       "symbol": "backtrace",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Capture stack backtrace via host glibc",
@@ -1832,7 +1832,7 @@
     },
     {
       "symbol": "backtrace_symbols",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Convert backtrace addresses to symbol strings via host glibc",
@@ -1841,7 +1841,7 @@
     },
     {
       "symbol": "backtrace_symbols_fd",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Write backtrace symbols to fd via host glibc",
@@ -1978,7 +1978,7 @@
     },
     {
       "symbol": "calloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
@@ -2099,7 +2099,7 @@
     },
     {
       "symbol": "cfree",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "BSD legacy free alias; delegates to free()",
@@ -2174,7 +2174,7 @@
     },
     {
       "symbol": "clearerr",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -2183,7 +2183,7 @@
     },
     {
       "symbol": "clearerr_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Clear error/EOF indicators without locking",
@@ -2767,7 +2767,7 @@
     },
     {
       "symbol": "dlclose",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native main-program handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract",
@@ -2785,7 +2785,7 @@
     },
     {
       "symbol": "dlopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native phase-1 loader: NULL and recognized libc NOLOAD aliases return a local main-program handle; unsupported libraries return NULL with thread-local dlerror",
@@ -2794,7 +2794,7 @@
     },
     {
       "symbol": "dlsym",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle with thread-local dlerror on misses",
@@ -3641,7 +3641,7 @@
     },
     {
       "symbol": "fclose",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -3650,7 +3650,7 @@
     },
     {
       "symbol": "fcloseall",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "GNU fcloseall; flushes all streams via fflush(NULL)",
@@ -3784,7 +3784,7 @@
     },
     {
       "symbol": "feof",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -3793,7 +3793,7 @@
     },
     {
       "symbol": "feof_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "GNU unlocked feof; delegates to feof without locking",
@@ -3811,7 +3811,7 @@
     },
     {
       "symbol": "ferror",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -3820,7 +3820,7 @@
     },
     {
       "symbol": "ferror_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "GNU unlocked ferror; delegates to ferror without locking",
@@ -3881,7 +3881,7 @@
     },
     {
       "symbol": "fflush",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -3890,7 +3890,7 @@
     },
     {
       "symbol": "fflush_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "GNU unlocked fflush; delegates to fflush without locking",
@@ -3926,7 +3926,7 @@
     },
     {
       "symbol": "fgetc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -3935,7 +3935,7 @@
     },
     {
       "symbol": "fgetc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -3957,7 +3957,7 @@
     },
     {
       "symbol": "fgetpos",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_fast",
       "strict_semantics": "Store current stream position into fpos_t",
@@ -3966,7 +3966,7 @@
     },
     {
       "symbol": "fgetpos64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native fgetpos implementation",
@@ -3991,7 +3991,7 @@
     },
     {
       "symbol": "fgets",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -4000,7 +4000,7 @@
     },
     {
       "symbol": "fgets_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "String input without locking",
@@ -4080,7 +4080,7 @@
     },
     {
       "symbol": "fileno",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -4089,7 +4089,7 @@
     },
     {
       "symbol": "fileno_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get fd from stream without locking",
@@ -4132,7 +4132,7 @@
     },
     {
       "symbol": "flockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -4308,7 +4308,7 @@
     },
     {
       "symbol": "fprintf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native printf engine + stream-registry stdio path; no host glibc call-through",
@@ -4317,7 +4317,7 @@
     },
     {
       "symbol": "fputc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -4326,13 +4326,13 @@
     },
     {
       "symbol": "fputc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
     {
       "symbol": "fputs",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -4341,7 +4341,7 @@
     },
     {
       "symbol": "fputs_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "String output without locking",
@@ -4380,7 +4380,7 @@
     },
     {
       "symbol": "fread",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -4389,7 +4389,7 @@
     },
     {
       "symbol": "fread_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Binary input without locking",
@@ -4398,7 +4398,7 @@
     },
     {
       "symbol": "free",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
@@ -4446,7 +4446,7 @@
     },
     {
       "symbol": "freopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "strict_semantics": "Close stream and reopen with new file/mode",
@@ -4455,7 +4455,7 @@
     },
     {
       "symbol": "freopen64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native freopen implementation",
@@ -4502,7 +4502,7 @@
     },
     {
       "symbol": "fseek",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream registry with SYS_lseek syscall; flushes pending writes, discards read buffer, updates logical offset",
@@ -4511,7 +4511,7 @@
     },
     {
       "symbol": "fseeko",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Aliases fseek on LP64 (off_t == long).",
@@ -4520,7 +4520,7 @@
     },
     {
       "symbol": "fseeko64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native fseeko implementation",
@@ -4529,7 +4529,7 @@
     },
     {
       "symbol": "fsetpos",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_fast",
       "strict_semantics": "Restore stream position from fpos_t (delegates to fseek)",
@@ -4538,7 +4538,7 @@
     },
     {
       "symbol": "fsetpos64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native fsetpos implementation",
@@ -4662,7 +4662,7 @@
     },
     {
       "symbol": "ftell",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Returns logical file offset from internal StdioStream state; no host glibc delegation",
@@ -4671,7 +4671,7 @@
     },
     {
       "symbol": "ftello",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Aliases ftell on LP64 (off_t == long).",
@@ -4680,7 +4680,7 @@
     },
     {
       "symbol": "ftello64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native ftello implementation",
@@ -4714,7 +4714,7 @@
     },
     {
       "symbol": "ftrylockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -4816,7 +4816,7 @@
     },
     {
       "symbol": "funlockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -4883,7 +4883,7 @@
     },
     {
       "symbol": "fwrite",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -4892,7 +4892,7 @@
     },
     {
       "symbol": "fwrite_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Binary output without locking",
@@ -5082,7 +5082,7 @@
     },
     {
       "symbol": "getc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Function alias for fgetc; reads one byte from stream",
@@ -5091,13 +5091,13 @@
     },
     {
       "symbol": "getc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
     {
       "symbol": "getchar",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -5106,7 +5106,7 @@
     },
     {
       "symbol": "getchar_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Read char from stdin without locking",
@@ -5158,7 +5158,7 @@
     },
     {
       "symbol": "getdelim",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "strict_semantics": "Read until delimiter with dynamic buffer allocation via malloc",
@@ -5432,7 +5432,7 @@
     },
     {
       "symbol": "getline",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "strict_semantics": "Read line (newline-delimited); delegates to getdelim",
@@ -6180,7 +6180,7 @@
     {
       "symbol": "getw",
       "header": "<stdio.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "Read int from stream",
       "module": "stdio_abi"
     },
@@ -7841,7 +7841,7 @@
     },
     {
       "symbol": "malloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
@@ -8008,7 +8008,7 @@
     },
     {
       "symbol": "memalign",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
@@ -8953,7 +8953,7 @@
     {
       "symbol": "pclose",
       "header": "stdio.h",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "notes": ""
     },
@@ -9158,7 +9158,7 @@
     },
     {
       "symbol": "posix_memalign",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
@@ -9490,7 +9490,7 @@
     },
     {
       "symbol": "printf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native printf engine writing directly to stdout via syscall-backed path; no host glibc call-through",
@@ -9868,7 +9868,7 @@
     },
     {
       "symbol": "pthread_cancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native cooperative cancellation via per-thread registry; sets pending flag; async mode consumes immediately",
@@ -9877,7 +9877,7 @@
     },
     {
       "symbol": "pthread_clockjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Managed-thread clock-aware timed join with CLOCK_REALTIME/CLOCK_MONOTONIC deadline conversion and deterministic ESRCH/EINVAL handling for consumed handles.",
@@ -9913,7 +9913,7 @@
     },
     {
       "symbol": "pthread_cond_init",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native condvar initialization with deterministic default clock and null/attr validation contract",
@@ -10003,7 +10003,7 @@
     },
     {
       "symbol": "pthread_create",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native clone-backed thread creation via core ThreadHandle; null thread_out/start rejected with EINVAL and non-null attr rejected deterministically",
@@ -10012,7 +10012,7 @@
     },
     {
       "symbol": "pthread_detach",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native detach on managed ThreadHandle registry; unknown or already-consumed thread ids return deterministic ESRCH",
@@ -10031,7 +10031,7 @@
     {
       "symbol": "pthread_exit",
       "header": "<pthread.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "Delegates to glibc pthread_exit",
       "module": "pthread_abi"
     },
@@ -10115,7 +10115,7 @@
     },
     {
       "symbol": "pthread_join",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native join on managed ThreadHandle registry with deterministic ESRCH for unknown ids and core join errno propagation",
@@ -10482,7 +10482,7 @@
     },
     {
       "symbol": "pthread_setcancelstate",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native thread-local cancel state (enable/disable); returns EINVAL for invalid state",
@@ -10491,7 +10491,7 @@
     },
     {
       "symbol": "pthread_setcanceltype",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native thread-local cancel type (deferred/async); returns EINVAL for invalid type",
@@ -10599,7 +10599,7 @@
     },
     {
       "symbol": "pthread_testcancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native cancellation point; consumes pending cancel if enabled",
@@ -10608,7 +10608,7 @@
     },
     {
       "symbol": "pthread_timedjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Managed-thread timed join with realtime abstime validation, futex-based timeout, and deterministic ESRCH/EINVAL/EDEADLK handling.",
@@ -10617,7 +10617,7 @@
     },
     {
       "symbol": "pthread_tryjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Managed-thread non-blocking join that returns EBUSY until the target reaches FINISHED and then performs the native join.",
@@ -10662,7 +10662,7 @@
     },
     {
       "symbol": "putc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Function alias for fputc; writes one byte to stream",
@@ -10671,13 +10671,13 @@
     },
     {
       "symbol": "putc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
     {
       "symbol": "putchar",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -10686,7 +10686,7 @@
     },
     {
       "symbol": "putchar_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Write char to stdout without locking",
@@ -10702,7 +10702,7 @@
     },
     {
       "symbol": "puts",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native string scan with direct write to stdout fd plus trailing newline; no host glibc delegation",
@@ -10748,7 +10748,7 @@
     {
       "symbol": "putw",
       "header": "<stdio.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "Write int to stream",
       "module": "stdio_abi"
     },
@@ -10783,7 +10783,7 @@
     },
     {
       "symbol": "pvalloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Page-aligned allocation with size rounded up to page boundary",
@@ -11047,7 +11047,7 @@
     },
     {
       "symbol": "realloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
@@ -11294,7 +11294,7 @@
     },
     {
       "symbol": "rewind",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -11804,7 +11804,7 @@
     },
     {
       "symbol": "setbuf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -11813,7 +11813,7 @@
     },
     {
       "symbol": "setbuffer",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "BSD setbuffer via setvbuf",
@@ -11935,7 +11935,7 @@
     },
     {
       "symbol": "setlinebuf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -12197,7 +12197,7 @@
     },
     {
       "symbol": "setvbuf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -13700,7 +13700,7 @@
     },
     {
       "symbol": "strdup",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust string scan + malloc + copy; no repair; returns malloc'd duplicate",
@@ -13888,7 +13888,7 @@
     },
     {
       "symbol": "strndup",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust string/memory ops; scans up to n bytes then malloc+copy; no repair",
@@ -15047,7 +15047,7 @@
     },
     {
       "symbol": "ungetc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -15169,7 +15169,7 @@
     },
     {
       "symbol": "valloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Page-aligned allocation via memalign delegation",
@@ -15256,7 +15256,7 @@
       "symbol": "vfprintf",
       "header": "stdio.h",
       "family": "stdio",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native Rust printf engine; renders through stream registry buffer.",
@@ -15265,7 +15265,7 @@
     },
     {
       "symbol": "vfscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native Rust scanf engine; va_list manually walked on x86_64.",
@@ -15304,7 +15304,7 @@
       "symbol": "vprintf",
       "header": "stdio.h",
       "family": "stdio",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native Rust printf engine; writes to stdout fd.",
@@ -15313,7 +15313,7 @@
     },
     {
       "symbol": "vscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native Rust scanf engine; va_list manually walked on x86_64.",
@@ -15345,7 +15345,7 @@
     },
     {
       "symbol": "vsscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native Rust scanf engine; va_list manually walked on x86_64.",
@@ -16132,7 +16132,7 @@
     },
     {
       "symbol": "_IO_puts",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal puts wrapper",
@@ -16159,7 +16159,7 @@
     },
     {
       "symbol": "_IO_flockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal flockfile wrapper",
@@ -16168,7 +16168,7 @@
     },
     {
       "symbol": "_IO_funlockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal funlockfile wrapper",
@@ -16177,7 +16177,7 @@
     },
     {
       "symbol": "_IO_ftrylockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal ftrylockfile wrapper",
@@ -16195,7 +16195,7 @@
     },
     {
       "symbol": "_IO_padn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "performance_class": "coldpath",
       "strict_semantics": "write padding chars to stream",
@@ -16204,7 +16204,7 @@
     },
     {
       "symbol": "_IO_sgetn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "performance_class": "coldpath",
       "strict_semantics": "read bytes from stream into buffer",
@@ -16213,7 +16213,7 @@
     },
     {
       "symbol": "_IO_seekoff",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "performance_class": "coldpath",
       "strict_semantics": "seek to offset in stream",
@@ -16222,7 +16222,7 @@
     },
     {
       "symbol": "_IO_seekpos",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "performance_class": "coldpath",
       "strict_semantics": "seek to absolute position",
@@ -18424,7 +18424,7 @@
     },
     {
       "symbol": "__strdup",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -18464,7 +18464,7 @@
     },
     {
       "symbol": "__strndup",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -19298,7 +19298,7 @@
     },
     {
       "symbol": "dlinfo",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi"
     },
     {
@@ -19308,7 +19308,7 @@
     },
     {
       "symbol": "dlvsym",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "strict_semantics": "Native exported-symbol resolver with explicit GLIBC version allowlist for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle",
       "hardened_semantics": "Native exported-symbol resolver with explicit GLIBC version allowlist and deterministic invalid-handle / symbol-miss dlerror behavior for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle"
@@ -33004,20 +33004,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 3705,
+    "implemented": 3588,
     "raw_syscall": 414,
-    "wraps_host_libc": 0,
+    "wraps_host_libc": 117,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 3705,
+  "implemented": 3588,
   "raw_syscall": 414,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 3705,
+    "implemented": 3588,
     "raw_syscall": 414,
     "glibc_call_through": 0,
-    "stub": 0
-  }
+    "stub": 0,
+    "wraps_host_libc": 117
+  },
+  "wraps_host_libc": 117
 }

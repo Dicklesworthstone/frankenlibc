@@ -258,9 +258,9 @@ def extract_function_body(source, fn_name):
 
         # Skip forward declarations inside extern blocks; we only want actual
         # function definitions with bodies.
-        if open_brace == -1:
+        if open_brace < 0:
             continue
-        if statement_end != -1 and statement_end < open_brace:
+        if statement_end >= 0 and statement_end < open_brace:
             continue
 
         start = match.start()
@@ -327,7 +327,7 @@ def validate_status(symbol, status, module, source, module_analysis):
 
     if status == "Implemented":
         if wraps_host_libc:
-            warnings.append("WrapsHostLibc candidate (host delegation detected)")
+            findings.append("Implemented but host delegation detected")
         # Should NOT have libc:: host calls (except libc type references
         # and common utility functions).
         libc_calls = LIBC_CALL_PATTERN.findall(body)
@@ -483,7 +483,7 @@ def validate_status(symbol, status, module, source, module_analysis):
 
     elif status == "RawSyscall":
         if wraps_host_libc:
-            warnings.append("WrapsHostLibc candidate (host delegation detected)")
+            findings.append("RawSyscall but host delegation detected")
         # RawSyscall functions use libc::syscall() and libc::SYS_* constants
         # which IS the raw syscall path (not glibc function calls).
         # We check that they don't call actual glibc library functions.

@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-05-20T03:22:48Z",
+  "generated_at": "2026-05-21T08:05:26Z",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -11,25 +11,25 @@
     "fixture_linked": 1160,
     "fixture_unlinked": 2959,
     "fixture_coverage_pct": 28.2,
-    "total_warnings": 117
+    "total_warnings": 0
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 3705,
+      "Implemented": 3588,
       "RawSyscall": 414,
-      "WrapsHostLibc": 0,
+      "WrapsHostLibc": 117,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 89.9,
+      "Implemented": 87.1,
       "RawSyscall": 10.1,
-      "WrapsHostLibc": 0.0,
+      "WrapsHostLibc": 2.8,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 100.0
+    "native_coverage_pct": 97.2
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
@@ -37,13 +37,13 @@
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 0,
+      "Implemented": -117,
       "RawSyscall": 0,
       "Stub": 0,
-      "WrapsHostLibc": 0
+      "WrapsHostLibc": 117
     },
-    "native_coverage_pct_delta": 0.0,
-    "reclassified_symbol_count": 0,
+    "native_coverage_pct_delta": -2.84,
+    "reclassified_symbol_count": 117,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
     "new_symbols": [],
@@ -59,18 +59,22 @@
     "reclassification_requires_conformance": {
       "status": "pass",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 0,
+      "total_reclassified": 117,
       "violations": []
     }
   },
   "status_distribution": {
     "Implemented": {
-      "count": 3705,
-      "fixture_linked": 1000
+      "count": 3588,
+      "fixture_linked": 895
     },
     "RawSyscall": {
       "count": 414,
       "fixture_linked": 160
+    },
+    "WrapsHostLibc": {
+      "count": 117,
+      "fixture_linked": 105
     }
   },
   "module_coverage": {
@@ -319,7 +323,7 @@
     "_IO_file_underflow": "Implemented",
     "_IO_file_write": "Implemented",
     "_IO_file_xsputn": "Implemented",
-    "_IO_flockfile": "Implemented",
+    "_IO_flockfile": "WrapsHostLibc",
     "_IO_flush_all": "Implemented",
     "_IO_flush_all_linebuffered": "Implemented",
     "_IO_fopen": "Implemented",
@@ -331,8 +335,8 @@
     "_IO_fsetpos": "Implemented",
     "_IO_fsetpos64": "Implemented",
     "_IO_ftell": "Implemented",
-    "_IO_ftrylockfile": "Implemented",
-    "_IO_funlockfile": "Implemented",
+    "_IO_ftrylockfile": "WrapsHostLibc",
+    "_IO_funlockfile": "WrapsHostLibc",
     "_IO_fwrite": "Implemented",
     "_IO_getc": "Implemented",
     "_IO_getline": "Implemented",
@@ -353,23 +357,23 @@
     "_IO_list_unlock": "Implemented",
     "_IO_marker_delta": "Implemented",
     "_IO_marker_difference": "Implemented",
-    "_IO_padn": "Implemented",
+    "_IO_padn": "WrapsHostLibc",
     "_IO_peekc_locked": "Implemented",
     "_IO_popen": "Implemented",
     "_IO_printf": "Implemented",
     "_IO_proc_close": "Implemented",
     "_IO_proc_open": "Implemented",
     "_IO_putc": "Implemented",
-    "_IO_puts": "Implemented",
+    "_IO_puts": "WrapsHostLibc",
     "_IO_remove_marker": "Implemented",
     "_IO_seekmark": "Implemented",
-    "_IO_seekoff": "Implemented",
-    "_IO_seekpos": "Implemented",
+    "_IO_seekoff": "WrapsHostLibc",
+    "_IO_seekpos": "WrapsHostLibc",
     "_IO_seekwmark": "Implemented",
     "_IO_setb": "Implemented",
     "_IO_setbuffer": "Implemented",
     "_IO_setvbuf": "Implemented",
-    "_IO_sgetn": "Implemented",
+    "_IO_sgetn": "WrapsHostLibc",
     "_IO_sprintf": "Implemented",
     "_IO_sputbackc": "Implemented",
     "_IO_sputbackwc": "Implemented",
@@ -483,7 +487,7 @@
     "__cxa_at_quick_exit": "Implemented",
     "__cxa_atexit": "Implemented",
     "__cxa_finalize": "Implemented",
-    "__cxa_thread_atexit_impl": "Implemented",
+    "__cxa_thread_atexit_impl": "WrapsHostLibc",
     "__cyg_profile_func_enter": "Implemented",
     "__cyg_profile_func_exit": "Implemented",
     "__daylight": "Implemented",
@@ -658,15 +662,15 @@
     "__isoc23_wcstoull_l": "Implemented",
     "__isoc23_wcstoumax": "Implemented",
     "__isoc23_wscanf": "Implemented",
-    "__isoc99_fscanf": "Implemented",
+    "__isoc99_fscanf": "WrapsHostLibc",
     "__isoc99_fwscanf": "Implemented",
-    "__isoc99_scanf": "Implemented",
-    "__isoc99_sscanf": "Implemented",
+    "__isoc99_scanf": "WrapsHostLibc",
+    "__isoc99_sscanf": "WrapsHostLibc",
     "__isoc99_swscanf": "Implemented",
-    "__isoc99_vfscanf": "Implemented",
+    "__isoc99_vfscanf": "WrapsHostLibc",
     "__isoc99_vfwscanf": "Implemented",
-    "__isoc99_vscanf": "Implemented",
-    "__isoc99_vsscanf": "Implemented",
+    "__isoc99_vscanf": "WrapsHostLibc",
+    "__isoc99_vsscanf": "WrapsHostLibc",
     "__isoc99_vswscanf": "Implemented",
     "__isoc99_vwscanf": "Implemented",
     "__isoc99_wscanf": "Implemented",
@@ -739,7 +743,7 @@
     "__libc_secure_getenv": "Implemented",
     "__libc_sigaction": "Implemented",
     "__libc_single_threaded": "Implemented",
-    "__libc_start_main": "Implemented",
+    "__libc_start_main": "WrapsHostLibc",
     "__libc_system": "Implemented",
     "__libc_valloc": "Implemented",
     "__lll_lock_wait_private": "RawSyscall",
@@ -978,7 +982,7 @@
     "__strcspn_c1": "Implemented",
     "__strcspn_c2": "Implemented",
     "__strcspn_c3": "Implemented",
-    "__strdup": "Implemented",
+    "__strdup": "WrapsHostLibc",
     "__strerror_r": "Implemented",
     "__strfmon_l": "Implemented",
     "__strftime_l": "Implemented",
@@ -987,7 +991,7 @@
     "__strncasecmp_l": "Implemented",
     "__strncat_chk": "Implemented",
     "__strncpy_chk": "Implemented",
-    "__strndup": "Implemented",
+    "__strndup": "WrapsHostLibc",
     "__strpbrk_c2": "Implemented",
     "__strpbrk_c3": "Implemented",
     "__strsep_1c": "Implemented",
@@ -1213,7 +1217,7 @@
     "aio_write": "Implemented",
     "aio_write64": "Implemented",
     "alarm": "RawSyscall",
-    "aligned_alloc": "Implemented",
+    "aligned_alloc": "WrapsHostLibc",
     "alphasort": "Implemented",
     "alphasort64": "Implemented",
     "arc4random": "Implemented",
@@ -1235,7 +1239,7 @@
     "argz_append": "Implemented",
     "argz_count": "Implemented",
     "argz_create": "Implemented",
-    "argz_create_sep": "Implemented",
+    "argz_create_sep": "WrapsHostLibc",
     "argz_delete": "Implemented",
     "argz_extract": "Implemented",
     "argz_insert": "Implemented",
@@ -1323,9 +1327,9 @@
     "authunix_create_default": "Implemented",
     "b64_ntop": "Implemented",
     "b64_pton": "Implemented",
-    "backtrace": "Implemented",
-    "backtrace_symbols": "Implemented",
-    "backtrace_symbols_fd": "Implemented",
+    "backtrace": "WrapsHostLibc",
+    "backtrace_symbols": "WrapsHostLibc",
+    "backtrace_symbols_fd": "WrapsHostLibc",
     "basename": "Implemented",
     "bcmp": "Implemented",
     "bcopy": "Implemented",
@@ -1367,7 +1371,7 @@
     "cacoshl": "Implemented",
     "cacosl": "Implemented",
     "call_once": "Implemented",
-    "calloc": "Implemented",
+    "calloc": "WrapsHostLibc",
     "callrpc": "Implemented",
     "canonicalize": "Implemented",
     "canonicalize_file_name": "Implemented",
@@ -1469,7 +1473,7 @@
     "cfgetobaud": "Implemented",
     "cfgetospeed": "RawSyscall",
     "cfmakeraw": "Implemented",
-    "cfree": "Implemented",
+    "cfree": "WrapsHostLibc",
     "cfsetbaud": "Implemented",
     "cfsetibaud": "Implemented",
     "cfsetispeed": "RawSyscall",
@@ -1490,8 +1494,8 @@
     "cimagf64x": "Implemented",
     "cimagl": "Implemented",
     "clearenv": "Implemented",
-    "clearerr": "Implemented",
-    "clearerr_unlocked": "Implemented",
+    "clearerr": "WrapsHostLibc",
+    "clearerr_unlocked": "WrapsHostLibc",
     "clnt_broadcast": "Implemented",
     "clnt_create": "Implemented",
     "clnt_pcreateerror": "Implemented",
@@ -1691,13 +1695,13 @@
     "dl_iterate_phdr": "Implemented",
     "dladdr": "Implemented",
     "dladdr1": "Implemented",
-    "dlclose": "Implemented",
+    "dlclose": "WrapsHostLibc",
     "dlerror": "Implemented",
-    "dlinfo": "Implemented",
+    "dlinfo": "WrapsHostLibc",
     "dlmopen": "Implemented",
-    "dlopen": "Implemented",
-    "dlsym": "Implemented",
-    "dlvsym": "Implemented",
+    "dlopen": "WrapsHostLibc",
+    "dlsym": "WrapsHostLibc",
+    "dlvsym": "WrapsHostLibc",
     "dmull": "Implemented",
     "dn_comp": "Implemented",
     "dn_expand": "Implemented",
@@ -1933,8 +1937,8 @@
     "fchmodat2": "RawSyscall",
     "fchown": "RawSyscall",
     "fchownat": "RawSyscall",
-    "fclose": "Implemented",
-    "fcloseall": "Implemented",
+    "fclose": "WrapsHostLibc",
+    "fcloseall": "WrapsHostLibc",
     "fcntl": "RawSyscall",
     "fcntl64": "Implemented",
     "fcrypt": "Implemented",
@@ -1963,11 +1967,11 @@
     "fegetmode": "Implemented",
     "fegetround": "Implemented",
     "feholdexcept": "Implemented",
-    "feof": "Implemented",
-    "feof_unlocked": "Implemented",
+    "feof": "WrapsHostLibc",
+    "feof_unlocked": "WrapsHostLibc",
     "feraiseexcept": "Implemented",
-    "ferror": "Implemented",
-    "ferror_unlocked": "Implemented",
+    "ferror": "WrapsHostLibc",
+    "ferror_unlocked": "WrapsHostLibc",
     "fesetenv": "Implemented",
     "fesetexcept": "Implemented",
     "fesetexceptflag": "Implemented",
@@ -1977,23 +1981,23 @@
     "fetestexceptflag": "Implemented",
     "feupdateenv": "Implemented",
     "fexecve": "Implemented",
-    "fflush": "Implemented",
-    "fflush_unlocked": "Implemented",
+    "fflush": "WrapsHostLibc",
+    "fflush_unlocked": "WrapsHostLibc",
     "ffma": "Implemented",
     "ffmal": "Implemented",
     "ffs": "Implemented",
     "ffsl": "Implemented",
     "ffsll": "Implemented",
-    "fgetc": "Implemented",
-    "fgetc_unlocked": "Implemented",
+    "fgetc": "WrapsHostLibc",
+    "fgetc_unlocked": "WrapsHostLibc",
     "fgetgrent": "Implemented",
     "fgetgrent_r": "Implemented",
-    "fgetpos": "Implemented",
-    "fgetpos64": "Implemented",
+    "fgetpos": "WrapsHostLibc",
+    "fgetpos64": "WrapsHostLibc",
     "fgetpwent": "Implemented",
     "fgetpwent_r": "Implemented",
-    "fgets": "Implemented",
-    "fgets_unlocked": "Implemented",
+    "fgets": "WrapsHostLibc",
+    "fgets_unlocked": "WrapsHostLibc",
     "fgetsgent": "Implemented",
     "fgetsgent_r": "Implemented",
     "fgetspent": "Implemented",
@@ -2003,14 +2007,14 @@
     "fgetws": "Implemented",
     "fgetws_unlocked": "Implemented",
     "fgetxattr": "RawSyscall",
-    "fileno": "Implemented",
-    "fileno_unlocked": "Implemented",
+    "fileno": "WrapsHostLibc",
+    "fileno_unlocked": "WrapsHostLibc",
     "finite": "Implemented",
     "finitef": "Implemented",
     "finitel": "Implemented",
     "flistxattr": "RawSyscall",
     "flock": "RawSyscall",
-    "flockfile": "Implemented",
+    "flockfile": "WrapsHostLibc",
     "floor": "Implemented",
     "floorf": "Implemented",
     "floorf128": "Implemented",
@@ -2142,25 +2146,25 @@
     "fork": "RawSyscall",
     "forkpty": "Implemented",
     "fpathconf": "Implemented",
-    "fprintf": "Implemented",
-    "fputc": "Implemented",
-    "fputc_unlocked": "Implemented",
-    "fputs": "Implemented",
-    "fputs_unlocked": "Implemented",
+    "fprintf": "WrapsHostLibc",
+    "fputc": "WrapsHostLibc",
+    "fputc_unlocked": "WrapsHostLibc",
+    "fputs": "WrapsHostLibc",
+    "fputs_unlocked": "WrapsHostLibc",
     "fputwc": "Implemented",
     "fputwc_unlocked": "Implemented",
     "fputws": "Implemented",
     "fputws_unlocked": "Implemented",
-    "fread": "Implemented",
-    "fread_unlocked": "Implemented",
-    "free": "Implemented",
+    "fread": "WrapsHostLibc",
+    "fread_unlocked": "WrapsHostLibc",
+    "free": "WrapsHostLibc",
     "freeaddrinfo": "Implemented",
     "freeifaddrs": "Implemented",
     "freelocale": "Implemented",
     "freezero": "Implemented",
     "fremovexattr": "RawSyscall",
-    "freopen": "Implemented",
-    "freopen64": "Implemented",
+    "freopen": "WrapsHostLibc",
+    "freopen64": "WrapsHostLibc",
     "frexp": "Implemented",
     "frexpf": "Implemented",
     "frexpf128": "Implemented",
@@ -2187,11 +2191,11 @@
     "fromfpxl": "Implemented",
     "fscanf": "Implemented",
     "fsconfig": "RawSyscall",
-    "fseek": "Implemented",
-    "fseeko": "Implemented",
-    "fseeko64": "Implemented",
-    "fsetpos": "Implemented",
-    "fsetpos64": "Implemented",
+    "fseek": "WrapsHostLibc",
+    "fseeko": "WrapsHostLibc",
+    "fseeko64": "WrapsHostLibc",
+    "fsetpos": "WrapsHostLibc",
+    "fsetpos64": "WrapsHostLibc",
     "fsetxattr": "RawSyscall",
     "fsmount": "RawSyscall",
     "fsopen": "RawSyscall",
@@ -2209,14 +2213,14 @@
     "fsub": "Implemented",
     "fsubl": "Implemented",
     "fsync": "RawSyscall",
-    "ftell": "Implemented",
-    "ftello": "Implemented",
-    "ftello64": "Implemented",
+    "ftell": "WrapsHostLibc",
+    "ftello": "WrapsHostLibc",
+    "ftello64": "WrapsHostLibc",
     "ftime": "Implemented",
     "ftok": "Implemented",
     "ftruncate": "RawSyscall",
     "ftruncate64": "Implemented",
-    "ftrylockfile": "Implemented",
+    "ftrylockfile": "WrapsHostLibc",
     "fts64_children": "Implemented",
     "fts64_close": "Implemented",
     "fts64_open": "Implemented",
@@ -2229,7 +2233,7 @@
     "fts_set": "Implemented",
     "ftw": "Implemented",
     "ftw64": "Implemented",
-    "funlockfile": "Implemented",
+    "funlockfile": "WrapsHostLibc",
     "futex": "RawSyscall",
     "futex_requeue": "RawSyscall",
     "futex_wait": "RawSyscall",
@@ -2240,8 +2244,8 @@
     "futimesat": "Implemented",
     "fwide": "Implemented",
     "fwprintf": "Implemented",
-    "fwrite": "Implemented",
-    "fwrite_unlocked": "Implemented",
+    "fwrite": "WrapsHostLibc",
+    "fwrite_unlocked": "WrapsHostLibc",
     "fwscanf": "Implemented",
     "gai_cancel": "Implemented",
     "gai_error": "Implemented",
@@ -2266,17 +2270,17 @@
     "getaliasent_r": "Implemented",
     "getauxval": "Implemented",
     "getbsize": "Implemented",
-    "getc": "Implemented",
-    "getc_unlocked": "Implemented",
-    "getchar": "Implemented",
-    "getchar_unlocked": "Implemented",
+    "getc": "WrapsHostLibc",
+    "getc_unlocked": "WrapsHostLibc",
+    "getchar": "WrapsHostLibc",
+    "getchar_unlocked": "WrapsHostLibc",
     "getcontext": "Implemented",
     "getcpu": "RawSyscall",
     "getcwd": "RawSyscall",
     "getdate": "Implemented",
     "getdate_err": "Implemented",
     "getdate_r": "Implemented",
-    "getdelim": "Implemented",
+    "getdelim": "WrapsHostLibc",
     "getdents64": "RawSyscall",
     "getdirentries": "Implemented",
     "getdirentries64": "Implemented",
@@ -2311,7 +2315,7 @@
     "getifaddrs": "Implemented",
     "getipv4sourcefilter": "Implemented",
     "getitimer": "RawSyscall",
-    "getline": "Implemented",
+    "getline": "WrapsHostLibc",
     "getloadavg": "Implemented",
     "getlogin": "Implemented",
     "getlogin_r": "Implemented",
@@ -2415,7 +2419,7 @@
     "getutxent": "Implemented",
     "getutxid": "Implemented",
     "getutxline": "Implemented",
-    "getw": "Implemented",
+    "getw": "WrapsHostLibc",
     "getwc": "Implemented",
     "getwc_unlocked": "Implemented",
     "getwchar": "Implemented",
@@ -2815,7 +2819,7 @@
     "makecontext": "Implemented",
     "mallinfo": "Implemented",
     "mallinfo2": "Implemented",
-    "malloc": "Implemented",
+    "malloc": "WrapsHostLibc",
     "malloc_info": "Implemented",
     "malloc_stats": "Implemented",
     "malloc_trim": "Implemented",
@@ -2838,7 +2842,7 @@
     "mcheck_check_all": "Implemented",
     "mcheck_pedantic": "Implemented",
     "mcount": "Implemented",
-    "memalign": "Implemented",
+    "memalign": "WrapsHostLibc",
     "membarrier": "RawSyscall",
     "memccpy": "Implemented",
     "memchr": "Implemented",
@@ -3056,7 +3060,7 @@
     "passwd2des": "Implemented",
     "pathconf": "Implemented",
     "pause": "RawSyscall",
-    "pclose": "Implemented",
+    "pclose": "WrapsHostLibc",
     "perf_event_open": "RawSyscall",
     "perror": "Implemented",
     "personality": "RawSyscall",
@@ -3088,7 +3092,7 @@
     "posix_fallocate": "RawSyscall",
     "posix_fallocate64": "Implemented",
     "posix_madvise": "RawSyscall",
-    "posix_memalign": "Implemented",
+    "posix_memalign": "WrapsHostLibc",
     "posix_openpt": "RawSyscall",
     "posix_spawn": "Implemented",
     "posix_spawn_file_actions_addchdir_np": "Implemented",
@@ -3152,7 +3156,7 @@
     "preadv2": "RawSyscall",
     "preadv64": "Implemented",
     "preadv64v2": "Implemented",
-    "printf": "Implemented",
+    "printf": "WrapsHostLibc",
     "printf_size": "Implemented",
     "printf_size_info": "Implemented",
     "prlimit": "RawSyscall",
@@ -3199,12 +3203,12 @@
     "pthread_barrierattr_getpshared": "Implemented",
     "pthread_barrierattr_init": "Implemented",
     "pthread_barrierattr_setpshared": "Implemented",
-    "pthread_cancel": "Implemented",
-    "pthread_clockjoin_np": "Implemented",
+    "pthread_cancel": "WrapsHostLibc",
+    "pthread_clockjoin_np": "WrapsHostLibc",
     "pthread_cond_broadcast": "Implemented",
     "pthread_cond_clockwait": "Implemented",
     "pthread_cond_destroy": "Implemented",
-    "pthread_cond_init": "Implemented",
+    "pthread_cond_init": "WrapsHostLibc",
     "pthread_cond_signal": "Implemented",
     "pthread_cond_timedwait": "Implemented",
     "pthread_cond_wait": "Implemented",
@@ -3214,10 +3218,10 @@
     "pthread_condattr_init": "Implemented",
     "pthread_condattr_setclock": "Implemented",
     "pthread_condattr_setpshared": "Implemented",
-    "pthread_create": "Implemented",
-    "pthread_detach": "Implemented",
+    "pthread_create": "WrapsHostLibc",
+    "pthread_detach": "WrapsHostLibc",
     "pthread_equal": "Implemented",
-    "pthread_exit": "Implemented",
+    "pthread_exit": "WrapsHostLibc",
     "pthread_getaffinity_np": "Implemented",
     "pthread_getattr_default_np": "Implemented",
     "pthread_getattr_np": "Implemented",
@@ -3227,7 +3231,7 @@
     "pthread_getschedparam": "Implemented",
     "pthread_getspecific": "Implemented",
     "pthread_gettid_np": "Implemented",
-    "pthread_join": "Implemented",
+    "pthread_join": "WrapsHostLibc",
     "pthread_key_create": "Implemented",
     "pthread_key_delete": "Implemented",
     "pthread_kill": "Implemented",
@@ -3280,8 +3284,8 @@
     "pthread_self": "Implemented",
     "pthread_setaffinity_np": "Implemented",
     "pthread_setattr_default_np": "Implemented",
-    "pthread_setcancelstate": "Implemented",
-    "pthread_setcanceltype": "Implemented",
+    "pthread_setcancelstate": "WrapsHostLibc",
+    "pthread_setcanceltype": "WrapsHostLibc",
     "pthread_setconcurrency": "Implemented",
     "pthread_setname_np": "Implemented",
     "pthread_setschedparam": "Implemented",
@@ -3294,33 +3298,33 @@
     "pthread_spin_lock": "Implemented",
     "pthread_spin_trylock": "Implemented",
     "pthread_spin_unlock": "Implemented",
-    "pthread_testcancel": "Implemented",
-    "pthread_timedjoin_np": "Implemented",
-    "pthread_tryjoin_np": "Implemented",
+    "pthread_testcancel": "WrapsHostLibc",
+    "pthread_timedjoin_np": "WrapsHostLibc",
+    "pthread_tryjoin_np": "WrapsHostLibc",
     "pthread_yield": "Implemented",
     "ptrace": "RawSyscall",
     "ptsname": "RawSyscall",
     "ptsname_r": "Implemented",
-    "putc": "Implemented",
-    "putc_unlocked": "Implemented",
-    "putchar": "Implemented",
-    "putchar_unlocked": "Implemented",
+    "putc": "WrapsHostLibc",
+    "putc_unlocked": "WrapsHostLibc",
+    "putchar": "WrapsHostLibc",
+    "putchar_unlocked": "WrapsHostLibc",
     "putenv": "Implemented",
     "putgrent": "Implemented",
     "putmsg": "Implemented",
     "putpmsg": "Implemented",
     "putpwent": "Implemented",
-    "puts": "Implemented",
+    "puts": "WrapsHostLibc",
     "putsgent": "Implemented",
     "putspent": "Implemented",
     "pututline": "Implemented",
     "pututxline": "Implemented",
-    "putw": "Implemented",
+    "putw": "WrapsHostLibc",
     "putwc": "Implemented",
     "putwc_unlocked": "Implemented",
     "putwchar": "Implemented",
     "putwchar_unlocked": "Implemented",
-    "pvalloc": "Implemented",
+    "pvalloc": "WrapsHostLibc",
     "pwrite": "RawSyscall",
     "pwrite64": "Implemented",
     "pwritev": "RawSyscall",
@@ -3367,7 +3371,7 @@
     "readlink": "RawSyscall",
     "readlinkat": "RawSyscall",
     "readv": "RawSyscall",
-    "realloc": "Implemented",
+    "realloc": "WrapsHostLibc",
     "reallocarr": "Implemented",
     "reallocarray": "Implemented",
     "realpath": "Implemented",
@@ -3426,7 +3430,7 @@
     "res_search": "Implemented",
     "res_send": "Implemented",
     "revoke": "Implemented",
-    "rewind": "Implemented",
+    "rewind": "WrapsHostLibc",
     "rewinddir": "Implemented",
     "rexec": "Implemented",
     "rexec_af": "Implemented",
@@ -3551,8 +3555,8 @@
     "sendmsg": "RawSyscall",
     "sendto": "RawSyscall",
     "setaliasent": "Implemented",
-    "setbuf": "Implemented",
-    "setbuffer": "Implemented",
+    "setbuf": "WrapsHostLibc",
+    "setbuffer": "WrapsHostLibc",
     "setcontext": "Implemented",
     "setdomainname": "RawSyscall",
     "setegid": "RawSyscall",
@@ -3572,7 +3576,7 @@
     "setjmp": "Implemented",
     "setkey": "Implemented",
     "setkey_r": "Implemented",
-    "setlinebuf": "Implemented",
+    "setlinebuf": "WrapsHostLibc",
     "setlocale": "Implemented",
     "setlogin": "Implemented",
     "setlogmask": "Implemented",
@@ -3622,7 +3626,7 @@
     "setusershell": "Implemented",
     "setutent": "Implemented",
     "setutxent": "Implemented",
-    "setvbuf": "Implemented",
+    "setvbuf": "WrapsHostLibc",
     "setxattr": "RawSyscall",
     "sgetsgent": "Implemented",
     "sgetsgent_r": "Implemented",
@@ -3826,7 +3830,7 @@
     "strcoll_l": "Implemented",
     "strcpy": "Implemented",
     "strcspn": "Implemented",
-    "strdup": "Implemented",
+    "strdup": "WrapsHostLibc",
     "strerror": "Implemented",
     "strerror_l": "Implemented",
     "strerror_r": "Implemented",
@@ -3854,7 +3858,7 @@
     "strncat": "Implemented",
     "strncmp": "Implemented",
     "strncpy": "Implemented",
-    "strndup": "Implemented",
+    "strndup": "WrapsHostLibc",
     "strnlen": "Implemented",
     "strnstr": "Implemented",
     "strpbrk": "Implemented",
@@ -4105,7 +4109,7 @@
     "umount": "RawSyscall",
     "umount2": "RawSyscall",
     "uname": "RawSyscall",
-    "ungetc": "Implemented",
+    "ungetc": "WrapsHostLibc",
     "ungetwc": "Implemented",
     "unlink": "RawSyscall",
     "unlinkat": "RawSyscall",
@@ -4125,7 +4129,7 @@
     "utimes": "Implemented",
     "utmpname": "Implemented",
     "utmpxname": "Implemented",
-    "valloc": "Implemented",
+    "valloc": "WrapsHostLibc",
     "vasprintf": "Implemented",
     "vdprintf": "Implemented",
     "verr": "Implemented",
@@ -4134,18 +4138,18 @@
     "versionsort": "Implemented",
     "versionsort64": "Implemented",
     "vfork": "RawSyscall",
-    "vfprintf": "Implemented",
-    "vfscanf": "Implemented",
+    "vfprintf": "WrapsHostLibc",
+    "vfscanf": "WrapsHostLibc",
     "vfwprintf": "Implemented",
     "vfwscanf": "Implemented",
     "vhangup": "Implemented",
     "vlimit": "Implemented",
     "vmsplice": "RawSyscall",
-    "vprintf": "Implemented",
-    "vscanf": "Implemented",
+    "vprintf": "WrapsHostLibc",
+    "vscanf": "WrapsHostLibc",
     "vsnprintf": "Implemented",
     "vsprintf": "Implemented",
-    "vsscanf": "Implemented",
+    "vsscanf": "WrapsHostLibc",
     "vswprintf": "Implemented",
     "vswscanf": "Implemented",
     "vsyslog": "Implemented",
@@ -4396,7 +4400,1772 @@
     "yperr_string": "Implemented",
     "ypprot_err": "Implemented"
   },
-  "reclassified_symbols": [],
+  "reclassified_symbols": [
+    {
+      "symbol": "_IO_flockfile",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "_IO_ftrylockfile",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "_IO_funlockfile",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "_IO_padn",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "_IO_puts",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "_IO_seekoff",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "_IO_seekpos",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "_IO_sgetn",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__cxa_thread_atexit_impl",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_fscanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_scanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_sscanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_vfscanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_vscanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_vsscanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__libc_start_main",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 4,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__strdup",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__strndup",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "aligned_alloc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "argz_create_sep",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "backtrace",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "backtrace_symbols",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "backtrace_symbols_fd",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "calloc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "cfree",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "clearerr",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "clearerr_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "dlclose",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "dlinfo",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "dlopen",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 3,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "dlsym",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 3,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "dlvsym",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fclose",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fcloseall",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "feof",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "feof_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "ferror",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "ferror_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fflush",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fflush_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fgetc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fgetc_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fgetpos",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fgetpos64",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fgets",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fgets_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fileno",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fileno_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "flockfile",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fprintf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fputc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fputc_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fputs",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fputs_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fread",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fread_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "free",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "freopen",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "freopen64",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fseek",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fseeko",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fseeko64",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fsetpos",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fsetpos64",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "ftell",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "ftello",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "ftello64",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "ftrylockfile",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "funlockfile",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fwrite",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fwrite_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getc_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getchar",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getchar_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getdelim",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getline",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getw",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "malloc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "memalign",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pclose",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "posix_memalign",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "printf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_cancel",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_clockjoin_np",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 6,
+      "hardened_fixture_count": 6,
+      "strict_conformance": {
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_cond_init",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 4,
+      "hardened_fixture_count": 4,
+      "strict_conformance": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_create",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_detach",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 3,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_exit",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_join",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 3,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_setcancelstate",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_setcanceltype",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_testcancel",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_timedjoin_np",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 7,
+      "hardened_fixture_count": 7,
+      "strict_conformance": {
+        "total": 7,
+        "passed": 7,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 7,
+        "passed": 7,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_tryjoin_np",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 5,
+      "hardened_fixture_count": 5,
+      "strict_conformance": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "putc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "putc_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "putchar",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "putchar_unlocked",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "puts",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "putw",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pvalloc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "realloc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "rewind",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "setbuf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "setbuffer",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "setlinebuf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "setvbuf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "strdup",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "strndup",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "ungetc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "valloc",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "vfprintf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "vfscanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "vprintf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "vscanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "vsscanf",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    }
+  ],
   "status_validation_issues": [
     {
       "symbol": "_Exit",
@@ -4407,86 +6176,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "__cxa_thread_atexit_impl",
-      "status": "Implemented",
-      "module": "startup_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__isoc99_fscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__isoc99_scanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__isoc99_sscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__isoc99_vfscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__isoc99_vscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__isoc99_vsscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__libc_start_main",
-      "status": "Implemented",
-      "module": "startup_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "__progname",
@@ -4529,16 +6218,6 @@
       "warnings": []
     },
     {
-      "symbol": "aligned_alloc",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "alphasort64",
       "status": "Implemented",
       "module": "io_abi",
@@ -4549,66 +6228,6 @@
       "warnings": []
     },
     {
-      "symbol": "argz_create_sep",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "backtrace",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "backtrace_symbols",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "backtrace_symbols_fd",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "calloc",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "cfree",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "chroot",
       "status": "RawSyscall",
       "module": "process_abi",
@@ -4617,26 +6236,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "clearerr",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "clearerr_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "clock_adjtime",
@@ -4669,36 +6268,6 @@
       "warnings": []
     },
     {
-      "symbol": "dlclose",
-      "status": "Implemented",
-      "module": "dlfcn_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "dlopen",
-      "status": "Implemented",
-      "module": "dlfcn_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "dlsym",
-      "status": "Implemented",
-      "module": "dlfcn_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "fanotify_init",
       "status": "RawSyscall",
       "module": "io_abi",
@@ -4717,146 +6286,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "fclose",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fcloseall",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "feof",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "feof_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "ferror",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "ferror_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fflush",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fflush_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fgetc",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fgetc_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fgetpos",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fgetpos64",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fgets",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fgets_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "fgetwc_unlocked",
@@ -4879,86 +6308,6 @@
       "warnings": []
     },
     {
-      "symbol": "fileno",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fileno_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "flockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fprintf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fputc",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fputc_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fputs",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fputs_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "fputwc_unlocked",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -4979,156 +6328,6 @@
       "warnings": []
     },
     {
-      "symbol": "fread",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fread_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "free",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "freopen",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "freopen64",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fseek",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fseeko",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fseeko64",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fsetpos",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fsetpos64",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "ftell",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "ftello",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "ftello64",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "ftrylockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "funlockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "futimens",
       "status": "Implemented",
       "module": "io_abi",
@@ -5137,86 +6336,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "fwrite",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "fwrite_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "getc",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "getc_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "getchar",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "getchar_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "getdelim",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "getline",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "getresgid",
@@ -5237,16 +6356,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "getw",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "getwc",
@@ -5439,16 +6548,6 @@
       "warnings": []
     },
     {
-      "symbol": "malloc",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "mblen",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -5509,16 +6608,6 @@
       "warnings": []
     },
     {
-      "symbol": "memalign",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "mlock2",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -5547,26 +6636,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "pclose",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "posix_memalign",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "posix_spawnattr_getflags",
@@ -5689,16 +6758,6 @@
       "warnings": []
     },
     {
-      "symbol": "printf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "program_invocation_name",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -5717,186 +6776,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "pthread_cancel",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_clockjoin_np",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_cond_init",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_create",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_detach",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_exit",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_join",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_setcancelstate",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_setcanceltype",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_testcancel",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_timedjoin_np",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "pthread_tryjoin_np",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "putc",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "putc_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "putchar",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "putchar_unlocked",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "puts",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "putw",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "putwc",
@@ -5929,66 +6808,6 @@
       "warnings": []
     },
     {
-      "symbol": "pvalloc",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "realloc",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "rewind",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "setbuf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "setbuffer",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "setlinebuf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "setresgid",
       "status": "RawSyscall",
       "module": "process_abi",
@@ -6009,16 +6828,6 @@
       "warnings": []
     },
     {
-      "symbol": "setvbuf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "sigdescr_np",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -6029,16 +6838,6 @@
       "warnings": []
     },
     {
-      "symbol": "strdup",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "strftime",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -6047,16 +6846,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "strndup",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "tdelete",
@@ -6129,16 +6918,6 @@
       "warnings": []
     },
     {
-      "symbol": "ungetc",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "utimensat",
       "status": "Implemented",
       "module": "io_abi",
@@ -6147,66 +6926,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "valloc",
-      "status": "Implemented",
-      "module": "malloc_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "vfprintf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "vfscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "vprintf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "vscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "vsscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "wcschrnul",
@@ -6429,16 +7148,6 @@
       "warnings": []
     },
     {
-      "symbol": "_IO_puts",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "_IO_feof",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -6459,36 +7168,6 @@
       "warnings": []
     },
     {
-      "symbol": "_IO_flockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "_IO_funlockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "_IO_ftrylockfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "_IO_peekc_locked",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -6497,46 +7176,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "_IO_padn",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "_IO_sgetn",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "_IO_seekoff",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "_IO_seekpos",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "_IO_2_1_stdin_",
@@ -7209,26 +7848,6 @@
       "warnings": []
     },
     {
-      "symbol": "__strdup",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "__strndup",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
       "symbol": "__timezone",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -7567,26 +8186,6 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
-    },
-    {
-      "symbol": "dlinfo",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
-    },
-    {
-      "symbol": "dlvsym",
-      "status": "Implemented",
-      "module": "dlfcn_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc candidate (host delegation detected)"
-      ]
     },
     {
       "symbol": "environ",

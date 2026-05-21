@@ -169,6 +169,18 @@ emit(
     },
 )
 
+if invalid:
+    print(f"\nFAIL: support matrix contains {invalid} invalid status row(s)")
+    errors += 1
+    emit(
+        "error",
+        "invalid_status_rows",
+        "all",
+        "fail",
+        1,
+        {"status_invalid": invalid},
+    )
+
 if coverage_dashboard:
     status_counts = coverage_dashboard.get("status_counts", {})
     native_pct = coverage_dashboard.get("native_coverage_pct")
