@@ -200,6 +200,77 @@ fn verify_zero_copy_source_invariance(
     Ok(())
 }
 
+fn verify_memcpy_metamorphic_relations_for_mode(
+    fixture: &FixtureFile,
+    full_case_name: &str,
+    zero_case_name: &str,
+    mode: &str,
+) -> Result<(), String> {
+    let full = case_by_name(fixture, full_case_name)?;
+    assert_eq!(
+        full.mode, mode,
+        "{full_case_name} should execute in the requested mode"
+    );
+    assert_eq!(
+        input_usize(full, "n")?,
+        input_bytes(full, "src")?.len(),
+        "full-copy relation requires n to match src length"
+    );
+    let base = execute_case_via_harness(&full.function, &full.inputs, mode)?;
+    let base_bytes = parse_output_bytes(&full.name, &base.impl_output)?;
+
+    let suffix = vec![251_u8, 0, 17];
+    let mut extended_src = input_bytes(full, "src")?;
+    extended_src.extend_from_slice(&suffix);
+    let mut extended_inputs = inputs_object(full)?;
+    extended_inputs.insert(String::from("src"), serde_json::json!(extended_src));
+    extended_inputs.insert(
+        String::from("n"),
+        serde_json::json!(input_usize(full, "n")? + suffix.len()),
+    );
+    extended_inputs.insert(
+        String::from("dst_len"),
+        serde_json::json!(input_usize(full, "dst_len")? + suffix.len()),
+    );
+    let extended_input = Value::Object(extended_inputs);
+    let extended = execute_case_via_harness(&full.function, &extended_input, mode)?;
+    let extended_bytes =
+        parse_output_bytes(&format!("{full_case_name}_extended"), &extended.impl_output)?;
+    verify_prefix_extension_relation(&base_bytes, &extended_bytes, &suffix)?;
+    assert!(
+        base.host_parity && extended.host_parity,
+        "metamorphic relation must run against host-parity executions for {mode}"
+    );
+
+    let zero = case_by_name(fixture, zero_case_name)?;
+    assert_eq!(
+        zero.mode, mode,
+        "{zero_case_name} should execute in the requested mode"
+    );
+    assert_eq!(
+        input_usize(zero, "n")?,
+        0,
+        "zero-copy relation requires n=0"
+    );
+    let zero_base = execute_case_via_harness(&zero.function, &zero.inputs, mode)?;
+    let mut zero_mutated_inputs = inputs_object(zero)?;
+    zero_mutated_inputs.insert(String::from("src"), serde_json::json!([9, 8, 7, 6, 5, 4]));
+    let zero_mutated_input = Value::Object(zero_mutated_inputs);
+    let zero_mutated = execute_case_via_harness(&zero.function, &zero_mutated_input, mode)?;
+    let zero_base_bytes = parse_output_bytes(&zero.name, &zero_base.impl_output)?;
+    let zero_mutated_bytes = parse_output_bytes(
+        &format!("{zero_case_name}_mutated_source"),
+        &zero_mutated.impl_output,
+    )?;
+    verify_zero_copy_source_invariance(&zero_base_bytes, &zero_mutated_bytes)?;
+    assert!(
+        zero_base.host_parity && zero_mutated.host_parity,
+        "zero-copy relation must run against host-parity executions for {mode}"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn memcpy_strict_fixture_exists() -> Result<(), String> {
     let path = repo_root()?.join("tests/conformance/fixtures/memcpy_strict.json");
@@ -382,56 +453,13 @@ fn memcpy_strict_fixture_executes_via_isolated_harness() -> Result<(), String> {
 fn memcpy_strict_metamorphic_relations_hold_without_golden_outputs() -> Result<(), String> {
     let fixture = load_fixture("memcpy_strict")?;
 
-    let full = case_by_name(&fixture, "copy_full_8")?;
-    assert_eq!(
-        input_usize(full, "n")?,
-        input_bytes(full, "src")?.len(),
-        "full-copy relation requires n to match src length"
-    );
-    let base = execute_case_via_harness(&full.function, &full.inputs, "strict")?;
-    let base_bytes = parse_output_bytes(&full.name, &base.impl_output)?;
-
-    let suffix = vec![251_u8, 0, 17];
-    let mut extended_src = input_bytes(full, "src")?;
-    extended_src.extend_from_slice(&suffix);
-    let mut extended_inputs = inputs_object(full)?;
-    extended_inputs.insert(String::from("src"), serde_json::json!(extended_src));
-    extended_inputs.insert(
-        String::from("n"),
-        serde_json::json!(input_usize(full, "n")? + suffix.len()),
-    );
-    extended_inputs.insert(
-        String::from("dst_len"),
-        serde_json::json!(input_usize(full, "dst_len")? + suffix.len()),
-    );
-    let extended_input = Value::Object(extended_inputs);
-    let extended = execute_case_via_harness(&full.function, &extended_input, "strict")?;
-    let extended_bytes = parse_output_bytes("copy_full_8_extended", &extended.impl_output)?;
-    verify_prefix_extension_relation(&base_bytes, &extended_bytes, &suffix)?;
-    assert!(
-        base.host_parity && extended.host_parity,
-        "metamorphic relation must run against host-parity executions"
-    );
-
-    let zero = case_by_name(&fixture, "copy_zero")?;
-    assert_eq!(
-        input_usize(zero, "n")?,
-        0,
-        "zero-copy relation requires n=0"
-    );
-    let zero_base = execute_case_via_harness(&zero.function, &zero.inputs, "strict")?;
-    let mut zero_mutated_inputs = inputs_object(zero)?;
-    zero_mutated_inputs.insert(String::from("src"), serde_json::json!([9, 8, 7, 6, 5, 4]));
-    let zero_mutated_input = Value::Object(zero_mutated_inputs);
-    let zero_mutated = execute_case_via_harness(&zero.function, &zero_mutated_input, "strict")?;
-    let zero_base_bytes = parse_output_bytes(&zero.name, &zero_base.impl_output)?;
-    let zero_mutated_bytes =
-        parse_output_bytes("copy_zero_mutated_source", &zero_mutated.impl_output)?;
-    verify_zero_copy_source_invariance(&zero_base_bytes, &zero_mutated_bytes)?;
-    assert!(
-        zero_base.host_parity && zero_mutated.host_parity,
-        "zero-copy relation must run against host-parity executions"
-    );
+    verify_memcpy_metamorphic_relations_for_mode(&fixture, "copy_full_8", "copy_zero", "strict")?;
+    verify_memcpy_metamorphic_relations_for_mode(
+        &fixture,
+        "copy_full_8_hardened",
+        "copy_zero_hardened",
+        "hardened",
+    )?;
 
     Ok(())
 }
