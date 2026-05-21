@@ -213,6 +213,12 @@ Per AGENTS.md branch-diversity: WS-0 alone draws on conformal/sequential statist
 
 **Goal.** Either the load-bearing theorems are machine-checked, or the "9 formal proofs" language is corrected.
 
+**RC-WS7.1 decision (2026-05-21).** Reframe now; do not claim machine-checked theorem discharge until machine-checked artifacts exist.
+
+**Rationale.** The current proof corpus is narrative notes and binder rows, not Lean/SMT/Coq/etc. artifacts. `FEATURE_PARITY.md` explicitly says no formal proof artifacts are committed yet, and the existing proof-chain CLI tests exercise evidence contracts rather than theorem-level mechanization. Mechanizing the load-bearing theorems remains valuable, but it is a separate implementation track with artifact obligations; until that lands, README/FEATURE_PARITY language must call these proof notes, proof obligations, and tested invariant catalogs, not completed formal proofs.
+
+**Follow-on.** `RC-WS7.2` may add actual machine-checked artifacts; `RC-WS7.3` discharges or honestly defers the 24 proof obligations; `RC-WS7.4` reconciles README and FEATURE_PARITY wording to this decision.
+
 **Beads.**
 - `RC-WS7.1` — Owner decision bead: mechanize (the project has a `lean-formal-feedback-loop` skill) vs. reframe.
 - `RC-WS7.2` — If mechanizing: machine-check the load-bearing theorems — Galois connection soundness, lattice monotonicity, SOS barrier nonnegativity, healing completeness — one checked artifact per theorem.
