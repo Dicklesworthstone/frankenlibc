@@ -1973,6 +1973,18 @@ unsafe extern "C" {
     fn free(ptr: *mut std::ffi::c_void);
 }
 
+static OBSTACK_CHUNK_ALLOC_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+unsafe extern "C" fn counting_obstack_chunkfun(size: usize) -> *mut u8 {
+    OBSTACK_CHUNK_ALLOC_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    unsafe { malloc(size).cast::<u8>() }
+}
+
+unsafe extern "C" fn counting_obstack_freefun(ptr: *mut u8) {
+    unsafe { free(ptr.cast()) };
+}
+
 #[repr(C)]
 struct ObstackTestView {
     chunk_size: i64,
@@ -2035,6 +2047,83 @@ fn obstack_begin_and_allocated_p() {
     assert_eq!(r, 0, "stack variable should not be in obstack");
 
     // Clean up
+    unsafe { _obstack_free(h, ptr::null_mut()) };
+}
+
+#[test]
+fn obstack_begin_rejects_unrepresentable_alignment_without_allocating() {
+    let mut obstack_buf = [0u64; 16];
+    let h = obstack_buf.as_mut_ptr() as *mut c_void;
+    OBSTACK_CHUNK_ALLOC_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+
+    let result = unsafe {
+        _obstack_begin(
+            h,
+            4096,
+            (i64::MAX as usize) + 1,
+            counting_obstack_chunkfun as *mut c_void,
+            counting_obstack_freefun as *mut c_void,
+        )
+    };
+
+    assert_eq!(result, 0, "unrepresentable alignment should fail closed");
+    assert_eq!(
+        OBSTACK_CHUNK_ALLOC_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "alignment validation should run before chunk allocation"
+    );
+}
+
+#[test]
+fn obstack_begin_rejects_oversized_chunk_without_allocating() {
+    let mut obstack_buf = [0u64; 16];
+    let h = obstack_buf.as_mut_ptr() as *mut c_void;
+    OBSTACK_CHUNK_ALLOC_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+
+    let result = unsafe {
+        _obstack_begin(
+            h,
+            usize::MAX,
+            8,
+            counting_obstack_chunkfun as *mut c_void,
+            counting_obstack_freefun as *mut c_void,
+        )
+    };
+
+    assert_eq!(result, 0, "overflowing chunk size should fail closed");
+    assert_eq!(
+        OBSTACK_CHUNK_ALLOC_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "size validation should run before chunk allocation"
+    );
+}
+
+#[test]
+fn obstack_begin_large_alignment_keeps_object_inside_chunk() {
+    let mut obstack_buf = [0u64; 16];
+    let h = obstack_buf.as_mut_ptr() as *mut c_void;
+
+    let result = unsafe { _obstack_begin(h, 64, 4096, malloc as *mut c_void, free as *mut c_void) };
+    assert_eq!(result, 1, "large valid alignment should succeed");
+
+    let view = h as *const ObstackTestView;
+    unsafe {
+        let object_base = (*view).object_base as usize;
+        let chunk = (*view).chunk as usize;
+        let chunk_limit = (*view).chunk_limit as usize;
+        let chunk_payload_start = chunk + (2 * std::mem::size_of::<*mut c_void>());
+
+        assert_eq!(object_base % 4096, 0, "object base should honor alignment");
+        assert!(
+            object_base >= chunk_payload_start,
+            "object base should not point before chunk payload"
+        );
+        assert!(
+            object_base < chunk_limit,
+            "object base must stay inside the allocated chunk"
+        );
+    }
+
     unsafe { _obstack_free(h, ptr::null_mut()) };
 }
 

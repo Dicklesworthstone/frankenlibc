@@ -1958,6 +1958,36 @@ const OBSTACK_FLAG_USE_EXTRA_ARG: u32 = 1;
 const OBSTACK_FLAG_MAYBE_EMPTY: u32 = 2;
 const OBSTACK_CHUNK_OVERHEAD: usize = std::mem::size_of::<ObstackChunk>();
 const OBSTACK_DEFAULT_SIZE: usize = 4096 - OBSTACK_CHUNK_OVERHEAD;
+const OBSTACK_MAX_ALIGNMENT: usize = (i32::MAX as usize) + 1;
+const OBSTACK_MAX_CHUNK_SIZE: usize = i64::MAX as usize;
+
+fn obstack_normalized_alignment(alignment: SizeT) -> Option<usize> {
+    let align = if alignment == 0 {
+        std::mem::size_of::<*mut c_void>()
+    } else {
+        alignment.checked_next_power_of_two()?
+    };
+    (align <= OBSTACK_MAX_ALIGNMENT).then_some(align)
+}
+
+fn obstack_chunk_total(payload_size: usize, align: usize) -> Option<usize> {
+    payload_size
+        .checked_add(OBSTACK_CHUNK_OVERHEAD)?
+        .checked_add(align.checked_sub(1)?)
+}
+
+fn obstack_align_addr(addr: usize, align: usize) -> Option<usize> {
+    Some(addr.checked_add(align.checked_sub(1)?)? & !(align - 1))
+}
+
+fn obstack_normalized_chunk_size(size: SizeT) -> Option<usize> {
+    let chunk_size = if size == 0 {
+        OBSTACK_DEFAULT_SIZE
+    } else {
+        size
+    };
+    (chunk_size <= OBSTACK_MAX_CHUNK_SIZE).then_some(chunk_size)
+}
 
 unsafe fn obstack_call_chunkfun(h: &Obstack, size: usize) -> *mut u8 {
     type ChunkFn = unsafe extern "C" fn(usize) -> *mut u8;
@@ -2000,15 +2030,14 @@ pub unsafe extern "C" fn _obstack_begin(
         return 0;
     }
     let h = h as *mut Obstack;
-    let align = if alignment == 0 {
-        std::mem::size_of::<*mut c_void>() // default: pointer alignment
-    } else {
-        alignment.next_power_of_two()
+    let Some(align) = obstack_normalized_alignment(alignment) else {
+        return 0;
     };
-    let chunk_size = if size == 0 {
-        OBSTACK_DEFAULT_SIZE
-    } else {
-        size
+    let Some(chunk_size) = obstack_normalized_chunk_size(size) else {
+        return 0;
+    };
+    let Some(total) = obstack_chunk_total(chunk_size, align) else {
+        return 0;
     };
 
     unsafe {
@@ -2020,7 +2049,6 @@ pub unsafe extern "C" fn _obstack_begin(
         (*h).flags = 0;
 
         // Allocate first chunk
-        let total = chunk_size + OBSTACK_CHUNK_OVERHEAD;
         let raw = obstack_call_chunkfun(&*h, total);
         if raw.is_null() {
             (*h).flags |= 4; // alloc_failed
@@ -2032,7 +2060,17 @@ pub unsafe extern "C" fn _obstack_begin(
         (*h).chunk = chunk;
         let contents = raw.add(OBSTACK_CHUNK_OVERHEAD);
         // Align contents
-        let aligned = ((contents as usize + align - 1) & !(align - 1)) as *mut u8;
+        let Some(aligned_addr) = obstack_align_addr(contents as usize, align) else {
+            obstack_call_freefun(&*h, raw);
+            (*h).flags |= 4; // alloc_failed
+            return 0;
+        };
+        let aligned = aligned_addr as *mut u8;
+        if aligned >= (*chunk).limit {
+            obstack_call_freefun(&*h, raw);
+            (*h).flags |= 4; // alloc_failed
+            return 0;
+        }
         (*h).object_base = aligned;
         (*h).next_free = aligned;
         (*h).chunk_limit = (*chunk).limit;
@@ -2069,14 +2107,25 @@ pub unsafe extern "C" fn _obstack_newchunk(h: *mut c_void, length: SizeT) {
     }
     let h = h as *mut Obstack;
     unsafe {
-        let obj_size = (*h).next_free as usize - (*h).object_base as usize;
-        let needed = obj_size + length + OBSTACK_CHUNK_OVERHEAD;
-        let new_size = if needed > (*h).chunk_size as usize {
-            needed
+        let Some(obj_size) = ((*h).next_free as usize).checked_sub((*h).object_base as usize)
+        else {
+            (*h).flags |= 4; // alloc_failed
+            return;
+        };
+        let Some(needed_payload) = obj_size.checked_add(length) else {
+            (*h).flags |= 4; // alloc_failed
+            return;
+        };
+        let new_size = if needed_payload > (*h).chunk_size as usize {
+            needed_payload
         } else {
             (*h).chunk_size as usize
         };
-        let total = new_size + OBSTACK_CHUNK_OVERHEAD;
+        let align = ((*h).alignment_mask as usize) + 1;
+        let Some(total) = obstack_chunk_total(new_size, align) else {
+            (*h).flags |= 4; // alloc_failed
+            return;
+        };
 
         let raw = obstack_call_chunkfun(&*h, total);
         if raw.is_null() {
@@ -2088,8 +2137,22 @@ pub unsafe extern "C" fn _obstack_newchunk(h: *mut c_void, length: SizeT) {
         (*new_chunk).prev = (*h).chunk;
 
         let contents = raw.add(OBSTACK_CHUNK_OVERHEAD);
-        let align = ((*h).alignment_mask as usize) + 1;
-        let aligned = ((contents as usize + align - 1) & !(align - 1)) as *mut u8;
+        let Some(aligned_addr) = obstack_align_addr(contents as usize, align) else {
+            obstack_call_freefun(&*h, raw);
+            (*h).flags |= 4; // alloc_failed
+            return;
+        };
+        let aligned = aligned_addr as *mut u8;
+        let Some(aligned_end_addr) = aligned_addr.checked_add(obj_size) else {
+            obstack_call_freefun(&*h, raw);
+            (*h).flags |= 4; // alloc_failed
+            return;
+        };
+        if aligned_end_addr > (*new_chunk).limit as usize {
+            obstack_call_freefun(&*h, raw);
+            (*h).flags |= 4; // alloc_failed
+            return;
+        }
 
         // Copy existing object data to new chunk
         if obj_size > 0 {
