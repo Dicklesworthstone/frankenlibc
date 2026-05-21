@@ -262,9 +262,14 @@ def symbol_rows(profile):
 baseline_rows = symbol_rows(baseline)
 strict_rows = symbol_rows(strict)
 hardened_rows = symbol_rows(hardened)
-baseline_syms = {s["symbol"] for s in baseline_rows}
-strict_syms = {s["symbol"]: s for s in strict_rows}
-hardened_syms = {s["symbol"]: s for s in hardened_rows}
+
+def symbol_identity(row):
+    return (row.get("object", ""), row["symbol"])
+
+
+baseline_syms = {symbol_identity(s) for s in baseline_rows}
+strict_syms = {symbol_identity(s): s for s in strict_rows}
+hardened_syms = {symbol_identity(s): s for s in hardened_rows}
 
 # Symbols in strict but not baseline (membrane overhead)
 strict_only = []
