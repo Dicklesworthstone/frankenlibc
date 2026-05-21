@@ -21,6 +21,7 @@ SMOKE_SCRIPT="${ROOT}/scripts/ld_preload_smoke.sh"
 TRACE_FILE="${ROOT}/target/adversarial_smoke/trace.jsonl"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-30}"
 REGENERATE="${REGENERATE:-false}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 die() { echo "ERROR: $*" >&2; exit 2; }
 
@@ -42,6 +43,7 @@ log_json() {
 }
 
 command -v jq >/dev/null 2>&1 || die "jq required"
+command -v rch >/dev/null 2>&1 || die "rch required; this gate must not fall back to local cargo"
 [[ -f "${SMOKE_SCRIPT}" ]] || die "Smoke script not found: ${SMOKE_SCRIPT}"
 [[ -f "${COMMITTED_SUMMARY}" ]] || die "Committed summary not found: ${COMMITTED_SUMMARY}"
 
@@ -51,25 +53,25 @@ mkdir -p "$(dirname "${TRACE_FILE}")"
 log "=== Adversarial Smoke Lane [bd-3yr14.6] ==="
 log_json "start" "committed_summary" "${COMMITTED_SUMMARY}"
 
-if ! command -v rch >/dev/null 2>&1; then
-  log "Warning: rch not available, using local cargo"
-  BUILD_CMD="cargo build -p frankenlibc-abi --release"
-else
-  BUILD_CMD="rch exec -- cargo build -p frankenlibc-abi --release"
-fi
+BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT}/target/adversarial_smoke/cargo_target/${RUN_ID}}"
+BUILD_CMD_DISPLAY="CARGO_TARGET_DIR=${BUILD_TARGET_DIR} RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_REQUIRE_REMOTE=1 rch exec -- cargo build -p frankenlibc-abi --release"
+mkdir -p "${BUILD_TARGET_DIR}"
 
 log "Rebuilding library..."
-log_json "build_start" "command" "${BUILD_CMD}"
+log_json "build_start" "command" "${BUILD_CMD_DISPLAY}" "target_dir" "${BUILD_TARGET_DIR}"
 
-if ! eval "${BUILD_CMD}" >/dev/null 2>&1; then
+if ! CARGO_TARGET_DIR="${BUILD_TARGET_DIR}" RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_REQUIRE_REMOTE=1 \
+  rch exec -- cargo build -p frankenlibc-abi --release >/dev/null 2>&1; then
   log_json "build_failed" "reason" "cargo_error"
   die "Library build failed"
 fi
-log_json "build_done"
+BUILT_LIB="${BUILD_TARGET_DIR}/release/libfrankenlibc_abi.so"
+[[ -f "${BUILT_LIB}" ]] || die "Library build did not produce ${BUILT_LIB}"
+export FRANKENLIBC_SMOKE_LIB_PATH="${BUILT_LIB}"
+log_json "build_done" "lib_path" "${BUILT_LIB}"
 
 log "Running smoke test..."
-RUN_TS="$(date -u +%Y%m%dT%H%M%SZ)"
-SMOKE_OUT="${ROOT}/target/adversarial_smoke/${RUN_TS}"
+SMOKE_OUT="${ROOT}/target/adversarial_smoke/${RUN_ID}"
 mkdir -p "${SMOKE_OUT}"
 
 export TIMEOUT_SECONDS
@@ -161,10 +163,10 @@ if [[ "${DIVERGED}" == "true" ]]; then
   "schema_version": "v1",
   "bead": "bd-3yr14.6",
   "source_report_path": "${FRESH_REPORT}",
-  "run_id": "${RUN_TS}",
+  "run_id": "${RUN_ID}",
   "checked_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "checked_date_display": "$(date -u +'%B %-d, %Y')",
-  "lib_path": "target/release/libfrankenlibc_abi.so",
+  "lib_path": "${BUILT_LIB}",
   "timeout_seconds": ${TIMEOUT_SECONDS},
   "stress_iters": 5,
   "summary": {
