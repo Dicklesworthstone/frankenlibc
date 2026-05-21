@@ -7,7 +7,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_ROOT="${ROOT}/target/ld_preload_smoke"
-RUN_ID="${FRANKENLIBC_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
+RUN_ID="${FRANKENLIBC_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 case "${RUN_ID}" in
   ""|*[!A-Za-z0-9._-]*)
     echo "ld_preload_smoke: invalid FRANKENLIBC_SMOKE_RUN_ID='${RUN_ID}'" >&2

@@ -241,3 +241,19 @@ fn ld_preload_smoke_script_emits_canonical_run_dir_root() -> TestResult {
         "ld_preload_smoke.sh must emit TRACE_FILE at <run_dir>/trace.jsonl",
     )
 }
+
+#[test]
+fn ld_preload_smoke_default_run_id_is_process_unique() -> TestResult {
+    let root = workspace_root()?;
+    let script_path = root.join("scripts").join("ld_preload_smoke.sh");
+    let src =
+        std::fs::read_to_string(&script_path).map_err(|e| format!("ld_preload_smoke.sh: {e}"))?;
+    require(
+        src.contains("RUN_ID=\"${FRANKENLIBC_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}\""),
+        "standalone ld_preload_smoke.sh default run id must include the process id",
+    )?;
+    require(
+        src.contains("\"\"|*[!A-Za-z0-9._-]*)"),
+        "ld_preload_smoke.sh must validate caller-supplied smoke run ids before using them as paths",
+    )
+}
