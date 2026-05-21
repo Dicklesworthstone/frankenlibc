@@ -20,6 +20,7 @@ COMMITTED_SUMMARY="${ROOT}/tests/conformance/ld_preload_smoke_summary.v1.json"
 SMOKE_SCRIPT="${ROOT}/scripts/ld_preload_smoke.sh"
 TRACE_FILE="${ROOT}/target/adversarial_smoke/trace.jsonl"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-30}"
+STRESS_ITERS="${STRESS_ITERS:-5}"
 REGENERATE="${REGENERATE:-false}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
@@ -46,6 +47,7 @@ command -v jq >/dev/null 2>&1 || die "jq required"
 command -v rch >/dev/null 2>&1 || die "rch required; this gate must not fall back to local cargo"
 [[ -f "${SMOKE_SCRIPT}" ]] || die "Smoke script not found: ${SMOKE_SCRIPT}"
 [[ -f "${COMMITTED_SUMMARY}" ]] || die "Committed summary not found: ${COMMITTED_SUMMARY}"
+[[ "${STRESS_ITERS}" =~ ^[0-9]+$ ]] || die "STRESS_ITERS must be a non-negative integer"
 
 mkdir -p "$(dirname "${TRACE_FILE}")"
 : > "${TRACE_FILE}"
@@ -75,6 +77,7 @@ SMOKE_OUT="${ROOT}/target/adversarial_smoke/${RUN_ID}"
 mkdir -p "${SMOKE_OUT}"
 
 export TIMEOUT_SECONDS
+export STRESS_ITERS
 export FRANKENLIBC_SMOKE_RUN_ID="${RUN_ID}"
 log_json "smoke_start" "timeout" "${TIMEOUT_SECONDS}"
 
@@ -188,7 +191,7 @@ if [[ "${DIVERGED}" == "true" ]]; then
   "checked_date_display": "$(date -u +'%B %-d, %Y')",
   "lib_path": "${BUILT_LIB}",
   "timeout_seconds": ${TIMEOUT_SECONDS},
-  "stress_iters": 5,
+  "stress_iters": ${STRESS_ITERS},
   "summary": {
     "total_cases": ${FRESH_TOTAL},
     "passes": ${FRESH_PASSES},
