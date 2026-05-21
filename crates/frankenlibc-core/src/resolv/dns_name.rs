@@ -61,6 +61,9 @@ pub fn name_ntop(wire: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
     loop {
         let b = *wire.get(si).ok_or(NameError::InvalidLabel)?;
         if b == 0 {
+            if si >= NS_MAXCDNAME {
+                return Err(NameError::InvalidLabel);
+            }
             // Root label.
             if first {
                 if oi + 1 >= dst.len() {
@@ -75,7 +78,11 @@ pub fn name_ntop(wire: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
             return Err(NameError::CompressionPointer);
         }
         let label_len = b as usize;
-        if label_len > NS_MAXLABEL || si + 1 + label_len > NS_MAXDNAME {
+        let label_end = si
+            .checked_add(1)
+            .and_then(|next| next.checked_add(label_len))
+            .ok_or(NameError::InvalidLabel)?;
+        if label_len > NS_MAXLABEL || label_end > wire.len() || label_end >= NS_MAXCDNAME {
             return Err(NameError::InvalidLabel);
         }
         if !first {
@@ -162,6 +169,9 @@ pub fn name_pton(text: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
             if oi >= dst.len() {
                 return Err(NameError::OutputTooSmall);
             }
+            if oi >= NS_MAXCDNAME {
+                return Err(NameError::InvalidLabel);
+            }
             label_start = oi;
             oi += 1;
             label_len = 0;
@@ -197,6 +207,9 @@ pub fn name_pton(text: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
         if oi >= dst.len() {
             return Err(NameError::OutputTooSmall);
         }
+        if oi >= NS_MAXCDNAME {
+            return Err(NameError::InvalidLabel);
+        }
         dst[oi] = byte;
         oi += 1;
         label_len = label_len.checked_add(1).ok_or(NameError::InvalidLabel)?;
@@ -212,6 +225,9 @@ pub fn name_pton(text: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
 
     if oi >= dst.len() {
         return Err(NameError::OutputTooSmall);
+    }
+    if oi >= NS_MAXCDNAME {
+        return Err(NameError::InvalidLabel);
     }
     dst[oi] = 0;
     oi += 1;
@@ -252,6 +268,9 @@ pub fn name_unpack(msg: &[u8], src_offset: usize, dst: &mut [u8]) -> Result<usiz
             if wire_len.is_none() {
                 wire_len = Some(pos + 1 - src_offset);
             }
+            if oi >= NS_MAXCDNAME {
+                return Err(NameError::InvalidLabel);
+            }
             if oi >= dst.len() {
                 return Err(NameError::OutputTooSmall);
             }
@@ -282,17 +301,28 @@ pub fn name_unpack(msg: &[u8], src_offset: usize, dst: &mut [u8]) -> Result<usiz
             return Err(NameError::CompressionPointer);
         }
         let label_len = b as usize;
-        if pos + 1 + label_len > msg.len() || label_len > NS_MAXLABEL {
+        let label_end = pos
+            .checked_add(1)
+            .and_then(|next| next.checked_add(label_len))
+            .ok_or(NameError::InvalidLabel)?;
+        if label_end > msg.len() || label_len > NS_MAXLABEL {
             return Err(NameError::InvalidLabel);
         }
-        if oi + 1 + label_len >= dst.len() {
+        let out_end = oi
+            .checked_add(1)
+            .and_then(|next| next.checked_add(label_len))
+            .ok_or(NameError::InvalidLabel)?;
+        if out_end >= NS_MAXCDNAME {
+            return Err(NameError::InvalidLabel);
+        }
+        if out_end >= dst.len() {
             return Err(NameError::OutputTooSmall);
         }
         dst[oi] = b;
         oi += 1;
-        dst[oi..oi + label_len].copy_from_slice(&msg[pos + 1..pos + 1 + label_len]);
+        dst[oi..oi + label_len].copy_from_slice(&msg[pos + 1..label_end]);
         oi += label_len;
-        pos += 1 + label_len;
+        pos = label_end;
     }
 }
 
@@ -315,6 +345,9 @@ pub fn name_pack(src: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
             if oi >= dst.len() {
                 return Err(NameError::OutputTooSmall);
             }
+            if oi >= NS_MAXCDNAME {
+                return Err(NameError::InvalidLabel);
+            }
             dst[oi] = 0;
             return Ok(oi + 1);
         }
@@ -322,19 +355,30 @@ pub fn name_pack(src: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
             return Err(NameError::CompressionPointer);
         }
         let label_len = b as usize;
+        let label_end = si
+            .checked_add(1)
+            .and_then(|next| next.checked_add(label_len))
+            .ok_or(NameError::InvalidLabel)?;
         if label_len > NS_MAXLABEL {
             return Err(NameError::InvalidLabel);
         }
-        if si + 1 + label_len > src.len() {
+        if label_end > src.len() {
             return Err(NameError::InvalidLabel);
         }
-        if oi + 1 + label_len > dst.len() {
+        let out_end = oi
+            .checked_add(1)
+            .and_then(|next| next.checked_add(label_len))
+            .ok_or(NameError::InvalidLabel)?;
+        if out_end >= NS_MAXCDNAME {
+            return Err(NameError::InvalidLabel);
+        }
+        if out_end > dst.len() {
             return Err(NameError::OutputTooSmall);
         }
         dst[oi] = b;
-        dst[oi + 1..oi + 1 + label_len].copy_from_slice(&src[si + 1..si + 1 + label_len]);
-        oi += 1 + label_len;
-        si += 1 + label_len;
+        dst[oi + 1..out_end].copy_from_slice(&src[si + 1..label_end]);
+        oi = out_end;
+        si = label_end;
     }
 }
 
@@ -354,12 +398,18 @@ pub fn name_skip(buf: &[u8]) -> Result<usize, NameError> {
         }
         let b = buf[i];
         if b == 0 {
+            if i >= NS_MAXCDNAME {
+                return Err(NameError::InvalidLabel);
+            }
             return Ok(i + 1);
         }
         if (b & NS_CMPRSFLGS) == NS_CMPRSFLGS {
             // Compression pointer is exactly 2 bytes.
             if i + 1 >= buf.len() {
                 return Err(NameError::CompressionPointer);
+            }
+            if i + 2 > NS_MAXCDNAME {
+                return Err(NameError::InvalidLabel);
             }
             return Ok(i + 2);
         }
@@ -368,10 +418,14 @@ pub fn name_skip(buf: &[u8]) -> Result<usize, NameError> {
             return Err(NameError::CompressionPointer);
         }
         let label_len = b as usize;
-        if label_len > NS_MAXLABEL || i + 1 + label_len > buf.len() {
+        let label_end = i
+            .checked_add(1)
+            .and_then(|next| next.checked_add(label_len))
+            .ok_or(NameError::InvalidLabel)?;
+        if label_len > NS_MAXLABEL || label_end > buf.len() || label_end >= NS_MAXCDNAME {
             return Err(NameError::InvalidLabel);
         }
-        i += 1 + label_len;
+        i = label_end;
     }
 }
 
@@ -392,19 +446,49 @@ pub fn is_uncompressed(buf: &[u8]) -> bool {
             return false;
         }
         if b == 0 {
-            return true;
+            return i < NS_MAXCDNAME;
         }
         let label_len = b as usize;
         if label_len > NS_MAXLABEL {
             return false;
         }
-        i += 1 + label_len;
+        let Some(label_end) = i
+            .checked_add(1)
+            .and_then(|next| next.checked_add(label_len))
+        else {
+            return false;
+        };
+        if label_end >= NS_MAXCDNAME {
+            return false;
+        }
+        i = label_end;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn label_text(lengths: &[usize]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (idx, &len) in lengths.iter().enumerate() {
+            if idx > 0 {
+                out.push(b'.');
+            }
+            out.extend(std::iter::repeat_n(b'a', len));
+        }
+        out
+    }
+
+    fn label_wire(lengths: &[usize]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for &len in lengths {
+            out.push(len as u8);
+            out.extend(std::iter::repeat_n(b'a', len));
+        }
+        out.push(0);
+        out
+    }
 
     // ---- name_ntop ----
 
@@ -514,6 +598,13 @@ mod tests {
         assert_eq!(name_ntop(wire, &mut dst), Err(NameError::OutputTooSmall));
     }
 
+    #[test]
+    fn ntop_rejects_wire_name_over_255_bytes() {
+        let wire = label_wire(&[63, 63, 63, 63]);
+        let mut dst = [0u8; NS_MAXDNAME];
+        assert_eq!(name_ntop(&wire, &mut dst), Err(NameError::InvalidLabel));
+    }
+
     // ---- name_pton ----
 
     #[test]
@@ -584,6 +675,22 @@ mod tests {
         let r = name_pton(long_label.as_bytes(), &mut dst);
         // Either the per-label cap or buffer cap can fire — both are valid rejections.
         assert!(matches!(r, Err(NameError::InvalidLabel)));
+    }
+
+    #[test]
+    fn pton_accepts_exact_255_byte_wire_name() {
+        let text = label_text(&[63, 63, 63, 61]);
+        let mut dst = [0u8; NS_MAXCDNAME];
+        let n = name_pton(&text, &mut dst).unwrap();
+        assert_eq!(n, NS_MAXCDNAME);
+        assert_eq!(dst[NS_MAXCDNAME - 1], 0);
+    }
+
+    #[test]
+    fn pton_rejects_wire_name_over_255_bytes() {
+        let text = label_text(&[63, 63, 63, 63]);
+        let mut dst = [0u8; 300];
+        assert_eq!(name_pton(&text, &mut dst), Err(NameError::InvalidLabel));
     }
 
     #[test]
@@ -700,6 +807,13 @@ mod tests {
         );
     }
 
+    #[test]
+    fn unpack_rejects_decompressed_name_over_255_bytes() {
+        let msg = label_wire(&[63, 63, 63, 63]);
+        let mut dst = [0u8; 300];
+        assert_eq!(name_unpack(&msg, 0, &mut dst), Err(NameError::InvalidLabel));
+    }
+
     // ---- name_pack ----
 
     #[test]
@@ -752,6 +866,13 @@ mod tests {
         let src = &[0x07, b'a', b'b', b'c'];
         let mut dst = [0u8; 16];
         assert_eq!(name_pack(src, &mut dst), Err(NameError::InvalidLabel));
+    }
+
+    #[test]
+    fn pack_rejects_wire_name_over_255_bytes() {
+        let src = label_wire(&[63, 63, 63, 63]);
+        let mut dst = [0u8; 300];
+        assert_eq!(name_pack(&src, &mut dst), Err(NameError::InvalidLabel));
     }
 
     #[test]
@@ -821,6 +942,12 @@ mod tests {
         assert_eq!(name_skip(buf), Err(NameError::InvalidLabel));
     }
 
+    #[test]
+    fn skip_rejects_wire_name_over_255_bytes() {
+        let buf = label_wire(&[63, 63, 63, 63]);
+        assert_eq!(name_skip(&buf), Err(NameError::InvalidLabel));
+    }
+
     // ---- is_uncompressed ----
 
     #[test]
@@ -865,5 +992,11 @@ mod tests {
     #[test]
     fn uncompressed_returns_false_for_empty_buffer() {
         assert!(!is_uncompressed(&[]));
+    }
+
+    #[test]
+    fn uncompressed_returns_false_for_wire_name_over_255_bytes() {
+        let buf = label_wire(&[63, 63, 63, 63]);
+        assert!(!is_uncompressed(&buf));
     }
 }
