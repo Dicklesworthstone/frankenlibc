@@ -116,6 +116,8 @@ fn write_capture_template(dir: &Path) -> TestResult<PathBuf> {
   "version": "v1",
   "family": "string/narrow",
   "captured_at": "2026-05-14T00:00:00Z",
+  "description": "String capture contract template metadata",
+  "spec_reference": "POSIX.1-2017 string functions",
   "cases": [
     {
       "name": "strict_strlen_two",
@@ -124,7 +126,8 @@ fn write_capture_template(dir: &Path) -> TestResult<PathBuf> {
       "inputs": {"s": [65, 66, 0]},
       "expected_output": "stale-strict",
       "expected_errno": 0,
-      "mode": "strict"
+      "mode": "strict",
+      "note": "strict case note must survive capture"
     },
     {
       "name": "hardened_strlen_preserved",
@@ -365,6 +368,14 @@ fn cli_refreshes_strict_and_both_cases_while_preserving_hardened_only() -> TestR
         json_string(&fixture, "captured_at")? == PINNED_CAPTURE_TIMESTAMP,
         "capture must stamp the run timestamp instead of preserving a placeholder",
     )?;
+    require(
+        json_string(&fixture, "description")? == "String capture contract template metadata",
+        "capture must preserve fixture description",
+    )?;
+    require(
+        json_string(&fixture, "spec_reference")? == "POSIX.1-2017 string functions",
+        "capture must preserve fixture spec reference",
+    )?;
     let capture_host = json_object(&fixture, "capture_host")?;
     for field in ["kernel", "glibc_version", "arch", "fingerprint"] {
         require(
@@ -396,6 +407,13 @@ fn cli_refreshes_strict_and_both_cases_while_preserving_hardened_only() -> TestR
             .and_then(Value::as_str)
             == Some("2"),
         "strict case must be refreshed from host output",
+    )?;
+    require(
+        case_by_name(cases, "strict_strlen_two")?
+            .get("note")
+            .and_then(Value::as_str)
+            == Some("strict case note must survive capture"),
+        "strict case note must be preserved",
     )?;
     require(
         case_by_name(cases, "both_strlen_one")?

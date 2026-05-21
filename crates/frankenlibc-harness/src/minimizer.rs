@@ -159,6 +159,8 @@ pub fn minimize_fixture_set(
         family: set.family.clone(),
         captured_at: set.captured_at.clone(),
         capture_host: set.capture_host.clone(),
+        description: set.description.clone(),
+        spec_reference: set.spec_reference.clone(),
         cases: result.cases.clone(),
     };
     (minimized_set, result)
@@ -178,6 +180,7 @@ mod tests {
             expected_output: "ok".into(),
             expected_errno: 0,
             mode: "strict".into(),
+            note: None,
         }
     }
 
@@ -295,6 +298,8 @@ mod tests {
             family: "string/ops".into(),
             captured_at: "2026-01-01T00:00:00Z".into(),
             capture_host: None,
+            description: Some("string operation cases".into()),
+            spec_reference: Some("POSIX string".into()),
             cases: vec![make_case("a"), make_case("b"), make_case("c")],
         };
         let pred = FnPredicate(|c: &[FixtureCase]| {
@@ -308,6 +313,11 @@ mod tests {
         assert_eq!(minimized.version, "v1");
         assert_eq!(minimized.family, "string/ops");
         assert_eq!(minimized.captured_at, "2026-01-01T00:00:00Z");
+        assert_eq!(
+            minimized.description.as_deref(),
+            Some("string operation cases")
+        );
+        assert_eq!(minimized.spec_reference.as_deref(), Some("POSIX string"));
         assert_eq!(minimized.cases.len(), 1);
         assert_eq!(minimized.cases[0].name, "b");
         assert_eq!(result.original_count, 3);

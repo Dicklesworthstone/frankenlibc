@@ -23,6 +23,9 @@ pub struct FixtureCase {
     pub expected_errno: i32,
     /// Whether this tests strict or hardened behavior.
     pub mode: String,
+    /// Optional human-readable case note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,6 +49,8 @@ struct RawFixtureCase {
     #[serde(default)]
     expected_errno: i32,
     mode: String,
+    #[serde(default)]
+    note: Option<String>,
 }
 
 fn deserialize_present_value<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
@@ -74,6 +79,7 @@ impl TryFrom<RawFixtureCase> for FixtureCase {
             expected_output,
             expected_errno: raw.expected_errno,
             mode: raw.mode,
+            note: raw.note,
         })
     }
 }
@@ -90,6 +96,12 @@ pub struct FixtureSet {
     /// Host identity used while refreshing strict host-glibc outputs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_host: Option<CaptureHost>,
+    /// Human-readable fixture family description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Standards or implementation reference covered by the fixture family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_reference: Option<String>,
     /// Individual test cases.
     pub cases: Vec<FixtureCase>,
 }
@@ -162,6 +174,10 @@ struct StructuredFixtureSet {
     #[serde(default)]
     capture_host: Option<CaptureHost>,
     #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    spec_reference: Option<String>,
+    #[serde(default)]
     program_scenarios: Vec<StructuredProgramScenario>,
     #[serde(default)]
     unsupported_scenarios: Vec<StructuredUnsupportedScenario>,
@@ -198,6 +214,7 @@ impl StructuredFixtureSet {
                 expected_output: String::from("structured_program_scenario"),
                 expected_errno: 0,
                 mode: String::from("both"),
+                note: None,
             });
         }
 
@@ -214,6 +231,7 @@ impl StructuredFixtureSet {
                 expected_output: normalize_expected_output_value(&scenario.expected_errno),
                 expected_errno: 0,
                 mode: String::from("both"),
+                note: None,
             });
         }
 
@@ -222,6 +240,8 @@ impl StructuredFixtureSet {
             family: self.family,
             captured_at: self.captured_at,
             capture_host: self.capture_host,
+            description: self.description,
+            spec_reference: self.spec_reference,
             cases,
         }
     }
@@ -682,6 +702,8 @@ mod tests {
                 "version":"v1",
                 "family":"string/strlen",
                 "captured_at":"2026-02-08T00:00:00Z",
+                "description":"strlen smoke cases",
+                "spec_reference":"POSIX strlen",
                 "cases":[]
             }"#,
         )
@@ -690,6 +712,8 @@ mod tests {
         assert_eq!(fixture.version, "v1");
         assert_eq!(fixture.family, "string/strlen");
         assert_eq!(fixture.captured_at, "2026-02-08T00:00:00Z");
+        assert_eq!(fixture.description.as_deref(), Some("strlen smoke cases"));
+        assert_eq!(fixture.spec_reference.as_deref(), Some("POSIX strlen"));
         assert!(fixture.cases.is_empty());
     }
 
@@ -722,8 +746,10 @@ mod tests {
                 "version":"v1",
                 "family":"test",
                 "captured_at":"2026-01-01T00:00:00Z",
+                "description":"roundtrip metadata",
+                "spec_reference":"roundtrip spec",
                 "cases":[
-                    {"name":"rt","function":"test","spec_section":"test","inputs":{"x":1},"expected_output":"ok","expected_errno":0,"mode":"strict"}
+                    {"name":"rt","function":"test","spec_section":"test","inputs":{"x":1},"expected_output":"ok","expected_errno":0,"mode":"strict","note":"keep case note"}
                 ]
             }"#,
         )
@@ -733,9 +759,12 @@ mod tests {
         let restored = FixtureSet::from_json(&json).unwrap();
         assert_eq!(restored.version, original.version);
         assert_eq!(restored.family, original.family);
+        assert_eq!(restored.description, original.description);
+        assert_eq!(restored.spec_reference, original.spec_reference);
         assert_eq!(restored.cases.len(), 1);
         assert_eq!(restored.cases[0].name, "rt");
         assert_eq!(restored.cases[0].expected_output, "ok");
+        assert_eq!(restored.cases[0].note.as_deref(), Some("keep case note"));
     }
 
     #[test]
