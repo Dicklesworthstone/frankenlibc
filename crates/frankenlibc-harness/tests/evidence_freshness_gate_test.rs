@@ -144,7 +144,17 @@ fn checker_rejects_divergent_artifact_with_alarm() -> TestResult {
     let bad_ledger = out_dir.join("bad_ledger.jsonl");
     let report_path = out_dir.join("report.json");
     let mut rows = load_ledger_rows(&ledger_path(&root))?;
-    rows[0]["artifact_hash"] = Value::String("0".repeat(64));
+    // Diverge every artifact_hash so the anytime-valid e-process alarm fires
+    // regardless of how many entries the canonical ledger currently carries.
+    // A single divergence among many fresh entries is (correctly) not enough
+    // adverse evidence to cross the alarm threshold, so corrupting only row[0]
+    // silently stopped tripping the alarm once the WS-0 ledger grew past one
+    // entry. Per-artifact staleness is still caught exactly by the ledger
+    // chain gate; this test exercises the divergence-rate alarm specifically.
+    let divergent_count = rows.len();
+    for row in &mut rows {
+        row["artifact_hash"] = Value::String("0".repeat(64));
+    }
     write_ledger(&bad_ledger, &rows)?;
 
     let output = run_checker(&root, &bad_ledger, &report_path)?;
@@ -152,7 +162,7 @@ fn checker_rejects_divergent_artifact_with_alarm() -> TestResult {
     let report = load_json(&report_path)?;
     assert_eq!(report["status"], "fail");
     assert_eq!(report["state"], "alarm");
-    assert_eq!(report["divergences"].as_u64(), Some(1));
+    assert_eq!(report["divergences"].as_u64(), Some(divergent_count as u64));
     assert!(failure_signatures(&report).contains("evidence_freshness_alarm"));
     assert!(
         report["e_value"].as_f64().unwrap_or_default()
