@@ -586,10 +586,16 @@ scenario_unit_tests() {
             targets="${#cargo_targets[@]}" target_dir="$target_dir"
         set +e
         ( cd "$ROOT" && CARGO_TARGET_DIR="$target_dir" RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR \
-            rch exec -- cargo test -p frankenlibc-harness "${cargo_targets[@]}" ) \
+            RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-harness "${cargo_targets[@]}" ) \
             > "$SANDBOX/unit_cargo.out" 2>&1
         RC=$?
         set -e
+        local rch_local="no"
+        if grep -q '\[RCH\] local' "$SANDBOX/unit_cargo.out"; then
+            rch_local="yes"
+            RC=1
+        fi
+        expect run-cargo-remote "WS-0 cargo unit tests do not use local rch fallback" no "$rch_local"
         expect run-cargo-units "WS-0 cargo unit tests pass" 0 "$RC"
     else
         observe cargo-skip "rch unavailable; cargo unit tests not executed (re-run with rch on PATH)"
