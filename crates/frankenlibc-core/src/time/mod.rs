@@ -466,7 +466,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             b'D' => {
                 // %m/%d/%y
-                push_dec!(bd.tm_mon + 1, 2);
+                push_dec!(bd.tm_mon as i64 + 1, 2);
                 push!(b'/');
                 push_dec!(bd.tm_mday, 2);
                 push!(b'/');
@@ -479,7 +479,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 // %Y-%m-%d — %Y is bare-decimal (no width padding).
                 push_dec!(bd.tm_year as i64 + 1900, 0);
                 push!(b'-');
-                push_dec!(bd.tm_mon + 1, 2);
+                push_dec!(bd.tm_mon as i64 + 1, 2);
                 push!(b'-');
                 push_dec!(bd.tm_mday, 2);
             }
@@ -499,7 +499,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!(if h == 0 { 12 } else { h }, 2);
             }
             b'j' => {
-                push_dec!(bd.tm_yday + 1, 3);
+                push_dec!(bd.tm_yday as i64 + 1, 3);
             }
             b'k' => {
                 push_dec_space!(bd.tm_hour, 2);
@@ -509,7 +509,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_space!(if h == 0 { 12 } else { h }, 2);
             }
             b'm' => {
-                push_dec!(bd.tm_mon + 1, 2);
+                push_dec!(bd.tm_mon as i64 + 1, 2);
             }
             b'M' => {
                 push_dec!(bd.tm_min, 2);
@@ -604,7 +604,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             b'x' => {
                 // Preferred date: %m/%d/%y
-                push_dec!(bd.tm_mon + 1, 2);
+                push_dec!(bd.tm_mon as i64 + 1, 2);
                 push!(b'/');
                 push_dec!(bd.tm_mday, 2);
                 push!(b'/');
@@ -1031,5 +1031,27 @@ mod tests {
         let _ = format_strftime(b"%W", &bd, &mut buf);
         let _ = format_strftime(b"%G", &bd, &mut buf);
         let _ = format_strftime(b"%g", &bd, &mut buf);
+
+        // %m/%D/%F/%x add 1 to tm_mon and %j adds 1 to tm_yday. With the
+        // field already at i32::MAX, that `+ 1` overflows i32 unless the
+        // arithmetic widens to i64 first. Exercise the max-valued fields
+        // explicitly — tm_mon/tm_yday at i32::MIN above already covers the
+        // lower bound, but only i32::MAX triggers the +1 overflow.
+        let bd_max = BrokenDownTime {
+            tm_sec: i32::MAX,
+            tm_min: i32::MAX,
+            tm_hour: i32::MAX,
+            tm_mday: i32::MAX,
+            tm_mon: i32::MAX,
+            tm_year: 0,
+            tm_wday: i32::MAX,
+            tm_yday: i32::MAX,
+            tm_isdst: 0,
+        };
+        let _ = format_strftime(b"%m", &bd_max, &mut buf);
+        let _ = format_strftime(b"%j", &bd_max, &mut buf);
+        let _ = format_strftime(b"%D", &bd_max, &mut buf);
+        let _ = format_strftime(b"%F", &bd_max, &mut buf);
+        let _ = format_strftime(b"%x", &bd_max, &mut buf);
     }
 }
