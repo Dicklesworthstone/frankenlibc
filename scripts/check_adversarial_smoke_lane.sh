@@ -76,7 +76,9 @@ export TIMEOUT_SECONDS
 log_json "smoke_start" "timeout" "${TIMEOUT_SECONDS}"
 
 SMOKE_RC=0
-if ! bash "${SMOKE_SCRIPT}" > "${SMOKE_OUT}/stdout.txt" 2> "${SMOKE_OUT}/stderr.txt"; then
+if bash "${SMOKE_SCRIPT}" > "${SMOKE_OUT}/stdout.txt" 2> "${SMOKE_OUT}/stderr.txt"; then
+  SMOKE_RC=0
+else
   SMOKE_RC=$?
   log "Warning: Smoke script exited with code ${SMOKE_RC}"
 fi
