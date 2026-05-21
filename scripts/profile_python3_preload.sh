@@ -50,7 +50,7 @@ mapfile -t PYTHON_ARGV <<<"$PYTHON_ARGV_TEXT"
 build_preload_lib() {
     if ! command -v rch >/dev/null 2>&1; then
         echo "FAIL: preload library missing and rch is not available" >&2
-        echo "Build with: RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo build -p frankenlibc-abi --release" >&2
+        echo "Build with: RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_REQUIRE_REMOTE=1 rch exec -- cargo build -p frankenlibc-abi --release" >&2
         exit 1
     fi
 
@@ -66,7 +66,7 @@ build_preload_lib() {
     esac
 
     echo "Building frankenlibc-abi through rch..."
-    CARGO_TARGET_DIR="$target_dir" RCH_ENV_ALLOWLIST="$allowlist" \
+    CARGO_TARGET_DIR="$target_dir" RCH_ENV_ALLOWLIST="$allowlist" RCH_REQUIRE_REMOTE=1 \
         rch exec -- cargo build -p frankenlibc-abi --release >"$build_log" 2>&1
 
     if grep -q '\[RCH\] local' "$build_log"; then
