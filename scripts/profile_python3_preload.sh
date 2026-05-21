@@ -190,12 +190,18 @@ try:
 except Exception as e:
     symbols = [{"error": str(e)}]
 
+symbol_count = sum(
+    1
+    for row in symbols
+    if isinstance(row, dict) and isinstance(row.get("symbol"), str) and row["symbol"]
+)
+
 result = {
     "trace_id": trace_id,
     "label": label,
     "duration_ms": duration_ms,
     "top_n": top_n,
-    "symbol_count": len(symbols),
+    "symbol_count": symbol_count,
     "symbols": symbols,
 }
 
@@ -205,7 +211,34 @@ PY
         echo "  Hot symbols: $hot_symbols"
     else
         echo "  Warning: perf data not captured"
-        python3 -c "import json; json.dump({'trace_id': '$TRACE_ID', 'label': '$label', 'error': 'perf data not captured'}, open('$hot_symbols', 'w'), indent=2)"
+        python3 - "$hot_symbols" "$TOP_N" "$label" "$duration_ms" "$TRACE_ID" "$profile_rc" <<'PY'
+import json
+import sys
+
+output_path = sys.argv[1]
+top_n = int(sys.argv[2])
+label = sys.argv[3]
+duration_ms = int(sys.argv[4])
+trace_id = sys.argv[5]
+profile_rc = int(sys.argv[6])
+
+result = {
+    "trace_id": trace_id,
+    "label": label,
+    "duration_ms": duration_ms,
+    "top_n": top_n,
+    "symbol_count": 0,
+    "symbols": [
+        {
+            "error": "perf data not captured",
+            "profile_exit": profile_rc,
+        }
+    ],
+}
+
+with open(output_path, "w") as f:
+    json.dump(result, f, indent=2)
+PY
     fi
 
     # Write timing JSON
