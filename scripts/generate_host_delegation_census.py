@@ -18,7 +18,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 1
+DETECTOR_VERSION = 2
 
 REQUIRED_ANCHORS = [
     "__libc_start_main",
@@ -50,7 +50,7 @@ THREAD_RAW_SYMBOLS = {
 }
 
 FUNCTION_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+CALL_RE = re.compile(r"(?<![\w.])([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 RAW_LITERAL_RE = re.compile(r'resolve_host_symbol_raw\s*\(\s*"([^"]+)"')
 RAW_DYNAMIC_RE = re.compile(r"resolve_host_symbol_raw\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
 CACHED_LITERAL_RE = re.compile(r'resolve_host_symbol_cached\s*\([^,]+,\s*"([^"]+)"')
@@ -284,7 +284,7 @@ def alias_callsites(function: FunctionInfo, targets: set[str], root: Path) -> li
             continue
         line = strip_comments(raw_line)
         for target in sorted(targets):
-            if re.search(rf"\b{re.escape(target)}\s*\(", line):
+            if re.search(rf"(?<![\w.]){re.escape(target)}\s*\(", line):
                 calls.append(
                     HostCall(
                         path=path,
@@ -297,6 +297,39 @@ def alias_callsites(function: FunctionInfo, targets: set[str], root: Path) -> li
                     )
                 )
     return calls
+
+
+def host_reaching_functions(
+    direct_host_calls: dict[str, list[HostCall]],
+    call_graph: dict[str, set[str]],
+) -> set[str]:
+    reaching = {name for name, calls in direct_host_calls.items() if calls}
+    changed = True
+    while changed:
+        changed = False
+        for name, callees in call_graph.items():
+            if name in reaching:
+                continue
+            if callees & reaching:
+                reaching.add(name)
+                changed = True
+    return reaching
+
+
+def reachable_host_helpers(
+    start: str,
+    call_graph: dict[str, set[str]],
+    host_reaching: set[str],
+) -> set[str]:
+    reachable: set[str] = set()
+    stack = list(call_graph.get(start, set()) & host_reaching)
+    while stack:
+        name = stack.pop()
+        if name in reachable or name == start:
+            continue
+        reachable.add(name)
+        stack.extend(call_graph.get(name, set()) & host_reaching)
+    return reachable
 
 
 def broader_references(source_files: list[Path], root: Path) -> list[dict[str, Any]]:
@@ -336,15 +369,34 @@ def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
     symbol_rows: list[dict[str, Any]] = []
     all_calls: list[dict[str, Any]] = []
     exported_functions = [function for function in functions if function.is_exported_abi]
-    direct_names = {name for name, calls in direct_host_calls.items() if calls}
+    host_reaching = host_reaching_functions(direct_host_calls, call_graph)
     expanded_calls: dict[str, list[HostCall]] = {}
     for function in exported_functions:
         calls = list(direct_host_calls[function.name])
-        alias_targets = call_graph.get(function.name, set()) & direct_names
-        if alias_targets:
-            calls.extend(alias_callsites(function, alias_targets, root))
-            for target in sorted(alias_targets):
-                calls.extend(direct_host_calls[target])
+        helper_names = reachable_host_helpers(function.name, call_graph, host_reaching)
+        caller_names = {function.name, *helper_names}
+        for caller_name in sorted(
+            caller_names,
+            key=lambda name: (
+                rel(root, function_by_name[name].path),
+                function_by_name[name].start_line,
+                name,
+            ),
+        ):
+            caller = function_by_name[caller_name]
+            alias_targets = call_graph.get(caller_name, set()) & host_reaching
+            if caller_name == function.name:
+                alias_targets.discard(function.name)
+            calls.extend(alias_callsites(caller, alias_targets, root))
+        for target in sorted(
+            helper_names,
+            key=lambda name: (
+                rel(root, function_by_name[name].path),
+                function_by_name[name].start_line,
+                name,
+            ),
+        ):
+            calls.extend(direct_host_calls[target])
         if calls:
             expanded_calls[function.name] = calls
 
@@ -356,7 +408,7 @@ def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
         kinds = sorted({call.delegation_kind for call in calls})
         callsite_ids = []
         for idx, call in enumerate(calls, 1):
-            callsite_id = f"{function.name}:{idx:03d}"
+            callsite_id = f"{function.module}:{function.name}:{function.start_line}:{idx:03d}"
             callsite_ids.append(callsite_id)
             all_calls.append(
                 {
