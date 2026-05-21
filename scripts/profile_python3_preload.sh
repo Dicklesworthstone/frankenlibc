@@ -290,9 +290,9 @@ summary = {
         "hardened_ratio": round(hardened_ratio, 2),
     },
     "hot_symbol_counts": {
-        "baseline": baseline.get("symbol_count", 0),
-        "strict": strict.get("symbol_count", 0),
-        "hardened": hardened.get("symbol_count", 0),
+        "baseline": len(baseline_rows),
+        "strict": len(strict_rows),
+        "hardened": len(hardened_rows),
     },
     "strict_only_hot_symbols": strict_only[:10],
     "hardened_only_hot_symbols": hardened_only[:10],
