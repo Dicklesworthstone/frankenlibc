@@ -335,29 +335,18 @@ def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
 
     symbol_rows: list[dict[str, Any]] = []
     all_calls: list[dict[str, Any]] = []
-    exported_functions = [
-        function for function in functions if function.is_exported_abi
-    ]
-    direct_exported = {
-        function.name: direct_host_calls[function.name]
-        for function in exported_functions
-        if direct_host_calls[function.name]
-    }
-
-    expanded_calls: dict[str, list[HostCall]] = {
-        name: list(calls) for name, calls in direct_exported.items()
-    }
-    direct_names = set(direct_exported)
+    exported_functions = [function for function in functions if function.is_exported_abi]
+    direct_names = {name for name, calls in direct_host_calls.items() if calls}
+    expanded_calls: dict[str, list[HostCall]] = {}
     for function in exported_functions:
-        if function.name in expanded_calls:
-            continue
+        calls = list(direct_host_calls[function.name])
         alias_targets = call_graph.get(function.name, set()) & direct_names
-        if not alias_targets:
-            continue
-        calls = alias_callsites(function, alias_targets, root)
-        for target in sorted(alias_targets):
-            calls.extend(direct_exported[target])
-        expanded_calls[function.name] = calls
+        if alias_targets:
+            calls.extend(alias_callsites(function, alias_targets, root))
+            for target in sorted(alias_targets):
+                calls.extend(direct_host_calls[target])
+        if calls:
+            expanded_calls[function.name] = calls
 
     for function in sorted(exported_functions, key=lambda item: (rel(root, item.path), item.start_line)):
         calls = expanded_calls.get(function.name, [])

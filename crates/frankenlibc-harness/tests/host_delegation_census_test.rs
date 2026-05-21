@@ -207,6 +207,8 @@ fn generator_detects_host_calls_on_opening_brace_line() -> TestResult {
 pub extern "C" fn direct_same_line() -> i32 { let _ = resolve_host_symbol_raw("direct_same_line"); 0 }
 pub extern "C" fn helper_same_line() -> i32 { let _ = resolve_host_symbol_raw("helper_same_line"); 0 }
 pub extern "C" fn alias_same_line() -> i32 { helper_same_line() }
+fn private_host_helper() -> i32 { let _ = resolve_host_symbol_raw("private_helper_target"); 0 }
+pub extern "C" fn via_private_helper() -> i32 { private_host_helper() }
 "#,
     )?;
     let output_path = unique_output_path(&root, "same-line-output", "json");
@@ -249,6 +251,21 @@ pub extern "C" fn alias_same_line() -> i32 { helper_same_line() }
     assert!(
         kinds.contains("alias_to_host_delegating_symbol"),
         "alias callsite on the opening-brace line should be recorded"
+    );
+
+    let via_private = symbols
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("via_private_helper"))
+        .expect("exported ABI symbol reaching a private host helper should be detected");
+    let private_hosts: BTreeSet<_> = via_private["host_symbols"]
+        .as_array()
+        .expect("host symbols should be array")
+        .iter()
+        .filter_map(|row| row.as_str())
+        .collect();
+    assert!(
+        private_hosts.contains("private_helper_target"),
+        "private helper host symbol should propagate to exported ABI symbol"
     );
     Ok(())
 }
