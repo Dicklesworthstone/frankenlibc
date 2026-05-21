@@ -161,6 +161,45 @@ fn parse_output_bytes(case_name: &str, output: &str) -> Result<Vec<u8>, String> 
         .map_err(|err| format!("case {case_name} produced non-byte-array output {output:?}: {err}"))
 }
 
+fn verify_prefix_extension_relation(
+    base_bytes: &[u8],
+    extended_bytes: &[u8],
+    suffix: &[u8],
+) -> Result<(), String> {
+    let prefix = extended_bytes
+        .get(..base_bytes.len())
+        .ok_or_else(|| String::from("extended memcpy output shorter than base output"))?;
+    if prefix != base_bytes {
+        return Err(format!(
+            "extended memcpy prefix drifted: expected {base_bytes:?}, got {prefix:?}"
+        ));
+    }
+
+    let observed_suffix = extended_bytes
+        .get(base_bytes.len()..)
+        .ok_or_else(|| String::from("extended memcpy output missing appended suffix"))?;
+    if observed_suffix != suffix {
+        return Err(format!(
+            "extended memcpy suffix drifted: expected {suffix:?}, got {observed_suffix:?}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn verify_zero_copy_source_invariance(
+    base_bytes: &[u8],
+    mutated_source_bytes: &[u8],
+) -> Result<(), String> {
+    if base_bytes != mutated_source_bytes {
+        return Err(format!(
+            "n=0 memcpy output changed after source mutation: expected {base_bytes:?}, got {mutated_source_bytes:?}"
+        ));
+    }
+
+    Ok(())
+}
+
 #[test]
 fn memcpy_strict_fixture_exists() -> Result<(), String> {
     let path = repo_root()?.join("tests/conformance/fixtures/memcpy_strict.json");
@@ -368,20 +407,7 @@ fn memcpy_strict_metamorphic_relations_hold_without_golden_outputs() -> Result<(
     let extended_input = Value::Object(extended_inputs);
     let extended = execute_case_via_harness(&full.function, &extended_input, "strict")?;
     let extended_bytes = parse_output_bytes("copy_full_8_extended", &extended.impl_output)?;
-    assert_eq!(
-        extended_bytes
-            .get(..base_bytes.len())
-            .ok_or_else(|| String::from("extended memcpy output shorter than base output"))?,
-        base_bytes.as_slice(),
-        "extending src/n/dst_len must preserve the original full-copy prefix"
-    );
-    assert_eq!(
-        extended_bytes
-            .get(base_bytes.len()..)
-            .ok_or_else(|| String::from("extended memcpy output missing appended suffix"))?,
-        suffix.as_slice(),
-        "extended full-copy output suffix must come from the appended input suffix"
-    );
+    verify_prefix_extension_relation(&base_bytes, &extended_bytes, &suffix)?;
     assert!(
         base.host_parity && extended.host_parity,
         "metamorphic relation must run against host-parity executions"
@@ -398,15 +424,30 @@ fn memcpy_strict_metamorphic_relations_hold_without_golden_outputs() -> Result<(
     zero_mutated_inputs.insert(String::from("src"), serde_json::json!([9, 8, 7, 6, 5, 4]));
     let zero_mutated_input = Value::Object(zero_mutated_inputs);
     let zero_mutated = execute_case_via_harness(&zero.function, &zero_mutated_input, "strict")?;
-    assert_eq!(
-        parse_output_bytes(&zero.name, &zero_base.impl_output)?,
-        parse_output_bytes("copy_zero_mutated_source", &zero_mutated.impl_output)?,
-        "n=0 memcpy output must be invariant under source-byte changes"
-    );
+    let zero_base_bytes = parse_output_bytes(&zero.name, &zero_base.impl_output)?;
+    let zero_mutated_bytes =
+        parse_output_bytes("copy_zero_mutated_source", &zero_mutated.impl_output)?;
+    verify_zero_copy_source_invariance(&zero_base_bytes, &zero_mutated_bytes)?;
     assert!(
         zero_base.host_parity && zero_mutated.host_parity,
         "zero-copy relation must run against host-parity executions"
     );
 
     Ok(())
+}
+
+#[test]
+fn memcpy_strict_metamorphic_relations_reject_broken_outputs() {
+    assert!(
+        verify_prefix_extension_relation(&[65, 66, 67], &[65, 99, 67, 251], &[251]).is_err(),
+        "prefix extension relation must reject drift inside the preserved prefix"
+    );
+    assert!(
+        verify_prefix_extension_relation(&[65, 66, 67], &[65, 66, 67, 0], &[251]).is_err(),
+        "prefix extension relation must reject an incorrect appended suffix"
+    );
+    assert!(
+        verify_zero_copy_source_invariance(&[0, 0, 0, 0], &[9, 8, 7, 6]).is_err(),
+        "zero-copy relation must reject source-dependent output when n=0"
+    );
 }
