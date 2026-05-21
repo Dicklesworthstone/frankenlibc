@@ -44,7 +44,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 command -v perf >/dev/null 2>&1 || die "perf not found"
 
-LIB_PATH="$(find_lib)" || die "libfrankenlibc_abi.so not found; build with: cargo build -p frankenlibc-abi --release"
+LIB_PATH="$(find_lib)" || die "libfrankenlibc_abi.so not found; build with: RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo build -p frankenlibc-abi --release"
 
 mkdir -p "${OUT_DIR}"
 RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -82,7 +82,7 @@ capture_profile() {
       exit_code=$?
     fi
   else
-    if timeout "${TIMEOUT_SEC}" env "${env_cmd[@]}" perf record -F "${PERF_FREQ}" -g -o "${perf_data}" -- python3 -c "${WORKLOAD_SCRIPT}" >/dev/null 2>&1; then
+    if timeout "${TIMEOUT_SEC}" perf record -F "${PERF_FREQ}" -g -o "${perf_data}" -- env "${env_cmd[@]}" python3 -c "${WORKLOAD_SCRIPT}" >/dev/null 2>&1; then
       exit_code=0
     else
       exit_code=$?
