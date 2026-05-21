@@ -195,7 +195,7 @@ where
     let total_cases = u64::try_from(rows.len()).unwrap_or(u64::MAX);
     let passed = u64::try_from(rows.iter().filter(|row| row.passed).count()).unwrap_or(0);
     let errors =
-        u64::try_from(rows.iter().filter(|row| row.status == "error").count()).unwrap_or(0);
+        u64::try_from(rows.iter().filter(|row| row_counts_as_error(row)).count()).unwrap_or(0);
     let failed = total_cases.saturating_sub(passed).saturating_sub(errors);
     let pass_rate_percent = ratio_percent(passed, total_cases);
 
@@ -206,7 +206,7 @@ where
         bucket.0 = bucket.0.saturating_add(1);
         if row.passed {
             bucket.1 = bucket.1.saturating_add(1);
-        } else if row.status == "error" {
+        } else if row_counts_as_error(row) {
             bucket.3 = bucket.3.saturating_add(1);
         } else {
             bucket.2 = bucket.2.saturating_add(1);
@@ -408,6 +408,10 @@ fn mode_matches(active_mode: &str, case_mode: &str) -> bool {
 
 fn host_oracle_is_undefined(host_output: &str) -> bool {
     host_output.trim().eq_ignore_ascii_case("UB")
+}
+
+fn row_counts_as_error(row: &ConformanceCaseRow) -> bool {
+    matches!(row.status.as_str(), "error" | "timeout" | "crash")
 }
 
 fn deterministic_generated_at_utc(fixture_sets: &[FixtureSet]) -> String {
@@ -678,8 +682,15 @@ mod tests {
 
         assert_eq!(report.summary.total_cases, 2);
         assert_eq!(report.summary.passed, 0);
-        assert_eq!(report.summary.failed, 2);
-        assert_eq!(report.summary.errors, 0);
+        assert_eq!(report.summary.failed, 0);
+        assert_eq!(report.summary.errors, 2);
+        assert!(
+            report
+                .symbol_matrix
+                .iter()
+                .all(|row| row.failed == 0 && row.errors == 1),
+            "timeout/crash rows should be error-class symbol rows, not ordinary failures"
+        );
         assert!(report.cases.iter().any(|row| row.status == "timeout"));
         assert!(report.cases.iter().any(|row| row.status == "crash"));
         Ok(())
