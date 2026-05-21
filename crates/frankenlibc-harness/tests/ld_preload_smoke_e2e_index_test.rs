@@ -289,3 +289,35 @@ fn ld_preload_smoke_rch_build_is_remote_and_target_isolated() -> TestResult {
         "ld_preload_smoke.sh must require remote rch before invoking cargo build",
     )
 }
+
+#[test]
+fn ld_preload_smoke_valgrind_wraps_the_preloaded_target_only() -> TestResult {
+    let root = workspace_root()?;
+    let script_path = root.join("scripts").join("ld_preload_smoke.sh");
+    let src =
+        std::fs::read_to_string(&script_path).map_err(|e| format!("ld_preload_smoke.sh: {e}"))?;
+    require(
+        !src.contains(
+            "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \\\n            valgrind",
+        ),
+        "ld_preload_smoke.sh must not preload FrankenLibC into valgrind itself",
+    )?;
+    let valgrind = src
+        .find("valgrind --error-exitcode=101 --leak-check=full --track-origins=no --quiet")
+        .ok_or_else(|| {
+            "ld_preload_smoke.sh must run valgrind in strict smoke checks".to_string()
+        })?;
+    let valgrind_tail = src.get(valgrind..).ok_or_else(|| {
+        "ld_preload_smoke.sh valgrind anchor is not on a valid boundary".to_string()
+    })?;
+    let target_env = valgrind_tail
+        .find("env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \"$@\"")
+        .ok_or_else(|| {
+            "ld_preload_smoke.sh must apply FRANKENLIBC_MODE/LD_PRELOAD to the valgrind target"
+                .to_string()
+        })?;
+    require(
+        target_env > 0,
+        "ld_preload_smoke.sh must place the preload env after valgrind options",
+    )
+}

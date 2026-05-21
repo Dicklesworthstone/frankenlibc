@@ -460,8 +460,8 @@ run_case() {
           valgrind_checked=1
           set +e
           timeout "${TIMEOUT_SECONDS}" \
-            env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" \
-            valgrind --error-exitcode=101 --leak-check=full --track-origins=no --quiet "$@" \
+            valgrind --error-exitcode=101 --leak-check=full --track-origins=no --quiet \
+            env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
             > "${valgrind_stdout}" 2> "${valgrind_stderr}"
           valgrind_rc=$?
           set -e
