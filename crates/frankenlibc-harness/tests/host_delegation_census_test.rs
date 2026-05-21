@@ -147,6 +147,11 @@ fn symbol_and_callsite_counts_are_self_consistent() -> TestResult {
                 .to_string()
         })
         .collect();
+    assert_eq!(
+        actual_callsite_ids.len(),
+        callsites.len(),
+        "callsite ids should be globally unique"
+    );
     assert_eq!(referenced_callsite_ids, actual_callsite_ids);
     Ok(())
 }
@@ -207,6 +212,13 @@ fn generator_detects_host_calls_on_opening_brace_line() -> TestResult {
 pub extern "C" fn direct_same_line() -> i32 { let _ = resolve_host_symbol_raw("direct_same_line"); 0 }
 pub extern "C" fn helper_same_line() -> i32 { let _ = resolve_host_symbol_raw("helper_same_line"); 0 }
 pub extern "C" fn alias_same_line() -> i32 { helper_same_line() }
+fn private_host_helper() -> i32 { let _ = resolve_host_symbol_raw("private_helper_target"); 0 }
+pub extern "C" fn via_private_helper() -> i32 { private_host_helper() }
+fn nested_terminal_helper() -> i32 { let _ = resolve_host_symbol_raw("nested_private_target"); 0 }
+fn nested_mid_helper() -> i32 { nested_terminal_helper() }
+pub extern "C" fn via_nested_private_helper() -> i32 { nested_mid_helper() }
+pub extern "C" fn remove() -> i32 { let _ = resolve_host_symbol_raw("remove_target"); 0 }
+pub extern "C" fn method_only_remove() -> i32 { let mut values = vec![1]; values.remove(0); 0 }
 "#,
     )?;
     let output_path = unique_output_path(&root, "same-line-output", "json");
@@ -249,6 +261,54 @@ pub extern "C" fn alias_same_line() -> i32 { helper_same_line() }
     assert!(
         kinds.contains("alias_to_host_delegating_symbol"),
         "alias callsite on the opening-brace line should be recorded"
+    );
+
+    let via_private = symbols
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("via_private_helper"))
+        .expect("exported ABI symbol reaching a private host helper should be detected");
+    let private_hosts: BTreeSet<_> = via_private["host_symbols"]
+        .as_array()
+        .expect("host symbols should be array")
+        .iter()
+        .filter_map(|row| row.as_str())
+        .collect();
+    assert!(
+        private_hosts.contains("private_helper_target"),
+        "private helper host symbol should propagate to exported ABI symbol"
+    );
+
+    let via_nested = symbols
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("via_nested_private_helper"))
+        .expect("exported ABI symbol reaching a nested private host helper should be detected");
+    let nested_hosts: BTreeSet<_> = via_nested["host_symbols"]
+        .as_array()
+        .expect("host symbols should be array")
+        .iter()
+        .filter_map(|row| row.as_str())
+        .collect();
+    assert!(
+        nested_hosts.contains("nested_private_target"),
+        "multi-hop private helper host symbol should propagate to exported ABI symbol"
+    );
+    let nested_helpers: BTreeSet<_> = data["callsite_census"]
+        .as_array()
+        .expect("callsite census should be array")
+        .iter()
+        .filter(|row| row["exported_symbol"].as_str() == Some("via_nested_private_helper"))
+        .filter_map(|row| row["helper_function"].as_str())
+        .collect();
+    assert!(
+        nested_helpers.contains("nested_mid_helper")
+            && nested_helpers.contains("nested_terminal_helper"),
+        "multi-hop private helper evidence should include the intermediate and terminal helpers"
+    );
+    assert!(
+        !symbols
+            .iter()
+            .any(|row| row["symbol"].as_str() == Some("method_only_remove")),
+        "dotted method calls must not be treated as libc symbol aliases"
     );
     Ok(())
 }
