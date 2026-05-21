@@ -2,6 +2,10 @@
 # CI quality gates for frankenlibc.
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+CI_EIK_LOG="${FRANKENLIBC_EIK_CI_LOG:-$ROOT/target/conformance/evidence_integrity_ci.log.jsonl}"
+CI_EIK_TRACE_ID="${FRANKENLIBC_EIK_TRACE_ID:-ci-eik-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+
 run_benchmark_gate() {
     if [[ "${FRANKENLIBC_FORCE_LOCAL_BENCHMARK_GATE:-0}" == "1" ]] || ! command -v rch >/dev/null 2>&1; then
         echo "WARN: rch unavailable; running local benchmark gate fallback"
@@ -26,6 +30,54 @@ run_remote_cargo() {
         rch exec -- env CARGO_TARGET_DIR="${target_dir}" cargo "$@"
 }
 
+emit_eik_gate_event() {
+    local gate="$1"
+    local outcome="$2"
+    local exit_code="$3"
+    shift 3
+    mkdir -p "$(dirname "$CI_EIK_LOG")"
+    python3 - "$CI_EIK_LOG" "$CI_EIK_TRACE_ID" "$gate" "$outcome" "$exit_code" "$@" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime, timezone
+
+log_path, trace_id, gate, outcome, exit_code, *command = sys.argv[1:]
+entry = {
+    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "trace_id": trace_id,
+    "event": "evidence_integrity_ci_gate",
+    "gate": gate,
+    "outcome": outcome,
+    "exit_code": int(exit_code),
+    "command": command,
+}
+with open(log_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(entry, sort_keys=True) + "\n")
+PY
+}
+
+run_eik_gate() {
+    local gate="$1"
+    shift
+    local timeout_seconds="${FRANKENLIBC_EIK_GATE_TIMEOUT_SECONDS:-900}"
+    local status
+
+    echo "--- evidence integrity: $gate ---"
+    emit_eik_gate_event "$gate" "start" 0 "$@"
+    if timeout "${timeout_seconds}s" "$@"; then
+        emit_eik_gate_event "$gate" "pass" 0 "$@"
+        echo "PASS"
+        echo ""
+        return 0
+    else
+        status=$?
+        emit_eik_gate_event "$gate" "fail" "$status" "$@"
+        return "$status"
+    fi
+}
+
 echo "=== frankenlibc CI ==="
 echo ""
 
@@ -38,6 +90,12 @@ echo "--- CI RCH cargo policy gate ---"
 bash scripts/check_ci_rch_cargo_policy.sh --validate-only
 echo "PASS"
 echo ""
+
+run_eik_gate "evidence ledger chain" scripts/check_evidence_ledger.sh
+run_eik_gate "evidence freshness e-process" scripts/check_evidence_freshness.sh
+run_eik_gate "gate drift changepoint" scripts/check_gate_drift.sh
+run_eik_gate "regenerate then diff" scripts/check_regenerate_then_diff_gate.sh
+run_eik_gate "bead closure freshness" scripts/check_bead_closure_freshness.sh
 
 echo "--- cargo fmt --check ---"
 cargo fmt --check
