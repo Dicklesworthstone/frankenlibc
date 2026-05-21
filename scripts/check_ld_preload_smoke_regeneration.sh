@@ -13,6 +13,11 @@ CANONICAL="${FRANKENLIBC_LD_PRELOAD_SMOKE_CANONICAL:-${ROOT}/tests/conformance/l
 OUT_DIR="${FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_OUT_DIR:-${ROOT}/target/conformance}"
 RUN_ROOT="${FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_RUN_ROOT:-${ROOT}/target/ld_preload_smoke_regeneration}"
 RUN_ID="${FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+if [[ ! "${RUN_ID}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "check_ld_preload_smoke_regeneration: invalid run id: ${RUN_ID}" >&2
+  echo "check_ld_preload_smoke_regeneration: run id must be a single path token [A-Za-z0-9._-]+" >&2
+  exit 2
+fi
 RUN_DIR="${RUN_ROOT}/${RUN_ID}"
 REPORT="${FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_REPORT:-${OUT_DIR}/ld_preload_smoke_regeneration_gate.report.json}"
 LOG="${FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_LOG:-${OUT_DIR}/ld_preload_smoke_regeneration_gate.log.jsonl}"
