@@ -91,6 +91,12 @@ check_artifact() {
 
     echo "Regenerating $name from source..."
     local regen_output="$OUT_DIR/${name}.regen.log"
+    # Delete any stale generated artifact left in this persistent OUT_DIR by
+    # a previous run. If the regenerator exits 0 without actually writing
+    # "$generated" (wrong --output path, a no-op rch invocation, etc.), a
+    # leftover copy must NOT be diffed as if it were fresh output: that would
+    # mask a non-running regenerator and let a stale committed artifact PASS.
+    rm -f "$generated"
     if ! eval "$regenerate_cmd" > "$regen_output" 2>&1; then
         echo "FAIL: regeneration command failed for $name"
         cat "$regen_output" | head -20
