@@ -68,7 +68,8 @@ impl core::ops::BitOrAssign for FnmatchFlags {
 ///
 /// `Terminated`: closed `]` found, parse as bracket.
 /// `LiteralFallback`: unterminated, treat the leading `[` as a literal.
-/// `Invalid`: unterminated with final content byte `-`; match fails.
+/// `Invalid`: unterminated with a final *unescaped* `-` content byte
+/// (an incomplete range); match fails.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BracketShape {
     Terminated,
@@ -76,7 +77,7 @@ enum BracketShape {
     Invalid,
 }
 
-fn classify_bracket(pat: &[u8], pi: usize) -> BracketShape {
+fn classify_bracket(pat: &[u8], pi: usize, noescape: bool) -> BracketShape {
     let mut scan = pi + 1; // skip the opening '['
     if let Some(&b'!') | Some(&b'^') = pat.get(scan) {
         scan += 1;
@@ -97,6 +98,18 @@ fn classify_bracket(pat: &[u8], pi: usize) -> BracketShape {
         // is literal, not a closer — gated by content_count > 0.
         if bc == b']' && content_count > 0 {
             return BracketShape::Terminated;
+        }
+        // An escaped byte (`\X`) is one literal content element; the
+        // bracket parser consumes it as such, so the classifier must
+        // too. Without this an escaped trailing `-` (`[a\-`) is misread
+        // as an incomplete range (`Invalid`) when it is actually a
+        // literal dash — glibc treats the unterminated bracket as a
+        // literal `[` there and the pattern still matches.
+        if bc == b'\\' && !noescape && scan + 1 < pat.len() {
+            content_count += 1;
+            last_was_dash = false;
+            scan += 2;
+            continue;
         }
         last_was_dash = bc == b'-';
         content_count += 1;
@@ -307,7 +320,7 @@ fn fnmatch_inner(
                 }
                 return false;
             }
-            b'[' => match classify_bracket(pat, pi) {
+            b'[' => match classify_bracket(pat, pi, noescape) {
                 BracketShape::Invalid => return false,
                 BracketShape::LiteralFallback => {
                     let c = match sc {
@@ -626,6 +639,20 @@ mod tests {
         // '[a-' — incomplete range, never matches
         assert!(!m("[a-", "a", FnmatchFlags::NONE));
         assert!(!m("[a-", "[a-", FnmatchFlags::NONE));
+    }
+
+    #[test]
+    fn unterminated_bracket_with_escaped_dash_is_literal() {
+        // '[a\-' — the trailing '-' is escaped, so it is a literal dash,
+        // NOT an incomplete range. glibc treats the unterminated bracket
+        // as a literal '[', so the pattern matches the literal text
+        // "[a-" (verified against host glibc fnmatch). The classifier
+        // must be escape-aware to avoid the bogus `Invalid` verdict.
+        assert!(m(r"[a\-", "[a-", FnmatchFlags::NONE));
+        assert!(!m(r"[a\-", "a", FnmatchFlags::NONE));
+        // With NOESCAPE the backslash is literal: '[a\-' really does end
+        // in an unescaped '-' → incomplete range → never matches.
+        assert!(!m(r"[a\-", "[a-", FnmatchFlags::NOESCAPE));
     }
 
     #[test]
