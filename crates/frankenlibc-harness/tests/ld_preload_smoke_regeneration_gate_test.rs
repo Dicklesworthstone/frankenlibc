@@ -359,6 +359,46 @@ fn legacy_adversarial_gate_requires_numeric_skip_counts() {
 }
 
 #[test]
+fn legacy_adversarial_gate_requires_total_cases_to_include_skips() {
+    let root = workspace_root();
+    let script = std::fs::read_to_string(root.join(LEGACY_ADVERSARIAL_GATE_SCRIPT))
+        .expect("legacy adversarial gate script readable");
+    assert!(
+        script
+            .contains("COMMITTED_TOTAL=\"$(extract_count \"${COMMITTED_SUMMARY}\" total_cases)\""),
+        "legacy adversarial gate must read the committed total_cases field"
+    );
+    assert!(
+        script.contains("FRESH_TOTAL=\"$(extract_count \"${FRESH_REPORT}\" total_cases)\""),
+        "legacy adversarial gate must read the fresh total_cases field"
+    );
+    assert!(
+        script.contains(
+            "require_total_consistency \"committed summary\" \"${COMMITTED_TOTAL}\" \"${COMMITTED_PASSES}\" \"${COMMITTED_FAILS}\" \"${COMMITTED_SKIPS}\""
+        ),
+        "committed total_cases must equal passes + fails + skips"
+    );
+    assert!(
+        script.contains(
+            "require_total_consistency \"fresh report\" \"${FRESH_TOTAL}\" \"${FRESH_PASSES}\" \"${FRESH_FAILS}\" \"${FRESH_SKIPS}\""
+        ),
+        "fresh total_cases must equal passes + fails + skips"
+    );
+    assert!(
+        script.contains("DIVERGENCE: total count differs"),
+        "legacy adversarial gate must compare total_cases"
+    );
+    assert!(
+        script.contains("\"total_cases\": ${FRESH_TOTAL}"),
+        "regenerated legacy summaries must preserve the verified fresh total instead of passes + fails"
+    );
+    assert!(
+        !script.contains("\"total_cases\": $((FRESH_PASSES + FRESH_FAILS)),"),
+        "regeneration must not omit skipped cases from total_cases"
+    );
+}
+
+#[test]
 fn validate_only_accepts_report_matching_committed_summary() -> TestResult {
     let root = workspace_root();
     let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));

@@ -112,27 +112,46 @@ require_count() {
     || die "$1 is not a numeric count (got '$2') — summary unparseable or missing its .summary field; failing closed"
 }
 
+COMMITTED_TOTAL="$(extract_count "${COMMITTED_SUMMARY}" total_cases)"
 COMMITTED_PASSES="$(extract_count "${COMMITTED_SUMMARY}" passes)"
 COMMITTED_FAILS="$(extract_count "${COMMITTED_SUMMARY}" fails)"
 COMMITTED_SKIPS="$(extract_count "${COMMITTED_SUMMARY}" skips)"
+FRESH_TOTAL="$(extract_count "${FRESH_REPORT}" total_cases)"
 FRESH_PASSES="$(extract_count "${FRESH_REPORT}" passes)"
 FRESH_FAILS="$(extract_count "${FRESH_REPORT}" fails)"
 FRESH_SKIPS="$(extract_count "${FRESH_REPORT}" skips)"
 
+require_count "committed total count" "${COMMITTED_TOTAL}"
 require_count "committed pass count" "${COMMITTED_PASSES}"
 require_count "committed fail count" "${COMMITTED_FAILS}"
 require_count "fresh pass count" "${FRESH_PASSES}"
 require_count "fresh fail count" "${FRESH_FAILS}"
+require_count "fresh total count" "${FRESH_TOTAL}"
 require_count "committed skip count" "${COMMITTED_SKIPS}"
 require_count "fresh skip count" "${FRESH_SKIPS}"
 
-log "Committed: passes=${COMMITTED_PASSES} fails=${COMMITTED_FAILS} skips=${COMMITTED_SKIPS}"
-log "Fresh:     passes=${FRESH_PASSES} fails=${FRESH_FAILS} skips=${FRESH_SKIPS}"
-log_json "comparison" "committed_passes" "${COMMITTED_PASSES}" "committed_fails" "${COMMITTED_FAILS}" \
-  "committed_skips" "${COMMITTED_SKIPS}" "fresh_passes" "${FRESH_PASSES}" "fresh_fails" "${FRESH_FAILS}" \
+require_total_consistency() {
+  local label="$1" total="$2" passes="$3" fails="$4" skips="$5"
+  local computed=$((passes + fails + skips))
+  [[ "${total}" -eq "${computed}" ]] \
+    || die "$label total_cases=${total} does not equal passes+fails+skips=${computed}; failing closed"
+}
+
+require_total_consistency "committed summary" "${COMMITTED_TOTAL}" "${COMMITTED_PASSES}" "${COMMITTED_FAILS}" "${COMMITTED_SKIPS}"
+require_total_consistency "fresh report" "${FRESH_TOTAL}" "${FRESH_PASSES}" "${FRESH_FAILS}" "${FRESH_SKIPS}"
+
+log "Committed: total=${COMMITTED_TOTAL} passes=${COMMITTED_PASSES} fails=${COMMITTED_FAILS} skips=${COMMITTED_SKIPS}"
+log "Fresh:     total=${FRESH_TOTAL} passes=${FRESH_PASSES} fails=${FRESH_FAILS} skips=${FRESH_SKIPS}"
+log_json "comparison" "committed_total" "${COMMITTED_TOTAL}" "committed_passes" "${COMMITTED_PASSES}" \
+  "committed_fails" "${COMMITTED_FAILS}" "committed_skips" "${COMMITTED_SKIPS}" \
+  "fresh_total" "${FRESH_TOTAL}" "fresh_passes" "${FRESH_PASSES}" "fresh_fails" "${FRESH_FAILS}" \
   "fresh_skips" "${FRESH_SKIPS}"
 
 DIVERGED=false
+if [[ "${COMMITTED_TOTAL}" != "${FRESH_TOTAL}" ]]; then
+  log "DIVERGENCE: total count differs (committed=${COMMITTED_TOTAL}, fresh=${FRESH_TOTAL})"
+  DIVERGED=true
+fi
 if [[ "${COMMITTED_PASSES}" != "${FRESH_PASSES}" ]]; then
   log "DIVERGENCE: pass count differs (committed=${COMMITTED_PASSES}, fresh=${FRESH_PASSES})"
   DIVERGED=true
@@ -149,7 +168,8 @@ if [[ "${COMMITTED_SKIPS}" != "${FRESH_SKIPS}" ]]; then
 fi
 
 if [[ "${DIVERGED}" == "true" ]]; then
-  log_json "divergence_detected" "committed_passes" "${COMMITTED_PASSES}" "fresh_passes" "${FRESH_PASSES}" \
+  log_json "divergence_detected" "committed_total" "${COMMITTED_TOTAL}" "fresh_total" "${FRESH_TOTAL}" \
+    "committed_passes" "${COMMITTED_PASSES}" "fresh_passes" "${FRESH_PASSES}" \
     "committed_fails" "${COMMITTED_FAILS}" "fresh_fails" "${FRESH_FAILS}" \
     "committed_skips" "${COMMITTED_SKIPS}" "fresh_skips" "${FRESH_SKIPS}"
 
@@ -169,7 +189,7 @@ if [[ "${DIVERGED}" == "true" ]]; then
   "timeout_seconds": ${TIMEOUT_SECONDS},
   "stress_iters": 5,
   "summary": {
-    "total_cases": $((FRESH_PASSES + FRESH_FAILS)),
+    "total_cases": ${FRESH_TOTAL},
     "passes": ${FRESH_PASSES},
     "fails": ${FRESH_FAILS},
     "skips": ${FRESH_SKIPS},
