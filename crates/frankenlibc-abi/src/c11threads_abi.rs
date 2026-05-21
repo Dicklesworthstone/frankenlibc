@@ -18,7 +18,7 @@ const THRD_SUCCESS: c_int = 0;
 const THRD_ERROR: c_int = 2;
 const THRD_NOMEM: c_int = 3;
 const THRD_TIMEDOUT: c_int = 4;
-const THRD_BUSY: c_int = 5;
+const THRD_BUSY: c_int = 1;
 
 // ---------------------------------------------------------------------------
 // C11 mutex type flags
@@ -27,8 +27,8 @@ const THRD_BUSY: c_int = 5;
 #[allow(dead_code)]
 const MTX_PLAIN: c_int = 0;
 #[allow(dead_code)]
-const MTX_TIMED: c_int = 1;
-const MTX_RECURSIVE: c_int = 2;
+const MTX_RECURSIVE: c_int = 1;
+const MTX_TIMED: c_int = 2;
 
 // ---------------------------------------------------------------------------
 // C11 opaque types — same layout as pthread equivalents on glibc/Linux
@@ -470,10 +470,11 @@ mod tests {
     fn constants_match_c11_spec() {
         // C11 defines thrd_success = 0
         assert_eq!(THRD_SUCCESS, 0);
-        // MTX_PLAIN is 0, MTX_TIMED is 1, MTX_RECURSIVE is 2
+        assert_eq!(THRD_BUSY, 1);
+        // glibc `<threads.h>` defines mtx_plain=0, mtx_recursive=1, mtx_timed=2.
         assert_eq!(MTX_PLAIN, 0);
-        assert_eq!(MTX_TIMED, 1);
-        assert_eq!(MTX_RECURSIVE, 2);
+        assert_eq!(MTX_RECURSIVE, 1);
+        assert_eq!(MTX_TIMED, 2);
     }
 
     #[test]

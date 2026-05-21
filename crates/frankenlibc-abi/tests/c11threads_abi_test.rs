@@ -16,6 +16,8 @@ use frankenlibc_abi::dirent_abi::versionsort;
 use frankenlibc_abi::time_abi::{timespec_get, timespec_getres};
 
 const THRD_SUCCESS: c_int = 0;
+const THRD_BUSY: c_int = 1;
+const MTX_RECURSIVE: c_int = 1;
 
 static C11_THREAD_SELF_SNAPSHOT: AtomicUsize = AtomicUsize::new(0);
 
@@ -186,6 +188,11 @@ fn test_mtx_trylock() {
         let mut mtx: libc::pthread_mutex_t = std::mem::zeroed();
         assert_eq!(mtx_init(&mut mtx, 0), THRD_SUCCESS);
         assert_eq!(mtx_trylock(&mut mtx), THRD_SUCCESS);
+        assert_eq!(
+            mtx_trylock(&mut mtx),
+            THRD_BUSY,
+            "busy trylock must return glibc thrd_busy=1"
+        );
         assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
         mtx_destroy(&mut mtx);
     }
@@ -195,8 +202,7 @@ fn test_mtx_trylock() {
 fn test_mtx_recursive() {
     unsafe {
         let mut mtx: libc::pthread_mutex_t = std::mem::zeroed();
-        // MTX_RECURSIVE = 2
-        assert_eq!(mtx_init(&mut mtx, 2), THRD_SUCCESS);
+        assert_eq!(mtx_init(&mut mtx, MTX_RECURSIVE), THRD_SUCCESS);
         assert_eq!(mtx_lock(&mut mtx), THRD_SUCCESS);
         assert_eq!(mtx_lock(&mut mtx), THRD_SUCCESS); // second lock OK for recursive
         assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
@@ -319,7 +325,7 @@ fn test_cnd_timedwait_timeout() {
 
         assert_eq!(mtx_lock(&mut mtx), THRD_SUCCESS);
         let rc = cnd_timedwait(&mut cond, &mut mtx, &ts);
-        // Should return thrd_timedout (2) or thrd_error
+        // Should return thrd_timedout (4) or thrd_error.
         assert_ne!(
             rc, THRD_SUCCESS,
             "cnd_timedwait with past deadline should not succeed"
