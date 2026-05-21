@@ -207,15 +207,17 @@ SUMMARY_DRIFT_JSON="$(jq -c -n \
     }[.];
 
   def optional_skip_binaries($doc):
-    if ($doc.optional_skip_binaries | type) == "array" then
-      ($doc.optional_skip_binaries | sort)
-    else
+    if (($doc.cases | type) == "array" and (($doc.cases | length) > 0)) then
       [
         $doc.cases[]?
         | select(.status == "skip")
         | (.case | optional_binary_for_case)
         | select(. != null)
       ] | unique
+    elif ($doc.optional_skip_binaries | type) == "array" then
+      ($doc.optional_skip_binaries | sort)
+    else
+      []
     end;
 
   def projection($doc):
