@@ -185,6 +185,9 @@ result = {
     "label": label,
     "duration_ms": duration_ms,
     "top_n": top_n,
+    "profile_exit": profile_rc,
+    "perf_report_exit": perf_report_rc,
+    "perf_data_bytes": perf_data_bytes,
     "symbol_count": 0,
     "symbols": [row],
 }
@@ -198,7 +201,7 @@ PY
         local perf_report_rc=0
         if perf report -i "$perf_data" --stdio --no-children --percent-limit 0.1 > "$report_txt" 2>"${report_txt}.stderr"; then
             # Extract hot symbols as JSON
-            python3 - "$report_txt" "$hot_symbols" "$TOP_N" "$label" "$duration_ms" "$TRACE_ID" <<'PY'
+            python3 - "$report_txt" "$hot_symbols" "$TOP_N" "$label" "$duration_ms" "$TRACE_ID" "$profile_rc" "$perf_data_bytes" <<'PY'
 import json
 import re
 import sys
@@ -209,6 +212,8 @@ top_n = int(sys.argv[3])
 label = sys.argv[4]
 duration_ms = int(sys.argv[5])
 trace_id = sys.argv[6]
+profile_rc = int(sys.argv[7])
+perf_data_bytes = int(sys.argv[8])
 
 symbols = []
 # Parse perf report output
@@ -245,6 +250,9 @@ result = {
     "label": label,
     "duration_ms": duration_ms,
     "top_n": top_n,
+    "profile_exit": profile_rc,
+    "perf_report_exit": 0,
+    "perf_data_bytes": perf_data_bytes,
     "symbol_count": symbol_count,
     "symbols": symbols,
 }
@@ -311,6 +319,44 @@ def symbol_rows(profile):
     return rows
 
 
+def int_field(row, name, default=0):
+    value = row.get(name, default)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    return default
+
+
+def profile_error_rows(profile):
+    rows = []
+    for row in profile.get("symbols", []):
+        if not isinstance(row, dict) or "error" not in row:
+            continue
+        error = row.get("error")
+        rows.append({
+            "error": str(error) if error is not None else "unknown error",
+            "profile_exit": int_field(row, "profile_exit"),
+            "perf_report_exit": int_field(row, "perf_report_exit"),
+            "perf_data_bytes": int_field(row, "perf_data_bytes"),
+        })
+    return rows
+
+
+def profile_health(profile):
+    profile_exit = int_field(profile, "profile_exit")
+    perf_report_exit = int_field(profile, "perf_report_exit")
+    errors = profile_error_rows(profile)
+    return {
+        "ok": profile_exit == 0 and perf_report_exit == 0 and not errors,
+        "profile_exit": profile_exit,
+        "perf_report_exit": perf_report_exit,
+        "perf_data_bytes": int_field(profile, "perf_data_bytes"),
+        "error_count": len(errors),
+        "errors": errors,
+    }
+
+
 # Find symbols unique to preload modes (potential hot spots). A failed perf
 # capture emits an error row without a symbol; keep those per-mode files intact
 # but do not let them abort summary generation.
@@ -353,6 +399,11 @@ summary = {
         "baseline": len(baseline_rows),
         "strict": len(strict_rows),
         "hardened": len(hardened_rows),
+    },
+    "profile_health": {
+        "baseline": profile_health(baseline),
+        "strict": profile_health(strict),
+        "hardened": profile_health(hardened),
     },
     "strict_only_hot_symbols": strict_only[:10],
     "hardened_only_hot_symbols": hardened_only[:10],
