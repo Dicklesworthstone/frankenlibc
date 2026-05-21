@@ -54,7 +54,7 @@ MODE = sys.argv[6]
 
 REPORT_SCHEMA = "bead_closure_freshness_report.v1"
 CONTRACT_RE = re.compile(r"((?:tests|target|scripts)/[A-Za-z0-9._/-]*completion_contract\.v1\.json)")
-UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+UTC_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|\+00:00)$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -77,10 +77,17 @@ def rel(path: pathlib.Path) -> str:
 
 
 def parse_utc(value: Any) -> dt.datetime | None:
-    if not isinstance(value, str) or not UTC_RE.match(value):
+    if not isinstance(value, str):
         return None
+    match = UTC_RE.match(value)
+    if match is None:
+        return None
+    fraction = match.group(2) or ""
+    if len(fraction) > 7:
+        fraction = fraction[:7]
+    text = f"{match.group(1)}{fraction}+00:00"
     try:
-        return dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+        return dt.datetime.fromisoformat(text).astimezone(dt.timezone.utc)
     except ValueError:
         return None
 
@@ -371,7 +378,12 @@ def audit(
 def self_test(policy: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     valid_hash = "a" * 64
     base_policy = dict(policy)
-    base_policy["enforced_bead_ids"] = ["bd-self-pass", "bd-self-predated", "bd-self-missing-chain"]
+    base_policy["enforced_bead_ids"] = [
+        "bd-self-pass",
+        "bd-self-predated",
+        "bd-self-missing-chain",
+        "bd-self-fractional",
+    ]
     base_policy["require_ledger_chain_hash"] = False
 
     cases = [
@@ -442,6 +454,29 @@ def self_test(policy: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[s
                 "bead_status_window": {"in_progress_at_utc": "2026-05-21T07:05:00Z"},
             },
             "expected_signatures": ["bead_closure_missing_chain_hash"],
+        },
+        {
+            "name": "fractional_bead_timestamps_pass",
+            "bead": {
+                "id": "bd-self-fractional",
+                "status": "closed",
+                "labels": ["reality-check"],
+                "created_at": "2026-05-21T07:00:00.123456789Z",
+                "closed_at": "2026-05-21T07:30:00.987654321Z",
+                "close_reason": "evidence: tests/conformance/self_fractional_completion_contract.v1.json",
+            },
+            "path": "tests/conformance/self_fractional_completion_contract.v1.json",
+            "contract": {
+                "freshness_state": {
+                    "generated_at_utc": "2026-05-21T07:10:00.456789123Z",
+                    "source_commit": "1111111111111111111111111111111111111111",
+                    "generator_command": "self-test fractional timestamps",
+                    "tool_version": "self-test",
+                    "chain_hash": valid_hash,
+                },
+                "bead_status_window": {"in_progress_at_utc": "2026-05-21T07:05:00.111222333Z"},
+            },
+            "expected_signatures": [],
         },
     ]
 
