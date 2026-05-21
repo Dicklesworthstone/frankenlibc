@@ -79,6 +79,7 @@ if [[ "${MODE}" == "run" ]]; then
       export RCH_ENV_ALLOWLIST="${RCH_ENV_ALLOWLIST},CARGO_TARGET_DIR"
       ;;
   esac
+  export RCH_REQUIRE_REMOTE=1
   echo "check_ld_preload_smoke_regeneration: building frankenlibc-abi through rch"
   set +e
   rch exec -- cargo build -p frankenlibc-abi --release > "${BUILD_LOG}" 2>&1
