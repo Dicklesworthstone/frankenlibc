@@ -123,6 +123,8 @@ require_count "committed pass count" "${COMMITTED_PASSES}"
 require_count "committed fail count" "${COMMITTED_FAILS}"
 require_count "fresh pass count" "${FRESH_PASSES}"
 require_count "fresh fail count" "${FRESH_FAILS}"
+require_count "committed skip count" "${COMMITTED_SKIPS}"
+require_count "fresh skip count" "${FRESH_SKIPS}"
 
 log "Committed: passes=${COMMITTED_PASSES} fails=${COMMITTED_FAILS} skips=${COMMITTED_SKIPS}"
 log "Fresh:     passes=${FRESH_PASSES} fails=${FRESH_FAILS} skips=${FRESH_SKIPS}"
@@ -139,20 +141,17 @@ if [[ "${COMMITTED_FAILS}" != "${FRESH_FAILS}" ]]; then
   log "DIVERGENCE: fail count differs (committed=${COMMITTED_FAILS}, fresh=${FRESH_FAILS})"
   DIVERGED=true
 fi
-# The lane's contract is to fail on ANY divergence; the skip count is part
-# of that. Compared only when both sides expose a numeric skip count, so a
-# report without a skip field cannot newly hard-fail the lane.
-if [[ "${COMMITTED_SKIPS}" =~ ^[0-9]+$ && "${FRESH_SKIPS}" =~ ^[0-9]+$ ]]; then
-  if [[ "${COMMITTED_SKIPS}" != "${FRESH_SKIPS}" ]]; then
-    log "DIVERGENCE: skip count differs (committed=${COMMITTED_SKIPS}, fresh=${FRESH_SKIPS})"
-    DIVERGED=true
-  fi
-else
-  log "NOTE: skip counts not both numeric (committed=${COMMITTED_SKIPS}, fresh=${FRESH_SKIPS}); skip-divergence check omitted"
+# The lane's contract is to fail on ANY divergence; the skip count is part of
+# that checked summary. Missing or malformed skip counts fail closed above.
+if [[ "${COMMITTED_SKIPS}" != "${FRESH_SKIPS}" ]]; then
+  log "DIVERGENCE: skip count differs (committed=${COMMITTED_SKIPS}, fresh=${FRESH_SKIPS})"
+  DIVERGED=true
 fi
 
 if [[ "${DIVERGED}" == "true" ]]; then
-  log_json "divergence_detected" "committed_passes" "${COMMITTED_PASSES}" "fresh_passes" "${FRESH_PASSES}" "committed_fails" "${COMMITTED_FAILS}" "fresh_fails" "${FRESH_FAILS}"
+  log_json "divergence_detected" "committed_passes" "${COMMITTED_PASSES}" "fresh_passes" "${FRESH_PASSES}" \
+    "committed_fails" "${COMMITTED_FAILS}" "fresh_fails" "${FRESH_FAILS}" \
+    "committed_skips" "${COMMITTED_SKIPS}" "fresh_skips" "${FRESH_SKIPS}"
 
   if [[ "${REGENERATE}" == "true" ]]; then
     log "Regenerating committed summary..."
@@ -173,7 +172,7 @@ if [[ "${DIVERGED}" == "true" ]]; then
     "total_cases": $((FRESH_PASSES + FRESH_FAILS)),
     "passes": ${FRESH_PASSES},
     "fails": ${FRESH_FAILS},
-    "skips": $([[ "${FRESH_SKIPS}" =~ ^[0-9]+$ ]] && echo "${FRESH_SKIPS}" || echo 0),
+    "skips": ${FRESH_SKIPS},
     "signature_guard_failures": 0,
     "perf_failures": 0,
     "valgrind_failures": 0,

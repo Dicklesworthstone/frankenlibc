@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 const CONTRACT_PATH: &str = "tests/conformance/ld_preload_smoke_regeneration_gate.v1.json";
 const CANONICAL_SUMMARY_PATH: &str = "tests/conformance/ld_preload_smoke_summary.v1.json";
 const GATE_SCRIPT: &str = "scripts/check_ld_preload_smoke_regeneration.sh";
+const LEGACY_ADVERSARIAL_GATE_SCRIPT: &str = "scripts/check_adversarial_smoke_lane.sh";
 
 type TestResult<T = ()> = Result<T, String>;
 
@@ -331,6 +332,29 @@ fn default_run_id_is_process_unique() {
             "RUN_ID=\"${FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}\""
         ),
         "default run id should include the process id so concurrent same-second runs do not share a run directory"
+    );
+}
+
+#[test]
+fn legacy_adversarial_gate_requires_numeric_skip_counts() {
+    let root = workspace_root();
+    let script = std::fs::read_to_string(root.join(LEGACY_ADVERSARIAL_GATE_SCRIPT))
+        .expect("legacy adversarial gate script readable");
+    assert!(
+        script.contains("require_count \"committed skip count\" \"${COMMITTED_SKIPS}\""),
+        "legacy adversarial gate must fail closed when committed skips are missing or malformed"
+    );
+    assert!(
+        script.contains("require_count \"fresh skip count\" \"${FRESH_SKIPS}\""),
+        "legacy adversarial gate must fail closed when fresh skips are missing or malformed"
+    );
+    assert!(
+        script.contains("DIVERGENCE: skip count differs"),
+        "legacy adversarial gate must compare numeric skip counts"
+    );
+    assert!(
+        !script.contains("skip-divergence check omitted"),
+        "legacy adversarial gate must not silently omit skip divergence"
     );
 }
 
