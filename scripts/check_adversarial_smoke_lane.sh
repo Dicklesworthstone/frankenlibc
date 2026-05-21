@@ -171,6 +171,128 @@ if [[ "${COMMITTED_SKIPS}" != "${FRESH_SKIPS}" ]]; then
   DIVERGED=true
 fi
 
+SUMMARY_DRIFT_JSON="$(jq -c -n \
+  --slurpfile committed "${COMMITTED_SUMMARY}" \
+  --slurpfile fresh "${FRESH_REPORT}" '
+  def status_from_counts($m):
+    if (($m.fails // 0) > 0
+        or ($m.signature_guard_failures // 0) > 0
+        or ($m.perf_failures // 0) > 0
+        or ($m.valgrind_failures // 0) > 0
+        or ($m.strict_parity_failures // 0) > 0)
+    then "red"
+    else "green"
+    end;
+
+  def mode_projection($mode):
+    ($mode // {}) as $m
+    | {
+        total_cases: $m.total_cases,
+        passes: $m.passes,
+        fails: $m.fails,
+        skips: $m.skips,
+        signature_guard_failures: $m.signature_guard_failures,
+        strict_parity_failures: $m.strict_parity_failures,
+        perf_failures: $m.perf_failures,
+        valgrind_failures: $m.valgrind_failures,
+        status: status_from_counts($m)
+      };
+
+  def optional_binary_for_case:
+    {
+      busybox_help: "busybox",
+      sqlite_memory_select: "sqlite3",
+      redis_cli_version: "redis-cli",
+      nginx_version: "nginx"
+    }[.];
+
+  def optional_skip_binaries($doc):
+    if ($doc.optional_skip_binaries | type) == "array" then
+      ($doc.optional_skip_binaries | sort)
+    else
+      [
+        $doc.cases[]?
+        | select(.status == "skip")
+        | (.case | optional_binary_for_case)
+        | select(. != null)
+      ] | unique
+    end;
+
+  def projection($doc):
+    {
+      timeout_seconds: $doc.timeout_seconds,
+      stress_iters: $doc.stress_iters,
+      summary: {
+        total_cases: $doc.summary.total_cases,
+        passes: $doc.summary.passes,
+        fails: $doc.summary.fails,
+        skips: $doc.summary.skips,
+        signature_guard_failures: $doc.summary.signature_guard_failures,
+        perf_failures: $doc.summary.perf_failures,
+        valgrind_failures: $doc.summary.valgrind_failures,
+        overall_failed: $doc.summary.overall_failed
+      },
+      modes: {
+        strict: mode_projection($doc.modes.strict),
+        hardened: mode_projection($doc.modes.hardened)
+      },
+      optional_skip_binaries: optional_skip_binaries($doc)
+    };
+
+  [
+    ["timeout_seconds"],
+    ["stress_iters"],
+    ["summary", "total_cases"],
+    ["summary", "passes"],
+    ["summary", "fails"],
+    ["summary", "skips"],
+    ["summary", "signature_guard_failures"],
+    ["summary", "perf_failures"],
+    ["summary", "valgrind_failures"],
+    ["summary", "overall_failed"],
+    ["modes", "strict", "total_cases"],
+    ["modes", "strict", "passes"],
+    ["modes", "strict", "fails"],
+    ["modes", "strict", "skips"],
+    ["modes", "strict", "signature_guard_failures"],
+    ["modes", "strict", "strict_parity_failures"],
+    ["modes", "strict", "perf_failures"],
+    ["modes", "strict", "valgrind_failures"],
+    ["modes", "strict", "status"],
+    ["modes", "hardened", "total_cases"],
+    ["modes", "hardened", "passes"],
+    ["modes", "hardened", "fails"],
+    ["modes", "hardened", "skips"],
+    ["modes", "hardened", "signature_guard_failures"],
+    ["modes", "hardened", "strict_parity_failures"],
+    ["modes", "hardened", "perf_failures"],
+    ["modes", "hardened", "valgrind_failures"],
+    ["modes", "hardened", "status"],
+    ["optional_skip_binaries"]
+  ] as $paths
+  | (projection($committed[0])) as $committed_projection
+  | (projection($fresh[0])) as $fresh_projection
+  | [
+      $paths[] as $path
+      | select(($committed_projection | getpath($path)) != ($fresh_projection | getpath($path)))
+      | {
+          field: ($path | join(".")),
+          committed: ($committed_projection | getpath($path)),
+          fresh: ($fresh_projection | getpath($path))
+        }
+    ]
+')" || die "Failed to compare full smoke summary projection"
+SUMMARY_DRIFT_COUNT="$(jq 'length' <<< "${SUMMARY_DRIFT_JSON}")"
+if [[ "${SUMMARY_DRIFT_COUNT}" -gt 0 ]]; then
+  log "DIVERGENCE: load-bearing summary fields differ (${SUMMARY_DRIFT_COUNT} field(s))"
+  jq -r '.[] | "DIVERGENCE: \(.field) differs (committed=\(.committed | tojson), fresh=\(.fresh | tojson))"' \
+    <<< "${SUMMARY_DRIFT_JSON}" \
+    | while IFS= read -r drift_line; do
+        log "${drift_line}"
+      done
+  DIVERGED=true
+fi
+
 if [[ "${DIVERGED}" == "true" ]]; then
   log_json "divergence_detected" "committed_total" "${COMMITTED_TOTAL}" "fresh_total" "${FRESH_TOTAL}" \
     "committed_passes" "${COMMITTED_PASSES}" "fresh_passes" "${FRESH_PASSES}" \
