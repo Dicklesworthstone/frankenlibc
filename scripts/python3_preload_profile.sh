@@ -18,6 +18,14 @@ PERF_FREQ="${PERF_FREQ:-997}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-5}"
 WORKLOAD_SCRIPT='print("done")'
 
+# Human-readable workload description, JSON-escaped for embedding in
+# profile_summary.json. WORKLOAD_SCRIPT contains double-quotes, so the raw
+# string cannot be interpolated into a JSON value verbatim (it would close the
+# string early and emit malformed JSON). Escape backslashes first, then quotes.
+WORKLOAD_DESC="python3 -c '${WORKLOAD_SCRIPT}'"
+WORKLOAD_DESC_JSON="${WORKLOAD_DESC//\\/\\\\}"
+WORKLOAD_DESC_JSON="${WORKLOAD_DESC_JSON//\"/\\\"}"
+
 LIB_CANDIDATES=(
   "${FRANKENLIBC_LIB:-}"
   "${ROOT}/target/release/libfrankenlibc_abi.so"
@@ -172,7 +180,7 @@ cat > "${SUMMARY_JSON}" <<EOF
     "generated_at": "${RUN_TS}",
     "git_commit": "${GIT_COMMIT}",
     "library_path": "${LIB_PATH}",
-    "workload": "python3 -c '${WORKLOAD_SCRIPT}'",
+    "workload": "${WORKLOAD_DESC_JSON}",
     "timeout_sec": ${TIMEOUT_SEC},
     "perf_freq": ${PERF_FREQ},
     "top_n": ${TOP_N}
