@@ -166,6 +166,16 @@ SUMMARY_FIELDS = [
     "valgrind_failures",
     "overall_failed",
 ]
+MODE_REPORT_FIELDS = [
+    "total_cases",
+    "passes",
+    "fails",
+    "skips",
+    "signature_guard_failures",
+    "strict_parity_failures",
+    "perf_failures",
+    "valgrind_failures",
+]
 OPTIONAL_SKIP_CASES = {
     "busybox_help": "busybox",
     "sqlite_memory_select": "sqlite3",
@@ -326,6 +336,9 @@ def summary_from_cases(cases: list[dict[str, Any]], report: dict[str, Any]) -> d
         mode_perf_failures = sum(
             1 for case in mode_cases if case.get("perf_required") and not case.get("perf_pass")
         )
+        mode_strict_parity_failures = sum(
+            1 for case in mode_cases if case.get("parity_required") and not case.get("parity_pass")
+        )
         mode_valgrind_failures = sum(
             1 for case in mode_cases if case.get("valgrind_checked") and not case.get("valgrind_pass")
         )
@@ -335,6 +348,10 @@ def summary_from_cases(cases: list[dict[str, Any]], report: dict[str, Any]) -> d
             "passes": sum(1 for case in mode_cases if case.get("status") == "pass"),
             "fails": mode_fails,
             "skips": sum(1 for case in mode_cases if case.get("status") == "skip"),
+            "signature_guard_failures": mode_signature_guard,
+            "strict_parity_failures": mode_strict_parity_failures,
+            "perf_failures": mode_perf_failures,
+            "valgrind_failures": mode_valgrind_failures,
             "status": status_for_counts(mode_fails, mode_signature_guard, mode_perf_failures, mode_valgrind_failures),
         }
     signature_guard = sum(1 for case in cases if case.get("signature_guard_triggered"))
@@ -391,7 +408,7 @@ def validate_report_summary(report: dict[str, Any], projection: dict[str, Any]) 
         if not isinstance(raw_mode, dict):
             errors.append(f"smoke_report.modes.{mode} must be object")
             continue
-        for field in ["total_cases", "passes", "fails", "skips"]:
+        for field in MODE_REPORT_FIELDS:
             expected = projection["modes"][mode][field]
             actual = raw_mode.get(field)
             if actual != expected:

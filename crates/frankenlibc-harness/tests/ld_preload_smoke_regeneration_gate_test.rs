@@ -339,6 +339,37 @@ fn validate_only_accepts_report_matching_committed_summary() -> TestResult {
 }
 
 #[test]
+fn validate_only_rejects_stale_mode_failure_counters() -> TestResult {
+    let root = workspace_root();
+    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
+    let mut report_value = fake_report(&canonical);
+    report_value["modes"]["strict"]["signature_guard_failures"] = json!(0);
+    report_value["modes"]["strict"]["perf_failures"] = json!(0);
+
+    let temp = unique_temp_dir("ld-preload-smoke-regeneration-mode-counters");
+    let report = temp.join("abi_compat_report.json");
+    let trace = temp.join("trace.jsonl");
+    write_json(&report, &report_value);
+    std::fs::write(&trace, fake_trace(&report_value)).expect("write trace");
+
+    let (gate_report, _gate_log, output) = run_gate(&temp, &report, &trace, None);
+    assert!(
+        !output.status.success(),
+        "gate should fail when per-mode failure counters disagree with cases"
+    );
+    let gate = load_json(&gate_report);
+    assert_eq!(gate["status"].as_str(), Some("fail"));
+    assert!(
+        gate["errors"].as_array().unwrap().iter().any(|error| error
+            .as_str()
+            .unwrap_or("")
+            .contains("smoke_report.modes.strict.signature_guard_failures")),
+        "failure should identify the stale strict-mode counter"
+    );
+    Ok(())
+}
+
+#[test]
 fn validate_only_rejects_regenerated_smoke_summary_drift() -> TestResult {
     let root = workspace_root();
     let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
