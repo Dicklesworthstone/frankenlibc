@@ -586,7 +586,7 @@ def validate_contract(contract: dict[str, Any]) -> None:
 
 
 def validate_trace(trace_rows: list[dict[str, Any]], cases: list[dict[str, Any]], expected_run_id: str) -> None:
-    indexed: set[tuple[str, str, str]] = set()
+    indexed: Counter[tuple[str, str, str]] = Counter()
     for index, row in enumerate(trace_rows):
         row_mode = row.get("mode")
         row_case = row.get("case")
@@ -595,7 +595,7 @@ def validate_trace(trace_rows: list[dict[str, Any]], cases: list[dict[str, Any]]
         event = row.get("event")
         if event in {"case_pass", "case_fail", "case_skip_optional_binary_missing"}:
             if isinstance(row_mode, str) and isinstance(row_case, str) and isinstance(row_status, str):
-                indexed.add((row_mode, row_case, row_status))
+                indexed[(row_mode, row_case, row_status)] += 1
         for field in ["timestamp", "event", "mode", "case", "status", "run_id"]:
             if field not in row:
                 errors.append(f"trace[{index}].{field} missing")
@@ -605,10 +605,16 @@ def validate_trace(trace_rows: list[dict[str, Any]], cases: list[dict[str, Any]]
             errors.append(
                 f"trace[{index}].run_id={row_run_id!r} does not match smoke_report.run_id={expected_run_id!r}"
             )
-    for case in cases:
-        key = (str(case.get("mode")), str(case.get("case")), str(case.get("status")))
-        if key not in indexed:
-            errors.append(f"trace missing case event for {key[0]}/{key[1]} status={key[2]}")
+    expected_events: Counter[tuple[str, str, str]] = Counter(
+        (str(case.get("mode")), str(case.get("case")), str(case.get("status"))) for case in cases
+    )
+    for key, expected_count in expected_events.items():
+        actual_count = indexed.get(key, 0)
+        if actual_count < expected_count:
+            errors.append(
+                f"trace missing {expected_count - actual_count} case event(s) for "
+                f"{key[0]}/{key[1]} status={key[2]} (expected {expected_count}, saw {actual_count})"
+            )
 
 
 def append_case_log(case: dict[str, Any], report_ref: str, trace_ref: str, run_id: str) -> None:

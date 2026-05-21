@@ -596,8 +596,55 @@ fn validate_only_rejects_trace_missing_workload_case() -> TestResult {
         gate["errors"].as_array().unwrap().iter().any(|error| error
             .as_str()
             .unwrap_or("")
-            .contains("trace missing case event")),
+            .contains("trace missing 1 case event")),
         "failure should identify missing trace coverage"
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_only_rejects_trace_multiplicity_shortfall_for_duplicate_cases() -> TestResult {
+    let root = workspace_root();
+    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
+    let mut report_value = fake_report(&canonical);
+    let first_case = report_value["cases"][0].clone();
+    report_value["cases"][1] = first_case;
+
+    let temp = unique_temp_dir("ld-preload-smoke-regeneration-trace-multiplicity");
+    let report = temp.join("abi_compat_report.json");
+    let trace = temp.join("trace.jsonl");
+    write_json(&report, &report_value);
+
+    let mut removed_one_duplicate = false;
+    let trace_text = fake_trace(&report_value)
+        .lines()
+        .filter(|line| {
+            if !removed_one_duplicate && line.contains("\"case\":\"synthetic_pass_00\"") {
+                removed_one_duplicate = true;
+                return false;
+            }
+            true
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&trace, trace_text).expect("write trace");
+
+    let (gate_report, _gate_log, output) = run_gate(&temp, &report, &trace, None);
+    assert!(
+        !output.status.success(),
+        "gate should fail when trace has fewer matching case events than the report"
+    );
+    let gate = load_json(&gate_report);
+    assert_eq!(gate["status"].as_str(), Some("fail"));
+    assert!(
+        gate["errors"].as_array().unwrap().iter().any(|error| {
+            let error = error.as_str().unwrap_or("");
+            error.contains("trace missing 1 case event")
+                && error.contains("synthetic_pass_00")
+                && error.contains("expected 2, saw 1")
+        }),
+        "failure should identify the duplicate case trace multiplicity shortfall"
     );
     Ok(())
 }
