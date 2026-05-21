@@ -12,6 +12,19 @@
 
 use super::printf::LengthMod;
 
+/// Whitespace test matching C's `isspace` in the C locale. POSIX scanf
+/// defines both the white-space *directive* and the `%s`/`%[`-style
+/// match boundaries in terms of `isspace`, whose C-locale set is `' '`
+/// plus `\t \n \v \f \r` (0x09..=0x0D).
+///
+/// Rust's `u8::is_ascii_whitespace` omits the vertical tab `\v` (0x0b),
+/// so using it would make `sscanf("\x0b42", "%d", …)` fail to skip the
+/// leading VT and `%s` swallow an embedded VT — both diverge from glibc.
+#[inline]
+const fn is_c_space(b: u8) -> bool {
+    b == b' ' || (b >= b'\t' && b <= b'\r')
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum ScanfHandler {
@@ -429,11 +442,11 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
             }
 
             directives.push(ScanDirective::Spec(Box::new(spec)));
-        } else if fmt[i].is_ascii_whitespace() {
+        } else if is_c_space(fmt[i]) {
             directives.push(ScanDirective::Whitespace);
             i += 1;
             // Consume additional whitespace in format.
-            while i < fmt.len() && fmt[i].is_ascii_whitespace() {
+            while i < fmt.len() && is_c_space(fmt[i]) {
                 i += 1;
             }
         } else {
@@ -472,7 +485,7 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
         match dir {
             ScanDirective::Whitespace => {
                 // Skip whitespace in input.
-                while pos < input.len() && input[pos].is_ascii_whitespace() {
+                while pos < input.len() && is_c_space(input[pos]) {
                     pos += 1;
                 }
             }
@@ -540,7 +553,7 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
 
 /// Skip leading whitespace. Returns new position.
 fn skip_ws(input: &[u8], mut pos: usize) -> usize {
-    while pos < input.len() && input[pos].is_ascii_whitespace() {
+    while pos < input.len() && is_c_space(input[pos]) {
         pos += 1;
     }
     pos
@@ -1050,7 +1063,7 @@ fn scan_string(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Scan
     let mut chars_read = 0usize;
     let mut buf = Vec::new();
 
-    while i < input.len() && chars_read < max_chars && !input[i].is_ascii_whitespace() {
+    while i < input.len() && chars_read < max_chars && !is_c_space(input[i]) {
         buf.push(input[i]);
         i += 1;
         chars_read += 1;
@@ -1148,6 +1161,29 @@ mod tests {
     fn test_parse_simple_format() {
         let dirs = parse_scanf_format(b"%d %s");
         assert_eq!(dirs.len(), 3); // %d, whitespace, %s
+    }
+
+    #[test]
+    fn vertical_tab_is_c_isspace_for_directive_skip_and_string_boundary() {
+        // POSIX scanf defines whitespace via isspace(), whose C-locale
+        // set includes the vertical tab \x0b. glibc skips a leading VT
+        // before %d and ends %s at an embedded VT.
+
+        // A bare VT in the format string is a whitespace directive.
+        let dirs = parse_scanf_format(b"\x0b");
+        assert_eq!(dirs.len(), 1);
+        assert!(matches!(dirs[0], ScanDirective::Whitespace));
+
+        // %d must skip leading VT/FF input whitespace.
+        let dirs = parse_scanf_format(b"%d");
+        let result = scan_input(b"\x0b\x0c42", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(42)));
+
+        // %s must stop at an embedded VT, not swallow it.
+        let dirs = parse_scanf_format(b"%s");
+        let result = scan_input(b"ab\x0bcd", &dirs);
+        assert!(matches!(&result.values[0], ScanValue::String(s) if s == b"ab"));
     }
 
     #[test]
