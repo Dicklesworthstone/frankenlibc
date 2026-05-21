@@ -65,7 +65,14 @@ impl AnytimeEProcessMonitor {
         alarm_e: f64,
     ) -> Self {
         let p0 = p0.clamp(1e-6, 1.0 - 1e-6);
-        let q1 = q1.clamp(p0 + 1e-6, 1.0 - 1e-6);
+        // A well-formed e-process needs q1 > p0, but when p0 is pinned at its
+        // own ceiling there is no headroom left below `1 - 1e-6`. Cap the
+        // lower bound at the upper bound so `f64::clamp` never sees
+        // `min > max` (which panics). At that degenerate extreme q1 collapses
+        // onto p0, leaving both log-likelihood deltas at 0 — the monitor
+        // simply never accumulates evidence rather than crashing.
+        let q1_hi = 1.0 - 1e-6;
+        let q1 = q1.clamp((p0 + 1e-6).min(q1_hi), q1_hi);
         let warning_e = warning_e.max(1.0);
         let alarm_e = alarm_e.max(warning_e);
 
@@ -321,5 +328,22 @@ mod tests {
         assert!(floored_e >= expected_floor * 0.999_999);
         assert!(floored_e <= expected_floor * 1.000_001);
         assert_eq!(mon.state(ApiFamily::Allocator), SequentialState::Normal);
+    }
+
+    #[test]
+    fn extreme_null_rate_does_not_panic() {
+        // Regression: with p0 near 1.0 the q1 clamp lower bound (p0 + 1e-6)
+        // rounded above its upper bound (1 - 1e-6), so `f64::clamp` panicked
+        // with "min > max". The constructor must degrade gracefully instead.
+        for &p0 in &[0.999_998_f64, 0.999_999, 1.0] {
+            let mon = AnytimeEProcessMonitor::new_with_params(p0, 0.5, 8, 2.0, 4.0);
+            mon.observe(ApiFamily::IoFd, false);
+            mon.observe(ApiFamily::IoFd, true);
+            let e = mon.e_value(ApiFamily::IoFd);
+            assert!(
+                e.is_finite() && e > 0.0,
+                "e-value must stay finite and positive for p0={p0}, got {e}"
+            );
+        }
     }
 }
