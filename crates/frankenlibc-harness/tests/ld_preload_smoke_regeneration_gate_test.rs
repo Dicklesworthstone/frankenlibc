@@ -1,0 +1,385 @@
+//! Integration test: adversarial LD_PRELOAD smoke regeneration gate (bd-3yr14.6).
+//!
+//! The broad smoke battery is intentionally not run here. These tests feed
+//! synthetic smoke reports into validate-only mode so the gate comparison logic
+//! is fast, deterministic, and still fail-closed on summary drift.
+
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde_json::{Value, json};
+
+const CONTRACT_PATH: &str = "tests/conformance/ld_preload_smoke_regeneration_gate.v1.json";
+const CANONICAL_SUMMARY_PATH: &str = "tests/conformance/ld_preload_smoke_summary.v1.json";
+const GATE_SCRIPT: &str = "scripts/check_ld_preload_smoke_regeneration.sh";
+
+type TestResult<T = ()> = Result<T, String>;
+
+fn workspace_root() -> PathBuf {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    Path::new(manifest)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+fn load_json(path: &Path) -> Value {
+    let content = std::fs::read_to_string(path).expect("json should be readable");
+    serde_json::from_str(&content).expect("json should parse")
+}
+
+fn write_json(path: &Path, value: &Value) {
+    let content = serde_json::to_string_pretty(value).expect("json should serialize");
+    std::fs::write(path, format!("{content}\n")).expect("write json");
+}
+
+fn unique_temp_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after Unix epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    dir
+}
+
+fn smoke_case(mode: &str, case: &str, status: &str) -> Value {
+    json!({
+        "mode": mode,
+        "case": case,
+        "status": status,
+        "workload": if case.starts_with("stress_") { "stress" } else { "smoke" },
+        "startup_path": "coreutils_dynamic_startup",
+        "failure_signature": "none",
+        "signature_guard_triggered": false,
+        "parity_required": mode == "strict",
+        "parity_pass": true,
+        "perf_required": mode == "strict",
+        "perf_pass": true,
+        "latency_ratio_ppm": 1000000,
+        "baseline_rc": if status == "skip" { -1 } else { 0 },
+        "preload_rc": if status == "skip" { -1 } else { 0 },
+        "stdout_match": true,
+        "stderr_match": true,
+        "baseline_latency_ns": if status == "skip" { 0 } else { 1000 },
+        "preload_latency_ns": if status == "skip" { 0 } else { 1000 },
+        "valgrind_checked": false,
+        "valgrind_pass": true
+    })
+}
+
+fn fake_cases(canonical: &Value) -> Vec<Value> {
+    let mut cases = Vec::new();
+    for mode in ["strict", "hardened"] {
+        let passes = canonical["modes"][mode]["passes"]
+            .as_u64()
+            .expect("canonical passes") as usize;
+        for index in 0..passes {
+            cases.push(smoke_case(
+                mode,
+                &format!("synthetic_pass_{index:02}"),
+                "pass",
+            ));
+        }
+        for case in ["sqlite_memory_select", "redis_cli_version", "nginx_version"] {
+            cases.push(smoke_case(mode, case, "skip"));
+        }
+    }
+    cases
+}
+
+fn fake_report(canonical: &Value) -> Value {
+    let cases = fake_cases(canonical);
+    json!({
+        "schema_version": "v1",
+        "bead_id": "bd-3yr14.6",
+        "run_id": "synthetic-smoke-regeneration",
+        "lib_path": "/tmp/frankenlibc/libfrankenlibc_abi.so",
+        "timeout_seconds": canonical["timeout_seconds"],
+        "stress_iters": canonical["stress_iters"],
+        "enforce_parity_modes": ["strict"],
+        "enforce_perf_modes": ["strict"],
+        "perf_ratio_max_ppm": 2000000,
+        "valgrind_policy": "off",
+        "summary": canonical["summary"],
+        "modes": {
+            "strict": {
+                "total_cases": canonical["modes"]["strict"]["total_cases"],
+                "passes": canonical["modes"]["strict"]["passes"],
+                "fails": canonical["modes"]["strict"]["fails"],
+                "skips": canonical["modes"]["strict"]["skips"],
+                "signature_guard_failures": 0,
+                "strict_parity_failures": 0,
+                "perf_failures": 0,
+                "valgrind_failures": 0,
+                "failure_signature_counts": {}
+            },
+            "hardened": {
+                "total_cases": canonical["modes"]["hardened"]["total_cases"],
+                "passes": canonical["modes"]["hardened"]["passes"],
+                "fails": canonical["modes"]["hardened"]["fails"],
+                "skips": canonical["modes"]["hardened"]["skips"],
+                "signature_guard_failures": 0,
+                "strict_parity_failures": 0,
+                "perf_failures": 0,
+                "valgrind_failures": 0,
+                "failure_signature_counts": {}
+            }
+        },
+        "cases": cases
+    })
+}
+
+fn fake_trace(report: &Value) -> String {
+    let mut rows = Vec::new();
+    rows.push(json!({
+        "timestamp": "2026-05-21T00:00:00Z",
+        "event": "suite_start",
+        "mode": "all",
+        "case": "all",
+        "status": "running",
+        "run_id": "synthetic-smoke-regeneration"
+    }));
+    for case in report["cases"].as_array().expect("cases") {
+        let status = case["status"].as_str().expect("status");
+        let event = match status {
+            "pass" => "case_pass",
+            "fail" => "case_fail",
+            "skip" => "case_skip_optional_binary_missing",
+            _ => "case_fail",
+        };
+        rows.push(json!({
+            "timestamp": "2026-05-21T00:00:00Z",
+            "event": event,
+            "mode": case["mode"],
+            "case": case["case"],
+            "status": status,
+            "run_id": "synthetic-smoke-regeneration"
+        }));
+    }
+    rows.push(json!({
+        "timestamp": "2026-05-21T00:00:00Z",
+        "event": "suite_end",
+        "mode": "all",
+        "case": "all",
+        "status": "pass",
+        "run_id": "synthetic-smoke-regeneration"
+    }));
+    rows.into_iter()
+        .map(|row| serde_json::to_string(&row).expect("trace row serializes"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn run_gate(
+    temp: &Path,
+    report: &Path,
+    trace: &Path,
+    canonical: Option<&Path>,
+) -> (PathBuf, PathBuf, Output) {
+    let root = workspace_root();
+    let gate_report = temp.join("gate.report.json");
+    let gate_log = temp.join("gate.log.jsonl");
+    let mut command = Command::new(root.join(GATE_SCRIPT));
+    command
+        .arg("--validate-only")
+        .arg("--report")
+        .arg(report)
+        .arg("--trace")
+        .arg(trace)
+        .current_dir(&root)
+        .env("FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_REPORT", &gate_report)
+        .env("FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_LOG", &gate_log);
+    if let Some(path) = canonical {
+        command.env("FRANKENLIBC_LD_PRELOAD_SMOKE_CANONICAL", path);
+    }
+    let output = command.output().expect("gate script should execute");
+    (gate_report, gate_log, output)
+}
+
+#[test]
+fn manifest_pins_run_and_validate_only_contracts() {
+    let root = workspace_root();
+    let manifest = load_json(&root.join(CONTRACT_PATH));
+    assert_eq!(manifest["schema_version"].as_str(), Some("v1"));
+    assert_eq!(
+        manifest["manifest_id"].as_str(),
+        Some("ld-preload-smoke-regeneration-gate")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-3yr14.6"));
+    assert_eq!(
+        manifest["inputs"]["canonical_summary"].as_str(),
+        Some(CANONICAL_SUMMARY_PATH)
+    );
+    assert_eq!(
+        manifest["inputs"]["gate_script"].as_str(),
+        Some(GATE_SCRIPT)
+    );
+    assert_eq!(
+        manifest["run_mode_contract"]["build_tool"].as_str(),
+        Some("rch exec -- cargo build -p frankenlibc-abi --release")
+    );
+    assert_eq!(
+        manifest["run_mode_contract"]["bare_cargo_allowed"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        manifest["run_mode_contract"]["local_rch_fallback_allowed"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        manifest["validate_only_contract"]["report_env"].as_str(),
+        Some("FRANKENLIBC_LD_PRELOAD_SMOKE_REPORT")
+    );
+}
+
+#[test]
+fn gate_script_is_executable() {
+    let root = workspace_root();
+    let mode = std::fs::metadata(root.join(GATE_SCRIPT))
+        .expect("gate script metadata")
+        .permissions()
+        .mode();
+    assert_ne!(mode & 0o111, 0, "gate script must be executable");
+}
+
+#[test]
+fn validate_only_accepts_report_matching_committed_summary() -> TestResult {
+    let root = workspace_root();
+    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
+    let report_value = fake_report(&canonical);
+    let temp = unique_temp_dir("ld-preload-smoke-regeneration-pass");
+    let report = temp.join("abi_compat_report.json");
+    let trace = temp.join("trace.jsonl");
+    write_json(&report, &report_value);
+    std::fs::write(&trace, fake_trace(&report_value)).expect("write trace");
+
+    let (gate_report, gate_log, output) = run_gate(&temp, &report, &trace, None);
+    if !output.status.success() {
+        return Err(format!(
+            "gate should pass\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let gate = load_json(&gate_report);
+    assert_eq!(gate["status"].as_str(), Some("pass"));
+    assert_eq!(
+        gate["checks"]["regenerated_summary_matches_committed"],
+        true
+    );
+    let log = std::fs::read_to_string(gate_log).expect("gate log readable");
+    assert!(
+        log.contains("\"event\": \"smoke_case_pass\"")
+            || log.contains("\"event\":\"smoke_case_pass\""),
+        "gate log should include case pass rows"
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_only_rejects_regenerated_smoke_summary_drift() -> TestResult {
+    let root = workspace_root();
+    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
+    let mut report_value = fake_report(&canonical);
+    report_value["cases"][0]["status"] = json!("fail");
+    report_value["cases"][0]["failure_signature"] = json!("startup_abort");
+    report_value["cases"][0]["preload_rc"] = json!(134);
+    report_value["summary"]["passes"] = json!(canonical["summary"]["passes"].as_u64().unwrap() - 1);
+    report_value["summary"]["fails"] = json!(1);
+    report_value["summary"]["overall_failed"] = json!(true);
+    report_value["modes"]["strict"]["passes"] =
+        json!(canonical["modes"]["strict"]["passes"].as_u64().unwrap() - 1);
+    report_value["modes"]["strict"]["fails"] = json!(1);
+
+    let temp = unique_temp_dir("ld-preload-smoke-regeneration-drift");
+    let report = temp.join("abi_compat_report.json");
+    let trace = temp.join("trace.jsonl");
+    write_json(&report, &report_value);
+    std::fs::write(&trace, fake_trace(&report_value)).expect("write trace");
+
+    let (gate_report, _gate_log, output) = run_gate(&temp, &report, &trace, None);
+    assert!(
+        !output.status.success(),
+        "gate should fail on regenerated summary drift"
+    );
+    let gate = load_json(&gate_report);
+    assert_eq!(gate["status"].as_str(), Some("fail"));
+    assert!(
+        gate["comparison"]["drift_count"].as_u64().unwrap() >= 1,
+        "drift_count should be non-zero"
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_only_rejects_hand_edited_committed_summary_without_matching_report() -> TestResult {
+    let root = workspace_root();
+    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
+    let report_value = fake_report(&canonical);
+    let temp = unique_temp_dir("ld-preload-smoke-regeneration-hand-edit");
+    let report = temp.join("abi_compat_report.json");
+    let trace = temp.join("trace.jsonl");
+    let edited_canonical = temp.join("ld_preload_smoke_summary.v1.json");
+    let mut mutated = canonical.clone();
+    mutated["summary"]["passes"] = json!(canonical["summary"]["passes"].as_u64().unwrap() + 1);
+    write_json(&report, &report_value);
+    std::fs::write(&trace, fake_trace(&report_value)).expect("write trace");
+    write_json(&edited_canonical, &mutated);
+
+    let (gate_report, _gate_log, output) =
+        run_gate(&temp, &report, &trace, Some(&edited_canonical));
+    assert!(
+        !output.status.success(),
+        "gate should fail when committed summary is hand-edited without matching regeneration"
+    );
+    let gate = load_json(&gate_report);
+    assert_eq!(gate["status"].as_str(), Some("fail"));
+    assert!(
+        gate["errors"].as_array().unwrap().iter().any(|error| error
+            .as_str()
+            .unwrap_or("")
+            .contains("canonical.summary.passes")
+            || error.as_str().unwrap_or("").contains("diverges")),
+        "failure should identify canonical inconsistency or regeneration drift"
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_only_rejects_trace_missing_workload_case() -> TestResult {
+    let root = workspace_root();
+    let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
+    let report_value = fake_report(&canonical);
+    let temp = unique_temp_dir("ld-preload-smoke-regeneration-missing-trace");
+    let report = temp.join("abi_compat_report.json");
+    let trace = temp.join("trace.jsonl");
+    write_json(&report, &report_value);
+    let mut trace_text = fake_trace(&report_value)
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    trace_text.retain(|line| !line.contains("synthetic_pass_00"));
+    std::fs::write(&trace, trace_text.join("\n") + "\n").expect("write trace");
+
+    let (gate_report, _gate_log, output) = run_gate(&temp, &report, &trace, None);
+    assert!(
+        !output.status.success(),
+        "gate should fail when trace omits a workload case"
+    );
+    let gate = load_json(&gate_report);
+    assert_eq!(gate["status"].as_str(), Some("fail"));
+    assert!(
+        gate["errors"].as_array().unwrap().iter().any(|error| error
+            .as_str()
+            .unwrap_or("")
+            .contains("trace missing case event")),
+        "failure should identify missing trace coverage"
+    );
+    Ok(())
+}

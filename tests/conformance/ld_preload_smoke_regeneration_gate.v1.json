@@ -1,0 +1,86 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "ld-preload-smoke-regeneration-gate",
+  "bead": "bd-3yr14.6",
+  "purpose": "Fail-closed gate for the adversarial LD_PRELOAD smoke lane: rebuild the frankenlibc ABI artifact in a fresh target directory, rerun scripts/ld_preload_smoke.sh, and reject any regenerated smoke summary that diverges from the committed canonical summary.",
+  "inputs": {
+    "canonical_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "smoke_runner": "scripts/ld_preload_smoke.sh",
+    "gate_script": "scripts/check_ld_preload_smoke_regeneration.sh"
+  },
+  "run_mode_contract": {
+    "mode": "--run",
+    "build_tool": "rch exec -- cargo build -p frankenlibc-abi --release",
+    "target_dir_policy": "fresh per-run CARGO_TARGET_DIR under target/ld_preload_smoke_regeneration/<run-id>/cargo-target",
+    "bare_cargo_allowed": false,
+    "local_rch_fallback_allowed": false,
+    "smoke_command": "TIMEOUT_SECONDS=10 FRANKENLIBC_SMOKE_LIB_PATH=<fresh lib> scripts/ld_preload_smoke.sh",
+    "required_artifacts": [
+      "target/ld_preload_smoke/<run-id>/abi_compat_report.json",
+      "target/ld_preload_smoke/<run-id>/trace.jsonl",
+      "target/conformance/ld_preload_smoke_regeneration_gate.report.json",
+      "target/conformance/ld_preload_smoke_regeneration_gate.log.jsonl"
+    ]
+  },
+  "validate_only_contract": {
+    "mode": "--validate-only",
+    "report_env": "FRANKENLIBC_LD_PRELOAD_SMOKE_REPORT",
+    "trace_env": "FRANKENLIBC_LD_PRELOAD_SMOKE_TRACE",
+    "canonical_env": "FRANKENLIBC_LD_PRELOAD_SMOKE_CANONICAL",
+    "purpose": "Allow focused tests to validate the comparison logic with synthetic smoke reports and trace rows without rebuilding or rerunning the broad smoke battery."
+  },
+  "comparison_fields": {
+    "summary": [
+      "total_cases",
+      "passes",
+      "fails",
+      "skips",
+      "signature_guard_failures",
+      "perf_failures",
+      "valgrind_failures",
+      "overall_failed"
+    ],
+    "modes": [
+      "strict.total_cases",
+      "strict.passes",
+      "strict.fails",
+      "strict.skips",
+      "strict.status",
+      "hardened.total_cases",
+      "hardened.passes",
+      "hardened.fails",
+      "hardened.skips",
+      "hardened.status"
+    ],
+    "optional_skip_binaries": true
+  },
+  "policies": {
+    "report_cases_must_recompute_summary": true,
+    "committed_summary_must_be_internally_consistent": true,
+    "trace_must_include_each_workload_case": true,
+    "summary_divergence_fails_closed": true,
+    "fresh_report_with_matching_summary_passes": true,
+    "hand_edited_summary_without_matching_regeneration_fails_closed": true
+  },
+  "structured_log_contract": {
+    "log_path": "target/conformance/ld_preload_smoke_regeneration_gate.log.jsonl",
+    "required_fields": [
+      "timestamp",
+      "level",
+      "event",
+      "bead",
+      "run_id",
+      "mode",
+      "case",
+      "status",
+      "source_commit",
+      "report",
+      "trace"
+    ],
+    "case_events": [
+      "smoke_case_pass",
+      "smoke_case_fail",
+      "smoke_case_skip"
+    ]
+  }
+}
