@@ -27,6 +27,7 @@ pub mod explainability_workbench;
 pub mod fault_injection;
 pub mod fixtures;
 pub mod freshness_state;
+pub mod gate_drift;
 pub mod healing_oracle;
 pub mod kernel_regression_report;
 pub mod kernel_snapshot;
