@@ -1,0 +1,29 @@
+{
+  "schema_version": "bead_closure_freshness_completion_contract.v1",
+  "bead_id": "bd-3yr14.7",
+  "generated_at_utc": "2026-05-21T07:08:00Z",
+  "purpose": "Completion contract for the bead-closure freshness gate.",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-21T07:08:00Z",
+    "source_commit": "68c3a03df7be561b9bce392e6b724e991256669b",
+    "generator_command": "bash scripts/check_bead_closure_freshness.sh --self-test && bash scripts/check_bead_closure_freshness.sh",
+    "tool_version": "frankenlibc-shell-gate bead_closure_freshness.v1",
+    "chain_hash": "941b48d6b39516b105e99090fc3a058942b3df5f1628c86635dd90ae403c9376"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-21T07:03:25Z",
+    "in_progress_source": "Agent Mail message 36214 plus exclusive reservations for the script and policy/contract artifacts; br --no-db tracker mutation was blocked by .beads/.write.lock at claim time.",
+    "closed_at_source": ".beads/issues.jsonl closed_at value after br --no-db close"
+  },
+  "owned_paths": [
+    "scripts/check_bead_closure_freshness.sh",
+    "tests/conformance/bead_closure_freshness_policy.v1.json",
+    "tests/conformance/bead_closure_freshness_completion_contract.v1.json"
+  ],
+  "acceptance_evidence": {
+    "positive_gate": "bash scripts/check_bead_closure_freshness.sh",
+    "negative_fixture_gate": "bash scripts/check_bead_closure_freshness.sh --self-test",
+    "predated_rejection_signature": "bead_closure_predated_artifact",
+    "report_path": "target/conformance/bead_closure_freshness.report.json"
+  }
+}

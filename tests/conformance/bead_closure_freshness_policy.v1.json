@@ -1,0 +1,46 @@
+{
+  "schema_version": "bead_closure_freshness_policy.v1",
+  "bead_id": "bd-3yr14.7",
+  "purpose": "Closed beads covered by this policy must cite a completion-contract artifact whose freshness_state is generated after the bead enters in_progress and no later than closed_at.",
+  "effective_after_utc": "2026-05-21T08:00:00Z",
+  "enforce_reality_check_after_effective": true,
+  "enforced_labels": [
+    "reality-check"
+  ],
+  "enforced_bead_ids": [
+    "bd-3yr14.7"
+  ],
+  "completion_artifact_patterns": [
+    "tests/conformance/*_completion_contract.v1.json"
+  ],
+  "window_start_sources": [
+    "artifact.bead_status_window.in_progress_at_utc",
+    "artifact.bead_status_window.claimed_at_utc",
+    "bead.in_progress_at",
+    "bead.started_at",
+    "bead.claimed_at",
+    "bead.updated_at",
+    "bead.created_at"
+  ],
+  "required_freshness_state_fields": [
+    "generated_at_utc",
+    "source_commit",
+    "generator_command",
+    "tool_version",
+    "chain_hash"
+  ],
+  "chain_hash_shape": "lowercase hex sha256 digest, 64 characters",
+  "require_ledger_chain_hash": false,
+  "report_path": "target/conformance/bead_closure_freshness.report.json",
+  "gate_commands": [
+    "bash scripts/check_bead_closure_freshness.sh --self-test",
+    "bash scripts/check_bead_closure_freshness.sh"
+  ],
+  "failure_signatures": {
+    "missing_completion_artifact": "bead_closure_missing_completion_artifact",
+    "missing_generated_at_utc": "bead_closure_missing_generated_at_utc",
+    "missing_chain_hash": "bead_closure_missing_chain_hash",
+    "predated_artifact": "bead_closure_predated_artifact",
+    "postdated_artifact": "bead_closure_postdated_artifact"
+  }
+}
