@@ -323,6 +323,18 @@ fn run_mode_forwards_target_dir_without_clobbering_rch_allowlist() {
 }
 
 #[test]
+fn default_run_id_is_process_unique() {
+    let root = workspace_root();
+    let script = std::fs::read_to_string(root.join(GATE_SCRIPT)).expect("gate script readable");
+    assert!(
+        script.contains(
+            "RUN_ID=\"${FRANKENLIBC_LD_PRELOAD_SMOKE_REGEN_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}\""
+        ),
+        "default run id should include the process id so concurrent same-second runs do not share a run directory"
+    );
+}
+
+#[test]
 fn validate_only_accepts_report_matching_committed_summary() -> TestResult {
     let root = workspace_root();
     let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
