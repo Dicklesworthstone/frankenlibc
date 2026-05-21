@@ -62,6 +62,10 @@ fn contract_exists_and_valid() {
         doc["structured_log_requirements"].is_object(),
         "structured_log_requirements missing"
     );
+    assert!(
+        doc["bead_closure_freshness"].is_object(),
+        "bead_closure_freshness missing"
+    );
 }
 
 #[test]
@@ -149,6 +153,66 @@ fn transition_requirements_reference_known_invariants() {
 }
 
 #[test]
+fn bead_closure_freshness_policy_is_machine_checkable() {
+    let doc = load_contract();
+    let policy = &doc["bead_closure_freshness"];
+    assert_eq!(policy["bead"].as_str(), Some("bd-3yr14.7"));
+    assert_eq!(
+        policy["event_env"].as_str(),
+        Some("FRANKENLIBC_CLOSURE_FRESHNESS_EVENT")
+    );
+
+    let required_event_fields: HashSet<_> = policy["required_event_fields"]
+        .as_array()
+        .expect("required event fields should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("event field should be string"))
+        .collect();
+    for field in [
+        "bead_id",
+        "in_progress_at_utc",
+        "closed_at_utc",
+        "completion_contract_path",
+    ] {
+        assert!(
+            required_event_fields.contains(field),
+            "closure freshness policy missing event field {field}"
+        );
+    }
+
+    let required_artifact_fields: HashSet<_> = policy["required_artifact_freshness_fields"]
+        .as_array()
+        .expect("required artifact fields should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("artifact field should be string"))
+        .collect();
+    for field in ["generated_at_utc", "chain_hash"] {
+        assert!(
+            required_artifact_fields.contains(field),
+            "closure freshness policy missing artifact field {field}"
+        );
+    }
+
+    let failure_signatures: HashSet<_> = policy["failure_signatures"]
+        .as_array()
+        .expect("failure signatures should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("failure signature should be string"))
+        .collect();
+    for signature in [
+        "missing_completion_contract_generated_at_utc",
+        "missing_completion_contract_chain_hash",
+        "completion_contract_predates_in_progress",
+        "completion_contract_postdates_closed",
+    ] {
+        assert!(
+            failure_signatures.contains(signature),
+            "closure freshness policy missing failure signature {signature}"
+        );
+    }
+}
+
+#[test]
 fn completion_debt_evidence_binds_required_audit_items() {
     let doc = load_contract();
     let evidence = &doc["completion_debt_evidence"];
@@ -170,6 +234,7 @@ fn completion_debt_evidence_binds_required_audit_items() {
             "contract_exists_and_valid",
             "all_levels_have_machine_checkable_obligations",
             "transition_requirements_reference_known_invariants",
+            "bead_closure_freshness_policy_is_machine_checkable",
         ])
     );
 
@@ -184,6 +249,7 @@ fn completion_debt_evidence_binds_required_audit_items() {
         HashSet::from([
             "gate_script_passes_and_emits_required_log_fields",
             "gate_script_fails_for_intentionally_broken_contract",
+            "gate_script_rejects_predated_completion_contract_artifact",
         ])
     );
 
@@ -419,5 +485,89 @@ fn gate_script_rejects_stale_completion_debt_evidence() {
     assert!(
         merged.contains("FAILED"),
         "failure output should include FAILED summary"
+    );
+}
+
+#[test]
+fn gate_script_rejects_predated_completion_contract_artifact() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_closure_contract.sh");
+
+    let mut stable_contract = load_contract();
+    let levels = stable_contract["levels"].as_array_mut().unwrap();
+    let l0 = levels
+        .iter_mut()
+        .find(|entry| entry["level"].as_str() == Some("L0"))
+        .expect("L0 level should exist");
+    let obligations = l0["obligations"].as_array_mut().unwrap();
+    let closure_gate = obligations
+        .iter_mut()
+        .find(|entry| entry["invariant_id"].as_str() == Some("l0.closure_evidence_gate"))
+        .expect("l0.closure_evidence_gate should exist");
+    closure_gate["predicate"] = serde_json::json!({
+        "type": "path_exists",
+        "path": "tests/conformance/closure_evidence_schema.json"
+    });
+    closure_gate["check_cmd"] =
+        serde_json::Value::String("test -f tests/conformance/closure_evidence_schema.json".into());
+
+    let contract_path = unique_tmp_path("closure-contract-freshness", ".json");
+    std::fs::write(
+        &contract_path,
+        serde_json::to_string_pretty(&stable_contract).expect("serialize stable contract"),
+    )
+    .expect("write stable contract");
+
+    let artifact_path = unique_tmp_path("closure-contract-predated-artifact", ".json");
+    let artifact = serde_json::json!({
+        "schema_version": "test_completion_contract.v1",
+        "generated_at_utc": "2026-05-21T00:05:00Z",
+        "chain_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    });
+    std::fs::write(
+        &artifact_path,
+        serde_json::to_string_pretty(&artifact).expect("serialize predated artifact"),
+    )
+    .expect("write predated artifact");
+
+    let event_path = unique_tmp_path("closure-contract-freshness-event", ".json");
+    let event = serde_json::json!({
+        "bead_id": "bd-test",
+        "in_progress_at_utc": "2026-05-21T00:10:00Z",
+        "closed_at_utc": "2026-05-21T00:20:00Z",
+        "completion_contract_path": artifact_path.to_string_lossy().to_string()
+    });
+    std::fs::write(
+        &event_path,
+        serde_json::to_string_pretty(&event).expect("serialize freshness event"),
+    )
+    .expect("write freshness event");
+
+    let log_path = unique_tmp_path("closure-contract-freshness-log", ".jsonl");
+    let output = Command::new("bash")
+        .arg(&script)
+        .current_dir(&root)
+        .env("FRANKENLIBC_CLOSURE_CONTRACT_PATH", &contract_path)
+        .env("FRANKENLIBC_CLOSURE_FRESHNESS_EVENT", &event_path)
+        .env("FRANKENLIBC_CLOSURE_LOG", &log_path)
+        .env("FRANKENLIBC_CLOSURE_LEVEL", "L0")
+        .output()
+        .expect("check_closure_contract.sh should execute with freshness event");
+
+    assert!(
+        !output.status.success(),
+        "predated completion-contract artifact should force gate failure"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let merged = format!("{stdout}\n{stderr}");
+    assert!(
+        merged.contains("bead_closure_freshness.bd-test"),
+        "failure output must name the stale closure freshness record: {merged}"
+    );
+    assert!(
+        merged.contains("completion_contract_predates_in_progress"),
+        "failure output must include the predated-artifact signature: {merged}"
     );
 }

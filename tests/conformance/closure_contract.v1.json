@@ -347,14 +347,16 @@
       "required_test_names": [
         "contract_exists_and_valid",
         "all_levels_have_machine_checkable_obligations",
-        "transition_requirements_reference_known_invariants"
+        "transition_requirements_reference_known_invariants",
+        "bead_closure_freshness_policy_is_machine_checkable"
       ]
     },
     "e2e_primary": {
       "description": "End-to-end validator execution for passing and intentionally broken closure contracts.",
       "required_test_names": [
         "gate_script_passes_and_emits_required_log_fields",
-        "gate_script_fails_for_intentionally_broken_contract"
+        "gate_script_fails_for_intentionally_broken_contract",
+        "gate_script_rejects_predated_completion_contract_artifact"
       ]
     },
     "telemetry_primary": {
@@ -377,6 +379,31 @@
         "failure_reason"
       ]
     }
+  },
+  "bead_closure_freshness": {
+    "bead": "bd-3yr14.7",
+    "description": "Fail-closed event contract for bead closure evidence. A closure event must identify the bead window and a completion-contract artifact whose freshness payload includes generated_at_utc and chain_hash; generated_at_utc must fall inside the bead in_progress-to-closed window.",
+    "event_env": "FRANKENLIBC_CLOSURE_FRESHNESS_EVENT",
+    "required_event_fields": [
+      "bead_id",
+      "in_progress_at_utc",
+      "closed_at_utc",
+      "completion_contract_path"
+    ],
+    "optional_event_fields": [
+      "artifact_query"
+    ],
+    "required_artifact_freshness_fields": [
+      "generated_at_utc",
+      "chain_hash"
+    ],
+    "failure_signatures": [
+      "missing_completion_contract_generated_at_utc",
+      "missing_completion_contract_chain_hash",
+      "completion_contract_predates_in_progress",
+      "completion_contract_postdates_closed"
+    ],
+    "tracked_closures": []
   },
   "structured_log_requirements": {
     "format": "jsonl",
