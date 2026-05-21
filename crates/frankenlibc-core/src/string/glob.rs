@@ -275,16 +275,29 @@ where
         }
         full_path.extend_from_slice(name_bytes);
 
+        // Resolve whether this entry is (or points to) a directory.
+        // `DirEntry::file_type()` reflects `lstat` — it does NOT follow
+        // symlinks, so a symlink-to-directory would report as a plain
+        // symlink. glibc's glob() stats (follows symlinks) here, so a
+        // symlinked directory is traversed for intermediate components,
+        // gets a trailing '/' under GLOB_MARK, and is accepted under
+        // GLOB_ONLYDIR. Use a symlink-following stat to match. A broken
+        // symlink errors out and is treated as a non-directory.
+        let resolves_to_dir =
+            std::fs::metadata(Path::new(OsStr::from_bytes(&full_path)))
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+
         if rest.is_empty() {
             // No more pattern components — this is a final match.
-            if flags & GLOB_ONLYDIR != 0 && !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            if flags & GLOB_ONLYDIR != 0 && !resolves_to_dir {
                 continue;
             }
-            if flags & GLOB_MARK != 0 && entry.file_type().is_ok_and(|t| t.is_dir()) {
+            if flags & GLOB_MARK != 0 && resolves_to_dir {
                 full_path.push(b'/');
             }
             results.push(full_path);
-        } else if entry.file_type().is_ok_and(|t| t.is_dir()) {
+        } else if resolves_to_dir {
             // More pattern components remain — recurse into directory.
             full_path.push(b'/');
             full_path.extend_from_slice(rest);
@@ -548,6 +561,39 @@ mod tests {
         assert_eq!(res.paths.len(), 1);
         assert_eq!(res.paths[0], escaped_path.as_os_str().as_bytes());
         assert!(has_magic(b"\\*", true));
+    }
+
+    #[test]
+    fn glob_traverses_and_marks_symlinked_directories() {
+        // glibc's glob() stats (follows symlinks) when deciding whether an
+        // entry is a directory, so a symlink-to-directory is recursed into
+        // for intermediate components and marked with '/' under GLOB_MARK.
+        // A regression guard: DirEntry::file_type() does not follow symlinks.
+        let temp = unique_glob_test_dir("symlink_dir");
+        let real_dir = temp.join("realdir");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        std::fs::write(real_dir.join("target.txt"), b"hi").unwrap();
+        let link_dir = temp.join("linkdir");
+        std::os::unix::fs::symlink("realdir", &link_dir).unwrap();
+
+        // Intermediate component: must recurse through the symlink.
+        let mut recurse_pat = temp.as_os_str().as_bytes().to_vec();
+        recurse_pat.extend_from_slice(b"/linkdir/*\0");
+        let res = glob_expand(&recurse_pat, 0).expect("symlinked dir must be traversed");
+        assert_eq!(res.paths.len(), 1);
+        assert!(res.paths[0].ends_with(b"/linkdir/target.txt"));
+
+        // GLOB_MARK: the symlink-to-directory must get a trailing '/'.
+        let mut mark_pat = temp.as_os_str().as_bytes().to_vec();
+        mark_pat.extend_from_slice(b"/link*\0");
+        let marked = glob_expand(&mark_pat, GLOB_MARK).expect("linkdir must match");
+        assert_eq!(marked.paths.len(), 1);
+        assert!(
+            marked.paths[0].ends_with(b"/"),
+            "symlinked directory must be marked with trailing slash"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 
     fn unique_glob_test_dir(name: &str) -> std::path::PathBuf {
