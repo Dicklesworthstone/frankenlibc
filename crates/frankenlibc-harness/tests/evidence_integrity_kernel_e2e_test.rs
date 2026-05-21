@@ -76,8 +76,8 @@ fn run_harness(root: &Path, out_dir: &Path, args: &[&str]) -> TestResult<Output>
 fn harness_script_exists_and_is_executable() -> TestResult {
     let root = workspace_root()?;
     let path = harness_path(&root);
-    let metadata = fs::metadata(&path)
-        .map_err(|err| test_error(format!("harness script missing: {err}")))?;
+    let metadata =
+        fs::metadata(&path).map_err(|err| test_error(format!("harness script missing: {err}")))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -114,6 +114,21 @@ fn harness_lists_every_eik_scenario() -> TestResult {
 }
 
 #[test]
+fn harness_uses_per_run_sandbox_without_destructive_cleanup() -> TestResult {
+    let root = workspace_root()?;
+    let script = fs::read_to_string(harness_path(&root))?;
+    assert!(
+        !script.contains("rm -rf"),
+        "EIK harness must not delete prior sandbox evidence"
+    );
+    assert!(
+        script.contains("SANDBOX=\"$OUT_DIR/sandbox/$SANDBOX_TRACE-$$\""),
+        "EIK harness should allocate a per-run sandbox"
+    );
+    Ok(())
+}
+
+#[test]
 fn quick_run_passes_every_eik_scenario() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "quick")?;
@@ -123,7 +138,10 @@ fn quick_run_passes_every_eik_scenario() -> TestResult {
     // The machine-readable summary must agree with the process exit code.
     let summary: Value =
         serde_json::from_str(&fs::read_to_string(out_dir.join("e2e_summary.json"))?)?;
-    assert_eq!(summary["schema_version"], "evidence_integrity_kernel_e2e_report.v1");
+    assert_eq!(
+        summary["schema_version"],
+        "evidence_integrity_kernel_e2e_report.v1"
+    );
     assert_eq!(summary["bead_id"], "bd-3yr14.10");
     assert_eq!(summary["status"], "pass", "{}", output_text(&output));
     assert_eq!(summary["quick_mode"], true);
@@ -162,12 +180,13 @@ fn quick_run_emits_a_begin_and_passing_end_for_each_scenario() -> TestResult {
             .iter()
             .any(|event| event["scenario"] == scenario && event["step"] == "begin");
         let end_passes = events.iter().any(|event| {
-            event["scenario"] == scenario
-                && event["step"] == "end"
-                && event["outcome"] == "pass"
+            event["scenario"] == scenario && event["step"] == "end" && event["outcome"] == "pass"
         });
         assert!(has_begin, "scenario {scenario} never logged a begin event");
-        assert!(end_passes, "scenario {scenario} did not log a passing end event");
+        assert!(
+            end_passes,
+            "scenario {scenario} did not log a passing end event"
+        );
     }
 
     // No step anywhere in a deterministic --quick run may report a failure.

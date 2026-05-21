@@ -33,10 +33,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 OUT_DIR="${FRANKENLIBC_EIK_E2E_OUT_DIR:-$ROOT/target/conformance/evidence_integrity_kernel_e2e}"
-SANDBOX="$OUT_DIR/sandbox"
 LOG="$OUT_DIR/e2e.log.jsonl"
 SUMMARY="$OUT_DIR/e2e_summary.json"
 TRACE_ID="${FRANKENLIBC_EIK_E2E_TRACE_ID:-bd-3yr14.10-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+SANDBOX_TRACE="$(printf '%s' "$TRACE_ID" | tr -c 'A-Za-z0-9_.-' '_')"
+SANDBOX="$OUT_DIR/sandbox/$SANDBOX_TRACE-$$"
 
 QUICK=false
 while [[ $# -gt 0 ]]; do
@@ -70,7 +71,9 @@ PY
     esac
 done
 
-rm -rf "$SANDBOX"
+# Use a per-run sandbox instead of deleting a shared sandbox path. Repo policy
+# forbids file deletion, and preserving prior target evidence makes reruns
+# auditable.
 mkdir -p "$SANDBOX" "$OUT_DIR"
 : > "$LOG"
 
