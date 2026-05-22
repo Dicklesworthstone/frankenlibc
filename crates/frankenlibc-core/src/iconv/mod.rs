@@ -155,6 +155,7 @@ enum Encoding {
     Cp1162,
     Cp1163,
     Isiri3342,
+    Mik,
     Cp856,
     Cp1125,
     Cp850,
@@ -192,7 +193,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 111] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 112] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -714,6 +715,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 111] = [
         canonical: "ISIRI-3342",
         normalized: "ISIRI3342",
         aliases: &["ISIRI3342"],
+    },
+    CodecSpec {
+        encoding: Encoding::Mik,
+        canonical: "MIK",
+        normalized: "MIK",
+        aliases: &[],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -6570,6 +6577,67 @@ fn encode_isiri3342(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const MIK_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Cyrillic capital letters А-П)
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // 80-87
+    0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F, // 88-8F
+    // 0x90-0x9F (Cyrillic capital letters Р-Я)
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, // 90-97
+    0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, // 98-9F
+    // 0xA0-0xAF (Cyrillic small letters а-п)
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, // A0-A7
+    0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F, // A8-AF
+    // 0xB0-0xBF (Cyrillic small letters р-я)
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // B0-B7
+    0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, // B8-BF
+    // 0xC0-0xCF (Box drawing)
+    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x2563, 0x2551, // C0-C7
+    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2510, // C8-CF
+    // 0xD0-0xDF (Box drawing continued)
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2557, 0x255D, 0x2518, // D0-D7
+    0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580, 0x03B1, 0x03B2, // D8-DF
+    // 0xE0-0xEF (Greek letters and math symbols)
+    0x0393, 0x03C0, 0x03A3, 0x03C3, 0x03C4, 0x03A6, 0x0398, 0x03A9, // E0-E7
+    0x03B4, 0x221E, 0x03C6, 0x03B5, 0x2229, 0x2261, 0x00B1, 0x2265, // E8-EF
+    // 0xF0-0xFF (Math symbols and special)
+    0x2264, 0x2320, 0x2321, 0x00F7, 0x2248, 0x00B0, 0x2219, 0x00B7, // F0-F7
+    0x221A, 0x207F, 0x00B2, 0x25A0, 0x00A0, 0x00AD, 0x2502, 0x00A4, // F8-FF
+];
+
+fn decode_mik(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MIK_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_mik(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MIK_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -6950,6 +7018,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1162 => decode_cp1162(input),
         Encoding::Cp1163 => decode_cp1163(input),
         Encoding::Isiri3342 => decode_isiri3342(input),
+        Encoding::Mik => decode_mik(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -7134,6 +7203,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1162 => encode_cp1162(ch, out),
         Encoding::Cp1163 => encode_cp1163(ch, out),
         Encoding::Isiri3342 => encode_isiri3342(ch, out),
+        Encoding::Mik => encode_mik(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -10362,5 +10432,19 @@ mod tests {
     fn isiri3342_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"ISIRI3342");
         assert!(cd.is_some());
+    }
+
+    #[test]
+    fn mik_decode_roundtrip() {
+        let mik_input: &[u8] = &[0x80, 0x81, 0xA0, 0xA1, 0xC0, 0xE0];
+        let expected_utf8 = "АБаб└Γ";
+        let mut cd = iconv_open(b"UTF-8", b"MIK").expect("MIK to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mik_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"MIK", b"UTF-8").expect("UTF-8 to MIK conversion");
+        let mut mik_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mik_out).unwrap();
+        assert_eq!(&mik_out[..result2.out_written], mik_input);
     }
 }
