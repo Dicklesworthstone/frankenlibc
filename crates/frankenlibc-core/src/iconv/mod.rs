@@ -94,6 +94,7 @@ enum Encoding {
     Cp857,
     Cp860,
     Cp861,
+    Cp869,
     Cp850,
     MacRoman,
     Iso88592,
@@ -127,7 +128,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 46] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 47] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -285,6 +286,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 46] = [
         aliases: &["IBM861", "861", "CSIBM861", "CPIS"],
     },
     CodecSpec {
+        encoding: Encoding::Cp869,
+        canonical: "CP869",
+        normalized: "CP869",
+        aliases: &["IBM869", "869", "CSIBM869", "CPGR2"],
+    },
+    CodecSpec {
         encoding: Encoding::Cp850,
         canonical: "CP850",
         normalized: "CP850",
@@ -426,8 +433,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 46] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-16BE", "UTF-32", "UTF-32BE", "KOI8-R", "KOI8-U", "CP437", "CP850", "CP857", "CP860", "CP861", "CP862", "CP863", "CP865", "CP866", "CP874", "MACROMAN", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-11", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 47] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-16BE", "UTF-32", "UTF-32BE", "KOI8-R", "KOI8-U", "CP437", "CP850", "CP857", "CP860", "CP861", "CP862", "CP863", "CP865", "CP866", "CP869", "CP874", "MACROMAN", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-11", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -1732,6 +1739,61 @@ fn encode_cp861(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// CP869 (DOS Greek 2) to Unicode mapping for bytes 0x80-0xFF.
+/// 0xFFFF marks undefined positions.
+const CP869_TO_UNICODE: [u16; 128] = [
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0386, 0xFFFF, // 80-87 (Ά at 86)
+    0x00B7, 0x00AC, 0x00A6, 0x2018, 0x2019, 0x0388, 0x2015, 0x0389, // 88-8F (Έ at 8D, Ή at 8F)
+    0x038A, 0x03AA, 0x038C, 0xFFFF, 0xFFFF, 0x038E, 0x03AB, 0x00A9, // 90-97 (Ί,Ϊ,Ό at 90-92, Ύ,Ϋ at 95-96)
+    0x038F, 0x00B2, 0x00B3, 0x03AC, 0x00A3, 0x03AD, 0x03AE, 0x03AF, // 98-9F (Ώ at 98, ά,έ,ή,ί at 9B-9F)
+    0x03CA, 0x0390, 0x03CC, 0x03CD, 0x0391, 0x0392, 0x0393, 0x0394, // A0-A7 (ϊ,ΐ,ό,ύ at A0-A3, Α-Δ at A4-A7)
+    0x0395, 0x0396, 0x0397, 0x00BD, 0x0398, 0x0399, 0x00AB, 0x00BB, // A8-AF (Ε-Η at A8-AA, Θ,Ι at AC-AD)
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x039A, 0x039B, 0x039C, // B0-B7 (Κ,Λ,Μ at B5-B7)
+    0x039D, 0x2563, 0x2551, 0x2557, 0x255D, 0x039E, 0x039F, 0x2510, // B8-BF (Ν at B8, Ξ,Ο at BD-BE)
+    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x03A0, 0x03A1, // C0-C7 (Π,Ρ at C6-C7)
+    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x03A3, // C8-CF (Σ at CF)
+    0x03A4, 0x03A5, 0x03A6, 0x03A7, 0x03A8, 0x03A9, 0x03B1, 0x03B2, // D0-D7 (Τ-Ω at D0-D5, α,β at D6-D7)
+    0x03B3, 0x2518, 0x250C, 0x2588, 0x2584, 0x03B4, 0x03B5, 0x2580, // D8-DF (γ at D8, δ,ε at DD-DE)
+    0x03B6, 0x03B7, 0x03B8, 0x03B9, 0x03BA, 0x03BB, 0x03BC, 0x03BD, // E0-E7 (ζ-ν)
+    0x03BE, 0x03BF, 0x03C0, 0x03C1, 0x03C3, 0x03C2, 0x03C4, 0x0384, // E8-EF (ξ-τ, ΄ at EF)
+    0x00AD, 0x00B1, 0x03C5, 0x03C6, 0x03C7, 0x00A7, 0x03C8, 0x0385, // F0-F7 (υ-χ at F2-F4, ψ at F6, ΅ at F7)
+    0x00B0, 0x00A8, 0x03C9, 0x03CB, 0x03B0, 0x03CE, 0x25A0, 0x00A0, // F8-FF (ω,ϋ,ΰ,ώ at FA-FD)
+];
+
+fn decode_cp869(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP869_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp869(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP869_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// CP850 (DOS Western European/Multilingual Latin 1) to Unicode mapping for bytes 0x80-0xFF.
 const CP850_TO_UNICODE: [u16; 128] = [
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, // 80-87
@@ -2734,6 +2796,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp857 => decode_cp857(input),
         Encoding::Cp860 => decode_cp860(input),
         Encoding::Cp861 => decode_cp861(input),
+        Encoding::Cp869 => decode_cp869(input),
         Encoding::Cp850 => decode_cp850(input),
         Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
@@ -2853,6 +2916,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp857 => encode_cp857(ch, out),
         Encoding::Cp860 => encode_cp860(ch, out),
         Encoding::Cp861 => encode_cp861(ch, out),
+        Encoding::Cp869 => encode_cp869(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
         Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
@@ -3795,6 +3859,30 @@ mod tests {
     #[test]
     fn cp861_accepts_ibm861_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM861");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp869_to_utf8_round_trip() {
+        // CP869: Α (0xA4 Greek Alpha), β (0xD7 Greek beta)
+        let cp869_input: &[u8] = &[0xA4, 0xD7];
+        let expected_utf8 = "\u{0391}\u{03B2}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP869").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(cp869_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP869", b"UTF-8").unwrap();
+        let mut cp869_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp869_out).unwrap();
+        assert_eq!(&cp869_out[..result2.out_written], cp869_input);
+    }
+
+    #[test]
+    fn cp869_accepts_ibm869_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM869");
         assert!(cd.is_some());
     }
 
