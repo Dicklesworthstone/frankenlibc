@@ -86,6 +86,7 @@ enum Encoding {
     Iso885915,
     EucJp,
     ShiftJis,
+    Big5,
 }
 
 struct CodecSpec {
@@ -100,7 +101,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 19] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 20] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -215,6 +216,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 19] = [
         normalized: "SHIFTJIS",
         aliases: &["SHIFTJIS", "SJIS", "CP932", "MS_KANJI", "CSSHIFTJIS"],
     },
+    CodecSpec {
+        encoding: Encoding::Big5,
+        canonical: "BIG5",
+        normalized: "BIG5",
+        aliases: &["CSBIG5", "BIG5TW", "BIGFIVE"],
+    },
 ];
 
 const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
@@ -237,8 +244,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 19] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15", "EUC-JP", "SHIFT_JIS"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 20] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -1180,6 +1187,39 @@ fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b0 = input[0];
+    if b0 <= 0x7F {
+        return Ok((char::from(b0), 1));
+    }
+    if (0x81..=0xFE).contains(&b0) {
+        if input.len() < 2 {
+            return Err(DecodeError::Incomplete);
+        }
+        let b1 = input[1];
+        if !((0x40..=0x7E).contains(&b1) || (0xA1..=0xFE).contains(&b1)) {
+            return Err(DecodeError::Invalid);
+        }
+        return Err(DecodeError::Invalid);
+    }
+    Err(DecodeError::Invalid)
+}
+
+fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    let cp = ch as u32;
+    if cp <= 0x7F {
+        if out.is_empty() {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
@@ -1215,6 +1255,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso885915 => decode_iso885915(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
+        Encoding::Big5 => decode_big5(input),
     }
 }
 
@@ -1287,6 +1328,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso885915 => encode_iso885915(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
+        Encoding::Big5 => encode_big5(ch, out),
     }
 }
 
@@ -2168,6 +2210,27 @@ mod tests {
     #[test]
     fn shiftjis_accepts_sjis_alias() {
         let cd = iconv_open(b"UTF-8", b"SJIS");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn big5_ascii_round_trip() {
+        let big5_input: &[u8] = b"Hello";
+        let mut cd = iconv_open(b"UTF-8", b"BIG5").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(big5_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 5);
+        assert_eq!(&utf8_out[..result.out_written], b"Hello");
+
+        let mut cd2 = iconv_open(b"BIG5", b"UTF-8").unwrap();
+        let mut big5_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(b"Hello"), &mut big5_out).unwrap();
+        assert_eq!(&big5_out[..result2.out_written], b"Hello");
+    }
+
+    #[test]
+    fn big5_accepts_csbig5_alias() {
+        let cd = iconv_open(b"UTF-8", b"CSBIG5");
         assert!(cd.is_some());
     }
 }
