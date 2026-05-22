@@ -102,6 +102,7 @@ enum Encoding {
     Tcvn,
     Armscii8,
     Geostd8,
+    Pt154,
     Cp850,
     MacRoman,
     Iso88592,
@@ -135,7 +136,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 54] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 55] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -339,6 +340,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 54] = [
         canonical: "GEORGIAN-PS",
         normalized: "GEORGIANPS",
         aliases: &["GEOSTD8"],
+    },
+    CodecSpec {
+        encoding: Encoding::Pt154,
+        canonical: "PT154",
+        normalized: "PT154",
+        aliases: &["PTCP154", "CP154", "CSPTCP154"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -2212,6 +2219,58 @@ fn encode_geostd8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// PT154 (ParaType Kazakh Cyrillic) to Unicode mapping for bytes 0x80-0xFF.
+/// Used for Kazakh language with additional Cyrillic letters.
+const PT154_TO_UNICODE: [u16; 128] = [
+    0x0496, 0x0492, 0x04EE, 0x0493, 0x201E, 0x2026, 0x04B6, 0x04AE, // 80-87 (Ж with descender, Г with stroke, etc.)
+    0x04B2, 0x04AF, 0x04A0, 0x04E2, 0x04A2, 0x049A, 0x04BA, 0x04B8, // 88-8F
+    0x0497, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0x04B3, 0x04B7, 0x04A1, 0x04E3, 0x04A3, 0x049B, 0x04BB, 0x04B9, // 98-9F
+    0x00A0, 0x040E, 0x045E, 0x0408, 0x04E8, 0x0498, 0x04B0, 0x00A7, // A0-A7
+    0x0401, 0x00A9, 0x04D8, 0x00AB, 0x00AC, 0x04EF, 0x00AE, 0x049C, // A8-AF
+    0x00B0, 0x04B1, 0x0406, 0x0456, 0x0499, 0x04E9, 0x00B6, 0x00B7, // B0-B7
+    0x0451, 0x2116, 0x04D9, 0x00BB, 0x0458, 0x04AA, 0x04AB, 0x049D, // B8-BF
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // C0-C7 (А-З)
+    0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F, // C8-CF (И-П)
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, // D0-D7 (Р-Ч)
+    0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, // D8-DF (Ш-Я)
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, // E0-E7 (а-з)
+    0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F, // E8-EF (и-п)
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // F0-F7 (р-ч)
+    0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, // F8-FF (ш-я)
+];
+
+fn decode_pt154(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = PT154_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_pt154(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in PT154_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// CP850 (DOS Western European/Multilingual Latin 1) to Unicode mapping for bytes 0x80-0xFF.
 const CP850_TO_UNICODE: [u16; 128] = [
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, // 80-87
@@ -3222,6 +3281,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Tcvn => decode_tcvn(input),
         Encoding::Armscii8 => decode_armscii8(input),
         Encoding::Geostd8 => decode_geostd8(input),
+        Encoding::Pt154 => decode_pt154(input),
         Encoding::Cp850 => decode_cp850(input),
         Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
@@ -3349,6 +3409,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Tcvn => encode_tcvn(ch, out),
         Encoding::Armscii8 => encode_armscii8(ch, out),
         Encoding::Geostd8 => encode_geostd8(ch, out),
+        Encoding::Pt154 => encode_pt154(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
         Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
@@ -4483,6 +4544,30 @@ mod tests {
     #[test]
     fn geostd8_accepts_geostd8_alias() {
         let cd = iconv_open(b"UTF-8", b"GEOSTD8");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn pt154_to_utf8_round_trip() {
+        // PT154: А (0xC0 Cyrillic A), Б (0xC1 Cyrillic Be)
+        let pt154_input: &[u8] = &[0xC0, 0xC1];
+        let expected_utf8 = "\u{0410}\u{0411}";
+
+        let mut cd = iconv_open(b"UTF-8", b"PT154").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(pt154_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"PT154", b"UTF-8").unwrap();
+        let mut pt154_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut pt154_out).unwrap();
+        assert_eq!(&pt154_out[..result2.out_written], pt154_input);
+    }
+
+    #[test]
+    fn pt154_accepts_ptcp154_alias() {
+        let cd = iconv_open(b"UTF-8", b"PTCP154");
         assert!(cd.is_some());
     }
 
