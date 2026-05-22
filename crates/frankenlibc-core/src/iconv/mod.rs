@@ -138,6 +138,7 @@ enum Encoding {
     Cp856,
     Cp1125,
     Cp850,
+    Cp851,
     MacRoman,
     Iso88592,
     Iso88593,
@@ -170,7 +171,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 89] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 90] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -590,6 +591,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 89] = [
         canonical: "CP850",
         normalized: "CP850",
         aliases: &["IBM850", "850", "CSPC850MULTILINGUAL"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp851,
+        canonical: "CP851",
+        normalized: "CP851",
+        aliases: &["IBM851", "851", "CSIBM851"],
     },
     CodecSpec {
         encoding: Encoding::MacRoman,
@@ -2876,6 +2883,62 @@ fn encode_cp850(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     }
     for (idx, &unicode) in CP850_TO_UNICODE.iter().enumerate() {
         if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
+/// CP851 (DOS Greek) to Unicode mapping for bytes 0x80-0xFF.
+/// Position 0x91 is undefined and marked with 0xFFFF.
+const CP851_TO_UNICODE: [u16; 128] = [
+    0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x0386, 0x00E7, // 80-87
+    0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x0388, 0x00C4, 0x0389, // 88-8F
+    0x038A, 0xFFFF, 0x038C, 0x00F4, 0x00F6, 0x038E, 0x00FB, 0x00F9, // 90-97
+    0x038F, 0x00D6, 0x00DC, 0x03AC, 0x00A3, 0x03AD, 0x03AE, 0x03AF, // 98-9F
+    0x03CA, 0x0390, 0x03CC, 0x03CD, 0x0391, 0x0392, 0x0393, 0x0394, // A0-A7
+    0x0395, 0x0396, 0x0397, 0x00BD, 0x0398, 0x0399, 0x00AB, 0x00BB, // A8-AF
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x039A, 0x039B, 0x039D, // B0-B7
+    0x039C, 0x2563, 0x2551, 0x2557, 0x255D, 0x039E, 0x039F, 0x2510, // B8-BF
+    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x03A0, 0x03A1, // C0-C7
+    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x03A3, // C8-CF
+    0x03A4, 0x03A5, 0x03A6, 0x03A7, 0x03A8, 0x03A9, 0x03B1, 0x03B2, // D0-D7
+    0x03B3, 0x2518, 0x250C, 0x2588, 0x2584, 0x03B4, 0x03B5, 0x2580, // D8-DF
+    0x03B6, 0x03B7, 0x03B8, 0x03B9, 0x03BA, 0x03BB, 0x03BC, 0x03BD, // E0-E7
+    0x03BE, 0x03BF, 0x03C0, 0x03C1, 0x03C3, 0x03C2, 0x03C4, 0x00B4, // E8-EF
+    0x00AD, 0x00B1, 0x03C5, 0x03C6, 0x03C7, 0x00A7, 0x03C8, 0x02DB, // F0-F7
+    0x00B0, 0x00A8, 0x03C9, 0x03CB, 0x03B0, 0x03CE, 0x25A0, 0x00A0, // F8-FF
+];
+
+fn decode_cp851(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP851_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_cp851(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP851_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -5556,6 +5619,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Nextstep => decode_nextstep(input),
         Encoding::Atarist => decode_atarist(input),
         Encoding::Cp850 => decode_cp850(input),
+        Encoding::Cp851 => decode_cp851(input),
         Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
         Encoding::Iso88592 => decode_iso88592(input),
@@ -5718,6 +5782,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Nextstep => encode_nextstep(ch, out),
         Encoding::Atarist => encode_atarist(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
+        Encoding::Cp851 => encode_cp851(ch, out),
         Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
         Encoding::Iso88592 => encode_iso88592(ch, out),
@@ -7047,6 +7112,41 @@ mod tests {
     #[test]
     fn cp850_accepts_ibm850_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM850");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp851_to_utf8_round_trip() {
+        // CP851: Ç (0x80), Greek alpha Α (0xA4), sigma ς (0xED)
+        let cp851_input: &[u8] = &[0x80, 0xA4, 0xED];
+        let expected_utf8 = "\u{00C7}\u{0391}\u{03C2}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP851").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(cp851_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP851", b"UTF-8").unwrap();
+        let mut cp851_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp851_out).unwrap();
+        assert_eq!(&cp851_out[..result2.out_written], cp851_input);
+    }
+
+    #[test]
+    fn cp851_undefined_position_returns_replacement() {
+        // Position 0x91 is undefined in CP851
+        let input: &[u8] = &[0x91];
+        let mut cd = iconv_open(b"UTF-8", b"CP851").unwrap();
+        let mut out = [0u8; 16];
+        let result = iconv(&mut cd, Some(input), &mut out).unwrap();
+        let utf8_str = std::str::from_utf8(&out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, "\u{FFFD}");
+    }
+
+    #[test]
+    fn cp851_accepts_ibm851_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM851");
         assert!(cd.is_some());
     }
 
