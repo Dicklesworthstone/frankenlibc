@@ -81,6 +81,7 @@ enum Encoding {
     Iso88595,
     Iso88596,
     Iso88597,
+    Iso88598,
     Iso88599,
     Iso885913,
     Iso885915,
@@ -101,7 +102,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 20] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 21] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -187,6 +188,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 20] = [
         aliases: &["ISO88597", "GREEK", "GREEK8", "CSISOLATINGREEK", "ELOT928", "ECMA118"],
     },
     CodecSpec {
+        encoding: Encoding::Iso88598,
+        canonical: "ISO-8859-8",
+        normalized: "ISO88598",
+        aliases: &["ISO88598", "HEBREW", "CSISOLATINHEBREW"],
+    },
+    CodecSpec {
         encoding: Encoding::Iso88599,
         canonical: "ISO-8859-9",
         normalized: "ISO88599",
@@ -244,8 +251,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 20] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15", "EUC-JP", "SHIFT_JIS", "BIG5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 21] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -899,6 +906,57 @@ fn encode_iso88597(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ISO-8859-8 (Hebrew) to Unicode mapping for bytes 0xA0-0xFF.
+/// Many positions are undefined (0xFFFF marks these).
+const ISO88598_TO_UNICODE: [u16; 96] = [
+    0x00A0, 0xFFFF, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, // A0-A7
+    0x00A8, 0x00A9, 0x00D7, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF, // A8-AF
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x00B8, 0x00B9, 0x00F7, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0xFFFF, // B8-BF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // C0-C7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // C8-CF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D0-D7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x2017, // D8-DF
+    0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // E0-E7
+    0x05D8, 0x05D9, 0x05DA, 0x05DB, 0x05DC, 0x05DD, 0x05DE, 0x05DF, // E8-EF
+    0x05E0, 0x05E1, 0x05E2, 0x05E3, 0x05E4, 0x05E5, 0x05E6, 0x05E7, // F0-F7
+    0x05E8, 0x05E9, 0x05EA, 0xFFFF, 0xFFFF, 0x200E, 0x200F, 0xFFFF, // F8-FF
+];
+
+fn decode_iso88598(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0xA0 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = ISO88598_TO_UNICODE[(b - 0xA0) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_iso88598(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0xA0 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in ISO88598_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0xA0;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// Windows-1252 (CP1252) to Unicode lookup table for bytes 0x80-0x9F.
 /// These 32 positions differ from ISO-8859-1 (C1 control codes in 8859-1,
 /// printable characters in CP1252). 0xFFFF marks undefined positions.
@@ -1250,6 +1308,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso88595 => decode_iso88595(input),
         Encoding::Iso88596 => decode_iso88596(input),
         Encoding::Iso88597 => decode_iso88597(input),
+        Encoding::Iso88598 => decode_iso88598(input),
         Encoding::Iso88599 => decode_iso88599(input),
         Encoding::Iso885913 => decode_iso885913(input),
         Encoding::Iso885915 => decode_iso885915(input),
@@ -1323,6 +1382,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso88595 => encode_iso88595(ch, out),
         Encoding::Iso88596 => encode_iso88596(ch, out),
         Encoding::Iso88597 => encode_iso88597(ch, out),
+        Encoding::Iso88598 => encode_iso88598(ch, out),
         Encoding::Iso88599 => encode_iso88599(ch, out),
         Encoding::Iso885913 => encode_iso885913(ch, out),
         Encoding::Iso885915 => encode_iso885915(ch, out),
@@ -1972,6 +2032,35 @@ mod tests {
     #[test]
     fn iso88597_accepts_greek_alias() {
         let cd = iconv_open(b"UTF-8", b"GREEK");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88598_to_utf8_round_trip() {
+        // ISO-8859-8 bytes for "שלום" (Hebrew "shalom")
+        // ש=0xF9, ל=0xEC, ו=0xE5, ם=0xED
+        let iso_input: &[u8] = &[0xF9, 0xEC, 0xE5, 0xED];
+        let expected_utf8 = "\u{05E9}\u{05DC}\u{05D5}\u{05DD}";
+
+        // ISO-8859-8 → UTF-8
+        let mut cd = iconv_open(b"UTF-8", b"ISO-8859-8").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(iso_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 4);
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        // UTF-8 → ISO-8859-8 (reverse)
+        let mut cd2 = iconv_open(b"ISO-8859-8", b"UTF-8").unwrap();
+        let mut iso_out = [0u8; 32];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut iso_out).unwrap();
+        assert_eq!(result2.in_consumed, expected_utf8.len());
+        assert_eq!(&iso_out[..result2.out_written], iso_input);
+    }
+
+    #[test]
+    fn iso88598_accepts_hebrew_alias() {
+        let cd = iconv_open(b"UTF-8", b"HEBREW");
         assert!(cd.is_some());
     }
 
