@@ -180,15 +180,21 @@ HARD_PARTS_TRUTH="$REPO_ROOT/tests/conformance/hard_parts_truth_table.v1.json"
 PROOF_OBLIGATIONS="$REPO_ROOT/tests/conformance/proof_obligations_binder.v1.json"
 
 regenerate_reality_report() {
-    # Use isolated target dir to avoid rustc version conflicts in multi-agent environment
+    # Use isolated target dir to avoid rustc version conflicts in multi-agent environment.
+    # The harness writes inside CARGO_TARGET_DIR so rch retrieves the generated
+    # artifact consistently across workers.
     local isolated_target="${CARGO_TARGET_DIR:-$OUT_DIR/cargo_target}"
+    local retrieved="$isolated_target/reality_report.generated.json"
     mkdir -p "$isolated_target"
+    rm -f "$retrieved"
     CARGO_TARGET_DIR="$isolated_target" \
     RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR \
-    rch exec -- cargo run --quiet -p frankenlibc-harness --bin harness -- \
-        reality-report \
-        --support-matrix "$REPO_ROOT/support_matrix.json" \
-        --output "$GENERATED_ARTIFACT" 2>&1
+    rch exec -- sh -c "cargo run --quiet -p frankenlibc-harness --bin harness -- reality-report --support-matrix '$REPO_ROOT/support_matrix.json' --output \"\$CARGO_TARGET_DIR/reality_report.generated.json\"" 2>&1
+    if [[ ! -s "$retrieved" ]]; then
+        echo "rch did not retrieve reality report artifact: $retrieved" >&2
+        return 1
+    fi
+    cp "$retrieved" "$GENERATED_ARTIFACT"
 }
 
 regenerate_maintenance_report() {

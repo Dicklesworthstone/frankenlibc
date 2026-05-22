@@ -1,0 +1,29 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-iu3fb.1",
+  "title": "[RC-WS9.1] Proof-carrying completion contracts",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:44:45Z",
+    "source_commit": "a3e62d44439302946a8caba0a1dd17d8f852d80b",
+    "generator_command": "manual closure audit: proof-carrying completion contract verification self-test and policy fields",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "1c3526bb7ef44a9c5b8d0a8ba0434f622cd3a0ba91a49718cad82f497a79dfae"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:42:30Z",
+    "closed_at_utc": "2026-05-22T03:45:11Z",
+    "in_progress_source": "bd-iu3fb.1 implementation window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "scripts/check_bead_closure_freshness.sh",
+    "tests/conformance/bead_closure_freshness_policy.v1.json"
+  ],
+  "validation": [
+    "bead_closure_freshness_policy.v1.json records proof-carrying enforcement readiness",
+    "check_bead_closure_freshness.sh self-test covers fake-chain rejection when require_ledger_chain_hash is enabled",
+    "commit a3e62d44439302946a8caba0a1dd17d8f852d80b contains the proof-carrying verifier change"
+  ],
+  "backfill_note": "Materialized after concurrent closure so check_bead_closure_freshness.sh can bind the proof-carrying completion-contract closure to a completion contract."
+}

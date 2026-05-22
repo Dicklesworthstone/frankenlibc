@@ -2666,6 +2666,10 @@ unsafe fn impl_entry_payload(entry: *mut frankenlibc_abi::search_abi::Entry) -> 
     }
 }
 
+fn impl_hash_action(action: frankenlibc_abi::search_abi::Action) -> c_int {
+    action as c_int
+}
+
 fn format_hash_step(action: &str, payload: Option<usize>) -> String {
     match payload {
         Some(value) => format!("{action}:1:{value}"),
@@ -3090,7 +3094,7 @@ fn run_impl_hsearch_replace(
                 key: key_ptr,
                 data: first_data as *mut c_void,
             },
-            frankenlibc_abi::search_abi::Action::ENTER,
+            impl_hash_action(frankenlibc_abi::search_abi::Action::ENTER),
         );
         let enter_first_step = format_hash_step("ENTER", impl_entry_payload(enter_first));
         let enter_second = frankenlibc_abi::search_abi::hsearch(
@@ -3098,7 +3102,7 @@ fn run_impl_hsearch_replace(
                 key: key_ptr,
                 data: second_data as *mut c_void,
             },
-            frankenlibc_abi::search_abi::Action::ENTER,
+            impl_hash_action(frankenlibc_abi::search_abi::Action::ENTER),
         );
         let enter_second_step = format_hash_step("ENTER", impl_entry_payload(enter_second));
         let find_result = frankenlibc_abi::search_abi::hsearch(
@@ -3106,7 +3110,7 @@ fn run_impl_hsearch_replace(
                 key: key_ptr,
                 data: std::ptr::null_mut(),
             },
-            frankenlibc_abi::search_abi::Action::FIND,
+            impl_hash_action(frankenlibc_abi::search_abi::Action::FIND),
         );
         let find_step = format_hash_step("FIND", impl_entry_payload(find_result));
 
@@ -3152,7 +3156,7 @@ fn run_impl_hsearch_missing(capacity: usize, key: &str) -> Result<String, String
                 key: key_ptr,
                 data: std::ptr::null_mut(),
             },
-            frankenlibc_abi::search_abi::Action::FIND,
+            impl_hash_action(frankenlibc_abi::search_abi::Action::FIND),
         );
         let output = format_hash_step("FIND", impl_entry_payload(find_result));
         frankenlibc_abi::search_abi::hdestroy();
@@ -3260,7 +3264,7 @@ fn run_impl_hsearch_r_replace(
                 key: key_ptr,
                 data: first_data as *mut c_void,
             },
-            frankenlibc_abi::search_abi::Action::ENTER,
+            impl_hash_action(frankenlibc_abi::search_abi::Action::ENTER),
             &mut enter_first,
             &mut htab,
         ) == 0
@@ -3275,7 +3279,7 @@ fn run_impl_hsearch_r_replace(
                 key: key_ptr,
                 data: second_data as *mut c_void,
             },
-            frankenlibc_abi::search_abi::Action::ENTER,
+            impl_hash_action(frankenlibc_abi::search_abi::Action::ENTER),
             &mut enter_second,
             &mut htab,
         ) == 0
@@ -3290,7 +3294,7 @@ fn run_impl_hsearch_r_replace(
                 key: key_ptr,
                 data: std::ptr::null_mut(),
             },
-            frankenlibc_abi::search_abi::Action::FIND,
+            impl_hash_action(frankenlibc_abi::search_abi::Action::FIND),
             &mut find_result,
             &mut htab,
         ) == 0
@@ -4042,7 +4046,9 @@ fn execute_encode_domain_name_case(
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let name = parse_string(inputs, "name")?;
-    let encoded = frankenlibc_core::resolv::dns::encode_domain_name(name.as_bytes());
+    let Some(encoded) = frankenlibc_core::resolv::dns::encode_domain_name(name.as_bytes()) else {
+        return Err(String::from("impl encode_domain_name rejected input"));
+    };
     Ok(non_host_execution(render_dns_wire(&encoded)))
 }
 

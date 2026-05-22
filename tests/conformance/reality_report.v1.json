@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
-  "generated_at_utc": "2026-05-21T08:05:09Z",
+  "generated_at_utc": "2026-02-18T04:49:26Z",
   "total_exported": 4119,
   "counts": {
-    "implemented": 3705,
+    "implemented": 3588,
     "raw_syscall": 414,
-    "wraps_host_libc": 0,
+    "wraps_host_libc": 117,
     "glibc_call_through": 0,
     "stub": 0
   },
