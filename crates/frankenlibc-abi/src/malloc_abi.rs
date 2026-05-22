@@ -1221,9 +1221,19 @@ fn fallback_remaining(addr: usize) -> Option<usize> {
     if addr <= FALLBACK_SLOT_TOMBSTONE {
         return None;
     }
+    // Fast path: use hash-based probing (up to 1024 slots) instead of full scan.
+    // This is O(1) amortized instead of O(262144), at the cost of potentially
+    // missing interior pointers that hash to a different slot. For exact-start
+    // pointers (the common case), this finds the allocation immediately.
     let _guard = lock_fallback_alloc_table();
-    for idx in 0..FALLBACK_ALLOC_TABLE_SLOTS {
+    let start = fallback_start_index(addr);
+    for i in 0..1024 {
+        let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let base = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        if base == FALLBACK_SLOT_EMPTY {
+            // No more entries in this probe sequence
+            return None;
+        }
         if base <= FALLBACK_SLOT_TOMBSTONE {
             continue;
         }
