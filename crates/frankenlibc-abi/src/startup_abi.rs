@@ -1,8 +1,9 @@
 //! Phase-0 CRT bootstrap ABI plumbing.
 //!
-//! This module exposes a constrained startup path for controlled fixtures.
-//! `__libc_start_main` delegates to host libc by default to avoid hijacking
-//! normal process bootstrap in LD_PRELOAD mode.
+//! This module exposes FrankenLibC's owned startup path as the default (bd-73h55.1).
+//! `__libc_start_main` uses owned csu/TLS init unless `FRANKENLIBC_STARTUP_DELEGATE=1`
+//! is set to delegate to host libc. The legacy `FRANKENLIBC_STARTUP_PHASE0=1` env var
+//! still works for backward compatibility but is no longer needed.
 
 use std::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
@@ -467,6 +468,42 @@ fn startup_phase0_env_enabled() -> bool {
     false
 }
 
+fn startup_delegate_env_requested() -> bool {
+    const KEY_EQ: &[u8] = b"FRANKENLIBC_STARTUP_DELEGATE=";
+    const MAX_SCAN: usize = 4096;
+
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return false;
+    }
+
+    for _ in 0..MAX_SCAN {
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            return false;
+        }
+
+        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
+            let value = unsafe { entry.add(KEY_EQ.len()) };
+            return unsafe { cstr_eq_bytes(value, b"1") };
+        }
+
+        envp = unsafe { envp.add(1) };
+    }
+
+    false
+}
+
+fn use_owned_startup() -> bool {
+    // Owned startup is the default (bd-73h55.1).
+    // Opt-out via FRANKENLIBC_STARTUP_DELEGATE=1 to delegate to host libc.
+    // Legacy FRANKENLIBC_STARTUP_PHASE0=1 still forces owned startup for backward compat.
+    if startup_phase0_env_enabled() {
+        return true;
+    }
+    !startup_delegate_env_requested()
+}
+
 unsafe extern "C" fn host_delegate_main_wrapper(
     argc: c_int,
     argv: *mut *mut c_char,
@@ -811,7 +848,8 @@ unsafe fn startup_phase0_impl(
     rc
 }
 
-/// libc-compatible startup symbol. Delegates to host libc unless phase-0 mode is explicitly enabled.
+/// libc-compatible startup symbol. Uses owned startup by default (bd-73h55.1).
+/// Set `FRANKENLIBC_STARTUP_DELEGATE=1` to delegate to host libc instead.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_start_main(
     main: Option<MainFn>,
@@ -825,8 +863,8 @@ pub unsafe extern "C" fn __libc_start_main(
     // Keep loader/init in bootstrap passthrough mode and flip runtime-ready at
     // the wrapped `main` boundary after host libc initialization completes.
 
-    if startup_phase0_env_enabled() {
-        // SAFETY: explicit phase-0 opt-in path.
+    if use_owned_startup() {
+        // SAFETY: owned startup path (default since bd-73h55.1).
         let phase0_rc =
             unsafe { startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end) };
         if phase0_rc >= 0 {

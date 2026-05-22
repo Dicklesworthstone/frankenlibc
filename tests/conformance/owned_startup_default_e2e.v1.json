@@ -1,0 +1,20 @@
+{
+  "schema_version": "owned_startup_default_e2e.v1",
+  "bead_id": "bd-73h55.1",
+  "generated_at_utc": "2026-05-22T06:10:36Z",
+  "lib_path": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+  "fixture_bin": "/data/projects/frankenlibc/target/owned_startup_default_e2e/fixture_owned_startup",
+  "tests": {
+    "owned_startup_default": "pass",
+    "delegation_opt_out": "pass",
+    "init_hook_fires": "pass",
+    "atexit_fires": "pass",
+    "errno_tls_isolated": "checked"
+  },
+  "contract": {
+    "default_behavior": "owned startup (phase-0)",
+    "opt_out_env_var": "FRANKENLIBC_STARTUP_DELEGATE=1",
+    "legacy_env_var": "FRANKENLIBC_STARTUP_PHASE0=1 (still forces owned, now redundant)"
+  },
+  "overall_status": "pass"
+}

@@ -18,6 +18,7 @@ use frankenlibc_abi::startup_abi::{
     program_invocation_name, program_invocation_short_name, setprogname,
     startup_policy_snapshot_for_tests,
 };
+use frankenlibc_abi::startup_helpers::SecureModeState;
 use frankenlibc_abi::stdlib_abi::{atexit, on_exit};
 use frankenlibc_abi::unistd_abi::{__cxa_atexit, __cxa_finalize};
 
@@ -1063,4 +1064,128 @@ fn getprogname_pointer_aliases_short_name_when_set() {
     let p = unsafe { getprogname() };
     let short = program_invocation_short_name.load(Ordering::Acquire) as *const c_char;
     assert_eq!(p, short, "getprogname must hand back the cached pointer");
+}
+
+// ---------------------------------------------------------------------------
+// bd-73h55.1 — Edge case tests for owned startup default
+// ---------------------------------------------------------------------------
+
+const AT_SECURE: usize = 23;
+
+struct TruncatedAuxvFixture {
+    argv0: Vec<u8>,
+    argv: Vec<*mut c_char>,
+    #[allow(dead_code)]
+    env: Vec<*mut c_char>,
+    auxv: Vec<usize>,
+}
+
+impl TruncatedAuxvFixture {
+    fn new_truncated(program: &[u8]) -> Self {
+        let mut argv0 = program.to_vec();
+        argv0.push(0);
+        let mut me = Self {
+            argv0,
+            argv: Vec::new(),
+            env: vec![ptr::null_mut()],
+            auxv: vec![1usize, 42usize], // No AT_NULL terminator
+        };
+        me.argv.push(me.argv0.as_mut_ptr().cast::<c_char>());
+        me.argv.push(ptr::null_mut());
+        me
+    }
+
+    fn new_with_secure_mode(program: &[u8], secure: bool) -> Self {
+        let mut argv0 = program.to_vec();
+        argv0.push(0);
+        let secure_val = if secure { 1usize } else { 0usize };
+        let mut me = Self {
+            argv0,
+            argv: Vec::new(),
+            env: vec![ptr::null_mut()],
+            auxv: vec![AT_SECURE, secure_val, AT_NULL, 0],
+        };
+        me.argv.push(me.argv0.as_mut_ptr().cast::<c_char>());
+        me.argv.push(ptr::null_mut());
+        me
+    }
+
+    fn argc(&self) -> c_int {
+        (self.argv.len() - 1) as c_int
+    }
+
+    fn argv_ptr(&mut self) -> *mut *mut c_char {
+        self.argv.as_mut_ptr()
+    }
+
+    fn stack_end(&mut self) -> *mut c_void {
+        self.auxv.as_mut_ptr().cast::<c_void>()
+    }
+}
+
+#[test]
+fn phase0_handles_truncated_auxv_vector() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let mut fix = TruncatedAuxvFixture::new_truncated(b"/usr/bin/truncated-auxv");
+    let rc = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(test_main),
+            fix.argc(),
+            fix.argv_ptr(),
+            None,
+            None,
+            None,
+            fix.stack_end(),
+        )
+    };
+    assert_eq!(
+        rc, 42,
+        "truncated auxv should not prevent startup from running main"
+    );
+}
+
+#[test]
+fn phase0_classifies_secure_mode_from_auxv() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let mut fix = TruncatedAuxvFixture::new_with_secure_mode(b"/usr/bin/secure-test", true);
+    let _ = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(test_main),
+            fix.argc(),
+            fix.argv_ptr(),
+            None,
+            None,
+            None,
+            fix.stack_end(),
+        )
+    };
+    let snap = startup_policy_snapshot_for_tests();
+    assert_eq!(
+        snap.secure_mode_state,
+        SecureModeState::Secure,
+        "AT_SECURE=1 in auxv should yield SecureModeState::Secure"
+    );
+}
+
+#[test]
+fn phase0_classifies_nonsecure_mode_from_auxv() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let mut fix = TruncatedAuxvFixture::new_with_secure_mode(b"/usr/bin/nonsecure-test", false);
+    let _ = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(test_main),
+            fix.argc(),
+            fix.argv_ptr(),
+            None,
+            None,
+            None,
+            fix.stack_end(),
+        )
+    };
+    let snap = startup_policy_snapshot_for_tests();
+    assert_eq!(
+        snap.secure_mode_state,
+        SecureModeState::NonSecure,
+        "AT_SECURE=0 in auxv should yield SecureModeState::NonSecure"
+    );
 }
