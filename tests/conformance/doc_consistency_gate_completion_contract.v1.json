@@ -1,0 +1,30 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-as0w2.5",
+  "title": "[RC-WS4.5] Add check_doc_consistency.sh gate",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:38:20Z",
+    "source_commit": "eade12bb",
+    "generator_command": "backfill from bd-as0w2.5 close_reason: check_doc_consistency.sh gate and planning-document headers",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "6a853fe328aaa50ecc5b7a403b6fb6ddcf50096d4eaa0072f23d4f2ab3da1cd4"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:36:45Z",
+    "closed_at_utc": "2026-05-22T03:38:30Z",
+    "in_progress_source": "bd-as0w2.5 in-progress tracker update",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "scripts/check_doc_consistency.sh",
+    "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+    "PROPOSED_ARCHITECTURE.md"
+  ],
+  "validation": [
+    "check_doc_consistency.sh verifies live-claim docs against machine artifacts",
+    "planning-document headers added to PLAN_TO_PORT_GLIBC_TO_RUST.md and PROPOSED_ARCHITECTURE.md",
+    "Close reason records commit eade12bb and gate pass"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}
