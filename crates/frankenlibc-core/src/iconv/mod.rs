@@ -127,6 +127,7 @@ enum Encoding {
     MacDevanagari,
     MacGurmukhi,
     MacGujarati,
+    MacKannada,
     Cp850,
     MacRoman,
     Iso88592,
@@ -160,7 +161,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 79] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 80] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -514,6 +515,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 79] = [
         canonical: "MACGUJARATI",
         normalized: "MACGUJARATI",
         aliases: &["XMACGUJARATI"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacKannada,
+        canonical: "MACKANNADA",
+        normalized: "MACKANNADA",
+        aliases: &["XMACKANNADA"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4673,6 +4680,68 @@ fn encode_macgujarati(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const MACKANNADA_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Kannada vowels)
+    0xFFFF, 0xFFFF, 0x0C82, 0x0C83, 0xFFFF, 0x0C85, 0x0C86, 0x0C87, // 80-87
+    0x0C88, 0x0C89, 0x0C8A, 0x0C8B, 0x0C8C, 0xFFFF, 0x0C8E, 0x0C8F, // 88-8F
+    // 0x90-0x9F (Kannada vowels and consonants)
+    0x0C90, 0xFFFF, 0x0C92, 0x0C93, 0x0C94, 0x0C95, 0x0C96, 0x0C97, // 90-97
+    0x0C98, 0x0C99, 0x0C9A, 0x0C9B, 0x0C9C, 0x0C9D, 0x0C9E, 0x0C9F, // 98-9F
+    // 0xA0-0xAF (Kannada consonants)
+    0x0CA0, 0x0CA1, 0x0CA2, 0x0CA3, 0x0CA4, 0x0CA5, 0x0CA6, 0x0CA7, // A0-A7
+    0x0CA8, 0xFFFF, 0x0CAA, 0x0CAB, 0x0CAC, 0x0CAD, 0x0CAE, 0x0CAF, // A8-AF
+    // 0xB0-0xBF (Kannada consonants and matras)
+    0x0CB0, 0x0CB1, 0x0CB2, 0x0CB3, 0xFFFF, 0x0CB5, 0x0CB6, 0x0CB7, // B0-B7
+    0x0CB8, 0x0CB9, 0xFFFF, 0x0CBE, 0x0CBF, 0x0CC0, 0x0CC1, 0x0CC2, // B8-BF
+    // 0xC0-0xCF (Kannada matras and marks)
+    0x0CC3, 0x0CC4, 0xFFFF, 0x0CC6, 0x0CC7, 0x0CC8, 0xFFFF, 0x0CCA, // C0-C7
+    0x0CCB, 0x0CCC, 0x0CCD, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // C8-CF
+    // 0xD0-0xDF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D0-D7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D8-DF
+    // 0xE0-0xEF (Kannada digits)
+    0x0CE6, 0x0CE7, 0x0CE8, 0x0CE9, 0x0CEA, 0x0CEB, 0x0CEC, 0x0CED, // E0-E7
+    0x0CEE, 0x0CEF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // E8-EF
+    // 0xF0-0xFF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F0-F7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_mackannada(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACKANNADA_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_mackannada(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACKANNADA_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4900,6 +4969,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacDevanagari => decode_macdevanagari(input),
         Encoding::MacGurmukhi => decode_macgurmukhi(input),
         Encoding::MacGujarati => decode_macgujarati(input),
+        Encoding::MacKannada => decode_mackannada(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -5052,6 +5122,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacDevanagari => encode_macdevanagari(ch, out),
         Encoding::MacGurmukhi => encode_macgurmukhi(ch, out),
         Encoding::MacGujarati => encode_macgujarati(ch, out),
+        Encoding::MacKannada => encode_mackannada(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -7297,6 +7368,30 @@ mod tests {
     #[test]
     fn macgujarati_accepts_xmacgujarati_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-GUJARATI");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn mackannada_to_utf8_round_trip() {
+        // MacKannada: A (0x85), Ka (0x95), digit 0 (0xE0), digit 1 (0xE1)
+        let mac_input: &[u8] = &[0x85, 0x95, 0xE0, 0xE1];
+        let expected_utf8 = "\u{0C85}\u{0C95}\u{0CE6}\u{0CE7}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACKANNADA").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACKANNADA", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn mackannada_accepts_xmackannada_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-KANNADA");
         assert!(cd.is_some());
     }
 
