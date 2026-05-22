@@ -114,6 +114,7 @@ enum Encoding {
     MacGreek,
     MacTurkish,
     MacIceland,
+    MacCentralEurope,
     Cp850,
     MacRoman,
     Iso88592,
@@ -147,7 +148,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 66] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 67] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -423,6 +424,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 66] = [
         canonical: "MACICELAND",
         normalized: "MACICELAND",
         aliases: &["XMACICELANDIC"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacCentralEurope,
+        canonical: "MACCENTRALEUROPE",
+        normalized: "MACCENTRALEUROPE",
+        aliases: &["XMACCE", "MACCE"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -3793,6 +3800,66 @@ fn encode_maciceland(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// Mac Central European to Unicode mapping for bytes 0x80-0xFF.
+/// Used for Polish, Czech, Slovak, Hungarian on classic Mac OS.
+const MACCENTRALEUROPE_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F
+    0x00C4, 0x0100, 0x0101, 0x00C9, 0x0104, 0x00D6, 0x00DC, 0x00E1, // 80-87 (Ä,Ā,ā,É,Ą,Ö,Ü,á)
+    0x0105, 0x010C, 0x00E4, 0x010D, 0x0106, 0x0107, 0x00E9, 0x0179, // 88-8F (ą,Č,ä,č,Ć,ć,é,Ź)
+    // 0x90-0x9F
+    0x017A, 0x010E, 0x00ED, 0x010F, 0x0112, 0x0113, 0x0116, 0x00F3, // 90-97 (ź,Ď,í,ď,Ē,ē,Ė,ó)
+    0x0117, 0x00F4, 0x00F6, 0x00F5, 0x00FA, 0x011A, 0x011B, 0x00FC, // 98-9F (ė,ô,ö,õ,ú,Ě,ě,ü)
+    // 0xA0-0xAF
+    0x2020, 0x00B0, 0x0118, 0x00A3, 0x00A7, 0x2022, 0x00B6, 0x00DF, // A0-A7 (†,°,Ę,£,§,•,¶,ß)
+    0x00AE, 0x00A9, 0x2122, 0x0119, 0x00A8, 0x2260, 0x0123, 0x012E, // A8-AF (®,©,™,ę,¨,≠,ģ,Į)
+    // 0xB0-0xBF
+    0x012F, 0x012A, 0x2264, 0x2265, 0x012B, 0x0136, 0x2202, 0x2211, // B0-B7 (į,Ī,≤,≥,ī,Ķ,∂,∑)
+    0x0142, 0x013B, 0x013C, 0x013D, 0x013E, 0x0139, 0x013A, 0x0145, // B8-BF (ł,Ļ,ļ,Ľ,ľ,Ĺ,ĺ,Ņ)
+    // 0xC0-0xCF
+    0x0146, 0x0143, 0x00AC, 0x221A, 0x0144, 0x0147, 0x2206, 0x00AB, // C0-C7 (ņ,Ń,¬,√,ń,Ň,∆,«)
+    0x00BB, 0x2026, 0x00A0, 0x0148, 0x0150, 0x00D5, 0x0151, 0x014C, // C8-CF (»,…,NBSP,ň,Ő,Õ,ő,Ō)
+    // 0xD0-0xDF
+    0x2013, 0x2014, 0x201C, 0x201D, 0x2018, 0x2019, 0x00F7, 0x25CA, // D0-D7 (–,—,",",',',÷,◊)
+    0x014D, 0x0154, 0x0155, 0x0158, 0x2039, 0x203A, 0x0159, 0x0156, // D8-DF (ō,Ŕ,ŕ,Ř,‹,›,ř,Ŗ)
+    // 0xE0-0xEF
+    0x0157, 0x0160, 0x201A, 0x201E, 0x0161, 0x015A, 0x015B, 0x00C1, // E0-E7 (ŗ,Š,‚,„,š,Ś,ś,Á)
+    0x0164, 0x0165, 0x00CD, 0x017D, 0x017E, 0x016A, 0x00D3, 0x00D4, // E8-EF (Ť,ť,Í,Ž,ž,Ū,Ó,Ô)
+    // 0xF0-0xFF
+    0x016B, 0x016E, 0x00DA, 0x016F, 0x0170, 0x0171, 0x0172, 0x0173, // F0-F7 (ū,Ů,Ú,ů,Ű,ű,Ų,ų)
+    0x00DD, 0x00FD, 0x0137, 0x017B, 0x0141, 0x017C, 0x0122, 0x02C7, // F8-FF (Ý,ý,ķ,Ż,Ł,ż,Ģ,ˇ)
+];
+
+fn decode_maccentraleurope(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACCENTRALEUROPE_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_maccentraleurope(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACCENTRALEUROPE_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4007,6 +4074,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacGreek => decode_macgreek(input),
         Encoding::MacTurkish => decode_macturkish(input),
         Encoding::MacIceland => decode_maciceland(input),
+        Encoding::MacCentralEurope => decode_maccentraleurope(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4146,6 +4214,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacGreek => encode_macgreek(ch, out),
         Encoding::MacTurkish => encode_macturkish(ch, out),
         Encoding::MacIceland => encode_maciceland(ch, out),
+        Encoding::MacCentralEurope => encode_maccentraleurope(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -6079,6 +6148,30 @@ mod tests {
     #[test]
     fn maciceland_accepts_xmacicelandic_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-ICELANDIC");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn maccentraleurope_to_utf8_round_trip() {
+        // Mac Central Europe: Ą (0x84), ą (0x88), Č (0x89), č (0x8B), Ł (0xFC)
+        let mac_input: &[u8] = &[0x84, 0x88, 0x89, 0x8B, 0xFC];
+        let expected_utf8 = "\u{0104}\u{0105}\u{010C}\u{010D}\u{0141}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACCENTRALEUROPE").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACCENTRALEUROPE", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn maccentraleurope_accepts_macce_alias() {
+        let cd = iconv_open(b"UTF-8", b"MACCE");
         assert!(cd.is_some());
     }
 
