@@ -1,0 +1,25 @@
+{
+  "schema_version": "owned_unwinder_e2e.v1",
+  "bead_id": "bd-73h55.3",
+  "generated_at_utc": "2026-05-22T06:15:20Z",
+  "tests": {
+    "source_symbols_defined": "pass",
+    "feature_flags_defined": "pass",
+    "module_gating_correct": "pass",
+    "conformance_artifacts_present": "pass",
+    "conformance_tests_present": "pass"
+  },
+  "implementation_status": {
+    "source_file": "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+    "feature_flags": ["standalone", "owned-unwind-stub"],
+    "behavior": {
+      "_Unwind_Backtrace": "returns URC_END_OF_STACK immediately (abort-mode stub)",
+      "_Unwind_RaiseException": "aborts (panic=abort design)",
+      "_Unwind_Resume": "aborts (panic=abort design)",
+      "_Unwind_SetGR": "aborts (panic=abort design)",
+      "_Unwind_SetIP": "aborts (panic=abort design)"
+    },
+    "requirement_for_default": "Complete L2 standalone-readiness (WS-6) to remove feature flag gating"
+  },
+  "overall_status": "pass"
+}
