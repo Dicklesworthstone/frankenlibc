@@ -140,6 +140,7 @@ enum Encoding {
     Cp1006,
     Cp1008,
     Cp1046,
+    Cp1124,
     Cp856,
     Cp1125,
     Cp850,
@@ -177,7 +178,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 96] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 97] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -609,6 +610,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 96] = [
         canonical: "CP1046",
         normalized: "CP1046",
         aliases: &["IBM1046"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp1124,
+        canonical: "CP1124",
+        normalized: "CP1124",
+        aliases: &["IBM1124"],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -5665,6 +5672,57 @@ fn encode_cp1046(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// CP1124 (IBM Ukrainian Cyrillic) to Unicode mapping for bytes 0x80-0xFF.
+const CP1124_TO_UNICODE: [u16; 128] = [
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    0x00A0, 0x0401, 0x0402, 0x0490, 0x0404, 0x0405, 0x0406, 0x0407, // A0-A7
+    0x0408, 0x0409, 0x040A, 0x040B, 0x040C, 0x00AD, 0x040E, 0x040F, // A8-AF
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // B0-B7
+    0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F, // B8-BF
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, // C0-C7
+    0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, // C8-CF
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, // D0-D7
+    0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F, // D8-DF
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // E0-E7
+    0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, // E8-EF
+    0x2116, 0x0451, 0x0452, 0x0491, 0x0454, 0x0455, 0x0456, 0x0457, // F0-F7
+    0x0458, 0x0459, 0x045A, 0x045B, 0x045C, 0x00A7, 0x045E, 0x045F, // F8-FF
+];
+
+fn decode_cp1124(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP1124_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp1124(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP1124_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -6030,6 +6088,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1006 => decode_cp1006(input),
         Encoding::Cp1008 => decode_cp1008(input),
         Encoding::Cp1046 => decode_cp1046(input),
+        Encoding::Cp1124 => decode_cp1124(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -6199,6 +6258,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1006 => encode_cp1006(ch, out),
         Encoding::Cp1008 => encode_cp1008(ch, out),
         Encoding::Cp1046 => encode_cp1046(ch, out),
+        Encoding::Cp1124 => encode_cp1124(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -8828,6 +8888,30 @@ mod tests {
     #[test]
     fn cp1046_accepts_ibm1046_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM1046");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp1124_to_utf8_round_trip() {
+        // CP1124: Cyrillic А (0xB0), Б (0xB1), В (0xB2)
+        let input: &[u8] = &[0xB0, 0xB1, 0xB2];
+        let expected_utf8 = "\u{0410}\u{0411}\u{0412}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP1124").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP1124", b"UTF-8").unwrap();
+        let mut out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut out).unwrap();
+        assert_eq!(&out[..result2.out_written], input);
+    }
+
+    #[test]
+    fn cp1124_accepts_ibm1124_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM1124");
         assert!(cd.is_some());
     }
 
