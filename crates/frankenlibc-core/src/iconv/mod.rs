@@ -113,6 +113,7 @@ enum Encoding {
     MacCyrillic,
     MacGreek,
     MacTurkish,
+    MacIceland,
     Cp850,
     MacRoman,
     Iso88592,
@@ -146,7 +147,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 65] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 66] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -416,6 +417,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 65] = [
         canonical: "MACTURKISH",
         normalized: "MACTURKISH",
         aliases: &["XMACTURKISH"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacIceland,
+        canonical: "MACICELAND",
+        normalized: "MACICELAND",
+        aliases: &["XMACICELANDIC"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -3726,6 +3733,66 @@ fn encode_macturkish(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// Mac Icelandic to Unicode mapping for bytes 0x80-0xFF.
+/// Based on Mac Roman with Icelandic-specific characters.
+const MACICELAND_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F
+    0x00C4, 0x00C5, 0x00C7, 0x00C9, 0x00D1, 0x00D6, 0x00DC, 0x00E1, // 80-87 (Ä,Å,Ç,É,Ñ,Ö,Ü,á)
+    0x00E0, 0x00E2, 0x00E4, 0x00E3, 0x00E5, 0x00E7, 0x00E9, 0x00E8, // 88-8F (à,â,ä,ã,å,ç,é,è)
+    // 0x90-0x9F
+    0x00EA, 0x00EB, 0x00ED, 0x00EC, 0x00EE, 0x00EF, 0x00F1, 0x00F3, // 90-97 (ê,ë,í,ì,î,ï,ñ,ó)
+    0x00F2, 0x00F4, 0x00F6, 0x00F5, 0x00FA, 0x00F9, 0x00FB, 0x00FC, // 98-9F (ò,ô,ö,õ,ú,ù,û,ü)
+    // 0xA0-0xAF
+    0x00DD, 0x00B0, 0x00A2, 0x00A3, 0x00A7, 0x2022, 0x00B6, 0x00DF, // A0-A7 (Ý,°,¢,£,§,•,¶,ß)
+    0x00AE, 0x00A9, 0x2122, 0x00B4, 0x00A8, 0x2260, 0x00C6, 0x00D8, // A8-AF (®,©,™,´,¨,≠,Æ,Ø)
+    // 0xB0-0xBF
+    0x221E, 0x00B1, 0x2264, 0x2265, 0x00A5, 0x00B5, 0x2202, 0x2211, // B0-B7 (∞,±,≤,≥,¥,µ,∂,∑)
+    0x220F, 0x03C0, 0x222B, 0x00AA, 0x00BA, 0x03A9, 0x00E6, 0x00F8, // B8-BF (∏,π,∫,ª,º,Ω,æ,ø)
+    // 0xC0-0xCF
+    0x00BF, 0x00A1, 0x00AC, 0x221A, 0x0192, 0x2248, 0x2206, 0x00AB, // C0-C7 (¿,¡,¬,√,ƒ,≈,∆,«)
+    0x00BB, 0x2026, 0x00A0, 0x00C0, 0x00C3, 0x00D5, 0x0152, 0x0153, // C8-CF (»,…,NBSP,À,Ã,Õ,Œ,œ)
+    // 0xD0-0xDF
+    0x2013, 0x2014, 0x201C, 0x201D, 0x2018, 0x2019, 0x00F7, 0x25CA, // D0-D7 (–,—,",",',',÷,◊)
+    0x00FF, 0x0178, 0x2044, 0x00A4, 0x00D0, 0x00F0, 0x00DE, 0x00FE, // D8-DF (ÿ,Ÿ,⁄,¤,Ð,ð,Þ,þ)
+    // 0xE0-0xEF
+    0x00FD, 0x00B7, 0x201A, 0x201E, 0x2030, 0x00C2, 0x00CA, 0x00C1, // E0-E7 (ý,·,‚,„,‰,Â,Ê,Á)
+    0x00CB, 0x00C8, 0x00CD, 0x00CE, 0x00CF, 0x00CC, 0x00D3, 0x00D4, // E8-EF (Ë,È,Í,Î,Ï,Ì,Ó,Ô)
+    // 0xF0-0xFF
+    0xF8FF, 0x00D2, 0x00DA, 0x00DB, 0x00D9, 0x0131, 0x02C6, 0x02DC, // F0-F7 (Apple,Ò,Ú,Û,Ù,ı,ˆ,˜)
+    0x00AF, 0x02D8, 0x02D9, 0x02DA, 0x00B8, 0x02DD, 0x02DB, 0x02C7, // F8-FF (¯,˘,˙,˚,¸,˝,˛,ˇ)
+];
+
+fn decode_maciceland(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACICELAND_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_maciceland(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACICELAND_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -3939,6 +4006,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacCyrillic => decode_maccyrillic(input),
         Encoding::MacGreek => decode_macgreek(input),
         Encoding::MacTurkish => decode_macturkish(input),
+        Encoding::MacIceland => decode_maciceland(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4077,6 +4145,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacCyrillic => encode_maccyrillic(ch, out),
         Encoding::MacGreek => encode_macgreek(ch, out),
         Encoding::MacTurkish => encode_macturkish(ch, out),
+        Encoding::MacIceland => encode_maciceland(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -5986,6 +6055,30 @@ mod tests {
     #[test]
     fn macturkish_accepts_xmacturkish_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-TURKISH");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn maciceland_to_utf8_round_trip() {
+        // Mac Icelandic: Ð (0xDC), ð (0xDD), Þ (0xDE), þ (0xDF), Ý (0xA0), ý (0xE0)
+        let mac_input: &[u8] = &[0xDC, 0xDD, 0xDE, 0xDF, 0xA0, 0xE0];
+        let expected_utf8 = "\u{00D0}\u{00F0}\u{00DE}\u{00FE}\u{00DD}\u{00FD}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACICELAND").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACICELAND", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn maciceland_accepts_xmacicelandic_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-ICELANDIC");
         assert!(cd.is_some());
     }
 
