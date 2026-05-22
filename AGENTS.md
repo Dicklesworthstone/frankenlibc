@@ -1283,6 +1283,83 @@ git push                # Push to remote
 
 ---
 
+## Adversarial-Verifier Agent Role (Anti-Recurrence)
+
+A standing agent role whose objective is to **disprove closure claims** rather than produce them. This is a structural counterweight to closure-optimizing agents who may (inadvertently or through Goodhart drift) close beads that lack genuine completion evidence.
+
+### Role Definition
+
+| Property | Value |
+|----------|-------|
+| Objective | Falsify closure claims via independent verification |
+| Trigger | Any bead closed in the last 24h with `status=closed` |
+| Scope | Reality-check beads (`bd-*`) and any bead claiming artifact delivery |
+| Authority | Can reopen beads or file defect beads against false closures |
+| Frequency | At least once per day, or on-demand via `/verify <bead-id>` |
+
+### Concrete Verification Protocol
+
+For each bead selected for verification, the adversarial-verifier executes:
+
+1. **Evidence Audit**
+   - Does the closure reason cite a specific commit SHA?
+   - Does that commit exist and contain changes matching the bead description?
+   - Are claimed artifacts present at the stated paths?
+
+2. **Gate Replay**
+   - Re-run the bead's stated verification command (if any)
+   - If no command stated, identify the minimal gate that would catch a non-implementation
+   - Record pass/fail and any output divergence from closure notes
+
+3. **Semantic Spot-Check**
+   - For code beads: read the touched files and verify the described behavior is implemented
+   - For docs beads: verify the claimed doc section exists and matches the description
+   - For test beads: run the test and verify it exercises the stated condition
+
+4. **Cross-Reference Consistency**
+   - Check that parent epics/children have consistent state
+   - Verify no orphan artifacts (files referenced in closure that don't exist)
+   - Check that dependencies marked closed are genuinely closed
+
+5. **Verdict Emission**
+   ```
+   VERIFIED: <bead-id> — evidence consistent with closure claim
+   DISPUTED: <bead-id> — <specific falsification reason>
+   INCONCLUSIVE: <bead-id> — <reason verification could not complete>
+   ```
+
+### Reopen Criteria
+
+A bead may be reopened (via `br update <id> --status=open`) if:
+
+- The claimed artifact does not exist
+- The verification gate fails
+- The closure commit does not match the bead description
+- Evidence suggests the bead was closed by the same agent that created it with no independent verification
+
+### Filing Defects
+
+When a false closure is detected, file a child bead:
+```bash
+br create --title="[DEFECT] <original-title> closure lacks evidence" \
+  --type=bug --priority=1 \
+  --description="Closure of <bead-id> disputed: <specific reason>. Reopening parent."
+br dep add <new-id> <original-id>
+br update <original-id> --status=open
+```
+
+### Protocol Activation
+
+The adversarial-verifier role activates when:
+- Invoked explicitly via `/verify <bead-id>` or `/verify recent`
+- The bead queue empties (mandatory reality-check trigger per WS-9)
+- A milestone is claimed complete
+- Any agent self-closes more than 3 beads in a single session without independent review
+
+This role is **not adversarial to agents** — it is adversarial to **false closure**. The goal is to make truthful closure the dominant strategy by ensuring that premature or unfounded closures are caught and corrected.
+
+---
+
 ## cass — Cross-Agent Session Search
 
 `cass` indexes prior agent conversations (Claude Code, Codex, Cursor, Gemini, ChatGPT, etc.) so we can reuse solved problems.
