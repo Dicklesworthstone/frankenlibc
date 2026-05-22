@@ -74,6 +74,7 @@ enum Encoding {
     Utf32,
     Koi8R,
     Cp437,
+    Iso88595,
 }
 
 struct CodecSpec {
@@ -88,7 +89,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 7] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 8] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -131,6 +132,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 7] = [
         normalized: "CP437",
         aliases: &["IBM437", "437", "CSPC8CODEPAGE437"],
     },
+    CodecSpec {
+        encoding: Encoding::Iso88595,
+        canonical: "ISO-8859-5",
+        normalized: "ISO88595",
+        aliases: &["ISO88595", "CYRILLIC", "CSISOLATINCYRILLIC"],
+    },
 ];
 
 const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
@@ -161,8 +168,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 7] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "CP437"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 8] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "CP437", "ISO-8859-5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -517,6 +524,57 @@ fn encode_cp437(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ISO-8859-5 (Cyrillic) to Unicode mapping for bytes 0xA0-0xFF.
+/// Bytes 0x00-0x9F map directly to Unicode (ASCII + C1 controls).
+const ISO88595_TO_UNICODE: [u16; 96] = [
+    0x00A0, 0x0401, 0x0402, 0x0403, 0x0404, 0x0405, 0x0406, 0x0407, // A0-A7
+    0x0408, 0x0409, 0x040A, 0x040B, 0x040C, 0x00AD, 0x040E, 0x040F, // A8-AF
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // B0-B7
+    0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F, // B8-BF
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, // C0-C7
+    0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, // C8-CF
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, // D0-D7
+    0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F, // D8-DF
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // E0-E7
+    0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, // E8-EF
+    0x2116, 0x0451, 0x0452, 0x0453, 0x0454, 0x0455, 0x0456, 0x0457, // F0-F7
+    0x0458, 0x0459, 0x045A, 0x045B, 0x045C, 0x00A7, 0x045E, 0x045F, // F8-FF
+];
+
+fn decode_iso88595(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0xA0 {
+        // 0x00-0x9F map directly to Unicode
+        Ok((char::from(b), 1))
+    } else {
+        let cp = ISO88595_TO_UNICODE[(b - 0xA0) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_iso88595(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    // Direct mapping range (0x00-0x9F)
+    if cp < 0xA0 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    // Search in the 0xA0-0xFF range
+    for (idx, &unicode) in ISO88595_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0xA0;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
@@ -540,6 +598,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Koi8R => decode_koi8r(input),
         Encoding::Cp437 => decode_cp437(input),
+        Encoding::Iso88595 => decode_iso88595(input),
     }
 }
 
@@ -600,6 +659,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         }
         Encoding::Koi8R => encode_koi8r(ch, out),
         Encoding::Cp437 => encode_cp437(ch, out),
+        Encoding::Iso88595 => encode_iso88595(ch, out),
     }
 }
 
@@ -1092,6 +1152,35 @@ mod tests {
     #[test]
     fn cp437_accepts_ibm437_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM437");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88595_to_utf8_round_trip() {
+        // ISO-8859-5 bytes for "Привет" (same as KOI8-R but different byte values)
+        // П=0xBF, р=0xE0, и=0xD8, в=0xD2, е=0xD5, т=0xE2
+        let iso_input: &[u8] = &[0xBF, 0xE0, 0xD8, 0xD2, 0xD5, 0xE2];
+        let expected_utf8 = "Привет";
+
+        // ISO-8859-5 → UTF-8
+        let mut cd = iconv_open(b"UTF-8", b"ISO-8859-5").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(iso_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 6);
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        // UTF-8 → ISO-8859-5 (reverse)
+        let mut cd2 = iconv_open(b"ISO-8859-5", b"UTF-8").unwrap();
+        let mut iso_out = [0u8; 32];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut iso_out).unwrap();
+        assert_eq!(result2.in_consumed, expected_utf8.len());
+        assert_eq!(&iso_out[..result2.out_written], iso_input);
+    }
+
+    #[test]
+    fn iso88595_accepts_cyrillic_alias() {
+        let cd = iconv_open(b"UTF-8", b"CYRILLIC");
         assert!(cd.is_some());
     }
 }
