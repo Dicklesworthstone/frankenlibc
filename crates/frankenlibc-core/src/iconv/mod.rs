@@ -106,6 +106,7 @@ enum Encoding {
     Geostd8,
     GeorgianAcademy,
     Pt154,
+    Rk1048,
     Mulelao,
     HpRoman8,
     Nextstep,
@@ -174,7 +175,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 93] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 94] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -402,6 +403,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 93] = [
         canonical: "PT154",
         normalized: "PT154",
         aliases: &["PTCP154", "CP154", "CSPTCP154"],
+    },
+    CodecSpec {
+        encoding: Encoding::Rk1048,
+        canonical: "RK1048",
+        normalized: "RK1048",
+        aliases: &["STRK1048-2002", "KZ-1048"],
     },
     CodecSpec {
         encoding: Encoding::Mulelao,
@@ -2696,6 +2703,63 @@ fn encode_pt154(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     }
     for (idx, &unicode) in PT154_TO_UNICODE.iter().enumerate() {
         if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
+/// RK1048 (Kazakh Cyrillic) to Unicode mapping for bytes 0x80-0xFF.
+/// Based on Windows-1251 with Kazakh-specific characters.
+/// Position 0x98 is undefined.
+const RK1048_TO_UNICODE: [u16; 128] = [
+    0x0402, 0x0403, 0x201A, 0x0453, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+    0x20AC, 0x2030, 0x0409, 0x2039, 0x040A, 0x049A, 0x04BA, 0x040F, // 88-8F
+    0x0452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0xFFFF, 0x2122, 0x0459, 0x203A, 0x045A, 0x049B, 0x04BB, 0x045F, // 98-9F
+    0x00A0, 0x04B0, 0x04B1, 0x04D8, 0x00A4, 0x04E8, 0x00A6, 0x00A7, // A0-A7
+    0x0401, 0x00A9, 0x0492, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x04AE, // A8-AF
+    0x00B0, 0x00B1, 0x0406, 0x0456, 0x04E9, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x0451, 0x2116, 0x0493, 0x00BB, 0x04D9, 0x04A2, 0x04A3, 0x04AF, // B8-BF
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // C0-C7
+    0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F, // C8-CF
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, // D0-D7
+    0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, // D8-DF
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, // E0-E7
+    0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F, // E8-EF
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // F0-F7
+    0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, // F8-FF
+];
+
+fn decode_rk1048(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = RK1048_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_rk1048(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in RK1048_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -5787,6 +5851,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Geostd8 => decode_geostd8(input),
         Encoding::GeorgianAcademy => decode_georgian_academy(input),
         Encoding::Pt154 => decode_pt154(input),
+        Encoding::Rk1048 => decode_rk1048(input),
         Encoding::Mulelao => decode_mulelao(input),
         Encoding::HpRoman8 => decode_hproman8(input),
         Encoding::Nextstep => decode_nextstep(input),
@@ -5953,6 +6018,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Geostd8 => encode_geostd8(ch, out),
         Encoding::GeorgianAcademy => encode_georgian_academy(ch, out),
         Encoding::Pt154 => encode_pt154(ch, out),
+        Encoding::Rk1048 => encode_rk1048(ch, out),
         Encoding::Mulelao => encode_mulelao(ch, out),
         Encoding::HpRoman8 => encode_hproman8(ch, out),
         Encoding::Nextstep => encode_nextstep(ch, out),
@@ -7201,6 +7267,35 @@ mod tests {
     fn pt154_accepts_ptcp154_alias() {
         let cd = iconv_open(b"UTF-8", b"PTCP154");
         assert!(cd.is_some());
+    }
+
+    #[test]
+    fn rk1048_to_utf8_round_trip() {
+        // RK1048: А (0xC0), Б (0xC1), В (0xC2) — Cyrillic letters
+        let input: &[u8] = &[0xC0, 0xC1, 0xC2];
+        let expected_utf8 = "\u{0410}\u{0411}\u{0412}";
+
+        let mut cd = iconv_open(b"UTF-8", b"RK1048").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"RK1048", b"UTF-8").unwrap();
+        let mut out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut out).unwrap();
+        assert_eq!(&out[..result2.out_written], input);
+    }
+
+    #[test]
+    fn rk1048_undefined_position_returns_replacement() {
+        // Position 0x98 is undefined in RK1048
+        let input: &[u8] = &[0x98];
+        let mut cd = iconv_open(b"UTF-8", b"RK1048").unwrap();
+        let mut out = [0u8; 16];
+        let result = iconv(&mut cd, Some(input), &mut out).unwrap();
+        let utf8_str = std::str::from_utf8(&out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, "\u{FFFD}");
     }
 
     #[test]
