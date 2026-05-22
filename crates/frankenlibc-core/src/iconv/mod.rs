@@ -108,6 +108,7 @@ enum Encoding {
     HpRoman8,
     Nextstep,
     Atarist,
+    RiscosLatin1,
     Cp850,
     MacRoman,
     Iso88592,
@@ -141,7 +142,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 60] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 61] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -381,6 +382,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 60] = [
         canonical: "ATARI-ST",
         normalized: "ATARIST",
         aliases: &["ATARIST"],
+    },
+    CodecSpec {
+        encoding: Encoding::RiscosLatin1,
+        canonical: "RISCOS-LATIN1",
+        normalized: "RISCOSLATIN1",
+        aliases: &["RISCOS"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -3391,6 +3398,65 @@ fn encode_iso885916(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// RISC OS Latin-1 to Unicode mapping for bytes 0x80-0xFF.
+/// 0x80-0x9F contain various symbols, 0xA0-0xFF match Latin-1.
+const RISCOSLATIN1_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F
+    0x20AC, 0x0174, 0x0175, 0xFFFF, 0xFFFF, 0x0176, 0x0177, 0xFFFF, // 80-87 (€,Ŵ,ŵ,-,-,Ŷ,ŷ,-)
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x2026, 0x2122, 0x2030, 0x2022, // 88-8F (-,-,-,-,…,™,‰,•)
+    // 0x90-0x9F
+    0x2018, 0x2019, 0x2039, 0x203A, 0x201C, 0x201D, 0x201E, 0x2013, // 90-97 (',',‹,›,",",„,–)
+    0x2014, 0x2212, 0x0152, 0x0153, 0x2020, 0x2021, 0xFB01, 0xFB02, // 98-9F (—,−,Œ,œ,†,‡,ﬁ,ﬂ)
+    // 0xA0-0xFF: same as Latin-1 (U+00A0-U+00FF)
+    0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, // A0-A7
+    0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF, // A8-AF
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF, // B8-BF
+    0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x00C4, 0x00C5, 0x00C6, 0x00C7, // C0-C7
+    0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF, // C8-CF
+    0x00D0, 0x00D1, 0x00D2, 0x00D3, 0x00D4, 0x00D5, 0x00D6, 0x00D7, // D0-D7
+    0x00D8, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x00DD, 0x00DE, 0x00DF, // D8-DF
+    0x00E0, 0x00E1, 0x00E2, 0x00E3, 0x00E4, 0x00E5, 0x00E6, 0x00E7, // E0-E7
+    0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF, // E8-EF
+    0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, // F0-F7
+    0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF
+];
+
+fn decode_riscoslatin1(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = RISCOSLATIN1_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_riscoslatin1(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in RISCOSLATIN1_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -3599,6 +3665,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso885914 => decode_iso885914(input),
         Encoding::Iso885915 => decode_iso885915(input),
         Encoding::Iso885916 => decode_iso885916(input),
+        Encoding::RiscosLatin1 => decode_riscoslatin1(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -3732,6 +3799,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso885914 => encode_iso885914(ch, out),
         Encoding::Iso885915 => encode_iso885915(ch, out),
         Encoding::Iso885916 => encode_iso885916(ch, out),
+        Encoding::RiscosLatin1 => encode_riscoslatin1(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -5499,6 +5567,41 @@ mod tests {
     #[test]
     fn iso885916_accepts_romanian_alias() {
         let cd = iconv_open(b"UTF-8", b"ROMANIAN");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn riscoslatin1_to_utf8_round_trip() {
+        // RISC OS Latin-1: € (0x80), Ŵ (0x81), ' (0x90), — (0x98)
+        let riscos_input: &[u8] = &[0x80, 0x81, 0x90, 0x98];
+        let expected_utf8 = "\u{20AC}\u{0174}\u{2018}\u{2014}";
+
+        let mut cd = iconv_open(b"UTF-8", b"RISCOS-LATIN1").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(riscos_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"RISCOS-LATIN1", b"UTF-8").unwrap();
+        let mut riscos_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut riscos_out).unwrap();
+        assert_eq!(&riscos_out[..result2.out_written], riscos_input);
+    }
+
+    #[test]
+    fn riscoslatin1_undefined_positions_decode_to_replacement() {
+        // 0x83 is undefined in RISC OS Latin-1
+        let riscos_input: &[u8] = &[0x41, 0x83, 0x42];
+        let mut cd = iconv_open(b"UTF-8", b"RISCOS-LATIN1").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(riscos_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, "A\u{FFFD}B");
+    }
+
+    #[test]
+    fn riscoslatin1_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"RISC-OS");
         assert!(cd.is_some());
     }
 
