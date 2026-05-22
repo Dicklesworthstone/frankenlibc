@@ -1,7 +1,7 @@
 {
   "schema_version": "strict_observation_e2e.v1",
   "bead_id": "bd-06bxm.3",
-  "generated_at_utc": "2026-05-22T05:27:00Z",
+  "generated_at_utc": "2026-05-22T05:57:57Z",
   "lib_path": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
   "tests": {
     "evidence_emitted": "pass",

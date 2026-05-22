@@ -1,0 +1,29 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-as0w2.1",
+  "title": "[RC-WS4.1] Fix DEPLOYMENT.md: L0 to L1",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:33:20Z",
+    "source_commit": "34fe884b65b22b9d7cc5791016194ba144fef849",
+    "generator_command": "manual closure audit: DEPLOYMENT.md release-level reconciliation against README and replacement_levels.json",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "2d49a8774f1256cc3458c8bd29d3024c882535c19f6037f8781369e2380148e4"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:31:00Z",
+    "closed_at_utc": "2026-05-22T03:33:51Z",
+    "in_progress_source": "bd-as0w2.1 implementation window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "DEPLOYMENT.md",
+    "replacement_levels.json",
+    "README.md"
+  ],
+  "validation": [
+    "DEPLOYMENT.md now reports L1 consistently with replacement_levels.json and README",
+    "commit 34fe884b65b22b9d7cc5791016194ba144fef849 contains the doc reconciliation"
+  ],
+  "backfill_note": "Materialized after concurrent closure so check_bead_closure_freshness.sh can bind the doc bead closure to a completion contract."
+}

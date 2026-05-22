@@ -91,7 +91,7 @@
     },
     {
       "symbol": "__confstr_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "performance_class": "coldpath",
       "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
@@ -2356,7 +2356,7 @@
     },
     {
       "symbol": "confstr",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native confstr for supported names (currently _CS_PATH) with POSIX copy/length behavior and errno contract",

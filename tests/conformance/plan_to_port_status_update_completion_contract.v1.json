@@ -1,0 +1,31 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-as0w2.3",
+  "title": "[RC-WS4.3] Update PLAN_TO_PORT and PROPOSED_ARCHITECTURE rollout sections",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:36:00Z",
+    "source_commit": "1f502815c64416a63ffa19303862c54b6bd932c7",
+    "generator_command": "manual closure audit: PLAN_TO_PORT implementation-status update against current shipped artifacts",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "3f48ccb393cbefc19b45d1603dfdaaccb78a8dc5cb188f3833b6408cb59dd004"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:35:30Z",
+    "closed_at_utc": "2026-05-22T03:36:29Z",
+    "in_progress_source": "bd-as0w2.3 implementation window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+    "PROPOSED_ARCHITECTURE.md",
+    "support_matrix.json",
+    "replacement_levels.json"
+  ],
+  "validation": [
+    "PLAN_TO_PORT_GLIBC_TO_RUST.md implementation-status section reflects the current shipped L1/native-coverage artifacts",
+    "PROPOSED_ARCHITECTURE.md had no rollout status section requiring a matching change",
+    "commit 1f502815c64416a63ffa19303862c54b6bd932c7 contains the doc reconciliation"
+  ],
+  "backfill_note": "Materialized after concurrent closure so check_bead_closure_freshness.sh can bind the doc bead closure to a completion contract."
+}

@@ -4,16 +4,16 @@
   "title": "[RC-WS4.2] Fix FEATURE_PARITY.md staleness and false claims",
   "status": "pass",
   "freshness_state": {
-    "generated_at_utc": "2026-05-22T03:35:10Z",
-    "source_commit": "6738b635",
-    "generator_command": "backfill from bd-as0w2.2 close_reason: FEATURE_PARITY.md TSM matrix and Gap-Summary correction",
+    "generated_at_utc": "2026-05-22T03:34:50Z",
+    "source_commit": "6738b63556589cd0170fc9aa74084e41384ddb62",
+    "generator_command": "manual closure audit: FEATURE_PARITY.md TSM matrix and proof-claim reconciliation",
     "tool_version": "manual-audit-2026-05-22",
-    "chain_hash": "7329823f181464944d8ffd02909597f3f69b6beb8074454d04c1a17693d01048"
+    "chain_hash": "6575bc8a7898613d1a1bc6608c9eacd62de52329e11bc8e2fbee6eacb624bc49"
   },
   "bead_status_window": {
-    "in_progress_at_utc": "2026-05-22T03:33:59Z",
+    "in_progress_at_utc": "2026-05-22T03:34:00Z",
     "closed_at_utc": "2026-05-22T03:35:22Z",
-    "in_progress_source": "bd-as0w2.2 in-progress tracker update",
+    "in_progress_source": "bd-as0w2.2 implementation window",
     "closed_at_source": ".beads/issues.jsonl"
   },
   "artifact_refs": [
@@ -22,9 +22,9 @@
     "tests/conformance/hard_parts_truth_table.v1.json"
   ],
   "validation": [
-    "FEATURE_PARITY.md TSM Coverage Matrix corrected from PLANNED to DONE",
-    "Gap-Summary proof claim narrowed to distinguish notes from machine-checked proofs",
-    "Close reason records commit 6738b635"
+    "FEATURE_PARITY.md TSM Coverage Matrix no longer under-reports shipped TSM components",
+    "Gap-Summary proof wording now distinguishes committed proof notes from machine-checked proof status",
+    "commit 6738b63556589cd0170fc9aa74084e41384ddb62 contains the doc reconciliation"
   ],
-  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+  "backfill_note": "Materialized after concurrent closure so check_bead_closure_freshness.sh can bind the doc bead closure to a completion contract."
 }
