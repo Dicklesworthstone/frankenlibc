@@ -111,6 +111,7 @@ enum Encoding {
     RiscosLatin1,
     Cp852,
     MacCyrillic,
+    MacGreek,
     Cp850,
     MacRoman,
     Iso88592,
@@ -144,7 +145,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 63] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 64] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -402,6 +403,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 63] = [
         canonical: "MACCYRILLIC",
         normalized: "MACCYRILLIC",
         aliases: &["XMACCYRILLIC"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacGreek,
+        canonical: "MACGREEK",
+        normalized: "MACGREEK",
+        aliases: &["XMACGREEK"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -3589,6 +3596,69 @@ fn encode_maccyrillic(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// Mac Greek to Unicode mapping for bytes 0x80-0xFF.
+const MACGREEK_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F
+    0x00C4, 0x00B9, 0x00B2, 0x00C9, 0x00B3, 0x00D6, 0x00DC, 0x0385, // 80-87 (Ä,¹,²,É,³,Ö,Ü,΅)
+    0x00E0, 0x00E2, 0x00E4, 0x0384, 0x00A8, 0x00E7, 0x00E9, 0x00E8, // 88-8F (à,â,ä,΄,¨,ç,é,è)
+    // 0x90-0x9F
+    0x00EA, 0x00EB, 0x00A3, 0x2122, 0x00EE, 0x00EF, 0x2022, 0x00BD, // 90-97 (ê,ë,£,™,î,ï,•,½)
+    0x2030, 0x00F4, 0x00F6, 0x00A6, 0x00AD, 0x00F9, 0x00FB, 0x00FC, // 98-9F (‰,ô,ö,¦,SHY,ù,û,ü)
+    // 0xA0-0xAF
+    0x2020, 0x0393, 0x0394, 0x0398, 0x039B, 0x039E, 0x03A0, 0x00DF, // A0-A7 (†,Γ,Δ,Θ,Λ,Ξ,Π,ß)
+    0x00AE, 0x00A9, 0x03A3, 0x03AA, 0x00A7, 0x2260, 0x00B0, 0x00B7, // A8-AF (®,©,Σ,Ϊ,§,≠,°,·)
+    // 0xB0-0xBF
+    0x0391, 0x00B1, 0x2264, 0x2265, 0x00A5, 0x0392, 0x0395, 0x0396, // B0-B7 (Α,±,≤,≥,¥,Β,Ε,Ζ)
+    0x0397, 0x0399, 0x039A, 0x039C, 0x03A6, 0x03AB, 0x03A8, 0x03A9, // B8-BF (Η,Ι,Κ,Μ,Φ,Ϋ,Ψ,Ω)
+    // 0xC0-0xCF
+    0x03AC, 0x039D, 0x00AC, 0x039F, 0x03A1, 0x2248, 0x03A4, 0x00AB, // C0-C7 (ά,Ν,¬,Ο,Ρ,≈,Τ,«)
+    0x00BB, 0x2026, 0x00A0, 0x03A5, 0x03A7, 0x0386, 0x0388, 0x0153, // C8-CF (»,…,NBSP,Υ,Χ,Ά,Έ,œ)
+    // 0xD0-0xDF
+    0x2013, 0x2015, 0x201C, 0x201D, 0x2018, 0x2019, 0x00F7, 0x0389, // D0-D7 (–,―,",",',',÷,Ή)
+    0x038A, 0x038C, 0x038E, 0x03AD, 0x03AE, 0x03AF, 0x03CC, 0x038F, // D8-DF (Ί,Ό,Ύ,έ,ή,ί,ό,Ώ)
+    // 0xE0-0xEF
+    0x03CD, 0x03B1, 0x03B2, 0x03C8, 0x03B4, 0x03B5, 0x03C6, 0x03B3, // E0-E7 (ύ,α,β,ψ,δ,ε,φ,γ)
+    0x03B7, 0x03B9, 0x03BE, 0x03BA, 0x03BB, 0x03BC, 0x03BD, 0x03BF, // E8-EF (η,ι,ξ,κ,λ,μ,ν,ο)
+    // 0xF0-0xFF
+    0x03C0, 0x03CE, 0x03C1, 0x03C3, 0x03C4, 0x03B8, 0x03C9, 0x03C2, // F0-F7 (π,ώ,ρ,σ,τ,θ,ω,ς)
+    0x03C7, 0x03C5, 0x03B6, 0x03CA, 0x03CB, 0x0390, 0x03B0, 0xFFFF, // F8-FF (χ,υ,ζ,ϊ,ϋ,ΐ,ΰ,-)
+];
+
+fn decode_macgreek(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACGREEK_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_macgreek(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACGREEK_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -3800,6 +3870,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::RiscosLatin1 => decode_riscoslatin1(input),
         Encoding::Cp852 => decode_cp852(input),
         Encoding::MacCyrillic => decode_maccyrillic(input),
+        Encoding::MacGreek => decode_macgreek(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -3936,6 +4007,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::RiscosLatin1 => encode_riscoslatin1(ch, out),
         Encoding::Cp852 => encode_cp852(ch, out),
         Encoding::MacCyrillic => encode_maccyrillic(ch, out),
+        Encoding::MacGreek => encode_macgreek(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -5787,6 +5859,41 @@ mod tests {
     fn maccyrillic_accepts_xmaccyrillic_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-CYRILLIC");
         assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macgreek_to_utf8_round_trip() {
+        // Mac Greek: Γ (0xA1), Δ (0xA2), α (0xE1), β (0xE2)
+        let mac_input: &[u8] = &[0xA1, 0xA2, 0xE1, 0xE2];
+        let expected_utf8 = "\u{0393}\u{0394}\u{03B1}\u{03B2}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACGREEK").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACGREEK", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macgreek_accepts_xmacgreek_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-GREEK");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macgreek_undefined_position_decodes_to_replacement() {
+        // 0xFF is undefined in Mac Greek
+        let mac_input: &[u8] = &[0x41, 0xFF, 0x42];
+        let mut cd = iconv_open(b"UTF-8", b"MACGREEK").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, "A\u{FFFD}B");
     }
 
     #[test]
