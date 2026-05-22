@@ -77,6 +77,7 @@ enum Encoding {
     Cp437,
     Cp1252,
     Iso88592,
+    Iso88594,
     Iso88595,
     Iso88597,
     Iso88599,
@@ -95,7 +96,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 14] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 15] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -157,6 +158,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 14] = [
         aliases: &["ISO88592", "LATIN2", "CSISOLATIN2"],
     },
     CodecSpec {
+        encoding: Encoding::Iso88594,
+        canonical: "ISO-8859-4",
+        normalized: "ISO88594",
+        aliases: &["ISO88594", "LATIN4", "CSISOLATIN4", "BALTIC"],
+    },
+    CodecSpec {
         encoding: Encoding::Iso88595,
         canonical: "ISO-8859-5",
         normalized: "ISO88595",
@@ -210,8 +217,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 14] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-5", "ISO-8859-7", "ISO-8859-9", "ISO-8859-15"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 15] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-7", "ISO-8859-9", "ISO-8859-15"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -671,6 +678,53 @@ fn encode_iso88592(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ISO-8859-4 (Latin-4/Baltic) to Unicode mapping for bytes 0xA0-0xFF.
+const ISO88594_TO_UNICODE: [u16; 96] = [
+    0x00A0, 0x0104, 0x0138, 0x0156, 0x00A4, 0x0128, 0x013B, 0x00A7, // A0-A7
+    0x00A8, 0x0160, 0x0112, 0x0122, 0x0166, 0x00AD, 0x017D, 0x00AF, // A8-AF
+    0x00B0, 0x0105, 0x02DB, 0x0157, 0x00B4, 0x0129, 0x013C, 0x02C7, // B0-B7
+    0x00B8, 0x0161, 0x0113, 0x0123, 0x0167, 0x014A, 0x017E, 0x014B, // B8-BF
+    0x0100, 0x00C1, 0x00C2, 0x00C3, 0x00C4, 0x00C5, 0x00C6, 0x012E, // C0-C7
+    0x010C, 0x00C9, 0x0118, 0x00CB, 0x0116, 0x00CD, 0x00CE, 0x012A, // C8-CF
+    0x0110, 0x0145, 0x014C, 0x0136, 0x00D4, 0x00D5, 0x00D6, 0x00D7, // D0-D7
+    0x00D8, 0x0172, 0x00DA, 0x00DB, 0x00DC, 0x0168, 0x016A, 0x00DF, // D8-DF
+    0x0101, 0x00E1, 0x00E2, 0x00E3, 0x00E4, 0x00E5, 0x00E6, 0x012F, // E0-E7
+    0x010D, 0x00E9, 0x0119, 0x00EB, 0x0117, 0x00ED, 0x00EE, 0x012B, // E8-EF
+    0x0111, 0x0146, 0x014D, 0x0137, 0x00F4, 0x00F5, 0x00F6, 0x00F7, // F0-F7
+    0x00F8, 0x0173, 0x00FA, 0x00FB, 0x00FC, 0x0169, 0x016B, 0x02D9, // F8-FF
+];
+
+fn decode_iso88594(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0xA0 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = ISO88594_TO_UNICODE[(b - 0xA0) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_iso88594(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0xA0 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in ISO88594_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0xA0;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// ISO-8859-5 (Cyrillic) to Unicode mapping for bytes 0xA0-0xFF.
 /// Bytes 0x00-0x9F map directly to Unicode (ASCII + C1 controls).
 const ISO88595_TO_UNICODE: [u16; 96] = [
@@ -934,6 +988,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp437 => decode_cp437(input),
         Encoding::Cp1252 => decode_cp1252(input),
         Encoding::Iso88592 => decode_iso88592(input),
+        Encoding::Iso88594 => decode_iso88594(input),
         Encoding::Iso88595 => decode_iso88595(input),
         Encoding::Iso88597 => decode_iso88597(input),
         Encoding::Iso88599 => decode_iso88599(input),
@@ -1001,6 +1056,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp437 => encode_cp437(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
         Encoding::Iso88592 => encode_iso88592(ch, out),
+        Encoding::Iso88594 => encode_iso88594(ch, out),
         Encoding::Iso88595 => encode_iso88595(ch, out),
         Encoding::Iso88597 => encode_iso88597(ch, out),
         Encoding::Iso88599 => encode_iso88599(ch, out),
@@ -1678,6 +1734,35 @@ mod tests {
     #[test]
     fn iso88592_accepts_latin2_alias() {
         let cd = iconv_open(b"UTF-8", b"LATIN2");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88594_to_utf8_round_trip() {
+        // ISO-8859-4 bytes for "Rīga" (Latvian capital)
+        // R=0x52, ī=0xEF, g=0x67, a=0x61
+        let iso_input: &[u8] = &[0x52, 0xEF, 0x67, 0x61];
+        let expected_utf8 = "Rīga";
+
+        // ISO-8859-4 → UTF-8
+        let mut cd = iconv_open(b"UTF-8", b"ISO-8859-4").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(iso_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 4);
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        // UTF-8 → ISO-8859-4 (reverse)
+        let mut cd2 = iconv_open(b"ISO-8859-4", b"UTF-8").unwrap();
+        let mut iso_out = [0u8; 32];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut iso_out).unwrap();
+        assert_eq!(result2.in_consumed, expected_utf8.len());
+        assert_eq!(&iso_out[..result2.out_written], iso_input);
+    }
+
+    #[test]
+    fn iso88594_accepts_latin4_alias() {
+        let cd = iconv_open(b"UTF-8", b"LATIN4");
         assert!(cd.is_some());
     }
 
