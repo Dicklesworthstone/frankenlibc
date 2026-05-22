@@ -1135,15 +1135,25 @@ fn encode_koi8u(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
 }
 
 const KOI8RU_DIFFS: &[(u8, u16)] = &[
-    (0x95, 0x0491), // Ukrainian small ghe with upturn
-    (0xA4, 0x0404), // Ukrainian Ye
-    (0xA6, 0x0406), // Ukrainian I
-    (0xA7, 0x0407), // Ukrainian Yi
-    (0xAD, 0x0491), // Ukrainian small ghe with upturn (alternate)
-    (0xB4, 0x0454), // Ukrainian small ye
-    (0xB6, 0x0456), // Ukrainian small i
-    (0xB7, 0x0457), // Ukrainian small yi
-    (0xBD, 0x0490), // Ukrainian Ghe with upturn
+    (0x93, 0x201C), // left double quotation mark
+    (0x96, 0x201D), // right double quotation mark
+    (0x97, 0x2014), // em dash
+    (0x98, 0x2116), // numero sign
+    (0x99, 0x2122), // trademark sign
+    (0x9B, 0x00BB), // right angle quote
+    (0x9C, 0x00AE), // registered sign
+    (0x9D, 0x00AB), // left angle quote
+    (0x9F, 0x00A4), // currency sign
+    (0xA4, 0x0454), // Ukrainian small ye
+    (0xA6, 0x0456), // Ukrainian small i
+    (0xA7, 0x0457), // Ukrainian small yi
+    (0xAD, 0x0491), // Ukrainian small ghe with upturn
+    (0xAE, 0x045E), // Belarusian small short u
+    (0xB4, 0x0404), // Ukrainian capital Ye
+    (0xB6, 0x0406), // Ukrainian capital I
+    (0xB7, 0x0407), // Ukrainian capital Yi
+    (0xBD, 0x0490), // Ukrainian capital Ghe with upturn
+    (0xBE, 0x040E), // Belarusian capital short U
 ];
 
 fn decode_koi8ru(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -7201,15 +7211,20 @@ mod tests {
 
     #[test]
     fn koi8ru_to_utf8_round_trip() {
-        // KOI8-RU: Ukrainian yi at 0xB7, Ukrainian Ye at 0xA4
-        let koi8ru_input: &[u8] = &[0xB7, 0xA4];
-        let expected_utf8 = "\u{0457}\u{0404}"; // ї, Є
+        // KOI8-RU: glibc punctuation plus Ukrainian/Belarusian diff bytes.
+        let koi8ru_input: &[u8] = &[0xA4, 0xB4, 0xAD, 0xBD, 0x93, 0x98, 0x9F];
+        let expected_utf8 = "\u{0454}\u{0404}\u{0491}\u{0490}\u{201C}\u{2116}\u{00A4}";
 
         let mut cd = iconv_open(b"UTF-8", b"KOI8-RU").unwrap();
         let mut utf8_out = [0u8; 16];
         let result = iconv(&mut cd, Some(koi8ru_input), &mut utf8_out).unwrap();
         let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
         assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"KOI8-RU", b"UTF-8").unwrap();
+        let mut koi8ru_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut koi8ru_out).unwrap();
+        assert_eq!(&koi8ru_out[..result2.out_written], koi8ru_input);
     }
 
     #[test]
