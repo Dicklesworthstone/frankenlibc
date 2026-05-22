@@ -1,5 +1,7 @@
 # PROPOSED_ARCHITECTURE.md
 
+> **Design Document** — This describes the target architecture and formal model. For current implementation status, see README.md and FEATURE_PARITY.md.
+
 ## 1. Architecture Thesis
 
 C ABI compatibility and memory safety are reconciled via a **Transparent Safety Membrane (TSM)**.

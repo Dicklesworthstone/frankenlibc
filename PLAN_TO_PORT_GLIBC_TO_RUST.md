@@ -1,5 +1,7 @@
 # PLAN_TO_PORT_GLIBC_TO_RUST.md
 
+> **Planning Document** — This is an aspirational roadmap and design rationale, not a live claim document. For current factual status, see README.md and FEATURE_PARITY.md.
+
 ## North Star
 
 Build a clean-room Rust libc that is:
