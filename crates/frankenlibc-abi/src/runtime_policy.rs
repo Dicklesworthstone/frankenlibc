@@ -1328,6 +1328,13 @@ fn record_last_explainability(
     decision: RuntimeDecision,
     decision_gate: &'static str,
 ) {
+    // Fast path: skip explainability recording in strict passthrough mode.
+    // The data is only useful for debugging/hardened mode analysis and creating
+    // it on every libc call is a significant perf cost (~300x overhead for python3).
+    if cfg!(not(test)) && matches!(mode, SafetyLevel::Strict) {
+        return;
+    }
+
     let trace = active_trace_context();
     let (contract_state, contract_event, contract_action) = apply_decision_contract(mode, decision);
     let explainability = DecisionExplainability {
