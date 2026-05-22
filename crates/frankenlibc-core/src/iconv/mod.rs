@@ -84,6 +84,7 @@ enum Encoding {
     Iso88599,
     Iso885913,
     Iso885915,
+    EucJp,
 }
 
 struct CodecSpec {
@@ -98,7 +99,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 17] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 18] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -201,9 +202,15 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 17] = [
         normalized: "ISO885915",
         aliases: &["ISO885915", "LATIN9", "CSISOLATIN9"],
     },
+    CodecSpec {
+        encoding: Encoding::EucJp,
+        canonical: "EUC-JP",
+        normalized: "EUCJP",
+        aliases: &["EUCJP", "CSEUCPKDFMTJAPANESE", "UJIS"],
+    },
 ];
 
-const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
+const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 5] = [
     ExcludedCodecSpec {
         canonical: "ISO-2022-CN-EXT",
         normalized: "ISO2022CNEXT",
@@ -211,10 +218,6 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
     ExcludedCodecSpec {
         canonical: "ISO-2022-JP",
         normalized: "ISO2022JP",
-    },
-    ExcludedCodecSpec {
-        canonical: "EUC-JP",
-        normalized: "EUCJP",
     },
     ExcludedCodecSpec {
         canonical: "SHIFT_JIS",
@@ -231,8 +234,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 17] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 18] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15", "EUC-JP"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -244,10 +247,9 @@ pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
-pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 6] = [
+pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 5] = [
     "ISO-2022-CN-EXT",
     "ISO-2022-JP",
-    "EUC-JP",
     "SHIFT_JIS",
     "GB18030",
     "BIG5-HKSCS",
@@ -1074,6 +1076,64 @@ fn encode_iso885915(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b0 = input[0];
+    if b0 <= 0x7F {
+        return Ok((char::from(b0), 1));
+    }
+    if b0 == 0x8E {
+        if input.len() < 2 {
+            return Err(DecodeError::Incomplete);
+        }
+        let b1 = input[1];
+        if (0xA1..=0xDF).contains(&b1) {
+            let cp = 0xFF61 + u32::from(b1 - 0xA1);
+            return Ok((char::from_u32(cp).unwrap_or('\u{FFFD}'), 2));
+        }
+        return Err(DecodeError::Invalid);
+    }
+    if b0 == 0x8F {
+        if input.len() < 3 {
+            return Err(DecodeError::Incomplete);
+        }
+        return Err(DecodeError::Invalid);
+    }
+    if (0xA1..=0xFE).contains(&b0) {
+        if input.len() < 2 {
+            return Err(DecodeError::Incomplete);
+        }
+        let b1 = input[1];
+        if !(0xA1..=0xFE).contains(&b1) {
+            return Err(DecodeError::Invalid);
+        }
+        return Err(DecodeError::Invalid);
+    }
+    Err(DecodeError::Invalid)
+}
+
+fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    let cp = ch as u32;
+    if cp <= 0x7F {
+        if out.is_empty() {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    if (0xFF61..=0xFF9F).contains(&cp) {
+        if out.len() < 2 {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = 0x8E;
+        out[1] = (cp - 0xFF61 + 0xA1) as u8;
+        return Ok(2);
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
@@ -1107,6 +1167,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso88599 => decode_iso88599(input),
         Encoding::Iso885913 => decode_iso885913(input),
         Encoding::Iso885915 => decode_iso885915(input),
+        Encoding::EucJp => decode_eucjp(input),
     }
 }
 
@@ -1177,6 +1238,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso88599 => encode_iso88599(ch, out),
         Encoding::Iso885913 => encode_iso885913(ch, out),
         Encoding::Iso885915 => encode_iso885915(ch, out),
+        Encoding::EucJp => encode_eucjp(ch, out),
     }
 }
 
@@ -1972,6 +2034,46 @@ mod tests {
     #[test]
     fn iso885915_accepts_latin9_alias() {
         let cd = iconv_open(b"UTF-8", b"LATIN9");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn eucjp_ascii_round_trip() {
+        let euc_input: &[u8] = b"Hello";
+        let mut cd = iconv_open(b"UTF-8", b"EUC-JP").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(euc_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 5);
+        assert_eq!(&utf8_out[..result.out_written], b"Hello");
+
+        let mut cd2 = iconv_open(b"EUC-JP", b"UTF-8").unwrap();
+        let mut euc_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(b"Hello"), &mut euc_out).unwrap();
+        assert_eq!(&euc_out[..result2.out_written], b"Hello");
+    }
+
+    #[test]
+    fn eucjp_halfwidth_katakana_round_trip() {
+        // EUC-JP half-width katakana: SS2 (0x8E) + 0xA1-0xDF → U+FF61-U+FF9F
+        // ｱ (U+FF71) = 0x8E 0xB1, ｲ (U+FF72) = 0x8E 0xB2
+        let euc_input: &[u8] = &[0x8E, 0xB1, 0x8E, 0xB2];
+        let expected_utf8 = "\u{FF71}\u{FF72}";
+
+        let mut cd = iconv_open(b"UTF-8", b"EUC-JP").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(euc_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"EUC-JP", b"UTF-8").unwrap();
+        let mut euc_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut euc_out).unwrap();
+        assert_eq!(&euc_out[..result2.out_written], euc_input);
+    }
+
+    #[test]
+    fn eucjp_accepts_ujis_alias() {
+        let cd = iconv_open(b"UTF-8", b"UJIS");
         assert!(cd.is_some());
     }
 }
