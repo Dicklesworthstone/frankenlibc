@@ -111,6 +111,8 @@ Current semantic fallback/no-op/bootstrap contracts:
 
 ## Runtime Math Kernel Matrix
 
+> **Liveness status (WS-2 complete)**: All runtime-math kernels below are **live by default** as of bd-06bxm closure. Default is ON; opt-out via `FRANKENLIBC_RUNTIME_MATH=off`. Evidence: `tests/conformance/runtime_math_liveness_e2e.v1.json`.
+
 | Runtime Kernel | Live Role | Status |
 |---|---|---|
 | `runtime_math::risk` | online risk upper bound per API family (`risk_upper_bound_ppm`) | DONE |
