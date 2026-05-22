@@ -577,7 +577,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 89] = [
         encoding: Encoding::Cp1125,
         canonical: "CP1125",
         normalized: "CP1125",
-        aliases: &["IBM1125"],
+        aliases: &[],
     },
     CodecSpec {
         encoding: Encoding::Cp1131,
@@ -8233,8 +8233,9 @@ mod tests {
     }
 
     #[test]
-    fn cp1125_accepts_ibm1125_alias() {
-        assert!(iconv_open(b"UTF-8", b"IBM1125").is_some());
+    fn cp1125_rejects_unlisted_aliases() {
+        assert!(iconv_open(b"UTF-8", b"IBM1125").is_none());
+        assert!(iconv_open(b"UTF-8", b"1125").is_none());
     }
 
     #[test]
