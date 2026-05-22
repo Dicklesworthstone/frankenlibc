@@ -123,6 +123,7 @@ enum Encoding {
     MacHebrew,
     MacArabic,
     MacThai,
+    MacFarsi,
     Cp850,
     MacRoman,
     Iso88592,
@@ -156,7 +157,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 75] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 76] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -486,6 +487,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 75] = [
         canonical: "MACTHAI",
         normalized: "MACTHAI",
         aliases: &["XMACTHAI"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacFarsi,
+        canonical: "MACFARSI",
+        normalized: "MACFARSI",
+        aliases: &["XMACFARSI"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4397,6 +4404,68 @@ fn encode_macthai(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const MACFARSI_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (same as MacArabic)
+    0x00C4, 0x00A0, 0x00C7, 0x00C9, 0x00D1, 0x00D6, 0x00DC, 0x00E1, // 80-87
+    0x00E0, 0x00E2, 0x00E4, 0x06BA, 0x00AB, 0x00E7, 0x00E9, 0x00E8, // 88-8F
+    // 0x90-0x9F
+    0x00EA, 0x00EB, 0x00ED, 0x2026, 0x00EE, 0x00EF, 0x00F1, 0x00F3, // 90-97
+    0x00BB, 0x00F4, 0x00F6, 0x00F7, 0x00FA, 0x00F9, 0x00FB, 0x00FC, // 98-9F
+    // 0xA0-0xAF (Persian digits)
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // A0-A7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x060C, 0xFFFF, 0xFFFF, 0xFFFF, // A8-AF
+    // 0xB0-0xBF (Persian-Eastern Arabic digits)
+    0x06F0, 0x06F1, 0x06F2, 0x06F3, 0x06F4, 0x06F5, 0x06F6, 0x06F7, // B0-B7
+    0x06F8, 0x06F9, 0xFFFF, 0x061B, 0xFFFF, 0xFFFF, 0xFFFF, 0x061F, // B8-BF
+    // 0xC0-0xCF (Arabic letters)
+    0x066D, 0x0621, 0x0622, 0x0623, 0x0624, 0x0625, 0x0626, 0x0627, // C0-C7
+    0x0628, 0x0629, 0x062A, 0x062B, 0x062C, 0x062D, 0x062E, 0x062F, // C8-CF
+    // 0xD0-0xDF (Arabic letters)
+    0x0630, 0x0631, 0x0632, 0x0633, 0x0634, 0x0635, 0x0636, 0x0637, // D0-D7
+    0x0638, 0x0639, 0x063A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D8-DF
+    // 0xE0-0xEF (Arabic letters)
+    0x0640, 0x0641, 0x0642, 0x06A9, 0x0644, 0x0645, 0x0646, 0x0647, // E0-E7 (0xE3=ک instead of ك)
+    0x0648, 0x0649, 0x06CC, 0x064B, 0x064C, 0x064D, 0x064E, 0x064F, // E8-EF (0xEA=ی instead of ي)
+    // 0xF0-0xFF (Persian-specific)
+    0x0650, 0x0651, 0x0652, 0x067E, 0x0679, 0x0686, 0x06D5, 0x06A4, // F0-F7
+    0x06AF, 0x0688, 0x0691, 0xFFFF, 0xFFFF, 0xFFFF, 0x0698, 0x06D2, // F8-FF
+];
+
+fn decode_macfarsi(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACFARSI_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_macfarsi(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACFARSI_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4620,6 +4689,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacHebrew => decode_machebrew(input),
         Encoding::MacArabic => decode_macarabic(input),
         Encoding::MacThai => decode_macthai(input),
+        Encoding::MacFarsi => decode_macfarsi(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4768,6 +4838,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacHebrew => encode_machebrew(ch, out),
         Encoding::MacArabic => encode_macarabic(ch, out),
         Encoding::MacThai => encode_macthai(ch, out),
+        Encoding::MacFarsi => encode_macfarsi(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -6917,6 +6988,30 @@ mod tests {
     #[test]
     fn macthai_accepts_xmacthai_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-THAI");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macfarsi_to_utf8_round_trip() {
+        // MacFarsi: Alef (0xC7), Persian Kaf (0xE3), Persian Yeh (0xEA), Gaf (0xF8)
+        let mac_input: &[u8] = &[0xC7, 0xE3, 0xEA, 0xF8];
+        let expected_utf8 = "\u{0627}\u{06A9}\u{06CC}\u{06AF}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACFARSI").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACFARSI", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macfarsi_accepts_xmacfarsi_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-FARSI");
         assert!(cd.is_some());
     }
 
