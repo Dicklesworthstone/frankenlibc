@@ -1,0 +1,21 @@
+{
+  "schema_version": "l2_standalone_readiness_e2e.v1",
+  "bead_id": "bd-73h55.8",
+  "generated_at_utc": "2026-05-22T09:32:36Z",
+  "tests": {
+    "loader_tls_e2e": "pass",
+    "pthread_closure_e2e": "pass",
+    "owned_libc_start_main": "pass",
+    "native_threading_default": "pass",
+    "owned_unwinder": "pass",
+    "elf_loader": "pass",
+    "iconv_breadth": "pass",
+    "host_symbol_audit": "pass"
+  },
+  "summary": {
+    "passed": 8,
+    "failed": 0,
+    "total": 8
+  },
+  "overall_status": "pass"
+}

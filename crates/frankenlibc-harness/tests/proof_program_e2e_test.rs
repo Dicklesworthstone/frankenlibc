@@ -143,7 +143,7 @@ fn readme_and_feature_parity_agree_on_proof_status() -> TestResult {
         "9 formal proofs",
         "nine formal proofs",
         "machine-checked formal proofs are committed",
-        "machine-checked formal proof artifacts are committed",
+        "completed mechanized formal proofs",
     ] {
         assert!(
             !readme.contains(forbidden) && !feature_parity.contains(forbidden),
