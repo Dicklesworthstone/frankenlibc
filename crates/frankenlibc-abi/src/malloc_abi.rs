@@ -286,8 +286,7 @@ fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
         let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
         if cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
             let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
-            if slot_matches_thread_key(slot, thread_key)
-                && !MULTI_THREADED.load(Ordering::Relaxed)
+            if slot_matches_thread_key(slot, thread_key) && !MULTI_THREADED.load(Ordering::Relaxed)
             {
                 return Some(slot);
             }
@@ -1318,8 +1317,7 @@ pub fn malloc_restore_reentry_depth_for_tests(previous: u32) {
 #[doc(hidden)]
 pub fn malloc_current_reentry_slot_index_for_tests() -> Option<usize> {
     current_allocator_reentry_slot().map(|slot| {
-        (slot as *const AllocatorReentrySlot as usize
-            - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
+        (slot as *const AllocatorReentrySlot as usize - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
             / std::mem::size_of::<AllocatorReentrySlot>()
     })
 }

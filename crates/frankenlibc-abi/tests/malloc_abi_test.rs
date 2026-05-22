@@ -11,8 +11,8 @@ use frankenlibc_abi::malloc_abi::{
     malloc_current_reentry_slot_index_for_tests, malloc_htm_reset_for_tests,
     malloc_htm_snapshot_for_tests, malloc_info, malloc_known_remaining_for_tests,
     malloc_reentry_multithreaded_latched_for_tests, malloc_restore_reentry_depth_for_tests,
-    malloc_stats, malloc_stats_init_for_tests, malloc_swap_reentry_depth_for_tests,
-    malloc_trim, malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
+    malloc_stats, malloc_stats_init_for_tests, malloc_swap_reentry_depth_for_tests, malloc_trim,
+    malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
     signal_runtime_ready_for_tests, take_last_decision_gate_for_tests, valloc,
 };
 use frankenlibc_abi::unistd_abi::mprobe;

@@ -287,7 +287,11 @@ fn runtime_math_enabled() -> bool {
     }
 
     let enabled = parse_runtime_math_from_environ();
-    let state = if enabled { RUNTIME_MATH_ON } else { RUNTIME_MATH_OFF };
+    let state = if enabled {
+        RUNTIME_MATH_ON
+    } else {
+        RUNTIME_MATH_OFF
+    };
     RUNTIME_MATH_STATE.store(state, AtomicOrdering::Release);
 
     if !enabled {
@@ -1880,7 +1884,14 @@ pub(crate) fn decide(
             return (SafetyLevel::Strict, passthrough_decision());
         }
         // For other families, consult kernel for observation then passthrough
-        return decide_strict_observation(family, addr_hint, requested_bytes, is_write, bloom_negative, contention_hint);
+        return decide_strict_observation(
+            family,
+            addr_hint,
+            requested_bytes,
+            is_write,
+            bloom_negative,
+            contention_hint,
+        );
     }
 
     let mode = mode();

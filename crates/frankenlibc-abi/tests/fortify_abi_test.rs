@@ -257,7 +257,12 @@ fn strncat_chk_does_not_overread_src_past_n() {
         let mut dest = [0u8; 64];
         dest[0] = b'A';
         dest[1] = 0;
-        __strncat_chk(dest.as_mut_ptr().cast(), src.cast::<c_char>(), n, dest.len());
+        __strncat_chk(
+            dest.as_mut_ptr().cast(),
+            src.cast::<c_char>(),
+            n,
+            dest.len(),
+        );
 
         assert_eq!(dest[0], b'A');
         assert!(
@@ -266,11 +271,7 @@ fn strncat_chk_does_not_overread_src_past_n() {
         );
         assert_eq!(dest[1 + n], 0, "result must be NUL-terminated");
 
-        assert_eq!(
-            libc::munmap(region, page * 2),
-            0,
-            "munmap failed"
-        );
+        assert_eq!(libc::munmap(region, page * 2), 0, "munmap failed");
     }
 }
 

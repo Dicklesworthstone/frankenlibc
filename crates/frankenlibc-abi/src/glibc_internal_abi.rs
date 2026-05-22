@@ -8821,7 +8821,12 @@ pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut c_void {
 /// Allocate and initialize a TLS block for a dynamically loaded module.
 ///
 /// Called by the loader when a module with PT_TLS is loaded after thread creation.
-pub fn allocate_tls_block(module_id: usize, size: usize, align: usize, init: Option<&[u8]>) -> bool {
+pub fn allocate_tls_block(
+    module_id: usize,
+    size: usize,
+    align: usize,
+    init: Option<&[u8]>,
+) -> bool {
     with_dtv(|dtv| {
         // Grow DTV if needed.
         if module_id >= dtv.len() {
