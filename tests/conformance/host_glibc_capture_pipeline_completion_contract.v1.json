@@ -1,0 +1,31 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-zt1pq.1",
+  "title": "[RC-WS5.1] Build a real host-glibc capture pipeline",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-21T09:00:00Z",
+    "source_commit": "bd-zt1pq.1-close",
+    "generator_command": "backfill from bd-zt1pq.1 close_reason: capture CLI contract, capture lib tests, check, clippy, and ubs",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "4e82c6121fb848ea52286c6289321f9645c119b335dd3ccdd458b28ffb78dfae"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-21T08:45:00Z",
+    "closed_at_utc": "2026-05-21T09:01:20Z",
+    "in_progress_source": "bd-zt1pq.1 close_reason validation window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "tests/conformance/capture_cli_contract.v1.json",
+    "crates/frankenlibc-harness/tests/capture_cli_contract_test.rs"
+  ],
+  "validation": [
+    "rch exec -- cargo test -p frankenlibc-harness --test capture_cli_contract_test -- --nocapture",
+    "rch exec -- cargo test -p frankenlibc-harness --lib capture -- --nocapture",
+    "rch exec -- cargo check -p frankenlibc-harness --all-targets",
+    "rch exec -- cargo clippy -p frankenlibc-harness --all-targets -- -D warnings",
+    "ubs owned files exited 0"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}

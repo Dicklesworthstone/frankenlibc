@@ -183,9 +183,10 @@ def artifact_paths_from_bead(bead: dict[str, Any]) -> list[str]:
     refs = bead.get("artifact_refs")
     if isinstance(refs, list):
         paths.extend(item for item in refs if isinstance(item, str))
-    close_reason = bead.get("close_reason")
-    if isinstance(close_reason, str):
-        paths.extend(CONTRACT_RE.findall(close_reason))
+    for key in ("close_reason", "notes"):
+        value = bead.get(key)
+        if isinstance(value, str):
+            paths.extend(CONTRACT_RE.findall(value))
     seen: set[str] = set()
     unique: list[str] = []
     for path in paths:
@@ -383,6 +384,7 @@ def self_test(policy: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[s
         "bd-self-predated",
         "bd-self-missing-chain",
         "bd-self-fractional",
+        "bd-self-notes-ref",
     ]
     base_policy["require_ledger_chain_hash"] = False
 
@@ -475,6 +477,29 @@ def self_test(policy: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[s
                     "chain_hash": valid_hash,
                 },
                 "bead_status_window": {"in_progress_at_utc": "2026-05-21T07:05:00.111222333Z"},
+            },
+            "expected_signatures": [],
+        },
+        {
+            "name": "notes_completion_contract_reference_passes",
+            "bead": {
+                "id": "bd-self-notes-ref",
+                "status": "closed",
+                "labels": ["reality-check"],
+                "created_at": "2026-05-21T07:00:00Z",
+                "closed_at": "2026-05-21T07:30:00Z",
+                "notes": "completion_artifact: tests/conformance/self_notes_completion_contract.v1.json",
+            },
+            "path": "tests/conformance/self_notes_completion_contract.v1.json",
+            "contract": {
+                "freshness_state": {
+                    "generated_at_utc": "2026-05-21T07:10:00Z",
+                    "source_commit": "1111111111111111111111111111111111111111",
+                    "generator_command": "self-test notes reference",
+                    "tool_version": "self-test",
+                    "chain_hash": valid_hash,
+                },
+                "bead_status_window": {"in_progress_at_utc": "2026-05-21T07:05:00Z"},
             },
             "expected_signatures": [],
         },

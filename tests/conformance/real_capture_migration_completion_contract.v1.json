@@ -1,0 +1,33 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-zt1pq.2",
+  "title": "[RC-WS5.2] Replace synthetic fixtures with real captures",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-21T09:40:00Z",
+    "source_commit": "bd-zt1pq.2-close",
+    "generator_command": "backfill from bd-zt1pq.2 close_reason: memcpy_strict harness capture migration and rch verification",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "9085f1f346ea1b39119190701838fd1adb4f4f4c30ee88eb190328bb08b2bf09"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-21T09:10:00Z",
+    "closed_at_utc": "2026-05-21T09:41:40Z",
+    "in_progress_source": "bd-zt1pq.2 close_reason validation window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "tests/conformance/fixtures/memcpy_strict.json",
+    "crates/frankenlibc-harness/tests/memcpy_strict_conformance_test.rs"
+  ],
+  "validation": [
+    "rch cargo test -p frankenlibc-harness --lib fixture_roundtrip_serialization",
+    "rch cargo test -p frankenlibc-harness --lib metadata",
+    "rch cargo test -p frankenlibc-harness --test capture_cli_contract_test",
+    "rch cargo test -p frankenlibc-harness --test memcpy_strict_conformance_test",
+    "rch cargo check -p frankenlibc-harness --all-targets",
+    "rch cargo clippy -p frankenlibc-harness --all-targets -- -D warnings",
+    "ubs touched files"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}

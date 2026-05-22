@@ -1,0 +1,34 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-3yr14.8",
+  "title": "[RC-WS0.8] Regenerate every stale canonical artifact and ledger-anchor it",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-21T08:24:00Z",
+    "source_commit": "1b5e2cb45fc793937aa629c55adb729b58ed1161d1c8ea3a7efec4545dab4be9",
+    "generator_command": "backfill from bd-3yr14.8 close_reason: canonical artifact regeneration, evidence ledger/freshness gates, and rch harness validation",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "ce312787120280cd0eb3eb555af61cbe8aa191d2543109810433e2980a1ee992"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-21T08:00:00Z",
+    "closed_at_utc": "2026-05-21T08:25:11Z",
+    "in_progress_source": "bd-3yr14.8 close_reason validation window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "tests/conformance/reality_report.v1.json",
+    "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "tests/conformance/proof_obligations_binder.v1.json",
+    "tests/conformance/hard_parts_truth_table.v1.json",
+    "tests/conformance/evidence_ledger.jsonl"
+  ],
+  "validation": [
+    "jq empty for regenerated canonical artifacts and evidence ledger",
+    "scripts/check_evidence_ledger.sh head=1b5e2cb45fc793937aa629c55adb729b58ed1161d1c8ea3a7efec4545dab4be9",
+    "scripts/check_evidence_freshness.sh e_value=0.000413554 divergences=0",
+    "rch cargo test/check/clippy -p frankenlibc-harness",
+    "ubs changed files"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}

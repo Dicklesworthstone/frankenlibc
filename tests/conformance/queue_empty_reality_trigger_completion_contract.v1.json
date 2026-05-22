@@ -1,0 +1,30 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-iu3fb.2",
+  "title": "[RC-WS9.2] Queue-empty triggers a mandatory reality check",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:23:00Z",
+    "source_commit": "14079bca",
+    "generator_command": "backfill from bd-iu3fb.2 notes and scripts/check_queue_empty_reality_trigger_completion_contract.sh: CC 10/10 passed",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "d6e9a80927161268f0faec06780dbd807f181b28ca804fd5c5198ea756e16543"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:20:00Z",
+    "closed_at_utc": "2026-05-22T03:23:33Z",
+    "in_progress_source": "bd-iu3fb.2 queue-empty completion verification window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "scripts/check_queue_empty_reality_trigger.sh",
+    "scripts/check_queue_empty_reality_trigger_completion_contract.sh",
+    "target/conformance/queue_empty_trigger_cc.report.json"
+  ],
+  "validation": [
+    "scripts/check_queue_empty_reality_trigger_completion_contract.sh: CC 10/10 passed",
+    "commit 14079bca added the empty-queue reality-check trigger contract",
+    "commit afeb51d1 closed bd-iu3fb.2"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}

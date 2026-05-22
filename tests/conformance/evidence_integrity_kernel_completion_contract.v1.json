@@ -1,0 +1,35 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-3yr14",
+  "title": "[reality-check WS-0] Evidence Integrity Kernel: make stale or self-authored evidence unable to pass a gate",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:29:30Z",
+    "source_commit": "afeb51d17934bf18465e6fa686b361bac716ab6a",
+    "generator_command": "manual parent-epic close audit after all WS-0 child beads were closed and completion contracts were bound",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "fad8c44c59d19637e06cf469a4ed63a71acd9191758e110b595261ac354a07cb"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:24:30Z",
+    "closed_at_utc": "2026-05-22T03:30:04Z",
+    "in_progress_source": "bd-3yr14 in-progress tracker update",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "scripts/check_evidence_ledger.sh",
+    "scripts/check_evidence_freshness.sh",
+    "scripts/check_gate_drift.sh",
+    "scripts/check_regenerate_then_diff_gate.sh",
+    "scripts/check_bead_closure_freshness.sh",
+    "tests/conformance/evidence_integrity_kernel_e2e_completion_contract.v1.json",
+    "tests/conformance/ws0_canonical_artifact_regeneration_completion_contract.v1.json",
+    "tests/conformance/ld_preload_smoke_regeneration_fixture_completion_contract.v1.json"
+  ],
+  "validation": [
+    "All 12 child beads closed before parent closure",
+    "WS-0 gate scripts shipped and wired into scripts/ci.sh",
+    "Parent completion is freshness-bound to the 2026-05-22 close window"
+  ],
+  "backfill_note": "Materialized after the concurrent parent close so check_bead_closure_freshness.sh can audit the parent closure under the same completion-contract policy as child closures."
+}

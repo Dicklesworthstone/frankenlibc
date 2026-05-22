@@ -1,0 +1,28 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-3yr14.11",
+  "title": "[RC-WS0] Refresh stale ld_preload smoke regeneration test fixture for the red canonical summary",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-21T11:32:00Z",
+    "source_commit": "010c5d6e1abbf936299c5be26cf81e2f0520df68",
+    "generator_command": "backfill from bd-3yr14.11 close_reason: rch cargo test -p frankenlibc-harness --test ld_preload_smoke_regeneration_gate_test",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "3b3ebaf2e4f041a1a9c6ed4746b6778ba9e00b3b3192ea25a2d414c89bed205c"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-21T11:20:00Z",
+    "closed_at_utc": "2026-05-21T11:33:30Z",
+    "in_progress_source": "bd-3yr14.11 verification window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "crates/frankenlibc-harness/tests/ld_preload_smoke_regeneration_gate_test.rs",
+    "scripts/check_ld_preload_smoke_regeneration.sh"
+  ],
+  "validation": [
+    "rch exec -- cargo test -p frankenlibc-harness --test ld_preload_smoke_regeneration_gate_test: 12 passed, 0 failed",
+    "validate_only_accepts_report_matching_committed_summary exercised scripts/check_ld_preload_smoke_regeneration.sh --validate-only"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}
