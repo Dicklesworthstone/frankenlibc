@@ -128,6 +128,7 @@ enum Encoding {
     MacGurmukhi,
     MacGujarati,
     MacKannada,
+    MacTelugu,
     Cp850,
     MacRoman,
     Iso88592,
@@ -161,7 +162,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 80] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 81] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -521,6 +522,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 80] = [
         canonical: "MACKANNADA",
         normalized: "MACKANNADA",
         aliases: &["XMACKANNADA"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacTelugu,
+        canonical: "MACTELUGU",
+        normalized: "MACTELUGU",
+        aliases: &["XMACTELUGU"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4742,6 +4749,68 @@ fn encode_mackannada(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const MACTELUGU_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Telugu vowels)
+    0xFFFF, 0x0C01, 0x0C02, 0x0C03, 0xFFFF, 0x0C05, 0x0C06, 0x0C07, // 80-87
+    0x0C08, 0x0C09, 0x0C0A, 0x0C0B, 0x0C0C, 0xFFFF, 0x0C0E, 0x0C0F, // 88-8F
+    // 0x90-0x9F (Telugu vowels and consonants)
+    0x0C10, 0xFFFF, 0x0C12, 0x0C13, 0x0C14, 0x0C15, 0x0C16, 0x0C17, // 90-97
+    0x0C18, 0x0C19, 0x0C1A, 0x0C1B, 0x0C1C, 0x0C1D, 0x0C1E, 0x0C1F, // 98-9F
+    // 0xA0-0xAF (Telugu consonants)
+    0x0C20, 0x0C21, 0x0C22, 0x0C23, 0x0C24, 0x0C25, 0x0C26, 0x0C27, // A0-A7
+    0x0C28, 0xFFFF, 0x0C2A, 0x0C2B, 0x0C2C, 0x0C2D, 0x0C2E, 0x0C2F, // A8-AF
+    // 0xB0-0xBF (Telugu consonants and matras)
+    0x0C30, 0x0C31, 0x0C32, 0x0C33, 0xFFFF, 0x0C35, 0x0C36, 0x0C37, // B0-B7
+    0x0C38, 0x0C39, 0xFFFF, 0x0C3E, 0x0C3F, 0x0C40, 0x0C41, 0x0C42, // B8-BF
+    // 0xC0-0xCF (Telugu matras and marks)
+    0x0C43, 0x0C44, 0xFFFF, 0x0C46, 0x0C47, 0x0C48, 0xFFFF, 0x0C4A, // C0-C7
+    0x0C4B, 0x0C4C, 0x0C4D, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // C8-CF
+    // 0xD0-0xDF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D0-D7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D8-DF
+    // 0xE0-0xEF (Telugu digits)
+    0x0C66, 0x0C67, 0x0C68, 0x0C69, 0x0C6A, 0x0C6B, 0x0C6C, 0x0C6D, // E0-E7
+    0x0C6E, 0x0C6F, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // E8-EF
+    // 0xF0-0xFF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F0-F7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_mactelugu(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACTELUGU_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_mactelugu(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACTELUGU_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4970,6 +5039,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacGurmukhi => decode_macgurmukhi(input),
         Encoding::MacGujarati => decode_macgujarati(input),
         Encoding::MacKannada => decode_mackannada(input),
+        Encoding::MacTelugu => decode_mactelugu(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -5123,6 +5193,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacGurmukhi => encode_macgurmukhi(ch, out),
         Encoding::MacGujarati => encode_macgujarati(ch, out),
         Encoding::MacKannada => encode_mackannada(ch, out),
+        Encoding::MacTelugu => encode_mactelugu(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -7392,6 +7463,30 @@ mod tests {
     #[test]
     fn mackannada_accepts_xmackannada_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-KANNADA");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn mactelugu_to_utf8_round_trip() {
+        // MacTelugu: A (0x85), Ka (0x95), digit 0 (0xE0), digit 1 (0xE1)
+        let mac_input: &[u8] = &[0x85, 0x95, 0xE0, 0xE1];
+        let expected_utf8 = "\u{0C05}\u{0C15}\u{0C66}\u{0C67}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACTELUGU").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACTELUGU", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn mactelugu_accepts_xmactelugu_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-TELUGU");
         assert!(cd.is_some());
     }
 

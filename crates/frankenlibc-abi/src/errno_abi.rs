@@ -64,9 +64,7 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
 /// Uses volatile write to prevent the LTO optimizer from eliminating the store.
 #[inline]
 pub unsafe fn set_abi_errno(val: c_int) {
-    // Set our internal errno.
-    let p = unsafe { __errno_location() };
-    unsafe { std::ptr::write_volatile(p, val) };
+    unsafe { set_abi_errno_local(val) };
 
     // In interpose mode, also set libc's errno so callers using
     // the host libc's errno slot see the same value. In standalone mode,
@@ -75,6 +73,16 @@ pub unsafe fn set_abi_errno(val: c_int) {
     unsafe {
         crate::host_resolve::write_host_errno_if_available(val)
     };
+}
+
+/// Set only FrankenLibC's own thread-local errno slot.
+///
+/// Native replacement-clean paths use this when host errno mirroring would be
+/// the only remaining host-libc dependency for the symbol.
+#[inline]
+pub(crate) unsafe fn set_abi_errno_local(val: c_int) {
+    let p = unsafe { __errno_location() };
+    unsafe { std::ptr::write_volatile(p, val) };
 }
 
 #[cfg(test)]

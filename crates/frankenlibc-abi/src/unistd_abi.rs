@@ -9338,7 +9338,6 @@ nss_files_end_stub!(_nss_files_endhostent);
 nss_files_end_stub!(_nss_files_endnetent);
 nss_files_end_stub!(_nss_files_endpwent);
 nss_files_end_stub!(_nss_files_endrpcent);
-nss_files_end_stub!(_nss_files_endservent);
 nss_files_end_stub!(_nss_files_endsgent);
 nss_files_end_stub!(_nss_files_endspent);
 
@@ -9346,6 +9345,13 @@ nss_files_end_stub!(_nss_files_endspent);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_endprotoent() -> c_int {
     unsafe { endprotoent() };
+    NSS_STATUS_SUCCESS
+}
+
+/// `_nss_files_endservent()` — close/reset service database iteration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endservent() -> c_int {
+    unsafe { endservent() };
     NSS_STATUS_SUCCESS
 }
 
@@ -9392,7 +9398,6 @@ nss_files_set_stayopen_stub!(_nss_files_sethostent);
 nss_files_set_stayopen_stub!(_nss_files_setnetent);
 nss_files_set_stayopen_stub!(_nss_files_setpwent);
 nss_files_set_stayopen_stub!(_nss_files_setrpcent);
-nss_files_set_stayopen_stub!(_nss_files_setservent);
 nss_files_set_stayopen_stub!(_nss_files_setsgent);
 nss_files_set_stayopen_stub!(_nss_files_setspent);
 
@@ -9400,6 +9405,13 @@ nss_files_set_stayopen_stub!(_nss_files_setspent);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_setprotoent(stayopen: c_int) -> c_int {
     unsafe { setprotoent(stayopen) };
+    NSS_STATUS_SUCCESS
+}
+
+/// `_nss_files_setservent(stayopen)` — reset service database iteration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setservent(stayopen: c_int) -> c_int {
+    unsafe { setservent(stayopen) };
     NSS_STATUS_SUCCESS
 }
 
@@ -9730,7 +9742,6 @@ nss_files_get_ent_stub!(_nss_files_getetherent_r);
 nss_files_get_ent_stub!(_nss_files_getgrent_r);
 nss_files_get_ent_stub!(_nss_files_getpwent_r);
 nss_files_get_ent_stub!(_nss_files_getrpcent_r);
-nss_files_get_ent_stub!(_nss_files_getservent_r);
 nss_files_get_ent_stub!(_nss_files_getsgent_r);
 nss_files_get_ent_stub!(_nss_files_getspent_r);
 
@@ -9749,6 +9760,24 @@ pub unsafe extern "C" fn _nss_files_getprotoent_r(
     }
     let mut resolved = std::ptr::null_mut();
     let rc = unsafe { getprotoent_r(result, buffer, buflen, &mut resolved) };
+    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+}
+
+/// `_nss_files_getservent_r(*result, *buf, buflen, *errnop)` —
+/// service database iteration through the native /etc/services backend.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getservent_r(
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    if result.is_null() || buffer.is_null() {
+        unsafe { nss_set_errnop_enoent(errnop) };
+        return NSS_STATUS_NOTFOUND;
+    }
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe { getservent_r(result, buffer, buflen, &mut resolved) };
     unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
 }
 
@@ -10086,33 +10115,39 @@ pub unsafe extern "C" fn _nss_files_getnetbyname_r(
 }
 
 /// `_nss_files_getservbyname_r(name, proto, *result, *buf, buflen,
-/// *errnop)`.
+/// *errnop)` — service lookup through the native /etc/services backend.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getservbyname_r(
-    _name: *const c_char,
-    _proto: *const c_char,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    proto: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    NSS_STATUS_NOTFOUND
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe {
+        crate::inet_abi::getservbyname_r(name, proto, result, buffer, buflen, &mut resolved)
+    };
+    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
 }
 
 /// `_nss_files_getservbyport_r(port, proto, *result, *buf, buflen,
-/// *errnop)`.
+/// *errnop)` — service lookup through the native /etc/services backend.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getservbyport_r(
-    _port: c_int,
-    _proto: *const c_char,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    port: c_int,
+    proto: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    NSS_STATUS_NOTFOUND
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe {
+        crate::inet_abi::getservbyport_r(port, proto, result, buffer, buflen, &mut resolved)
+    };
+    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
 }
 
 // ---------------------------------------------------------------------------

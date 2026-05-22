@@ -12431,7 +12431,7 @@ fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_getaliasent_r, _nss_files_getetherent_r, _nss_files_getgrent_r,
         _nss_files_getnetgrent_r, _nss_files_getpwent_r, _nss_files_getrpcent_r,
-        _nss_files_getservent_r, _nss_files_getsgent_r, _nss_files_getspent_r,
+        _nss_files_getsgent_r, _nss_files_getspent_r,
     };
 
     macro_rules! check {
@@ -12464,7 +12464,6 @@ fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     check!(_nss_files_getnetgrent_r);
     check!(_nss_files_getpwent_r);
     check!(_nss_files_getrpcent_r);
-    check!(_nss_files_getservent_r);
     check!(_nss_files_getsgent_r);
     check!(_nss_files_getspent_r);
 }
@@ -12646,6 +12645,75 @@ fn nss_files_get_protocols_use_native_backend() {
 }
 
 #[test]
+fn nss_files_get_services_use_native_backend() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getservbyname_r, _nss_files_getservbyport_r, _nss_files_getservent_r,
+        _nss_files_setservent,
+    };
+
+    let mut by_name: libc::servent = unsafe { std::mem::zeroed() };
+    let mut by_name_buf = [0 as c_char; 1024];
+    let mut err = -1;
+    let status = unsafe {
+        _nss_files_getservbyname_r(
+            c"ssh".as_ptr(),
+            c"tcp".as_ptr(),
+            (&mut by_name as *mut libc::servent).cast(),
+            by_name_buf.as_mut_ptr(),
+            by_name_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!by_name.s_name.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(by_name.s_name) }.to_bytes(), b"ssh");
+    assert_eq!(
+        unsafe { CStr::from_ptr(by_name.s_proto) }.to_bytes(),
+        b"tcp"
+    );
+    assert_eq!(u16::from_be(by_name.s_port as u16), 22);
+
+    let mut by_port: libc::servent = unsafe { std::mem::zeroed() };
+    let mut by_port_buf = [0 as c_char; 1024];
+    err = -1;
+    let status = unsafe {
+        _nss_files_getservbyport_r(
+            (22u16).to_be() as c_int,
+            c"tcp".as_ptr(),
+            (&mut by_port as *mut libc::servent).cast(),
+            by_port_buf.as_mut_ptr(),
+            by_port_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!by_port.s_name.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(by_port.s_name) }.to_bytes(), b"ssh");
+    assert_eq!(
+        unsafe { CStr::from_ptr(by_port.s_proto) }.to_bytes(),
+        b"tcp"
+    );
+
+    let mut iter: libc::servent = unsafe { std::mem::zeroed() };
+    let mut iter_buf = [0 as c_char; 1024];
+    assert_eq!(unsafe { _nss_files_setservent(1) }, 1);
+    err = -1;
+    let status = unsafe {
+        _nss_files_getservent_r(
+            (&mut iter as *mut libc::servent).cast(),
+            iter_buf.as_mut_ptr(),
+            iter_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!iter.s_name.is_null());
+}
+
+#[test]
 fn nss_files_get_host_stubs_return_notfound_and_set_errno_slots() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_getcanonname_r, _nss_files_gethostbyaddr_r, _nss_files_gethostbyaddr2_r,
@@ -12794,15 +12862,10 @@ fn nss_files_get_host_stubs_return_notfound_and_set_errno_slots() {
 }
 
 #[test]
-fn nss_files_get_service_and_network_stubs_return_notfound_and_set_errno() {
-    use frankenlibc_abi::unistd_abi::{
-        _nss_files_getnetbyaddr_r, _nss_files_getnetbyname_r, _nss_files_getservbyname_r,
-        _nss_files_getservbyport_r,
-    };
+fn nss_files_get_network_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_getnetbyaddr_r, _nss_files_getnetbyname_r};
 
     let network = CString::new("missing-net").unwrap();
-    let service = CString::new("missing").unwrap();
-    let proto = CString::new("tcp").unwrap();
     let mut err = 0;
     let mut h_err = 0;
     assert_eq!(
@@ -12839,38 +12902,6 @@ fn nss_files_get_service_and_network_stubs_return_notfound_and_set_errno() {
     );
     assert_eq!(err, libc::ENOENT);
     assert_eq!(h_err, 1);
-
-    err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_files_getservbyname_r(
-                service.as_ptr(),
-                proto.as_ptr(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-                &mut err,
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-
-    err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_files_getservbyport_r(
-                80,
-                proto.as_ptr(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-                &mut err,
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
 }
 
 // ---------------------------------------------------------------------------

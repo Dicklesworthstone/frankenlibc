@@ -3585,7 +3585,7 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
         2 => b"glibc 2.38\0",    // _CS_GNU_LIBC_VERSION
         3 => b"NPTL 2.38\0",     // _CS_GNU_LIBPTHREAD_VERSION
         _ => {
-            unsafe { set_abi_errno(libc::EINVAL) };
+            unsafe { crate::errno_abi::set_abi_errno_local(libc::EINVAL) };
             return 0;
         }
     };

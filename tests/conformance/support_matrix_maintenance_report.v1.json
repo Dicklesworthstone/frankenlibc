@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-05-22T04:22:50Z",
+  "generated_at": "2026-05-22T15:22:18Z",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -16,20 +16,20 @@
   "coverage_dashboard": {
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 2368,
+      "Implemented": 2370,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1337,
+      "WrapsHostLibc": 1335,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
       "Implemented": 57.5,
       "RawSyscall": 10.1,
-      "WrapsHostLibc": 32.5,
+      "WrapsHostLibc": 32.4,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 67.5
+    "native_coverage_pct": 67.6
   },
   "trend": {
     "baseline_report_path": "/tmp/frankenlibc_support_matrix_maintenance_report_before_bd_smp21_2.json",
@@ -37,13 +37,13 @@
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": -1220,
+      "Implemented": -1218,
       "RawSyscall": 0,
       "Stub": 0,
-      "WrapsHostLibc": 1220
+      "WrapsHostLibc": 1218
     },
-    "native_coverage_pct_delta": -29.66,
-    "reclassified_symbol_count": 1220,
+    "native_coverage_pct_delta": -29.61,
+    "reclassified_symbol_count": 1218,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
     "new_symbols": [],
@@ -59,22 +59,22 @@
     "reclassification_requires_conformance": {
       "status": "pass",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 1220,
+      "total_reclassified": 1218,
       "violations": []
     }
   },
   "status_distribution": {
     "Implemented": {
-      "count": 2368,
-      "fixture_linked": 672
+      "count": 2370,
+      "fixture_linked": 673
     },
     "RawSyscall": {
       "count": 414,
       "fixture_linked": 160
     },
     "WrapsHostLibc": {
-      "count": 1337,
-      "fixture_linked": 328
+      "count": 1335,
+      "fixture_linked": 327
     }
   },
   "module_coverage": {
@@ -465,7 +465,7 @@
     "__close_nocancel": "RawSyscall",
     "__close_nocancel_nostatus": "RawSyscall",
     "__cmsg_nxthdr": "Implemented",
-    "__confstr_chk": "WrapsHostLibc",
+    "__confstr_chk": "Implemented",
     "__connect": "WrapsHostLibc",
     "__copy_grp": "Implemented",
     "__cosh_finite": "Implemented",
@@ -1552,7 +1552,7 @@
     "compoundnf64": "WrapsHostLibc",
     "compoundnf64x": "WrapsHostLibc",
     "compoundnl": "WrapsHostLibc",
-    "confstr": "WrapsHostLibc",
+    "confstr": "Implemented",
     "conj": "Implemented",
     "conjf": "Implemented",
     "conjf128": "Implemented",
@@ -5399,18 +5399,6 @@
     },
     {
       "symbol": "__close",
-      "previous_status": "Implemented",
-      "current_status": "WrapsHostLibc",
-      "promotion_requires_evidence": false,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": null,
-      "hardened_conformance": null,
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__confstr_chk",
       "previous_status": "Implemented",
       "current_status": "WrapsHostLibc",
       "promotion_requires_evidence": false,
@@ -10493,18 +10481,6 @@
     },
     {
       "symbol": "compoundnl",
-      "previous_status": "Implemented",
-      "current_status": "WrapsHostLibc",
-      "promotion_requires_evidence": false,
-      "strict_fixture_count": 0,
-      "hardened_fixture_count": 0,
-      "strict_conformance": null,
-      "hardened_conformance": null,
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "confstr",
       "previous_status": "Implemented",
       "current_status": "WrapsHostLibc",
       "promotion_requires_evidence": false,
