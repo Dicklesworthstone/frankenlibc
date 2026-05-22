@@ -161,6 +161,7 @@ enum Encoding {
     DecMcs,
     HpRoman9,
     HpGreek8,
+    HpThai8,
     Csn369103,
     Ibm902,
     Ibm901,
@@ -201,7 +202,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 120] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 121] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -759,6 +760,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 120] = [
         canonical: "HP-GREEK8",
         normalized: "HPGREEK8",
         aliases: &["HPGREEK8", "GREEK8"],
+    },
+    CodecSpec {
+        encoding: Encoding::HpThai8,
+        canonical: "HP-THAI8",
+        normalized: "HPTHAI8",
+        aliases: &["HPTHAI8", "THAI8"],
     },
     CodecSpec {
         encoding: Encoding::Csn369103,
@@ -6993,6 +7000,67 @@ fn encode_hpgreek8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const HPTHAI8_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (C1 controls)
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    // 0x90-0x9F (C1 controls continued)
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    // 0xA0-0xAF (NBSP + Thai consonants ก-ฏ)
+    0x00A0, 0x0E01, 0x0E02, 0x0E03, 0x0E04, 0x0E05, 0x0E06, 0x0E07, // A0-A7
+    0x0E08, 0x0E09, 0x0E0A, 0x0E0B, 0x0E0C, 0x0E0D, 0x0E0E, 0x0E0F, // A8-AF
+    // 0xB0-0xBF (Thai consonants ฐ-ฟ)
+    0x0E10, 0x0E11, 0x0E12, 0x0E13, 0x0E14, 0x0E15, 0x0E16, 0x0E17, // B0-B7
+    0x0E18, 0x0E19, 0x0E1A, 0x0E1B, 0x0E1C, 0x0E1D, 0x0E1E, 0x0E1F, // B8-BF
+    // 0xC0-0xCF (Thai consonants ภ-ฮ + vowels)
+    0x0E20, 0x0E21, 0x0E22, 0x0E23, 0x0E24, 0x0E25, 0x0E26, 0x0E27, // C0-C7
+    0x0E28, 0x0E29, 0x0E2A, 0x0E2B, 0x0E2C, 0x0E2D, 0x0E2E, 0x0E2F, // C8-CF
+    // 0xD0-0xDF (Thai vowels + diacritics)
+    0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E34, 0x0E35, 0x0E36, 0x0E37, // D0-D7
+    0x0E38, 0x0E39, 0x0E3A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0E3F, // D8-DF
+    // 0xE0-0xEF (Thai vowels + tone marks + symbols)
+    0x0E40, 0x0E41, 0x0E42, 0x0E43, 0x0E44, 0x0E45, 0x0E46, 0x0E47, // E0-E7
+    0x0E48, 0x0E49, 0x0E4A, 0x0E4B, 0x0E4C, 0x0E4D, 0x0E4E, 0x0E4F, // E8-EF
+    // 0xF0-0xFF (Thai digits + symbols)
+    0x0E50, 0x0E51, 0x0E52, 0x0E53, 0x0E54, 0x0E55, 0x0E56, 0x0E57, // F0-F7
+    0x0E58, 0x0E59, 0x0E5A, 0x0E5B, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_hpthai8(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = HPTHAI8_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_hpthai8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in HPTHAI8_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CSN369103_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (C1 controls)
     0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
@@ -7562,6 +7630,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::DecMcs => decode_decmcs(input),
         Encoding::HpRoman9 => decode_hproman9(input),
         Encoding::HpGreek8 => decode_hpgreek8(input),
+        Encoding::HpThai8 => decode_hpthai8(input),
         Encoding::Csn369103 => decode_csn369103(input),
         Encoding::Ibm902 => decode_ibm902(input),
         Encoding::Ibm901 => decode_ibm901(input),
@@ -7755,6 +7824,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::DecMcs => encode_decmcs(ch, out),
         Encoding::HpRoman9 => encode_hproman9(ch, out),
         Encoding::HpGreek8 => encode_hpgreek8(ch, out),
+        Encoding::HpThai8 => encode_hpthai8(ch, out),
         Encoding::Csn369103 => encode_csn369103(ch, out),
         Encoding::Ibm902 => encode_ibm902(ch, out),
         Encoding::Ibm901 => encode_ibm901(ch, out),
@@ -11093,6 +11163,26 @@ mod tests {
     #[test]
     fn hpgreek8_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"HPGREEK8");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn hpthai8_decode_roundtrip() {
+        let hpthai8_input: &[u8] = &[0xA1, 0xA2, 0xF0, 0xF1];
+        let expected_utf8 = "กข๐๑";
+        let mut cd = iconv_open(b"UTF-8", b"HP-THAI8").expect("HP-THAI8 to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(hpthai8_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"HP-THAI8", b"UTF-8").expect("UTF-8 to HP-THAI8 conversion");
+        let mut hpthai8_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut hpthai8_out).unwrap();
+        assert_eq!(&hpthai8_out[..result2.out_written], hpthai8_input);
+    }
+
+    #[test]
+    fn hpthai8_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"HPTHAI8");
         assert!(cd.is_some());
     }
 
