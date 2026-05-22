@@ -148,6 +148,7 @@ enum Encoding {
     Cp772,
     Cp771,
     Cp770,
+    Cp868,
     Cp856,
     Cp1125,
     Cp850,
@@ -185,7 +186,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 104] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 105] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -665,6 +666,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 104] = [
         canonical: "CP770",
         normalized: "CP770",
         aliases: &["IBM770"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp868,
+        canonical: "CP868",
+        normalized: "CP868",
+        aliases: &["IBM868", "CSIBM868"],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -6139,6 +6146,61 @@ fn encode_cp770(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// CP868 (Urdu/Arabic) to Unicode mapping for bytes 0x80-0xFF.
+/// Contains Arabic-Indic digits, Arabic letters and presentation forms.
+const CP868_TO_UNICODE: [u16; 128] = [
+    0x0660, 0x0661, 0x0662, 0x0663, 0x0664, 0x0665, 0x0666, 0x0667, // 80-87
+    0x0668, 0x0669, 0x060C, 0x061B, 0x061F, 0x0622, 0x0627, 0xFE8E, // 88-8F
+    0xE016, 0x0628, 0xFE91, 0x067E, 0xFFFF, 0x0629, 0x062A, 0xFE97, // 90-97
+    0xFFFF, 0xFFFF, 0x062B, 0xFE9B, 0x062C, 0xFE9F, 0xFFFF, 0xFFFF, // 98-9F
+    0x062D, 0xFEA3, 0x062E, 0xFEA7, 0x062F, 0xFFFF, 0x0630, 0x0631, // A0-A7
+    0xFFFF, 0x0632, 0xFFFF, 0x0633, 0xFEB3, 0x0634, 0x00AB, 0x00BB, // A8-AF
+    0xFEB7, 0x0635, 0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0xFEBB, // B0-B7
+    0x0636, 0xFEBF, 0x0637, 0x2563, 0x2551, 0x2557, 0x255D, 0x0638, // B8-BF
+    0x0639, 0x2510, 0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, // C0-C7
+    0xFECA, 0xFECB, 0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, // C8-CF
+    0x256C, 0xFECC, 0x063A, 0xFECE, 0xFECF, 0xFED0, 0x0641, 0xFED3, // D0-D7
+    0x0642, 0xFED7, 0xFEDA, 0x2518, 0x250C, 0x2588, 0x2580, 0xFEDB, // D8-DF
+    0xFFFF, 0x2584, 0xFFFF, 0x0644, 0xFEDE, 0xFEE0, 0x0645, 0xFEE3, // E0-E7
+    0xFFFF, 0x0646, 0xFEE7, 0xFFFF, 0x0648, 0xFFFF, 0xFFFF, 0xFFFF, // E8-EF
+    0xFFFF, 0x0621, 0x00AD, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F0-F7
+    0xFFFF, 0xFFFF, 0xFFFF, 0x0651, 0xFE7D, 0xFFFF, 0x25A0, 0x00A0, // F8-FF
+];
+
+fn decode_cp868(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP868_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp868(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP868_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -6512,6 +6574,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp772 => decode_cp772(input),
         Encoding::Cp771 => decode_cp771(input),
         Encoding::Cp770 => decode_cp770(input),
+        Encoding::Cp868 => decode_cp868(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -6689,6 +6752,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp772 => encode_cp772(ch, out),
         Encoding::Cp771 => encode_cp771(ch, out),
         Encoding::Cp770 => encode_cp770(ch, out),
+        Encoding::Cp868 => encode_cp868(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -9702,5 +9766,40 @@ mod tests {
     fn cp772_accepts_ibm772_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM772");
         assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp868_urdu_round_trip() {
+        // CP868 is Urdu/Arabic encoding
+        // 0x80 = U+0660 (Arabic-Indic digit 0), 0x81 = U+0661 (Arabic-Indic digit 1)
+        let cp868_input: &[u8] = &[0x80, 0x81];
+        let expected_utf8 = "\u{0660}\u{0661}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP868").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(cp868_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP868", b"UTF-8").unwrap();
+        let mut cp868_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp868_out).unwrap();
+        assert_eq!(&cp868_out[..result2.out_written], cp868_input);
+    }
+
+    #[test]
+    fn cp868_accepts_ibm868_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM868");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp868_undefined_byte_returns_error() {
+        // 0x94 is undefined in CP868
+        let cp868_input: &[u8] = &[0x94];
+        let mut cd = iconv_open(b"UTF-8", b"CP868").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(cp868_input), &mut utf8_out);
+        assert!(result.is_err());
     }
 }
