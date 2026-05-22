@@ -87,6 +87,7 @@ enum Encoding {
     Cp874,
     Cp866,
     Cp850,
+    MacRoman,
     Iso88592,
     Iso88593,
     Iso88594,
@@ -118,7 +119,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 37] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 38] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -232,6 +233,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 37] = [
         canonical: "CP850",
         normalized: "CP850",
         aliases: &["IBM850", "850", "CSPC850MULTILINGUAL"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacRoman,
+        canonical: "MACROMAN",
+        normalized: "MACROMAN",
+        aliases: &["MACINTOSH", "MAC", "CSMACINTOSH"],
     },
     CodecSpec {
         encoding: Encoding::Cp1252,
@@ -363,8 +370,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 37] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP850", "CP866", "CP874", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-11", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 38] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP850", "CP866", "CP874", "MACROMAN", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-11", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -1368,6 +1375,57 @@ fn encode_cp850(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// MacRoman (Apple Macintosh Roman) to Unicode mapping for bytes 0x80-0xFF.
+const MACROMAN_TO_UNICODE: [u16; 128] = [
+    0x00C4, 0x00C5, 0x00C7, 0x00C9, 0x00D1, 0x00D6, 0x00DC, 0x00E1, // 80-87
+    0x00E0, 0x00E2, 0x00E4, 0x00E3, 0x00E5, 0x00E7, 0x00E9, 0x00E8, // 88-8F
+    0x00EA, 0x00EB, 0x00ED, 0x00EC, 0x00EE, 0x00EF, 0x00F1, 0x00F3, // 90-97
+    0x00F2, 0x00F4, 0x00F6, 0x00F5, 0x00FA, 0x00F9, 0x00FB, 0x00FC, // 98-9F
+    0x2020, 0x00B0, 0x00A2, 0x00A3, 0x00A7, 0x2022, 0x00B6, 0x00DF, // A0-A7
+    0x00AE, 0x00A9, 0x2122, 0x00B4, 0x00A8, 0x2260, 0x00C6, 0x00D8, // A8-AF
+    0x221E, 0x00B1, 0x2264, 0x2265, 0x00A5, 0x00B5, 0x2202, 0x2211, // B0-B7
+    0x220F, 0x03C0, 0x222B, 0x00AA, 0x00BA, 0x03A9, 0x00E6, 0x00F8, // B8-BF
+    0x00BF, 0x00A1, 0x00AC, 0x221A, 0x0192, 0x2248, 0x2206, 0x00AB, // C0-C7
+    0x00BB, 0x2026, 0x00A0, 0x00C0, 0x00C3, 0x00D5, 0x0152, 0x0153, // C8-CF
+    0x2013, 0x2014, 0x201C, 0x201D, 0x2018, 0x2019, 0x00F7, 0x25CA, // D0-D7
+    0x00FF, 0x0178, 0x2044, 0x20AC, 0x2039, 0x203A, 0xFB01, 0xFB02, // D8-DF
+    0x2021, 0x00B7, 0x201A, 0x201E, 0x2030, 0x00C2, 0x00CA, 0x00C1, // E0-E7
+    0x00CB, 0x00C8, 0x00CD, 0x00CE, 0x00CF, 0x00CC, 0x00D3, 0x00D4, // E8-EF
+    0xF8FF, 0x00D2, 0x00DA, 0x00DB, 0x00D9, 0x0131, 0x02C6, 0x02DC, // F0-F7
+    0x00AF, 0x02D8, 0x02D9, 0x02DA, 0x00B8, 0x02DD, 0x02DB, 0x02C7, // F8-FF
+];
+
+fn decode_macroman(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACROMAN_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_macroman(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACROMAN_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// ISO-8859-2 (Latin-2/Central European) to Unicode mapping for bytes 0xA0-0xFF.
 const ISO88592_TO_UNICODE: [u16; 96] = [
     0x00A0, 0x0104, 0x02D8, 0x0141, 0x00A4, 0x013D, 0x015A, 0x00A7, // A0-A7
@@ -2261,6 +2319,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp874 => decode_cp874(input),
         Encoding::Cp866 => decode_cp866(input),
         Encoding::Cp850 => decode_cp850(input),
+        Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
         Encoding::Iso88592 => decode_iso88592(input),
         Encoding::Iso88593 => decode_iso88593(input),
@@ -2351,6 +2410,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp874 => encode_cp874(ch, out),
         Encoding::Cp866 => encode_cp866(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
+        Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
         Encoding::Iso88592 => encode_iso88592(ch, out),
         Encoding::Iso88593 => encode_iso88593(ch, out),
@@ -3125,6 +3185,30 @@ mod tests {
     #[test]
     fn cp850_accepts_ibm850_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM850");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macroman_to_utf8_round_trip() {
+        // MacRoman: Ä (0x80) and Å (0x81)
+        let mac_input: &[u8] = &[0x80, 0x81];
+        let expected_utf8 = "\u{00C4}\u{00C5}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACROMAN").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACROMAN", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macroman_accepts_macintosh_alias() {
+        let cd = iconv_open(b"UTF-8", b"MACINTOSH");
         assert!(cd.is_some());
     }
 
