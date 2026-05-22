@@ -98,6 +98,7 @@ enum Encoding {
     Cp855,
     Cp864,
     Cp775,
+    Viscii,
     Cp850,
     MacRoman,
     Iso88592,
@@ -131,7 +132,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 50] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 51] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -313,6 +314,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 50] = [
         aliases: &["IBM775", "775", "CSPC775BALTIC"],
     },
     CodecSpec {
+        encoding: Encoding::Viscii,
+        canonical: "VISCII",
+        normalized: "VISCII",
+        aliases: &["CSVISCII", "VISCII11"],
+    },
+    CodecSpec {
         encoding: Encoding::Cp850,
         canonical: "CP850",
         normalized: "CP850",
@@ -454,8 +461,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 50] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-16BE", "UTF-32", "UTF-32BE", "KOI8-R", "KOI8-U", "CP437", "CP775", "CP850", "CP855", "CP857", "CP860", "CP861", "CP862", "CP863", "CP864", "CP865", "CP866", "CP869", "CP874", "MACROMAN", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-11", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 51] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-16BE", "UTF-32", "UTF-32BE", "KOI8-R", "KOI8-U", "CP437", "CP775", "CP850", "CP855", "CP857", "CP860", "CP861", "CP862", "CP863", "CP864", "CP865", "CP866", "CP869", "CP874", "MACROMAN", "VISCII", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-11", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -1972,6 +1979,57 @@ fn encode_cp775(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// VISCII (Vietnamese) to Unicode mapping for bytes 0x80-0xFF.
+const VISCII_TO_UNICODE: [u16; 128] = [
+    0x1EA0, 0x1EAE, 0x1EB0, 0x1EB6, 0x1EA4, 0x1EA6, 0x1EA8, 0x1EAC, // 80-87 (Ạ,Ắ,Ằ,Ặ,Ấ,Ầ,Ẩ,Ậ)
+    0x1EBC, 0x1EB8, 0x1EBE, 0x1EC0, 0x1EC2, 0x1EC4, 0x1EC6, 0x1ED0, // 88-8F (Ẽ,Ẹ,Ế,Ề,Ể,Ễ,Ệ,Ố)
+    0x1ED2, 0x1ED4, 0x1ED6, 0x1ED8, 0x1EE2, 0x1EDA, 0x1EDC, 0x1EDE, // 90-97 (Ồ,Ổ,Ỗ,Ộ,Ợ,Ớ,Ờ,Ở)
+    0x1ECA, 0x1ECE, 0x1ECC, 0x1EC8, 0x1EE6, 0x0168, 0x1EE4, 0x1EF2, // 98-9F (Ị,Ỏ,Ọ,Ỉ,Ủ,Ũ,Ụ,Ỳ)
+    0x00D5, 0x1EAF, 0x1EB1, 0x1EB7, 0x1EA5, 0x1EA7, 0x1EA9, 0x1EAD, // A0-A7 (Õ,ắ,ằ,ặ,ấ,ầ,ẩ,ậ)
+    0x1EBD, 0x1EB9, 0x1EBF, 0x1EC1, 0x1EC3, 0x1EC5, 0x1EC7, 0x1ED1, // A8-AF (ẽ,ẹ,ế,ề,ể,ễ,ệ,ố)
+    0x1ED3, 0x1ED5, 0x1ED7, 0x1EE0, 0x01A0, 0x1ED9, 0x1EDD, 0x1EDF, // B0-B7 (ồ,ổ,ỗ,Ỡ,Ơ,ộ,ờ,ở)
+    0x1ECB, 0x1EF0, 0x1EE8, 0x1EEA, 0x1EEC, 0x01A1, 0x1EDB, 0x01AF, // B8-BF (ị,Ự,Ứ,Ừ,Ử,ơ,ớ,Ư)
+    0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x1EA2, 0x0102, 0x1EB3, 0x1EB5, // C0-C7 (À,Á,Â,Ã,Ả,Ă,ẳ,ẵ)
+    0x00C8, 0x00C9, 0x00CA, 0x1EBA, 0x00CC, 0x00CD, 0x0128, 0x1EF3, // C8-CF (È,É,Ê,Ẻ,Ì,Í,Ĩ,ỳ)
+    0x0110, 0x1EE9, 0x00D2, 0x00D3, 0x00D4, 0x1EA1, 0x1EF7, 0x1EEB, // D0-D7 (Đ,ứ,Ò,Ó,Ô,ạ,ỷ,ừ)
+    0x1EED, 0x00D9, 0x00DA, 0x1EF9, 0x1EF1, 0x01B0, 0x1EE1, 0x1EEF, // D8-DF (ử,Ù,Ú,ỹ,ự,ư,ỡ,ữ)
+    0x00E0, 0x00E1, 0x00E2, 0x00E3, 0x1EA3, 0x0103, 0x1EEE, 0x1EAB, // E0-E7 (à,á,â,ã,ả,ă,Ữ,ẫ)
+    0x00E8, 0x00E9, 0x00EA, 0x1EBB, 0x00EC, 0x00ED, 0x0129, 0x1EC9, // E8-EF (è,é,ê,ẻ,ì,í,ĩ,ỉ)
+    0x0111, 0x1EF5, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x1ECF, 0x1ECD, // F0-F7 (đ,ỵ,ò,ó,ô,õ,ỏ,ọ)
+    0x1EE5, 0x00F9, 0x00FA, 0x0169, 0x1EE7, 0x00FD, 0x1EE3, 0x1EF1, // F8-FF (ụ,ù,ú,ũ,ủ,ý,ợ,ự)
+];
+
+fn decode_viscii(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = VISCII_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_viscii(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in VISCII_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// CP850 (DOS Western European/Multilingual Latin 1) to Unicode mapping for bytes 0x80-0xFF.
 const CP850_TO_UNICODE: [u16; 128] = [
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, // 80-87
@@ -2978,6 +3036,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp855 => decode_cp855(input),
         Encoding::Cp864 => decode_cp864(input),
         Encoding::Cp775 => decode_cp775(input),
+        Encoding::Viscii => decode_viscii(input),
         Encoding::Cp850 => decode_cp850(input),
         Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
@@ -3101,6 +3160,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp855 => encode_cp855(ch, out),
         Encoding::Cp864 => encode_cp864(ch, out),
         Encoding::Cp775 => encode_cp775(ch, out),
+        Encoding::Viscii => encode_viscii(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
         Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
@@ -4139,6 +4199,30 @@ mod tests {
     #[test]
     fn cp775_accepts_ibm775_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM775");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn viscii_to_utf8_round_trip() {
+        // VISCII: Ạ (0x80), Ắ (0x81) - Vietnamese characters
+        let viscii_input: &[u8] = &[0x80, 0x81];
+        let expected_utf8 = "\u{1EA0}\u{1EAE}";
+
+        let mut cd = iconv_open(b"UTF-8", b"VISCII").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(viscii_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"VISCII", b"UTF-8").unwrap();
+        let mut viscii_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut viscii_out).unwrap();
+        assert_eq!(&viscii_out[..result2.out_written], viscii_input);
+    }
+
+    #[test]
+    fn viscii_accepts_csviscii_alias() {
+        let cd = iconv_open(b"UTF-8", b"CSVISCII");
         assert!(cd.is_some());
     }
 
