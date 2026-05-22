@@ -119,6 +119,7 @@ enum Encoding {
     MacUkraine,
     Cp858,
     MacRomanian,
+    MacSami,
     MacCroatian,
     Cp720,
     MacHebrew,
@@ -172,7 +173,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 91] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 92] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -478,6 +479,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 91] = [
         canonical: "MACROMANIA",
         normalized: "MACROMANIA",
         aliases: &["XMACROMANIAN"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacSami,
+        canonical: "MAC-SAMI",
+        normalized: "MACSAMI",
+        aliases: &["MACSAMI"],
     },
     CodecSpec {
         encoding: Encoding::MacCroatian,
@@ -4366,6 +4373,58 @@ fn encode_macromanian(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// Mac Sami (Northern Sami) to Unicode mapping for bytes 0x80-0xFF.
+/// Used for Sami languages in Scandinavian countries.
+const MACSAMI_TO_UNICODE: [u16; 128] = [
+    0x00C4, 0x00C5, 0x00C7, 0x00C9, 0x00D1, 0x00D6, 0x00DC, 0x00E1, // 80-87
+    0x00E0, 0x00E2, 0x00E4, 0x00E3, 0x00E5, 0x00E7, 0x00E9, 0x00E8, // 88-8F
+    0x00EA, 0x00EB, 0x00ED, 0x00EC, 0x00EE, 0x00EF, 0x00F1, 0x00F3, // 90-97
+    0x00F2, 0x00F4, 0x00F6, 0x00F5, 0x00FA, 0x00F9, 0x00FB, 0x00FC, // 98-9F
+    0x00DD, 0x00B0, 0x010C, 0x00A3, 0x00A7, 0x2022, 0x00B6, 0x00DF, // A0-A7
+    0x00AE, 0x00A9, 0x2122, 0x00B4, 0x00A8, 0x2260, 0x00C6, 0x00D8, // A8-AF
+    0x0110, 0x014A, 0x021E, 0x021F, 0x0160, 0x0166, 0x2202, 0x017D, // B0-B7
+    0x010D, 0x0111, 0x014B, 0x0161, 0x0167, 0x017E, 0x00E6, 0x00F8, // B8-BF
+    0x00BF, 0x00A1, 0x00AC, 0x221A, 0x0192, 0x2248, 0x2206, 0x00AB, // C0-C7
+    0x00BB, 0x2026, 0x00A0, 0x00C0, 0x00C3, 0x00D5, 0x0152, 0x0153, // C8-CF
+    0x2013, 0x2014, 0x201C, 0x201D, 0x2018, 0x2019, 0x00F7, 0x25CA, // D0-D7
+    0x00FF, 0x0178, 0x2044, 0x00A4, 0x00D0, 0x00F0, 0x00DE, 0x00FE, // D8-DF
+    0x00FD, 0x00B7, 0x201A, 0x201E, 0x2030, 0x00C2, 0x00CA, 0x00C1, // E0-E7
+    0x00CB, 0x00C8, 0x00CD, 0x00CE, 0x00CF, 0x00CC, 0x00D3, 0x00D4, // E8-EF
+    0xF8FF, 0x00D2, 0x00DA, 0x00DB, 0x00D9, 0x0131, 0x01B7, 0x0292, // F0-F7
+    0x01EE, 0x01EF, 0x01E4, 0x01E5, 0x01E6, 0x01E7, 0x01E8, 0x01E9, // F8-FF
+];
+
+fn decode_macsami(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACSAMI_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_macsami(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACSAMI_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// Mac Croatian to Unicode mapping for bytes 0x80-0xFF.
 /// Similar to Mac Roman but with Croatian/Slovenian-specific characters.
 const MACCROATIAN_TO_UNICODE: [u16; 128] = [
@@ -5701,6 +5760,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacUkraine => decode_macukraine(input),
         Encoding::Cp858 => decode_cp858(input),
         Encoding::MacRomanian => decode_macromanian(input),
+        Encoding::MacSami => decode_macsami(input),
         Encoding::MacCroatian => decode_maccroatian(input),
         Encoding::Cp720 => decode_cp720(input),
         Encoding::MacHebrew => decode_machebrew(input),
@@ -5865,6 +5925,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacUkraine => encode_macukraine(ch, out),
         Encoding::Cp858 => encode_cp858(ch, out),
         Encoding::MacRomanian => encode_macromanian(ch, out),
+        Encoding::MacSami => encode_macsami(ch, out),
         Encoding::MacCroatian => encode_maccroatian(ch, out),
         Encoding::Cp720 => encode_cp720(ch, out),
         Encoding::MacHebrew => encode_machebrew(ch, out),
@@ -7989,6 +8050,30 @@ mod tests {
     #[test]
     fn macromanian_accepts_xmacromanian_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-ROMANIAN");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macsami_to_utf8_round_trip() {
+        // Mac Sami: Đ (0xB0), Ŋ (0xB1), Š (0xB4), Ŧ (0xB5), Ʒ (0xF6), ʒ (0xF7)
+        let mac_input: &[u8] = &[0xB0, 0xB1, 0xB4, 0xB5, 0xF6, 0xF7];
+        let expected_utf8 = "\u{0110}\u{014A}\u{0160}\u{0166}\u{01B7}\u{0292}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MAC-SAMI").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MAC-SAMI", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macsami_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"MACSAMI");
         assert!(cd.is_some());
     }
 
