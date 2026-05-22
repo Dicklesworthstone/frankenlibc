@@ -977,7 +977,7 @@ fn encode_cp1250(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1250_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -1031,7 +1031,7 @@ fn encode_cp1251(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1251_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -1086,7 +1086,7 @@ fn encode_cp1253(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1253_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -1142,7 +1142,7 @@ fn encode_cp1254(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1254_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -1197,7 +1197,7 @@ fn encode_cp1255(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1255_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -1303,7 +1303,7 @@ fn encode_cp1257(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1257_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -1358,7 +1358,7 @@ fn encode_cp1258(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1258_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -1413,7 +1413,7 @@ fn encode_cp874(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP874_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -2345,7 +2345,7 @@ fn encode_iso88593(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in ISO88593_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0xA0;
             return Ok(1);
         }
@@ -2494,7 +2494,7 @@ fn encode_iso88596(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in ISO88596_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0xA0;
             return Ok(1);
         }
@@ -2592,7 +2592,7 @@ fn encode_iso88598(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in ISO88598_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0xA0;
             return Ok(1);
         }
@@ -2636,7 +2636,7 @@ fn encode_cp1252(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1252_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
         }
@@ -2776,7 +2776,7 @@ fn encode_iso885911(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in ISO885911_TO_UNICODE.iter().enumerate() {
-        if u32::from(unicode) == cp {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0xA0;
             return Ok(1);
         }
