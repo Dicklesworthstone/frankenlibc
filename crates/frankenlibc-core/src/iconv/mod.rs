@@ -452,7 +452,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 96] = [
         encoding: Encoding::MacCyrillic,
         canonical: "MACCYRILLIC",
         normalized: "MACCYRILLIC",
-        aliases: &["XMACCYRILLIC"],
+        aliases: &["XMACCYRILLIC", "CP10007", "IBM10007"],
     },
     CodecSpec {
         encoding: Encoding::MacGreek,
@@ -8187,6 +8187,12 @@ mod tests {
     #[test]
     fn maccyrillic_accepts_xmaccyrillic_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-CYRILLIC");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn maccyrillic_accepts_cp10007_alias() {
+        let cd = iconv_open(b"UTF-8", b"CP10007");
         assert!(cd.is_some());
     }
 
