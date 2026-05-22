@@ -87,6 +87,7 @@ enum Encoding {
     Iso885913,
     Iso885914,
     Iso885915,
+    Iso885916,
     EucJp,
     ShiftJis,
     Big5,
@@ -104,7 +105,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 23] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 24] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -226,6 +227,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 23] = [
         aliases: &["ISO885915", "LATIN9", "CSISOLATIN9"],
     },
     CodecSpec {
+        encoding: Encoding::Iso885916,
+        canonical: "ISO-8859-16",
+        normalized: "ISO885916",
+        aliases: &["ISO885916", "LATIN10", "CSISOLATIN10", "ROMANIAN"],
+    },
+    CodecSpec {
         encoding: Encoding::EucJp,
         canonical: "EUC-JP",
         normalized: "EUCJP",
@@ -265,8 +272,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 23] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "EUC-JP", "SHIFT_JIS", "BIG5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 24] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -1251,6 +1258,53 @@ fn encode_iso885915(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ISO-8859-16 (Latin-10/Romanian) to Unicode mapping for bytes 0xA0-0xFF.
+const ISO885916_TO_UNICODE: [u16; 96] = [
+    0x00A0, 0x0104, 0x0105, 0x0141, 0x20AC, 0x201E, 0x0160, 0x00A7, // A0-A7
+    0x0161, 0x00A9, 0x0218, 0x00AB, 0x0179, 0x00AD, 0x017A, 0x017B, // A8-AF
+    0x00B0, 0x00B1, 0x010C, 0x0142, 0x017D, 0x201D, 0x00B6, 0x00B7, // B0-B7
+    0x017E, 0x010D, 0x0219, 0x00BB, 0x0152, 0x0153, 0x0178, 0x017C, // B8-BF
+    0x00C0, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x0106, 0x00C6, 0x00C7, // C0-C7
+    0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF, // C8-CF
+    0x0110, 0x0143, 0x00D2, 0x00D3, 0x00D4, 0x0150, 0x00D6, 0x015A, // D0-D7
+    0x0170, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x0118, 0x021A, 0x00DF, // D8-DF
+    0x00E0, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x0107, 0x00E6, 0x00E7, // E0-E7
+    0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF, // E8-EF
+    0x0111, 0x0144, 0x00F2, 0x00F3, 0x00F4, 0x0151, 0x00F6, 0x015B, // F0-F7
+    0x0171, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x0119, 0x021B, 0x00FF, // F8-FF
+];
+
+fn decode_iso885916(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0xA0 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = ISO885916_TO_UNICODE[(b - 0xA0) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_iso885916(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0xA0 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in ISO885916_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0xA0;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -1422,6 +1476,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso885913 => decode_iso885913(input),
         Encoding::Iso885914 => decode_iso885914(input),
         Encoding::Iso885915 => decode_iso885915(input),
+        Encoding::Iso885916 => decode_iso885916(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -1498,6 +1553,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso885913 => encode_iso885913(ch, out),
         Encoding::Iso885914 => encode_iso885914(ch, out),
         Encoding::Iso885915 => encode_iso885915(ch, out),
+        Encoding::Iso885916 => encode_iso885916(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -2379,6 +2435,30 @@ mod tests {
     #[test]
     fn iso885915_accepts_latin9_alias() {
         let cd = iconv_open(b"UTF-8", b"LATIN9");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso885916_to_utf8_round_trip() {
+        // ISO-8859-16 Romanian: Ș (0xAA) and ș (0xBA) with comma below
+        let iso_input: &[u8] = &[0xAA, 0xBA];
+        let expected_utf8 = "\u{0218}\u{0219}";
+
+        let mut cd = iconv_open(b"UTF-8", b"ISO-8859-16").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(iso_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"ISO-8859-16", b"UTF-8").unwrap();
+        let mut iso_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut iso_out).unwrap();
+        assert_eq!(&iso_out[..result2.out_written], iso_input);
+    }
+
+    #[test]
+    fn iso885916_accepts_romanian_alias() {
+        let cd = iconv_open(b"UTF-8", b"ROMANIAN");
         assert!(cd.is_some());
     }
 
