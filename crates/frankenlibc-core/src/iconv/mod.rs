@@ -138,6 +138,7 @@ enum Encoding {
     MacMalayalam,
     MacTamil,
     Cp1006,
+    Cp1008,
     Cp856,
     Cp1125,
     Cp850,
@@ -175,7 +176,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 94] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 95] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -595,6 +596,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 94] = [
         canonical: "CP1006",
         normalized: "CP1006",
         aliases: &["IBM1006"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp1008,
+        canonical: "CP1008",
+        normalized: "CP1008",
+        aliases: &["IBM1008"],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -5539,6 +5546,62 @@ fn encode_cp1006(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// CP1008 (IBM Arabic) to Unicode mapping for bytes 0x80-0xFF.
+/// Contains Arabic presentation forms. Position 0xFF is undefined.
+const CP1008_TO_UNICODE: [u16; 128] = [
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    0x00A0, 0x060C, 0x00A2, 0x061B, 0x061F, 0xFE7C, 0x00A6, 0xFE7D, // A0-A7
+    0x0640, 0xF8FC, 0xFE80, 0xFE81, 0x00AC, 0x00AD, 0xFE82, 0xFE83, // A8-AF
+    0x0660, 0x0661, 0x0662, 0x0663, 0x0664, 0x0665, 0x0666, 0x0667, // B0-B7
+    0x0668, 0x0669, 0xFE84, 0xFE85, 0xFE8B, 0xFE8D, 0xFE8E, 0xFE8F, // B8-BF
+    0xFE91, 0xFE93, 0xFE95, 0xFE97, 0xFE99, 0xFE9B, 0xFE9D, 0xFE9F, // C0-C7
+    0xFEA1, 0xFEA3, 0xFEA5, 0xFEA7, 0xFEA9, 0xFEAB, 0xFEAD, 0xFEAF, // C8-CF
+    0xF8F6, 0xFEB3, 0xF8F5, 0xFEB7, 0xF8F4, 0xFEBB, 0xF8F7, 0x00D7, // D0-D7
+    0xFEBF, 0xFEC3, 0xFEC7, 0xFEC9, 0xFECA, 0xFECB, 0xFECC, 0xFECD, // D8-DF
+    0xFECE, 0xFECF, 0xFED0, 0xFED1, 0xFED3, 0xFED5, 0xFED7, 0xFED9, // E0-E7
+    0xFEDB, 0xFEDD, 0xFEF5, 0xFEF6, 0xFEF7, 0xFEF8, 0xFEFB, 0xFEFC, // E8-EF
+    0xFEDF, 0xFEE1, 0xFEE3, 0xFEE5, 0xFEE7, 0xFEE9, 0xFEEB, 0x00F7, // F0-F7
+    0xFEEC, 0xFEED, 0xFEEF, 0xFEF0, 0xFEF1, 0xFEF2, 0xFEF3, 0xFFFF, // F8-FF
+];
+
+fn decode_cp1008(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP1008_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_cp1008(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP1008_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -5902,6 +5965,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacMalayalam => decode_macmalayalam(input),
         Encoding::MacTamil => decode_mactamil(input),
         Encoding::Cp1006 => decode_cp1006(input),
+        Encoding::Cp1008 => decode_cp1008(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -6069,6 +6133,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacMalayalam => encode_macmalayalam(ch, out),
         Encoding::MacTamil => encode_mactamil(ch, out),
         Encoding::Cp1006 => encode_cp1006(ch, out),
+        Encoding::Cp1008 => encode_cp1008(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -8644,6 +8709,30 @@ mod tests {
     #[test]
     fn cp1006_accepts_ibm1006_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM1006");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp1008_to_utf8_round_trip() {
+        // CP1008: Arabic-Indic digits 0-2 (0xB0-0xB2)
+        let input: &[u8] = &[0xB0, 0xB1, 0xB2];
+        let expected_utf8 = "\u{0660}\u{0661}\u{0662}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP1008").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP1008", b"UTF-8").unwrap();
+        let mut out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut out).unwrap();
+        assert_eq!(&out[..result2.out_written], input);
+    }
+
+    #[test]
+    fn cp1008_accepts_ibm1008_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM1008");
         assert!(cd.is_some());
     }
 
