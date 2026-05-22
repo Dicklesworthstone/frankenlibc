@@ -5,9 +5,8 @@ FrankenLibC currently ships as an interposition-first artifact, not as a full st
 Current deployment status:
 
 - Shipping artifact: `target/release/libfrankenlibc_abi.so`
-- Current release claim: `L0` (`LD_PRELOAD` interpose on top of host glibc)
-- Hardened interpose evidence exists, but the explicit `L1` claim is still blocked by claim-control gates in [`tests/conformance/replacement_levels.json`](/data/projects/frankenlibc/tests/conformance/replacement_levels.json)
-- Planned standalone artifact: `libfrankenlibc_replace.so` is not shipped yet
+- Current release claim: `L1` (Hardened Interpose — `LD_PRELOAD` on top of host glibc with TSM membrane active in both strict and hardened modes)
+- Planned standalone artifact: `libfrankenlibc_replace.so` is not shipped yet (L2/L3)
 
 Canonical source artifacts for deployment claims:
 
