@@ -101,6 +101,7 @@ enum Encoding {
     Viscii,
     Tcvn,
     Armscii8,
+    Geostd8,
     Cp850,
     MacRoman,
     Iso88592,
@@ -134,7 +135,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 53] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 54] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -332,6 +333,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 53] = [
         canonical: "ARMSCII-8",
         normalized: "ARMSCII8",
         aliases: &["ARMSCII8"],
+    },
+    CodecSpec {
+        encoding: Encoding::Geostd8,
+        canonical: "GEORGIAN-PS",
+        normalized: "GEORGIANPS",
+        aliases: &["GEOSTD8"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -2153,6 +2160,58 @@ fn encode_armscii8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// GEOSTD8 (Georgian-PS) to Unicode mapping for bytes 0x80-0xFF.
+/// Georgian letters are in the 0xC0-0xEF range, mapping to U+10D0-U+10FF.
+const GEOSTD8_TO_UNICODE: [u16; 128] = [
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87 (C1 controls)
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, // A0-A7
+    0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF, // A8-AF
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF, // B8-BF
+    0x10D0, 0x10D1, 0x10D2, 0x10D3, 0x10D4, 0x10D5, 0x10D6, 0x10D7, // C0-C7 (ა-თ)
+    0x10D8, 0x10D9, 0x10DA, 0x10DB, 0x10DC, 0x10DD, 0x10DE, 0x10DF, // C8-CF (ი-პ)
+    0x10E0, 0x10E1, 0x10E2, 0x10E3, 0x10E4, 0x10E5, 0x10E6, 0x10E7, // D0-D7 (ჟ-ხ)
+    0x10E8, 0x10E9, 0x10EA, 0x10EB, 0x10EC, 0x10ED, 0x10EE, 0x10EF, // D8-DF (შ-ჯ)
+    0x10F0, 0x10F1, 0x10F2, 0x10F3, 0x10F4, 0x10F5, 0x10F6, 0x00E7, // E0-E7 (ჰ-ჶ, ç)
+    0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF, // E8-EF (è-ï)
+    0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, // F0-F7 (ð-÷)
+    0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF (ø-ÿ)
+];
+
+fn decode_geostd8(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = GEOSTD8_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_geostd8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in GEOSTD8_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// CP850 (DOS Western European/Multilingual Latin 1) to Unicode mapping for bytes 0x80-0xFF.
 const CP850_TO_UNICODE: [u16; 128] = [
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, // 80-87
@@ -3162,6 +3221,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Viscii => decode_viscii(input),
         Encoding::Tcvn => decode_tcvn(input),
         Encoding::Armscii8 => decode_armscii8(input),
+        Encoding::Geostd8 => decode_geostd8(input),
         Encoding::Cp850 => decode_cp850(input),
         Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
@@ -3288,6 +3348,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Viscii => encode_viscii(ch, out),
         Encoding::Tcvn => encode_tcvn(ch, out),
         Encoding::Armscii8 => encode_armscii8(ch, out),
+        Encoding::Geostd8 => encode_geostd8(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
         Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
@@ -4398,6 +4459,30 @@ mod tests {
     #[test]
     fn armscii8_accepts_armscii8_alias() {
         let cd = iconv_open(b"UTF-8", b"ARMSCII8");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn geostd8_to_utf8_round_trip() {
+        // GEOSTD8: ა (0xC0 Georgian Ani), ბ (0xC1 Georgian Bani)
+        let geostd8_input: &[u8] = &[0xC0, 0xC1];
+        let expected_utf8 = "\u{10D0}\u{10D1}";
+
+        let mut cd = iconv_open(b"UTF-8", b"GEORGIAN-PS").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(geostd8_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"GEORGIAN-PS", b"UTF-8").unwrap();
+        let mut geostd8_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut geostd8_out).unwrap();
+        assert_eq!(&geostd8_out[..result2.out_written], geostd8_input);
+    }
+
+    #[test]
+    fn geostd8_accepts_geostd8_alias() {
+        let cd = iconv_open(b"UTF-8", b"GEOSTD8");
         assert!(cd.is_some());
     }
 
