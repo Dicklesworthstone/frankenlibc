@@ -154,6 +154,7 @@ enum Encoding {
     Cp1161,
     Cp1162,
     Cp1163,
+    Isiri3342,
     Cp856,
     Cp1125,
     Cp850,
@@ -191,7 +192,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 110] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 111] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -707,6 +708,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 110] = [
         canonical: "CP1163",
         normalized: "CP1163",
         aliases: &["IBM1163"],
+    },
+    CodecSpec {
+        encoding: Encoding::Isiri3342,
+        canonical: "ISIRI-3342",
+        normalized: "ISIRI3342",
+        aliases: &["ISIRI3342"],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -6508,6 +6515,61 @@ fn encode_cp1163(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ISIRI-3342 (Persian) to Unicode mapping for bytes 0x80-0xFF.
+/// Contains Persian/Arabic script with extended Arabic digits.
+const ISIRI3342_TO_UNICODE: [u16; 128] = [
+    0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, // 80-87
+    0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x000F, // 88-8F
+    0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017, // 90-97
+    0x0018, 0x0019, 0x001A, 0x001B, 0x001C, 0x001D, 0x001E, 0x001F, // 98-9F
+    0x0020, 0x200C, 0x200D, 0x0021, 0x00A4, 0x066A, 0x002E, 0x066C, // A0-A7
+    0x0029, 0x0028, 0x00D7, 0x002B, 0x060C, 0x002D, 0x066B, 0x002F, // A8-AF
+    0x06F0, 0x06F1, 0x06F2, 0x06F3, 0x06F4, 0x06F5, 0x06F6, 0x06F7, // B0-B7
+    0x06F8, 0x06F9, 0x003A, 0x061B, 0x003C, 0x003D, 0x003E, 0x061F, // B8-BF
+    0x0622, 0x0627, 0x0621, 0x0628, 0x067E, 0x062A, 0x062B, 0x062C, // C0-C7
+    0x0686, 0x062D, 0x062E, 0x062F, 0x0630, 0x0631, 0x0632, 0x0698, // C8-CF
+    0x0633, 0x0634, 0x0635, 0x0636, 0x0637, 0x0638, 0x0639, 0x063A, // D0-D7
+    0x0641, 0x0642, 0x06A9, 0x06AF, 0x0644, 0x0645, 0x0646, 0x0648, // D8-DF
+    0x0647, 0x06CC, 0x005D, 0x005B, 0x007D, 0x007B, 0x00AB, 0x00BB, // E0-E7
+    0x002A, 0x0640, 0x007C, 0x005C, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // E8-EF
+    0x064E, 0x0650, 0x064F, 0x064B, 0x064D, 0x064C, 0x0651, 0x0652, // F0-F7
+    0x0623, 0x0624, 0x0625, 0x0626, 0x0629, 0x0643, 0x064A, 0x007F, // F8-FF
+];
+
+fn decode_isiri3342(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = ISIRI3342_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_isiri3342(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in ISIRI3342_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -6887,6 +6949,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1161 => decode_cp1161(input),
         Encoding::Cp1162 => decode_cp1162(input),
         Encoding::Cp1163 => decode_cp1163(input),
+        Encoding::Isiri3342 => decode_isiri3342(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -7070,6 +7133,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1161 => encode_cp1161(ch, out),
         Encoding::Cp1162 => encode_cp1162(ch, out),
         Encoding::Cp1163 => encode_cp1163(ch, out),
+        Encoding::Isiri3342 => encode_isiri3342(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -10272,6 +10336,31 @@ mod tests {
     #[test]
     fn cp1163_accepts_ibm1163_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM1163");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn isiri3342_persian_round_trip() {
+        // ISIRI-3342 is Persian encoding
+        // 0xB0 = U+06F0 (Extended Arabic digit 0), 0xC0 = U+0622 (Arabic letter Alef with Madda)
+        let isiri_input: &[u8] = &[0xB0, 0xC0];
+        let expected_utf8 = "\u{06F0}\u{0622}";
+
+        let mut cd = iconv_open(b"UTF-8", b"ISIRI-3342").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(isiri_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"ISIRI-3342", b"UTF-8").unwrap();
+        let mut isiri_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut isiri_out).unwrap();
+        assert_eq!(&isiri_out[..result2.out_written], isiri_input);
+    }
+
+    #[test]
+    fn isiri3342_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"ISIRI3342");
         assert!(cd.is_some());
     }
 }
