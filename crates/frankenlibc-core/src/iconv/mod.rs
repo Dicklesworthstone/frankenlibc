@@ -137,6 +137,7 @@ enum Encoding {
     Cp1006,
     Cp856,
     Cp1125,
+    Cp1131,
     Cp850,
     MacRoman,
     Iso88592,
@@ -153,7 +154,6 @@ enum Encoding {
     Iso885914,
     Iso885915,
     Iso885916,
-    JisX0201,
     EucJp,
     ShiftJis,
     Big5,
@@ -587,6 +587,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 90] = [
         aliases: &[],
     },
     CodecSpec {
+        encoding: Encoding::Cp1131,
+        canonical: "CP1131",
+        normalized: "CP1131",
+        aliases: &["IBM1131"],
+    },
+    CodecSpec {
         encoding: Encoding::Cp850,
         canonical: "CP850",
         normalized: "CP850",
@@ -687,12 +693,6 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 90] = [
         canonical: "ISO-8859-16",
         normalized: "ISO885916",
         aliases: &["ISO885916", "LATIN10", "CSISOLATIN10", "ROMANIAN"],
-    },
-    CodecSpec {
-        encoding: Encoding::JisX0201,
-        canonical: "JIS_X0201",
-        normalized: "JISX0201",
-        aliases: &["JISX0201", "JIS-X0201", "X0201", "CSHALFWIDTHKATAKANA"],
     },
     CodecSpec {
         encoding: Encoding::EucJp,
@@ -5370,49 +5370,66 @@ fn encode_cp1125(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
-fn decode_jisx0201(input: &[u8]) -> Result<(char, usize), DecodeError> {
+const CP1131_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Cyrillic uppercase A-P)
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // 80-87
+    0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F, // 88-8F
+    // 0x90-0x9F (Cyrillic uppercase R-Ya + Belarusian chars)
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, // 90-97
+    0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, // 98-9F
+    // 0xA0-0xAF (Cyrillic lowercase a-p)
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, // A0-A7
+    0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F, // A8-AF
+    // 0xB0-0xBF (Box drawing)
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556, // B0-B7
+    0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B, 0x2510, // B8-BF
+    // 0xC0-0xCF (Box drawing continued)
+    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F, // C0-C7
+    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567, // C8-CF
+    // 0xD0-0xDF (Box drawing / special)
+    0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B, // D0-D7
+    0x256A, 0x2518, 0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580, // D8-DF
+    // 0xE0-0xEF (Cyrillic lowercase r-ya)
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // E0-E7
+    0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, // E8-EF
+    // 0xF0-0xFF (Belarusian specific chars)
+    0x0401, 0x0451, 0x0404, 0x0454, 0x0407, 0x0457, 0x040E, 0x045E, // F0-F7
+    0x00B0, 0x2219, 0x00B7, 0x221A, 0x2116, 0x00A4, 0x25A0, 0x00A0, // F8-FF
+];
+
+fn decode_cp1131(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
     }
     let b = input[0];
-    match b {
-        0x5C => Ok(('\u{00A5}', 1)), // Yen sign
-        0x7E => Ok(('\u{203E}', 1)), // Overline
-        0x00..=0x7F => Ok((char::from(b), 1)),
-        0xA1..=0xDF => {
-            // Half-width katakana: 0xA1-0xDF maps to U+FF61-U+FF9F
-            let cp = 0xFF61 + u32::from(b - 0xA1);
-            Ok((char::from_u32(cp).unwrap_or('\u{FFFD}'), 1))
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP1131_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
         }
-        _ => Ok(('\u{FFFD}', 1)),
     }
 }
 
-fn encode_jisx0201(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+fn encode_cp1131(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     if out.is_empty() {
         return Err(EncodeError::NoSpace);
     }
     let cp = ch as u32;
-    match cp {
-        0x00A5 => {
-            out[0] = 0x5C; // Yen sign
-            Ok(1)
-        }
-        0x203E => {
-            out[0] = 0x7E; // Overline
-            Ok(1)
-        }
-        0x00..=0x7F => {
-            out[0] = cp as u8;
-            Ok(1)
-        }
-        0xFF61..=0xFF9F => {
-            // Half-width katakana
-            out[0] = (cp - 0xFF61 + 0xA1) as u8;
-            Ok(1)
-        }
-        _ => Err(EncodeError::Unrepresentable),
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
     }
+    for (idx, &unicode) in CP1131_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
 }
 
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -5652,7 +5669,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1006 => decode_cp1006(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
-        Encoding::JisX0201 => decode_jisx0201(input),
+        Encoding::Cp1131 => decode_cp1131(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -5815,7 +5832,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1006 => encode_cp1006(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
-        Encoding::JisX0201 => encode_jisx0201(ch, out),
+        Encoding::Cp1131 => encode_cp1131(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -8318,63 +8335,27 @@ mod tests {
     }
 
     #[test]
-    fn cp1131_rejects_unlisted_encoding() {
-        assert!(iconv_open(b"UTF-8", b"CP1131").is_none());
-        assert!(iconv_open(b"UTF-8", b"IBM1131").is_none());
-        assert!(iconv_open(b"UTF-8", b"1131").is_none());
-    }
+    fn cp1131_to_utf8_round_trip() {
+        // CP1131: А (0x80), Б (0x81), а (0xA0), б (0xA1)
+        let cp_input: &[u8] = &[0x80, 0x81, 0xA0, 0xA1];
+        let expected_utf8 = "\u{0410}\u{0411}\u{0430}\u{0431}";
 
-    #[test]
-    fn jisx0201_ascii_round_trip() {
-        let jis_input: &[u8] = b"Hello";
-        let mut cd = iconv_open(b"UTF-8", b"JIS_X0201").unwrap();
-        let mut utf8_out = [0u8; 16];
-        let result = iconv(&mut cd, Some(jis_input), &mut utf8_out).unwrap();
-        assert_eq!(result.in_consumed, 5);
-        assert_eq!(&utf8_out[..result.out_written], b"Hello");
-    }
-
-    #[test]
-    fn jisx0201_yen_and_overline() {
-        // 0x5C maps to yen sign (U+00A5), 0x7E maps to overline (U+203E)
-        let jis_input: &[u8] = &[0x5C, 0x7E];
-        let expected_utf8 = "\u{00A5}\u{203E}";
-
-        let mut cd = iconv_open(b"UTF-8", b"JIS_X0201").unwrap();
-        let mut utf8_out = [0u8; 16];
-        let result = iconv(&mut cd, Some(jis_input), &mut utf8_out).unwrap();
+        let mut cd = iconv_open(b"UTF-8", b"CP1131").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(cp_input), &mut utf8_out).unwrap();
         let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
         assert_eq!(utf8_str, expected_utf8);
 
-        let mut cd2 = iconv_open(b"JIS_X0201", b"UTF-8").unwrap();
-        let mut jis_out = [0u8; 16];
-        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut jis_out).unwrap();
-        assert_eq!(&jis_out[..result2.out_written], jis_input);
+        let mut cd2 = iconv_open(b"CP1131", b"UTF-8").unwrap();
+        let mut cp_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp_out).unwrap();
+        assert_eq!(&cp_out[..result2.out_written], cp_input);
     }
 
     #[test]
-    fn jisx0201_halfwidth_katakana() {
-        // 0xA1-0xDF maps to U+FF61-U+FF9F
-        let jis_input: &[u8] = &[0xA1, 0xA2, 0xDF]; // ｡, ｢, ﾟ
-        let expected_utf8 = "\u{FF61}\u{FF62}\u{FF9F}";
-
-        let mut cd = iconv_open(b"UTF-8", b"JIS_X0201").unwrap();
-        let mut utf8_out = [0u8; 16];
-        let result = iconv(&mut cd, Some(jis_input), &mut utf8_out).unwrap();
-        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
-        assert_eq!(utf8_str, expected_utf8);
-
-        let mut cd2 = iconv_open(b"JIS_X0201", b"UTF-8").unwrap();
-        let mut jis_out = [0u8; 16];
-        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut jis_out).unwrap();
-        assert_eq!(&jis_out[..result2.out_written], jis_input);
-    }
-
-    #[test]
-    fn jisx0201_accepts_aliases() {
-        assert!(iconv_open(b"UTF-8", b"JISX0201").is_some());
-        assert!(iconv_open(b"UTF-8", b"JIS-X0201").is_some());
-        assert!(iconv_open(b"UTF-8", b"X0201").is_some());
+    fn cp1131_accepts_ibm1131_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM1131");
+        assert!(cd.is_some());
     }
 
     #[test]
