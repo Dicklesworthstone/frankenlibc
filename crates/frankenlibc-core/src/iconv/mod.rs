@@ -727,7 +727,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 107] = [
         encoding: Encoding::Iso88592,
         canonical: "ISO-8859-2",
         normalized: "ISO88592",
-        aliases: &["ISO88592", "LATIN2", "CSISOLATIN2"],
+        aliases: &["ISO88592", "LATIN2", "CSISOLATIN2", "CP912", "IBM912"],
     },
     CodecSpec {
         encoding: Encoding::Iso88593,
@@ -9978,6 +9978,12 @@ mod tests {
     #[test]
     fn cp916_accepts_ibm916_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM916");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88592_accepts_cp912_alias() {
+        let cd = iconv_open(b"UTF-8", b"CP912");
         assert!(cd.is_some());
     }
 }
