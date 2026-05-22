@@ -166,6 +166,7 @@ enum Encoding {
     Cp1004,
     Ibm1167,
     Cwi,
+    Strk10482002,
     Csn369103,
     Ibm902,
     Ibm901,
@@ -206,7 +207,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 125] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 126] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -794,6 +795,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 125] = [
         canonical: "CWI",
         normalized: "CWI",
         aliases: &["CWI2"],
+    },
+    CodecSpec {
+        encoding: Encoding::Strk10482002,
+        canonical: "STRK1048-2002",
+        normalized: "STRK10482002",
+        aliases: &["RK1048", "KZ1048"],
     },
     CodecSpec {
         encoding: Encoding::Csn369103,
@@ -7333,6 +7340,67 @@ fn encode_cwi(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const STRK10482002_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Cyrillic + typographic)
+    0x0402, 0x0403, 0x201A, 0x0453, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+    0x20AC, 0x2030, 0x0409, 0x2039, 0x040A, 0x049A, 0x04BA, 0x040F, // 88-8F
+    // 0x90-0x9F (Cyrillic + typographic)
+    0x0452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0xFFFF, 0x2122, 0x0459, 0x203A, 0x045A, 0x049B, 0x04BB, 0x045F, // 98-9F
+    // 0xA0-0xAF (Kazakh + symbols)
+    0x00A0, 0x04B0, 0x04B1, 0x04D8, 0x00A4, 0x04E8, 0x00A6, 0x00A7, // A0-A7
+    0x0401, 0x00A9, 0x0492, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x04AE, // A8-AF
+    // 0xB0-0xBF (symbols + Kazakh)
+    0x00B0, 0x00B1, 0x0406, 0x0456, 0x04E9, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x0451, 0x2116, 0x0493, 0x00BB, 0x04D9, 0x04A2, 0x04A3, 0x04AF, // B8-BF
+    // 0xC0-0xCF (Cyrillic uppercase А-П)
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // C0-C7
+    0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F, // C8-CF
+    // 0xD0-0xDF (Cyrillic uppercase Р-Я)
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, // D0-D7
+    0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, // D8-DF
+    // 0xE0-0xEF (Cyrillic lowercase а-п)
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, // E0-E7
+    0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F, // E8-EF
+    // 0xF0-0xFF (Cyrillic lowercase р-я)
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // F0-F7
+    0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, // F8-FF
+];
+
+fn decode_strk10482002(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = STRK10482002_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_strk10482002(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in STRK10482002_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CSN369103_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (C1 controls)
     0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
@@ -7907,6 +7975,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1004 => decode_cp1004(input),
         Encoding::Ibm1167 => decode_ibm1167(input),
         Encoding::Cwi => decode_cwi(input),
+        Encoding::Strk10482002 => decode_strk10482002(input),
         Encoding::Csn369103 => decode_csn369103(input),
         Encoding::Ibm902 => decode_ibm902(input),
         Encoding::Ibm901 => decode_ibm901(input),
@@ -8105,6 +8174,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1004 => encode_cp1004(ch, out),
         Encoding::Ibm1167 => encode_ibm1167(ch, out),
         Encoding::Cwi => encode_cwi(ch, out),
+        Encoding::Strk10482002 => encode_strk10482002(ch, out),
         Encoding::Csn369103 => encode_csn369103(ch, out),
         Encoding::Ibm902 => encode_ibm902(ch, out),
         Encoding::Ibm901 => encode_ibm901(ch, out),
@@ -11543,6 +11613,26 @@ mod tests {
     #[test]
     fn cwi_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"CWI2");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn strk10482002_decode_roundtrip() {
+        let strk_input: &[u8] = &[0xC0, 0xC1, 0xE0, 0xE1];
+        let expected_utf8 = "АБаб";
+        let mut cd = iconv_open(b"UTF-8", b"STRK1048-2002").expect("STRK1048-2002 to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(strk_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"STRK1048-2002", b"UTF-8").expect("UTF-8 to STRK1048-2002 conversion");
+        let mut strk_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut strk_out).unwrap();
+        assert_eq!(&strk_out[..result2.out_written], strk_input);
+    }
+
+    #[test]
+    fn strk10482002_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"RK1048");
         assert!(cd.is_some());
     }
 
