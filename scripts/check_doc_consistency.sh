@@ -147,17 +147,43 @@ def load_artifact_truth() -> dict[str, Any]:
     if rl and isinstance(rl, dict):
         truth["replacement_level"] = rl.get("current_level", "unknown")
 
-    # reality_report or support_matrix
-    rr = load_json(ROOT / "tests/conformance/reality_report.v1.json")
-    if rr and isinstance(rr, dict):
-        truth["total_symbols"] = rr.get("total_exported", 0)
-        # Counts may be nested under "counts" key
-        counts = rr.get("counts", rr)
-        truth["implemented_count"] = counts.get("implemented", 0)
-        truth["raw_syscall_count"] = counts.get("raw_syscall", 0)
-        truth["glibc_callthrough_count"] = counts.get("glibc_call_through", 0)
-        truth["wraps_host_count"] = counts.get("wraps_host_libc", 0)
-        truth["stub_count"] = counts.get("stub", 0)
+    # support_matrix.json is the canonical live support-taxonomy artifact.
+    # Older reality reports are generated snapshots and can lag taxonomy
+    # reclassification work, so use them only as a compatibility fallback.
+    sm = load_json(ROOT / "support_matrix.json")
+    if sm and isinstance(sm, dict):
+        symbols = sm.get("symbols", [])
+        if isinstance(symbols, list):
+            counts = {
+                "Implemented": 0,
+                "RawSyscall": 0,
+                "GlibcCallThrough": 0,
+                "WrapsHostLibc": 0,
+                "Stub": 0,
+            }
+            for symbol in symbols:
+                if not isinstance(symbol, dict):
+                    continue
+                status = symbol.get("status")
+                if status in counts:
+                    counts[status] += 1
+            truth["total_symbols"] = len(symbols)
+            truth["implemented_count"] = counts["Implemented"]
+            truth["raw_syscall_count"] = counts["RawSyscall"]
+            truth["glibc_callthrough_count"] = counts["GlibcCallThrough"]
+            truth["wraps_host_count"] = counts["WrapsHostLibc"]
+            truth["stub_count"] = counts["Stub"]
+
+    if "total_symbols" not in truth:
+        rr = load_json(ROOT / "tests/conformance/reality_report.v1.json")
+        if rr and isinstance(rr, dict):
+            truth["total_symbols"] = rr.get("total_exported", 0)
+            counts = rr.get("counts", rr)
+            truth["implemented_count"] = counts.get("implemented", 0)
+            truth["raw_syscall_count"] = counts.get("raw_syscall", 0)
+            truth["glibc_callthrough_count"] = counts.get("glibc_call_through", 0)
+            truth["wraps_host_count"] = counts.get("wraps_host_libc", 0)
+            truth["stub_count"] = counts.get("stub", 0)
 
     # Compute native coverage
     impl = truth.get("implemented_count", 0)

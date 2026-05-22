@@ -174,11 +174,11 @@ fn gate_passes_current_docs_and_emits_report_and_log() {
     );
     assert_eq!(
         report["summary"]["semantic_parity_blocker_count"].as_u64(),
-        Some(19)
+        Some(17)
     );
     assert_eq!(
         report["summary"]["taxonomy_semantic_conflict_count"].as_u64(),
-        Some(19)
+        Some(17)
     );
     assert_eq!(report["summary"]["forbidden_claim_count"].as_u64(), Some(0));
 
