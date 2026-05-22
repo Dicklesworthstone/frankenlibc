@@ -511,19 +511,27 @@ fn assessment_matches_support_matrix() {
     }
 
     let matrix_total = symbols.len();
+    let implemented_count = *counts.get("Implemented").unwrap_or(&0);
+    let raw_syscall_count = *counts.get("RawSyscall").unwrap_or(&0);
+    let wraps_host_count = *counts.get("WrapsHostLibc").unwrap_or(&0);
+    let glibc_callthrough_count = *counts.get("GlibcCallThrough").unwrap_or(&0);
+    let host_backed_count = wraps_host_count + glibc_callthrough_count;
+    let native_count = implemented_count + raw_syscall_count;
     let claimed_total = assessment["total_symbols"].as_u64().unwrap() as usize;
     assert_eq!(
         claimed_total, matrix_total,
         "total_symbols mismatch: claimed={claimed_total} matrix={matrix_total}"
     );
 
-    for (status_key, json_key) in [
-        ("Implemented", "implemented"),
-        ("RawSyscall", "raw_syscall"),
-        ("GlibcCallThrough", "callthrough"),
-        ("Stub", "stub"),
+    for (json_key, actual) in [
+        ("implemented", implemented_count),
+        ("raw_syscall", raw_syscall_count),
+        ("native", native_count),
+        ("wraps_host_libc", wraps_host_count),
+        ("glibc_callthrough", glibc_callthrough_count),
+        ("callthrough", host_backed_count),
+        ("stub", *counts.get("Stub").unwrap_or(&0)),
     ] {
-        let actual = *counts.get(status_key).unwrap_or(&0);
         let claimed = assessment[json_key].as_u64().unwrap() as usize;
         assert_eq!(
             claimed, actual,
@@ -531,16 +539,47 @@ fn assessment_matches_support_matrix() {
         );
     }
 
-    // Check callthrough breakdown
+    // Check host-backed callthrough breakdowns.
     let ct_breakdown = assessment["callthrough_breakdown"].as_object().unwrap();
     for (module, claimed_val) in ct_breakdown {
+        let claimed = claimed_val.as_u64().unwrap() as usize;
+        let actual = module_counts
+            .get(&("WrapsHostLibc".to_string(), module.clone()))
+            .copied()
+            .unwrap_or(0)
+            + module_counts
+                .get(&("GlibcCallThrough".to_string(), module.clone()))
+                .copied()
+                .unwrap_or(0);
+        assert_eq!(
+            claimed, actual,
+            "callthrough_breakdown.{module}: claimed={claimed} matrix={actual}"
+        );
+    }
+
+    let wraps_breakdown = assessment["wraps_host_libc_breakdown"].as_object().unwrap();
+    for (module, claimed_val) in wraps_breakdown {
+        let claimed = claimed_val.as_u64().unwrap() as usize;
+        let actual = *module_counts
+            .get(&("WrapsHostLibc".to_string(), module.clone()))
+            .unwrap_or(&0);
+        assert_eq!(
+            claimed, actual,
+            "wraps_host_libc_breakdown.{module}: claimed={claimed} matrix={actual}"
+        );
+    }
+
+    let glibc_breakdown = assessment["glibc_callthrough_breakdown"]
+        .as_object()
+        .unwrap();
+    for (module, claimed_val) in glibc_breakdown {
         let claimed = claimed_val.as_u64().unwrap() as usize;
         let actual = *module_counts
             .get(&("GlibcCallThrough".to_string(), module.clone()))
             .unwrap_or(&0);
         assert_eq!(
             claimed, actual,
-            "callthrough_breakdown.{module}: claimed={claimed} matrix={actual}"
+            "glibc_callthrough_breakdown.{module}: claimed={claimed} matrix={actual}"
         );
     }
 
@@ -690,8 +729,22 @@ fn percentages_consistent() {
 
     let implemented = assessment["implemented"].as_u64().unwrap() as f64;
     let raw_syscall = assessment["raw_syscall"].as_u64().unwrap() as f64;
+    let native = assessment["native"].as_u64().unwrap() as f64;
+    let wraps_host_libc = assessment["wraps_host_libc"].as_u64().unwrap() as f64;
+    let glibc_callthrough = assessment["glibc_callthrough"].as_u64().unwrap() as f64;
     let callthrough = assessment["callthrough"].as_u64().unwrap() as f64;
     let stub = assessment["stub"].as_u64().unwrap() as f64;
+
+    assert_eq!(
+        native as u64,
+        (implemented + raw_syscall) as u64,
+        "native count must equal implemented + raw_syscall"
+    );
+    assert_eq!(
+        callthrough as u64,
+        (wraps_host_libc + glibc_callthrough) as u64,
+        "callthrough count must equal WrapsHostLibc + GlibcCallThrough"
+    );
 
     // Counts must sum to total
     let sum = implemented + raw_syscall + callthrough + stub;
@@ -719,6 +772,17 @@ fn percentages_consistent() {
         "raw_syscall",
         raw_syscall,
         assessment["raw_syscall_pct"].as_u64().unwrap(),
+    );
+    check_pct("native", native, assessment["native_pct"].as_u64().unwrap());
+    check_pct(
+        "wraps_host_libc",
+        wraps_host_libc,
+        assessment["wraps_host_libc_pct"].as_u64().unwrap(),
+    );
+    check_pct(
+        "glibc_callthrough",
+        glibc_callthrough,
+        assessment["glibc_callthrough_pct"].as_u64().unwrap(),
     );
     check_pct(
         "callthrough",

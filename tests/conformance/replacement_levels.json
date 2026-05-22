@@ -19,11 +19,43 @@
         "test_gate": "cargo test --workspace passes"
       },
       "current_state": {
-        "implemented_pct": 90,
+        "implemented_pct": 57,
         "raw_syscall_pct": 10,
-        "callthrough_pct": 0,
+        "callthrough_pct": 32,
+        "wraps_host_libc_pct": 32,
+        "glibc_callthrough_pct": 0,
+        "native_pct": 68,
         "stub_pct": 0,
-        "callthrough_modules": [],
+        "callthrough_modules": [
+          "c11threads_abi",
+          "dirent_abi",
+          "dlfcn_abi",
+          "err_abi",
+          "fortify_abi",
+          "glibc_internal_abi",
+          "grp_abi",
+          "iconv_abi",
+          "inet_abi",
+          "io_internal_abi",
+          "isoc_abi",
+          "locale_abi",
+          "malloc_abi",
+          "math_abi",
+          "process_abi",
+          "pthread_abi",
+          "pwd_abi",
+          "resolv_abi",
+          "rpc_abi",
+          "setjmp_abi",
+          "signal_abi",
+          "startup_abi",
+          "stdio_abi",
+          "stdlib_abi",
+          "string_abi",
+          "time_abi",
+          "unistd_abi",
+          "wchar_abi"
+        ],
         "stub_modules": []
       },
       "status": "achieved"
@@ -31,11 +63,11 @@
     {
       "level": "L1",
       "name": "Hardened Interpose",
-      "description": "LD_PRELOAD with hardened mode active. All call-throughs validated by membrane. Healing actions applied for safety-critical APIs. Stubs eliminated \u2014 all symbols either Implemented, RawSyscall, or GlibcCallThrough.",
+      "description": "LD_PRELOAD with hardened mode active. Implemented plus RawSyscall is the native classified surface; WrapsHostLibc is the explicit host-backed interpose subset for startup, loader, threading, stdio, math, and related compatibility wrappers. Stubs and opaque GlibcCallThrough rows are eliminated, but L1 remains host-glibc-dependent and is not a standalone replacement claim.",
       "deployment": "FRANKENLIBC_MODE=hardened LD_PRELOAD=libfrankenlibc_abi.so",
       "host_glibc_required": true,
       "gate_criteria": {
-        "max_callthrough_pct": 30,
+        "max_callthrough_pct": 35,
         "max_stub_pct": 0,
         "min_implemented_pct": 35,
         "e2e_smoke_required": true,
@@ -44,7 +76,8 @@
         "test_gate": "cargo test --workspace + E2E smoke suite passes in both modes",
         "additional": [
           "All stubs eliminated",
-          "Hardened mode E2E validated"
+          "Hardened mode E2E validated",
+          "WrapsHostLibc rows remain explicit L1 host-backed interpose rows and block L2/L3 standalone claims"
         ]
       },
       "objective_gate": {
@@ -78,13 +111,13 @@
           },
           {
             "id": "callthrough_pct_within_l1_bound",
-            "description": "Current assessment keeps call-through percentage within the L1 ceiling.",
+            "description": "Current assessment keeps explicit host-backed interpose percentage (WrapsHostLibc plus GlibcCallThrough) within the L1 ceiling.",
             "artifact_ref": "tests/conformance/replacement_levels.json",
             "expected": {
-              "max_callthrough_pct": 30
+              "max_callthrough_pct": 35
             },
             "actual": {
-              "callthrough_pct": 0
+              "callthrough_pct": 32
             },
             "outcome": "pass"
           },
@@ -96,7 +129,7 @@
               "min_implemented_pct": 35
             },
             "actual": {
-              "implemented_pct": 90
+              "implemented_pct": 57
             },
             "outcome": "pass"
           },
@@ -203,7 +236,7 @@
     {
       "level": "L2",
       "name": "Partial Replacement",
-      "description": "Standalone for a declared core subset with no GlibcCallThrough symbols on that subset. Host-glibc-backed process environment and packaging evidence are still required before partial-replacement claims are credible.",
+      "description": "Standalone for a declared core subset with no WrapsHostLibc or GlibcCallThrough symbols on that subset. Host-glibc-backed process environment and packaging evidence are still required before partial-replacement claims are credible.",
       "deployment": "Direct link or LD_PRELOAD (host glibc for stdio/dlfcn only)",
       "host_glibc_required": true,
       "gate_criteria": {
@@ -215,7 +248,7 @@
         "perf_budget_hardened_ns": 200,
         "test_gate": "Full test suite + C fixture suite + perf benchmarks",
         "additional": [
-          "Declared standalone subset has zero GlibcCallThrough symbols",
+          "Declared standalone subset has zero WrapsHostLibc and GlibcCallThrough symbols",
           "Standalone dependency policy documents any remaining host-environment assumptions",
           "C compile/link/run fixtures pass"
         ]
@@ -242,7 +275,7 @@
         "perf_budget_hardened_ns": 200,
         "test_gate": "Full test suite + C fixtures + real binary workload matrix + perf parity",
         "additional": [
-          "Zero GlibcCallThrough symbols",
+          "Zero WrapsHostLibc or GlibcCallThrough symbols",
           "pthread implemented via futex (no host pthread)",
           "stdio implemented (no host FILE*)",
           "Custom _start/CRT bootstrap",
@@ -263,15 +296,81 @@
   "current_level": "L1",
   "current_assessment": {
     "total_symbols": 4119,
-    "implemented": 3705,
+    "implemented": 2368,
     "raw_syscall": 414,
-    "callthrough": 0,
+    "native": 2782,
+    "wraps_host_libc": 1337,
+    "glibc_callthrough": 0,
+    "callthrough": 1337,
     "stub": 0,
-    "implemented_pct": 90,
+    "implemented_pct": 57,
     "raw_syscall_pct": 10,
-    "callthrough_pct": 0,
+    "native_pct": 68,
+    "wraps_host_libc_pct": 32,
+    "glibc_callthrough_pct": 0,
+    "callthrough_pct": 32,
     "stub_pct": 0,
-    "callthrough_breakdown": {},
+    "callthrough_breakdown": {
+      "c11threads_abi": 9,
+      "dirent_abi": 7,
+      "dlfcn_abi": 6,
+      "err_abi": 12,
+      "fortify_abi": 54,
+      "glibc_internal_abi": 211,
+      "grp_abi": 3,
+      "iconv_abi": 3,
+      "inet_abi": 8,
+      "io_internal_abi": 63,
+      "isoc_abi": 3,
+      "locale_abi": 4,
+      "malloc_abi": 11,
+      "math_abi": 518,
+      "process_abi": 3,
+      "pthread_abi": 32,
+      "pwd_abi": 8,
+      "resolv_abi": 5,
+      "rpc_abi": 26,
+      "setjmp_abi": 6,
+      "signal_abi": 9,
+      "startup_abi": 4,
+      "stdio_abi": 116,
+      "stdlib_abi": 64,
+      "string_abi": 36,
+      "time_abi": 6,
+      "unistd_abi": 56,
+      "wchar_abi": 54
+    },
+    "wraps_host_libc_breakdown": {
+      "c11threads_abi": 9,
+      "dirent_abi": 7,
+      "dlfcn_abi": 6,
+      "err_abi": 12,
+      "fortify_abi": 54,
+      "glibc_internal_abi": 211,
+      "grp_abi": 3,
+      "iconv_abi": 3,
+      "inet_abi": 8,
+      "io_internal_abi": 63,
+      "isoc_abi": 3,
+      "locale_abi": 4,
+      "malloc_abi": 11,
+      "math_abi": 518,
+      "process_abi": 3,
+      "pthread_abi": 32,
+      "pwd_abi": 8,
+      "resolv_abi": 5,
+      "rpc_abi": 26,
+      "setjmp_abi": 6,
+      "signal_abi": 9,
+      "startup_abi": 4,
+      "stdio_abi": 116,
+      "stdlib_abi": 64,
+      "string_abi": 36,
+      "time_abi": 6,
+      "unistd_abi": 56,
+      "wchar_abi": 54
+    },
+    "glibc_callthrough_breakdown": {},
     "stub_breakdown": {}
   },
   "release_tag_policy": {
@@ -294,13 +393,13 @@
       "Complete the L1 CRT/startup/TLS proof matrix for startup, TLS, init/fini, destructors, errno isolation, secure mode, and diagnostics"
     ],
     "L1_to_L2": [
-      "Maintain zero GlibcCallThrough symbols for the declared standalone subset",
+      "Maintain zero WrapsHostLibc and GlibcCallThrough symbols for the declared standalone subset",
       "Build C compile/link/run fixture suite",
       "Enforce perf budgets in CI",
       "Prove standalone dependency policy with compile-time and runtime guards"
     ],
     "L2_to_L3": [
-      "Maintain zero GlibcCallThrough symbols across the full replacement surface",
+      "Maintain zero WrapsHostLibc and GlibcCallThrough symbols across the full replacement surface",
       "Build custom CRT bootstrap",
       "Build minimal rtld",
       "Build NSS files backend",

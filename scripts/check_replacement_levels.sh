@@ -152,23 +152,45 @@ for sym in symbols:
     module_counts[key] = module_counts.get(key, 0) + 1
 
 matrix_total = len(symbols)
+implemented_count = counts.get('Implemented', 0)
+raw_syscall_count = counts.get('RawSyscall', 0)
+wraps_host_count = counts.get('WrapsHostLibc', 0)
+glibc_callthrough_count = counts.get('GlibcCallThrough', 0)
+host_backed_count = wraps_host_count + glibc_callthrough_count
+native_count = implemented_count + raw_syscall_count
 claimed_total = assessment.get('total_symbols', 0)
 if claimed_total != matrix_total:
     errors.append(f'total_symbols: claimed={claimed_total} matrix={matrix_total}')
 
-for status_key, json_key in [('Implemented', 'implemented'), ('RawSyscall', 'raw_syscall'),
-                               ('GlibcCallThrough', 'callthrough'), ('Stub', 'stub')]:
-    actual = counts.get(status_key, 0)
+for json_key, actual in [('implemented', implemented_count), ('raw_syscall', raw_syscall_count),
+                         ('native', native_count), ('wraps_host_libc', wraps_host_count),
+                         ('glibc_callthrough', glibc_callthrough_count),
+                         ('callthrough', host_backed_count), ('stub', counts.get('Stub', 0))]:
     claimed = assessment.get(json_key, 0)
     if claimed != actual:
         errors.append(f'{json_key}: claimed={claimed} matrix={actual}')
 
-# Check callthrough breakdown
+# Check host-backed callthrough breakdowns
 ct_breakdown = assessment.get('callthrough_breakdown', {})
 for module, claimed_count in ct_breakdown.items():
-    actual_count = module_counts.get(('GlibcCallThrough', module), 0)
+    actual_count = (
+        module_counts.get(('WrapsHostLibc', module), 0)
+        + module_counts.get(('GlibcCallThrough', module), 0)
+    )
     if claimed_count != actual_count:
         errors.append(f'callthrough_breakdown.{module}: claimed={claimed_count} matrix={actual_count}')
+
+wrap_breakdown = assessment.get('wraps_host_libc_breakdown', {})
+for module, claimed_count in wrap_breakdown.items():
+    actual_count = module_counts.get(('WrapsHostLibc', module), 0)
+    if claimed_count != actual_count:
+        errors.append(f'wraps_host_libc_breakdown.{module}: claimed={claimed_count} matrix={actual_count}')
+
+glibc_breakdown = assessment.get('glibc_callthrough_breakdown', {})
+for module, claimed_count in glibc_breakdown.items():
+    actual_count = module_counts.get(('GlibcCallThrough', module), 0)
+    if claimed_count != actual_count:
+        errors.append(f'glibc_callthrough_breakdown.{module}: claimed={claimed_count} matrix={actual_count}')
 
 # Check stub breakdown
 stub_breakdown = assessment.get('stub_breakdown', {})
@@ -183,10 +205,12 @@ for e in errors:
 
 # Distribution report
 print()
-for status in ['Implemented', 'RawSyscall', 'GlibcCallThrough', 'Stub']:
+for status in ['Implemented', 'RawSyscall', 'WrapsHostLibc', 'GlibcCallThrough', 'Stub']:
     c = counts.get(status, 0)
     pct = round(c * 100 / matrix_total) if matrix_total > 0 else 0
     print(f'{status}: {c} ({pct}%)')
+print(f'Native: {native_count} ({round(native_count * 100 / matrix_total) if matrix_total > 0 else 0}%)')
+print(f'HostBacked: {host_backed_count} ({round(host_backed_count * 100 / matrix_total) if matrix_total > 0 else 0}%)')
 ")
 
 assessment_errs=$(echo "${assessment_check}" | grep '^ASSESSMENT_ERRORS=' | cut -d= -f2)
@@ -198,7 +222,7 @@ if [[ "${assessment_errs}" -gt 0 ]]; then
 else
     echo "PASS: Current assessment matches support_matrix.json"
 fi
-echo "${assessment_check}" | grep -E '^(Implemented|RawSyscall|GlibcCallThrough|Stub):' || true
+echo "${assessment_check}" | grep -E '^(Implemented|RawSyscall|WrapsHostLibc|GlibcCallThrough|Stub|Native|HostBacked):' || true
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -1030,26 +1054,49 @@ try:
         module_counts[(status, module)] += 1
 
     matrix_total = len(symbols)
+    implemented_count = counts.get("Implemented", 0)
+    raw_syscall_count = counts.get("RawSyscall", 0)
+    wraps_host_count = counts.get("WrapsHostLibc", 0)
+    glibc_callthrough_count = counts.get("GlibcCallThrough", 0)
+    host_backed_count = wraps_host_count + glibc_callthrough_count
+    native_count = implemented_count + raw_syscall_count
     claimed_total = assessment.get("total_symbols", 0)
     if claimed_total != matrix_total:
         assessment_failures.append(
             f"total_symbols: claimed={claimed_total} matrix={matrix_total}"
         )
-    for status_key, json_key in [
-        ("Implemented", "implemented"),
-        ("RawSyscall", "raw_syscall"),
-        ("GlibcCallThrough", "callthrough"),
-        ("Stub", "stub"),
+    for json_key, actual in [
+        ("implemented", implemented_count),
+        ("raw_syscall", raw_syscall_count),
+        ("native", native_count),
+        ("wraps_host_libc", wraps_host_count),
+        ("glibc_callthrough", glibc_callthrough_count),
+        ("callthrough", host_backed_count),
+        ("stub", counts.get("Stub", 0)),
     ]:
-        actual = counts.get(status_key, 0)
         claimed = assessment.get(json_key, 0)
         if claimed != actual:
             assessment_failures.append(f"{json_key}: claimed={claimed} matrix={actual}")
     for module, claimed_count in assessment.get("callthrough_breakdown", {}).items():
-        actual = module_counts.get(("GlibcCallThrough", module), 0)
+        actual = (
+            module_counts.get(("WrapsHostLibc", module), 0)
+            + module_counts.get(("GlibcCallThrough", module), 0)
+        )
         if claimed_count != actual:
             assessment_failures.append(
                 f"callthrough_breakdown.{module}: claimed={claimed_count} matrix={actual}"
+            )
+    for module, claimed_count in assessment.get("wraps_host_libc_breakdown", {}).items():
+        actual = module_counts.get(("WrapsHostLibc", module), 0)
+        if claimed_count != actual:
+            assessment_failures.append(
+                f"wraps_host_libc_breakdown.{module}: claimed={claimed_count} matrix={actual}"
+            )
+    for module, claimed_count in assessment.get("glibc_callthrough_breakdown", {}).items():
+        actual = module_counts.get(("GlibcCallThrough", module), 0)
+        if claimed_count != actual:
+            assessment_failures.append(
+                f"glibc_callthrough_breakdown.{module}: claimed={claimed_count} matrix={actual}"
             )
     for module, claimed_count in assessment.get("stub_breakdown", {}).items():
         actual = module_counts.get(("Stub", module), 0)
