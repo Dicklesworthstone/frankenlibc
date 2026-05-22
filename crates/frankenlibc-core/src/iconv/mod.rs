@@ -105,6 +105,7 @@ enum Encoding {
     Geostd8,
     Pt154,
     Mulelao,
+    HpRoman8,
     Cp850,
     MacRoman,
     Iso88592,
@@ -138,7 +139,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 57] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 58] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -360,6 +361,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 57] = [
         canonical: "MULELAO-1",
         normalized: "MULELAO1",
         aliases: &["MULELAO"],
+    },
+    CodecSpec {
+        encoding: Encoding::HpRoman8,
+        canonical: "HP-ROMAN8",
+        normalized: "HPROMAN8",
+        aliases: &["ROMAN8", "R8", "CSHPROMAN8"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -2387,6 +2394,57 @@ fn encode_mulelao(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// HP-ROMAN8 to Unicode mapping for bytes 0xA0-0xFF.
+/// HP proprietary character set used on HP-UX and HP terminals.
+const HPROMAN8_TO_UNICODE: [u16; 96] = [
+    0x00A0, 0x00C0, 0x00C2, 0x00C8, 0x00CA, 0x00CB, 0x00CE, 0x00CF, // A0-A7
+    0x00B4, 0x02CB, 0x02C6, 0x00A8, 0x02DC, 0x00D9, 0x00DB, 0x20A4, // A8-AF
+    0x00AF, 0x00DD, 0x00FD, 0x00B0, 0x00C7, 0x00E7, 0x00D1, 0x00F1, // B0-B7
+    0x00A1, 0x00BF, 0x00A4, 0x00A3, 0x00A5, 0x00A7, 0x0192, 0x00A2, // B8-BF
+    0x00E2, 0x00EA, 0x00F4, 0x00FB, 0x00E1, 0x00E9, 0x00F3, 0x00FA, // C0-C7
+    0x00E0, 0x00E8, 0x00F2, 0x00F9, 0x00E4, 0x00EB, 0x00F6, 0x00FC, // C8-CF
+    0x00C5, 0x00EE, 0x00D8, 0x00C6, 0x00E5, 0x00ED, 0x00F8, 0x00E6, // D0-D7
+    0x00C4, 0x00EC, 0x00D6, 0x00DC, 0x00C9, 0x00EF, 0x00DF, 0x00D4, // D8-DF
+    0x00C1, 0x00C3, 0x00E3, 0x00D0, 0x00F0, 0x00CD, 0x00CC, 0x00D3, // E0-E7
+    0x00D2, 0x00D5, 0x00F5, 0x0160, 0x0161, 0x00DA, 0x0178, 0x00FF, // E8-EF
+    0x00DE, 0x00FE, 0x00B7, 0x00B5, 0x00B6, 0x00BE, 0x2014, 0x00BC, // F0-F7
+    0x00BD, 0x00AA, 0x00BA, 0x00AB, 0x25A0, 0x00BB, 0x00B1, 0xFFFF, // F8-FF (0xFF undefined)
+];
+
+fn decode_hproman8(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0xA0 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = HPROMAN8_TO_UNICODE[(b - 0xA0) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_hproman8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0xA0 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in HPROMAN8_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0xA0;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// CP850 (DOS Western European/Multilingual Latin 1) to Unicode mapping for bytes 0x80-0xFF.
 const CP850_TO_UNICODE: [u16; 128] = [
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, // 80-87
@@ -3400,6 +3458,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Geostd8 => decode_geostd8(input),
         Encoding::Pt154 => decode_pt154(input),
         Encoding::Mulelao => decode_mulelao(input),
+        Encoding::HpRoman8 => decode_hproman8(input),
         Encoding::Cp850 => decode_cp850(input),
         Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
@@ -3530,6 +3589,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Geostd8 => encode_geostd8(ch, out),
         Encoding::Pt154 => encode_pt154(ch, out),
         Encoding::Mulelao => encode_mulelao(ch, out),
+        Encoding::HpRoman8 => encode_hproman8(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
         Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
@@ -4736,6 +4796,30 @@ mod tests {
     #[test]
     fn mulelao_accepts_mulelao_alias() {
         let cd = iconv_open(b"UTF-8", b"MULELAO");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn hproman8_to_utf8_round_trip() {
+        // HP-ROMAN8: À (0xA1), Â (0xA2)
+        let hproman8_input: &[u8] = &[0xA1, 0xA2];
+        let expected_utf8 = "\u{00C0}\u{00C2}";
+
+        let mut cd = iconv_open(b"UTF-8", b"HP-ROMAN8").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(hproman8_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"HP-ROMAN8", b"UTF-8").unwrap();
+        let mut hproman8_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut hproman8_out).unwrap();
+        assert_eq!(&hproman8_out[..result2.out_written], hproman8_input);
+    }
+
+    #[test]
+    fn hproman8_accepts_roman8_alias() {
+        let cd = iconv_open(b"UTF-8", b"ROMAN8");
         assert!(cd.is_some());
     }
 
