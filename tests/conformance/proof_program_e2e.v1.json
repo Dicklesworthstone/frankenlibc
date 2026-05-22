@@ -1,0 +1,47 @@
+{
+  "schema": "proof_program_e2e.v1",
+  "bead": "bd-e4phe.5",
+  "mode": "reframe_as_tested_invariant_catalogs",
+  "inputs": {
+    "decision": "tests/conformance/proof_program_owner_decision.v1.json",
+    "binder": "tests/conformance/proof_obligations_binder.v1.json",
+    "readme": "README.md",
+    "feature_parity": "FEATURE_PARITY.md"
+  },
+  "required_decision": {
+    "choice": "reframe_as_tested_invariant_catalogs",
+    "machine_checked_formal_proof_status": "none_committed",
+    "mechanization_status": "deferred_by_owner_decision",
+    "mechanization_bead": "bd-e4phe.2"
+  },
+  "required_binder": {
+    "decision_artifact": "tests/conformance/proof_program_owner_decision.v1.json",
+    "minimum_obligations": 24,
+    "required_deferred_target_bead": "bd-e4phe.2",
+    "allowed_statuses": [
+      "deferred",
+      "discharged"
+    ],
+    "expected_reframe_status": "deferred"
+  },
+  "required_source_phrases": [
+    "no machine-checked formal proof artifacts are committed yet",
+    "not completed machine-checked proof artifacts",
+    "no machine-checked proof artifacts yet"
+  ],
+  "required_events": [
+    "proof_program_decision_validated",
+    "proof_program_binder_validated",
+    "proof_program_doc_language_validated"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "event",
+    "status",
+    "bead_id",
+    "mode",
+    "claim_decision",
+    "artifact_refs",
+    "failure_signature"
+  ]
+}
