@@ -107,6 +107,7 @@ enum Encoding {
     Mulelao,
     HpRoman8,
     Nextstep,
+    Atarist,
     Cp850,
     MacRoman,
     Iso88592,
@@ -140,7 +141,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 59] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 60] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -374,6 +375,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 59] = [
         canonical: "NEXTSTEP",
         normalized: "NEXTSTEP",
         aliases: &["NEXT"],
+    },
+    CodecSpec {
+        encoding: Encoding::Atarist,
+        canonical: "ATARI-ST",
+        normalized: "ATARIST",
+        aliases: &["ATARIST"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -2507,6 +2514,58 @@ fn encode_nextstep(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ATARI-ST to Unicode mapping for bytes 0x80-0xFF.
+/// Character set used by Atari ST computers.
+const ATARIST_TO_UNICODE: [u16; 128] = [
+    0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, // 80-87
+    0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x00EC, 0x00C4, 0x00C5, // 88-8F
+    0x00C9, 0x00E6, 0x00C6, 0x00F4, 0x00F6, 0x00F2, 0x00FB, 0x00F9, // 90-97
+    0x00FF, 0x00D6, 0x00DC, 0x00A2, 0x00A3, 0x00A5, 0x00DF, 0x0192, // 98-9F
+    0x00E1, 0x00ED, 0x00F3, 0x00FA, 0x00F1, 0x00D1, 0x00AA, 0x00BA, // A0-A7
+    0x00BF, 0x2310, 0x00AC, 0x00BD, 0x00BC, 0x00A1, 0x00AB, 0x00BB, // A8-AF
+    0x00E3, 0x00F5, 0x00D8, 0x00F8, 0x0153, 0x0152, 0x00C0, 0x00C3, // B0-B7
+    0x00D5, 0x00A8, 0x00B4, 0x2020, 0x00B6, 0x00A9, 0x00AE, 0x2122, // B8-BF
+    0x0133, 0x0132, 0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, // C0-C7 (ij,IJ,Hebrew)
+    0x05D6, 0x05D7, 0x05D8, 0x05D9, 0x05DB, 0x05DC, 0x05DE, 0x05E0, // C8-CF
+    0x05E1, 0x05E2, 0x05E4, 0x05E6, 0x05E7, 0x05E8, 0x05E9, 0x05EA, // D0-D7
+    0x05DF, 0x05DA, 0x05DD, 0x05E3, 0x05E5, 0x00A7, 0x2227, 0x221E, // D8-DF
+    0x03B1, 0x03B2, 0x0393, 0x03C0, 0x03A3, 0x03C3, 0x00B5, 0x03C4, // E0-E7
+    0x03A6, 0x0398, 0x03A9, 0x03B4, 0x222E, 0x03C6, 0x2208, 0x2229, // E8-EF
+    0x2261, 0x00B1, 0x2265, 0x2264, 0x2320, 0x2321, 0x00F7, 0x2248, // F0-F7
+    0x00B0, 0x2022, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x00B3, 0x00AF, // F8-FF
+];
+
+fn decode_atarist(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = ATARIST_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_atarist(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in ATARIST_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// CP850 (DOS Western European/Multilingual Latin 1) to Unicode mapping for bytes 0x80-0xFF.
 const CP850_TO_UNICODE: [u16; 128] = [
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, // 80-87
@@ -3522,6 +3581,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Mulelao => decode_mulelao(input),
         Encoding::HpRoman8 => decode_hproman8(input),
         Encoding::Nextstep => decode_nextstep(input),
+        Encoding::Atarist => decode_atarist(input),
         Encoding::Cp850 => decode_cp850(input),
         Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
@@ -3654,6 +3714,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Mulelao => encode_mulelao(ch, out),
         Encoding::HpRoman8 => encode_hproman8(ch, out),
         Encoding::Nextstep => encode_nextstep(ch, out),
+        Encoding::Atarist => encode_atarist(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
         Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
@@ -4908,6 +4969,30 @@ mod tests {
     #[test]
     fn nextstep_accepts_next_alias() {
         let cd = iconv_open(b"UTF-8", b"NEXT");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn atarist_to_utf8_round_trip() {
+        // ATARI-ST: Ç (0x80), ü (0x81)
+        let atarist_input: &[u8] = &[0x80, 0x81];
+        let expected_utf8 = "\u{00C7}\u{00FC}";
+
+        let mut cd = iconv_open(b"UTF-8", b"ATARI-ST").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(atarist_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"ATARI-ST", b"UTF-8").unwrap();
+        let mut atarist_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut atarist_out).unwrap();
+        assert_eq!(&atarist_out[..result2.out_written], atarist_input);
+    }
+
+    #[test]
+    fn atarist_accepts_atarist_alias() {
+        let cd = iconv_open(b"UTF-8", b"ATARIST");
         assert!(cd.is_some());
     }
 
