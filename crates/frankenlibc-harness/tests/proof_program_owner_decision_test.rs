@@ -146,6 +146,72 @@ fn claim_policy_blocks_theorem_level_overclaiming() -> TestResult {
 }
 
 #[test]
+fn mechanization_bead_is_deferred_until_real_proof_artifacts_exist() -> TestResult {
+    let manifest = load_json(&decision_path())?;
+    let decision = field(&manifest, "decision")?;
+    let deferral = field(&manifest, "mechanization_deferral")?;
+
+    assert_eq!(string_field(deferral, "bead")?, "bd-e4phe.2");
+    assert_eq!(
+        string_field(deferral, "status")?,
+        "deferred_by_owner_decision"
+    );
+    assert_eq!(
+        string_field(decision, "choice")?,
+        "reframe_as_tested_invariant_catalogs"
+    );
+    assert_eq!(
+        string_field(decision, "machine_checked_formal_proof_status")?,
+        "none_committed"
+    );
+    assert!(
+        string_field(deferral, "ci_policy")?.contains("honestly scoped language"),
+        "CI policy should follow the reframe path instead of requiring fake proof artifacts"
+    );
+    assert!(
+        string_field(deferral, "future_activation_rule")?.contains("machine-checked"),
+        "future activation should require real machine-checked artifacts"
+    );
+
+    let required_theorems: BTreeSet<&str> = array_field(deferral, "required_future_artifacts")?
+        .iter()
+        .map(|value| string_field(value, "theorem"))
+        .collect::<Result<_, _>>()?;
+    assert_eq!(
+        required_theorems,
+        BTreeSet::from([
+            "Galois connection soundness",
+            "lattice monotonicity",
+            "SOS barrier nonnegativity",
+            "healing completeness"
+        ])
+    );
+
+    for artifact in array_field(deferral, "required_future_artifacts")? {
+        assert_eq!(string_field(artifact, "current_status")?, "deferred");
+        assert!(
+            string_field(artifact, "artifact_kind")?.contains("machine-checked proof"),
+            "future artifact kind should stay explicit"
+        );
+    }
+
+    let dependent = array_field(&manifest, "dependent_beads")?
+        .iter()
+        .find(|value| string_field(value, "id").ok() == Some("bd-e4phe.2"))
+        .ok_or_else(|| test_error("bd-e4phe.2 dependent bead should be listed"))?;
+    assert_eq!(
+        string_field(dependent, "current_status")?,
+        "deferred_by_owner_decision"
+    );
+    assert!(
+        string_field(dependent, "unblock_rule")?.contains("honestly-scoped-language"),
+        "bd-e4phe.2 unblock rule should point E2E at the reframe path"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn cited_readme_and_feature_parity_lines_match_decision() -> TestResult {
     let root = workspace_root();
     let manifest = load_json(&decision_path())?;

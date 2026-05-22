@@ -23,6 +23,35 @@
       "not completed machine-checked proof artifacts"
     ]
   },
+  "mechanization_deferral": {
+    "bead": "bd-e4phe.2",
+    "status": "deferred_by_owner_decision",
+    "reason": "RC-WS7.1 selected the conservative reframe path because no Lean, Coq, Kani, or equivalent machine-checked theorem artifacts are committed.",
+    "ci_policy": "Do not require or claim machine-verified theorem artifacts while decision.choice is reframe_as_tested_invariant_catalogs. The proof-program E2E must instead assert honestly scoped language and deferred proof-obligation rows.",
+    "future_activation_rule": "A future owner may reactivate bd-e4phe.2 only by committing the required machine-checked theorem artifacts and changing decision.machine_checked_formal_proof_status away from none_committed.",
+    "required_future_artifacts": [
+      {
+        "theorem": "Galois connection soundness",
+        "artifact_kind": "Lean/Coq/Kani/SMT machine-checked proof",
+        "current_status": "deferred"
+      },
+      {
+        "theorem": "lattice monotonicity",
+        "artifact_kind": "Lean/Coq/Kani/SMT machine-checked proof",
+        "current_status": "deferred"
+      },
+      {
+        "theorem": "SOS barrier nonnegativity",
+        "artifact_kind": "Lean/Coq/Kani/SMT machine-checked proof",
+        "current_status": "deferred"
+      },
+      {
+        "theorem": "healing completeness",
+        "artifact_kind": "Lean/Coq/Kani/SMT machine-checked proof",
+        "current_status": "deferred"
+      }
+    ]
+  },
   "source_refs": [
     {
       "path": "FEATURE_PARITY.md",
@@ -48,7 +77,9 @@
   "dependent_beads": [
     {
       "id": "bd-e4phe.2",
-      "decision_effect": "optional future mechanization track; not a current public proof claim"
+      "decision_effect": "deferred future mechanization track; not a current public proof claim",
+      "current_status": "deferred_by_owner_decision",
+      "unblock_rule": "RC-WS7.E2E follows the honestly-scoped-language path until machine-checked theorem artifacts are committed."
     },
     {
       "id": "bd-e4phe.3",
