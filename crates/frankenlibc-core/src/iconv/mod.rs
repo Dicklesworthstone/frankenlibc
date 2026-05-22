@@ -117,6 +117,7 @@ enum Encoding {
     MacCentralEurope,
     MacUkraine,
     Cp858,
+    MacRomanian,
     Cp850,
     MacRoman,
     Iso88592,
@@ -150,7 +151,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 69] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 70] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -444,6 +445,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 69] = [
         canonical: "CP858",
         normalized: "CP858",
         aliases: &["IBM858", "858", "PCMULTILINGUAL850EURO"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacRomanian,
+        canonical: "MACROMANIA",
+        normalized: "MACROMANIA",
+        aliases: &["XMACROMANIAN"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -3986,6 +3993,66 @@ fn encode_cp858(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// Mac Romanian to Unicode mapping for bytes 0x80-0xFF.
+/// Similar to Mac Roman but with Romanian-specific Ș, ș, Ț, ț characters.
+const MACROMANIAN_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F
+    0x00C4, 0x00C5, 0x00C7, 0x00C9, 0x00D1, 0x00D6, 0x00DC, 0x00E1, // 80-87 (Ä,Å,Ç,É,Ñ,Ö,Ü,á)
+    0x00E0, 0x00E2, 0x00E4, 0x00E3, 0x00E5, 0x00E7, 0x00E9, 0x00E8, // 88-8F (à,â,ä,ã,å,ç,é,è)
+    // 0x90-0x9F
+    0x00EA, 0x00EB, 0x00ED, 0x00EC, 0x00EE, 0x00EF, 0x00F1, 0x00F3, // 90-97 (ê,ë,í,ì,î,ï,ñ,ó)
+    0x00F2, 0x00F4, 0x00F6, 0x00F5, 0x00FA, 0x00F9, 0x00FB, 0x00FC, // 98-9F (ò,ô,ö,õ,ú,ù,û,ü)
+    // 0xA0-0xAF
+    0x2020, 0x00B0, 0x00A2, 0x00A3, 0x00A7, 0x2022, 0x00B6, 0x00DF, // A0-A7 (†,°,¢,£,§,•,¶,ß)
+    0x00AE, 0x00A9, 0x2122, 0x00B4, 0x00A8, 0x2260, 0x0102, 0x0218, // A8-AF (®,©,™,´,¨,≠,Ă,Ș)
+    // 0xB0-0xBF
+    0x221E, 0x00B1, 0x2264, 0x2265, 0x00A5, 0x00B5, 0x2202, 0x2211, // B0-B7 (∞,±,≤,≥,¥,µ,∂,∑)
+    0x220F, 0x03C0, 0x222B, 0x00AA, 0x00BA, 0x03A9, 0x0103, 0x0219, // B8-BF (∏,π,∫,ª,º,Ω,ă,ș)
+    // 0xC0-0xCF
+    0x00BF, 0x00A1, 0x00AC, 0x221A, 0x0192, 0x2248, 0x2206, 0x00AB, // C0-C7 (¿,¡,¬,√,ƒ,≈,∆,«)
+    0x00BB, 0x2026, 0x00A0, 0x00C0, 0x00C3, 0x00D5, 0x0152, 0x0153, // C8-CF (»,…,NBSP,À,Ã,Õ,Œ,œ)
+    // 0xD0-0xDF
+    0x2013, 0x2014, 0x201C, 0x201D, 0x2018, 0x2019, 0x00F7, 0x25CA, // D0-D7 (–,—,",",',',÷,◊)
+    0x00FF, 0x0178, 0x2044, 0x00A4, 0x021A, 0x021B, 0x2039, 0x203A, // D8-DF (ÿ,Ÿ,⁄,¤,Ț,ț,‹,›)
+    // 0xE0-0xEF
+    0x2021, 0x00B7, 0x201A, 0x201E, 0x2030, 0x00C2, 0x00CA, 0x00C1, // E0-E7 (‡,·,‚,„,‰,Â,Ê,Á)
+    0x00CB, 0x00C8, 0x00CD, 0x00CE, 0x00CF, 0x00CC, 0x00D3, 0x00D4, // E8-EF (Ë,È,Í,Î,Ï,Ì,Ó,Ô)
+    // 0xF0-0xFF
+    0xF8FF, 0x00D2, 0x00DA, 0x00DB, 0x00D9, 0x0131, 0x02C6, 0x02DC, // F0-F7 (Apple,Ò,Ú,Û,Ù,ı,ˆ,˜)
+    0x00AF, 0x02D8, 0x02D9, 0x02DA, 0x00B8, 0x02DD, 0x02DB, 0x02C7, // F8-FF (¯,˘,˙,˚,¸,˝,˛,ˇ)
+];
+
+fn decode_macromanian(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACROMANIAN_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_macromanian(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACROMANIAN_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4203,6 +4270,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacCentralEurope => decode_maccentraleurope(input),
         Encoding::MacUkraine => decode_macukraine(input),
         Encoding::Cp858 => decode_cp858(input),
+        Encoding::MacRomanian => decode_macromanian(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4345,6 +4413,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacCentralEurope => encode_maccentraleurope(ch, out),
         Encoding::MacUkraine => encode_macukraine(ch, out),
         Encoding::Cp858 => encode_cp858(ch, out),
+        Encoding::MacRomanian => encode_macromanian(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -6350,6 +6419,30 @@ mod tests {
     #[test]
     fn cp858_accepts_ibm858_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM858");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macromanian_to_utf8_round_trip() {
+        // Mac Romanian: Ș (0xAF), ș (0xBF), Ț (0xDC), ț (0xDD)
+        let mac_input: &[u8] = &[0xAF, 0xBF, 0xDC, 0xDD];
+        let expected_utf8 = "\u{0218}\u{0219}\u{021A}\u{021B}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACROMANIA").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACROMANIA", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macromanian_accepts_xmacromanian_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-ROMANIAN");
         assert!(cd.is_some());
     }
 
