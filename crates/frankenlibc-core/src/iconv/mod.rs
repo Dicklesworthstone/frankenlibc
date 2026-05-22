@@ -74,6 +74,7 @@ enum Encoding {
     Utf32,
     Koi8R,
     Cp437,
+    Cp1252,
     Iso88592,
     Iso88595,
     Iso88597,
@@ -93,7 +94,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 12] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 13] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -135,6 +136,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 12] = [
         canonical: "CP437",
         normalized: "CP437",
         aliases: &["IBM437", "437", "CSPC8CODEPAGE437"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp1252,
+        canonical: "CP1252",
+        normalized: "CP1252",
+        aliases: &["WINDOWS1252", "MS-ANSI", "1252"],
     },
     CodecSpec {
         encoding: Encoding::Iso88592,
@@ -196,8 +203,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 12] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "CP437", "ISO-8859-2", "ISO-8859-5", "ISO-8859-7", "ISO-8859-9", "ISO-8859-15"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 13] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-5", "ISO-8859-7", "ISO-8859-9", "ISO-8859-15"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -697,6 +704,50 @@ fn encode_iso88597(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// Windows-1252 (CP1252) to Unicode lookup table for bytes 0x80-0x9F.
+/// These 32 positions differ from ISO-8859-1 (C1 control codes in 8859-1,
+/// printable characters in CP1252). 0xFFFF marks undefined positions.
+const CP1252_TO_UNICODE: [u16; 32] = [
+    0x20AC, 0xFFFF, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFF, 0x017D, 0xFFFF, // 88-8F
+    0xFFFF, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0xFFFF, 0x017E, 0x0178, // 98-9F
+];
+
+fn decode_cp1252(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b >= 0x80 && b <= 0x9F {
+        let cp = CP1252_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    } else {
+        Ok((char::from(b), 1))
+    }
+}
+
+fn encode_cp1252(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 || (cp >= 0xA0 && cp <= 0xFF) {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP1252_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// ISO-8859-9 (Latin-5/Turkish) differs from ISO-8859-1 at 6 positions.
 /// This table lists (byte, unicode) pairs for the differing positions.
 const ISO88599_DIFFS: [(u8, u16); 6] = [
@@ -815,6 +866,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Koi8R => decode_koi8r(input),
         Encoding::Cp437 => decode_cp437(input),
+        Encoding::Cp1252 => decode_cp1252(input),
         Encoding::Iso88592 => decode_iso88592(input),
         Encoding::Iso88595 => decode_iso88595(input),
         Encoding::Iso88597 => decode_iso88597(input),
@@ -880,6 +932,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         }
         Encoding::Koi8R => encode_koi8r(ch, out),
         Encoding::Cp437 => encode_cp437(ch, out),
+        Encoding::Cp1252 => encode_cp1252(ch, out),
         Encoding::Iso88592 => encode_iso88592(ch, out),
         Encoding::Iso88595 => encode_iso88595(ch, out),
         Encoding::Iso88597 => encode_iso88597(ch, out),
@@ -1377,6 +1430,35 @@ mod tests {
     #[test]
     fn cp437_accepts_ibm437_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM437");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp1252_to_utf8_round_trip() {
+        // CP1252 bytes: curly quotes ""
+        // " = 0x93, " = 0x94
+        let cp1252_input: &[u8] = &[0x93, 0x94];
+        let expected_utf8 = "\u{201C}\u{201D}";
+
+        // CP1252 → UTF-8
+        let mut cd = iconv_open(b"UTF-8", b"CP1252").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(cp1252_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 2);
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        // UTF-8 → CP1252 (reverse)
+        let mut cd2 = iconv_open(b"CP1252", b"UTF-8").unwrap();
+        let mut cp1252_out = [0u8; 32];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp1252_out).unwrap();
+        assert_eq!(result2.in_consumed, expected_utf8.len());
+        assert_eq!(&cp1252_out[..result2.out_written], cp1252_input);
+    }
+
+    #[test]
+    fn cp1252_accepts_windows1252_alias() {
+        let cd = iconv_open(b"UTF-8", b"WINDOWS1252");
         assert!(cd.is_some());
     }
 
