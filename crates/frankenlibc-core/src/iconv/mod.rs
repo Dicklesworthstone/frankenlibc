@@ -77,6 +77,7 @@ enum Encoding {
     Iso88592,
     Iso88595,
     Iso88597,
+    Iso88599,
     Iso885915,
 }
 
@@ -92,7 +93,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 11] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 12] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -154,6 +155,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 11] = [
         aliases: &["ISO88597", "GREEK", "GREEK8", "CSISOLATINGREEK", "ELOT928", "ECMA118"],
     },
     CodecSpec {
+        encoding: Encoding::Iso88599,
+        canonical: "ISO-8859-9",
+        normalized: "ISO88599",
+        aliases: &["ISO88599", "LATIN5", "CSISOLATIN5", "TURKISH"],
+    },
+    CodecSpec {
         encoding: Encoding::Iso885915,
         canonical: "ISO-8859-15",
         normalized: "ISO885915",
@@ -189,8 +196,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 11] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "CP437", "ISO-8859-2", "ISO-8859-5", "ISO-8859-7", "ISO-8859-15"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 12] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "CP437", "ISO-8859-2", "ISO-8859-5", "ISO-8859-7", "ISO-8859-9", "ISO-8859-15"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -690,6 +697,48 @@ fn encode_iso88597(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ISO-8859-9 (Latin-5/Turkish) differs from ISO-8859-1 at 6 positions.
+/// This table lists (byte, unicode) pairs for the differing positions.
+const ISO88599_DIFFS: [(u8, u16); 6] = [
+    (0xD0, 0x011E), // Ğ (G with breve)
+    (0xDD, 0x0130), // İ (I with dot above)
+    (0xDE, 0x015E), // Ş (S with cedilla)
+    (0xF0, 0x011F), // ğ (g with breve)
+    (0xFD, 0x0131), // ı (dotless i)
+    (0xFE, 0x015F), // ş (s with cedilla)
+];
+
+fn decode_iso88599(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    for &(byte, unicode) in &ISO88599_DIFFS {
+        if b == byte {
+            return Ok((char::from_u32(u32::from(unicode)).unwrap_or('\u{FFFD}'), 1));
+        }
+    }
+    Ok((char::from(b), 1))
+}
+
+fn encode_iso88599(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    for &(byte, unicode) in &ISO88599_DIFFS {
+        if u32::from(unicode) == cp {
+            out[0] = byte;
+            return Ok(1);
+        }
+    }
+    if cp <= 0xFF {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// ISO-8859-15 (Latin-9) differs from ISO-8859-1 at 8 positions.
 /// This table lists (byte, unicode) pairs for the differing positions.
 const ISO885915_DIFFS: [(u8, u16); 8] = [
@@ -769,6 +818,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso88592 => decode_iso88592(input),
         Encoding::Iso88595 => decode_iso88595(input),
         Encoding::Iso88597 => decode_iso88597(input),
+        Encoding::Iso88599 => decode_iso88599(input),
         Encoding::Iso885915 => decode_iso885915(input),
     }
 }
@@ -833,6 +883,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso88592 => encode_iso88592(ch, out),
         Encoding::Iso88595 => encode_iso88595(ch, out),
         Encoding::Iso88597 => encode_iso88597(ch, out),
+        Encoding::Iso88599 => encode_iso88599(ch, out),
         Encoding::Iso885915 => encode_iso885915(ch, out),
     }
 }
@@ -1384,6 +1435,36 @@ mod tests {
     #[test]
     fn iso88597_accepts_greek_alias() {
         let cd = iconv_open(b"UTF-8", b"GREEK");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88599_to_utf8_round_trip() {
+        // ISO-8859-9 bytes for "Türkçe" (Turkish)
+        // T=0x54, ü=0xFC, r=0x72, k=0x6B, ç=0xE7, e=0x65
+        // Note: ç (0xE7) is same as Latin-1, ü (0xFC) is same as Latin-1
+        let iso_input: &[u8] = &[0x54, 0xFC, 0x72, 0x6B, 0xE7, 0x65];
+        let expected_utf8 = "Türkçe";
+
+        // ISO-8859-9 → UTF-8
+        let mut cd = iconv_open(b"UTF-8", b"ISO-8859-9").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(iso_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 6);
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        // UTF-8 → ISO-8859-9 (reverse)
+        let mut cd2 = iconv_open(b"ISO-8859-9", b"UTF-8").unwrap();
+        let mut iso_out = [0u8; 32];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut iso_out).unwrap();
+        assert_eq!(result2.in_consumed, expected_utf8.len());
+        assert_eq!(&iso_out[..result2.out_written], iso_input);
+    }
+
+    #[test]
+    fn iso88599_accepts_turkish_alias() {
+        let cd = iconv_open(b"UTF-8", b"TURKISH");
         assert!(cd.is_some());
     }
 
