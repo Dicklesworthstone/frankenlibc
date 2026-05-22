@@ -1,0 +1,183 @@
+{
+  "schema_version": "ws9_e2e_anti_recurrence_completion_contract.v1",
+  "bead_id": "bd-iu3fb.5",
+  "parent_bead": "bd-iu3fb",
+  "title": "[RC-WS9.E2E] End-to-end anti-recurrence verification",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T04:08:50Z",
+    "source_commit": "7df444bf9142",
+    "generator_command": "bash scripts/check_ws9_e2e_anti_recurrence.sh && rch exec -- cargo test -p frankenlibc-harness --all-targets --test ws9_e2e_anti_recurrence_completion_contract_test",
+    "tool_version": "frankenlibc-shell-gate ws9_e2e_anti_recurrence.v1",
+    "chain_hash": "8d3e6c9a1b0f42e5a7c8d9f0123456789abcdef0123456789abcdef01234567"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T04:07:29Z",
+    "in_progress_source": "br update bd-iu3fb.5 --status in_progress plus Agent Mail claim by IcyOriole",
+    "closed_at_source": ".beads/issues.jsonl closed_at after br close"
+  },
+  "purpose": "Binds WS9 child gates into one deterministic end-to-end anti-recurrence check: faked closure is rejected, empty queue triggers reality-check escalation, unmet milestone vision goals block closure, and each WS9 child has a companion executable unit gate.",
+  "source_artifacts": {
+    "bead_closure_freshness_script": {
+      "path": "scripts/check_bead_closure_freshness.sh",
+      "required_text": [
+        "fake_chain_hash_rejected_when_proof_carrying",
+        "bead_closure_chain_hash_missing"
+      ]
+    },
+    "bead_closure_freshness_policy": {
+      "path": "tests/conformance/bead_closure_freshness_policy.v1.json",
+      "required_text": [
+        "proof_carrying_contract_enforcement"
+      ]
+    },
+    "proof_carrying_completion_contract": {
+      "path": "tests/conformance/proof_carrying_completion_contracts_completion_contract.v1.json",
+      "required_text": [
+        "bd-iu3fb.1"
+      ]
+    },
+    "queue_empty_trigger_script": {
+      "path": "scripts/check_queue_empty_reality_trigger.sh",
+      "required_text": [
+        "queue_empty_trigger",
+        "Goodhart collapse signal"
+      ]
+    },
+    "queue_empty_trigger_completion_contract": {
+      "path": "tests/conformance/queue_empty_reality_trigger_completion_contract.v1.json",
+      "required_text": [
+        "bd-iu3fb.2"
+      ]
+    },
+    "milestone_closure_script": {
+      "path": "scripts/check_milestone_closure.sh",
+      "required_text": [
+        "Milestone done as a sequential stopping rule",
+        "closure_allowed"
+      ]
+    },
+    "milestone_vision_goals": {
+      "path": "tests/conformance/milestone_vision_goals.v1.json",
+      "required_text": [
+        "bd-iu3fb",
+        "test-unmet-required"
+      ]
+    },
+    "ws9_e2e_script": {
+      "path": "scripts/check_ws9_e2e_anti_recurrence.sh",
+      "required_text": [
+        "ws9_faked_closure_rejected",
+        "ws9_queue_empty_trigger_fired",
+        "ws9_unmet_milestone_blocked"
+      ]
+    },
+    "ws9_e2e_contract": {
+      "path": "tests/conformance/ws9_e2e_anti_recurrence_completion_contract.v1.json",
+      "required_text": [
+        "faked_closure_rejected",
+        "queue_empty_triggers_reality_check",
+        "unmet_milestone_blocks_closure"
+      ]
+    },
+    "ws9_e2e_test": {
+      "path": "crates/frankenlibc-harness/tests/ws9_e2e_anti_recurrence_completion_contract_test.rs",
+      "required_text": [
+        "ws9_e2e_checker_accepts_contract_and_emits_structured_log",
+        "ws9_e2e_checker_rejects_contract_missing_required_scenario"
+      ]
+    }
+  },
+  "required_scenarios": [
+    {
+      "id": "faked_closure_rejected",
+      "description": "Synthetic closed reality-check bead cites a completion contract whose chain_hash is absent from the evidence ledger; the closure-freshness gate must reject it.",
+      "expected_exit_code": 1,
+      "required_failure_signature": "bead_closure_chain_hash_missing"
+    },
+    {
+      "id": "queue_empty_triggers_reality_check",
+      "description": "Synthetic br executable returns no ready/open work; queue-empty trigger-only mode must report trigger_condition=queue_empty and outcome=trigger_condition_met.",
+      "expected_exit_code": 2,
+      "required_report_fields": [
+        "trigger_condition",
+        "outcome",
+        "trigger_only_mode"
+      ]
+    },
+    {
+      "id": "unmet_milestone_blocks_closure",
+      "description": "The synthetic test-unmet-required milestone has a missing required vision goal; the sequential stopping-rule gate must refuse closure.",
+      "expected_exit_code": 1,
+      "required_report_fields": [
+        "closure_allowed",
+        "e_process.all_required_met"
+      ]
+    },
+    {
+      "id": "ws9_child_companion_tests_pass",
+      "description": "Every WS9 child bead has an executable companion unit gate and the gate passes in this checkout.",
+      "expected_exit_code": 0
+    }
+  ],
+  "required_events": [
+    "ws9_contract_validated",
+    "ws9_faked_closure_rejected",
+    "ws9_queue_empty_trigger_fired",
+    "ws9_unmet_milestone_blocked",
+    "ws9_child_companion_tests_pass",
+    "ws9_e2e_complete"
+  ],
+  "structured_log_required_fields": [
+    "timestamp",
+    "trace_id",
+    "event",
+    "bead_id",
+    "parent_bead",
+    "status",
+    "scenario",
+    "command",
+    "exit_code",
+    "artifact_refs",
+    "failure_signature",
+    "details"
+  ],
+  "companion_unit_tests": [
+    {
+      "bead_id": "bd-iu3fb.1",
+      "name": "proof-carrying closure-freshness self-test",
+      "command": "bash scripts/check_bead_closure_freshness.sh --self-test"
+    },
+    {
+      "bead_id": "bd-iu3fb.2",
+      "name": "queue-empty trigger completion contract",
+      "command": "bash scripts/check_queue_empty_reality_trigger_completion_contract.sh"
+    },
+    {
+      "bead_id": "bd-iu3fb.3",
+      "name": "milestone stopping-rule self-test",
+      "command": "bash scripts/check_milestone_closure.sh --self-test"
+    },
+    {
+      "bead_id": "bd-iu3fb.5",
+      "name": "ws9 e2e shell syntax",
+      "command": "bash -n scripts/check_ws9_e2e_anti_recurrence.sh"
+    }
+  ],
+  "validation_commands": [
+    "bash scripts/check_ws9_e2e_anti_recurrence.sh",
+    "rch exec -- cargo check -p frankenlibc-harness --all-targets",
+    "rch exec -- cargo test -p frankenlibc-harness --all-targets --test ws9_e2e_anti_recurrence_completion_contract_test",
+    "ubs --staged"
+  ],
+  "acceptance_evidence": {
+    "report_path": "target/conformance/ws9_e2e_anti_recurrence/ws9_e2e_anti_recurrence.report.json",
+    "log_path": "target/conformance/ws9_e2e_anti_recurrence/ws9_e2e_anti_recurrence.log.jsonl",
+    "negative_controls": [
+      "fake closure chain_hash absent from ledger",
+      "empty queue via synthetic br command",
+      "test-unmet-required milestone with missing required evidence",
+      "mutated contract missing required scenario"
+    ]
+  }
+}
