@@ -144,6 +144,7 @@ enum Encoding {
     Cp1129,
     Cp1133,
     Cp774,
+    Cp773,
     Cp770,
     Cp856,
     Cp1125,
@@ -182,7 +183,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 101] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 102] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -638,6 +639,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 101] = [
         canonical: "CP774",
         normalized: "CP774",
         aliases: &["IBM774"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp773,
+        canonical: "CP773",
+        normalized: "CP773",
+        aliases: &["IBM773"],
     },
     CodecSpec {
         encoding: Encoding::Cp770,
@@ -5910,6 +5917,58 @@ fn encode_cp774(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// CP773 (Baltic/Polish) to Unicode mapping for bytes 0x80-0xFF.
+/// Contains Baltic and Polish characters with extended box drawing.
+const CP773_TO_UNICODE: [u16; 128] = [
+    0x0106, 0x00FC, 0x00E9, 0x0101, 0x00E4, 0x0123, 0x00E5, 0x0107, // 80-87
+    0x0142, 0x0113, 0x0156, 0x0157, 0x012B, 0x0179, 0x00C4, 0x00C5, // 88-8F
+    0x00C9, 0x00E6, 0x00C6, 0x014D, 0x00F6, 0x0122, 0x00A2, 0x015A, // 90-97
+    0x015B, 0x00D6, 0x00DC, 0x00F8, 0x00A3, 0x00D8, 0x00D7, 0x00A4, // 98-9F
+    0x0100, 0x012A, 0x00F3, 0x017B, 0x017C, 0x017A, 0x201D, 0x00A6, // A0-A7
+    0x00A9, 0x00AE, 0x00AC, 0x00BD, 0x00BC, 0x0141, 0x00AB, 0x00BB, // A8-AF
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556, // B0-B7
+    0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B, 0x2510, // B8-BF
+    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F, // C0-C7
+    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567, // C8-CF
+    0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B, // D0-D7
+    0x256A, 0x2518, 0x250C, 0x2588, 0x0104, 0x0105, 0x010C, 0x010D, // D8-DF
+    0x00D3, 0x00DF, 0x014C, 0x0143, 0x00F5, 0x00D5, 0x00B5, 0x0144, // E0-E7
+    0x0136, 0x0137, 0x013B, 0x013C, 0x0146, 0x0112, 0x0145, 0x2019, // E8-EF
+    0x0118, 0x0119, 0x0116, 0x0117, 0x012E, 0x012F, 0x0160, 0x0161, // F0-F7
+    0x0172, 0x0173, 0x016A, 0x016B, 0x017D, 0x017E, 0x25A0, 0x00A0, // F8-FF
+];
+
+fn decode_cp773(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP773_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp773(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP773_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// CP770 (Baltic) to Unicode mapping for bytes 0x80-0xFF.
 /// Contains Lithuanian/Baltic characters with box drawing and Greek math symbols.
 const CP770_TO_UNICODE: [u16; 128] = [
@@ -6331,6 +6390,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1129 => decode_cp1129(input),
         Encoding::Cp1133 => decode_cp1133(input),
         Encoding::Cp774 => decode_cp774(input),
+        Encoding::Cp773 => decode_cp773(input),
         Encoding::Cp770 => decode_cp770(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
@@ -6505,6 +6565,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1129 => encode_cp1129(ch, out),
         Encoding::Cp1133 => encode_cp1133(ch, out),
         Encoding::Cp774 => encode_cp774(ch, out),
+        Encoding::Cp773 => encode_cp773(ch, out),
         Encoding::Cp770 => encode_cp770(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
@@ -9443,6 +9504,31 @@ mod tests {
     #[test]
     fn cp770_accepts_ibm770_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM770");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp773_baltic_polish_round_trip() {
+        // CP773 is Baltic/Polish encoding
+        // 0x80 = U+0106 (Latin capital C with acute), 0x87 = U+0107 (Latin small c with acute)
+        let cp773_input: &[u8] = &[0x80, 0x87];
+        let expected_utf8 = "\u{0106}\u{0107}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP773").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(cp773_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP773", b"UTF-8").unwrap();
+        let mut cp773_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp773_out).unwrap();
+        assert_eq!(&cp773_out[..result2.out_written], cp773_input);
+    }
+
+    #[test]
+    fn cp773_accepts_ibm773_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM773");
         assert!(cd.is_some());
     }
 }
