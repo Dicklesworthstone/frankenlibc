@@ -76,6 +76,7 @@ enum Encoding {
     Cp437,
     Iso88592,
     Iso88595,
+    Iso885915,
 }
 
 struct CodecSpec {
@@ -90,7 +91,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 9] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 10] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -145,6 +146,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 9] = [
         normalized: "ISO88595",
         aliases: &["ISO88595", "CYRILLIC", "CSISOLATINCYRILLIC"],
     },
+    CodecSpec {
+        encoding: Encoding::Iso885915,
+        canonical: "ISO-8859-15",
+        normalized: "ISO885915",
+        aliases: &["ISO885915", "LATIN9", "CSISOLATIN9"],
+    },
 ];
 
 const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
@@ -175,8 +182,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 9] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "CP437", "ISO-8859-2", "ISO-8859-5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 10] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "CP437", "ISO-8859-2", "ISO-8859-5", "ISO-8859-15"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -629,6 +636,59 @@ fn encode_iso88595(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ISO-8859-15 (Latin-9) differs from ISO-8859-1 at 8 positions.
+/// This table lists (byte, unicode) pairs for the differing positions.
+const ISO885915_DIFFS: [(u8, u16); 8] = [
+    (0xA4, 0x20AC), // Euro sign
+    (0xA6, 0x0160), // Š
+    (0xA8, 0x0161), // š
+    (0xB4, 0x017D), // Ž
+    (0xB8, 0x017E), // ž
+    (0xBC, 0x0152), // Œ
+    (0xBD, 0x0153), // œ
+    (0xBE, 0x0178), // Ÿ
+];
+
+fn decode_iso885915(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    // Check for ISO-8859-15 specific mappings
+    for &(byte, unicode) in &ISO885915_DIFFS {
+        if b == byte {
+            return Ok((char::from_u32(u32::from(unicode)).unwrap_or('\u{FFFD}'), 1));
+        }
+    }
+    // Otherwise same as Latin-1
+    Ok((char::from(b), 1))
+}
+
+fn encode_iso885915(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    // Check for ISO-8859-15 specific mappings
+    for &(byte, unicode) in &ISO885915_DIFFS {
+        if cp == u32::from(unicode) {
+            out[0] = byte;
+            return Ok(1);
+        }
+    }
+    // Check if it's a Latin-1 character NOT replaced by ISO-8859-15
+    if cp <= 0xFF {
+        let b = cp as u8;
+        // Reject the Latin-1 characters that are replaced in ISO-8859-15
+        if matches!(b, 0xA4 | 0xA6 | 0xA8 | 0xB4 | 0xB8 | 0xBC | 0xBD | 0xBE) {
+            return Err(EncodeError::Unrepresentable);
+        }
+        out[0] = b;
+        return Ok(1);
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
@@ -654,6 +714,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp437 => decode_cp437(input),
         Encoding::Iso88592 => decode_iso88592(input),
         Encoding::Iso88595 => decode_iso88595(input),
+        Encoding::Iso885915 => decode_iso885915(input),
     }
 }
 
@@ -716,6 +777,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp437 => encode_cp437(ch, out),
         Encoding::Iso88592 => encode_iso88592(ch, out),
         Encoding::Iso88595 => encode_iso88595(ch, out),
+        Encoding::Iso885915 => encode_iso885915(ch, out),
     }
 }
 
@@ -1266,6 +1328,41 @@ mod tests {
     #[test]
     fn iso88592_accepts_latin2_alias() {
         let cd = iconv_open(b"UTF-8", b"LATIN2");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso885915_euro_sign_round_trip() {
+        // ISO-8859-15 byte 0xA4 is Euro sign (€), not currency sign (¤)
+        let iso_input: &[u8] = &[0xA4];
+        let expected_utf8 = "€";
+
+        // ISO-8859-15 → UTF-8
+        let mut cd = iconv_open(b"UTF-8", b"ISO-8859-15").unwrap();
+        let mut utf8_out = [0u8; 8];
+        let result = iconv(&mut cd, Some(iso_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        // UTF-8 → ISO-8859-15 (reverse)
+        let mut cd2 = iconv_open(b"ISO-8859-15", b"UTF-8").unwrap();
+        let mut iso_out = [0u8; 8];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut iso_out).unwrap();
+        assert_eq!(&iso_out[..result2.out_written], iso_input);
+    }
+
+    #[test]
+    fn iso885915_latin1_currency_sign_unrepresentable() {
+        // Currency sign (¤, U+00A4) is NOT in ISO-8859-15 (replaced by Euro)
+        let mut cd = iconv_open(b"ISO-8859-15", b"UTF-8").unwrap();
+        let mut out = [0u8; 8];
+        let err = iconv(&mut cd, Some("¤".as_bytes()), &mut out).unwrap_err();
+        assert_eq!(err.code, ICONV_EILSEQ);
+    }
+
+    #[test]
+    fn iso885915_accepts_latin9_alias() {
+        let cd = iconv_open(b"UTF-8", b"LATIN9");
         assert!(cd.is_some());
     }
 }
