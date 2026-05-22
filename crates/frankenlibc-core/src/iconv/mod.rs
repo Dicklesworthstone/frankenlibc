@@ -160,6 +160,7 @@ enum Encoding {
     Cp866Nav,
     DecMcs,
     HpRoman9,
+    Csn369103,
     Cp856,
     Cp1125,
     Cp850,
@@ -197,7 +198,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 116] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 117] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -749,6 +750,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 116] = [
         canonical: "HP-ROMAN9",
         normalized: "HPROMAN9",
         aliases: &["HPROMAN9", "ROMAN9"],
+    },
+    CodecSpec {
+        encoding: Encoding::Csn369103,
+        canonical: "CSN_369103",
+        normalized: "CSN369103",
+        aliases: &["CSN369103"],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -6904,6 +6911,67 @@ fn encode_hproman9(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const CSN369103_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (C1 controls)
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    // 0x90-0x9F (C1 controls continued)
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    // 0xA0-0xAF (Latin extended)
+    0x00A0, 0x0104, 0x02D8, 0x0141, 0x0024, 0x013D, 0x015A, 0x00A7, // A0-A7
+    0x00A8, 0x0160, 0x015E, 0x0164, 0x0179, 0x00AD, 0x017D, 0x017B, // A8-AF
+    // 0xB0-0xBF (Latin extended continued)
+    0x00B0, 0x0105, 0x02DB, 0x0142, 0x00B4, 0x013E, 0x015B, 0x02C7, // B0-B7
+    0x00B8, 0x0161, 0x015F, 0x0165, 0x017A, 0x02DD, 0x017E, 0x017C, // B8-BF
+    // 0xC0-0xCF (Latin capital with diacritics)
+    0x0154, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x0139, 0x0106, 0x00C7, // C0-C7
+    0x010C, 0x00C9, 0x0118, 0x00CB, 0x011A, 0x00CD, 0x00CE, 0x010E, // C8-CF
+    // 0xD0-0xDF (Latin capital continued)
+    0x0110, 0x0143, 0x0147, 0x00D3, 0x00D4, 0x0150, 0x00D6, 0x00D7, // D0-D7
+    0x0158, 0x016E, 0x00DA, 0x0170, 0x00DC, 0x00DD, 0x0162, 0x00DF, // D8-DF
+    // 0xE0-0xEF (Latin small with diacritics)
+    0x0155, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x013A, 0x0107, 0x00E7, // E0-E7
+    0x010D, 0x00E9, 0x0119, 0x00EB, 0x011B, 0x00ED, 0x00EE, 0x010F, // E8-EF
+    // 0xF0-0xFF (Latin small continued)
+    0x0111, 0x0144, 0x0148, 0x00F3, 0x00F4, 0x0151, 0x00F6, 0x00F7, // F0-F7
+    0x0159, 0x016F, 0x00FA, 0x0171, 0x00FC, 0x00FD, 0x0163, 0x02D9, // F8-FF
+];
+
+fn decode_csn369103(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CSN369103_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_csn369103(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CSN369103_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -7289,6 +7357,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp866Nav => decode_cp866nav(input),
         Encoding::DecMcs => decode_decmcs(input),
         Encoding::HpRoman9 => decode_hproman9(input),
+        Encoding::Csn369103 => decode_csn369103(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -7478,6 +7547,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp866Nav => encode_cp866nav(ch, out),
         Encoding::DecMcs => encode_decmcs(ch, out),
         Encoding::HpRoman9 => encode_hproman9(ch, out),
+        Encoding::Csn369103 => encode_csn369103(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -10793,6 +10863,26 @@ mod tests {
     #[test]
     fn hproman9_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"HPROMAN9");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn csn369103_decode_roundtrip() {
+        let csn_input: &[u8] = &[0xC1, 0xC9, 0xE1, 0xE9];
+        let expected_utf8 = "ÁÉáé";
+        let mut cd = iconv_open(b"UTF-8", b"CSN_369103").expect("CSN_369103 to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(csn_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"CSN_369103", b"UTF-8").expect("UTF-8 to CSN_369103 conversion");
+        let mut csn_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut csn_out).unwrap();
+        assert_eq!(&csn_out[..result2.out_written], csn_input);
+    }
+
+    #[test]
+    fn csn369103_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"CSN369103");
         assert!(cd.is_some());
     }
 }
