@@ -1,0 +1,25 @@
+{
+  "schema_version": "pthread_closure_e2e.v1",
+  "bead_id": "bd-73h55.7",
+  "generated_at_utc": "2026-05-22T08:39:00Z",
+  "tests": {
+    "barrier_implementations": "pass",
+    "spinlock_implementations": "pass",
+    "named_semaphore_implementations": "pass",
+    "cancellation_cleanup_implementations": "pass",
+    "conformance_tests_present": "pass"
+  },
+  "symbol_inventory": {
+    "pthread_barrier": ["pthread_barrier_init", "pthread_barrier_destroy", "pthread_barrier_wait"],
+    "pthread_spin": ["pthread_spin_init", "pthread_spin_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"],
+    "named_semaphore": ["sem_open", "sem_close", "sem_unlink"],
+    "cleanup": ["_pthread_cleanup_push", "_pthread_cleanup_pop", "_pthread_cleanup_push_defer", "_pthread_cleanup_pop_restore"]
+  },
+  "implementation_status": {
+    "barrier": "native futex-based implementation",
+    "spinlock": "native atomic-based implementation",
+    "named_semaphore": "native /dev/shm-backed implementation",
+    "cancellation_cleanup": "TLS-based cleanup stack"
+  },
+  "overall_status": "pass"
+}
