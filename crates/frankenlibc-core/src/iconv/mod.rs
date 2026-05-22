@@ -733,19 +733,19 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 107] = [
         encoding: Encoding::Iso88593,
         canonical: "ISO-8859-3",
         normalized: "ISO88593",
-        aliases: &["ISO88593", "LATIN3", "CSISOLATIN3"],
+        aliases: &["ISO88593", "LATIN3", "CSISOLATIN3", "CP913", "IBM913"],
     },
     CodecSpec {
         encoding: Encoding::Iso88594,
         canonical: "ISO-8859-4",
         normalized: "ISO88594",
-        aliases: &["ISO88594", "LATIN4", "CSISOLATIN4", "BALTIC"],
+        aliases: &["ISO88594", "LATIN4", "CSISOLATIN4", "BALTIC", "CP914", "IBM914"],
     },
     CodecSpec {
         encoding: Encoding::Iso88595,
         canonical: "ISO-8859-5",
         normalized: "ISO88595",
-        aliases: &["ISO88595", "CYRILLIC", "CSISOLATINCYRILLIC"],
+        aliases: &["ISO88595", "CYRILLIC", "CSISOLATINCYRILLIC", "CP915", "IBM915"],
     },
     CodecSpec {
         encoding: Encoding::Iso88596,
@@ -769,7 +769,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 107] = [
         encoding: Encoding::Iso88599,
         canonical: "ISO-8859-9",
         normalized: "ISO88599",
-        aliases: &["ISO88599", "LATIN5", "CSISOLATIN5", "TURKISH"],
+        aliases: &["ISO88599", "LATIN5", "CSISOLATIN5", "TURKISH", "CP920", "IBM920"],
     },
     CodecSpec {
         encoding: Encoding::Iso88599e,
@@ -9984,6 +9984,30 @@ mod tests {
     #[test]
     fn iso88592_accepts_cp912_alias() {
         let cd = iconv_open(b"UTF-8", b"CP912");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88593_accepts_cp913_alias() {
+        let cd = iconv_open(b"UTF-8", b"CP913");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88594_accepts_cp914_alias() {
+        let cd = iconv_open(b"UTF-8", b"CP914");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88595_accepts_cp915_alias() {
+        let cd = iconv_open(b"UTF-8", b"CP915");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88599_accepts_cp920_alias() {
+        let cd = iconv_open(b"UTF-8", b"CP920");
         assert!(cd.is_some());
     }
 }
