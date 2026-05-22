@@ -7,9 +7,15 @@
 //! # Phase 1 Limitations
 //!
 //! - No IFUNC support
-//! - No TLS support
 //! - Dependency graph and symbol-scope planning only; no mmap-backed dlopen yet
 //! - x86_64 Linux only
+//!
+//! # TLS Support (bd-73h55.2.4)
+//!
+//! TLS for dynamically loaded objects is supported via:
+//! - PT_TLS segment parsing → `TlsSegment` in `LoadedObject`
+//! - TLS module ID allocation → `TlsModuleRegistry`
+//! - DTV growth on dlopen → managed by the ABI layer
 
 use super::{
     ElfError, ElfResult,
@@ -31,7 +37,97 @@ use std::{
 const LOAD_PAGE_SIZE: u64 = 4096;
 const DT_NULL: i64 = 0;
 const DT_NEEDED: i64 = 1;
+const DT_INIT: i64 = 12;
+const DT_FINI: i64 = 13;
 const DT_SONAME: i64 = 14;
+
+/// TLS segment metadata from PT_TLS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsSegment {
+    /// Virtual address of the TLS template image.
+    pub vaddr: u64,
+    /// File size of the TLS initialized data.
+    pub filesz: u64,
+    /// Memory size including BSS (zero-initialized tail).
+    pub memsz: u64,
+    /// Alignment requirement (must be power of two or zero).
+    pub align: u64,
+    /// File offset for copying initialization data.
+    pub file_offset: u64,
+}
+
+impl TlsSegment {
+    /// Size of zero-initialized TLS tail (.tbss).
+    pub fn bss_size(&self) -> u64 {
+        self.memsz.saturating_sub(self.filesz)
+    }
+}
+
+/// A registered TLS module for dynamic loading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsModule {
+    /// Unique module ID (1-based, 0 is reserved for the executable).
+    pub module_id: u64,
+    /// Size of the TLS block.
+    pub size: u64,
+    /// Alignment requirement.
+    pub align: u64,
+    /// Pointer to initialization data (or null for zero-init).
+    pub init_image: Option<u64>,
+    /// Size of initialization data.
+    pub init_size: u64,
+}
+
+/// Registry for TLS modules loaded via dlopen.
+///
+/// Each dynamically loaded object with PT_TLS receives a unique module ID.
+/// The DTV (dynamic thread vector) is extended to accommodate new modules.
+#[derive(Debug, Default)]
+pub struct TlsModuleRegistry {
+    /// Registered modules in allocation order.
+    modules: Vec<TlsModule>,
+    /// Next module ID to allocate (starts at 1, 0 is reserved).
+    next_id: u64,
+}
+
+impl TlsModuleRegistry {
+    /// Create a new empty registry.
+    pub fn new() -> Self {
+        Self {
+            modules: Vec::new(),
+            next_id: 1,
+        }
+    }
+
+    /// Register a TLS module and return its assigned module ID.
+    pub fn register(&mut self, segment: &TlsSegment, init_image: Option<u64>) -> u64 {
+        let module_id = self.next_id;
+        self.next_id += 1;
+        self.modules.push(TlsModule {
+            module_id,
+            size: segment.memsz,
+            align: if segment.align == 0 { 1 } else { segment.align },
+            init_image,
+            init_size: segment.filesz,
+        });
+        module_id
+    }
+
+    /// Get a module by ID.
+    pub fn get(&self, module_id: u64) -> Option<&TlsModule> {
+        self.modules.iter().find(|m| m.module_id == module_id)
+    }
+
+    /// Number of registered modules.
+    pub fn count(&self) -> usize {
+        self.modules.len()
+    }
+
+    /// Iterate over all registered modules.
+    pub fn iter(&self) -> impl Iterator<Item = &TlsModule> {
+        self.modules.iter()
+    }
+}
 
 /// A loaded ELF object.
 #[derive(Debug)]
@@ -64,14 +160,20 @@ pub struct LoadedObject {
     pub rela_plt: Vec<Elf64Rela>,
     /// Expanded DT_RELR/.relr.dyn relative relocation target offsets
     pub relr_dyn: Vec<u64>,
-    /// Initialization functions
+    /// Legacy DT_INIT/_init function, if present
+    pub legacy_init: Option<u64>,
+    /// Legacy DT_FINI/_fini function, if present
+    pub legacy_fini: Option<u64>,
+    /// Initialization functions in linker-emitted priority order
     pub init_array: Vec<u64>,
-    /// Finalization functions
+    /// Finalization functions in linker-emitted priority order
     pub fini_array: Vec<u64>,
     /// RELRO start address (for mprotect)
     pub relro_start: Option<u64>,
     /// RELRO size
     pub relro_size: u64,
+    /// TLS segment from PT_TLS, if present.
+    pub tls_segment: Option<TlsSegment>,
 }
 
 /// A page-aligned PT_LOAD mapping decision.
@@ -179,6 +281,43 @@ pub struct DependencyGraph {
     pub nodes: Vec<DependencyNode>,
     /// Topological order with dependencies before users.
     pub topological_order: Vec<usize>,
+}
+
+/// Lifecycle callback kind for loaded ELF objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleFunctionKind {
+    /// Legacy DT_INIT/_init callback.
+    LegacyInit,
+    /// DT_INIT_ARRAY/.init_array callback.
+    InitArray,
+    /// DT_FINI_ARRAY/.fini_array callback.
+    FiniArray,
+    /// Legacy DT_FINI/_fini callback.
+    LegacyFini,
+}
+
+/// One ordered init/fini callback in the loader lifecycle plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleFunction {
+    /// Link-map object index that owns the callback.
+    pub object_index: usize,
+    /// Stable object name used in structured lifecycle logs.
+    pub object_name: String,
+    /// Runtime callback address.
+    pub address: u64,
+    /// Callback source/kind.
+    pub kind: LifecycleFunctionKind,
+    /// Original array ordinal for array callbacks, or zero for legacy callbacks.
+    pub ordinal: usize,
+}
+
+/// Dependency-aware constructor/destructor execution plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecyclePlan {
+    /// Constructors in dependency-before-dependent order.
+    pub init_order: Vec<LifecycleFunction>,
+    /// Destructors in reverse dependency order.
+    pub fini_order: Vec<LifecycleFunction>,
 }
 
 /// Resolved symbol metadata from a scoped lookup.
@@ -428,6 +567,72 @@ impl DependencyGraph {
             .iter()
             .any(|node| !node.unresolved_needed.is_empty())
     }
+
+    /// Build the init/fini callback plan for a link map.
+    ///
+    /// Constructors run dependencies before users. For each object, legacy
+    /// DT_INIT runs before .init_array, and .init_array preserves linker order
+    /// so section-suffix priorities remain intact. Destructors run the reverse:
+    /// objects are visited in reverse topological order, each .fini_array is
+    /// consumed backward, then legacy DT_FINI runs last for that object.
+    pub fn lifecycle_plan(&self, objects: &[LinkMapObject<'_>]) -> ElfResult<LifecyclePlan> {
+        let mut init_order = Vec::new();
+        for &object_index in &self.topological_order {
+            let link_object = objects
+                .get(object_index)
+                .ok_or(ElfError::InvalidObjectIndex(object_index))?;
+            let object_name = link_map_object_name(link_object, object_index);
+            if let Some(address) = link_object.object.legacy_init {
+                init_order.push(LifecycleFunction {
+                    object_index,
+                    object_name: object_name.clone(),
+                    address,
+                    kind: LifecycleFunctionKind::LegacyInit,
+                    ordinal: 0,
+                });
+            }
+            for (ordinal, &address) in link_object.object.init_array.iter().enumerate() {
+                init_order.push(LifecycleFunction {
+                    object_index,
+                    object_name: object_name.clone(),
+                    address,
+                    kind: LifecycleFunctionKind::InitArray,
+                    ordinal,
+                });
+            }
+        }
+
+        let mut fini_order = Vec::new();
+        for &object_index in self.topological_order.iter().rev() {
+            let link_object = objects
+                .get(object_index)
+                .ok_or(ElfError::InvalidObjectIndex(object_index))?;
+            let object_name = link_map_object_name(link_object, object_index);
+            for (ordinal, &address) in link_object.object.fini_array.iter().enumerate().rev() {
+                fini_order.push(LifecycleFunction {
+                    object_index,
+                    object_name: object_name.clone(),
+                    address,
+                    kind: LifecycleFunctionKind::FiniArray,
+                    ordinal,
+                });
+            }
+            if let Some(address) = link_object.object.legacy_fini {
+                fini_order.push(LifecycleFunction {
+                    object_index,
+                    object_name,
+                    address,
+                    kind: LifecycleFunctionKind::LegacyFini,
+                    ordinal: 0,
+                });
+            }
+        }
+
+        Ok(LifecyclePlan {
+            init_order,
+            fini_order,
+        })
+    }
 }
 
 impl<'a> ScopedSymbolResolver<'a> {
@@ -643,7 +848,7 @@ impl ElfLoader {
             .find(|ph| matches!(ph.p_type, ProgramType::Dynamic));
 
         // Extract dynamic info from PT_DYNAMIC segment
-        let (needed_libraries, soname) = parse_dynamic_metadata(data, &section_headers);
+        let dynamic_metadata = parse_dynamic_metadata(data, &section_headers, self.ctx.base)?;
 
         let (
             dynsym,
@@ -680,6 +885,18 @@ impl ElfLoader {
             .map(|ph| (Some(self.ctx.base + ph.p_vaddr), ph.p_memsz))
             .unwrap_or((None, 0));
 
+        // Find TLS segment (PT_TLS)
+        let tls_segment = program_headers
+            .iter()
+            .find(|ph| ph.is_tls())
+            .map(|ph| TlsSegment {
+                vaddr: ph.p_vaddr,
+                filesz: ph.p_filesz,
+                memsz: ph.p_memsz,
+                align: ph.p_align,
+                file_offset: ph.p_offset,
+            });
+
         // Determine entry point
         let entry = if header.e_entry != 0 {
             Some(self.ctx.base + header.e_entry)
@@ -696,16 +913,19 @@ impl ElfLoader {
             dynstr,
             gnu_hash,
             elf_hash,
-            soname,
-            needed_libraries,
+            soname: dynamic_metadata.soname,
+            needed_libraries: dynamic_metadata.needed_libraries,
             symbol_versions,
             rela_dyn,
             rela_plt,
             relr_dyn,
+            legacy_init: dynamic_metadata.legacy_init,
+            legacy_fini: dynamic_metadata.legacy_fini,
             init_array,
             fini_array,
             relro_start,
             relro_size,
+            tls_segment,
         })
     }
 
@@ -1413,31 +1633,57 @@ struct DynamicEntry {
     value: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DynamicMetadata {
+    needed_libraries: Vec<String>,
+    soname: Option<String>,
+    legacy_init: Option<u64>,
+    legacy_fini: Option<u64>,
+}
+
 fn parse_dynamic_metadata(
     data: &[u8],
     sections: &[Elf64SectionHeader],
-) -> (Vec<String>, Option<String>) {
+    base: u64,
+) -> ElfResult<DynamicMetadata> {
     let mut needed_libraries = Vec::new();
     let mut soname = None;
+    let mut legacy_init = None;
+    let mut legacy_fini = None;
 
     for section in sections.iter().filter(|section| section.is_dynamic()) {
         let Some(dynamic_bytes) = section_data(data, section) else {
             continue;
         };
-        let Some(strings) = linked_string_table(data, sections, section) else {
-            continue;
-        };
+        let strings = linked_string_table(data, sections, section);
 
         for entry in parse_dynamic_entries(dynamic_bytes) {
             match entry.tag {
                 DT_NULL => break,
                 DT_NEEDED => {
-                    if let Some(name) = dynamic_string(strings, entry.value) {
+                    if let Some(strings) = strings
+                        && let Some(name) = dynamic_string(strings, entry.value)
+                    {
                         needed_libraries.push(name.to_owned());
                     }
                 }
+                DT_INIT if legacy_init.is_none() => {
+                    legacy_init = Some(checked_add_u64(
+                        "DT_INIT runtime address",
+                        base,
+                        entry.value,
+                    )?);
+                }
+                DT_FINI if legacy_fini.is_none() => {
+                    legacy_fini = Some(checked_add_u64(
+                        "DT_FINI runtime address",
+                        base,
+                        entry.value,
+                    )?);
+                }
                 DT_SONAME => {
                     if soname.is_none()
+                        && let Some(strings) = strings
                         && let Some(name) = dynamic_string(strings, entry.value)
                     {
                         soname = Some(name.to_owned());
@@ -1448,7 +1694,12 @@ fn parse_dynamic_metadata(
         }
     }
 
-    (needed_libraries, soname)
+    Ok(DynamicMetadata {
+        needed_libraries,
+        soname,
+        legacy_init,
+        legacy_fini,
+    })
 }
 
 fn parse_dynamic_entries(data: &[u8]) -> impl Iterator<Item = DynamicEntry> + '_ {
@@ -1729,10 +1980,13 @@ mod tests {
             rela_dyn: Vec::new(),
             rela_plt: Vec::new(),
             relr_dyn: Vec::new(),
+            legacy_init: None,
+            legacy_fini: None,
             init_array: Vec::new(),
             fini_array: Vec::new(),
             relro_start: None,
             relro_size: 0,
+            tls_segment: None,
         }
     }
 
@@ -2046,10 +2300,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_dynamic_metadata_extracts_needed_and_soname() {
+    fn test_parse_dynamic_metadata_extracts_needed_soname_and_legacy_lifecycle() -> ElfResult<()> {
         let strings = b"\0libdep.so\0libroot.so\0";
         let mut dynamic = Vec::new();
         push_dynamic_entry(&mut dynamic, DT_NEEDED, 1);
+        push_dynamic_entry(&mut dynamic, DT_INIT, 0x710);
+        push_dynamic_entry(&mut dynamic, DT_FINI, 0x810);
         push_dynamic_entry(&mut dynamic, DT_SONAME, 11);
         push_dynamic_entry(&mut dynamic, DT_NULL, 0);
 
@@ -2061,9 +2317,12 @@ mod tests {
             strtab_section(string_offset as u64, strings.len() as u64),
         ];
 
-        let (needed, soname) = parse_dynamic_metadata(&data, &sections);
-        assert_eq!(needed, vec!["libdep.so"]);
-        assert_eq!(soname.as_deref(), Some("libroot.so"));
+        let metadata = parse_dynamic_metadata(&data, &sections, 0x7000_0000)?;
+        assert_eq!(metadata.needed_libraries, vec!["libdep.so"]);
+        assert_eq!(metadata.soname.as_deref(), Some("libroot.so"));
+        assert_eq!(metadata.legacy_init, Some(0x7000_0710));
+        assert_eq!(metadata.legacy_fini, Some(0x7000_0810));
+        Ok(())
     }
 
     #[test]
@@ -2143,6 +2402,156 @@ mod tests {
         assert_eq!(graph.nodes[2].dependencies, vec![3]);
         assert_eq!(graph.topological_order, vec![3, 1, 2, 0]);
         assert_eq!(graph.local_lookup_order(0)?, vec![0, 1, 3, 2]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_lifecycle_plan_orders_constructors_and_destructors_by_dependency() -> ElfResult<()> {
+        let mut app = object_with_symbols(0x1000, Some("app"), &["liba.so"], &[])?;
+        app.legacy_init = Some(0x1010);
+        app.legacy_fini = Some(0x10f0);
+        app.init_array = vec![0x1020, 0x1030];
+        app.fini_array = vec![0x1040, 0x1050];
+
+        let mut liba = object_with_symbols(0x2000, Some("liba.so"), &["libb.so"], &[])?;
+        liba.legacy_init = Some(0x2010);
+        liba.legacy_fini = Some(0x20f0);
+        liba.init_array = vec![0x2020];
+        liba.fini_array = vec![0x2040, 0x2050];
+
+        let mut libb = object_with_symbols(0x3000, Some("libb.so"), &[], &[])?;
+        libb.legacy_init = Some(0x3010);
+        libb.legacy_fini = Some(0x30f0);
+
+        let objects = vec![
+            LinkMapObject {
+                name: "app",
+                object: &app,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "liba.so",
+                object: &liba,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "libb.so",
+                object: &libb,
+                visibility: RtldVisibility::Global,
+            },
+        ];
+
+        let graph = DependencyGraph::build(&objects)?;
+        let plan = graph.lifecycle_plan(&objects)?;
+
+        assert_eq!(
+            plan.init_order
+                .iter()
+                .map(|entry| (entry.object_index, entry.kind, entry.ordinal, entry.address))
+                .collect::<Vec<_>>(),
+            vec![
+                (2, LifecycleFunctionKind::LegacyInit, 0, 0x3010),
+                (1, LifecycleFunctionKind::LegacyInit, 0, 0x2010),
+                (1, LifecycleFunctionKind::InitArray, 0, 0x2020),
+                (0, LifecycleFunctionKind::LegacyInit, 0, 0x1010),
+                (0, LifecycleFunctionKind::InitArray, 0, 0x1020),
+                (0, LifecycleFunctionKind::InitArray, 1, 0x1030),
+            ]
+        );
+        assert_eq!(
+            plan.fini_order
+                .iter()
+                .map(|entry| (entry.object_index, entry.kind, entry.ordinal, entry.address))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, LifecycleFunctionKind::FiniArray, 1, 0x1050),
+                (0, LifecycleFunctionKind::FiniArray, 0, 0x1040),
+                (0, LifecycleFunctionKind::LegacyFini, 0, 0x10f0),
+                (1, LifecycleFunctionKind::FiniArray, 1, 0x2050),
+                (1, LifecycleFunctionKind::FiniArray, 0, 0x2040),
+                (1, LifecycleFunctionKind::LegacyFini, 0, 0x20f0),
+                (2, LifecycleFunctionKind::LegacyFini, 0, 0x30f0),
+            ]
+        );
+        assert_eq!(plan.init_order[0].object_name, "libb.so");
+        Ok(())
+    }
+
+    #[test]
+    fn test_lifecycle_plan_handles_constructor_dlopen_rebuild_order() -> ElfResult<()> {
+        let mut app = object_with_symbols(0x1000, Some("app"), &[], &[])?;
+        app.init_array = vec![0x1010];
+
+        let initial_objects = vec![LinkMapObject {
+            name: "app",
+            object: &app,
+            visibility: RtldVisibility::Global,
+        }];
+        let initial_plan =
+            DependencyGraph::build(&initial_objects)?.lifecycle_plan(&initial_objects)?;
+        assert_eq!(initial_plan.init_order[0].address, 0x1010);
+
+        let mut plugin =
+            object_with_symbols(0x2000, Some("libplugin.so"), &["libsupport.so"], &[])?;
+        plugin.init_array = vec![0x2010];
+        plugin.fini_array = vec![0x2020];
+        let mut support = object_with_symbols(0x3000, Some("libsupport.so"), &[], &[])?;
+        support.init_array = vec![0x3010];
+        support.fini_array = vec![0x3020];
+
+        let extended_objects = vec![
+            LinkMapObject {
+                name: "app",
+                object: &app,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "libplugin.so",
+                object: &plugin,
+                visibility: RtldVisibility::Local,
+            },
+            LinkMapObject {
+                name: "libsupport.so",
+                object: &support,
+                visibility: RtldVisibility::Local,
+            },
+        ];
+        let plan = DependencyGraph::build(&extended_objects)?.lifecycle_plan(&extended_objects)?;
+
+        assert_eq!(
+            plan.init_order
+                .iter()
+                .map(|entry| entry.object_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["app", "libsupport.so", "libplugin.so"]
+        );
+        assert_eq!(
+            plan.fini_order
+                .iter()
+                .map(|entry| entry.object_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["libplugin.so", "libsupport.so"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_lifecycle_plan_rejects_stale_graph_indexes() -> ElfResult<()> {
+        let app = object_with_symbols(0x1000, Some("app"), &[], &[])?;
+        let objects = vec![LinkMapObject {
+            name: "app",
+            object: &app,
+            visibility: RtldVisibility::Global,
+        }];
+        let graph = DependencyGraph {
+            nodes: Vec::new(),
+            topological_order: vec![1],
+        };
+
+        assert!(matches!(
+            graph.lifecycle_plan(&objects),
+            Err(ElfError::InvalidObjectIndex(1))
+        ));
         Ok(())
     }
 
