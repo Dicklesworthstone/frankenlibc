@@ -1416,3 +1416,15 @@ pub unsafe extern "C" fn __frankenlibc_healing_foreign_free_count() -> u64 {
         .foreign_frees
         .load(Ordering::Relaxed)
 }
+
+/// FFI export to check if runtime-math kernels are enabled.
+/// Returns 1 if enabled (default), 0 if disabled via FRANKENLIBC_RUNTIME_MATH=off.
+/// Used by e2e tests to verify kill-switch works (bd-06bxm.9).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_is_runtime_math_enabled() -> c_int {
+    if crate::runtime_policy::runtime_math_disabled() {
+        0
+    } else {
+        1
+    }
+}

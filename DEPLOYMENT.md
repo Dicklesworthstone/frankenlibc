@@ -114,6 +114,27 @@ FRANKENLIBC_MODE=hardened \
 LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
 ```
 
+## Runtime-Math Kill-Switch (bd-06bxm.9)
+
+`FRANKENLIBC_RUNTIME_MATH` provides an escape hatch for processes hit by unexpected regressions from the runtime-math kernel. When set to `off`, the runtime-math kernel consultation is skipped but basic membrane validation (null/bloom/arena/fingerprint/canary) still runs.
+
+| Env value | Meaning |
+|---|---|
+| unset, `on`, `1`, `true` | Full runtime-math kernel consultation (default) |
+| `off` | Skip runtime-math kernel, basic membrane validation only |
+| anything else | Log warning, fall back to `on` |
+
+The value is resolved once at init and immutable after. This is process-level, not per-call.
+
+Example disabling runtime-math:
+
+```bash
+FRANKENLIBC_RUNTIME_MATH=off FRANKENLIBC_MODE=hardened \
+LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
+```
+
+Use this knob when you need to quickly rule out the runtime-math layer as a regression source without disabling the entire membrane or reverting to an old build.
+
 ## Operator Configuration
 
 Primary deployment-facing variables:
@@ -121,6 +142,7 @@ Primary deployment-facing variables:
 | Variable | Default | Purpose |
 |---|---|---|
 | `FRANKENLIBC_MODE` | `strict` | Selects strict vs hardened mode |
+| `FRANKENLIBC_RUNTIME_MATH` | `on` | Enable/disable runtime-math kernel consultation (bd-06bxm.9) |
 | `FRANKENLIBC_LOG` | unset | Structured runtime evidence log destination |
 | `FRANKENLIBC_LIB` | auto-detected `target/release/libfrankenlibc_abi.so` | Tooling override for preload library path |
 | `FRANKENLIBC_STARTUP_PHASE0` | `0` | Enables the phase-0 `__libc_start_main` startup path |

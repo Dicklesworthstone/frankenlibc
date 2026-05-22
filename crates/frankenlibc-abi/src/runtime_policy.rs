@@ -85,6 +85,17 @@ static FFI_PCC_STATE: AtomicU8 = AtomicU8::new(FFI_PCC_STATE_UNVERIFIED);
 static FFI_PCC_HASH_PREFIX: AtomicU64 = AtomicU64::new(0);
 static FFI_PCC_ROW_COUNT: AtomicU32 = AtomicU32::new(0);
 
+// Runtime-math kill-switch state (bd-06bxm.9)
+// FRANKENLIBC_RUNTIME_MATH=on|off controls whether decide() consults the
+// runtime-math kernel. Default is ON. When OFF, basic membrane validation
+// (null/bloom/arena/fingerprint/canary) still runs but kernel consultation
+// is skipped. Resolved once at init, immutable after.
+const RUNTIME_MATH_UNRESOLVED: u8 = 0;
+const RUNTIME_MATH_RESOLVING: u8 = 1;
+const RUNTIME_MATH_ON: u8 = 2;
+const RUNTIME_MATH_OFF: u8 = 3;
+static RUNTIME_MATH_STATE: AtomicU8 = AtomicU8::new(RUNTIME_MATH_UNRESOLVED);
+
 #[cfg(test)]
 type RuntimePolicyTestGuard = crate::util::AbiReentrantMutexGuard<'static, ()>;
 
@@ -201,6 +212,95 @@ fn mode_name(level: SafetyLevel) -> &'static str {
         SafetyLevel::Hardened => "hardened",
         SafetyLevel::Off => "off",
     }
+}
+
+/// Parse FRANKENLIBC_RUNTIME_MATH from environ (bd-06bxm.9).
+/// Returns Ok(true) for "on" or absent (default), Ok(false) for "off".
+/// Invalid values log a warning and fall back to on.
+fn parse_runtime_math_from_environ() -> bool {
+    const KEY_EQ: &[u8] = b"FRANKENLIBC_RUNTIME_MATH=";
+    const MAX_SCAN: usize = 4096;
+
+    // SAFETY: process-owned env pointer table.
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return true; // Default ON
+    }
+
+    for _ in 0..MAX_SCAN {
+        // SAFETY: envp points to a readable pointer slot.
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            return true; // Not found, default ON
+        }
+
+        // SAFETY: entry points to a NUL-terminated env string.
+        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
+            // SAFETY: KEY_EQ matched exactly; value pointer is in-bounds.
+            let value = unsafe { entry.add(KEY_EQ.len()) };
+            // SAFETY: value is a valid C string tail of entry.
+            if unsafe { cstr_eq_ignore_ascii_case(value, b"off") } {
+                return false;
+            }
+            if unsafe {
+                cstr_eq_ignore_ascii_case(value, b"on")
+                    || cstr_eq_ignore_ascii_case(value, b"1")
+                    || cstr_eq_ignore_ascii_case(value, b"true")
+            } {
+                return true;
+            }
+            // Invalid value - log warning and fall back to ON
+            push_mode_event("warn", "invalid_runtime_math_value", mode(), None);
+            return true;
+        }
+
+        // SAFETY: advance to next env vector slot.
+        envp = unsafe { envp.add(1) };
+    }
+
+    true // Default ON
+}
+
+/// Resolve runtime-math switch once at init (bd-06bxm.9).
+/// Returns true if runtime-math should be active.
+#[inline]
+fn runtime_math_enabled() -> bool {
+    let cached = RUNTIME_MATH_STATE.load(AtomicOrdering::Relaxed);
+    if cached == RUNTIME_MATH_ON {
+        return true;
+    }
+    if cached == RUNTIME_MATH_OFF {
+        return false;
+    }
+    // Need to resolve
+    if RUNTIME_MATH_STATE
+        .compare_exchange(
+            RUNTIME_MATH_UNRESOLVED,
+            RUNTIME_MATH_RESOLVING,
+            AtomicOrdering::AcqRel,
+            AtomicOrdering::Relaxed,
+        )
+        .is_err()
+    {
+        // Another thread is resolving or already resolved
+        return RUNTIME_MATH_STATE.load(AtomicOrdering::Acquire) == RUNTIME_MATH_ON;
+    }
+
+    let enabled = parse_runtime_math_from_environ();
+    let state = if enabled { RUNTIME_MATH_ON } else { RUNTIME_MATH_OFF };
+    RUNTIME_MATH_STATE.store(state, AtomicOrdering::Release);
+
+    if !enabled {
+        push_mode_event("info", "runtime_math_disabled", mode(), None);
+    }
+
+    enabled
+}
+
+/// Check if runtime-math is disabled via FRANKENLIBC_RUNTIME_MATH=off (bd-06bxm.9).
+#[inline]
+pub(crate) fn runtime_math_disabled() -> bool {
+    !runtime_math_enabled()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1835,6 +1935,20 @@ pub(crate) fn decide(
         return (mode, decision);
     }
     MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
+
+    // Runtime-math kill-switch (bd-06bxm.9): when FRANKENLIBC_RUNTIME_MATH=off,
+    // skip kernel consultation but still run basic membrane validation.
+    if runtime_math_disabled() {
+        let decision = RuntimeDecision {
+            action: MembraneAction::Allow,
+            profile: ValidationProfile::Full,
+            policy_id: 0,
+            risk_upper_bound_ppm: 0,
+            evidence_seqno: 0,
+        };
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    }
 
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
         let decision = passthrough_decision();
