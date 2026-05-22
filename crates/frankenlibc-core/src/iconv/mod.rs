@@ -162,6 +162,7 @@ enum Encoding {
     HpRoman9,
     HpGreek8,
     HpThai8,
+    HpTurkish8,
     Csn369103,
     Ibm902,
     Ibm901,
@@ -202,7 +203,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 121] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 122] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -766,6 +767,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 121] = [
         canonical: "HP-THAI8",
         normalized: "HPTHAI8",
         aliases: &["HPTHAI8", "THAI8"],
+    },
+    CodecSpec {
+        encoding: Encoding::HpTurkish8,
+        canonical: "HP-TURKISH8",
+        normalized: "HPTURKISH8",
+        aliases: &["HPTURKISH8", "TURKISH8"],
     },
     CodecSpec {
         encoding: Encoding::Csn369103,
@@ -7061,6 +7068,67 @@ fn encode_hpthai8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const HPTURKISH8_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (C1 controls)
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    // 0x90-0x9F (C1 controls continued)
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    // 0xA0-0xAF (Latin + Turkish Ğ, accents)
+    0x00A0, 0x00C7, 0x011E, 0x00C8, 0x00CA, 0x00CB, 0x00CE, 0x00CF, // A0-A7
+    0x00B4, 0x02CB, 0x02C6, 0x00A8, 0x02DC, 0x00D9, 0x00DB, 0x20A4, // A8-AF
+    // 0xB0-0xBF (symbols + currency)
+    0xFFFF, 0x00DD, 0x00FD, 0x00B0, 0xFFFF, 0xFFFF, 0x00D1, 0x00F1, // B0-B7
+    0x00A1, 0x00BF, 0x00A4, 0x00A3, 0x00A5, 0x00A7, 0x0192, 0x00A2, // B8-BF
+    // 0xC0-0xCF (accented vowels)
+    0xFFFF, 0x00EA, 0x00F4, 0xFFFF, 0x00E1, 0x00E9, 0x00F3, 0x00FA, // C0-C7
+    0x00E0, 0x00E8, 0x00F2, 0x00F9, 0x00E4, 0x00EB, 0xFFFF, 0xFFFF, // C8-CF
+    // 0xD0-0xDF (Nordic + Turkish İ, Ş)
+    0x00C5, 0x00EE, 0x00D8, 0x00C6, 0x00E5, 0x00ED, 0x00F8, 0x00E6, // D0-D7
+    0x00C4, 0x00EC, 0xFFFF, 0x0130, 0x00D6, 0x015E, 0x00DC, 0x00E7, // D8-DF
+    // 0xE0-0xEF (Turkish ğ + Latin)
+    0x011F, 0x00C3, 0x00E3, 0x00D0, 0x00F0, 0x00CD, 0x00CC, 0x00D3, // E0-E7
+    0x00D2, 0x00D5, 0x00F5, 0x0160, 0x0161, 0x00DA, 0x0178, 0x00FF, // E8-EF
+    // 0xF0-0xFF (Symbols + Turkish ı, ö, ş, ü)
+    0x00DE, 0x00FE, 0x00B7, 0x00B5, 0x00B6, 0x00BE, 0x2014, 0x00BC, // F0-F7
+    0x00BD, 0x00AA, 0x00BA, 0x0131, 0x00F6, 0x015F, 0x00FC, 0xFFFF, // F8-FF
+];
+
+fn decode_hpturkish8(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = HPTURKISH8_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_hpturkish8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in HPTURKISH8_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CSN369103_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (C1 controls)
     0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
@@ -7631,6 +7699,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::HpRoman9 => decode_hproman9(input),
         Encoding::HpGreek8 => decode_hpgreek8(input),
         Encoding::HpThai8 => decode_hpthai8(input),
+        Encoding::HpTurkish8 => decode_hpturkish8(input),
         Encoding::Csn369103 => decode_csn369103(input),
         Encoding::Ibm902 => decode_ibm902(input),
         Encoding::Ibm901 => decode_ibm901(input),
@@ -7825,6 +7894,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::HpRoman9 => encode_hproman9(ch, out),
         Encoding::HpGreek8 => encode_hpgreek8(ch, out),
         Encoding::HpThai8 => encode_hpthai8(ch, out),
+        Encoding::HpTurkish8 => encode_hpturkish8(ch, out),
         Encoding::Csn369103 => encode_csn369103(ch, out),
         Encoding::Ibm902 => encode_ibm902(ch, out),
         Encoding::Ibm901 => encode_ibm901(ch, out),
@@ -11183,6 +11253,26 @@ mod tests {
     #[test]
     fn hpthai8_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"HPTHAI8");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn hpturkish8_decode_roundtrip() {
+        let hpturkish8_input: &[u8] = &[0xA2, 0xE0, 0xDB, 0xFB];
+        let expected_utf8 = "Ğğİı";
+        let mut cd = iconv_open(b"UTF-8", b"HP-TURKISH8").expect("HP-TURKISH8 to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(hpturkish8_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"HP-TURKISH8", b"UTF-8").expect("UTF-8 to HP-TURKISH8 conversion");
+        let mut hpturkish8_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut hpturkish8_out).unwrap();
+        assert_eq!(&hpturkish8_out[..result2.out_written], hpturkish8_input);
+    }
+
+    #[test]
+    fn hpturkish8_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"HPTURKISH8");
         assert!(cd.is_some());
     }
 
