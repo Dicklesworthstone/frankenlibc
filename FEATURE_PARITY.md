@@ -197,15 +197,15 @@ Current semantic fallback/no-op/bootstrap contracts:
 | profiling hooks (`gmon`, sampling/probe paths) | probe-induced benchmark distortion | minimal probe schedules + deterministic debias weights | PLANNED |
 | floating-point edges (`soft-fp`, `fenv` exceptional paths) | denormal/NaN/payload drift across regimes | regime-indexed numeric guard tables + certified fallback kernels | PLANNED |
 
-## TSM Coverage Matrix (Planned)
+## TSM Coverage Matrix
 
 | Safety Dimension | Description | Status |
 |---|---|---|
-| provenance checks | track pointer origin/ownership | PLANNED |
-| bounds checks | enforce region length constraints | PLANNED |
-| temporal checks | detect freed/quarantined states | PLANNED |
-| repair policies | clamp/truncate/no-op/deny deterministic fixes | PLANNED |
-| evidence logging | record repaired/denied operations | PLANNED |
+| provenance checks | track pointer origin/ownership via fingerprint + bloom filter | DONE |
+| bounds checks | enforce region length constraints via arena + page oracle | DONE |
+| temporal checks | detect freed/quarantined states via generational arena | DONE |
+| repair policies | clamp/truncate/no-op/deny deterministic fixes in heal.rs | DONE |
+| evidence logging | record repaired/denied operations via evidence.rs | DONE |
 
 ## Legacy-Driven Engine Matrix
 
@@ -295,7 +295,7 @@ RC-WS7 proof-program status: no machine-checked formal proof artifacts are commi
 2. Initial conformance fixtures committed (`tests/conformance/fixtures/`); full capture pending.
 3. Benchmark harnesses exist, but committed baseline evidence + regression thresholds are still pending.
 4. Version script scaffold created (`libc.map`); full symbol/version verification pending.
-5. No formal proof artifacts are committed yet.
+5. Proof notes exist in `docs/proofs/` (9 files); machine-checked formal proof artifacts (Lean/Coq/SMT) are not committed yet.
 6. Runtime math kernel is live in membrane and pointer validation; cross-family ABI wiring remains incomplete.
 7. Sequential-statistical guardrails are wired with deterministic calibration evidence (`tests/runtime_math/risk_pareto_calibration.v1.json`) and enforced via `scripts/check_runtime_math_risk_pareto_calibration.sh`.
 8. Bootstrap string/memory + allocator boundary implementations exist; initial strict/hardened fixture evidence is now committed (`tests/conformance/fixtures/membrane_mode_split.json`), full differential campaign remains pending.
