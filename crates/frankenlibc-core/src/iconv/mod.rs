@@ -79,6 +79,7 @@ enum Encoding {
     Iso88592,
     Iso88594,
     Iso88595,
+    Iso88596,
     Iso88597,
     Iso88599,
     Iso885913,
@@ -97,7 +98,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 16] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 17] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -171,6 +172,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 16] = [
         aliases: &["ISO88595", "CYRILLIC", "CSISOLATINCYRILLIC"],
     },
     CodecSpec {
+        encoding: Encoding::Iso88596,
+        canonical: "ISO-8859-6",
+        normalized: "ISO88596",
+        aliases: &["ISO88596", "ARABIC", "CSISOLATINARABIC", "ASMO708", "ECMA114"],
+    },
+    CodecSpec {
         encoding: Encoding::Iso88597,
         canonical: "ISO-8859-7",
         normalized: "ISO88597",
@@ -224,8 +231,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 16] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 17] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -783,6 +790,57 @@ fn encode_iso88595(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ISO-8859-6 (Arabic) to Unicode mapping for bytes 0xA0-0xFF.
+/// Many positions are undefined (0xFFFF marks these).
+const ISO88596_TO_UNICODE: [u16; 96] = [
+    0x00A0, 0xFFFF, 0xFFFF, 0xFFFF, 0x00A4, 0xFFFF, 0xFFFF, 0xFFFF, // A0-A7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x060C, 0x00AD, 0xFFFF, 0xFFFF, // A8-AF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // B0-B7
+    0xFFFF, 0xFFFF, 0xFFFF, 0x061B, 0xFFFF, 0xFFFF, 0xFFFF, 0x061F, // B8-BF
+    0xFFFF, 0x0621, 0x0622, 0x0623, 0x0624, 0x0625, 0x0626, 0x0627, // C0-C7
+    0x0628, 0x0629, 0x062A, 0x062B, 0x062C, 0x062D, 0x062E, 0x062F, // C8-CF
+    0x0630, 0x0631, 0x0632, 0x0633, 0x0634, 0x0635, 0x0636, 0x0637, // D0-D7
+    0x0638, 0x0639, 0x063A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D8-DF
+    0x0640, 0x0641, 0x0642, 0x0643, 0x0644, 0x0645, 0x0646, 0x0647, // E0-E7
+    0x0648, 0x0649, 0x064A, 0x064B, 0x064C, 0x064D, 0x064E, 0x064F, // E8-EF
+    0x0650, 0x0651, 0x0652, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F0-F7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_iso88596(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0xA0 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = ISO88596_TO_UNICODE[(b - 0xA0) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_iso88596(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0xA0 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in ISO88596_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0xA0;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// ISO-8859-7 (Greek) to Unicode lookup table for bytes 0xA0-0xFF.
 const ISO88597_TO_UNICODE: [u16; 96] = [
     0x00A0, 0x2018, 0x2019, 0x00A3, 0x20AC, 0x20AF, 0x00A6, 0x00A7, // A0-A7
@@ -1044,6 +1102,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso88592 => decode_iso88592(input),
         Encoding::Iso88594 => decode_iso88594(input),
         Encoding::Iso88595 => decode_iso88595(input),
+        Encoding::Iso88596 => decode_iso88596(input),
         Encoding::Iso88597 => decode_iso88597(input),
         Encoding::Iso88599 => decode_iso88599(input),
         Encoding::Iso885913 => decode_iso885913(input),
@@ -1113,6 +1172,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso88592 => encode_iso88592(ch, out),
         Encoding::Iso88594 => encode_iso88594(ch, out),
         Encoding::Iso88595 => encode_iso88595(ch, out),
+        Encoding::Iso88596 => encode_iso88596(ch, out),
         Encoding::Iso88597 => encode_iso88597(ch, out),
         Encoding::Iso88599 => encode_iso88599(ch, out),
         Encoding::Iso885913 => encode_iso885913(ch, out),
@@ -1702,6 +1762,35 @@ mod tests {
     #[test]
     fn iso88595_accepts_cyrillic_alias() {
         let cd = iconv_open(b"UTF-8", b"CYRILLIC");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88596_to_utf8_round_trip() {
+        // ISO-8859-6 bytes for "مرحبا" (hello in Arabic)
+        // م=0xE5, ر=0xD1, ح=0xCD, ب=0xC8, ا=0xC7
+        let iso_input: &[u8] = &[0xE5, 0xD1, 0xCD, 0xC8, 0xC7];
+        let expected_utf8 = "مرحبا";
+
+        // ISO-8859-6 → UTF-8
+        let mut cd = iconv_open(b"UTF-8", b"ISO-8859-6").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(iso_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 5);
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        // UTF-8 → ISO-8859-6 (reverse)
+        let mut cd2 = iconv_open(b"ISO-8859-6", b"UTF-8").unwrap();
+        let mut iso_out = [0u8; 32];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut iso_out).unwrap();
+        assert_eq!(result2.in_consumed, expected_utf8.len());
+        assert_eq!(&iso_out[..result2.out_written], iso_input);
+    }
+
+    #[test]
+    fn iso88596_accepts_arabic_alias() {
+        let cd = iconv_open(b"UTF-8", b"ARABIC");
         assert!(cd.is_some());
     }
 
