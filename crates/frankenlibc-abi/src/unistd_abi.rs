@@ -9418,7 +9418,17 @@ const NSS_STATUS_NOTFOUND: c_int = 0;
 const NSS_STATUS_UNAVAIL: c_int = -1;
 const NSS_STATUS_TRYAGAIN: c_int = -2;
 const NSS_HOST_NOT_FOUND: c_int = 1;
+const NSS_TRY_AGAIN: c_int = 2;
 const NSS_NO_RECOVERY: c_int = 3;
+
+#[repr(C)]
+struct GaihAddrtuple {
+    next: *mut GaihAddrtuple,
+    name: *mut c_char,
+    family: c_int,
+    addr: [u32; 4],
+    scopeid: u32,
+}
 
 #[inline]
 unsafe fn nss_set_errnop_enoent(errnop: *mut c_int) {
@@ -9486,6 +9496,146 @@ unsafe fn nss_hostent_notfound(errnop: *mut c_int, h_errnop: *mut c_int) -> c_in
     unsafe { nss_set_errnop_enoent(errnop) };
     unsafe { nss_set_herr_host_not_found(h_errnop) };
     NSS_STATUS_NOTFOUND
+}
+
+unsafe fn nss_pack_gaih_addrtuples_from_hostent(
+    hostent: &libc::hostent,
+    pat: *mut *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    if hostent.h_name.is_null()
+        || hostent.h_addr_list.is_null()
+        || (hostent.h_addrtype != libc::AF_INET && hostent.h_addrtype != libc::AF_INET6)
+    {
+        return unsafe { nss_hostent_notfound(errnop, std::ptr::null_mut()) };
+    }
+
+    let addr_len = match usize::try_from(hostent.h_length) {
+        Ok(4) if hostent.h_addrtype == libc::AF_INET => 4,
+        Ok(16) if hostent.h_addrtype == libc::AF_INET6 => 16,
+        _ => return unsafe { nss_hostent_notfound(errnop, std::ptr::null_mut()) },
+    };
+
+    let mut addrs = Vec::new();
+    let mut cursor = hostent.h_addr_list;
+    while !cursor.is_null() {
+        // SAFETY: hostent address lists are NULL-terminated by the reentrant resolver.
+        let addr = unsafe { *cursor };
+        if addr.is_null() {
+            break;
+        }
+        addrs.push(addr);
+        if addrs.len() == 64 {
+            break;
+        }
+        // SAFETY: cursor walks the NULL-terminated pointer array.
+        cursor = unsafe { cursor.add(1) };
+    }
+    if addrs.is_empty() {
+        return unsafe { nss_hostent_notfound(errnop, std::ptr::null_mut()) };
+    }
+
+    // SAFETY: hostent.h_name is populated by the resolver and points to a NUL-terminated string.
+    let name_bytes = unsafe { std::ffi::CStr::from_ptr(hostent.h_name) }.to_bytes_with_nul();
+    let capacity = tracked_output_capacity(buffer, buflen);
+    let tuple_align = core::mem::align_of::<GaihAddrtuple>();
+    let tuple_size = core::mem::size_of::<GaihAddrtuple>();
+    let tuple_off = match aligned_output_offset(buffer, 0, tuple_align) {
+        Some(offset) => offset,
+        None => {
+            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+            return NSS_STATUS_TRYAGAIN;
+        }
+    };
+    let tuple_bytes = match addrs.len().checked_mul(tuple_size) {
+        Some(bytes) => bytes,
+        None => {
+            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+            return NSS_STATUS_TRYAGAIN;
+        }
+    };
+    let name_off = match tuple_off.checked_add(tuple_bytes) {
+        Some(offset) => offset,
+        None => {
+            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+            return NSS_STATUS_TRYAGAIN;
+        }
+    };
+    let total = match name_off.checked_add(name_bytes.len()) {
+        Some(total) => total,
+        None => {
+            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+            return NSS_STATUS_TRYAGAIN;
+        }
+    };
+    if buffer.is_null() || total > capacity {
+        unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+        return NSS_STATUS_TRYAGAIN;
+    }
+
+    // SAFETY: capacity check above covers tuple and copied name storage.
+    let name_ptr = unsafe { buffer.add(name_off) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            name_bytes.as_ptr().cast::<c_char>(),
+            name_ptr,
+            name_bytes.len(),
+        )
+    };
+
+    for (idx, addr) in addrs.iter().copied().enumerate() {
+        let mut words = [0u32; 4];
+        let mut bytes = [0u8; 16];
+        // SAFETY: hostent address entries are at least h_length bytes long.
+        unsafe { std::ptr::copy_nonoverlapping(addr.cast::<u8>(), bytes.as_mut_ptr(), addr_len) };
+        for (word_idx, word) in words.iter_mut().enumerate() {
+            let start = word_idx * 4;
+            *word = u32::from_ne_bytes([
+                bytes[start],
+                bytes[start + 1],
+                bytes[start + 2],
+                bytes[start + 3],
+            ]);
+        }
+
+        // SAFETY: tuple slots are within the checked caller buffer.
+        let tuple_ptr = unsafe {
+            buffer
+                .add(tuple_off + idx * tuple_size)
+                .cast::<GaihAddrtuple>()
+        };
+        let next = if idx + 1 == addrs.len() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: the next tuple slot is within the checked caller buffer.
+            unsafe {
+                buffer
+                    .add(tuple_off + (idx + 1) * tuple_size)
+                    .cast::<GaihAddrtuple>()
+            }
+        };
+        unsafe {
+            std::ptr::write(
+                tuple_ptr,
+                GaihAddrtuple {
+                    next,
+                    name: name_ptr,
+                    family: hostent.h_addrtype,
+                    addr: words,
+                    scopeid: 0,
+                },
+            );
+        }
+    }
+
+    if !pat.is_null() {
+        // SAFETY: caller-provided output slot per NSS gethostbyname4_r contract.
+        unsafe { *pat = buffer.add(tuple_off).cast::<c_void>() };
+    }
+    unsafe { nss_set_errnop(errnop, 0) };
+    NSS_STATUS_SUCCESS
 }
 
 /// Plain `getXXent_r(*result, *buf, buflen, *errnop)` shape.
@@ -9712,17 +9862,60 @@ pub unsafe extern "C" fn _nss_files_gethostbyname3_r(
 /// buflen, *errnop, *h_errnop, *ttlp)` — newer gaih_addrtuple shape.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_gethostbyname4_r(
-    _name: *const c_char,
-    _pat: *mut *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    pat: *mut *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
-    _ttlp: *mut i32,
+    ttlp: *mut i32,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if !pat.is_null() {
+        // SAFETY: caller-provided output slot per NSS gethostbyname4_r contract.
+        unsafe { *pat = std::ptr::null_mut() };
+    }
+    if !ttlp.is_null() {
+        // SAFETY: optional NSS TTL output slot.
+        unsafe { *ttlp = 0 };
+    }
+    if name.is_null() || pat.is_null() || buffer.is_null() {
+        return unsafe { nss_hostent_notfound(errnop, h_errnop) };
+    }
+
+    let mut hostent = libc::hostent {
+        h_name: std::ptr::null_mut(),
+        h_aliases: std::ptr::null_mut(),
+        h_addrtype: 0,
+        h_length: 0,
+        h_addr_list: std::ptr::null_mut(),
+    };
+    let scratch_len = buflen.clamp(1024, 64 * 1024);
+    let mut scratch = vec![0 as c_char; scratch_len];
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe {
+        crate::resolv_abi::gethostbyname_r_impl(
+            name,
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut resolved,
+            h_errnop,
+        )
+    };
+    if rc != 0 || resolved.is_null() {
+        return unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) };
+    }
+
+    let status =
+        unsafe { nss_pack_gaih_addrtuples_from_hostent(&hostent, pat, buffer, buflen, errnop) };
+    if status == NSS_STATUS_SUCCESS {
+        unsafe { nss_set_herr(h_errnop, 0) };
+    } else if status == NSS_STATUS_TRYAGAIN {
+        unsafe { nss_set_herr(h_errnop, NSS_TRY_AGAIN) };
+    } else {
+        unsafe { nss_set_herr_host_not_found(h_errnop) };
+    }
+    status
 }
 
 /// `_nss_files_gethostbyaddr_r(addr, len, type, *result, *buf,

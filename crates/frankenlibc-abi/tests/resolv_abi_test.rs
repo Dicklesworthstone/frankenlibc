@@ -4465,3 +4465,61 @@ fn nss_files_gethostbyaddr_uses_hosts_backend() {
         },
     );
 }
+
+#[test]
+fn nss_files_gethostbyname4_uses_gaih_addrtuple_backend() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    #[repr(C)]
+    struct TestGaihAddrtuple {
+        next: *mut TestGaihAddrtuple,
+        name: *mut c_char,
+        family: c_int,
+        addr: [u32; 4],
+        scopeid: u32,
+    }
+
+    with_resolver_backends(
+        Some(b"203.0.113.55 nss-name4 nss-name4-alias\n"),
+        None,
+        |_| {
+            let name = c"nss-name4-alias";
+            let mut tuple_head: *mut c_void = ptr::null_mut();
+            let mut buf = [0 as c_char; 512];
+            let mut err = -1;
+            let mut h_err = -1;
+            let mut ttl = -1;
+
+            let status = unsafe {
+                _nss_files_gethostbyname4_r(
+                    name.as_ptr(),
+                    &mut tuple_head,
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    &mut err,
+                    &mut h_err,
+                    &mut ttl,
+                )
+            };
+
+            assert_eq!(status, 1);
+            assert_eq!(err, 0);
+            assert_eq!(h_err, 0);
+            assert_eq!(ttl, 0);
+            assert!(!tuple_head.is_null());
+
+            let tuple = unsafe { &*(tuple_head.cast::<TestGaihAddrtuple>()) };
+            assert!(tuple.next.is_null());
+            assert_eq!(tuple.family, libc::AF_INET);
+            assert_eq!(tuple.scopeid, 0);
+            assert_eq!(
+                unsafe { CStr::from_ptr(tuple.name) }.to_bytes(),
+                b"nss-name4-alias"
+            );
+            assert_eq!(tuple.addr[0].to_ne_bytes(), [203, 0, 113, 55]);
+            assert_eq!(tuple.addr[1], 0);
+            assert_eq!(tuple.addr[2], 0);
+            assert_eq!(tuple.addr[3], 0);
+        },
+    );
+}
