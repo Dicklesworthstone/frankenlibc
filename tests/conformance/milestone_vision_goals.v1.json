@@ -1,0 +1,119 @@
+{
+  "schema_version": "milestone_vision_goals.v1",
+  "purpose": "RC-WS9.3: Milestones close only when an anytime-valid sequential test over vision-goal evidence passes.",
+  "milestones": {
+    "bd-iu3fb": {
+      "title": "[WS-9] Anti-recurrence: make truthful bead closure the dominant strategy",
+      "vision_goals": [
+        {
+          "id": "vg-9.1",
+          "description": "Proof-carrying completion contracts: faked closure fails verification",
+          "evidence_sources": [
+            "scripts/check_bead_closure_freshness.sh --self-test",
+            "tests/conformance/bead_closure_freshness_policy.v1.json"
+          ],
+          "evidence_type": "gate_pass",
+          "required": true
+        },
+        {
+          "id": "vg-9.2",
+          "description": "Empty queue triggers reality check instead of done state",
+          "evidence_sources": [
+            "tests/conformance/queue_empty_reality_trigger_completion_contract.v1.json",
+            "scripts/check_queue_empty_reality_trigger.sh"
+          ],
+          "evidence_type": "file_exists",
+          "required": true
+        },
+        {
+          "id": "vg-9.3",
+          "description": "Milestone done is a sequential stopping rule over vision-goal evidence",
+          "evidence_sources": [
+            "scripts/check_milestone_closure.sh",
+            "tests/conformance/milestone_vision_goals.v1.json"
+          ],
+          "evidence_type": "file_exists",
+          "required": true
+        },
+        {
+          "id": "vg-9.4",
+          "description": "Standing adversarial-verifier agent role exists and is operational",
+          "evidence_sources": [
+            "AGENTS.md"
+          ],
+          "evidence_type": "doc_contains",
+          "evidence_pattern": "adversarial.verifier|cross.review",
+          "required": false
+        }
+      ],
+      "closure_threshold": {
+        "required_goals_met": "all_required",
+        "e_value_max": 0.1,
+        "min_observations": 3
+      }
+    },
+    "bd-38x82": {
+      "title": "[WS-8] Standalone artifact: libfrankenlibc_replace.so",
+      "vision_goals": [
+        {
+          "id": "vg-8.1",
+          "description": "Produce libfrankenlibc_replace.so standalone artifact",
+          "evidence_sources": [
+            "target/release/libfrankenlibc_replace.so"
+          ],
+          "evidence_type": "file_exists",
+          "required": true
+        }
+      ],
+      "closure_threshold": {
+        "required_goals_met": "all_required",
+        "e_value_max": 0.1,
+        "min_observations": 1
+      }
+    },
+    "test-unmet-required": {
+      "title": "[TEST] Synthetic milestone with unmet required goal",
+      "vision_goals": [
+        {
+          "id": "vg-test.1",
+          "description": "A file that exists",
+          "evidence_sources": [
+            "README.md"
+          ],
+          "evidence_type": "file_exists",
+          "required": true
+        },
+        {
+          "id": "vg-test.2",
+          "description": "A file that does NOT exist (required)",
+          "evidence_sources": [
+            "nonexistent-file-12345.xyz"
+          ],
+          "evidence_type": "file_exists",
+          "required": true
+        }
+      ],
+      "closure_threshold": {
+        "required_goals_met": "all_required",
+        "e_value_max": 0.2,
+        "min_observations": 1
+      }
+    }
+  },
+  "e_process_parameters": {
+    "null_hypothesis": "Goals are NOT met (divergence rate P0)",
+    "alternative_hypothesis": "Goals ARE met (divergence rate Q1 < P0)",
+    "P0": 0.50,
+    "Q1": 0.05,
+    "alarm_e_value": 10.0,
+    "pass_e_value": 0.2
+  },
+  "gate_commands": [
+    "bash scripts/check_milestone_closure.sh --self-test",
+    "bash scripts/check_milestone_closure.sh <milestone_id>"
+  ],
+  "test_cases": {
+    "met_goals_allow_closure": "All required goals have evidence -> e_value < pass_threshold -> closure allowed",
+    "unmet_goals_block_closure": "Missing required goal evidence -> e_value >= alarm_threshold -> closure blocked"
+  }
+}
