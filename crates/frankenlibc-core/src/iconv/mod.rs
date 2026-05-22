@@ -119,6 +119,7 @@ enum Encoding {
     Cp858,
     MacRomanian,
     MacCroatian,
+    Cp720,
     Cp850,
     MacRoman,
     Iso88592,
@@ -152,7 +153,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 71] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 72] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -458,6 +459,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 71] = [
         canonical: "MACCROATIAN",
         normalized: "MACCROATIAN",
         aliases: &["XMACCROATIAN"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp720,
+        canonical: "CP720",
+        normalized: "CP720",
+        aliases: &["IBM720", "720"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4120,6 +4127,69 @@ fn encode_maccroatian(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// CP720 (DOS Arabic) to Unicode mapping for bytes 0x80-0xFF.
+const CP720_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (undefined/control + some Arabic)
+    0xFFFF, 0xFFFF, 0x00E9, 0x00E2, 0xFFFF, 0x00E0, 0xFFFF, 0x00E7, // 80-87
+    0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0xFFFF, 0xFFFF, 0xFFFF, // 88-8F
+    // 0x90-0x9F (undefined + some)
+    0xFFFF, 0x0651, 0x0652, 0x00F4, 0x00A4, 0x0640, 0x00FB, 0x00F9, // 90-97
+    0x0621, 0x0622, 0x0623, 0x0624, 0x00A3, 0x0625, 0x0626, 0x0627, // 98-9F
+    // 0xA0-0xAF (Arabic letters)
+    0x0628, 0x0629, 0x062A, 0x062B, 0x062C, 0x062D, 0x062E, 0x062F, // A0-A7
+    0x0630, 0x0631, 0x0632, 0x0633, 0x0634, 0x0635, 0x00AB, 0x00BB, // A8-AF
+    // 0xB0-0xBF (box drawing)
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556, // B0-B7
+    0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B, 0x2510, // B8-BF
+    // 0xC0-0xCF (box drawing)
+    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F, // C0-C7
+    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567, // C8-CF
+    // 0xD0-0xDF (box drawing + misc)
+    0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B, // D0-D7
+    0x256A, 0x2518, 0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580, // D8-DF
+    // 0xE0-0xEF (Arabic letters)
+    0x0636, 0x0637, 0x0638, 0x0639, 0x063A, 0x0641, 0x00B5, 0x0642, // E0-E7
+    0x0643, 0x0644, 0x0645, 0x0646, 0x0647, 0x0648, 0x0649, 0x064A, // E8-EF
+    // 0xF0-0xFF (misc symbols)
+    0x2261, 0x064B, 0x064C, 0x064D, 0x064E, 0x064F, 0x0650, 0x2248, // F0-F7
+    0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x25A0, 0x00A0, // F8-FF
+];
+
+fn decode_cp720(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP720_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_cp720(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP720_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4339,6 +4409,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp858 => decode_cp858(input),
         Encoding::MacRomanian => decode_macromanian(input),
         Encoding::MacCroatian => decode_maccroatian(input),
+        Encoding::Cp720 => decode_cp720(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4483,6 +4554,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp858 => encode_cp858(ch, out),
         Encoding::MacRomanian => encode_macromanian(ch, out),
         Encoding::MacCroatian => encode_maccroatian(ch, out),
+        Encoding::Cp720 => encode_cp720(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -6536,6 +6608,30 @@ mod tests {
     #[test]
     fn maccroatian_accepts_xmaccroatian_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-CROATIAN");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp720_to_utf8_round_trip() {
+        // CP720 (DOS Arabic): ب (0xA0), ت (0xA2), ل (0xE9), م (0xEA)
+        let cp720_input: &[u8] = &[0xA0, 0xA2, 0xE9, 0xEA];
+        let expected_utf8 = "\u{0628}\u{062A}\u{0644}\u{0645}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP720").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(cp720_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP720", b"UTF-8").unwrap();
+        let mut cp720_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp720_out).unwrap();
+        assert_eq!(&cp720_out[..result2.out_written], cp720_input);
+    }
+
+    #[test]
+    fn cp720_accepts_ibm720_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM720");
         assert!(cd.is_some());
     }
 
