@@ -1396,3 +1396,23 @@ pub unsafe extern "C" fn __frankenlibc_is_feedback_enabled() -> c_int {
 pub unsafe extern "C" fn __frankenlibc_decision_count() -> u64 {
     crate::runtime_policy::runtime_decision_count().unwrap_or(0)
 }
+
+/// FFI export to get the count of double-free heals from the healing policy.
+/// Returns the number of double-free heals, used to verify PCC soundness (bd-06bxm.5).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_healing_double_free_count() -> u64 {
+    use std::sync::atomic::Ordering;
+    frankenlibc_membrane::heal::global_healing_policy()
+        .double_frees
+        .load(Ordering::Relaxed)
+}
+
+/// FFI export to get the count of foreign-free heals from the healing policy.
+/// Returns the number of foreign pointer free heals (bd-06bxm.5 diagnostic).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_healing_foreign_free_count() -> u64 {
+    use std::sync::atomic::Ordering;
+    frankenlibc_membrane::heal::global_healing_policy()
+        .foreign_frees
+        .load(Ordering::Relaxed)
+}

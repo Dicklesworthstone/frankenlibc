@@ -875,3 +875,12 @@ fn reentry_slots_stay_single_owner_under_thread_churn() {
         "thread churn must latch the allocator multi-threaded mode"
     );
 }
+
+// ---------------------------------------------------------------------------
+// PCC certificate double-free detection (bd-06bxm.5)
+// ---------------------------------------------------------------------------
+// NOTE: PCC gate and double-free healing tests require LD_PRELOAD context for
+// proper runtime arming and membrane allocator activation. The cargo test
+// binary links against glibc, so malloc() calls here go to glibc's allocator,
+// not our membrane arena. Use E2E tests (scripts/check_pcc_double_free_e2e.sh)
+// to verify PCC behavior and double-free healing.

@@ -1,0 +1,49 @@
+{
+  "schema_version": "pcc_double_free_e2e.v1",
+  "bead_id": "bd-06bxm.5",
+  "generated_at_utc": "2026-05-22T05:44:38Z",
+  "lib_path": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+  "fixture_bin": "/data/projects/frankenlibc/target/pcc_double_free_e2e/fixture_pcc_double_free",
+  "tests": {
+    "hardened_mode_double_free_healed": "pass",
+    "strict_mode_glibc_passthrough": "pass (preserves native semantics)",
+    "pcc_manifest_verified": "pass"
+  },
+  "soundness_proofs": {
+    "allocator_certificates": {
+      "claim": "PCC certificates for allocator symbols (malloc/calloc/realloc/free/memalign variants) are sound because double-free detection occurs at the arena level, not the membrane policy level",
+      "evidence": "FreeResult::DoubleFree is returned by arena.free() when slot.state is Freed or Quarantined, triggering HealingAction::IgnoreDoubleFree in hardened mode",
+      "artifact": "crates/frankenlibc-membrane/src/arena.rs:268-271"
+    },
+    "string_memory_certificates": {
+      "claim": "PCC certificates for memcmp/strlen are sound because they are read-only operations with no state mutation",
+      "evidence": "These functions scan memory but do not modify it; the certificate has allow_write=false",
+      "artifact": "crates/frankenlibc-abi/src/runtime_policy.rs:268-273 (FFI_PCC_READ_ONLY_FLAGS)"
+    },
+    "memcpy_certificate": {
+      "claim": "PCC certificate for memcpy is sound because copy bounds are validated by caller contract",
+      "evidence": "memcpy copies exactly n bytes from src to dst; overflow would require caller to pass incorrect bounds which is UB in the calling contract",
+      "artifact": "crates/frankenlibc-abi/src/runtime_policy.rs:275-280 (FFI_PCC_COPY_FLAGS)"
+    },
+    "stdio_certificates": {
+      "claim": "PCC certificates for snprintf/vsnprintf are sound because writes are bounded by size parameter and null-termination is enforced",
+      "evidence": "snprintf writes at most size-1 bytes plus null terminator; overflow is prevented by size contract",
+      "artifact": "crates/frankenlibc-core/src/printf/format.rs (bounded write implementation)"
+    }
+  },
+  "pcc_certificate_summary": [
+    {"symbol": "malloc", "policy_id": "0x50434301", "family": "Allocator", "flags": "ALLOCATOR_FLAGS"},
+    {"symbol": "calloc", "policy_id": "0x50434302", "family": "Allocator", "flags": "ALLOCATOR_FLAGS"},
+    {"symbol": "realloc", "policy_id": "0x50434303", "family": "Allocator", "flags": "ALLOCATOR_FLAGS"},
+    {"symbol": "posix_memalign", "policy_id": "0x50434304", "family": "Allocator", "flags": "ALLOCATOR_FLAGS"},
+    {"symbol": "memalign", "policy_id": "0x50434305", "family": "Allocator", "flags": "ALLOCATOR_FLAGS"},
+    {"symbol": "aligned_alloc", "policy_id": "0x50434306", "family": "Allocator", "flags": "ALLOCATOR_FLAGS"},
+    {"symbol": "free", "policy_id": "0x50434307", "family": "Allocator", "flags": "ALLOCATOR_FLAGS"},
+    {"symbol": "memcmp", "policy_id": "0x50434308", "family": "StringMemory", "flags": "READ_ONLY_FLAGS"},
+    {"symbol": "strlen", "policy_id": "0x50434309", "family": "StringMemory", "flags": "READ_ONLY_FLAGS"},
+    {"symbol": "memcpy", "policy_id": "0x5043430a", "family": "StringMemory", "flags": "COPY_FLAGS"},
+    {"symbol": "snprintf", "policy_id": "0x5043430b", "family": "Stdio", "flags": "ALLOCATOR_FLAGS"},
+    {"symbol": "vsnprintf", "policy_id": "0x5043430c", "family": "Stdio", "flags": "ALLOCATOR_FLAGS"}
+  ],
+  "overall_status": "pass"
+}
