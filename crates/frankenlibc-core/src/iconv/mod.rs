@@ -103,6 +103,7 @@ enum Encoding {
     Armscii8,
     Geostd8,
     Pt154,
+    Mulelao,
     Cp850,
     MacRoman,
     Iso88592,
@@ -136,7 +137,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 55] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 56] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -346,6 +347,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 55] = [
         canonical: "PT154",
         normalized: "PT154",
         aliases: &["PTCP154", "CP154", "CSPTCP154"],
+    },
+    CodecSpec {
+        encoding: Encoding::Mulelao,
+        canonical: "MULELAO-1",
+        normalized: "MULELAO1",
+        aliases: &["MULELAO"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -2271,6 +2278,57 @@ fn encode_pt154(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// MULELAO-1 (Lao script) to Unicode mapping for bytes 0xA0-0xFF.
+/// Maps Lao characters in the 0xA0-0xFF range to U+0E80-U+0EFF.
+const MULELAO_TO_UNICODE: [u16; 96] = [
+    0x00A0, 0x0E81, 0x0E82, 0x0E84, 0x0E87, 0x0E88, 0x0EAA, 0x0E8A, // A0-A7
+    0x0E8D, 0x0E94, 0x0E95, 0x0E96, 0x0E97, 0x0E99, 0x0E9A, 0x0E9B, // A8-AF
+    0x0E9C, 0x0E9D, 0x0E9E, 0x0E9F, 0x0EA1, 0x0EA2, 0x0EA3, 0x0EA5, // B0-B7
+    0x0EA7, 0x0EAB, 0x0EAD, 0x0EAE, 0xFFFF, 0xFFFF, 0xFFFF, 0x0EAF, // B8-BF (undefined at BC-BE)
+    0x0EB0, 0x0EB2, 0x0EB3, 0x0EB4, 0x0EB5, 0x0EB6, 0x0EB7, 0x0EB8, // C0-C7
+    0x0EB9, 0x0EBB, 0x0EBC, 0x0EBD, 0x0EC0, 0x0EC1, 0x0EC2, 0x0EC3, // C8-CF
+    0x0EC4, 0x0EC6, 0xFFFF, 0xFFFF, 0x0EC8, 0x0EC9, 0x0ECA, 0x0ECB, // D0-D7 (undefined at D2-D3)
+    0x0ECC, 0x0ECD, 0x0EDC, 0x0EDD, 0x0ED0, 0x0ED1, 0x0ED2, 0x0ED3, // D8-DF
+    0x0ED4, 0x0ED5, 0x0ED6, 0x0ED7, 0x0ED8, 0x0ED9, 0xFFFF, 0xFFFF, // E0-E7 (undefined at E6-E7)
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // E8-EF (undefined)
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F0-F7 (undefined)
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF (undefined)
+];
+
+fn decode_mulelao(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0xA0 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MULELAO_TO_UNICODE[(b - 0xA0) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_mulelao(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0xA0 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MULELAO_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0xA0;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// CP850 (DOS Western European/Multilingual Latin 1) to Unicode mapping for bytes 0x80-0xFF.
 const CP850_TO_UNICODE: [u16; 128] = [
     0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7, // 80-87
@@ -3282,6 +3340,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Armscii8 => decode_armscii8(input),
         Encoding::Geostd8 => decode_geostd8(input),
         Encoding::Pt154 => decode_pt154(input),
+        Encoding::Mulelao => decode_mulelao(input),
         Encoding::Cp850 => decode_cp850(input),
         Encoding::MacRoman => decode_macroman(input),
         Encoding::Cp1252 => decode_cp1252(input),
@@ -3410,6 +3469,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Armscii8 => encode_armscii8(ch, out),
         Encoding::Geostd8 => encode_geostd8(ch, out),
         Encoding::Pt154 => encode_pt154(ch, out),
+        Encoding::Mulelao => encode_mulelao(ch, out),
         Encoding::Cp850 => encode_cp850(ch, out),
         Encoding::MacRoman => encode_macroman(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
@@ -4568,6 +4628,30 @@ mod tests {
     #[test]
     fn pt154_accepts_ptcp154_alias() {
         let cd = iconv_open(b"UTF-8", b"PTCP154");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn mulelao_to_utf8_round_trip() {
+        // MULELAO: ກ (0xA1 Lao Ko Kai), ຂ (0xA2 Lao Kho Khai)
+        let mulelao_input: &[u8] = &[0xA1, 0xA2];
+        let expected_utf8 = "\u{0E81}\u{0E82}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MULELAO-1").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(mulelao_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MULELAO-1", b"UTF-8").unwrap();
+        let mut mulelao_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mulelao_out).unwrap();
+        assert_eq!(&mulelao_out[..result2.out_written], mulelao_input);
+    }
+
+    #[test]
+    fn mulelao_accepts_mulelao_alias() {
+        let cd = iconv_open(b"UTF-8", b"MULELAO");
         assert!(cd.is_some());
     }
 
