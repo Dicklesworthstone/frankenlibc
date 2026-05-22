@@ -1353,3 +1353,26 @@ pub unsafe extern "C" fn setprogname(progname: *const c_char) {
     program_invocation_short_name.store(base, Ordering::Release);
     __progname.store(base, Ordering::Release);
 }
+
+/// FFI export to check if the runtime-math kernel is armed and ready.
+/// Returns 1 if RUNTIME_READY is ACTIVE, 0 otherwise.
+/// Used by e2e tests to verify safe arming under LD_PRELOAD (bd-06bxm.1).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_is_runtime_ready() -> c_int {
+    if crate::runtime_policy::is_runtime_ready() {
+        1
+    } else {
+        0
+    }
+}
+
+/// FFI export to get the runtime arming phase.
+/// Returns: 0=BOOTSTRAP (passthrough), 1=ARMING (transitioning), 2=ACTIVE (armed).
+/// Used by e2e tests to diagnose arming transitions (bd-06bxm.1).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_runtime_phase() -> c_int {
+    match crate::runtime_policy::abi_runtime_phase() {
+        crate::runtime_policy::AbiRuntimePhase::BootstrapPassthrough => 0,
+        crate::runtime_policy::AbiRuntimePhase::Active => 2,
+    }
+}
