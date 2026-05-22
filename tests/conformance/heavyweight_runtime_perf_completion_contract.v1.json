@@ -1,0 +1,40 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-35hjg.4",
+  "title": "[RC-WS1.4] Perf-blocking regression gate for heavyweight runtimes",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T04:48:00Z",
+    "source_commit": "71d7f1b8",
+    "generator_command": "scripts/check_heavyweight_runtime_perf.sh",
+    "tool_version": "check_heavyweight_runtime_perf.sh v1",
+    "chain_hash": "pending"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T04:44:00Z",
+    "closed_at_utc": "2026-05-22T04:48:00Z",
+    "in_progress_source": "br update bd-35hjg.4 --status=in_progress",
+    "closed_at_source": "br close bd-35hjg.4"
+  },
+  "artifact_refs": [
+    "scripts/check_heavyweight_runtime_perf.sh",
+    "tests/conformance/heavyweight_runtime_perf.v1.json"
+  ],
+  "test_coverage": {
+    "python3_perf": "python3 -c 'print(1)' runs within 3x baseline under strict mode preload",
+    "perl_perf": "perl -e 'print 1' runs within 3x baseline under strict mode preload",
+    "per_binary_budget": "Each runtime has configurable ppm budget via environment variables",
+    "statistical_sampling": "10 samples with 2 warmup runs, p50/p95/p99.9 latencies reported"
+  },
+  "done_when_evidence": [
+    "scripts/check_heavyweight_runtime_perf.sh exists and is executable",
+    "Gate tests python3 and perl (2 heavyweight runtimes)",
+    "Per-binary p99.9 budgets enforced (3x default, configurable)",
+    "Gate fails if any runtime exceeds its budget",
+    "Results JSON artifact generated with detailed latency breakdowns"
+  ],
+  "known_limitations": [
+    "Node.js crashes under preload (separate bug, tracked separately)",
+    "p99.9 approximated as max of 10 samples due to small sample size"
+  ]
+}

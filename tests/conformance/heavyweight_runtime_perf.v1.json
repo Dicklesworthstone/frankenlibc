@@ -1,0 +1,10 @@
+{
+  "schema_version": "heavyweight_runtime_perf.v1",
+  "bead_id": "bd-35hjg.4",
+  "generated_at_utc": "2026-05-22T04:46:01Z",
+  "lib_path": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+  "sample_count": 10,
+  "warmup_runs": 2,
+  "results": [{"runtime":"python3","status":"PASS","baseline_p50_ns":20862309,"preload_p50_ns":36605730,"baseline_p999_ns":23605425,"preload_p999_ns":41943792,"ratio_p999_ppm":1776870,"budget_ppm":3000000},{"runtime":"perl","status":"PASS","baseline_p50_ns":9896978,"preload_p50_ns":19028405,"baseline_p999_ns":10706681,"preload_p999_ns":19871231,"ratio_p999_ppm":1855965,"budget_ppm":3000000}],
+  "overall_status": "pass"
+}
