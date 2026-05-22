@@ -45,7 +45,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind a glibc-shaped A
 | Large classified ABI surface | **4,119 exported symbols** all classified |
 | Native ownership is substantial and measured | **2,368 `Implemented` + 414 `RawSyscall` = 2,782 / 4,119 (67.5% native coverage)** |
 | Host-backed interpose subset is explicit | **1,337 `WrapsHostLibc` (32.5%), 0 `GlibcCallThrough`, 0 `Stub`** |
-| Interposition is usable on real workloads today | Curated smoke battery: **58 passes / 0 fails / 6 skips** across strict + hardened modes |
+| Interposition is usable on real workloads today | Curated smoke battery: **40 passes / 20 fails / 4 skips** across strict + hardened modes (see `COMPATIBILITY.md`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
 | Verification is first-class | Harness CLI, 40+ fixture families, **258 completion-contract artifacts**, **68 CLI-contract manifests** subject to ~50 meta-gates each, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings |
@@ -1458,7 +1458,7 @@ The remaining hard areas are difficult for real systems reasons, not because the
 
 - The current shipping artifact is the **interpose** shared library, not a fully standalone libc replacement.
 - The deployment model is `LD_PRELOAD`; setuid/setgid binaries are out of scope because the kernel loader ignores `LD_PRELOAD` for them.
-- The curated preload smoke battery is green in both strict and hardened modes (58/0/6); broader production hardening, non-curated workload stability, and L2/L3 release-claim closure are still active work.
+- The curated preload smoke battery is currently red in both strict and hardened modes (40/20/4); see `COMPATIBILITY.md` for workload status details.
 - Hardened mode is fixture-and-oracle-verified for the defined healing taxonomy; that is not a blanket production-readiness claim for arbitrary workloads.
 - Performance: strict-mode overhead is budgeted at < 20 ns/call and hardened-mode at < 200 ns/call; perf gates measure rather than assume, and regressions surface in `scripts/check_perf_regression_gate.sh`.
 - The README summarizes current reality; canonical truth lives in generated reports and gates.
@@ -3948,7 +3948,7 @@ Selected project health snapshot:
 | Shell scripts (CI / gates / smoke / perf) | 554 |
 | GNU ld version script | 4,687 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,030 lines (SOS synthesis + barrier audit) |
-| Curated `LD_PRELOAD` smoke battery | 58 pass / 0 fail / 6 skip, strict + hardened green |
+| Curated `LD_PRELOAD` smoke battery | 40 pass / 20 fail / 4 skip, strict + hardened red |
 
 ---
 
