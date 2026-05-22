@@ -129,6 +129,7 @@ enum Encoding {
     MacGujarati,
     MacKannada,
     MacTelugu,
+    MacOriya,
     Cp850,
     MacRoman,
     Iso88592,
@@ -162,7 +163,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 81] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 82] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -528,6 +529,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 81] = [
         canonical: "MACTELUGU",
         normalized: "MACTELUGU",
         aliases: &["XMACTELUGU"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacOriya,
+        canonical: "MACORIYA",
+        normalized: "MACORIYA",
+        aliases: &["XMACORIYA"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4811,6 +4818,68 @@ fn encode_mactelugu(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const MACORIYA_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Oriya vowels)
+    0xFFFF, 0x0B01, 0x0B02, 0x0B03, 0xFFFF, 0x0B05, 0x0B06, 0x0B07, // 80-87
+    0x0B08, 0x0B09, 0x0B0A, 0x0B0B, 0x0B0C, 0xFFFF, 0xFFFF, 0x0B0F, // 88-8F
+    // 0x90-0x9F (Oriya vowels and consonants)
+    0x0B10, 0xFFFF, 0xFFFF, 0x0B13, 0x0B14, 0x0B15, 0x0B16, 0x0B17, // 90-97
+    0x0B18, 0x0B19, 0x0B1A, 0x0B1B, 0x0B1C, 0x0B1D, 0x0B1E, 0x0B1F, // 98-9F
+    // 0xA0-0xAF (Oriya consonants)
+    0x0B20, 0x0B21, 0x0B22, 0x0B23, 0x0B24, 0x0B25, 0x0B26, 0x0B27, // A0-A7
+    0x0B28, 0xFFFF, 0x0B2A, 0x0B2B, 0x0B2C, 0x0B2D, 0x0B2E, 0x0B2F, // A8-AF
+    // 0xB0-0xBF (Oriya consonants and matras)
+    0x0B30, 0xFFFF, 0x0B32, 0x0B33, 0xFFFF, 0xFFFF, 0x0B36, 0x0B37, // B0-B7
+    0x0B38, 0x0B39, 0xFFFF, 0x0B3E, 0x0B3F, 0x0B40, 0x0B41, 0x0B42, // B8-BF
+    // 0xC0-0xCF (Oriya matras and marks)
+    0x0B43, 0xFFFF, 0xFFFF, 0x0B47, 0x0B48, 0xFFFF, 0xFFFF, 0x0B4B, // C0-C7
+    0x0B4C, 0x0B4D, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // C8-CF
+    // 0xD0-0xDF (Oriya special characters)
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0B5C, 0x0B5D, // D0-D7
+    0xFFFF, 0x0B5F, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D8-DF
+    // 0xE0-0xEF (Oriya digits)
+    0x0B66, 0x0B67, 0x0B68, 0x0B69, 0x0B6A, 0x0B6B, 0x0B6C, 0x0B6D, // E0-E7
+    0x0B6E, 0x0B6F, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // E8-EF
+    // 0xF0-0xFF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F0-F7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_macoriya(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACORIYA_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_macoriya(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACORIYA_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -5040,6 +5109,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacGujarati => decode_macgujarati(input),
         Encoding::MacKannada => decode_mackannada(input),
         Encoding::MacTelugu => decode_mactelugu(input),
+        Encoding::MacOriya => decode_macoriya(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -5194,6 +5264,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacGujarati => encode_macgujarati(ch, out),
         Encoding::MacKannada => encode_mackannada(ch, out),
         Encoding::MacTelugu => encode_mactelugu(ch, out),
+        Encoding::MacOriya => encode_macoriya(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -7487,6 +7558,30 @@ mod tests {
     #[test]
     fn mactelugu_accepts_xmactelugu_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-TELUGU");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macoriya_to_utf8_round_trip() {
+        // MacOriya: A (0x85), Ka (0x95), digit 0 (0xE0), digit 1 (0xE1)
+        let mac_input: &[u8] = &[0x85, 0x95, 0xE0, 0xE1];
+        let expected_utf8 = "\u{0B05}\u{0B15}\u{0B66}\u{0B67}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACORIYA").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACORIYA", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macoriya_accepts_xmacoriya_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-ORIYA");
         assert!(cd.is_some());
     }
 
