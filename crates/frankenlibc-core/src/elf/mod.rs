@@ -38,8 +38,9 @@ pub mod symbol;
 pub use hash::{ElfHashTable, GnuHashTable, elf_hash, gnu_hash};
 pub use header::{Elf64Header, ElfClass, ElfData, ElfMachine, ElfOsAbi, ElfType};
 pub use loader::{
-    ElfLoader, LoadImage, LoadSegmentMapping, LoadedObject, NullSymbolLookup, RelocationStats,
-    SymbolLookup,
+    DependencyGraph, DependencyNode, ElfLoader, LinkMapObject, LoadImage, LoadSegmentMapping,
+    LoadedObject, NullSymbolLookup, RelocationStats, ResolvedSymbol, RtldLookupScope,
+    RtldVisibility, ScopedSymbolResolver, SymbolLookup, SymbolLookupReport, SymbolLookupTraceEvent,
 };
 pub use nlist::{NlistSymbol, NlistSymtab};
 pub use program::{Elf64ProgramHeader, ProgramFlags, ProgramType};
@@ -84,6 +85,10 @@ pub enum ElfError {
         required: u16,
         found: u16,
     },
+    /// Circular DT_NEEDED dependency graph
+    DependencyCycle { object: String },
+    /// Link-map object index was outside the loaded-object table
+    InvalidObjectIndex(usize),
 }
 
 impl core::fmt::Display for ElfError {
@@ -119,6 +124,10 @@ impl core::fmt::Display for ElfError {
                     "version mismatch for {symbol}: required {required}, found {found}"
                 )
             }
+            Self::DependencyCycle { object } => {
+                write!(f, "circular DT_NEEDED dependency involving {object}")
+            }
+            Self::InvalidObjectIndex(index) => write!(f, "invalid link-map object index: {index}"),
         }
     }
 }

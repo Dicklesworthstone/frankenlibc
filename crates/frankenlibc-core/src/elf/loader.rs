@@ -8,7 +8,7 @@
 //!
 //! - No IFUNC support
 //! - No TLS support
-//! - Single object loading only (no dependency resolution)
+//! - Dependency graph and symbol-scope planning only; no mmap-backed dlopen yet
 //! - x86_64 Linux only
 
 use super::{
@@ -22,9 +22,15 @@ use super::{
     section::{Elf64SectionHeader, SectionType, parse_section_headers},
     symbol::{Elf64Symbol, get_string, parse_symbols},
 };
-use std::{collections::BTreeMap, ops::Range};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Range,
+};
 
 const LOAD_PAGE_SIZE: u64 = 4096;
+const DT_NULL: i64 = 0;
+const DT_NEEDED: i64 = 1;
+const DT_SONAME: i64 = 14;
 
 /// A loaded ELF object.
 #[derive(Debug)]
@@ -45,6 +51,10 @@ pub struct LoadedObject {
     pub gnu_hash: Option<GnuHashTable>,
     /// ELF hash table for legacy lookup
     pub elf_hash: Option<ElfHashTable>,
+    /// Shared-object name from DT_SONAME, if present
+    pub soname: Option<String>,
+    /// DT_NEEDED dependency names in declaration order
+    pub needed_libraries: Vec<String>,
     /// Parsed symbol version names indexed by dynsym slot
     pub symbol_versions: Vec<Option<String>>,
     /// Relocations to apply
@@ -111,6 +121,103 @@ pub struct LoadImage {
     pub relro_range: Option<Range<usize>>,
     /// Runtime RELRO address range, if the object has PT_GNU_RELRO.
     pub relro_runtime_range: Option<Range<u64>>,
+}
+
+/// RTLD_LOCAL/RTLD_GLOBAL visibility for a loaded object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtldVisibility {
+    /// Visible only through its own handle and dependency closure.
+    Local,
+    /// Participates in process-global lookup.
+    Global,
+}
+
+/// Symbol lookup scopes used by `dlsym`/`dlvsym`-style requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtldLookupScope {
+    /// `RTLD_DEFAULT`: search process-global objects in link-map order.
+    Global,
+    /// Explicit handle lookup: search the object and its DT_NEEDED closure.
+    Local { object_index: usize },
+    /// `RTLD_NEXT`: search global objects after the caller object.
+    Next { after_object_index: usize },
+}
+
+/// A loaded object plus the metadata a link map needs for scoped lookup.
+#[derive(Debug, Clone, Copy)]
+pub struct LinkMapObject<'a> {
+    /// Loader-facing stable name, usually a path or SONAME.
+    pub name: &'a str,
+    /// Parsed object.
+    pub object: &'a LoadedObject,
+    /// Visibility selected by dlopen flags.
+    pub visibility: RtldVisibility,
+}
+
+/// One object in the DT_NEEDED dependency graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencyNode {
+    /// Index into the input link-map object slice.
+    pub object_index: usize,
+    /// Stable object name used for diagnostics.
+    pub name: String,
+    /// DT_NEEDED names in declaration order.
+    pub needed_libraries: Vec<String>,
+    /// Resolved dependencies as link-map object indexes.
+    pub dependencies: Vec<usize>,
+    /// DT_NEEDED names that were not present in the current link map.
+    pub unresolved_needed: Vec<String>,
+}
+
+/// Deterministic DT_NEEDED graph with dependency-before-dependent topo order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencyGraph {
+    /// Per-object dependency records.
+    pub nodes: Vec<DependencyNode>,
+    /// Topological order with dependencies before users.
+    pub topological_order: Vec<usize>,
+}
+
+/// Resolved symbol metadata from a scoped lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedSymbol {
+    /// Link-map object index that supplied the symbol.
+    pub object_index: usize,
+    /// Dynamic symbol table index.
+    pub symbol_index: usize,
+    /// Runtime address, `object.base + st_value`.
+    pub address: u64,
+    /// Parsed GNU version string, if present.
+    pub version: Option<String>,
+}
+
+/// Structured trace event for a symbol-scope search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolLookupTraceEvent {
+    /// Link-map object index considered by the resolver.
+    pub object_index: usize,
+    /// Stable object name considered by the resolver.
+    pub object_name: String,
+    /// Whether this object supplied the requested symbol.
+    pub matched: bool,
+    /// Stable machine-readable reason.
+    pub reason: &'static str,
+}
+
+/// Symbol lookup result plus the search trace used for audit logging.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolLookupReport {
+    /// Resolved symbol, if any object in scope supplied it.
+    pub symbol: Option<ResolvedSymbol>,
+    /// Ordered search trace.
+    pub trace: Vec<SymbolLookupTraceEvent>,
+}
+
+/// Version-aware resolver over a native loader link map.
+#[derive(Debug, Clone)]
+pub struct ScopedSymbolResolver<'a> {
+    objects: Vec<LinkMapObject<'a>>,
+    graph: DependencyGraph,
 }
 
 impl LoadedObject {
@@ -200,6 +307,202 @@ impl LoadedObject {
     }
 }
 
+impl DependencyGraph {
+    /// Build a DT_NEEDED dependency graph from link-map objects.
+    pub fn build(objects: &[LinkMapObject<'_>]) -> ElfResult<Self> {
+        let mut object_by_name = BTreeMap::new();
+        for (idx, object) in objects.iter().enumerate() {
+            if !object.name.is_empty() {
+                object_by_name.entry(object.name).or_insert(idx);
+            }
+            if let Some(soname) = &object.object.soname {
+                object_by_name.entry(soname.as_str()).or_insert(idx);
+            }
+        }
+
+        let mut nodes = Vec::with_capacity(objects.len());
+        for (object_index, object) in objects.iter().enumerate() {
+            let mut dependencies = Vec::new();
+            let mut unresolved_needed = Vec::new();
+            for needed in &object.object.needed_libraries {
+                if let Some(idx) = object_by_name.get(needed.as_str()) {
+                    dependencies.push(*idx);
+                } else {
+                    unresolved_needed.push(needed.clone());
+                }
+            }
+
+            nodes.push(DependencyNode {
+                object_index,
+                name: link_map_object_name(object, object_index),
+                needed_libraries: object.object.needed_libraries.clone(),
+                dependencies,
+                unresolved_needed,
+            });
+        }
+
+        let topological_order = dependency_topological_order(&nodes)?;
+        Ok(Self {
+            nodes,
+            topological_order,
+        })
+    }
+
+    /// Return object indexes in explicit-handle lookup order.
+    pub fn local_lookup_order(&self, object_index: usize) -> ElfResult<Vec<usize>> {
+        if object_index >= self.nodes.len() {
+            return Err(ElfError::InvalidObjectIndex(object_index));
+        }
+        let mut order = Vec::new();
+        let mut seen = BTreeSet::new();
+        collect_local_lookup_order(object_index, &self.nodes, &mut seen, &mut order);
+        Ok(order)
+    }
+
+    /// True when any DT_NEEDED entry could not be matched to a loaded object.
+    pub fn has_unresolved_dependencies(&self) -> bool {
+        self.nodes
+            .iter()
+            .any(|node| !node.unresolved_needed.is_empty())
+    }
+}
+
+impl<'a> ScopedSymbolResolver<'a> {
+    /// Build a scoped resolver and validate the dependency graph is acyclic.
+    pub fn new(objects: Vec<LinkMapObject<'a>>) -> ElfResult<Self> {
+        let graph = DependencyGraph::build(&objects)?;
+        Ok(Self { objects, graph })
+    }
+
+    /// Return the resolved dependency graph used by this resolver.
+    pub fn dependency_graph(&self) -> &DependencyGraph {
+        &self.graph
+    }
+
+    /// Resolve a symbol and retain a structured search trace.
+    pub fn resolve_with_trace(
+        &self,
+        name: &str,
+        version: Option<&str>,
+        scope: RtldLookupScope,
+    ) -> ElfResult<SymbolLookupReport> {
+        let mut trace = Vec::new();
+        let search_order = self.lookup_order(scope, &mut trace)?;
+
+        for object_index in search_order {
+            let Some(link_object) = self.objects.get(object_index) else {
+                continue;
+            };
+            if let Some(symbol_index) = link_object.object.lookup_symbol_index(name, version) {
+                let Some(symbol) = link_object.object.dynsym.get(symbol_index) else {
+                    continue;
+                };
+                trace.push(SymbolLookupTraceEvent {
+                    object_index,
+                    object_name: link_map_object_name(link_object, object_index),
+                    matched: true,
+                    reason: "matched",
+                });
+                return Ok(SymbolLookupReport {
+                    symbol: Some(ResolvedSymbol {
+                        object_index,
+                        symbol_index,
+                        address: link_object.object.base + symbol.st_value,
+                        version: link_object
+                            .object
+                            .symbol_version_by_index(symbol_index)
+                            .map(str::to_owned),
+                    }),
+                    trace,
+                });
+            }
+            trace.push(SymbolLookupTraceEvent {
+                object_index,
+                object_name: link_map_object_name(link_object, object_index),
+                matched: false,
+                reason: "not_found",
+            });
+        }
+
+        Ok(SymbolLookupReport {
+            symbol: None,
+            trace,
+        })
+    }
+
+    /// Resolve a symbol without retaining the trace.
+    pub fn resolve(
+        &self,
+        name: &str,
+        version: Option<&str>,
+        scope: RtldLookupScope,
+    ) -> ElfResult<Option<ResolvedSymbol>> {
+        Ok(self.resolve_with_trace(name, version, scope)?.symbol)
+    }
+
+    fn lookup_order(
+        &self,
+        scope: RtldLookupScope,
+        trace: &mut Vec<SymbolLookupTraceEvent>,
+    ) -> ElfResult<Vec<usize>> {
+        match scope {
+            RtldLookupScope::Global => Ok(self.global_lookup_order(trace)),
+            RtldLookupScope::Local { object_index } => self.graph.local_lookup_order(object_index),
+            RtldLookupScope::Next { after_object_index } => {
+                if after_object_index >= self.objects.len() {
+                    return Err(ElfError::InvalidObjectIndex(after_object_index));
+                }
+                Ok(self.next_lookup_order(after_object_index, trace))
+            }
+        }
+    }
+
+    fn global_lookup_order(&self, trace: &mut Vec<SymbolLookupTraceEvent>) -> Vec<usize> {
+        let mut order = Vec::new();
+        for (object_index, object) in self.objects.iter().enumerate() {
+            if object.visibility == RtldVisibility::Global {
+                order.push(object_index);
+            } else {
+                trace.push(SymbolLookupTraceEvent {
+                    object_index,
+                    object_name: link_map_object_name(object, object_index),
+                    matched: false,
+                    reason: "skipped_local_visibility",
+                });
+            }
+        }
+        order
+    }
+
+    fn next_lookup_order(
+        &self,
+        after_object_index: usize,
+        trace: &mut Vec<SymbolLookupTraceEvent>,
+    ) -> Vec<usize> {
+        let mut order = Vec::new();
+        for (object_index, object) in self.objects.iter().enumerate() {
+            if object_index <= after_object_index {
+                trace.push(SymbolLookupTraceEvent {
+                    object_index,
+                    object_name: link_map_object_name(object, object_index),
+                    matched: false,
+                    reason: "skipped_before_rtld_next_anchor",
+                });
+            } else if object.visibility == RtldVisibility::Global {
+                order.push(object_index);
+            } else {
+                trace.push(SymbolLookupTraceEvent {
+                    object_index,
+                    object_name: link_map_object_name(object, object_index),
+                    matched: false,
+                    reason: "skipped_local_visibility",
+                });
+            }
+        }
+        order
+    }
+}
+
 /// Symbol lookup trait for external symbol resolution.
 pub trait SymbolLookup {
     /// Look up a symbol by name.
@@ -269,6 +572,8 @@ impl ElfLoader {
             .find(|ph| matches!(ph.p_type, ProgramType::Dynamic));
 
         // Extract dynamic info from PT_DYNAMIC segment
+        let (needed_libraries, soname) = parse_dynamic_metadata(data, &section_headers);
+
         let (
             dynsym,
             dynstr,
@@ -318,6 +623,8 @@ impl ElfLoader {
             dynstr,
             gnu_hash,
             elf_hash,
+            soname,
+            needed_libraries,
             symbol_versions,
             rela_dyn,
             rela_plt,
@@ -734,6 +1041,95 @@ fn checked_usize(kind: &'static str, value: u64) -> ElfResult<usize> {
     })
 }
 
+fn link_map_object_name(object: &LinkMapObject<'_>, object_index: usize) -> String {
+    object
+        .object
+        .soname
+        .clone()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            if object.name.is_empty() {
+                format!("<object:{object_index}>")
+            } else {
+                object.name.to_owned()
+            }
+        })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VisitState {
+    New,
+    Visiting,
+    Done,
+}
+
+fn dependency_topological_order(nodes: &[DependencyNode]) -> ElfResult<Vec<usize>> {
+    let mut states = vec![VisitState::New; nodes.len()];
+    let mut order = Vec::with_capacity(nodes.len());
+    for index in 0..nodes.len() {
+        visit_dependency_node(index, nodes, &mut states, &mut order)?;
+    }
+    Ok(order)
+}
+
+fn visit_dependency_node(
+    index: usize,
+    nodes: &[DependencyNode],
+    states: &mut [VisitState],
+    order: &mut Vec<usize>,
+) -> ElfResult<()> {
+    match states
+        .get(index)
+        .copied()
+        .ok_or(ElfError::InvalidObjectIndex(index))?
+    {
+        VisitState::Done => return Ok(()),
+        VisitState::Visiting => {
+            return Err(ElfError::DependencyCycle {
+                object: nodes
+                    .get(index)
+                    .map(|node| node.name.clone())
+                    .unwrap_or_else(|| format!("<object:{index}>")),
+            });
+        }
+        VisitState::New => {}
+    }
+
+    let Some(state) = states.get_mut(index) else {
+        return Err(ElfError::InvalidObjectIndex(index));
+    };
+    *state = VisitState::Visiting;
+    let Some(node) = nodes.get(index) else {
+        return Err(ElfError::InvalidObjectIndex(index));
+    };
+    for dependency in &node.dependencies {
+        visit_dependency_node(*dependency, nodes, states, order)?;
+    }
+    let Some(state) = states.get_mut(index) else {
+        return Err(ElfError::InvalidObjectIndex(index));
+    };
+    *state = VisitState::Done;
+    order.push(index);
+    Ok(())
+}
+
+fn collect_local_lookup_order(
+    object_index: usize,
+    nodes: &[DependencyNode],
+    seen: &mut BTreeSet<usize>,
+    order: &mut Vec<usize>,
+) {
+    if !seen.insert(object_index) {
+        return;
+    }
+    order.push(object_index);
+    if let Some(node) = nodes.get(object_index) {
+        for dependency in &node.dependencies {
+            collect_local_lookup_order(*dependency, nodes, seen, order);
+        }
+    }
+}
+
 fn section_data<'a>(data: &'a [u8], section: &Elf64SectionHeader) -> Option<&'a [u8]> {
     let start = section.sh_offset as usize;
     let end = start.checked_add(section.sh_size as usize)?;
@@ -762,6 +1158,66 @@ fn parse_u64_array(data: &[u8]) -> Vec<u64> {
             ])
         })
         .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DynamicEntry {
+    tag: i64,
+    value: u64,
+}
+
+fn parse_dynamic_metadata(
+    data: &[u8],
+    sections: &[Elf64SectionHeader],
+) -> (Vec<String>, Option<String>) {
+    let mut needed_libraries = Vec::new();
+    let mut soname = None;
+
+    for section in sections.iter().filter(|section| section.is_dynamic()) {
+        let Some(dynamic_bytes) = section_data(data, section) else {
+            continue;
+        };
+        let Some(strings) = linked_string_table(data, sections, section) else {
+            continue;
+        };
+
+        for entry in parse_dynamic_entries(dynamic_bytes) {
+            match entry.tag {
+                DT_NULL => break,
+                DT_NEEDED => {
+                    if let Some(name) = dynamic_string(strings, entry.value) {
+                        needed_libraries.push(name.to_owned());
+                    }
+                }
+                DT_SONAME => {
+                    if soname.is_none()
+                        && let Some(name) = dynamic_string(strings, entry.value)
+                    {
+                        soname = Some(name.to_owned());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    (needed_libraries, soname)
+}
+
+fn parse_dynamic_entries(data: &[u8]) -> impl Iterator<Item = DynamicEntry> + '_ {
+    data.chunks_exact(16).map(|chunk| DynamicEntry {
+        tag: i64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]),
+        value: u64::from_le_bytes([
+            chunk[8], chunk[9], chunk[10], chunk[11], chunk[12], chunk[13], chunk[14], chunk[15],
+        ]),
+    })
+}
+
+fn dynamic_string(strings: &[u8], value: u64) -> Option<&str> {
+    let offset = u32::try_from(value).ok()?;
+    get_string(strings, offset).ok()
 }
 
 fn parse_symbol_versions(
@@ -983,6 +1439,7 @@ impl RelocationStats {
 
 #[cfg(test)]
 mod tests {
+    use super::super::section::SectionFlags;
     use super::*;
     use std::cell::RefCell;
 
@@ -1010,6 +1467,8 @@ mod tests {
             dynstr: Vec::new(),
             gnu_hash: None,
             elf_hash: None,
+            soname: None,
+            needed_libraries: Vec::new(),
             symbol_versions: Vec::new(),
             rela_dyn: Vec::new(),
             rela_plt: Vec::new(),
@@ -1051,6 +1510,87 @@ mod tests {
             p_memsz,
             p_align: LOAD_PAGE_SIZE,
         }
+    }
+
+    fn dynamic_section(offset: u64, size: u64, link: u32) -> Elf64SectionHeader {
+        Elf64SectionHeader {
+            sh_name: 0,
+            sh_type: SectionType::Dynamic,
+            sh_flags: SectionFlags(0),
+            sh_addr: 0,
+            sh_offset: offset,
+            sh_size: size,
+            sh_link: link,
+            sh_info: 0,
+            sh_addralign: 8,
+            sh_entsize: 16,
+        }
+    }
+
+    fn strtab_section(offset: u64, size: u64) -> Elf64SectionHeader {
+        Elf64SectionHeader {
+            sh_name: 0,
+            sh_type: SectionType::Strtab,
+            sh_flags: SectionFlags(0),
+            sh_addr: 0,
+            sh_offset: offset,
+            sh_size: size,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        }
+    }
+
+    fn push_dynamic_entry(out: &mut Vec<u8>, tag: i64, value: u64) {
+        out.extend_from_slice(&tag.to_le_bytes());
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn object_with_symbols(
+        base: u64,
+        soname: Option<&str>,
+        needed_libraries: &[&str],
+        symbols: &[(&str, u64, Option<&str>)],
+    ) -> ElfResult<LoadedObject> {
+        let mut obj = empty_loaded_object();
+        obj.base = base;
+        obj.soname = soname.map(str::to_owned);
+        obj.needed_libraries = needed_libraries
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        obj.dynstr.push(0);
+        obj.dynsym.push(Elf64Symbol {
+            st_name: 0,
+            st_info: 0,
+            st_other: 0,
+            st_shndx: 0,
+            st_value: 0,
+            st_size: 0,
+        });
+        obj.symbol_versions.push(None);
+
+        for (name, value, version) in symbols {
+            let name_offset =
+                u32::try_from(obj.dynstr.len()).map_err(|_| ElfError::InvalidOffset {
+                    kind: "test dynstr",
+                    offset: u64::try_from(obj.dynstr.len()).unwrap_or(u64::MAX),
+                })?;
+            obj.dynstr.extend_from_slice(name.as_bytes());
+            obj.dynstr.push(0);
+            obj.dynsym.push(Elf64Symbol {
+                st_name: name_offset,
+                st_info: 0x12,
+                st_other: 0,
+                st_shndx: 1,
+                st_value: *value,
+                st_size: 0,
+            });
+            obj.symbol_versions.push(version.map(str::to_owned));
+        }
+
+        Ok(obj)
     }
 
     #[test]
@@ -1246,6 +1786,174 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn test_parse_dynamic_metadata_extracts_needed_and_soname() {
+        let strings = b"\0libdep.so\0libroot.so\0";
+        let mut dynamic = Vec::new();
+        push_dynamic_entry(&mut dynamic, DT_NEEDED, 1);
+        push_dynamic_entry(&mut dynamic, DT_SONAME, 11);
+        push_dynamic_entry(&mut dynamic, DT_NULL, 0);
+
+        let string_offset = dynamic.len();
+        let mut data = dynamic;
+        data.extend_from_slice(strings);
+        let sections = vec![
+            dynamic_section(0, string_offset as u64, 1),
+            strtab_section(string_offset as u64, strings.len() as u64),
+        ];
+
+        let (needed, soname) = parse_dynamic_metadata(&data, &sections);
+        assert_eq!(needed, vec!["libdep.so"]);
+        assert_eq!(soname.as_deref(), Some("libroot.so"));
+    }
+
+    #[test]
+    fn test_dependency_graph_records_order_and_missing_dependency() -> ElfResult<()> {
+        let root = object_with_symbols(0x1000, Some("app"), &["liba.so", "libmissing.so"], &[])?;
+        let liba = object_with_symbols(0x2000, Some("liba.so"), &["libb.so"], &[])?;
+        let libb = object_with_symbols(0x3000, Some("libb.so"), &[], &[])?;
+        let objects = vec![
+            LinkMapObject {
+                name: "app",
+                object: &root,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "liba.so",
+                object: &liba,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "libb.so",
+                object: &libb,
+                visibility: RtldVisibility::Global,
+            },
+        ];
+
+        let graph = DependencyGraph::build(&objects)?;
+        assert_eq!(graph.nodes[0].dependencies, vec![1]);
+        assert_eq!(graph.nodes[0].unresolved_needed, vec!["libmissing.so"]);
+        assert!(graph.has_unresolved_dependencies());
+        assert_eq!(graph.topological_order, vec![2, 1, 0]);
+        assert_eq!(graph.local_lookup_order(0)?, vec![0, 1, 2]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_dependency_graph_rejects_cycles() -> ElfResult<()> {
+        let liba = object_with_symbols(0x1000, Some("liba.so"), &["libb.so"], &[])?;
+        let libb = object_with_symbols(0x2000, Some("libb.so"), &["liba.so"], &[])?;
+        let objects = vec![
+            LinkMapObject {
+                name: "liba.so",
+                object: &liba,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "libb.so",
+                object: &libb,
+                visibility: RtldVisibility::Global,
+            },
+        ];
+
+        assert!(matches!(
+            DependencyGraph::build(&objects),
+            Err(ElfError::DependencyCycle { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_scoped_symbol_resolver_honors_global_local_next_and_versions() -> ElfResult<()> {
+        let root = object_with_symbols(0x1000, Some("app"), &["liblocal.so", "libglobal.so"], &[])?;
+        let local = object_with_symbols(
+            0x2000,
+            Some("liblocal.so"),
+            &[],
+            &[("only_local", 0x20, None)],
+        )?;
+        let global = object_with_symbols(
+            0x3000,
+            Some("libglobal.so"),
+            &[],
+            &[("target", 0x30, Some("VER_1"))],
+        )?;
+        let later = object_with_symbols(
+            0x4000,
+            Some("liblater.so"),
+            &[],
+            &[("target", 0x40, Some("VER_1"))],
+        )?;
+        let resolver = ScopedSymbolResolver::new(vec![
+            LinkMapObject {
+                name: "app",
+                object: &root,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "liblocal.so",
+                object: &local,
+                visibility: RtldVisibility::Local,
+            },
+            LinkMapObject {
+                name: "libglobal.so",
+                object: &global,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "liblater.so",
+                object: &later,
+                visibility: RtldVisibility::Global,
+            },
+        ])?;
+
+        let global_report =
+            resolver.resolve_with_trace("only_local", None, RtldLookupScope::Global)?;
+        assert!(global_report.symbol.is_none());
+        assert!(global_report.trace.iter().any(|event| {
+            event.object_index == 1 && event.reason == "skipped_local_visibility"
+        }));
+
+        let Some(local_symbol) = resolver.resolve(
+            "only_local",
+            None,
+            RtldLookupScope::Local { object_index: 0 },
+        )?
+        else {
+            return Err(ElfError::SymbolNotFound { name: "only_local" });
+        };
+        assert_eq!(local_symbol.object_index, 1);
+        assert_eq!(local_symbol.address, 0x2020);
+
+        let Some(versioned) = resolver.resolve("target", Some("VER_1"), RtldLookupScope::Global)?
+        else {
+            return Err(ElfError::SymbolNotFound { name: "target" });
+        };
+        assert_eq!(versioned.object_index, 2);
+        assert_eq!(versioned.address, 0x3030);
+        assert_eq!(versioned.version.as_deref(), Some("VER_1"));
+
+        assert!(
+            resolver
+                .resolve("target", Some("VER_X"), RtldLookupScope::Global)?
+                .is_none()
+        );
+
+        let Some(next) = resolver.resolve(
+            "target",
+            Some("VER_1"),
+            RtldLookupScope::Next {
+                after_object_index: 2,
+            },
+        )?
+        else {
+            return Err(ElfError::SymbolNotFound { name: "target" });
+        };
+        assert_eq!(next.object_index, 3);
+        assert_eq!(next.address, 0x4040);
+        Ok(())
     }
 
     #[test]
