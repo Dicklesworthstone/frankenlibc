@@ -1526,7 +1526,14 @@ pub(crate) fn check_ownership(addr: usize) -> bool {
 ///
 /// Returns `None` if the pipeline is not yet initialized (reentrant guard).
 #[must_use]
+#[inline(never)]
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
+    // Strict mode fast path: skip validation overhead for trusted workloads.
+    // Return None to signal "unknown bounds" - callers fall back to safe defaults.
+    if runtime_policy::strict_passthrough_active() {
+        return None;
+    }
+
     if runtime_policy::in_policy_reentry_context()
         || in_allocator_reentry_context()
         || crate::membrane_state::pipeline_initialization_active()

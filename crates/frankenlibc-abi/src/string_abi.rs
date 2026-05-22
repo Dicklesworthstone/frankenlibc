@@ -234,6 +234,11 @@ fn try_simd_dispatch_candidate(
     if len_hint < dispatch_threshold(operation, isa) {
         return None;
     }
+    // Strict mode: skip certification and assume SIMD operations are safe.
+    // This avoids CliffordController overhead for trusted workloads.
+    if runtime_policy::strict_passthrough_active() {
+        return Some(StringSimdDispatch::from_isa(isa));
+    }
     let certificate =
         certify_simd_string_operation(operation, isa, src_addr, dst_addr, len_hint, overlap);
     certificate

@@ -1709,6 +1709,20 @@ fn strict_runtime_kernel_fast_path(mode: SafetyLevel) -> bool {
     cfg!(not(test)) && matches!(mode, SafetyLevel::Strict)
 }
 
+/// Returns true if strict passthrough mode is active.
+/// Use this to skip expensive validation in strict mode where we delegate to host glibc.
+/// Uses direct atomic load to avoid TLS overhead in the hot path.
+/// Note: MODE_UNRESOLVED defaults to strict, so we treat both as passthrough.
+#[inline]
+pub(crate) fn strict_passthrough_active() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    let state = MODE_STATE.load(AtomicOrdering::Relaxed);
+    // Both unresolved (default strict) and explicit strict are passthrough
+    state == MODE_STRICT || state == MODE_UNRESOLVED
+}
+
 #[inline]
 fn runtime_kernel_passthrough_family(family: ApiFamily) -> bool {
     matches!(family, ApiFamily::Locale)
@@ -1722,6 +1736,12 @@ pub(crate) fn decide(
     bloom_negative: bool,
     contention_hint: u16,
 ) -> (SafetyLevel, RuntimeDecision) {
+    // Strict mode early-exit: skip all runtime-math decision overhead.
+    // Uses atomic load directly to avoid TLS overhead in the hot path.
+    if strict_passthrough_active() {
+        return (SafetyLevel::Strict, passthrough_decision());
+    }
+
     // Fast passthrough during early startup to prevent deadlocks.
     // The full decide path is only available after kernel init completes.
     if !is_runtime_ready() {
@@ -1788,6 +1808,12 @@ pub(crate) fn observe(
     estimated_cost_ns: u64,
     adverse: bool,
 ) {
+    // Strict mode early-exit: skip all runtime-math observation overhead.
+    // Uses atomic load directly to avoid TLS overhead in the hot path.
+    if strict_passthrough_active() {
+        return;
+    }
+
     let mode = mode();
     if runtime_kernel_passthrough_family(family) {
         let _ = (profile, estimated_cost_ns, adverse, mode);

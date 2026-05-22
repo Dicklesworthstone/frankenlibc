@@ -543,6 +543,11 @@ pub unsafe extern "C" fn fdim(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fma(x: f64, y: f64, z: f64) -> f64 {
+    // Strict mode fast path: skip runtime policy overhead entirely.
+    if runtime_policy::strict_passthrough_active() {
+        return frankenlibc_core::math::fma(x, y, z);
+    }
+
     let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
         ^ y.to_bits() as usize
         ^ z.to_bits() as usize;
