@@ -1,0 +1,30 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-as0w2.2",
+  "title": "[RC-WS4.2] Fix FEATURE_PARITY.md staleness and false claims",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:35:10Z",
+    "source_commit": "6738b635",
+    "generator_command": "backfill from bd-as0w2.2 close_reason: FEATURE_PARITY.md TSM matrix and Gap-Summary correction",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "7329823f181464944d8ffd02909597f3f69b6beb8074454d04c1a17693d01048"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:33:59Z",
+    "closed_at_utc": "2026-05-22T03:35:22Z",
+    "in_progress_source": "bd-as0w2.2 in-progress tracker update",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "FEATURE_PARITY.md",
+    "tests/conformance/reality_report.v1.json",
+    "tests/conformance/hard_parts_truth_table.v1.json"
+  ],
+  "validation": [
+    "FEATURE_PARITY.md TSM Coverage Matrix corrected from PLANNED to DONE",
+    "Gap-Summary proof claim narrowed to distinguish notes from machine-checked proofs",
+    "Close reason records commit 6738b635"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}

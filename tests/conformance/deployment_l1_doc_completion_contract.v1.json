@@ -1,0 +1,29 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-as0w2.1",
+  "title": "[RC-WS4.1] Fix DEPLOYMENT.md: L0 to L1",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:33:40Z",
+    "source_commit": "34fe884b",
+    "generator_command": "backfill from bd-as0w2.1 close_reason: DEPLOYMENT.md L0 to L1 update matching replacement_levels.json and README",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "8af82fffbe33fe8a314384396d7f44b8bcc2edd7e49c44be008bda3bc97e7fe9"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:33:00Z",
+    "closed_at_utc": "2026-05-22T03:33:51Z",
+    "in_progress_source": "bd-as0w2.1 close window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "DEPLOYMENT.md",
+    "tests/conformance/replacement_levels.json",
+    "README.md"
+  ],
+  "validation": [
+    "DEPLOYMENT.md release-level claim updated from L0 to L1",
+    "Close reason records commit 34fe884b"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}

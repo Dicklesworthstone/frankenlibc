@@ -1,0 +1,28 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-as0w2.3",
+  "title": "[RC-WS4.3] Update PLAN_TO_PORT and PROPOSED_ARCHITECTURE rollout sections",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T03:36:20Z",
+    "source_commit": "1f502815",
+    "generator_command": "backfill from bd-as0w2.3 close_reason: PLAN_TO_PORT implementation status refreshed to shipped-state counts",
+    "tool_version": "manual-audit-2026-05-22",
+    "chain_hash": "c57e42a204480e0bd5bf577d68276ee6e5a15fafc48de5b8fef1cf30de5b26a8"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T03:36:00Z",
+    "closed_at_utc": "2026-05-22T03:36:29Z",
+    "in_progress_source": "bd-as0w2.3 close window",
+    "closed_at_source": ".beads/issues.jsonl"
+  },
+  "artifact_refs": [
+    "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+    "PROPOSED_ARCHITECTURE.md"
+  ],
+  "validation": [
+    "PLAN_TO_PORT implementation status updated to 4119 symbols, 100% native, L1",
+    "Close reason records commit 1f502815"
+  ],
+  "backfill_note": "Materialized from the recorded bead closure evidence so check_bead_closure_freshness.sh can bind the existing closure to a completion contract."
+}

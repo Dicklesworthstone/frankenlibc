@@ -233,6 +233,25 @@ def read_contract(path_text: str, errors: list[dict[str, Any]], overrides: dict[
     return contract or None
 
 
+def discover_contract_paths_by_bead(warnings: list[dict[str, Any]]) -> dict[str, list[str]]:
+    discovered: dict[str, list[str]] = {}
+    for path in sorted((ROOT / "tests" / "conformance").glob("*completion_contract.v1.json")):
+        try:
+            contract = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            warnings.append({
+                "warning": "bead_closure_contract_discovery_skipped",
+                "message": f"cannot inspect {rel(path)}: {exc}",
+            })
+            continue
+        if not isinstance(contract, dict):
+            continue
+        bead_id = contract.get("bead_id")
+        if isinstance(bead_id, str) and bead_id:
+            discovered.setdefault(bead_id, []).append(rel(path))
+    return discovered
+
+
 def freshness_state(contract: dict[str, Any]) -> dict[str, Any]:
     value = contract.get("freshness_state")
     if isinstance(value, dict):
@@ -277,6 +296,15 @@ def audit_contract(
         "completion_artifact": path_text,
         "status": "pass",
     }
+
+    contract_bead_id = contract.get("bead_id")
+    if isinstance(contract_bead_id, str) and contract_bead_id != bead_id:
+        errors.append({
+            "bead_id": bead_id,
+            "failure_signature": "bead_closure_contract_bead_mismatch",
+            "message": f"{path_text} declares bead_id={contract_bead_id}, expected {bead_id}",
+        })
+        row["status"] = "fail"
 
     generated_at = parse_utc(state.get("generated_at_utc"))
     if generated_at is None:
@@ -355,15 +383,18 @@ def audit(
     warnings: list[dict[str, Any]] = []
     contracts = contracts or {}
     ledger_chain_hashes = load_ledger_chain_hashes(warnings)
+    discovered_contracts = discover_contract_paths_by_bead(warnings)
     checked: list[dict[str, Any]] = []
 
     for bead in sorted((b for b in beads if is_candidate(b, policy)), key=lambda b: str(b.get("id"))):
         paths = artifact_paths_from_bead(bead)
         if not paths:
+            paths = discovered_contracts.get(str(bead.get("id")), [])
+        if not paths:
             errors.append({
                 "bead_id": bead.get("id"),
                 "failure_signature": "bead_closure_missing_completion_artifact",
-                "message": f"{bead.get('id')} closure has no completion-contract artifact reference",
+                "message": f"{bead.get('id')} closure has no completion-contract artifact reference or matching contract file",
             })
             checked.append({"bead_id": bead.get("id"), "status": "fail", "completion_artifact": None})
             continue
