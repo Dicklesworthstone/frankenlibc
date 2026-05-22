@@ -576,7 +576,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 88] = [
         encoding: Encoding::Cp1125,
         canonical: "CP1125",
         normalized: "CP1125",
-        aliases: &["IBM1125"],
+        aliases: &[],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -5207,10 +5207,9 @@ fn decode_cp856(input: &[u8]) -> Result<(char, usize), DecodeError> {
     } else {
         let cp = CP856_TO_UNICODE[(b - 0x80) as usize];
         if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            return Err(DecodeError::Invalid);
         }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
     }
 }
 
@@ -5255,8 +5254,8 @@ const CP1125_TO_UNICODE: [u16; 128] = [
     0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // E0-E7
     0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, // E8-EF
     // 0xF0-0xFF (Ukrainian specific chars)
-    0x0404, 0x0454, 0x0406, 0x0456, 0x0407, 0x0457, 0x00B7, 0x221A, // F0-F7
-    0x2219, 0x00B2, 0x25A0, 0x00A0, 0x0490, 0x0491, 0x0031, 0xFFFF, // F8-FF
+    0x0401, 0x0451, 0x0490, 0x0491, 0x0404, 0x0454, 0x0406, 0x0456, // F0-F7
+    0x0407, 0x0457, 0x00B7, 0x221A, 0x2116, 0x00A4, 0x25A0, 0x00A0, // F8-FF
 ];
 
 fn decode_cp1125(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -8135,10 +8134,20 @@ mod tests {
     }
 
     #[test]
+    fn cp856_rejects_undefined_bytes() {
+        let mut cd = iconv_open(b"UTF-8", b"CP856").unwrap();
+        let mut utf8_out = [0u8; 8];
+        let err = iconv(&mut cd, Some(&[0x9B]), &mut utf8_out).unwrap_err();
+        assert_eq!(err.code, ICONV_EILSEQ);
+        assert_eq!(err.in_consumed, 0);
+        assert_eq!(err.out_written, 0);
+    }
+
+    #[test]
     fn cp1125_to_utf8_round_trip() {
-        // CP1125: А (0x80), Б (0x81), а (0xA0), б (0xA1)
-        let cp_input: &[u8] = &[0x80, 0x81, 0xA0, 0xA1];
-        let expected_utf8 = "\u{0410}\u{0411}\u{0430}\u{0431}";
+        // CP1125: Cyrillic letters plus the glibc Ukrainian tail.
+        let cp_input: &[u8] = &[0x80, 0x81, 0xA0, 0xA1, 0xF0, 0xF1, 0xFC, 0xFD];
+        let expected_utf8 = "\u{0410}\u{0411}\u{0430}\u{0431}\u{0401}\u{0451}\u{2116}\u{00A4}";
 
         let mut cd = iconv_open(b"UTF-8", b"CP1125").unwrap();
         let mut utf8_out = [0u8; 32];
@@ -8153,9 +8162,9 @@ mod tests {
     }
 
     #[test]
-    fn cp1125_accepts_ibm1125_alias() {
-        let cd = iconv_open(b"UTF-8", b"IBM1125");
-        assert!(cd.is_some());
+    fn cp1125_rejects_unlisted_aliases() {
+        assert!(iconv_open(b"UTF-8", b"IBM1125").is_none());
+        assert!(iconv_open(b"UTF-8", b"1125").is_none());
     }
 
     #[test]
