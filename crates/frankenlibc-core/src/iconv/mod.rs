@@ -122,6 +122,7 @@ enum Encoding {
     Cp720,
     MacHebrew,
     MacArabic,
+    MacThai,
     Cp850,
     MacRoman,
     Iso88592,
@@ -155,7 +156,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 74] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 75] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -479,6 +480,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 74] = [
         canonical: "MACARABIC",
         normalized: "MACARABIC",
         aliases: &["XMACARABIC"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacThai,
+        canonical: "MACTHAI",
+        normalized: "MACTHAI",
+        aliases: &["XMACTHAI"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4328,6 +4335,68 @@ fn encode_macarabic(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const MACTHAI_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Mac specific symbols)
+    0x00AB, 0x00BB, 0x2026, 0xF88C, 0xF88F, 0xF892, 0xF895, 0xF898, // 80-87
+    0xF88B, 0xF88E, 0xF891, 0xF894, 0xF897, 0x201C, 0x201D, 0xF899, // 88-8F
+    // 0x90-0x9F (Mac specific)
+    0xFFFF, 0x2022, 0xF884, 0xF889, 0xF885, 0xF886, 0xF887, 0xF888, // 90-97
+    0xF88A, 0xF88D, 0xF890, 0xF893, 0xF896, 0x2018, 0x2019, 0xFFFF, // 98-9F
+    // 0xA0-0xAF (Thai consonants)
+    0x00A0, 0x0E01, 0x0E02, 0x0E03, 0x0E04, 0x0E05, 0x0E06, 0x0E07, // A0-A7
+    0x0E08, 0x0E09, 0x0E0A, 0x0E0B, 0x0E0C, 0x0E0D, 0x0E0E, 0x0E0F, // A8-AF
+    // 0xB0-0xBF (Thai consonants)
+    0x0E10, 0x0E11, 0x0E12, 0x0E13, 0x0E14, 0x0E15, 0x0E16, 0x0E17, // B0-B7
+    0x0E18, 0x0E19, 0x0E1A, 0x0E1B, 0x0E1C, 0x0E1D, 0x0E1E, 0x0E1F, // B8-BF
+    // 0xC0-0xCF (Thai consonants and vowels)
+    0x0E20, 0x0E21, 0x0E22, 0x0E23, 0x0E24, 0x0E25, 0x0E26, 0x0E27, // C0-C7
+    0x0E28, 0x0E29, 0x0E2A, 0x0E2B, 0x0E2C, 0x0E2D, 0x0E2E, 0x0E2F, // C8-CF
+    // 0xD0-0xDF (Thai vowels)
+    0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E34, 0x0E35, 0x0E36, 0x0E37, // D0-D7
+    0x0E38, 0x0E39, 0x0E3A, 0xFEFF, 0x200B, 0x2013, 0x2014, 0x0E3F, // D8-DF
+    // 0xE0-0xEF (Thai vowels and tone marks)
+    0x0E40, 0x0E41, 0x0E42, 0x0E43, 0x0E44, 0x0E45, 0x0E46, 0x0E47, // E0-E7
+    0x0E48, 0x0E49, 0x0E4A, 0x0E4B, 0x0E4C, 0x0E4D, 0x2122, 0x0E4F, // E8-EF
+    // 0xF0-0xFF (Thai digits and special)
+    0x0E50, 0x0E51, 0x0E52, 0x0E53, 0x0E54, 0x0E55, 0x0E56, 0x0E57, // F0-F7
+    0x0E58, 0x0E59, 0x00AE, 0x00A9, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_macthai(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACTHAI_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_macthai(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACTHAI_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4550,6 +4619,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp720 => decode_cp720(input),
         Encoding::MacHebrew => decode_machebrew(input),
         Encoding::MacArabic => decode_macarabic(input),
+        Encoding::MacThai => decode_macthai(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4697,6 +4767,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp720 => encode_cp720(ch, out),
         Encoding::MacHebrew => encode_machebrew(ch, out),
         Encoding::MacArabic => encode_macarabic(ch, out),
+        Encoding::MacThai => encode_macthai(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -6822,6 +6893,30 @@ mod tests {
     #[test]
     fn macarabic_accepts_xmacarabic_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-ARABIC");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macthai_to_utf8_round_trip() {
+        // MacThai: Ko Kai (0xA1), Kho Khai (0xA2), Thai digit 0 (0xF0), Thai digit 1 (0xF1)
+        let mac_input: &[u8] = &[0xA1, 0xA2, 0xF0, 0xF1];
+        let expected_utf8 = "\u{0E01}\u{0E02}\u{0E50}\u{0E51}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACTHAI").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACTHAI", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macthai_accepts_xmacthai_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-THAI");
         assert!(cd.is_some());
     }
 
