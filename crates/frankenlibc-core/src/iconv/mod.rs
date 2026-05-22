@@ -163,6 +163,7 @@ enum Encoding {
     HpGreek8,
     HpThai8,
     HpTurkish8,
+    Cp1004,
     Csn369103,
     Ibm902,
     Ibm901,
@@ -203,7 +204,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 122] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 123] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -773,6 +774,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 122] = [
         canonical: "HP-TURKISH8",
         normalized: "HPTURKISH8",
         aliases: &["HPTURKISH8", "TURKISH8"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp1004,
+        canonical: "CP1004",
+        normalized: "CP1004",
+        aliases: &["1004", "IBM1004"],
     },
     CodecSpec {
         encoding: Encoding::Csn369103,
@@ -7129,6 +7136,67 @@ fn encode_hpturkish8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const CP1004_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (undefined + typographic)
+    0xFFFF, 0xFFFF, 0x201A, 0xFFFF, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFF, 0xFFFF, 0xFFFF, // 88-8F
+    // 0x90-0x9F (undefined + typographic)
+    0xFFFF, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0xFFFF, 0xFFFF, 0x0178, // 98-9F
+    // 0xA0-0xAF (Latin-1 supplement)
+    0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, // A0-A7
+    0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF, // A8-AF
+    // 0xB0-0xBF (Latin-1 supplement continued)
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF, // B8-BF
+    // 0xC0-0xCF (Latin-1 supplement continued)
+    0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x00C4, 0x00C5, 0x00C6, 0x00C7, // C0-C7
+    0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF, // C8-CF
+    // 0xD0-0xDF (Latin-1 supplement continued)
+    0x00D0, 0x00D1, 0x00D2, 0x00D3, 0x00D4, 0x00D5, 0x00D6, 0x00D7, // D0-D7
+    0x00D8, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x00DD, 0x00DE, 0x00DF, // D8-DF
+    // 0xE0-0xEF (Latin-1 supplement continued)
+    0x00E0, 0x00E1, 0x00E2, 0x00E3, 0x00E4, 0x00E5, 0x00E6, 0x00E7, // E0-E7
+    0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF, // E8-EF
+    // 0xF0-0xFF (Latin-1 supplement continued)
+    0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, // F0-F7
+    0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF
+];
+
+fn decode_cp1004(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP1004_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp1004(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP1004_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CSN369103_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (C1 controls)
     0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
@@ -7700,6 +7768,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::HpGreek8 => decode_hpgreek8(input),
         Encoding::HpThai8 => decode_hpthai8(input),
         Encoding::HpTurkish8 => decode_hpturkish8(input),
+        Encoding::Cp1004 => decode_cp1004(input),
         Encoding::Csn369103 => decode_csn369103(input),
         Encoding::Ibm902 => decode_ibm902(input),
         Encoding::Ibm901 => decode_ibm901(input),
@@ -7895,6 +7964,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::HpGreek8 => encode_hpgreek8(ch, out),
         Encoding::HpThai8 => encode_hpthai8(ch, out),
         Encoding::HpTurkish8 => encode_hpturkish8(ch, out),
+        Encoding::Cp1004 => encode_cp1004(ch, out),
         Encoding::Csn369103 => encode_csn369103(ch, out),
         Encoding::Ibm902 => encode_ibm902(ch, out),
         Encoding::Ibm901 => encode_ibm901(ch, out),
@@ -11273,6 +11343,26 @@ mod tests {
     #[test]
     fn hpturkish8_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"HPTURKISH8");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp1004_decode_roundtrip() {
+        let cp1004_input: &[u8] = &[0xC0, 0xC1, 0xE0, 0xE1];
+        let expected_utf8 = "ÀÁàá";
+        let mut cd = iconv_open(b"UTF-8", b"CP1004").expect("CP1004 to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(cp1004_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"CP1004", b"UTF-8").expect("UTF-8 to CP1004 conversion");
+        let mut cp1004_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp1004_out).unwrap();
+        assert_eq!(&cp1004_out[..result2.out_written], cp1004_input);
+    }
+
+    #[test]
+    fn cp1004_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"1004");
         assert!(cd.is_some());
     }
 
