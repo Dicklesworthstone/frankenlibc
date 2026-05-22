@@ -25,6 +25,9 @@ MATRIX_PATH = REPO_ROOT / "support_matrix.json"
 ABI_SRC = REPO_ROOT / "crates" / "frankenlibc-abi" / "src"
 FIXTURE_DIR = REPO_ROOT / "tests" / "conformance" / "fixtures"
 CONFORMANCE_MATRIX_PATH = REPO_ROOT / "tests" / "conformance" / "conformance_matrix.v1.json"
+HOST_DELEGATION_CENSUS_PATH = (
+    REPO_ROOT / "tests" / "conformance" / "host_delegation_census.v1.json"
+)
 
 # Patterns indicating actual host libc call expressions.
 # Type/constant references like `libc::timex` or `libc::EINVAL` are not calls.
@@ -142,6 +145,29 @@ def load_conformance_matrix(path: Path):
             "errors": int(row.get("errors", 0)),
             "pass_rate_percent": float(row.get("pass_rate_percent", 0.0)),
         }
+    return out
+
+
+def load_host_delegation_census(path: Path):
+    """Load symbol-level host delegation evidence from the canonical census."""
+    if not path.is_file():
+        return {}
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    out = {}
+    rows = data.get("symbol_census", [])
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol", ""))
+        if symbol:
+            out[symbol] = row
     return out
 
 
@@ -302,7 +328,7 @@ def is_type_or_constant(name):
     return name in lowercase_types
 
 
-def validate_status(symbol, status, module, source, module_analysis):
+def validate_status(symbol, status, module, source, module_analysis, host_delegation_entry):
     """Validate that a symbol's code matches its declared status.
 
     Returns (is_valid, findings: list of str, warnings: list of str).
@@ -316,6 +342,7 @@ def validate_status(symbol, status, module, source, module_analysis):
 
     findings = []
     warnings = []
+    census_detected_host_delegation = isinstance(host_delegation_entry, dict)
     host_resolve_aliases = module_analysis.get("host_resolve_aliases", set())
     host_helper_functions = module_analysis.get("host_helper_functions", set())
     wraps_host_libc = bool(
@@ -326,6 +353,8 @@ def validate_status(symbol, status, module, source, module_analysis):
     )
 
     if status == "Implemented":
+        if census_detected_host_delegation:
+            findings.append("Implemented but host delegation census detected")
         if wraps_host_libc:
             findings.append("Implemented but host delegation detected")
         # Should NOT have libc:: host calls (except libc type references
@@ -560,7 +589,7 @@ def validate_status(symbol, status, module, source, module_analysis):
             findings.append("RawSyscall but calls glibc::{" + calls_str + "}")
 
     elif status == "WrapsHostLibc":
-        if not wraps_host_libc:
+        if not wraps_host_libc and not census_detected_host_delegation:
             findings.append("WrapsHostLibc but no host delegation detected")
 
     elif status == "GlibcCallThrough":
@@ -610,6 +639,11 @@ def main():
         default=str(CONFORMANCE_MATRIX_PATH),
         help="Path to conformance_matrix artifact used for reclassification evidence checks",
     )
+    parser.add_argument(
+        "--host-delegation-census",
+        default=str(HOST_DELEGATION_CENSUS_PATH),
+        help="Path to canonical host delegation census used for taxonomy validation",
+    )
     parser.add_argument("--self-test", action="store_true", help="Run self-test")
     args = parser.parse_args()
 
@@ -619,6 +653,7 @@ def main():
 
     previous_report = load_previous_report(Path(args.previous_report))
     conformance_by_symbol = load_conformance_matrix(Path(args.conformance_matrix))
+    host_delegation_by_symbol = load_host_delegation_census(Path(args.host_delegation_census))
 
     matrix = load_matrix()
     symbols = matrix.get("symbols", [])
@@ -668,6 +703,7 @@ def main():
             module,
             source,
             module_analysis_cache.get(module, {}),
+            host_delegation_by_symbol.get(sym),
         )
         warnings += len(warn_list)
         if is_valid:

@@ -35,6 +35,10 @@ fn canonical_report_path() -> std::path::PathBuf {
     repo_root().join("tests/conformance/support_matrix_maintenance_report.v1.json")
 }
 
+fn host_delegation_census_path() -> std::path::PathBuf {
+    repo_root().join("tests/conformance/host_delegation_census.v1.json")
+}
+
 fn unique_generated_report_path(tag: &str) -> std::path::PathBuf {
     let root = repo_root();
     let out_dir = root.join("target/conformance");
@@ -124,37 +128,35 @@ fn run_support_matrix_gate(trace_symbol_events: bool) -> std::process::Output {
     run_support_matrix_gate_with_canonical(trace_symbol_events, None)
 }
 
-const IO_INTERNAL_NATIVE_SYMBOLS: &[&str] = &[
-    "_IO_fclose",
-    "_IO_fdopen",
-    "_IO_fflush",
-    "_IO_flush_all",
-    "_IO_fgetpos",
-    "_IO_fgetpos64",
-    "_IO_fgets",
-    "_IO_fopen",
-    "_IO_fputs",
-    "_IO_fread",
-    "_IO_fsetpos",
-    "_IO_fsetpos64",
-    "_IO_ftell",
-    "_IO_fwrite",
-    "_IO_fprintf",
-    "_IO_printf",
-    "_IO_setbuffer",
-    "_IO_setvbuf",
-    "_IO_sprintf",
-    "_IO_sscanf",
-    "_IO_ungetc",
-    "_IO_vfprintf",
-    "_IO_vsprintf",
+const IMPLEMENTED_NATIVE_SAMPLE_SYMBOLS: &[&str] = &[
+    "__b64_ntop",
+    "__ctype_b_loc",
+    "__errno_location",
+    "__finite",
+    "__fpclassify",
+    "__h_errno_location",
+    "__isinf",
+    "__isnan",
+    "__libc_current_sigrtmax",
+    "__libc_current_sigrtmin",
+    "abs",
+    "a64l",
 ];
 
 const HOST_WRAPPED_SYMBOLS: &[&str] = &[
     "__libc_start_main",
     "malloc",
     "pthread_create",
+    "pthread_join",
+    "pthread_detach",
     "dlopen",
+    "dlsym",
+    "dlclose",
+    "dl_iterate_phdr",
+    "dladdr",
+    "_IO_fclose",
+    "_IO_fopen",
+    "_IO_printf",
     "_IO_flockfile",
     "_IO_funlockfile",
     "_IO_ftrylockfile",
@@ -326,7 +328,7 @@ fn maintenance_module_coverage_consistent() {
 }
 
 #[test]
-fn maintenance_report_marks_io_internal_native_symbols_implemented() {
+fn maintenance_report_marks_native_sample_symbols_implemented() {
     let root = repo_root();
     let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
     let data = load_json(&report_path);
@@ -334,7 +336,7 @@ fn maintenance_report_marks_io_internal_native_symbols_implemented() {
         .as_object()
         .expect("symbol_status_map should be an object");
 
-    for symbol in IO_INTERNAL_NATIVE_SYMBOLS {
+    for symbol in IMPLEMENTED_NATIVE_SAMPLE_SYMBOLS {
         let status = symbol_status_map
             .get(*symbol)
             .and_then(serde_json::Value::as_str);
@@ -391,6 +393,36 @@ fn maintenance_report_reclassifies_host_delegating_symbols() {
     assert!(
         implemented_host_delegation.is_empty(),
         "Implemented rows must not delegate to host libc: {implemented_host_delegation:?}"
+    );
+}
+
+#[test]
+fn maintenance_report_has_no_implemented_host_census_symbols() {
+    let report = load_json(&canonical_report_path());
+    let census = load_json(&host_delegation_census_path());
+    let symbol_status_map = report["symbol_status_map"]
+        .as_object()
+        .expect("symbol_status_map should be an object");
+    let host_symbols: std::collections::BTreeSet<&str> = census["symbol_census"]
+        .as_array()
+        .expect("symbol_census should be an array")
+        .iter()
+        .filter_map(|row| row["symbol"].as_str())
+        .collect();
+
+    let implemented_host_symbols: Vec<&str> = host_symbols
+        .iter()
+        .copied()
+        .filter(|symbol| {
+            symbol_status_map
+                .get(*symbol)
+                .and_then(serde_json::Value::as_str)
+                == Some("Implemented")
+        })
+        .collect();
+    assert!(
+        implemented_host_symbols.is_empty(),
+        "host-delegating census symbols must be reclassified out of Implemented: {implemented_host_symbols:?}"
     );
 }
 
