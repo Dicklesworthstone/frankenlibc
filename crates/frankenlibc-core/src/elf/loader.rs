@@ -1842,6 +1842,54 @@ mod tests {
     }
 
     #[test]
+    fn test_dependency_graph_preserves_diamond_dependency_once() -> ElfResult<()> {
+        let root = object_with_symbols(
+            0x1000,
+            Some("app"),
+            &["liba.so", "libc.so"],
+            &[("root_symbol", 0x10, None)],
+        )?;
+        let liba = object_with_symbols(0x2000, Some("liba.so"), &["libb.so"], &[])?;
+        let libc = object_with_symbols(0x3000, Some("libc.so"), &["libb.so"], &[])?;
+        let libb = object_with_symbols(
+            0x4000,
+            Some("libb.so"),
+            &[],
+            &[("shared_symbol", 0x40, None)],
+        )?;
+        let objects = vec![
+            LinkMapObject {
+                name: "app",
+                object: &root,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "liba.so",
+                object: &liba,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "libc.so",
+                object: &libc,
+                visibility: RtldVisibility::Global,
+            },
+            LinkMapObject {
+                name: "libb.so",
+                object: &libb,
+                visibility: RtldVisibility::Global,
+            },
+        ];
+
+        let graph = DependencyGraph::build(&objects)?;
+        assert_eq!(graph.nodes[0].dependencies, vec![1, 2]);
+        assert_eq!(graph.nodes[1].dependencies, vec![3]);
+        assert_eq!(graph.nodes[2].dependencies, vec![3]);
+        assert_eq!(graph.topological_order, vec![3, 1, 2, 0]);
+        assert_eq!(graph.local_lookup_order(0)?, vec![0, 1, 3, 2]);
+        Ok(())
+    }
+
+    #[test]
     fn test_dependency_graph_rejects_cycles() -> ElfResult<()> {
         let liba = object_with_symbols(0x1000, Some("liba.so"), &["libb.so"], &[])?;
         let libb = object_with_symbols(0x2000, Some("libb.so"), &["liba.so"], &[])?;
