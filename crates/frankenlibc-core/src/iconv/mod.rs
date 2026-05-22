@@ -152,6 +152,7 @@ enum Encoding {
     Cp813,
     Cp916,
     Cp1161,
+    Cp1162,
     Cp856,
     Cp1125,
     Cp850,
@@ -189,7 +190,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 108] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 109] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -693,6 +694,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 108] = [
         canonical: "CP1161",
         normalized: "CP1161",
         aliases: &["IBM1161"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp1162,
+        canonical: "CP1162",
+        normalized: "CP1162",
+        aliases: &["IBM1162"],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -6387,6 +6394,61 @@ fn encode_cp1161(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// CP1162 (Thai Windows) to Unicode mapping for bytes 0x80-0xFF.
+/// Contains Thai script with typographic punctuation in 0x80-0x9F range.
+const CP1162_TO_UNICODE: [u16; 128] = [
+    0x20AC, 0x0081, 0x0082, 0x0083, 0x0084, 0x2026, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    0x00A0, 0x0E01, 0x0E02, 0x0E03, 0x0E04, 0x0E05, 0x0E06, 0x0E07, // A0-A7
+    0x0E08, 0x0E09, 0x0E0A, 0x0E0B, 0x0E0C, 0x0E0D, 0x0E0E, 0x0E0F, // A8-AF
+    0x0E10, 0x0E11, 0x0E12, 0x0E13, 0x0E14, 0x0E15, 0x0E16, 0x0E17, // B0-B7
+    0x0E18, 0x0E19, 0x0E1A, 0x0E1B, 0x0E1C, 0x0E1D, 0x0E1E, 0x0E1F, // B8-BF
+    0x0E20, 0x0E21, 0x0E22, 0x0E23, 0x0E24, 0x0E25, 0x0E26, 0x0E27, // C0-C7
+    0x0E28, 0x0E29, 0x0E2A, 0x0E2B, 0x0E2C, 0x0E2D, 0x0E2E, 0x0E2F, // C8-CF
+    0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E34, 0x0E35, 0x0E36, 0x0E37, // D0-D7
+    0x0E38, 0x0E39, 0x0E3A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0E3F, // D8-DF
+    0x0E40, 0x0E41, 0x0E42, 0x0E43, 0x0E44, 0x0E45, 0x0E46, 0x0E47, // E0-E7
+    0x0E48, 0x0E49, 0x0E4A, 0x0E4B, 0x0E4C, 0x0E4D, 0x0E4E, 0x0E4F, // E8-EF
+    0x0E50, 0x0E51, 0x0E52, 0x0E53, 0x0E54, 0x0E55, 0x0E56, 0x0E57, // F0-F7
+    0x0E58, 0x0E59, 0x0E5A, 0x0E5B, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_cp1162(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP1162_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp1162(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP1162_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -6764,6 +6826,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp813 => decode_cp813(input),
         Encoding::Cp916 => decode_cp916(input),
         Encoding::Cp1161 => decode_cp1161(input),
+        Encoding::Cp1162 => decode_cp1162(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -6945,6 +7008,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp813 => encode_cp813(ch, out),
         Encoding::Cp916 => encode_cp916(ch, out),
         Encoding::Cp1161 => encode_cp1161(ch, out),
+        Encoding::Cp1162 => encode_cp1162(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -10097,6 +10161,31 @@ mod tests {
     #[test]
     fn cp1161_accepts_ibm1161_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM1161");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp1162_thai_windows_round_trip() {
+        // CP1162 is Thai Windows encoding
+        // 0xA1 = U+0E01 (Thai character KO KAI), 0x80 = U+20AC (Euro sign)
+        let cp1162_input: &[u8] = &[0xA1, 0x80];
+        let expected_utf8 = "\u{0E01}\u{20AC}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP1162").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(cp1162_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP1162", b"UTF-8").unwrap();
+        let mut cp1162_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp1162_out).unwrap();
+        assert_eq!(&cp1162_out[..result2.out_written], cp1162_input);
+    }
+
+    #[test]
+    fn cp1162_accepts_ibm1162_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM1162");
         assert!(cd.is_some());
     }
 }
