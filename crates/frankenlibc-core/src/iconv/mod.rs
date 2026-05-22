@@ -162,6 +162,7 @@ enum Encoding {
     HpRoman9,
     Csn369103,
     Ibm902,
+    Ibm901,
     Cp856,
     Cp1125,
     Cp850,
@@ -199,7 +200,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 118] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 119] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -763,6 +764,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 118] = [
         canonical: "IBM-902",
         normalized: "IBM902",
         aliases: &["IBM902", "CP902", "902"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm901,
+        canonical: "IBM-901",
+        normalized: "IBM901",
+        aliases: &["IBM901", "CP901", "901"],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -7040,6 +7047,67 @@ fn encode_ibm902(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const IBM901_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (C1 controls)
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    // 0x90-0x9F (C1 controls continued)
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    // 0xA0-0xAF (Quotes, currency, Nordic)
+    0x00A0, 0x201D, 0x00A2, 0x00A3, 0x20AC, 0x201E, 0x00A6, 0x00A7, // A0-A7
+    0x00D8, 0x00A9, 0x0156, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00C6, // A8-AF
+    // 0xB0-0xBF (Symbols + Nordic)
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x201C, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x00F8, 0x00B9, 0x0157, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00E6, // B8-BF
+    // 0xC0-0xCF (Baltic capital letters)
+    0x0104, 0x012E, 0x0100, 0x0106, 0x00C4, 0x00C5, 0x0118, 0x0112, // C0-C7
+    0x010C, 0x00C9, 0x0179, 0x0116, 0x0122, 0x0136, 0x012A, 0x013B, // C8-CF
+    // 0xD0-0xDF (Baltic capital continued)
+    0x0160, 0x0143, 0x0145, 0x00D3, 0x014C, 0x00D5, 0x00D6, 0x00D7, // D0-D7
+    0x0172, 0x0141, 0x015A, 0x016A, 0x00DC, 0x017B, 0x017D, 0x00DF, // D8-DF
+    // 0xE0-0xEF (Baltic small letters)
+    0x0105, 0x012F, 0x0101, 0x0107, 0x00E4, 0x00E5, 0x0119, 0x0113, // E0-E7
+    0x010D, 0x00E9, 0x017A, 0x0117, 0x0123, 0x0137, 0x012B, 0x013C, // E8-EF
+    // 0xF0-0xFF (Baltic small continued)
+    0x0161, 0x0144, 0x0146, 0x00F3, 0x014D, 0x00F5, 0x00F6, 0x00F7, // F0-F7
+    0x0173, 0x0142, 0x015B, 0x016B, 0x00FC, 0x017C, 0x017E, 0x2019, // F8-FF
+];
+
+fn decode_ibm901(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = IBM901_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_ibm901(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in IBM901_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -7427,6 +7495,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::HpRoman9 => decode_hproman9(input),
         Encoding::Csn369103 => decode_csn369103(input),
         Encoding::Ibm902 => decode_ibm902(input),
+        Encoding::Ibm901 => decode_ibm901(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -7618,6 +7687,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::HpRoman9 => encode_hproman9(ch, out),
         Encoding::Csn369103 => encode_csn369103(ch, out),
         Encoding::Ibm902 => encode_ibm902(ch, out),
+        Encoding::Ibm901 => encode_ibm901(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -10973,6 +11043,26 @@ mod tests {
     #[test]
     fn ibm902_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM902");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn ibm901_decode_roundtrip() {
+        let ibm901_input: &[u8] = &[0xC0, 0xC1, 0xE0, 0xE1, 0xA4];
+        let expected_utf8 = "ĄĮąį€";
+        let mut cd = iconv_open(b"UTF-8", b"IBM-901").expect("IBM-901 to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(ibm901_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"IBM-901", b"UTF-8").expect("UTF-8 to IBM-901 conversion");
+        let mut ibm901_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut ibm901_out).unwrap();
+        assert_eq!(&ibm901_out[..result2.out_written], ibm901_input);
+    }
+
+    #[test]
+    fn ibm901_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM901");
         assert!(cd.is_some());
     }
 }
