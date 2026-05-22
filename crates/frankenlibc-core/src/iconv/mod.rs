@@ -84,6 +84,7 @@ enum Encoding {
     Cp1256,
     Cp1257,
     Cp1258,
+    Cp874,
     Iso88592,
     Iso88594,
     Iso88595,
@@ -113,7 +114,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 32] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 33] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -209,6 +210,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 32] = [
         canonical: "CP1258",
         normalized: "CP1258",
         aliases: &["WINDOWS1258", "1258"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp874,
+        canonical: "CP874",
+        normalized: "CP874",
+        aliases: &["WINDOWS874", "874", "TIS620"],
     },
     CodecSpec {
         encoding: Encoding::Cp1252,
@@ -328,8 +335,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 32] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 33] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP874", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -1176,6 +1183,61 @@ fn encode_cp1258(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// Windows-874 (CP874/Thai/TIS-620) to Unicode mapping for bytes 0x80-0xFF.
+/// 0xFFFF marks undefined positions.
+const CP874_TO_UNICODE: [u16; 128] = [
+    0x20AC, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x2026, 0xFFFF, 0xFFFF, // 80-87
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 88-8F
+    0xFFFF, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 98-9F
+    0x00A0, 0x0E01, 0x0E02, 0x0E03, 0x0E04, 0x0E05, 0x0E06, 0x0E07, // A0-A7
+    0x0E08, 0x0E09, 0x0E0A, 0x0E0B, 0x0E0C, 0x0E0D, 0x0E0E, 0x0E0F, // A8-AF
+    0x0E10, 0x0E11, 0x0E12, 0x0E13, 0x0E14, 0x0E15, 0x0E16, 0x0E17, // B0-B7
+    0x0E18, 0x0E19, 0x0E1A, 0x0E1B, 0x0E1C, 0x0E1D, 0x0E1E, 0x0E1F, // B8-BF
+    0x0E20, 0x0E21, 0x0E22, 0x0E23, 0x0E24, 0x0E25, 0x0E26, 0x0E27, // C0-C7
+    0x0E28, 0x0E29, 0x0E2A, 0x0E2B, 0x0E2C, 0x0E2D, 0x0E2E, 0x0E2F, // C8-CF
+    0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E34, 0x0E35, 0x0E36, 0x0E37, // D0-D7
+    0x0E38, 0x0E39, 0x0E3A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0E3F, // D8-DF
+    0x0E40, 0x0E41, 0x0E42, 0x0E43, 0x0E44, 0x0E45, 0x0E46, 0x0E47, // E0-E7
+    0x0E48, 0x0E49, 0x0E4A, 0x0E4B, 0x0E4C, 0x0E4D, 0x0E4E, 0x0E4F, // E8-EF
+    0x0E50, 0x0E51, 0x0E52, 0x0E53, 0x0E54, 0x0E55, 0x0E56, 0x0E57, // F0-F7
+    0x0E58, 0x0E59, 0x0E5A, 0x0E5B, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_cp874(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP874_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp874(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP874_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 /// ISO-8859-2 (Latin-2/Central European) to Unicode mapping for bytes 0xA0-0xFF.
 const ISO88592_TO_UNICODE: [u16; 96] = [
     0x00A0, 0x0104, 0x02D8, 0x0141, 0x00A4, 0x013D, 0x015A, 0x00A7, // A0-A7
@@ -1964,6 +2026,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1256 => decode_cp1256(input),
         Encoding::Cp1257 => decode_cp1257(input),
         Encoding::Cp1258 => decode_cp1258(input),
+        Encoding::Cp874 => decode_cp874(input),
         Encoding::Cp1252 => decode_cp1252(input),
         Encoding::Iso88592 => decode_iso88592(input),
         Encoding::Iso88594 => decode_iso88594(input),
@@ -2049,6 +2112,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1256 => encode_cp1256(ch, out),
         Encoding::Cp1257 => encode_cp1257(ch, out),
         Encoding::Cp1258 => encode_cp1258(ch, out),
+        Encoding::Cp874 => encode_cp874(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
         Encoding::Iso88592 => encode_iso88592(ch, out),
         Encoding::Iso88594 => encode_iso88594(ch, out),
@@ -2749,6 +2813,30 @@ mod tests {
     #[test]
     fn cp1258_accepts_windows1258_alias() {
         let cd = iconv_open(b"UTF-8", b"WINDOWS1258");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp874_to_utf8_round_trip() {
+        // CP874: Thai ก (KO KAI, 0xA1) and ข (KHO KHAI, 0xA2)
+        let cp874_input: &[u8] = &[0xA1, 0xA2];
+        let expected_utf8 = "\u{0E01}\u{0E02}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP874").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(cp874_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP874", b"UTF-8").unwrap();
+        let mut cp874_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp874_out).unwrap();
+        assert_eq!(&cp874_out[..result2.out_written], cp874_input);
+    }
+
+    #[test]
+    fn cp874_accepts_tis620_alias() {
+        let cd = iconv_open(b"UTF-8", b"TIS620");
         assert!(cd.is_some());
     }
 
