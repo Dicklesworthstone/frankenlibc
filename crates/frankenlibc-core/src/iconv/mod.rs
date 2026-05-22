@@ -109,6 +109,7 @@ enum Encoding {
     Nextstep,
     Atarist,
     RiscosLatin1,
+    Cp852,
     Cp850,
     MacRoman,
     Iso88592,
@@ -142,7 +143,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 61] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 62] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -388,6 +389,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 61] = [
         canonical: "RISCOS-LATIN1",
         normalized: "RISCOSLATIN1",
         aliases: &["RISCOS"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp852,
+        canonical: "CP852",
+        normalized: "CP852",
+        aliases: &["IBM852", "852", "CSPCP852"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -3457,6 +3464,65 @@ fn encode_riscoslatin1(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// CP852 (DOS Latin-2 / Central European) to Unicode mapping for bytes 0x80-0xFF.
+const CP852_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F
+    0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x016F, 0x0107, 0x00E7, // 80-87 (Ç,ü,é,â,ä,ů,ć,ç)
+    0x0142, 0x00EB, 0x0150, 0x0151, 0x00EE, 0x0179, 0x00C4, 0x0106, // 88-8F (ł,ë,Ő,ő,î,Ź,Ä,Ć)
+    // 0x90-0x9F
+    0x00C9, 0x0139, 0x013A, 0x00F4, 0x00F6, 0x013D, 0x013E, 0x015A, // 90-97 (É,Ĺ,ĺ,ô,ö,Ľ,ľ,Ś)
+    0x015B, 0x00D6, 0x00DC, 0x0164, 0x0165, 0x0141, 0x00D7, 0x010D, // 98-9F (ś,Ö,Ü,Ť,ť,Ł,×,č)
+    // 0xA0-0xAF
+    0x00E1, 0x00ED, 0x00F3, 0x00FA, 0x0104, 0x0105, 0x017D, 0x017E, // A0-A7 (á,í,ó,ú,Ą,ą,Ž,ž)
+    0x0118, 0x0119, 0x00AC, 0x017A, 0x010C, 0x015F, 0x00AB, 0x00BB, // A8-AF (Ę,ę,¬,ź,Č,ş,«,»)
+    // 0xB0-0xBF (box drawing)
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x00C1, 0x00C2, 0x011A, // B0-B7
+    0x015E, 0x2563, 0x2551, 0x2557, 0x255D, 0x017B, 0x017C, 0x2510, // B8-BF
+    // 0xC0-0xCF (box drawing)
+    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x0102, 0x0103, // C0-C7
+    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x00A4, // C8-CF
+    // 0xD0-0xDF (box drawing + misc)
+    0x0111, 0x0110, 0x010E, 0x00CB, 0x010F, 0x0147, 0x00CD, 0x00CE, // D0-D7
+    0x011B, 0x2518, 0x250C, 0x2588, 0x2584, 0x0162, 0x016E, 0x2580, // D8-DF
+    // 0xE0-0xEF
+    0x00D3, 0x00DF, 0x00D4, 0x0143, 0x0144, 0x0148, 0x0160, 0x0161, // E0-E7 (Ó,ß,Ô,Ń,ń,ň,Š,š)
+    0x0154, 0x00DA, 0x0155, 0x0170, 0x00FD, 0x00DD, 0x0163, 0x00B4, // E8-EF (Ŕ,Ú,ŕ,Ű,ý,Ý,ţ,´)
+    // 0xF0-0xFF
+    0x00AD, 0x02DD, 0x02DB, 0x02C7, 0x02D8, 0x00A7, 0x00F7, 0x00B8, // F0-F7 (SHY,˝,˛,ˇ,˘,§,÷,¸)
+    0x00B0, 0x00A8, 0x02D9, 0x0171, 0x0158, 0x0159, 0x25A0, 0x00A0, // F8-FF (°,¨,˙,ű,Ř,ř,■,NBSP)
+];
+
+fn decode_cp852(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP852_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp852(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP852_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -3666,6 +3732,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso885915 => decode_iso885915(input),
         Encoding::Iso885916 => decode_iso885916(input),
         Encoding::RiscosLatin1 => decode_riscoslatin1(input),
+        Encoding::Cp852 => decode_cp852(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -3800,6 +3867,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso885915 => encode_iso885915(ch, out),
         Encoding::Iso885916 => encode_iso885916(ch, out),
         Encoding::RiscosLatin1 => encode_riscoslatin1(ch, out),
+        Encoding::Cp852 => encode_cp852(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -5602,6 +5670,30 @@ mod tests {
     #[test]
     fn riscoslatin1_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"RISC-OS");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp852_to_utf8_round_trip() {
+        // CP852 Central European: ů (0x85), Ő (0x8A), ł (0x88), Ž (0xA6)
+        let cp852_input: &[u8] = &[0x85, 0x8A, 0x88, 0xA6];
+        let expected_utf8 = "\u{016F}\u{0150}\u{0142}\u{017D}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP852").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(cp852_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP852", b"UTF-8").unwrap();
+        let mut cp852_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp852_out).unwrap();
+        assert_eq!(&cp852_out[..result2.out_written], cp852_input);
+    }
+
+    #[test]
+    fn cp852_accepts_ibm852_alias() {
+        let cd = iconv_open(b"UTF-8", b"IBM852");
         assert!(cd.is_some());
     }
 
