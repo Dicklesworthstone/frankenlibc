@@ -1,0 +1,88 @@
+{
+  "schema_version": "ws3_taxonomy_honesty_e2e_completion_contract.v1",
+  "manifest_id": "bd-smp21.5-ws3-taxonomy-honesty-e2e",
+  "generated_utc": "2026-05-22T05:12:00Z",
+  "description": "Completion evidence binding for the WS-3 taxonomy-honesty E2E gate.",
+  "bead": "bd-smp21.5",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "readme": "README.md",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "host_delegation_census_gate": "scripts/check_host_delegation_census.sh",
+    "host_delegation_census_generator": "scripts/generate_host_delegation_census.py",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "replacement_levels_gate": "scripts/check_replacement_levels.sh",
+    "completion_gate": "scripts/check_ws3_taxonomy_honesty_e2e.sh",
+    "completion_harness": "crates/frankenlibc-harness/tests/ws3_taxonomy_honesty_e2e_test.rs"
+  },
+  "completion_debt_evidence": {
+    "required_summary": {
+      "total_symbols": 4119,
+      "implemented": 2368,
+      "raw_syscall": 414,
+      "native": 2782,
+      "wraps_host_libc": 1337,
+      "glibc_callthrough": 0,
+      "callthrough": 1337,
+      "stub": 0,
+      "native_pct": 67.5,
+      "callthrough_pct": 32.5,
+      "implemented_host_delegation_count": 0
+    },
+    "required_checks": [
+      "host_delegation_census_replayed",
+      "implemented_rows_have_no_host_delegation",
+      "readme_native_coverage_badge_matches_support_matrix",
+      "readme_native_coverage_phrase_matches_support_matrix",
+      "readme_contains_no_stale_100_percent_native_patterns",
+      "replacement_levels_gate_replayed",
+      "replacement_levels_assessment_matches_support_matrix",
+      "l1_remains_host_backed_interpose_not_standalone"
+    ],
+    "required_events": [
+      "host_delegation_census_replayed",
+      "implemented_host_delegation_checked",
+      "readme_native_badge_checked",
+      "replacement_levels_gate_replayed",
+      "ws3_taxonomy_honesty_e2e_validated",
+      "ws3_taxonomy_honesty_e2e_failed"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "level",
+      "bead_id",
+      "status",
+      "source_commit",
+      "failure_signature",
+      "summary",
+      "artifact_refs"
+    ],
+    "unit_primary": {
+      "required_test_refs": [
+        {
+          "source": "completion_harness",
+          "name": "contract_binds_gate_sources_events_and_expected_counts"
+        },
+        {
+          "source": "completion_harness",
+          "name": "gate_passes_current_taxonomy_and_emits_jsonl"
+        },
+        {
+          "source": "completion_harness",
+          "name": "gate_rejects_stale_readme_native_badge"
+        }
+      ],
+      "required_commands": [
+        "jq empty tests/conformance/ws3_taxonomy_honesty_e2e_completion_contract.v1.json",
+        "bash scripts/check_ws3_taxonomy_honesty_e2e.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test ws3_taxonomy_honesty_e2e_test -- --nocapture"
+      ]
+    },
+    "telemetry_primary": {
+      "default_report_path": "target/conformance/ws3_taxonomy_honesty_e2e.report.json",
+      "default_log_path": "target/conformance/ws3_taxonomy_honesty_e2e.log.jsonl"
+    }
+  }
+}
