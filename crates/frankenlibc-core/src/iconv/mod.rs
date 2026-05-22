@@ -78,6 +78,7 @@ enum Encoding {
     Cp1250,
     Cp1251,
     Cp1252,
+    Cp1253,
     Iso88592,
     Iso88594,
     Iso88595,
@@ -107,7 +108,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 26] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 27] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -167,6 +168,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 26] = [
         canonical: "CP1251",
         normalized: "CP1251",
         aliases: &["WINDOWS1251", "1251"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp1253,
+        canonical: "CP1253",
+        normalized: "CP1253",
+        aliases: &["WINDOWS1253", "1253"],
     },
     CodecSpec {
         encoding: Encoding::Cp1252,
@@ -286,8 +293,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 26] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1250", "CP1251", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 27] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1250", "CP1251", "CP1252", "CP1253", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -799,6 +806,61 @@ fn encode_cp1251(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP1251_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
+/// Windows-1253 (CP1253/Greek) to Unicode mapping for bytes 0x80-0xFF.
+/// 0xFFFF marks undefined positions.
+const CP1253_TO_UNICODE: [u16; 128] = [
+    0x20AC, 0xFFFF, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+    0xFFFF, 0x2030, 0xFFFF, 0x2039, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 88-8F
+    0xFFFF, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0xFFFF, 0x2122, 0xFFFF, 0x203A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 98-9F
+    0x00A0, 0x0385, 0x0386, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, // A0-A7
+    0x00A8, 0x00A9, 0xFFFF, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x2015, // A8-AF
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x0384, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x0388, 0x0389, 0x038A, 0x00BB, 0x038C, 0x00BD, 0x038E, 0x038F, // B8-BF
+    0x0390, 0x0391, 0x0392, 0x0393, 0x0394, 0x0395, 0x0396, 0x0397, // C0-C7
+    0x0398, 0x0399, 0x039A, 0x039B, 0x039C, 0x039D, 0x039E, 0x039F, // C8-CF
+    0x03A0, 0x03A1, 0xFFFF, 0x03A3, 0x03A4, 0x03A5, 0x03A6, 0x03A7, // D0-D7
+    0x03A8, 0x03A9, 0x03AA, 0x03AB, 0x03AC, 0x03AD, 0x03AE, 0x03AF, // D8-DF
+    0x03B0, 0x03B1, 0x03B2, 0x03B3, 0x03B4, 0x03B5, 0x03B6, 0x03B7, // E0-E7
+    0x03B8, 0x03B9, 0x03BA, 0x03BB, 0x03BC, 0x03BD, 0x03BE, 0x03BF, // E8-EF
+    0x03C0, 0x03C1, 0x03C2, 0x03C3, 0x03C4, 0x03C5, 0x03C6, 0x03C7, // F0-F7
+    0x03C8, 0x03C9, 0x03CA, 0x03CB, 0x03CC, 0x03CD, 0x03CE, 0xFFFF, // F8-FF
+];
+
+fn decode_cp1253(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = CP1253_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_cp1253(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in CP1253_TO_UNICODE.iter().enumerate() {
         if u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
@@ -1589,6 +1651,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp437 => decode_cp437(input),
         Encoding::Cp1250 => decode_cp1250(input),
         Encoding::Cp1251 => decode_cp1251(input),
+        Encoding::Cp1253 => decode_cp1253(input),
         Encoding::Cp1252 => decode_cp1252(input),
         Encoding::Iso88592 => decode_iso88592(input),
         Encoding::Iso88594 => decode_iso88594(input),
@@ -1668,6 +1731,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp437 => encode_cp437(ch, out),
         Encoding::Cp1250 => encode_cp1250(ch, out),
         Encoding::Cp1251 => encode_cp1251(ch, out),
+        Encoding::Cp1253 => encode_cp1253(ch, out),
         Encoding::Cp1252 => encode_cp1252(ch, out),
         Encoding::Iso88592 => encode_iso88592(ch, out),
         Encoding::Iso88594 => encode_iso88594(ch, out),
@@ -2224,6 +2288,30 @@ mod tests {
     #[test]
     fn cp1251_accepts_windows1251_alias() {
         let cd = iconv_open(b"UTF-8", b"WINDOWS1251");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn cp1253_to_utf8_round_trip() {
+        // CP1253: Greek Α (0xC1) and α (0xE1)
+        let cp1253_input: &[u8] = &[0xC1, 0xE1];
+        let expected_utf8 = "\u{0391}\u{03B1}";
+
+        let mut cd = iconv_open(b"UTF-8", b"CP1253").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(cp1253_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"CP1253", b"UTF-8").unwrap();
+        let mut cp1253_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut cp1253_out).unwrap();
+        assert_eq!(&cp1253_out[..result2.out_written], cp1253_input);
+    }
+
+    #[test]
+    fn cp1253_accepts_windows1253_alias() {
+        let cd = iconv_open(b"UTF-8", b"WINDOWS1253");
         assert!(cd.is_some());
     }
 
