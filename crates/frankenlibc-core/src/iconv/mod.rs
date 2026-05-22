@@ -160,6 +160,7 @@ enum Encoding {
     Cp866Nav,
     DecMcs,
     HpRoman9,
+    HpGreek8,
     Csn369103,
     Ibm902,
     Ibm901,
@@ -200,7 +201,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 119] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 120] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -752,6 +753,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 119] = [
         canonical: "HP-ROMAN9",
         normalized: "HPROMAN9",
         aliases: &["HPROMAN9", "ROMAN9"],
+    },
+    CodecSpec {
+        encoding: Encoding::HpGreek8,
+        canonical: "HP-GREEK8",
+        normalized: "HPGREEK8",
+        aliases: &["HPGREEK8", "GREEK8"],
     },
     CodecSpec {
         encoding: Encoding::Csn369103,
@@ -6925,6 +6932,67 @@ fn encode_hproman9(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const HPGREEK8_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (C1 controls)
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    // 0x90-0x9F (C1 controls continued)
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    // 0xA0-0xAF (NBSP + undefined)
+    0x00A0, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // A0-A7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // A8-AF
+    // 0xB0-0xBF (undefined + ϊ, ϋ)
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // B0-B7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x03CA, 0xFFFF, 0x03CB, 0xFFFF, // B8-BF
+    // 0xC0-0xCF (Greek capitals Α-Ξ with gap)
+    0xFFFF, 0x0391, 0x0392, 0x0393, 0x0394, 0x0395, 0x0396, 0x0397, // C0-C7
+    0x0398, 0x0399, 0xFFFF, 0x039A, 0x039B, 0x039C, 0x039D, 0x039E, // C8-CF
+    // 0xD0-0xDF (Greek capitals Ο-Ω + accented)
+    0x039F, 0x03A0, 0x03A1, 0x03A3, 0x03A4, 0x03A5, 0x03A6, 0xFFFF, // D0-D7
+    0x03A7, 0x03A8, 0x03A9, 0x03AC, 0x03AE, 0x03CC, 0xFFFF, 0xFFFF, // D8-DF
+    // 0xE0-0xEF (Greek lowercase α-ξ with gaps)
+    0x03CD, 0x03B1, 0x03B2, 0x03B3, 0x03B4, 0x03B5, 0x03B6, 0x03B7, // E0-E7
+    0x03B8, 0x03B9, 0xFFFF, 0x03BA, 0x03BB, 0x03BC, 0x03BD, 0x03BE, // E8-EF
+    // 0xF0-0xFF (Greek lowercase ο-ω + final sigma + accented)
+    0x03BF, 0x03C0, 0x03C1, 0x03C3, 0x03C4, 0x03C5, 0x03C6, 0x03C2, // F0-F7
+    0x03C7, 0x03C8, 0x03C9, 0x03AD, 0x03AF, 0x03CE, 0x03F3, 0xFFFF, // F8-FF
+];
+
+fn decode_hpgreek8(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = HPGREEK8_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_hpgreek8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in HPGREEK8_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CSN369103_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (C1 controls)
     0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
@@ -7493,6 +7561,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp866Nav => decode_cp866nav(input),
         Encoding::DecMcs => decode_decmcs(input),
         Encoding::HpRoman9 => decode_hproman9(input),
+        Encoding::HpGreek8 => decode_hpgreek8(input),
         Encoding::Csn369103 => decode_csn369103(input),
         Encoding::Ibm902 => decode_ibm902(input),
         Encoding::Ibm901 => decode_ibm901(input),
@@ -7685,6 +7754,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp866Nav => encode_cp866nav(ch, out),
         Encoding::DecMcs => encode_decmcs(ch, out),
         Encoding::HpRoman9 => encode_hproman9(ch, out),
+        Encoding::HpGreek8 => encode_hpgreek8(ch, out),
         Encoding::Csn369103 => encode_csn369103(ch, out),
         Encoding::Ibm902 => encode_ibm902(ch, out),
         Encoding::Ibm901 => encode_ibm901(ch, out),
@@ -11003,6 +11073,26 @@ mod tests {
     #[test]
     fn hproman9_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"HPROMAN9");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn hpgreek8_decode_roundtrip() {
+        let hpgreek8_input: &[u8] = &[0xC1, 0xC2, 0xE1, 0xE2];
+        let expected_utf8 = "ΑΒαβ";
+        let mut cd = iconv_open(b"UTF-8", b"HP-GREEK8").expect("HP-GREEK8 to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(hpgreek8_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"HP-GREEK8", b"UTF-8").expect("UTF-8 to HP-GREEK8 conversion");
+        let mut hpgreek8_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut hpgreek8_out).unwrap();
+        assert_eq!(&hpgreek8_out[..result2.out_written], hpgreek8_input);
+    }
+
+    #[test]
+    fn hpgreek8_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"HPGREEK8");
         assert!(cd.is_some());
     }
 
