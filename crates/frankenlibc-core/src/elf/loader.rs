@@ -12,17 +12,19 @@
 //! - x86_64 Linux only
 
 use super::{
-    ElfResult,
+    ElfError, ElfResult,
     hash::{ElfHashTable, GnuHashTable, elf_hash},
     header::Elf64Header,
-    program::{Elf64ProgramHeader, ProgramType, parse_program_headers},
+    program::{Elf64ProgramHeader, ProgramFlags, ProgramType, parse_program_headers},
     relocation::{
         Elf64Rela, RelocationContext, RelocationResult, compute_relocation, parse_relocations,
     },
     section::{Elf64SectionHeader, SectionType, parse_section_headers},
     symbol::{Elf64Symbol, get_string, parse_symbols},
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Range};
+
+const LOAD_PAGE_SIZE: u64 = 4096;
 
 /// A loaded ELF object.
 #[derive(Debug)]
@@ -57,6 +59,58 @@ pub struct LoadedObject {
     pub relro_start: Option<u64>,
     /// RELRO size
     pub relro_size: u64,
+}
+
+/// A page-aligned PT_LOAD mapping decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadSegmentMapping {
+    /// Program-header index from the parsed object.
+    pub segment_index: usize,
+    /// Original ELF virtual address of this segment.
+    pub virtual_addr: u64,
+    /// Runtime address for the segment contents.
+    pub runtime_addr: u64,
+    /// Page-aligned runtime address that an mmap-based loader would request.
+    pub map_addr: u64,
+    /// Page-aligned file offset that an mmap-based loader would request.
+    pub map_file_offset: u64,
+    /// Page-aligned mapping length.
+    pub map_size: u64,
+    /// Unaligned file offset of segment bytes.
+    pub file_offset: u64,
+    /// Number of bytes copied from the ELF file.
+    pub file_size: u64,
+    /// Number of bytes materialized in memory, including BSS.
+    pub memory_size: u64,
+    /// mmap protection bitmask derived from the ELF flags.
+    pub prot: i32,
+    /// Original ELF flags.
+    pub flags: ProgramFlags,
+    /// Range in the source ELF byte slice.
+    pub file_range: Range<usize>,
+    /// Range in the materialized load image.
+    pub memory_range: Range<usize>,
+    /// Zero-filled BSS tail in the materialized load image.
+    pub bss_range: Range<usize>,
+}
+
+/// A deterministic safe representation of the memory image for PT_LOAD segments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadImage {
+    /// Runtime base used by the loader.
+    pub base: u64,
+    /// Lowest page-aligned ELF virtual address covered by PT_LOAD.
+    pub low_vaddr: u64,
+    /// Exclusive highest page-aligned ELF virtual address covered by PT_LOAD.
+    pub high_vaddr: u64,
+    /// Contiguous zero-initialized image with file bytes copied into place.
+    pub memory: Vec<u8>,
+    /// Per-segment mapping decisions.
+    pub segments: Vec<LoadSegmentMapping>,
+    /// RELRO range in `memory`, if the object has PT_GNU_RELRO.
+    pub relro_range: Option<Range<usize>>,
+    /// Runtime RELRO address range, if the object has PT_GNU_RELRO.
+    pub relro_runtime_range: Option<Range<u64>>,
 }
 
 impl LoadedObject {
@@ -274,6 +328,143 @@ impl ElfLoader {
         })
     }
 
+    /// Materialize PT_LOAD segments into a deterministic in-memory image.
+    ///
+    /// The core crate stays safe Rust, so this does not call `mmap`. It performs
+    /// the same load-plan arithmetic an mmap-backed loader needs: validate
+    /// offset/alignment invariants, derive page-aligned mapping addresses and
+    /// protections, copy file-backed bytes, and leave the BSS tail zero-filled.
+    pub fn materialize_load_image(&self, data: &[u8], obj: &LoadedObject) -> ElfResult<LoadImage> {
+        let load_segments: Vec<(usize, &Elf64ProgramHeader)> = obj
+            .program_headers
+            .iter()
+            .enumerate()
+            .filter(|(_, header)| header.is_load())
+            .collect();
+        if load_segments.is_empty() {
+            return Err(ElfError::InvalidOffset {
+                kind: "PT_LOAD segment table",
+                offset: 0,
+            });
+        }
+
+        let mut low_vaddr = u64::MAX;
+        let mut high_vaddr = 0u64;
+        for (_, header) in &load_segments {
+            validate_load_segment(data.len(), header)?;
+            low_vaddr = low_vaddr.min(page_floor(header.p_vaddr));
+            let segment_end =
+                checked_add_u64("PT_LOAD virtual range", header.p_vaddr, header.p_memsz)?;
+            high_vaddr = high_vaddr.max(page_ceil(segment_end)?);
+        }
+
+        let image_len = checked_usize(
+            "PT_LOAD image size",
+            high_vaddr
+                .checked_sub(low_vaddr)
+                .ok_or(ElfError::InvalidOffset {
+                    kind: "PT_LOAD image range",
+                    offset: high_vaddr,
+                })?,
+        )?;
+        let mut memory = vec![0u8; image_len];
+        let mut segments = Vec::with_capacity(load_segments.len());
+
+        for (segment_index, header) in load_segments {
+            let file_range = checked_file_range(data.len(), header.p_offset, header.p_filesz)?;
+            let memory_range = image_range_for_vaddr(low_vaddr, header.p_vaddr, header.p_memsz)?;
+            if memory_range.end > memory.len() {
+                return Err(ElfError::BufferTooSmall {
+                    needed: memory_range.end,
+                    available: memory.len(),
+                });
+            }
+
+            let file_memory_range =
+                image_range_for_vaddr(low_vaddr, header.p_vaddr, header.p_filesz)?;
+            if !file_range.is_empty() {
+                let source =
+                    data.get(file_range.start..file_range.end)
+                        .ok_or(ElfError::BufferTooSmall {
+                            needed: file_range.end,
+                            available: data.len(),
+                        })?;
+                let available = memory.len();
+                let target = memory
+                    .get_mut(file_memory_range.start..file_memory_range.end)
+                    .ok_or(ElfError::BufferTooSmall {
+                        needed: file_memory_range.end,
+                        available,
+                    })?;
+                target.copy_from_slice(source);
+            }
+
+            let bss_start_vaddr =
+                checked_add_u64("PT_LOAD BSS start", header.p_vaddr, header.p_filesz)?;
+            let bss_range = image_range_for_vaddr(low_vaddr, bss_start_vaddr, header.bss_size())?;
+            let map_vaddr = page_floor(header.p_vaddr);
+            let map_end = page_ceil(checked_add_u64(
+                "PT_LOAD mapping range",
+                header.p_vaddr,
+                header.p_memsz,
+            )?)?;
+
+            segments.push(LoadSegmentMapping {
+                segment_index,
+                virtual_addr: header.p_vaddr,
+                runtime_addr: checked_add_u64(
+                    "PT_LOAD runtime address",
+                    self.ctx.base,
+                    header.p_vaddr,
+                )?,
+                map_addr: checked_add_u64("PT_LOAD map address", self.ctx.base, map_vaddr)?,
+                map_file_offset: page_floor(header.p_offset),
+                map_size: map_end
+                    .checked_sub(map_vaddr)
+                    .ok_or(ElfError::InvalidOffset {
+                        kind: "PT_LOAD mapping range",
+                        offset: map_end,
+                    })?,
+                file_offset: header.p_offset,
+                file_size: header.p_filesz,
+                memory_size: header.p_memsz,
+                prot: header.p_flags.to_mmap_prot(),
+                flags: header.p_flags,
+                file_range,
+                memory_range,
+                bss_range,
+            });
+        }
+
+        let relro_range = obj
+            .program_headers
+            .iter()
+            .find(|header| header.is_relro())
+            .map(|header| image_range_for_vaddr(low_vaddr, header.p_vaddr, header.p_memsz))
+            .transpose()?;
+        let relro_runtime_range = obj
+            .program_headers
+            .iter()
+            .find(|header| header.is_relro())
+            .map(|header| {
+                let start =
+                    checked_add_u64("PT_GNU_RELRO runtime start", self.ctx.base, header.p_vaddr)?;
+                let end = checked_add_u64("PT_GNU_RELRO runtime end", start, header.p_memsz)?;
+                Ok(start..end)
+            })
+            .transpose()?;
+
+        Ok(LoadImage {
+            base: self.ctx.base,
+            low_vaddr,
+            high_vaddr,
+            memory,
+            segments,
+            relro_range,
+            relro_runtime_range,
+        })
+    }
+
     /// Parse the dynamic segment to extract symbols, strings, and relocations.
     #[allow(clippy::type_complexity)]
     fn parse_dynamic_segment(
@@ -470,6 +661,77 @@ impl ElfLoader {
 
         RelocationResult::Applied
     }
+}
+
+fn validate_load_segment(data_len: usize, header: &Elf64ProgramHeader) -> ElfResult<()> {
+    if header.p_memsz < header.p_filesz {
+        return Err(ElfError::InvalidOffset {
+            kind: "PT_LOAD memory size",
+            offset: header.p_memsz,
+        });
+    }
+    if !header.is_valid_alignment() {
+        return Err(ElfError::InvalidOffset {
+            kind: "PT_LOAD alignment",
+            offset: header.p_align,
+        });
+    }
+    if header.p_align > 1 && header.p_vaddr % header.p_align != header.p_offset % header.p_align {
+        return Err(ElfError::InvalidOffset {
+            kind: "PT_LOAD congruence",
+            offset: header.p_vaddr,
+        });
+    }
+    checked_file_range(data_len, header.p_offset, header.p_filesz)?;
+    Ok(())
+}
+
+fn checked_file_range(data_len: usize, offset: u64, size: u64) -> ElfResult<Range<usize>> {
+    let end = checked_add_u64("PT_LOAD file range", offset, size)?;
+    let start = checked_usize("PT_LOAD file offset", offset)?;
+    let end = checked_usize("PT_LOAD file end", end)?;
+    if end > data_len {
+        return Err(ElfError::BufferTooSmall {
+            needed: end,
+            available: data_len,
+        });
+    }
+    Ok(start..end)
+}
+
+fn image_range_for_vaddr(low_vaddr: u64, vaddr: u64, size: u64) -> ElfResult<Range<usize>> {
+    let start = vaddr
+        .checked_sub(low_vaddr)
+        .ok_or(ElfError::InvalidOffset {
+            kind: "PT_LOAD image address",
+            offset: vaddr,
+        })?;
+    let end = checked_add_u64("PT_LOAD image range", start, size)?;
+    Ok(checked_usize("PT_LOAD image offset", start)?..checked_usize("PT_LOAD image end", end)?)
+}
+
+fn page_floor(value: u64) -> u64 {
+    value & !(LOAD_PAGE_SIZE - 1)
+}
+
+fn page_ceil(value: u64) -> ElfResult<u64> {
+    Ok(page_floor(checked_add_u64(
+        "PT_LOAD page alignment",
+        value,
+        LOAD_PAGE_SIZE - 1,
+    )?))
+}
+
+fn checked_add_u64(kind: &'static str, lhs: u64, rhs: u64) -> ElfResult<u64> {
+    lhs.checked_add(rhs)
+        .ok_or(ElfError::InvalidOffset { kind, offset: lhs })
+}
+
+fn checked_usize(kind: &'static str, value: u64) -> ElfResult<usize> {
+    usize::try_from(value).map_err(|_| ElfError::InvalidOffset {
+        kind,
+        offset: value,
+    })
 }
 
 fn section_data<'a>(data: &'a [u8], section: &Elf64SectionHeader) -> Option<&'a [u8]> {
@@ -758,6 +1020,39 @@ mod tests {
         }
     }
 
+    fn load_header(
+        p_offset: u64,
+        p_vaddr: u64,
+        p_filesz: u64,
+        p_memsz: u64,
+        p_align: u64,
+        flags: ProgramFlags,
+    ) -> Elf64ProgramHeader {
+        Elf64ProgramHeader {
+            p_type: ProgramType::Load,
+            p_flags: flags,
+            p_offset,
+            p_vaddr,
+            p_paddr: p_vaddr,
+            p_filesz,
+            p_memsz,
+            p_align,
+        }
+    }
+
+    fn relro_header(p_vaddr: u64, p_memsz: u64) -> Elf64ProgramHeader {
+        Elf64ProgramHeader {
+            p_type: ProgramType::GnuRelro,
+            p_flags: ProgramFlags(ProgramFlags::PF_R),
+            p_offset: 0,
+            p_vaddr,
+            p_paddr: p_vaddr,
+            p_filesz: 0,
+            p_memsz,
+            p_align: LOAD_PAGE_SIZE,
+        }
+    }
+
     #[test]
     fn test_null_lookup() {
         let resolver = NullSymbolLookup;
@@ -803,6 +1098,154 @@ mod tests {
 
         let loader = loader.with_got(0x7f00_0000_1000);
         assert_eq!(loader.ctx.got, Some(0x7f00_0000_1000));
+    }
+
+    #[test]
+    fn test_materialize_load_image_copies_segment_and_zeros_bss() -> ElfResult<()> {
+        let loader = ElfLoader::new(0x7000_0000_0000);
+        let mut data = vec![0u8; 0x3000];
+        data[0x1000..0x1004].copy_from_slice(&[1, 2, 3, 4]);
+
+        let mut obj = empty_loaded_object();
+        obj.program_headers = vec![
+            load_header(
+                0x1000,
+                0x401000,
+                4,
+                8,
+                LOAD_PAGE_SIZE,
+                ProgramFlags(ProgramFlags::PF_R | ProgramFlags::PF_W),
+            ),
+            relro_header(0x401004, 4),
+        ];
+
+        let image = loader.materialize_load_image(&data, &obj)?;
+
+        assert_eq!(image.base, 0x7000_0000_0000);
+        assert_eq!(image.low_vaddr, 0x401000);
+        assert_eq!(image.high_vaddr, 0x402000);
+        assert_eq!(&image.memory[0..8], &[1, 2, 3, 4, 0, 0, 0, 0]);
+        assert_eq!(image.relro_range, Some(4..8));
+        assert_eq!(
+            image.relro_runtime_range,
+            Some(0x7000_0040_1004..0x7000_0040_1008)
+        );
+
+        let segment = &image.segments[0];
+        assert_eq!(segment.segment_index, 0);
+        assert_eq!(segment.virtual_addr, 0x401000);
+        assert_eq!(segment.runtime_addr, 0x7000_0040_1000);
+        assert_eq!(segment.map_addr, 0x7000_0040_1000);
+        assert_eq!(segment.map_file_offset, 0x1000);
+        assert_eq!(segment.map_size, LOAD_PAGE_SIZE);
+        assert_eq!(segment.file_range, 0x1000..0x1004);
+        assert_eq!(segment.memory_range, 0..8);
+        assert_eq!(segment.bss_range, 4..8);
+        assert_eq!(segment.prot, 0x1 | 0x2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_materialize_load_image_records_page_aligned_mapping_for_unaligned_segment()
+    -> ElfResult<()> {
+        let loader = ElfLoader::new(0x7000_0000_0000);
+        let mut data = vec![0u8; 0x400];
+        data[0x123..0x125].copy_from_slice(&[0xaa, 0xbb]);
+
+        let mut obj = empty_loaded_object();
+        obj.program_headers = vec![load_header(
+            0x123,
+            0x401123,
+            2,
+            3,
+            LOAD_PAGE_SIZE,
+            ProgramFlags(ProgramFlags::PF_R | ProgramFlags::PF_X),
+        )];
+
+        let image = loader.materialize_load_image(&data, &obj)?;
+        let segment = &image.segments[0];
+
+        assert_eq!(image.low_vaddr, 0x401000);
+        assert_eq!(segment.map_addr, 0x7000_0040_1000);
+        assert_eq!(segment.map_file_offset, 0);
+        assert_eq!(segment.map_size, LOAD_PAGE_SIZE);
+        assert_eq!(segment.file_range, 0x123..0x125);
+        assert_eq!(segment.memory_range, 0x123..0x126);
+        assert_eq!(segment.bss_range, 0x125..0x126);
+        assert_eq!(&image.memory[0x123..0x126], &[0xaa, 0xbb, 0]);
+        assert_eq!(segment.prot, 0x1 | 0x4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_materialize_load_image_rejects_missing_load_segment() {
+        let loader = ElfLoader::new(0x7000_0000_0000);
+        let obj = empty_loaded_object();
+
+        assert!(matches!(
+            loader.materialize_load_image(&[], &obj),
+            Err(ElfError::InvalidOffset {
+                kind: "PT_LOAD segment table",
+                offset: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn test_materialize_load_image_rejects_truncated_file_segment() {
+        let loader = ElfLoader::new(0x7000_0000_0000);
+        let mut obj = empty_loaded_object();
+        obj.program_headers = vec![load_header(
+            0x100,
+            0x401100,
+            0x1000,
+            0x1000,
+            LOAD_PAGE_SIZE,
+            ProgramFlags(ProgramFlags::PF_R),
+        )];
+
+        assert!(matches!(
+            loader.materialize_load_image(&[0u8; 0x200], &obj),
+            Err(ElfError::BufferTooSmall { .. })
+        ));
+    }
+
+    #[test]
+    fn test_materialize_load_image_rejects_invalid_segment_contracts() {
+        let loader = ElfLoader::new(0x7000_0000_0000);
+        let mut obj = empty_loaded_object();
+        obj.program_headers = vec![load_header(
+            0x1000,
+            0x401000,
+            8,
+            4,
+            LOAD_PAGE_SIZE,
+            ProgramFlags(ProgramFlags::PF_R),
+        )];
+
+        assert!(matches!(
+            loader.materialize_load_image(&[0u8; 0x2000], &obj),
+            Err(ElfError::InvalidOffset {
+                kind: "PT_LOAD memory size",
+                ..
+            })
+        ));
+
+        obj.program_headers = vec![load_header(
+            0x1001,
+            0x401000,
+            4,
+            4,
+            LOAD_PAGE_SIZE,
+            ProgramFlags(ProgramFlags::PF_R),
+        )];
+        assert!(matches!(
+            loader.materialize_load_image(&[0u8; 0x2000], &obj),
+            Err(ElfError::InvalidOffset {
+                kind: "PT_LOAD congruence",
+                ..
+            })
+        ));
     }
 
     #[test]
