@@ -96,7 +96,6 @@ pub const RUNTIME_MATH_PRODUCTION_ENABLED: bool = cfg!(feature = "runtime-math-p
 /// Compile-time flag indicating research runtime-math extensions are enabled.
 pub const RUNTIME_MATH_RESEARCH_ENABLED: bool = cfg!(feature = "runtime-math-research");
 const OBSERVE_FEEDBACK_ENABLED: u8 = 1;
-const OBSERVE_FEEDBACK_DISABLED: u8 = 2;
 // Enable by default: bd-06bxm.1 verified safe RUNTIME_READY arming, so the exotic
 // cached_state atomics can now receive live feedback from observations.
 static OBSERVE_FEEDBACK_STATE: AtomicU8 = AtomicU8::new(OBSERVE_FEEDBACK_ENABLED);
@@ -5866,8 +5865,7 @@ mod tests {
     fn hji_snapshot_fields_respond_to_adverse_signal_feedback() {
         // Feed the HJI monitor directly via lock rather than through
         // observe_validation_result (which is gated by OBSERVE_FEEDBACK_STATE,
-        // a global static that is disabled by default and unsafe to mutate
-        // in parallel tests).
+        // a global static that is unsafe to mutate in parallel tests).
         let kernel = RuntimeMathKernel::new();
         let mode = SafetyLevel::Hardened;
 
