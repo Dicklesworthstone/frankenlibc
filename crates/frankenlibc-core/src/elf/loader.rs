@@ -1187,9 +1187,24 @@ fn write_relocation_value(
     };
 
     match size {
-        1 => target.copy_from_slice(&[value as u8]),
-        2 => target.copy_from_slice(&(value as u16).to_le_bytes()),
-        4 => target.copy_from_slice(&(value as u32).to_le_bytes()),
+        1 => {
+            let Ok(value) = u8::try_from(value) else {
+                return RelocationResult::Overflow;
+            };
+            target.copy_from_slice(&[value]);
+        }
+        2 => {
+            let Ok(value) = u16::try_from(value) else {
+                return RelocationResult::Overflow;
+            };
+            target.copy_from_slice(&value.to_le_bytes());
+        }
+        4 => {
+            let Ok(value) = u32::try_from(value) else {
+                return RelocationResult::Overflow;
+            };
+            target.copy_from_slice(&value.to_le_bytes());
+        }
         8 => target.copy_from_slice(&value.to_le_bytes()),
         _ => return RelocationResult::Overflow,
     }
