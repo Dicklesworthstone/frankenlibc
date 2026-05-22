@@ -85,6 +85,7 @@ enum Encoding {
     Iso885913,
     Iso885915,
     EucJp,
+    ShiftJis,
 }
 
 struct CodecSpec {
@@ -99,7 +100,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 18] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 19] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -208,9 +209,15 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 18] = [
         normalized: "EUCJP",
         aliases: &["EUCJP", "CSEUCPKDFMTJAPANESE", "UJIS"],
     },
+    CodecSpec {
+        encoding: Encoding::ShiftJis,
+        canonical: "SHIFT_JIS",
+        normalized: "SHIFTJIS",
+        aliases: &["SHIFTJIS", "SJIS", "CP932", "MS_KANJI", "CSSHIFTJIS"],
+    },
 ];
 
-const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 5] = [
+const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
     ExcludedCodecSpec {
         canonical: "ISO-2022-CN-EXT",
         normalized: "ISO2022CNEXT",
@@ -218,10 +225,6 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 5] = [
     ExcludedCodecSpec {
         canonical: "ISO-2022-JP",
         normalized: "ISO2022JP",
-    },
-    ExcludedCodecSpec {
-        canonical: "SHIFT_JIS",
-        normalized: "SHIFTJIS",
     },
     ExcludedCodecSpec {
         canonical: "GB18030",
@@ -234,8 +237,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 5] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 18] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15", "EUC-JP"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 19] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP1252", "ISO-8859-2", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-9", "ISO-8859-13", "ISO-8859-15", "EUC-JP", "SHIFT_JIS"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -247,10 +250,9 @@ pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
-pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 5] = [
+pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 4] = [
     "ISO-2022-CN-EXT",
     "ISO-2022-JP",
-    "SHIFT_JIS",
     "GB18030",
     "BIG5-HKSCS",
 ];
@@ -1134,6 +1136,50 @@ fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+fn decode_shiftjis(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b0 = input[0];
+    if b0 <= 0x7F {
+        return Ok((char::from(b0), 1));
+    }
+    if (0xA1..=0xDF).contains(&b0) {
+        let cp = 0xFF61 + u32::from(b0 - 0xA1);
+        return Ok((char::from_u32(cp).unwrap_or('\u{FFFD}'), 1));
+    }
+    if (0x81..=0x9F).contains(&b0) || (0xE0..=0xEF).contains(&b0) {
+        if input.len() < 2 {
+            return Err(DecodeError::Incomplete);
+        }
+        let b1 = input[1];
+        if !((0x40..=0x7E).contains(&b1) || (0x80..=0xFC).contains(&b1)) {
+            return Err(DecodeError::Invalid);
+        }
+        return Err(DecodeError::Invalid);
+    }
+    Err(DecodeError::Invalid)
+}
+
+fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    let cp = ch as u32;
+    if cp <= 0x7F {
+        if out.is_empty() {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    if (0xFF61..=0xFF9F).contains(&cp) {
+        if out.is_empty() {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = (cp - 0xFF61 + 0xA1) as u8;
+        return Ok(1);
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
@@ -1168,6 +1214,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso885913 => decode_iso885913(input),
         Encoding::Iso885915 => decode_iso885915(input),
         Encoding::EucJp => decode_eucjp(input),
+        Encoding::ShiftJis => decode_shiftjis(input),
     }
 }
 
@@ -1239,6 +1286,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso885913 => encode_iso885913(ch, out),
         Encoding::Iso885915 => encode_iso885915(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
+        Encoding::ShiftJis => encode_shiftjis(ch, out),
     }
 }
 
@@ -1471,9 +1519,9 @@ mod tests {
     #[test]
     fn iconv_open_detailed_reports_excluded_family_policy() {
         let err =
-            iconv_open_detailed(b"UTF-8", b"SHIFT_JIS").expect_err("excluded codec must fail");
+            iconv_open_detailed(b"UTF-8", b"GB18030").expect_err("excluded codec must fail");
         assert_eq!(err.policy, IconvFallbackPolicy::ExcludedCodecFamily);
-        assert_eq!(err.dispatch.from_codec, "SHIFT_JIS");
+        assert_eq!(err.dispatch.from_codec, "GB18030");
         assert_eq!(
             err.dispatch.from_dispatch_path,
             CodecDispatchPath::ExcludedFamily
@@ -2074,6 +2122,52 @@ mod tests {
     #[test]
     fn eucjp_accepts_ujis_alias() {
         let cd = iconv_open(b"UTF-8", b"UJIS");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn shiftjis_ascii_round_trip() {
+        let sjis_input: &[u8] = b"Hello";
+        let mut cd = iconv_open(b"UTF-8", b"SHIFT_JIS").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(sjis_input), &mut utf8_out).unwrap();
+        assert_eq!(result.in_consumed, 5);
+        assert_eq!(&utf8_out[..result.out_written], b"Hello");
+
+        let mut cd2 = iconv_open(b"SHIFT_JIS", b"UTF-8").unwrap();
+        let mut sjis_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(b"Hello"), &mut sjis_out).unwrap();
+        assert_eq!(&sjis_out[..result2.out_written], b"Hello");
+    }
+
+    #[test]
+    fn shiftjis_halfwidth_katakana_round_trip() {
+        // Shift_JIS half-width katakana: 0xA1-0xDF (single byte) → U+FF61-U+FF9F
+        // ｱ (U+FF71) = 0xB1, ｲ (U+FF72) = 0xB2
+        let sjis_input: &[u8] = &[0xB1, 0xB2];
+        let expected_utf8 = "\u{FF71}\u{FF72}";
+
+        let mut cd = iconv_open(b"UTF-8", b"SHIFT_JIS").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(sjis_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"SHIFT_JIS", b"UTF-8").unwrap();
+        let mut sjis_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut sjis_out).unwrap();
+        assert_eq!(&sjis_out[..result2.out_written], sjis_input);
+    }
+
+    #[test]
+    fn shiftjis_accepts_cp932_alias() {
+        let cd = iconv_open(b"UTF-8", b"CP932");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn shiftjis_accepts_sjis_alias() {
+        let cd = iconv_open(b"UTF-8", b"SJIS");
         assert!(cd.is_some());
     }
 }
