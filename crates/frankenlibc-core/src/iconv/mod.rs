@@ -125,6 +125,7 @@ enum Encoding {
     MacThai,
     MacFarsi,
     MacDevanagari,
+    MacGurmukhi,
     Cp850,
     MacRoman,
     Iso88592,
@@ -158,7 +159,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 77] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 78] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -500,6 +501,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 77] = [
         canonical: "MACDEVANAGARI",
         normalized: "MACDEVANAGARI",
         aliases: &["XMACDEVANAGARI"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacGurmukhi,
+        canonical: "MACGURMUKHI",
+        normalized: "MACGURMUKHI",
+        aliases: &["XMACGURMUKHI"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4535,6 +4542,68 @@ fn encode_macdevanagari(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> 
     Err(EncodeError::Unrepresentable)
 }
 
+const MACGURMUKHI_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Gurmukhi vowels)
+    0xFFFF, 0x0A01, 0x0A02, 0x0A03, 0x0A05, 0x0A06, 0x0A07, 0x0A08, // 80-87
+    0x0A09, 0x0A0A, 0xFFFF, 0xFFFF, 0xFFFF, 0x0A0F, 0x0A10, 0xFFFF, // 88-8F
+    // 0x90-0x9F (Gurmukhi vowels and consonants)
+    0xFFFF, 0x0A13, 0x0A14, 0x0A15, 0x0A16, 0x0A17, 0x0A18, 0x0A19, // 90-97
+    0x0A1A, 0x0A1B, 0x0A1C, 0x0A1D, 0x0A1E, 0x0A1F, 0x0A20, 0x0A21, // 98-9F
+    // 0xA0-0xAF (Gurmukhi consonants)
+    0x0A22, 0x0A23, 0x0A24, 0x0A25, 0x0A26, 0x0A27, 0x0A28, 0xFFFF, // A0-A7
+    0x0A2A, 0x0A2B, 0x0A2C, 0x0A2D, 0x0A2E, 0x0A2F, 0xFFFF, 0x0A30, // A8-AF
+    // 0xB0-0xBF (Gurmukhi consonants and matras)
+    0xFFFF, 0x0A32, 0x0A33, 0xFFFF, 0x0A35, 0x0A36, 0x0A37, 0x0A38, // B0-B7
+    0x0A39, 0xFFFF, 0x0A3E, 0x0A3F, 0x0A40, 0x0A41, 0x0A42, 0xFFFF, // B8-BF
+    // 0xC0-0xCF (Gurmukhi matras and marks)
+    0x0A47, 0x0A48, 0xFFFF, 0xFFFF, 0x0A4B, 0x0A4C, 0x0A4D, 0xFFFF, // C0-C7
+    0xFFFF, 0x0A3C, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // C8-CF
+    // 0xD0-0xDF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D0-D7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D8-DF
+    // 0xE0-0xEF (Gurmukhi digits)
+    0x0A66, 0x0A67, 0x0A68, 0x0A69, 0x0A6A, 0x0A6B, 0x0A6C, 0x0A6D, // E0-E7
+    0x0A6E, 0x0A6F, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // E8-EF
+    // 0xF0-0xFF
+    0xFFFF, 0x0A74, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F0-F7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_macgurmukhi(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACGURMUKHI_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_macgurmukhi(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACGURMUKHI_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4760,6 +4829,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacThai => decode_macthai(input),
         Encoding::MacFarsi => decode_macfarsi(input),
         Encoding::MacDevanagari => decode_macdevanagari(input),
+        Encoding::MacGurmukhi => decode_macgurmukhi(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4910,6 +4980,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacThai => encode_macthai(ch, out),
         Encoding::MacFarsi => encode_macfarsi(ch, out),
         Encoding::MacDevanagari => encode_macdevanagari(ch, out),
+        Encoding::MacGurmukhi => encode_macgurmukhi(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -7107,6 +7178,30 @@ mod tests {
     #[test]
     fn macdevanagari_accepts_xmacdevanagari_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-DEVANAGARI");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macgurmukhi_to_utf8_round_trip() {
+        // MacGurmukhi: A (0x84), Ka (0x93), digit 0 (0xE0), digit 1 (0xE1)
+        let mac_input: &[u8] = &[0x84, 0x93, 0xE0, 0xE1];
+        let expected_utf8 = "\u{0A05}\u{0A15}\u{0A66}\u{0A67}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACGURMUKHI").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACGURMUKHI", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macgurmukhi_accepts_xmacgurmukhi_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-GURMUKHI");
         assert!(cd.is_some());
     }
 
