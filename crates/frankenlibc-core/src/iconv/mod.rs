@@ -104,6 +104,7 @@ enum Encoding {
     Tcvn,
     Armscii8,
     Geostd8,
+    GeorgianAcademy,
     Pt154,
     Mulelao,
     HpRoman8,
@@ -173,7 +174,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 92] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 93] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -389,6 +390,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 92] = [
         canonical: "GEORGIAN-PS",
         normalized: "GEORGIANPS",
         aliases: &["GEOSTD8"],
+    },
+    CodecSpec {
+        encoding: Encoding::GeorgianAcademy,
+        canonical: "GEORGIAN-ACADEMY",
+        normalized: "GEORGIANACADEMY",
+        aliases: &["GEORGIANACADEMY"],
     },
     CodecSpec {
         encoding: Encoding::Pt154,
@@ -2584,6 +2591,58 @@ fn encode_geostd8(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in GEOSTD8_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
+/// Georgian Academy to Unicode mapping for bytes 0x80-0xFF.
+/// Similar to Georgian-PS but with different low-byte mappings.
+const GEORGIAN_ACADEMY_TO_UNICODE: [u16; 128] = [
+    0x0080, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x008E, 0x008F, // 88-8F
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x009E, 0x0178, // 98-9F
+    0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, // A0-A7
+    0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF, // A8-AF
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF, // B8-BF
+    0x10D0, 0x10D1, 0x10D2, 0x10D3, 0x10D4, 0x10D5, 0x10D6, 0x10D7, // C0-C7
+    0x10D8, 0x10D9, 0x10DA, 0x10DB, 0x10DC, 0x10DD, 0x10DE, 0x10DF, // C8-CF
+    0x10E0, 0x10E1, 0x10E2, 0x10E3, 0x10E4, 0x10E5, 0x10E6, 0x10E7, // D0-D7
+    0x10E8, 0x10E9, 0x10EA, 0x10EB, 0x10EC, 0x10ED, 0x10EE, 0x10EF, // D8-DF
+    0x10F0, 0x10F1, 0x10F2, 0x10F3, 0x10F4, 0x10F5, 0x10F6, 0x00E7, // E0-E7
+    0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF, // E8-EF
+    0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, // F0-F7
+    0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF
+];
+
+fn decode_georgian_academy(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = GEORGIAN_ACADEMY_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_georgian_academy(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in GEORGIAN_ACADEMY_TO_UNICODE.iter().enumerate() {
         if u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
@@ -5726,6 +5785,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Tcvn => decode_tcvn(input),
         Encoding::Armscii8 => decode_armscii8(input),
         Encoding::Geostd8 => decode_geostd8(input),
+        Encoding::GeorgianAcademy => decode_georgian_academy(input),
         Encoding::Pt154 => decode_pt154(input),
         Encoding::Mulelao => decode_mulelao(input),
         Encoding::HpRoman8 => decode_hproman8(input),
@@ -5891,6 +5951,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Tcvn => encode_tcvn(ch, out),
         Encoding::Armscii8 => encode_armscii8(ch, out),
         Encoding::Geostd8 => encode_geostd8(ch, out),
+        Encoding::GeorgianAcademy => encode_georgian_academy(ch, out),
         Encoding::Pt154 => encode_pt154(ch, out),
         Encoding::Mulelao => encode_mulelao(ch, out),
         Encoding::HpRoman8 => encode_hproman8(ch, out),
@@ -7086,6 +7147,36 @@ mod tests {
     fn geostd8_accepts_geostd8_alias() {
         let cd = iconv_open(b"UTF-8", b"GEOSTD8");
         assert!(cd.is_some());
+    }
+
+    #[test]
+    fn georgian_academy_to_utf8_round_trip() {
+        // Georgian Academy: ა (0xC0), ბ (0xC1), გ (0xC2) — Georgian letters
+        let input: &[u8] = &[0xC0, 0xC1, 0xC2];
+        let expected_utf8 = "\u{10D0}\u{10D1}\u{10D2}";
+
+        let mut cd = iconv_open(b"UTF-8", b"GEORGIAN-ACADEMY").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"GEORGIAN-ACADEMY", b"UTF-8").unwrap();
+        let mut out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut out).unwrap();
+        assert_eq!(&out[..result2.out_written], input);
+    }
+
+    #[test]
+    fn georgian_academy_differs_from_georgian_ps_in_low_range() {
+        // Georgian Academy has Windows-1252-like mappings in 0x80-0x9F
+        // e.g., 0x82 = U+201A (single low-9 quotation mark)
+        let input: &[u8] = &[0x82];
+        let mut cd = iconv_open(b"UTF-8", b"GEORGIAN-ACADEMY").unwrap();
+        let mut utf8_out = [0u8; 16];
+        let result = iconv(&mut cd, Some(input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, "\u{201A}");
     }
 
     #[test]
