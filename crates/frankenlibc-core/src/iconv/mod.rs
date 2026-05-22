@@ -126,6 +126,7 @@ enum Encoding {
     MacFarsi,
     MacDevanagari,
     MacGurmukhi,
+    MacGujarati,
     Cp850,
     MacRoman,
     Iso88592,
@@ -159,7 +160,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 78] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 79] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -507,6 +508,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 78] = [
         canonical: "MACGURMUKHI",
         normalized: "MACGURMUKHI",
         aliases: &["XMACGURMUKHI"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacGujarati,
+        canonical: "MACGUJARATI",
+        normalized: "MACGUJARATI",
+        aliases: &["XMACGUJARATI"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4604,6 +4611,68 @@ fn encode_macgurmukhi(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const MACGUJARATI_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Gujarati vowels)
+    0xFFFF, 0x0A81, 0x0A82, 0x0A83, 0x0A85, 0x0A86, 0x0A87, 0x0A88, // 80-87
+    0x0A89, 0x0A8A, 0x0A8B, 0xFFFF, 0x0A8F, 0x0A90, 0x0A8D, 0xFFFF, // 88-8F
+    // 0x90-0x9F (Gujarati vowels and consonants)
+    0x0A93, 0x0A94, 0x0A91, 0x0A95, 0x0A96, 0x0A97, 0x0A98, 0x0A99, // 90-97
+    0x0A9A, 0x0A9B, 0x0A9C, 0x0A9D, 0x0A9E, 0x0A9F, 0x0AA0, 0x0AA1, // 98-9F
+    // 0xA0-0xAF (Gujarati consonants)
+    0x0AA2, 0x0AA3, 0x0AA4, 0x0AA5, 0x0AA6, 0x0AA7, 0x0AA8, 0xFFFF, // A0-A7
+    0x0AAA, 0x0AAB, 0x0AAC, 0x0AAD, 0x0AAE, 0x0AAF, 0xFFFF, 0x0AB0, // A8-AF
+    // 0xB0-0xBF (Gujarati consonants and matras)
+    0xFFFF, 0x0AB2, 0x0AB3, 0xFFFF, 0x0AB5, 0x0AB6, 0x0AB7, 0x0AB8, // B0-B7
+    0x0AB9, 0xFFFF, 0x0ABE, 0x0ABF, 0x0AC0, 0x0AC1, 0x0AC2, 0x0AC3, // B8-BF
+    // 0xC0-0xCF (Gujarati matras and marks)
+    0xFFFF, 0x0AC7, 0x0AC8, 0x0AC5, 0xFFFF, 0x0ACB, 0x0ACC, 0x0AC9, // C0-C7
+    0x0ACD, 0x0ABC, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // C8-CF
+    // 0xD0-0xDF
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D0-D7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D8-DF
+    // 0xE0-0xEF (Gujarati digits)
+    0x0AE6, 0x0AE7, 0x0AE8, 0x0AE9, 0x0AEA, 0x0AEB, 0x0AEC, 0x0AED, // E0-E7
+    0x0AEE, 0x0AEF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // E8-EF
+    // 0xF0-0xFF
+    0xFFFF, 0x0AD0, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F0-F7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_macgujarati(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACGUJARATI_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_macgujarati(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACGUJARATI_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4830,6 +4899,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacFarsi => decode_macfarsi(input),
         Encoding::MacDevanagari => decode_macdevanagari(input),
         Encoding::MacGurmukhi => decode_macgurmukhi(input),
+        Encoding::MacGujarati => decode_macgujarati(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4981,6 +5051,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacFarsi => encode_macfarsi(ch, out),
         Encoding::MacDevanagari => encode_macdevanagari(ch, out),
         Encoding::MacGurmukhi => encode_macgurmukhi(ch, out),
+        Encoding::MacGujarati => encode_macgujarati(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -7202,6 +7273,30 @@ mod tests {
     #[test]
     fn macgurmukhi_accepts_xmacgurmukhi_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-GURMUKHI");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macgujarati_to_utf8_round_trip() {
+        // MacGujarati: A (0x84), Ka (0x93), digit 0 (0xE0), digit 1 (0xE1)
+        let mac_input: &[u8] = &[0x84, 0x93, 0xE0, 0xE1];
+        let expected_utf8 = "\u{0A85}\u{0A95}\u{0AE6}\u{0AE7}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACGUJARATI").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACGUJARATI", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macgujarati_accepts_xmacgujarati_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-GUJARATI");
         assert!(cd.is_some());
     }
 
