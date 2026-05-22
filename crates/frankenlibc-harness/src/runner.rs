@@ -33,7 +33,7 @@ impl TestRunner {
             .iter()
             .filter(|case| mode_matches(&self.mode, &case.mode))
             .map(|case| {
-                let (actual, diff, passed) = execute_case(case, &self.mode);
+                let evidence = execute_case(case, &self.mode);
                 let case_name = if case.mode.eq_ignore_ascii_case("both") {
                     format!("{} [{}]", case.name, self.mode)
                 } else {
@@ -55,10 +55,12 @@ impl TestRunner {
                     mode: self.mode.clone(),
                     case_name,
                     spec_section: case.spec_section.clone(),
-                    passed,
+                    passed: evidence.passed,
                     expected: case.expected_output.clone(),
-                    actual,
-                    diff,
+                    actual: evidence.actual,
+                    host_output: evidence.host_output,
+                    host_parity: evidence.host_parity,
+                    diff: evidence.diff,
                 }
             })
             .collect()
@@ -71,7 +73,16 @@ fn mode_matches(active_mode: &str, case_mode: &str) -> bool {
     case == active || case == "both"
 }
 
-fn execute_case(case: &FixtureCase, active_mode: &str) -> (String, Option<String>, bool) {
+#[derive(Debug)]
+struct RunnerCaseEvidence {
+    actual: String,
+    host_output: Option<String>,
+    host_parity: Option<bool>,
+    diff: Option<String>,
+    passed: bool,
+}
+
+fn execute_case(case: &FixtureCase, active_mode: &str) -> RunnerCaseEvidence {
     // Fixture cases with mode=both should execute under the runner's active mode.
     let execution = execute_fixture_case(&case.function, &case.inputs, active_mode);
     match execution {
@@ -93,6 +104,12 @@ fn execute_case(case: &FixtureCase, active_mode: &str) -> (String, Option<String
             {
                 notes.push(note.to_string());
             }
+            let host_match_kind = expected_output_match(&case.expected_output, &run.host_output);
+            let report_host_output = report_actual_output(
+                &case.expected_output,
+                &report_note_output(&run.host_output),
+                host_match_kind,
+            );
 
             let mut diff_out = None;
             if match_kind.is_none() {
@@ -101,16 +118,24 @@ fn execute_case(case: &FixtureCase, active_mode: &str) -> (String, Option<String
                 diff_out = Some(notes.join("\n"));
             }
 
-            (
-                report_actual_output(&case.expected_output, &run.impl_output, match_kind),
-                diff_out,
-                match_kind.is_some(),
-            )
+            RunnerCaseEvidence {
+                actual: report_actual_output(&case.expected_output, &run.impl_output, match_kind),
+                host_output: Some(report_host_output),
+                host_parity: Some(run.host_parity),
+                diff: diff_out,
+                passed: match_kind.is_some(),
+            }
         }
         Err(err) => {
             let actual = format!("unsupported:{err}");
             let diff_out = Some(diff::render_diff(&case.expected_output, &actual));
-            (actual, diff_out, false)
+            RunnerCaseEvidence {
+                actual,
+                host_output: None,
+                host_parity: None,
+                diff: diff_out,
+                passed: false,
+            }
         }
     }
 }
@@ -140,6 +165,8 @@ mod tests {
         assert!(strict[0].passed);
         assert_eq!(strict[0].symbol, "memcpy");
         assert_eq!(strict[0].mode, "strict");
+        assert_eq!(strict[0].host_output.as_deref(), Some("[1, 2, 0]"));
+        assert_eq!(strict[0].host_parity, Some(true));
         assert!(strict[0].trace_id.contains("smoke::"));
     }
 
@@ -163,6 +190,8 @@ mod tests {
         assert!(hardened[0].passed);
         assert_eq!(hardened[0].symbol, "strlen");
         assert_eq!(hardened[0].mode, "hardened");
+        assert_eq!(hardened[0].host_output.as_deref(), Some("3"));
+        assert_eq!(hardened[0].host_parity, Some(true));
     }
 
     #[test]

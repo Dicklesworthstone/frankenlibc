@@ -34,13 +34,24 @@ impl ConformanceReport {
         out.push_str(&format!("- Passed: {}\n", self.summary.passed));
         out.push_str(&format!("- Failed: {}\n\n", self.summary.failed));
 
-        out.push_str("| Trace | Family | Symbol | Mode | Case | Spec | Status |\n");
-        out.push_str("|-------|--------|--------|------|------|------|--------|\n");
+        out.push_str("| Trace | Family | Symbol | Mode | Case | Spec | Host Parity | Status |\n");
+        out.push_str("|-------|--------|--------|------|------|------|-------------|--------|\n");
         for r in &self.summary.results {
             let status = if r.passed { "PASS" } else { "FAIL" };
+            let host_parity = r
+                .host_parity
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string());
             out.push_str(&format!(
-                "| `{}` | {} | {} | {} | {} | {} | {} |\n",
-                r.trace_id, r.family, r.symbol, r.mode, r.case_name, r.spec_section, status
+                "| `{}` | {} | {} | {} | {} | {} | {} | {} |\n",
+                r.trace_id,
+                r.family,
+                r.symbol,
+                r.mode,
+                r.case_name,
+                r.spec_section,
+                host_parity,
+                status
             ));
         }
         out

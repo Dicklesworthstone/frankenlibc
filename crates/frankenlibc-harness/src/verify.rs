@@ -1,5 +1,7 @@
 //! Output comparison and verification.
 
+use std::collections::BTreeSet;
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -183,6 +185,12 @@ pub struct VerificationResult {
     pub expected: String,
     /// Actual output from our implementation.
     pub actual: String,
+    /// Host-glibc oracle output when the fixture executor reached the host path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_output: Option<String>,
+    /// Whether our implementation matched the host-glibc oracle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_parity: Option<bool>,
     /// Diff if the case failed.
     pub diff: Option<String>,
 }
@@ -232,6 +240,23 @@ impl VerificationSummary {
     pub fn failures(&self) -> Vec<&VerificationResult> {
         self.results.iter().filter(|r| !r.passed).collect()
     }
+
+    /// Fixture families with no reported host-glibc oracle result.
+    #[must_use]
+    pub fn families_without_host_parity_oracle(&self) -> Vec<String> {
+        let all_families: BTreeSet<&str> =
+            self.results.iter().map(|row| row.family.as_str()).collect();
+        let families_with_oracle: BTreeSet<&str> = self
+            .results
+            .iter()
+            .filter(|row| row.host_parity.is_some())
+            .map(|row| row.family.as_str())
+            .collect();
+        all_families
+            .difference(&families_with_oracle)
+            .map(|family| (*family).to_string())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -250,6 +275,8 @@ mod tests {
             passed,
             expected: "ok".into(),
             actual: if passed { "ok".into() } else { "fail".into() },
+            host_output: Some("ok".into()),
+            host_parity: Some(passed),
             diff: if passed {
                 None
             } else {
@@ -346,6 +373,8 @@ mod tests {
         assert_eq!(deserialized.trace_id, r.trace_id);
         assert_eq!(deserialized.symbol, r.symbol);
         assert_eq!(deserialized.passed, r.passed);
+        assert_eq!(deserialized.host_output, r.host_output);
+        assert_eq!(deserialized.host_parity, r.host_parity);
         assert_eq!(deserialized.diff, r.diff);
     }
 
@@ -435,5 +464,22 @@ mod tests {
         assert_eq!(deserialized.passed, 1);
         assert_eq!(deserialized.failed, 1);
         assert_eq!(deserialized.results.len(), 2);
+    }
+
+    #[test]
+    fn summary_reports_families_without_host_parity_oracle() {
+        let mut with_oracle = make_result("memcpy", true);
+        with_oracle.family = "string/memcpy".into();
+
+        let mut missing_oracle = make_result("strlen", true);
+        missing_oracle.family = "string/strlen".into();
+        missing_oracle.host_output = None;
+        missing_oracle.host_parity = None;
+
+        let summary = VerificationSummary::from_results(vec![with_oracle, missing_oracle]);
+        assert_eq!(
+            summary.families_without_host_parity_oracle(),
+            vec!["string/strlen".to_string()]
+        );
     }
 }

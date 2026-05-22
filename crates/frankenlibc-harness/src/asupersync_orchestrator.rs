@@ -145,6 +145,8 @@ fn run_one_case(
         passed: evidence.passed,
         expected: case.expected_output.clone(),
         actual: evidence.actual.clone(),
+        host_output: evidence.host_output.clone(),
+        host_parity: evidence.host_parity,
         diff: evidence.diff.clone(),
     };
 
@@ -175,6 +177,8 @@ fn run_one_case(
 #[derive(Debug)]
 struct CaseEvidence {
     actual: String,
+    host_output: Option<String>,
+    host_parity: Option<bool>,
     diff: Option<String>,
     passed: bool,
     checkpoints: Vec<Checkpoint>,
@@ -289,6 +293,8 @@ fn execute_case_with_evidence(
 
             CaseEvidence {
                 actual: report_impl_output,
+                host_output: Some(report_host_output),
+                host_parity: Some(run.host_parity),
                 diff: diff_out,
                 passed: match_kind.is_some(),
                 checkpoints,
@@ -317,6 +323,8 @@ fn execute_case_with_evidence(
 
             CaseEvidence {
                 actual,
+                host_output: None,
+                host_parity: None,
                 diff: diff_out,
                 passed: false,
                 checkpoints,
