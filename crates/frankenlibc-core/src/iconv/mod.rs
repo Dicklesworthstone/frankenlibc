@@ -110,6 +110,7 @@ enum Encoding {
     Atarist,
     RiscosLatin1,
     Cp852,
+    MacCyrillic,
     Cp850,
     MacRoman,
     Iso88592,
@@ -143,7 +144,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 62] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 63] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -395,6 +396,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 62] = [
         canonical: "CP852",
         normalized: "CP852",
         aliases: &["IBM852", "852", "CSPCP852"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacCyrillic,
+        canonical: "MACCYRILLIC",
+        normalized: "MACCYRILLIC",
+        aliases: &["XMACCYRILLIC"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -3523,6 +3530,65 @@ fn encode_cp852(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// Mac Cyrillic to Unicode mapping for bytes 0x80-0xFF.
+const MACCYRILLIC_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Cyrillic А-Р)
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // 80-87 (А-З)
+    0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F, // 88-8F (И-П)
+    // 0x90-0x9F (Cyrillic Р-Я)
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, // 90-97 (Р-Ч)
+    0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, // 98-9F (Ш-Я)
+    // 0xA0-0xAF (misc symbols)
+    0x2020, 0x00B0, 0x00A2, 0x00A3, 0x00A7, 0x2022, 0x00B6, 0x0406, // A0-A7 (†,°,¢,£,§,•,¶,І)
+    0x00AE, 0x00A9, 0x2122, 0x0402, 0x0452, 0x2260, 0x0403, 0x0453, // A8-AF (®,©,™,Ђ,ђ,≠,Ѓ,ѓ)
+    // 0xB0-0xBF
+    0x221E, 0x00B1, 0x2264, 0x2265, 0x0456, 0x00B5, 0x2202, 0x0408, // B0-B7 (∞,±,≤,≥,і,µ,∂,Ј)
+    0x0404, 0x0454, 0x0407, 0x0457, 0x0409, 0x0459, 0x040A, 0x045A, // B8-BF (Є,є,Ї,ї,Љ,љ,Њ,њ)
+    // 0xC0-0xCF
+    0x0458, 0x0405, 0x00AC, 0x221A, 0x0192, 0x2248, 0x2206, 0x00AB, // C0-C7 (ј,Ѕ,¬,√,ƒ,≈,∆,«)
+    0x00BB, 0x2026, 0x00A0, 0x040B, 0x045B, 0x040C, 0x045C, 0x0455, // C8-CF (»,…,NBSP,Ћ,ћ,Ќ,ќ,ѕ)
+    // 0xD0-0xDF
+    0x2013, 0x2014, 0x201C, 0x201D, 0x2018, 0x2019, 0x00F7, 0x201E, // D0-D7 (–,—,",",',',÷,„)
+    0x040E, 0x045E, 0x040F, 0x045F, 0x2116, 0x0401, 0x0451, 0x044F, // D8-DF (Ў,ў,Џ,џ,№,Ё,ё,я)
+    // 0xE0-0xEF (Cyrillic а-р)
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, // E0-E7 (а-з)
+    0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F, // E8-EF (и-п)
+    // 0xF0-0xFF (Cyrillic р-ю + €)
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, // F0-F7 (р-ч)
+    0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x20AC, // F8-FF (ш-ю,€)
+];
+
+fn decode_maccyrillic(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACCYRILLIC_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_maccyrillic(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACCYRILLIC_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -3733,6 +3799,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso885916 => decode_iso885916(input),
         Encoding::RiscosLatin1 => decode_riscoslatin1(input),
         Encoding::Cp852 => decode_cp852(input),
+        Encoding::MacCyrillic => decode_maccyrillic(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -3868,6 +3935,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso885916 => encode_iso885916(ch, out),
         Encoding::RiscosLatin1 => encode_riscoslatin1(ch, out),
         Encoding::Cp852 => encode_cp852(ch, out),
+        Encoding::MacCyrillic => encode_maccyrillic(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -5694,6 +5762,30 @@ mod tests {
     #[test]
     fn cp852_accepts_ibm852_alias() {
         let cd = iconv_open(b"UTF-8", b"IBM852");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn maccyrillic_to_utf8_round_trip() {
+        // Mac Cyrillic: А (0x80), Б (0x81), а (0xE0), б (0xE1)
+        let mac_input: &[u8] = &[0x80, 0x81, 0xE0, 0xE1];
+        let expected_utf8 = "\u{0410}\u{0411}\u{0430}\u{0431}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACCYRILLIC").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACCYRILLIC", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn maccyrillic_accepts_xmaccyrillic_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-CYRILLIC");
         assert!(cd.is_some());
     }
 
