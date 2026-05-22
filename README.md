@@ -3944,7 +3944,7 @@ Selected project health snapshot:
 | Completion contracts | 258 |
 | CLI contracts | 68 |
 | CLI meta-gates per contract | ~50 |
-| Formal proofs | 9 |
+| Proof notes / obligations | 9 (not yet machine-checked) |
 | Shell scripts (CI / gates / smoke / perf) | 554 |
 | GNU ld version script | 4,687 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,030 lines (SOS synthesis + barrier audit) |
