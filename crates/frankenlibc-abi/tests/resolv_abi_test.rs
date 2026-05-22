@@ -4376,3 +4376,92 @@ fn etc_hosts_legacy_addr_hook_uses_hosts_backend() {
         },
     );
 }
+
+#[test]
+fn nss_files_gethostbyname_uses_hosts_backend() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname_r;
+
+    with_resolver_backends(Some(b"203.0.113.44 nss-name nss-alias\n"), None, |_| {
+        let name = c"nss-alias";
+        let mut hostent = libc::hostent {
+            h_name: ptr::null_mut(),
+            h_aliases: ptr::null_mut(),
+            h_addrtype: 0,
+            h_length: 0,
+            h_addr_list: ptr::null_mut(),
+        };
+        let mut buf = [0 as c_char; 512];
+        let mut err = -1;
+        let mut h_err = -1;
+
+        let status = unsafe {
+            _nss_files_gethostbyname_r(
+                name.as_ptr(),
+                (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+            )
+        };
+
+        assert_eq!(status, 1);
+        assert_eq!(err, 0);
+        assert_eq!(h_err, 0);
+        assert_eq!(
+            unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+            b"nss-alias"
+        );
+        assert_eq!(hostent.h_addrtype, libc::AF_INET);
+        assert_eq!(hostent.h_length, 4);
+        let addr_ptr = unsafe { *hostent.h_addr_list };
+        let octets = unsafe { std::slice::from_raw_parts(addr_ptr.cast::<u8>(), 4) };
+        assert_eq!(octets, [203, 0, 113, 44]);
+    });
+}
+
+#[test]
+fn nss_files_gethostbyaddr_uses_hosts_backend() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyaddr_r;
+
+    with_resolver_backends(
+        Some(b"198.51.100.77 nss-reverse nss-reverse-alias\n"),
+        None,
+        |_| {
+            let addr = [198u8, 51, 100, 77];
+            let mut hostent = libc::hostent {
+                h_name: ptr::null_mut(),
+                h_aliases: ptr::null_mut(),
+                h_addrtype: 0,
+                h_length: 0,
+                h_addr_list: ptr::null_mut(),
+            };
+            let mut buf = [0 as c_char; 512];
+            let mut err = -1;
+            let mut h_err = -1;
+
+            let status = unsafe {
+                _nss_files_gethostbyaddr_r(
+                    addr.as_ptr().cast::<c_void>(),
+                    4,
+                    libc::AF_INET,
+                    (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    &mut err,
+                    &mut h_err,
+                )
+            };
+
+            assert_eq!(status, 1);
+            assert_eq!(err, 0);
+            assert_eq!(h_err, 0);
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"nss-reverse"
+            );
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+        },
+    );
+}

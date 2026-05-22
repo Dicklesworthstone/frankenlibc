@@ -9415,7 +9415,10 @@ pub unsafe extern "C" fn _nss_files_setnetgrent(
 // pointer matches what callers actually pass.
 
 const NSS_STATUS_NOTFOUND: c_int = 0;
+const NSS_STATUS_UNAVAIL: c_int = -1;
+const NSS_STATUS_TRYAGAIN: c_int = -2;
 const NSS_HOST_NOT_FOUND: c_int = 1;
+const NSS_NO_RECOVERY: c_int = 3;
 
 #[inline]
 unsafe fn nss_set_errnop_enoent(errnop: *mut c_int) {
@@ -9426,11 +9429,63 @@ unsafe fn nss_set_errnop_enoent(errnop: *mut c_int) {
 }
 
 #[inline]
+unsafe fn nss_set_errnop(errnop: *mut c_int, value: c_int) {
+    if !errnop.is_null() {
+        // SAFETY: caller-supplied writable slot per NSS contract.
+        unsafe { *errnop = value };
+    }
+}
+
+#[inline]
 unsafe fn nss_set_herr_host_not_found(h_errnop: *mut c_int) {
     if !h_errnop.is_null() {
         // SAFETY: caller-supplied writable slot per NSS contract.
         unsafe { *h_errnop = NSS_HOST_NOT_FOUND };
     }
+}
+
+#[inline]
+unsafe fn nss_set_herr(h_errnop: *mut c_int, value: c_int) {
+    if !h_errnop.is_null() {
+        // SAFETY: caller-supplied writable slot per NSS contract.
+        unsafe { *h_errnop = value };
+    }
+}
+
+unsafe fn nss_finish_hostent_lookup(
+    rc: c_int,
+    resolved: *mut c_void,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    if rc == 0 && !resolved.is_null() {
+        unsafe { nss_set_errnop(errnop, 0) };
+        unsafe { nss_set_herr(h_errnop, 0) };
+        return NSS_STATUS_SUCCESS;
+    }
+
+    match rc {
+        0 | libc::ENOENT => {
+            unsafe { nss_set_errnop_enoent(errnop) };
+            unsafe { nss_set_herr_host_not_found(h_errnop) };
+            NSS_STATUS_NOTFOUND
+        }
+        libc::ERANGE => {
+            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+            NSS_STATUS_TRYAGAIN
+        }
+        code => {
+            unsafe { nss_set_errnop(errnop, code) };
+            unsafe { nss_set_herr(h_errnop, NSS_NO_RECOVERY) };
+            NSS_STATUS_UNAVAIL
+        }
+    }
+}
+
+unsafe fn nss_hostent_notfound(errnop: *mut c_int, h_errnop: *mut c_int) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
 }
 
 /// Plain `getXXent_r(*result, *buf, buflen, *errnop)` shape.
@@ -9501,15 +9556,18 @@ nss_files_get_ent_stub!(_nss_files_getspent_r);
 /// h_errno slots.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_gethostent_r(
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if result.is_null() || buffer.is_null() {
+        return unsafe { nss_hostent_notfound(errnop, h_errnop) };
+    }
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe { gethostent_r(result, buffer, buflen, &mut resolved, h_errnop) };
+    unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) }
 }
 
 /// `_nss_files_getnetent_r(*result, *buf, buflen, *errnop,
@@ -9577,16 +9635,25 @@ pub unsafe extern "C" fn _nss_files_getcanonname_r(
 /// *errnop, *h_errnop)` — extra `*h_errnop` slot for h_errno.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_gethostbyname_r(
-    _name: *const c_char,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe {
+        crate::resolv_abi::gethostbyname_r_impl(
+            name,
+            result,
+            buffer,
+            buflen,
+            &mut resolved,
+            h_errnop,
+        )
+    };
+    unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) }
 }
 
 /// `_nss_files_gethostbyname2_r(name, af, *result, *buf, buflen,
@@ -9594,17 +9661,18 @@ pub unsafe extern "C" fn _nss_files_gethostbyname_r(
 /// family parameter.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_gethostbyname2_r(
-    _name: *const c_char,
-    _af: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    af: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if af != libc::AF_UNSPEC && af != libc::AF_INET {
+        return unsafe { nss_hostent_notfound(errnop, h_errnop) };
+    }
+    unsafe { _nss_files_gethostbyname_r(name, result, buffer, buflen, errnop, h_errnop) }
 }
 
 /// `_nss_files_gethostbyname3_r(name, af, *result, *buf, buflen,
@@ -9613,19 +9681,31 @@ pub unsafe extern "C" fn _nss_files_gethostbyname2_r(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn _nss_files_gethostbyname3_r(
-    _name: *const c_char,
-    _af: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    af: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
-    _ttlp: *mut i32,
-    _canonp: *mut *mut c_char,
+    ttlp: *mut i32,
+    canonp: *mut *mut c_char,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if !ttlp.is_null() {
+        // SAFETY: optional NSS TTL output slot.
+        unsafe { *ttlp = 0 };
+    }
+    if !canonp.is_null() {
+        // SAFETY: optional NSS canonical-name output slot.
+        unsafe { *canonp = std::ptr::null_mut() };
+    }
+    let status =
+        unsafe { _nss_files_gethostbyname2_r(name, af, result, buffer, buflen, errnop, h_errnop) };
+    if status == NSS_STATUS_SUCCESS && !canonp.is_null() && !result.is_null() {
+        // SAFETY: success means `result` was filled as a libc::hostent by the reentrant resolver.
+        unsafe { *canonp = (*(result.cast::<libc::hostent>())).h_name };
+    }
+    status
 }
 
 /// `_nss_files_gethostbyname4_r(name, *gaih_addrtuple_pp, *buf,
@@ -9650,18 +9730,32 @@ pub unsafe extern "C" fn _nss_files_gethostbyname4_r(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn _nss_files_gethostbyaddr_r(
-    _addr: *const c_void,
-    _len: libc::socklen_t,
-    _af: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if addr.is_null() || result.is_null() || buffer.is_null() {
+        return unsafe { nss_hostent_notfound(errnop, h_errnop) };
+    }
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe {
+        crate::resolv_abi::gethostbyaddr_r_impl(
+            addr,
+            len,
+            af,
+            result,
+            buffer,
+            buflen,
+            &mut resolved,
+            h_errnop,
+        )
+    };
+    unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) }
 }
 
 /// `_nss_files_gethostbyaddr2_r(addr, len, type, *result, *buf,
@@ -9669,19 +9763,21 @@ pub unsafe extern "C" fn _nss_files_gethostbyaddr_r(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn _nss_files_gethostbyaddr2_r(
-    _addr: *const c_void,
-    _len: libc::socklen_t,
-    _af: c_int,
-    _result: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
     errnop: *mut c_int,
     h_errnop: *mut c_int,
-    _ttlp: *mut i32,
+    ttlp: *mut i32,
 ) -> c_int {
-    unsafe { nss_set_errnop_enoent(errnop) };
-    unsafe { nss_set_herr_host_not_found(h_errnop) };
-    NSS_STATUS_NOTFOUND
+    if !ttlp.is_null() {
+        // SAFETY: optional NSS TTL output slot.
+        unsafe { *ttlp = 0 };
+    }
+    unsafe { _nss_files_gethostbyaddr_r(addr, len, af, result, buffer, buflen, errnop, h_errnop) }
 }
 
 /// `_nss_files_getnetbyaddr_r(net, type, *result, *buf, buflen,

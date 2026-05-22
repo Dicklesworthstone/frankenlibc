@@ -582,10 +582,10 @@ pub(crate) fn prewarm_host_thread_symbols() {
     prewarm_host_thread_lifecycle_symbols();
 
     // Check for opt-out env var (bd-73h55.4)
-    if let Ok(val) = std::env::var("FRANKENLIBC_THREAD_DELEGATE") {
-        if val == "1" {
-            FORCE_NATIVE_THREADING.store(false, Ordering::Release);
-        }
+    if let Ok(val) = std::env::var("FRANKENLIBC_THREAD_DELEGATE")
+        && val == "1"
+    {
+        FORCE_NATIVE_THREADING.store(false, Ordering::Release);
     }
 }
 
