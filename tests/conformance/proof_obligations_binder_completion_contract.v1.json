@@ -41,6 +41,20 @@
       "minimum_source_refs": 60,
       "minimum_unique_evidence_artifacts": 20,
       "minimum_unique_gate_scripts": 10,
+      "resolution_policy": {
+        "decision_artifact": "tests/conformance/proof_program_owner_decision.v1.json",
+        "decision_choice": "reframe_as_tested_invariant_catalogs",
+        "allowed_final_statuses": [
+          "discharged",
+          "deferred"
+        ],
+        "minimum_resolved_obligations": 24,
+        "deferred_required_fields": [
+          "deferred_reason",
+          "target_bead",
+          "target_resolution"
+        ]
+      },
       "required_obligation_ids": [
         "PO-01",
         "PO-02",
@@ -130,6 +144,10 @@
         {
           "source": "completion_harness_test",
           "name": "checker_emits_report_log_and_replays_static_gates"
+        },
+        {
+          "source": "completion_harness_test",
+          "name": "every_proof_obligation_is_discharged_or_honestly_deferred"
         }
       ]
     },

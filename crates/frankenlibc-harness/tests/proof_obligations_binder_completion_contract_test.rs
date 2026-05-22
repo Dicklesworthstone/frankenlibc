@@ -238,6 +238,7 @@ fn contract_binds_proof_binder_e2e_and_telemetry() -> TestResult {
         "proof_traceability_test::evidence_artifacts_resolve_in_current_tree",
         "fpg_proof_core_test::gate_artifact_is_well_formed",
         "completion_harness_test::checker_emits_report_log_and_replays_static_gates",
+        "completion_harness_test::every_proof_obligation_is_discharged_or_honestly_deferred",
     ] {
         assert!(e2e_refs.contains(expected), "missing e2e ref {expected}");
     }
@@ -256,6 +257,108 @@ fn contract_binds_proof_binder_e2e_and_telemetry() -> TestResult {
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn every_proof_obligation_is_discharged_or_honestly_deferred() -> TestResult {
+    let root = workspace_root()?;
+    let contract = read_json(&contract_path(&root))?;
+    let binder = read_json(&root.join("tests/conformance/proof_obligations_binder.v1.json"))?;
+    let decision = read_json(&root.join("tests/conformance/proof_program_owner_decision.v1.json"))?;
+
+    let policy =
+        &contract["completion_debt_evidence"]["proof_binder_contract"]["resolution_policy"];
+    assert_eq!(
+        decision["decision"]["choice"].as_str(),
+        policy["decision_choice"].as_str(),
+        "binder resolution policy should point at the recorded WS7 owner decision"
+    );
+    assert_eq!(
+        binder["resolution_policy"]["decision_artifact"].as_str(),
+        policy["decision_artifact"].as_str(),
+        "binder should cite the proof-program owner decision artifact"
+    );
+
+    let allowed_statuses = string_set(&policy["allowed_final_statuses"])?;
+    let required_deferred_fields = string_set(&policy["deferred_required_fields"])?;
+    let obligations = binder["obligations"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "obligations array"))?;
+    let minimum_resolved = policy["minimum_resolved_obligations"]
+        .as_u64()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "minimum_resolved_obligations"))?
+        as usize;
+    assert!(
+        obligations.len() >= minimum_resolved,
+        "all proof obligations should be resolved by discharge or explicit deferral"
+    );
+
+    let mut deferred = 0usize;
+    let mut discharged = 0usize;
+    for obligation in obligations {
+        let id = obligation["id"]
+            .as_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "obligation id"))?;
+        let status = obligation["status"]
+            .as_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "obligation status"))?;
+        assert!(
+            allowed_statuses.contains(status),
+            "{id} must be discharged or deferred, not {status}"
+        );
+
+        match status {
+            "deferred" => {
+                deferred += 1;
+                for field in &required_deferred_fields {
+                    let value = obligation
+                        .get(field.as_str())
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim();
+                    assert!(!value.is_empty(), "{id} deferred field {field} must be set");
+                }
+                let reason = obligation["deferred_reason"].as_str().unwrap_or_default();
+                assert!(
+                    reason.contains("bd-e4phe.1") && reason.contains("machine-checked"),
+                    "{id} deferred_reason should cite the owner decision and machine-checking gap"
+                );
+                assert_eq!(
+                    obligation["target_bead"].as_str(),
+                    Some("bd-e4phe.2"),
+                    "{id} should target the future mechanization bead"
+                );
+            }
+            "discharged" => {
+                discharged += 1;
+                assert!(
+                    obligation["evidence_artifacts"]
+                        .as_array()
+                        .is_some_and(|artifacts| !artifacts.is_empty()),
+                    "{id} discharged obligations need evidence artifacts"
+                );
+                assert!(
+                    obligation["verification_command"]
+                        .as_str()
+                        .is_some_and(|command| !command.trim().is_empty()),
+                    "{id} discharged obligations need a verification command"
+                );
+            }
+            _ => unreachable!("allowed_statuses was checked above"),
+        }
+    }
+
+    assert_eq!(
+        deferred + discharged,
+        obligations.len(),
+        "every obligation must have an explicit final disposition"
+    );
+    assert_eq!(
+        deferred,
+        obligations.len(),
+        "bd-e4phe.1 selected conservative deferral until machine-checked artifacts exist"
+    );
     Ok(())
 }
 
