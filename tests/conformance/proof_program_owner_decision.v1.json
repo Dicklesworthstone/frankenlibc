@@ -1,0 +1,68 @@
+{
+  "schema": "proof_program_owner_decision.v1",
+  "bead": "bd-e4phe.1",
+  "decision": {
+    "choice": "reframe_as_tested_invariant_catalogs",
+    "status": "accepted",
+    "decision_date": "2026-05-22",
+    "decision_basis": "No Lean, Coq, Kani, or equivalent machine-checked theorem artifacts are committed. Public readiness and parity language must therefore describe tested invariant catalogs and proof-obligation tracking, not completed machine-checked formal proofs.",
+    "machine_checked_formal_proof_status": "none_committed",
+    "mechanization_strategy": "future_followup_beads",
+    "human_override_policy": "A future owner may replace this decision only by committing machine-checked proof artifacts and updating the proof binder gates."
+  },
+  "claim_policy": {
+    "allow_public_claim": "tested_invariant_catalog",
+    "block_public_claims": [
+      "completed_machine_checked_formal_proofs",
+      "lean_coq_kani_artifacts_committed",
+      "theorem_level_completeness"
+    ],
+    "required_current_wording": [
+      "no machine-checked formal proof artifacts are committed yet",
+      "proof notes and invariant rationale",
+      "not completed machine-checked proof artifacts"
+    ]
+  },
+  "source_refs": [
+    {
+      "path": "FEATURE_PARITY.md",
+      "line": 242,
+      "must_contain": "no machine-checked formal proof artifacts are committed yet"
+    },
+    {
+      "path": "FEATURE_PARITY.md",
+      "line": 298,
+      "must_contain": "machine-checked formal proof artifacts (Lean/Coq/SMT) are not committed yet"
+    },
+    {
+      "path": "README.md",
+      "line": 1268,
+      "must_contain": "not completed machine-checked proof artifacts"
+    },
+    {
+      "path": "README.md",
+      "line": 4001,
+      "must_contain": "no machine-checked proof artifacts yet"
+    }
+  ],
+  "dependent_beads": [
+    {
+      "id": "bd-e4phe.2",
+      "decision_effect": "optional future mechanization track; not a current public proof claim"
+    },
+    {
+      "id": "bd-e4phe.3",
+      "decision_effect": "discharge or defer each proof obligation under explicit status"
+    },
+    {
+      "id": "bd-e4phe.4",
+      "decision_effect": "reconcile README and FEATURE_PARITY wording to this decision"
+    }
+  ],
+  "acceptance_checks": [
+    "decision artifact records reframe choice and rationale",
+    "artifact blocks completed machine-checked proof claims until committed proof artifacts exist",
+    "source references prove current README and FEATURE_PARITY wording already reflects the conservative decision",
+    "dependent beads remain explicit so mechanization can continue without overclaiming"
+  ]
+}
