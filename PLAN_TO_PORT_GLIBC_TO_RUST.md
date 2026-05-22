@@ -88,9 +88,13 @@ with:
 - hardened mode enabling deterministic repair under bounded risk/latency budgets.
 
 Implementation status (now):
-- live in `frankenlibc-membrane` for pointer validation,
-- sampled conformal (`risk_engine`), contextual ordering (`check_oracle`), and
-  primal-dual quarantine (`quarantine_controller`) are fused into runtime decisions.
+- **4,119 exported symbols classified**: 3,705 Implemented + 414 RawSyscall = 100% native coverage
+- **0 GlibcCallThrough, 0 WrapsHostLibc, 0 Stub** in support taxonomy
+- **L1 (Hardened Interpose)** deployment level per `replacement_levels.json`
+- Membrane live in `frankenlibc-membrane` for pointer validation
+- ~71 runtime-math control kernels implemented and wired
+- Sampled conformal (`risk_engine`), contextual ordering (`check_oracle`), and
+  primal-dual quarantine (`quarantine_controller`) fused into runtime decisions
 
 ### Accretive rollout (implementation order)
 
