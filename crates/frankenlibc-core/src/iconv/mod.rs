@@ -164,6 +164,7 @@ enum Encoding {
     HpThai8,
     HpTurkish8,
     Cp1004,
+    Ibm1167,
     Csn369103,
     Ibm902,
     Ibm901,
@@ -204,7 +205,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 123] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 124] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -780,6 +781,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 123] = [
         canonical: "CP1004",
         normalized: "CP1004",
         aliases: &["1004", "IBM1004"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm1167,
+        canonical: "IBM-1167",
+        normalized: "IBM1167",
+        aliases: &["IBM1167", "CP1167", "1167", "KOI8RU"],
     },
     CodecSpec {
         encoding: Encoding::Csn369103,
@@ -7197,6 +7204,67 @@ fn encode_cp1004(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const IBM1167_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (box drawing + block elements)
+    0x2500, 0x2502, 0x250C, 0x2510, 0x2514, 0x2518, 0x251C, 0x2524, // 80-87
+    0x252C, 0x2534, 0x253C, 0x2580, 0x2584, 0x2588, 0x258C, 0x2590, // 88-8F
+    // 0x90-0x9F (shades + typographic + symbols)
+    0x2591, 0x2592, 0x2593, 0x201C, 0x25A0, 0x2219, 0x201D, 0x2014, // 90-97
+    0x2116, 0x2122, 0x00A0, 0x00BB, 0x00AE, 0x00AB, 0x00B7, 0x00A4, // 98-9F
+    // 0xA0-0xAF (box drawing + Ukrainian Cyrillic lowercase)
+    0x2550, 0x2551, 0x2552, 0x0451, 0x0454, 0x2554, 0x0456, 0x0457, // A0-A7
+    0x2557, 0x2558, 0x2559, 0x255A, 0x255B, 0x0491, 0x045E, 0x255E, // A8-AF
+    // 0xB0-0xBF (box drawing + Ukrainian Cyrillic uppercase)
+    0x255F, 0x2560, 0x2561, 0x0401, 0x0404, 0x2563, 0x0406, 0x0407, // B0-B7
+    0x2566, 0x2567, 0x2568, 0x2569, 0x256A, 0x0490, 0x040E, 0x00A9, // B8-BF
+    // 0xC0-0xCF (Cyrillic lowercase)
+    0x044E, 0x0430, 0x0431, 0x0446, 0x0434, 0x0435, 0x0444, 0x0433, // C0-C7
+    0x0445, 0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, // C8-CF
+    // 0xD0-0xDF (Cyrillic lowercase continued)
+    0x043F, 0x044F, 0x0440, 0x0441, 0x0442, 0x0443, 0x0436, 0x0432, // D0-D7
+    0x044C, 0x044B, 0x0437, 0x0448, 0x044D, 0x0449, 0x0447, 0x044A, // D8-DF
+    // 0xE0-0xEF (Cyrillic uppercase)
+    0x042E, 0x0410, 0x0411, 0x0426, 0x0414, 0x0415, 0x0424, 0x0413, // E0-E7
+    0x0425, 0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, // E8-EF
+    // 0xF0-0xFF (Cyrillic uppercase continued)
+    0x041F, 0x042F, 0x0420, 0x0421, 0x0422, 0x0423, 0x0416, 0x0412, // F0-F7
+    0x042C, 0x042B, 0x0417, 0x0428, 0x042D, 0x0429, 0x0427, 0x042A, // F8-FF
+];
+
+fn decode_ibm1167(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = IBM1167_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_ibm1167(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in IBM1167_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CSN369103_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (C1 controls)
     0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
@@ -7769,6 +7837,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::HpThai8 => decode_hpthai8(input),
         Encoding::HpTurkish8 => decode_hpturkish8(input),
         Encoding::Cp1004 => decode_cp1004(input),
+        Encoding::Ibm1167 => decode_ibm1167(input),
         Encoding::Csn369103 => decode_csn369103(input),
         Encoding::Ibm902 => decode_ibm902(input),
         Encoding::Ibm901 => decode_ibm901(input),
@@ -7965,6 +8034,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::HpThai8 => encode_hpthai8(ch, out),
         Encoding::HpTurkish8 => encode_hpturkish8(ch, out),
         Encoding::Cp1004 => encode_cp1004(ch, out),
+        Encoding::Ibm1167 => encode_ibm1167(ch, out),
         Encoding::Csn369103 => encode_csn369103(ch, out),
         Encoding::Ibm902 => encode_ibm902(ch, out),
         Encoding::Ibm901 => encode_ibm901(ch, out),
@@ -11363,6 +11433,26 @@ mod tests {
     #[test]
     fn cp1004_accepts_alias() {
         let cd = iconv_open(b"UTF-8", b"1004");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn ibm1167_decode_roundtrip() {
+        let ibm1167_input: &[u8] = &[0xC1, 0xC2, 0xE1, 0xE2];
+        let expected_utf8 = "абАБ";
+        let mut cd = iconv_open(b"UTF-8", b"IBM-1167").expect("IBM-1167 to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(ibm1167_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"IBM-1167", b"UTF-8").expect("UTF-8 to IBM-1167 conversion");
+        let mut ibm1167_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut ibm1167_out).unwrap();
+        assert_eq!(&ibm1167_out[..result2.out_written], ibm1167_input);
+    }
+
+    #[test]
+    fn ibm1167_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"KOI8RU");
         assert!(cd.is_some());
     }
 
