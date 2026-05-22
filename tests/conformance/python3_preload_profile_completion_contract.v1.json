@@ -1,0 +1,39 @@
+{
+  "schema_version": "completion_contract.v1",
+  "bead_id": "bd-35hjg.1",
+  "title": "[RC-WS1.1] python3 preload profiling harness",
+  "status": "pass",
+  "freshness_state": {
+    "generated_at_utc": "2026-05-22T04:20:00Z",
+    "source_commit": "cb44ad5f",
+    "generator_command": "scripts/profile_python3_preload.sh produces target/perf/python3_preload_profile/ with baseline/strict/hardened hot_symbols.json and python3_preload_profile_summary.json",
+    "tool_version": "profile_python3_preload.sh v1",
+    "chain_hash": "pending"
+  },
+  "bead_status_window": {
+    "in_progress_at_utc": "2026-05-22T04:08:00Z",
+    "closed_at_utc": "2026-05-22T04:20:00Z",
+    "in_progress_source": "br update bd-35hjg.1 --status=in_progress",
+    "closed_at_source": "br close bd-35hjg.1"
+  },
+  "artifact_refs": [
+    "scripts/profile_python3_preload.sh",
+    "target/perf/python3_preload_profile/",
+    "target/perf/python3_preload_profile/baseline.hot_symbols.json",
+    "target/perf/python3_preload_profile/strict.hot_symbols.json",
+    "target/perf/python3_preload_profile/hardened.hot_symbols.json",
+    "target/perf/python3_preload_profile/python3_preload_profile_summary.json"
+  ],
+  "test_coverage": {
+    "harness_functional": "profile_python3_preload.sh generates deterministic hot-symbol lists for baseline, strict, and hardened modes",
+    "artifact_structure": "Each run produces timestamped directory with hot_symbols.json per mode and a summary.json with timing ratios",
+    "reproducibility": "Re-runs of the harness produce consistent top-N symbol rankings (verified via symbol identity matching)"
+  },
+  "done_when_evidence": [
+    "scripts/profile_python3_preload.sh exists and is executable",
+    "target/perf/python3_preload_profile/ contains baseline/strict/hardened profiles",
+    "Summary JSON shows timing ratios and hot-symbol deltas",
+    "Harness identifies strict-only and hardened-only hot symbols (membrane overhead candidates)"
+  ],
+  "backfill_note": "Harness already existed and was functional; completion contract formalizes evidence."
+}
