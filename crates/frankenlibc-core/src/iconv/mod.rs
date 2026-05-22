@@ -73,6 +73,7 @@ enum Encoding {
     Utf16Le,
     Utf16Be,
     Utf32,
+    Utf32Be,
     Koi8R,
     Koi8U,
     Cp437,
@@ -120,7 +121,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 39] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 40] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -156,6 +157,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 39] = [
         canonical: "UTF-32",
         normalized: "UTF32",
         aliases: &["UTF32"],
+    },
+    CodecSpec {
+        encoding: Encoding::Utf32Be,
+        canonical: "UTF-32BE",
+        normalized: "UTF32BE",
+        aliases: &["UTF32BE"],
     },
     CodecSpec {
         encoding: Encoding::Koi8R,
@@ -377,8 +384,8 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 39] =
-    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-16BE", "UTF-32", "KOI8-R", "KOI8-U", "CP437", "CP850", "CP866", "CP874", "MACROMAN", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-11", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 40] =
+    ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-16BE", "UTF-32", "UTF-32BE", "KOI8-R", "KOI8-U", "CP437", "CP850", "CP866", "CP874", "MACROMAN", "CP1250", "CP1251", "CP1252", "CP1253", "CP1254", "CP1255", "CP1256", "CP1257", "CP1258", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-5", "ISO-8859-6", "ISO-8859-7", "ISO-8859-8", "ISO-8859-9", "ISO-8859-10", "ISO-8859-11", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15", "ISO-8859-16", "EUC-JP", "SHIFT_JIS", "BIG5"];
 
 /// Canonical alias map for phase-1 supported codecs.
 pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
@@ -647,6 +654,18 @@ fn decode_utf32(input: &[u8]) -> Result<(char, usize), DecodeError> {
     }
 
     let cp = u32::from_le_bytes([input[0], input[1], input[2], input[3]]);
+    if let Some(ch) = char::from_u32(cp) {
+        return Ok((ch, 4));
+    }
+    Err(DecodeError::Invalid)
+}
+
+fn decode_utf32be(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.len() < 4 {
+        return Err(DecodeError::Incomplete);
+    }
+
+    let cp = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
     if let Some(ch) = char::from_u32(cp) {
         return Ok((ch, 4));
     }
@@ -2344,6 +2363,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf16Le => decode_utf16le(input),
         Encoding::Utf16Be => decode_utf16be(input),
         Encoding::Utf32 => decode_utf32(input),
+        Encoding::Utf32Be => decode_utf32be(input),
         Encoding::Koi8R => decode_koi8r(input),
         Encoding::Koi8U => decode_koi8u(input),
         Encoding::Cp437 => decode_cp437(input),
@@ -2446,6 +2466,14 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
                 return Err(EncodeError::NoSpace);
             }
             let bytes = (ch as u32).to_le_bytes();
+            out[..4].copy_from_slice(&bytes);
+            Ok(4)
+        }
+        Encoding::Utf32Be => {
+            if out.len() < 4 {
+                return Err(EncodeError::NoSpace);
+            }
+            let bytes = (ch as u32).to_be_bytes();
             out[..4].copy_from_slice(&bytes);
             Ok(4)
         }
@@ -2826,6 +2854,29 @@ mod tests {
         assert_eq!(res.out_written, 4);
         // Big-endian output: 'A' = 0x0041, '€' = 0x20AC
         assert_eq!(&out[..4], &[0x00, 0x41, 0x20, 0xAC]);
+    }
+
+    #[test]
+    fn utf32be_to_utf8_conversion() {
+        let mut cd = iconv_open(b"UTF-8", b"UTF-32BE").unwrap();
+        // Big-endian: 'A' = 0x00000041
+        let input = [0x00, 0x00, 0x00, 0x41];
+        let mut out = [0u8; 16];
+        let res = iconv(&mut cd, Some(&input), &mut out).unwrap();
+        assert_eq!(res.in_consumed, 4);
+        assert_eq!(res.out_written, 1);
+        assert_eq!(&out[..1], b"A");
+    }
+
+    #[test]
+    fn utf8_to_utf32be_conversion() {
+        let mut cd = iconv_open(b"UTF-32BE", b"UTF-8").unwrap();
+        let mut out = [0u8; 16];
+        let res = iconv(&mut cd, Some(b"A"), &mut out).unwrap();
+        assert_eq!(res.in_consumed, 1);
+        assert_eq!(res.out_written, 4);
+        // Big-endian output: 'A' = 0x00000041
+        assert_eq!(&out[..4], &[0x00, 0x00, 0x00, 0x41]);
     }
 
     #[test]
