@@ -147,6 +147,7 @@ Primary deployment-facing variables:
 | `FRANKENLIBC_LIB` | auto-detected `target/release/libfrankenlibc_abi.so` | Tooling override for preload library path |
 | `FRANKENLIBC_STARTUP_DELEGATE` | `0` | Opt-out: delegates `__libc_start_main` to host glibc (bd-73h55.1) |
 | `FRANKENLIBC_STARTUP_PHASE0` | `1` (legacy) | Legacy: forces owned startup path (now the default) |
+| `FRANKENLIBC_THREAD_DELEGATE` | `0` | Opt-out: delegates pthread_create/join/detach to host (bd-73h55.4) |
 | `FRANKENLIBC_E2E_SEED` | `42` | Deterministic replay seed for E2E tooling |
 | `FRANKENLIBC_E2E_STRESS_ITERS` | `5` | Stress-iteration control for E2E tooling |
 | `FRANKENLIBC_EXTENDED_GATES` | `0` | Enables heavier CI and verification gates |

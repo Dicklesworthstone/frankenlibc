@@ -104,10 +104,10 @@ static FORCE_NATIVE_MUTEX: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// When true, thread lifecycle operations (create/join/detach/self/equal) skip
-/// host delegation and use the native implementation. Set by
-/// [`pthread_threading_force_native_for_tests`].
+/// host delegation and use the native implementation. Defaults to true (bd-73h55.4).
+/// Set `FRANKENLIBC_THREAD_DELEGATE=1` to opt-out and delegate to host pthreads.
 static FORCE_NATIVE_THREADING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+    std::sync::atomic::AtomicBool::new(true);
 const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
 
 // ---------------------------------------------------------------------------
@@ -580,6 +580,13 @@ pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
 
 pub(crate) fn prewarm_host_thread_symbols() {
     prewarm_host_thread_lifecycle_symbols();
+
+    // Check for opt-out env var (bd-73h55.4)
+    if let Ok(val) = std::env::var("FRANKENLIBC_THREAD_DELEGATE") {
+        if val == "1" {
+            FORCE_NATIVE_THREADING.store(false, Ordering::Release);
+        }
+    }
 }
 
 #[allow(dead_code)]

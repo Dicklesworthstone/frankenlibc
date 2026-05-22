@@ -1,0 +1,16 @@
+{
+  "schema_version": "native_threading_default_e2e.v1",
+  "bead_id": "bd-73h55.4",
+  "generated_at_utc": "2026-05-22T06:19:46Z",
+  "lib_path": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+  "tests": {
+    "source_defaults_to_native": "pass",
+    "delegate_env_var_present": "pass",
+    "threading_fixture_runs": "checked"
+  },
+  "contract": {
+    "default_behavior": "native pthread_create/join/detach",
+    "opt_out_env_var": "FRANKENLIBC_THREAD_DELEGATE=1"
+  },
+  "overall_status": "pass"
+}
