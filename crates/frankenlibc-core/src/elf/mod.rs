@@ -38,10 +38,11 @@ pub mod symbol;
 pub use hash::{ElfHashTable, GnuHashTable, elf_hash, gnu_hash};
 pub use header::{Elf64Header, ElfClass, ElfData, ElfMachine, ElfOsAbi, ElfType};
 pub use loader::{
-    DependencyGraph, DependencyNode, ElfLoader, LinkMapObject, LoadImage, LoadSegmentMapping,
-    LoadedObject, NullSymbolLookup, PltBindingPolicy, RelocationBatchReport, RelocationStats,
-    RelocationTable, RelocationTraceEvent, ResolvedSymbol, RtldLookupScope, RtldVisibility,
-    ScopedSymbolResolver, SymbolLookup, SymbolLookupReport, SymbolLookupTraceEvent,
+    DependencyGraph, DependencyNode, ElfLoader, LifecycleFunction, LifecycleFunctionKind,
+    LifecyclePlan, LinkMapObject, LoadImage, LoadSegmentMapping, LoadedObject, NullSymbolLookup,
+    PltBindingPolicy, RelocationBatchReport, RelocationStats, RelocationTable,
+    RelocationTraceEvent, ResolvedSymbol, RtldLookupScope, RtldVisibility, ScopedSymbolResolver,
+    SymbolLookup, SymbolLookupReport, SymbolLookupTraceEvent,
 };
 pub use nlist::{NlistSymbol, NlistSymtab};
 pub use program::{Elf64ProgramHeader, ProgramFlags, ProgramType};
