@@ -31,6 +31,8 @@
   ],
   "chain_hash_shape": "lowercase hex sha256 digest, 64 characters",
   "require_ledger_chain_hash": false,
+  "proof_carrying_contract_enforcement": "RC-WS9.1: when require_ledger_chain_hash=true, completion contracts must have chain_hash values present in evidence_ledger.jsonl; a faked closure fails verification. Self-test proves this with fake_chain_hash_rejected_when_proof_carrying case.",
+  "proof_carrying_enforcement_ready": true,
   "report_path": "target/conformance/bead_closure_freshness.report.json",
   "gate_commands": [
     "bash scripts/check_bead_closure_freshness.sh --self-test",
@@ -40,6 +42,7 @@
     "missing_completion_artifact": "bead_closure_missing_completion_artifact",
     "missing_generated_at_utc": "bead_closure_missing_generated_at_utc",
     "missing_chain_hash": "bead_closure_missing_chain_hash",
+    "chain_hash_not_in_ledger": "bead_closure_chain_hash_missing",
     "predated_artifact": "bead_closure_predated_artifact",
     "postdated_artifact": "bead_closure_postdated_artifact"
   }

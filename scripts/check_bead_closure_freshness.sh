@@ -409,6 +409,7 @@ def audit(
 
 def self_test(policy: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     valid_hash = "a" * 64
+    fake_hash = "f" * 64  # Hash not in ledger - should fail proof-carrying verification
     base_policy = dict(policy)
     base_policy["enforced_bead_ids"] = [
         "bd-self-pass",
@@ -416,6 +417,7 @@ def self_test(policy: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[s
         "bd-self-missing-chain",
         "bd-self-fractional",
         "bd-self-notes-ref",
+        "bd-self-fake-hash",
     ]
     base_policy["require_ledger_chain_hash"] = False
 
@@ -536,11 +538,42 @@ def self_test(policy: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[s
         },
     ]
 
+    # RC-WS9.1: Proof-carrying test - fake hash not in ledger must be rejected
+    proof_carrying_policy = dict(base_policy)
+    proof_carrying_policy["require_ledger_chain_hash"] = True
+    proof_carrying_policy["enforced_bead_ids"] = ["bd-self-fake-hash"]
+    fake_hash_case = {
+        "name": "fake_chain_hash_rejected_when_proof_carrying",
+        "bead": {
+            "id": "bd-self-fake-hash",
+            "status": "closed",
+            "labels": ["reality-check"],
+            "created_at": "2026-05-21T07:00:00Z",
+            "closed_at": "2026-05-21T07:30:00Z",
+            "close_reason": "evidence: tests/conformance/self_fake_hash_completion_contract.v1.json",
+        },
+        "path": "tests/conformance/self_fake_hash_completion_contract.v1.json",
+        "contract": {
+            "freshness_state": {
+                "generated_at_utc": "2026-05-21T07:10:00Z",
+                "source_commit": "1111111111111111111111111111111111111111",
+                "generator_command": "self-test fake hash",
+                "tool_version": "self-test",
+                "chain_hash": fake_hash,  # Not in ledger - must fail
+            },
+            "bead_status_window": {"in_progress_at_utc": "2026-05-21T07:05:00Z"},
+        },
+        "expected_signatures": ["bead_closure_chain_hash_missing"],
+    }
+    cases.append(fake_hash_case)
+
     results: list[dict[str, Any]] = []
     harness_errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     for case in cases:
-        checked, errors, case_warnings = audit([case["bead"]], base_policy, {case["path"]: case["contract"]})
+        # Use proof-carrying policy for the fake hash test case
+        test_policy = proof_carrying_policy if case["name"] == "fake_chain_hash_rejected_when_proof_carrying" else base_policy
+        checked, errors, case_warnings = audit([case["bead"]], test_policy, {case["path"]: case["contract"]})
         warnings.extend(case_warnings)
         signatures = sorted({error.get("failure_signature") for error in errors})
         expected = sorted(case["expected_signatures"])
