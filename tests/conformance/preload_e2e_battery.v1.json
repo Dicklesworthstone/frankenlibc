@@ -1,0 +1,11 @@
+{
+  "schema_version": "preload_e2e_battery.v1",
+  "bead_id": "bd-35hjg.7",
+  "generated_at_utc": "2026-05-22T05:06:47Z",
+  "lib_path": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+  "sample_count": 2,
+  "timeout_sec": 10,
+  "failures": 13,
+  "results_jsonl": "/data/projects/frankenlibc/target/preload_e2e_battery/results.jsonl",
+  "overall_status": "fail"
+}
