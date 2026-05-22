@@ -1755,17 +1755,32 @@ pub(crate) fn decide(
     bloom_negative: bool,
     contention_hint: u16,
 ) -> (SafetyLevel, RuntimeDecision) {
-    // Strict mode early-exit: skip all runtime-math decision overhead.
-    // Uses atomic load directly to avoid TLS overhead in the hot path.
-    if strict_passthrough_active() {
-        return (SafetyLevel::Strict, passthrough_decision());
-    }
-
     // Fast passthrough during early startup to prevent deadlocks.
     // The full decide path is only available after kernel init completes.
     if !is_runtime_ready() {
         let mode = u8_to_mode(MODE_STATE.load(AtomicOrdering::Relaxed));
         return (mode, passthrough_decision());
+    }
+
+    // Strict mode observation path (bd-06bxm.3): consult kernel for evidence
+    // but override to passthrough. High-frequency families still fast-path.
+    if strict_passthrough_active() {
+        // High-frequency families skip kernel even for observation
+        if cfg!(not(test))
+            && matches!(
+                family,
+                ApiFamily::Allocator
+                    | ApiFamily::StringMemory
+                    | ApiFamily::Ctype
+                    | ApiFamily::Loader
+                    | ApiFamily::Stdlib
+                    | ApiFamily::MathFenv
+            )
+        {
+            return (SafetyLevel::Strict, passthrough_decision());
+        }
+        // For other families, consult kernel for observation then passthrough
+        return decide_strict_observation(family, addr_hint, requested_bytes, is_write, bloom_negative, contention_hint);
     }
 
     let mode = mode();
@@ -1846,21 +1861,75 @@ pub(crate) fn decide(
     (mode, decision)
 }
 
+/// Strict mode observation path: consult kernel for evidence but return passthrough.
+/// This allows the kernel to record evidence and feed exotic state without
+/// performing any behavior rewrites (Repair actions are overridden to Allow).
+/// Part of bd-06bxm.3: strict-mode observation policy.
+#[cold]
+fn decide_strict_observation(
+    family: ApiFamily,
+    addr_hint: usize,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+    contention_hint: u16,
+) -> (SafetyLevel, RuntimeDecision) {
+    let mode = SafetyLevel::Strict;
+    let ctx = RuntimeContext {
+        family,
+        addr_hint,
+        requested_bytes,
+        is_write,
+        contention_hint,
+        bloom_negative,
+    };
+
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    };
+
+    ensure_minimal_panic_hook();
+    let Some(k) = kernel() else {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    };
+
+    // Call kernel for observation (evidence recording, state updates)
+    let kernel_decision = match runtime_policy_guard(|| k.decide(mode, ctx)) {
+        Ok(decision) => decision,
+        Err(_) => {
+            mark_kernel_broken();
+            let decision = passthrough_decision();
+            record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+            return (mode, decision);
+        }
+    };
+
+    // Override to passthrough: strict mode must be ABI-faithful (no rewrites).
+    // Keep the profile and evidence_seqno for observation, but force Allow action.
+    let decision = RuntimeDecision {
+        action: MembraneAction::Allow,
+        profile: kernel_decision.profile,
+        policy_id: kernel_decision.policy_id,
+        risk_upper_bound_ppm: kernel_decision.risk_upper_bound_ppm,
+        evidence_seqno: kernel_decision.evidence_seqno,
+    };
+
+    record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+    (mode, decision)
+}
+
 pub(crate) fn observe(
     family: ApiFamily,
     profile: ValidationProfile,
     estimated_cost_ns: u64,
     adverse: bool,
 ) {
-    // Strict mode early-exit: skip all runtime-math observation overhead.
-    // Uses atomic load directly to avoid TLS overhead in the hot path.
-    if strict_passthrough_active() {
-        return;
-    }
-
-    // Hardened mode fast path for high-frequency operations.
-    // Skip observation for non-adverse outcomes to reduce overhead.
-    // This trades some telemetry fidelity for ~2x speedup on Python startup.
+    // High-frequency families fast path: skip observation overhead.
+    // This applies to both strict and hardened mode for perf.
     if cfg!(not(test))
         && !adverse
         && matches!(
@@ -1887,10 +1956,9 @@ pub(crate) fn observe(
         let _ = (profile, estimated_cost_ns);
         return;
     }
-    if strict_runtime_kernel_fast_path(mode) {
-        let _ = (family, profile, estimated_cost_ns, adverse);
-        return;
-    }
+    // Note: strict mode observation is now enabled (bd-06bxm.3).
+    // The strict_runtime_kernel_fast_path check was removed here.
+    // High-frequency families already fast-path above.
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
         return;
     };
@@ -1921,10 +1989,8 @@ pub(crate) fn check_ordering(
         let _ = (aligned, recent_page);
         return PASSTHROUGH_ORDERING;
     }
-    if strict_runtime_kernel_fast_path(mode()) {
-        let _ = (family, aligned, recent_page);
-        return PASSTHROUGH_ORDERING;
-    }
+    // Note: strict mode observation is enabled (bd-06bxm.3).
+    // High-frequency families still use passthrough ordering for perf.
     // Hardened mode fast path for high-frequency operations.
     if cfg!(not(test))
         && matches!(
