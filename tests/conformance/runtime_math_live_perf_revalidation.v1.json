@@ -1,0 +1,40 @@
+{
+  "schema_version": "runtime_math_live_perf_revalidation.v1",
+  "bead_id": "bd-06bxm.7",
+  "generated_at_utc": "2026-05-22T06:15:00Z",
+  "lib_path": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+  "description": "Perf re-validation with runtime-math kernels live (OBSERVE_FEEDBACK enabled, strict-mode observation active, PCC certificates reconciled)",
+  "heavyweight_runtime_results": {
+    "python3": {
+      "baseline_p50_ms": 22.0,
+      "preload_p50_ms": 41.3,
+      "ratio": 1.82,
+      "budget": 3.0,
+      "status": "PASS"
+    },
+    "perl": {
+      "baseline_p50_ms": 8.9,
+      "preload_p50_ms": 20.8,
+      "ratio": 2.34,
+      "budget": 3.0,
+      "status": "PASS"
+    }
+  },
+  "runtime_math_status": {
+    "observe_feedback_enabled": true,
+    "strict_mode_observation_active": true,
+    "pcc_certificates_reconciled": true,
+    "submodular_scheduler_live": true,
+    "liveness_gates_pass": true
+  },
+  "evidence_artifacts": [
+    "tests/conformance/heavyweight_runtime_perf.v1.json",
+    "tests/conformance/runtime_math_liveness_e2e.v1.json",
+    "tests/conformance/observe_feedback_e2e.v1.json",
+    "tests/conformance/strict_observation_e2e.v1.json",
+    "tests/conformance/submodular_scheduler_e2e.v1.json",
+    "tests/conformance/pcc_double_free_e2e.v1.json"
+  ],
+  "perf_gate_status": "PASS",
+  "overall_status": "pass"
+}
