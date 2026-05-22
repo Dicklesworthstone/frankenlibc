@@ -1704,6 +1704,25 @@ pub(crate) fn signal_runtime_ready() {
     let _ = try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed);
 }
 
+/// Returns true when validation feedback is enabled in the runtime-math kernel.
+/// When enabled, observations feed the exotic cached_state atomics (bd-06bxm.2).
+#[must_use]
+pub(crate) fn is_validation_feedback_enabled() -> bool {
+    let Some(k) = kernel() else {
+        return false;
+    };
+    k.validation_feedback_enabled()
+}
+
+/// Returns the total decision count from the runtime-math kernel.
+/// Used by e2e tests to verify kernel is active (bd-06bxm.2).
+#[must_use]
+pub(crate) fn runtime_decision_count() -> Option<u64> {
+    let k = kernel()?;
+    let snapshot = k.decision_telemetry_snapshot();
+    Some(snapshot.decisions)
+}
+
 #[inline]
 fn strict_runtime_kernel_fast_path(mode: SafetyLevel) -> bool {
     cfg!(not(test)) && matches!(mode, SafetyLevel::Strict)

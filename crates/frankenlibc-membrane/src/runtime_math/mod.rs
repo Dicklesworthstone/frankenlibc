@@ -97,8 +97,9 @@ pub const RUNTIME_MATH_PRODUCTION_ENABLED: bool = cfg!(feature = "runtime-math-p
 pub const RUNTIME_MATH_RESEARCH_ENABLED: bool = cfg!(feature = "runtime-math-research");
 const OBSERVE_FEEDBACK_ENABLED: u8 = 1;
 const OBSERVE_FEEDBACK_DISABLED: u8 = 2;
-// Default disabled for preload-stability while keeping decision/check-ordering live.
-static OBSERVE_FEEDBACK_STATE: AtomicU8 = AtomicU8::new(OBSERVE_FEEDBACK_DISABLED);
+// Enable by default: bd-06bxm.1 verified safe RUNTIME_READY arming, so the exotic
+// cached_state atomics can now receive live feedback from observations.
+static OBSERVE_FEEDBACK_STATE: AtomicU8 = AtomicU8::new(OBSERVE_FEEDBACK_ENABLED);
 
 const POLICY_LOAD_STATE_NONE: u8 = 0;
 const POLICY_LOAD_STATE_LOADED: u8 = 1;

@@ -1376,3 +1376,23 @@ pub unsafe extern "C" fn __frankenlibc_runtime_phase() -> c_int {
         crate::runtime_policy::AbiRuntimePhase::Active => 2,
     }
 }
+
+/// FFI export to check if validation feedback is enabled.
+/// Returns 1 if enabled (observations feed exotic kernel state), 0 otherwise.
+/// Used by e2e tests to verify OBSERVE_FEEDBACK is live (bd-06bxm.2).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_is_feedback_enabled() -> c_int {
+    if crate::runtime_policy::is_validation_feedback_enabled() {
+        1
+    } else {
+        0
+    }
+}
+
+/// FFI export to get the total decision count from the runtime-math kernel.
+/// Returns the number of decide() calls processed, or 0 if kernel not ready.
+/// Used by e2e tests to verify kernel is active (bd-06bxm.2).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_decision_count() -> u64 {
+    crate::runtime_policy::runtime_decision_count().unwrap_or(0)
+}
