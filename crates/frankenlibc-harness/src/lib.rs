@@ -58,8 +58,8 @@ pub mod verify_invariants;
 
 pub use fixtures::{FixtureCase, FixtureSet};
 pub use report::{
-    ConformanceReport, ErrnoEdgeCaseReport, PosixConformanceReport, PosixObligationMatrixReport,
-    RealityReport,
+    ConformanceReport, ErrnoEdgeCaseReport, FamilyHostParitySummary, PosixConformanceReport,
+    PosixObligationMatrixReport, RealityReport, aggregate_host_parity_by_family,
 };
 pub use runner::TestRunner;
 pub use verify::VerificationResult;

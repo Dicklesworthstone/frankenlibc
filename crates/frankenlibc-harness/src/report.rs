@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::conformance_matrix::{ConformanceCaseRow, ConformanceMatrixReport};
-use crate::verify::VerificationSummary;
+use crate::verify::{VerificationResult, VerificationSummary};
 use crate::{FixtureCase, FixtureSet};
 
 /// A conformance report combining verification and traceability data.
@@ -757,6 +757,66 @@ pub struct ErrnoEdgeCaseReport {
     pub generated_at_utc: String,
     pub summary: ErrnoEdgeCaseSummary,
     pub rows: Vec<ErrnoEdgeCaseRow>,
+}
+
+/// RC-WS5.4: Family-level host-parity summary for differential testing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FamilyHostParitySummary {
+    /// Fixture family name.
+    pub family: String,
+    /// Total cases with host_parity data.
+    pub total_with_parity: u64,
+    /// Cases where our impl matched host glibc.
+    pub parity_true: u64,
+    /// Cases where our impl diverged from host glibc.
+    pub parity_false: u64,
+    /// Cases missing host_parity (unsupported functions).
+    pub parity_missing: u64,
+    /// Parity percentage (parity_true / total_with_parity * 100).
+    pub parity_pct: f64,
+}
+
+/// Aggregate host-parity statistics by family from verification results.
+pub fn aggregate_host_parity_by_family(results: &[VerificationResult]) -> Vec<FamilyHostParitySummary> {
+    use std::collections::BTreeMap;
+
+    let mut by_family: BTreeMap<String, (u64, u64, u64, u64)> = BTreeMap::new();
+
+    for r in results {
+        let entry = by_family.entry(r.family.clone()).or_insert((0, 0, 0, 0));
+        match r.host_parity {
+            Some(true) => {
+                entry.0 += 1;
+                entry.1 += 1;
+            }
+            Some(false) => {
+                entry.0 += 1;
+                entry.2 += 1;
+            }
+            None => {
+                entry.3 += 1;
+            }
+        }
+    }
+
+    by_family
+        .into_iter()
+        .map(|(family, (total, parity_true, parity_false, parity_missing))| {
+            let parity_pct = if total > 0 {
+                (parity_true as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+            FamilyHostParitySummary {
+                family,
+                total_with_parity: total,
+                parity_true,
+                parity_false,
+                parity_missing,
+                parity_pct,
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -2040,8 +2100,9 @@ fn load_fixture_sets_from_dir(fixture_dir: &Path) -> Result<Vec<FixtureSet>, Str
 #[cfg(test)]
 mod tests {
     use super::{
-        DecisionTraceReport, ErrnoEdgeCaseReport, PosixCaseCategoryCounts, PosixConformanceReport,
-        PosixObligationMatrixReport, RealityCounts, RealityReport,
+        aggregate_host_parity_by_family, DecisionTraceReport, ErrnoEdgeCaseReport,
+        PosixCaseCategoryCounts, PosixConformanceReport, PosixObligationMatrixReport,
+        RealityCounts, RealityReport,
     };
     use crate::FixtureSet;
 
@@ -2723,5 +2784,95 @@ mod tests {
         assert_eq!(boundary_row.edge_class, "boundary");
         assert_eq!(boundary_row.status, "pass");
         assert_eq!(boundary_row.failure_kind, "covered");
+    }
+
+    #[test]
+    fn family_host_parity_aggregation_reports_per_family() {
+        use crate::verify::VerificationResult;
+
+        let results = vec![
+            VerificationResult {
+                trace_id: "t1".into(),
+                campaign: "fixture-verify".into(),
+                family: "string".into(),
+                symbol: "strlen".into(),
+                mode: "strict".into(),
+                case_name: "normal".into(),
+                spec_section: "POSIX".into(),
+                passed: true,
+                expected: "3".into(),
+                actual: "3".into(),
+                host_output: Some("3".into()),
+                host_parity: Some(true),
+                diff: None,
+            },
+            VerificationResult {
+                trace_id: "t2".into(),
+                campaign: "fixture-verify".into(),
+                family: "string".into(),
+                symbol: "strlen".into(),
+                mode: "strict".into(),
+                case_name: "edge".into(),
+                spec_section: "POSIX".into(),
+                passed: false,
+                expected: "0".into(),
+                actual: "-1".into(),
+                host_output: Some("-1".into()),
+                host_parity: Some(false),
+                diff: None,
+            },
+            VerificationResult {
+                trace_id: "t3".into(),
+                campaign: "fixture-verify".into(),
+                family: "math".into(),
+                symbol: "sin".into(),
+                mode: "strict".into(),
+                case_name: "zero".into(),
+                spec_section: "C11".into(),
+                passed: true,
+                expected: "0.0".into(),
+                actual: "0.0".into(),
+                host_output: Some("0.0".into()),
+                host_parity: Some(true),
+                diff: None,
+            },
+            VerificationResult {
+                trace_id: "t4".into(),
+                campaign: "fixture-verify".into(),
+                family: "pthread".into(),
+                symbol: "pthread_create".into(),
+                mode: "strict".into(),
+                case_name: "unsupported".into(),
+                spec_section: "POSIX".into(),
+                passed: false,
+                expected: "0".into(),
+                actual: "unsupported".into(),
+                host_output: None,
+                host_parity: None,
+                diff: None,
+            },
+        ];
+
+        let summaries = aggregate_host_parity_by_family(&results);
+
+        assert_eq!(summaries.len(), 3);
+
+        let string_family = summaries.iter().find(|s| s.family == "string").unwrap();
+        assert_eq!(string_family.total_with_parity, 2);
+        assert_eq!(string_family.parity_true, 1);
+        assert_eq!(string_family.parity_false, 1);
+        assert_eq!(string_family.parity_missing, 0);
+        assert!((string_family.parity_pct - 50.0).abs() < 0.1);
+
+        let math_family = summaries.iter().find(|s| s.family == "math").unwrap();
+        assert_eq!(math_family.total_with_parity, 1);
+        assert_eq!(math_family.parity_true, 1);
+        assert_eq!(math_family.parity_false, 0);
+        assert!((math_family.parity_pct - 100.0).abs() < 0.1);
+
+        let pthread_family = summaries.iter().find(|s| s.family == "pthread").unwrap();
+        assert_eq!(pthread_family.total_with_parity, 0);
+        assert_eq!(pthread_family.parity_missing, 1);
+        assert_eq!(pthread_family.parity_pct, 0.0);
     }
 }
