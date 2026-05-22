@@ -156,6 +156,7 @@ enum Encoding {
     Cp1163,
     Isiri3342,
     Mik,
+    Koi8T,
     Cp856,
     Cp1125,
     Cp850,
@@ -193,7 +194,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 112] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 113] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -721,6 +722,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 112] = [
         canonical: "MIK",
         normalized: "MIK",
         aliases: &[],
+    },
+    CodecSpec {
+        encoding: Encoding::Koi8T,
+        canonical: "KOI8-T",
+        normalized: "KOI8T",
+        aliases: &["KOI8T"],
     },
     CodecSpec {
         encoding: Encoding::Cp856,
@@ -6638,6 +6645,67 @@ fn encode_mik(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const KOI8T_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F (Tajik extensions + typographic)
+    0x049B, 0x0493, 0x201A, 0x0492, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+    0xFFFF, 0x2030, 0x04B3, 0x2039, 0x04B2, 0x04B7, 0x04B6, 0xFFFF, // 88-8F
+    // 0x90-0x9F (typographic + Tajik)
+    0x049A, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0xFFFF, 0x2122, 0xFFFF, 0x203A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 98-9F
+    // 0xA0-0xAF (Tajik + Latin symbols)
+    0xFFFF, 0x04EF, 0x04EE, 0x0451, 0x00A4, 0x04E3, 0x00A6, 0x00A7, // A0-A7
+    0xFFFF, 0xFFFF, 0xFFFF, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0xFFFF, // A8-AF
+    // 0xB0-0xBF (Latin symbols + Tajik)
+    0x00B0, 0x00B1, 0x00B2, 0x0401, 0xFFFF, 0x04E2, 0x00B6, 0x00B7, // B0-B7
+    0xFFFF, 0x2116, 0xFFFF, 0x00BB, 0xFFFF, 0xFFFF, 0xFFFF, 0x00A9, // B8-BF
+    // 0xC0-0xCF (Cyrillic small)
+    0x044E, 0x0430, 0x0431, 0x0446, 0x0434, 0x0435, 0x0444, 0x0433, // C0-C7
+    0x0445, 0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, // C8-CF
+    // 0xD0-0xDF (Cyrillic small continued)
+    0x043F, 0x044F, 0x0440, 0x0441, 0x0442, 0x0443, 0x0436, 0x0432, // D0-D7
+    0x044C, 0x044B, 0x0437, 0x0448, 0x044D, 0x0449, 0x0447, 0x044A, // D8-DF
+    // 0xE0-0xEF (Cyrillic capital)
+    0x042E, 0x0410, 0x0411, 0x0426, 0x0414, 0x0415, 0x0424, 0x0413, // E0-E7
+    0x0425, 0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, // E8-EF
+    // 0xF0-0xFF (Cyrillic capital continued)
+    0x041F, 0x042F, 0x0420, 0x0421, 0x0422, 0x0423, 0x0416, 0x0412, // F0-F7
+    0x042C, 0x042B, 0x0417, 0x0428, 0x042D, 0x0429, 0x0427, 0x042A, // F8-FF
+];
+
+fn decode_koi8t(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = KOI8T_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_koi8t(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = u32::from(ch);
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in KOI8T_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP856_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Hebrew letters)
     0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7, // 80-87
@@ -7019,6 +7087,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1163 => decode_cp1163(input),
         Encoding::Isiri3342 => decode_isiri3342(input),
         Encoding::Mik => decode_mik(input),
+        Encoding::Koi8T => decode_koi8t(input),
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
@@ -7204,6 +7273,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1163 => encode_cp1163(ch, out),
         Encoding::Isiri3342 => encode_isiri3342(ch, out),
         Encoding::Mik => encode_mik(ch, out),
+        Encoding::Koi8T => encode_koi8t(ch, out),
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
@@ -10446,5 +10516,25 @@ mod tests {
         let mut mik_out = [0u8; 16];
         let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mik_out).unwrap();
         assert_eq!(&mik_out[..result2.out_written], mik_input);
+    }
+
+    #[test]
+    fn koi8t_decode_roundtrip() {
+        let koi8t_input: &[u8] = &[0xC1, 0xC2, 0xE1, 0xE2];
+        let expected_utf8 = "абАБ";
+        let mut cd = iconv_open(b"UTF-8", b"KOI8-T").expect("KOI8-T to UTF-8 conversion");
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(koi8t_input), &mut utf8_out).unwrap();
+        assert_eq!(&utf8_out[..result.out_written], expected_utf8.as_bytes());
+        let mut cd2 = iconv_open(b"KOI8-T", b"UTF-8").expect("UTF-8 to KOI8-T conversion");
+        let mut koi8t_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut koi8t_out).unwrap();
+        assert_eq!(&koi8t_out[..result2.out_written], koi8t_input);
+    }
+
+    #[test]
+    fn koi8t_accepts_alias() {
+        let cd = iconv_open(b"UTF-8", b"KOI8T");
+        assert!(cd.is_some());
     }
 }
