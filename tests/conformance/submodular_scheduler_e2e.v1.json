@@ -1,0 +1,11 @@
+{
+  "schema_version": "submodular_scheduler_e2e.v1",
+  "bead_id": "bd-06bxm.4",
+  "generated_at_utc": "2026-05-22T05:31:37Z",
+  "tests": {
+    "per_call_monitor_count_bounded": "pass",
+    "greedy_selection_submodular_bound": "pass",
+    "design_module_tests": "pass (9/9)"
+  },
+  "overall_status": "pass"
+}
