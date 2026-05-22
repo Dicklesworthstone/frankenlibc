@@ -1105,6 +1105,9 @@ GLIBC_2.2.5 {
         _nss_files_gethostbyname4_r;
         _nss_files_gethostbyaddr_r;
         _nss_files_gethostbyaddr2_r;
+        _nss_files_getprotoent_r;
+        _nss_files_getprotobyname_r;
+        _nss_files_getprotobynumber_r;
 
         /* inet / network byte order */
         htons;

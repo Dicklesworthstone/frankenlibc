@@ -12430,9 +12430,8 @@ fn nss_files_setnetgrent_returns_success_with_null_or_arbitrary_args() {
 fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_getaliasent_r, _nss_files_getetherent_r, _nss_files_getgrent_r,
-        _nss_files_getnetgrent_r, _nss_files_getprotoent_r, _nss_files_getpwent_r,
-        _nss_files_getrpcent_r, _nss_files_getservent_r, _nss_files_getsgent_r,
-        _nss_files_getspent_r,
+        _nss_files_getnetgrent_r, _nss_files_getpwent_r, _nss_files_getrpcent_r,
+        _nss_files_getservent_r, _nss_files_getsgent_r, _nss_files_getspent_r,
     };
 
     macro_rules! check {
@@ -12463,7 +12462,6 @@ fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
     check!(_nss_files_getetherent_r);
     check!(_nss_files_getgrent_r);
     check!(_nss_files_getnetgrent_r);
-    check!(_nss_files_getprotoent_r);
     check!(_nss_files_getpwent_r);
     check!(_nss_files_getrpcent_r);
     check!(_nss_files_getservent_r);
@@ -12505,8 +12503,8 @@ fn nss_files_get_host_and_net_ent_stubs_set_both_error_slots() {
 fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_getaliasbyname_r, _nss_files_getgrnam_r, _nss_files_gethostton_r,
-        _nss_files_getntohost_r, _nss_files_getprotobyname_r, _nss_files_getpwnam_r,
-        _nss_files_getrpcbyname_r, _nss_files_getsgnam_r, _nss_files_getspnam_r,
+        _nss_files_getntohost_r, _nss_files_getpwnam_r, _nss_files_getrpcbyname_r,
+        _nss_files_getsgnam_r, _nss_files_getspnam_r,
     };
 
     let key = CString::new("missing").unwrap();
@@ -12547,7 +12545,6 @@ fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
     check!(_nss_files_getgrnam_r);
     check!(_nss_files_gethostton_r);
     check!(_nss_files_getntohost_r);
-    check!(_nss_files_getprotobyname_r);
     check!(_nss_files_getpwnam_r);
     check!(_nss_files_getrpcbyname_r);
     check!(_nss_files_getsgnam_r);
@@ -12557,8 +12554,7 @@ fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
 #[test]
 fn nss_files_get_by_int_stubs_return_notfound_and_set_errno() {
     use frankenlibc_abi::unistd_abi::{
-        _nss_files_getgrgid_r, _nss_files_getprotobynumber_r, _nss_files_getpwuid_r,
-        _nss_files_getrpcbynumber_r,
+        _nss_files_getgrgid_r, _nss_files_getpwuid_r, _nss_files_getrpcbynumber_r,
     };
 
     macro_rules! check {
@@ -12582,9 +12578,71 @@ fn nss_files_get_by_int_stubs_return_notfound_and_set_errno() {
     }
 
     check!(_nss_files_getgrgid_r, 0 as libc::gid_t);
-    check!(_nss_files_getprotobynumber_r, 9999);
     check!(_nss_files_getpwuid_r, 0 as libc::uid_t);
     check!(_nss_files_getrpcbynumber_r, 9999);
+}
+
+#[test]
+fn nss_files_get_protocols_use_native_backend() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getprotobyname_r, _nss_files_getprotobynumber_r, _nss_files_getprotoent_r,
+        _nss_files_setprotoent,
+    };
+
+    let mut by_name: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut by_name_buf = [0 as c_char; 512];
+    let mut err = -1;
+    let status = unsafe {
+        _nss_files_getprotobyname_r(
+            c"tcp".as_ptr(),
+            (&mut by_name as *mut libc::protoent).cast(),
+            by_name_buf.as_mut_ptr(),
+            by_name_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!by_name.p_name.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(by_name.p_name) }.to_bytes(), b"tcp");
+    assert_eq!(by_name.p_proto, libc::IPPROTO_TCP);
+
+    let mut by_number: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut by_number_buf = [0 as c_char; 512];
+    err = -1;
+    let status = unsafe {
+        _nss_files_getprotobynumber_r(
+            libc::IPPROTO_UDP,
+            (&mut by_number as *mut libc::protoent).cast(),
+            by_number_buf.as_mut_ptr(),
+            by_number_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!by_number.p_name.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr(by_number.p_name) }.to_bytes(),
+        b"udp"
+    );
+    assert_eq!(by_number.p_proto, libc::IPPROTO_UDP);
+
+    let mut iter: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut iter_buf = [0 as c_char; 512];
+    assert_eq!(unsafe { _nss_files_setprotoent(1) }, 1);
+    err = -1;
+    let status = unsafe {
+        _nss_files_getprotoent_r(
+            (&mut iter as *mut libc::protoent).cast(),
+            iter_buf.as_mut_ptr(),
+            iter_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!iter.p_name.is_null());
 }
 
 #[test]

@@ -9336,12 +9336,18 @@ nss_files_end_stub!(_nss_files_endetherent);
 nss_files_end_stub!(_nss_files_endgrent);
 nss_files_end_stub!(_nss_files_endhostent);
 nss_files_end_stub!(_nss_files_endnetent);
-nss_files_end_stub!(_nss_files_endprotoent);
 nss_files_end_stub!(_nss_files_endpwent);
 nss_files_end_stub!(_nss_files_endrpcent);
 nss_files_end_stub!(_nss_files_endservent);
 nss_files_end_stub!(_nss_files_endsgent);
 nss_files_end_stub!(_nss_files_endspent);
+
+/// `_nss_files_endprotoent()` — close/reset protocol database iteration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endprotoent() -> c_int {
+    unsafe { endprotoent() };
+    NSS_STATUS_SUCCESS
+}
 
 /// `_nss_files_endnetgrent(*result) -> nss_status` — netgroup end
 /// callbacks receive the iterator state object.
@@ -9384,12 +9390,18 @@ nss_files_set_stayopen_stub!(_nss_files_setetherent);
 nss_files_set_stayopen_stub!(_nss_files_setgrent);
 nss_files_set_stayopen_stub!(_nss_files_sethostent);
 nss_files_set_stayopen_stub!(_nss_files_setnetent);
-nss_files_set_stayopen_stub!(_nss_files_setprotoent);
 nss_files_set_stayopen_stub!(_nss_files_setpwent);
 nss_files_set_stayopen_stub!(_nss_files_setrpcent);
 nss_files_set_stayopen_stub!(_nss_files_setservent);
 nss_files_set_stayopen_stub!(_nss_files_setsgent);
 nss_files_set_stayopen_stub!(_nss_files_setspent);
+
+/// `_nss_files_setprotoent(stayopen)` — reset protocol database iteration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setprotoent(stayopen: c_int) -> c_int {
+    unsafe { setprotoent(stayopen) };
+    NSS_STATUS_SUCCESS
+}
 
 /// `_nss_files_setnetgrent(*group, *result) -> nss_status` — special
 /// signature taking the netgroup name plus a `struct __netgrent`
@@ -9496,6 +9508,28 @@ unsafe fn nss_hostent_notfound(errnop: *mut c_int, h_errnop: *mut c_int) -> c_in
     unsafe { nss_set_errnop_enoent(errnop) };
     unsafe { nss_set_herr_host_not_found(h_errnop) };
     NSS_STATUS_NOTFOUND
+}
+
+unsafe fn nss_finish_plain_lookup(rc: c_int, resolved: *mut c_void, errnop: *mut c_int) -> c_int {
+    if rc == 0 && !resolved.is_null() {
+        unsafe { nss_set_errnop(errnop, 0) };
+        return NSS_STATUS_SUCCESS;
+    }
+
+    match rc {
+        0 | libc::ENOENT => {
+            unsafe { nss_set_errnop_enoent(errnop) };
+            NSS_STATUS_NOTFOUND
+        }
+        libc::ERANGE => {
+            unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+            NSS_STATUS_TRYAGAIN
+        }
+        code => {
+            unsafe { nss_set_errnop(errnop, code) };
+            NSS_STATUS_UNAVAIL
+        }
+    }
 }
 
 unsafe fn nss_pack_gaih_addrtuples_from_hostent(
@@ -9694,12 +9728,29 @@ macro_rules! nss_files_get_by_int_stub {
 nss_files_get_ent_stub!(_nss_files_getaliasent_r);
 nss_files_get_ent_stub!(_nss_files_getetherent_r);
 nss_files_get_ent_stub!(_nss_files_getgrent_r);
-nss_files_get_ent_stub!(_nss_files_getprotoent_r);
 nss_files_get_ent_stub!(_nss_files_getpwent_r);
 nss_files_get_ent_stub!(_nss_files_getrpcent_r);
 nss_files_get_ent_stub!(_nss_files_getservent_r);
 nss_files_get_ent_stub!(_nss_files_getsgent_r);
 nss_files_get_ent_stub!(_nss_files_getspent_r);
+
+/// `_nss_files_getprotoent_r(*result, *buf, buflen, *errnop)` —
+/// protocol database iteration through the native /etc/protocols backend.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getprotoent_r(
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    if result.is_null() || buffer.is_null() {
+        unsafe { nss_set_errnop_enoent(errnop) };
+        return NSS_STATUS_NOTFOUND;
+    }
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe { getprotoent_r(result, buffer, buflen, &mut resolved) };
+    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+}
 
 /// `_nss_files_gethostent_r(*result, *buf, buflen, *errnop,
 /// *h_errnop)` — host database iteration carries both errno and
@@ -9746,7 +9797,6 @@ nss_files_get_ent_stub!(_nss_files_getnetgrent_r);
 // 9 single-key string lookup stubs.
 nss_files_get_by_str_stub!(_nss_files_getaliasbyname_r);
 nss_files_get_by_str_stub!(_nss_files_getgrnam_r);
-nss_files_get_by_str_stub!(_nss_files_getprotobyname_r);
 nss_files_get_by_str_stub!(_nss_files_getpwnam_r);
 nss_files_get_by_str_stub!(_nss_files_getrpcbyname_r);
 nss_files_get_by_str_stub!(_nss_files_getsgnam_r);
@@ -9758,8 +9808,37 @@ nss_files_get_by_str_stub!(_nss_files_getntohost_r);
 // 4 single-int lookup stubs (gid_t / uid_t / int).
 nss_files_get_by_int_stub!(_nss_files_getgrgid_r, libc::gid_t);
 nss_files_get_by_int_stub!(_nss_files_getpwuid_r, libc::uid_t);
-nss_files_get_by_int_stub!(_nss_files_getprotobynumber_r, c_int);
 nss_files_get_by_int_stub!(_nss_files_getrpcbynumber_r, c_int);
+
+/// `_nss_files_getprotobyname_r(name, *result, *buf, buflen,
+/// *errnop)` — protocol lookup through the native /etc/protocols backend.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getprotobyname_r(
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe { getprotobyname_r(name, result, buffer, buflen, &mut resolved) };
+    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+}
+
+/// `_nss_files_getprotobynumber_r(number, *result, *buf, buflen,
+/// *errnop)` — protocol lookup through the native /etc/protocols backend.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getprotobynumber_r(
+    proto: c_int,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    let mut resolved = std::ptr::null_mut();
+    let rc = unsafe { getprotobynumber_r(proto, result, buffer, buflen, &mut resolved) };
+    unsafe { nss_finish_plain_lookup(rc, resolved, errnop) }
+}
 
 /// `_nss_files_getcanonname_r(name, *buffer, buflen, **result,
 /// *errnop, *h_errnop)`.
