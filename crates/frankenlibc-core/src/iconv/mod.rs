@@ -121,6 +121,7 @@ enum Encoding {
     MacCroatian,
     Cp720,
     MacHebrew,
+    MacArabic,
     Cp850,
     MacRoman,
     Iso88592,
@@ -154,7 +155,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 73] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 74] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -472,6 +473,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 73] = [
         canonical: "MACHEBREW",
         normalized: "MACHEBREW",
         aliases: &["XMACHEBREW"],
+    },
+    CodecSpec {
+        encoding: Encoding::MacArabic,
+        canonical: "MACARABIC",
+        normalized: "MACARABIC",
+        aliases: &["XMACARABIC"],
     },
     CodecSpec {
         encoding: Encoding::Cp850,
@@ -4259,6 +4266,68 @@ fn encode_machebrew(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+const MACARABIC_TO_UNICODE: [u16; 128] = [
+    // 0x80-0x8F
+    0x00C4, 0x00A0, 0x00C7, 0x00C9, 0x00D1, 0x00D6, 0x00DC, 0x00E1, // 80-87
+    0x00E0, 0x00E2, 0x00E4, 0x06BA, 0x00AB, 0x00E7, 0x00E9, 0x00E8, // 88-8F
+    // 0x90-0x9F
+    0x00EA, 0x00EB, 0x00ED, 0x2026, 0x00EE, 0x00EF, 0x00F1, 0x00F3, // 90-97
+    0x00BB, 0x00F4, 0x00F6, 0x00F7, 0x00FA, 0x00F9, 0x00FB, 0x00FC, // 98-9F
+    // 0xA0-0xAF (Arabic)
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // A0-A7
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x060C, 0xFFFF, 0xFFFF, 0xFFFF, // A8-AF
+    // 0xB0-0xBF (Arabic)
+    0x0660, 0x0661, 0x0662, 0x0663, 0x0664, 0x0665, 0x0666, 0x0667, // B0-B7
+    0x0668, 0x0669, 0xFFFF, 0x061B, 0xFFFF, 0xFFFF, 0xFFFF, 0x061F, // B8-BF
+    // 0xC0-0xCF (Arabic letters)
+    0x066D, 0x0621, 0x0622, 0x0623, 0x0624, 0x0625, 0x0626, 0x0627, // C0-C7
+    0x0628, 0x0629, 0x062A, 0x062B, 0x062C, 0x062D, 0x062E, 0x062F, // C8-CF
+    // 0xD0-0xDF (Arabic letters)
+    0x0630, 0x0631, 0x0632, 0x0633, 0x0634, 0x0635, 0x0636, 0x0637, // D0-D7
+    0x0638, 0x0639, 0x063A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // D8-DF
+    // 0xE0-0xEF (Arabic letters)
+    0x0640, 0x0641, 0x0642, 0x0643, 0x0644, 0x0645, 0x0646, 0x0647, // E0-E7
+    0x0648, 0x0649, 0x064A, 0x064B, 0x064C, 0x064D, 0x064E, 0x064F, // E8-EF
+    // 0xF0-0xFF
+    0x0650, 0x0651, 0x0652, 0x067E, 0x0679, 0x0686, 0x06D5, 0x06A4, // F0-F7
+    0x06AF, 0x0688, 0x0691, 0xFFFF, 0xFFFF, 0xFFFF, 0x0698, 0x06D2, // F8-FF
+];
+
+fn decode_macarabic(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = MACARABIC_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            Ok(('\u{FFFD}', 1))
+        } else {
+            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        }
+    }
+}
+
+fn encode_macarabic(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in MACARABIC_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if input.is_empty() {
         return Err(DecodeError::Incomplete);
@@ -4480,6 +4549,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::MacCroatian => decode_maccroatian(input),
         Encoding::Cp720 => decode_cp720(input),
         Encoding::MacHebrew => decode_machebrew(input),
+        Encoding::MacArabic => decode_macarabic(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
@@ -4626,6 +4696,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::MacCroatian => encode_maccroatian(ch, out),
         Encoding::Cp720 => encode_cp720(ch, out),
         Encoding::MacHebrew => encode_machebrew(ch, out),
+        Encoding::MacArabic => encode_macarabic(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
@@ -6727,6 +6798,30 @@ mod tests {
     #[test]
     fn machebrew_accepts_xmachebrew_alias() {
         let cd = iconv_open(b"UTF-8", b"X-MAC-HEBREW");
+        assert!(cd.is_some());
+    }
+
+    #[test]
+    fn macarabic_to_utf8_round_trip() {
+        // MacArabic: Alef (0xC7), Ba (0xC8), Fa (0xE1), Lam (0xE4)
+        let mac_input: &[u8] = &[0xC7, 0xC8, 0xE1, 0xE4];
+        let expected_utf8 = "\u{0627}\u{0628}\u{0641}\u{0644}";
+
+        let mut cd = iconv_open(b"UTF-8", b"MACARABIC").unwrap();
+        let mut utf8_out = [0u8; 32];
+        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
+        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
+        assert_eq!(utf8_str, expected_utf8);
+
+        let mut cd2 = iconv_open(b"MACARABIC", b"UTF-8").unwrap();
+        let mut mac_out = [0u8; 16];
+        let result2 = iconv(&mut cd2, Some(expected_utf8.as_bytes()), &mut mac_out).unwrap();
+        assert_eq!(&mac_out[..result2.out_written], mac_input);
+    }
+
+    #[test]
+    fn macarabic_accepts_xmacarabic_alias() {
+        let cd = iconv_open(b"UTF-8", b"X-MAC-ARABIC");
         assert!(cd.is_some());
     }
 
