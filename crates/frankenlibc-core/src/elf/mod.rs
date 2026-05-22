@@ -39,12 +39,15 @@ pub use hash::{ElfHashTable, GnuHashTable, elf_hash, gnu_hash};
 pub use header::{Elf64Header, ElfClass, ElfData, ElfMachine, ElfOsAbi, ElfType};
 pub use loader::{
     DependencyGraph, DependencyNode, ElfLoader, LinkMapObject, LoadImage, LoadSegmentMapping,
-    LoadedObject, NullSymbolLookup, RelocationStats, ResolvedSymbol, RtldLookupScope,
-    RtldVisibility, ScopedSymbolResolver, SymbolLookup, SymbolLookupReport, SymbolLookupTraceEvent,
+    LoadedObject, NullSymbolLookup, PltBindingPolicy, RelocationBatchReport, RelocationStats,
+    RelocationTable, RelocationTraceEvent, ResolvedSymbol, RtldLookupScope, RtldVisibility,
+    ScopedSymbolResolver, SymbolLookup, SymbolLookupReport, SymbolLookupTraceEvent,
 };
 pub use nlist::{NlistSymbol, NlistSymtab};
 pub use program::{Elf64ProgramHeader, ProgramFlags, ProgramType};
-pub use relocation::{Elf64Rela, RelocationResult, RelocationType};
+pub use relocation::{
+    Elf64Rela, RelocationResult, RelocationType, expand_relr_entries, parse_relr_entries,
+};
 pub use section::{Elf64SectionHeader, SectionFlags, SectionType};
 pub use symbol::{Elf64Symbol, SymbolBinding, SymbolType, SymbolVisibility};
 

@@ -17,7 +17,8 @@ use super::{
     header::Elf64Header,
     program::{Elf64ProgramHeader, ProgramFlags, ProgramType, parse_program_headers},
     relocation::{
-        Elf64Rela, RelocationContext, RelocationResult, compute_relocation, parse_relocations,
+        Elf64Rela, RelocationContext, RelocationResult, RelocationType, compute_relocation,
+        expand_relr_entries, parse_relocations, parse_relr_entries,
     },
     section::{Elf64SectionHeader, SectionType, parse_section_headers},
     symbol::{Elf64Symbol, get_string, parse_symbols},
@@ -61,6 +62,8 @@ pub struct LoadedObject {
     pub rela_dyn: Vec<Elf64Rela>,
     /// PLT relocations
     pub rela_plt: Vec<Elf64Rela>,
+    /// Expanded DT_RELR/.relr.dyn relative relocation target offsets
+    pub relr_dyn: Vec<u64>,
     /// Initialization functions
     pub init_array: Vec<u64>,
     /// Finalization functions
@@ -218,6 +221,66 @@ pub struct SymbolLookupReport {
 pub struct ScopedSymbolResolver<'a> {
     objects: Vec<LinkMapObject<'a>>,
     graph: DependencyGraph,
+}
+
+/// Binding policy for PLT relocations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PltBindingPolicy {
+    /// Apply jump-slot relocations during relocation processing.
+    Eager,
+    /// Leave jump-slot relocations for first-call binding.
+    Lazy,
+}
+
+/// Relocation table that supplied a trace event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelocationTable {
+    /// Expanded DT_RELR/.relr.dyn targets.
+    RelrDyn,
+    /// RELA dynamic relocations.
+    RelaDyn,
+    /// RELA PLT relocations.
+    RelaPlt,
+}
+
+/// Structured trace entry for one relocation decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelocationTraceEvent {
+    /// Batch-wide zero-based relocation index.
+    pub index: usize,
+    /// Source relocation table.
+    pub table: RelocationTable,
+    /// Relocation type processed at this index.
+    pub reloc_type: RelocationType,
+    /// Dynamic symbol table index from `r_info`, if this came from RELA.
+    pub symbol_index: u32,
+    /// Runtime memory offset targeted by the relocation.
+    pub offset: u64,
+    /// Number of bytes written for successful applications.
+    pub write_size: usize,
+    /// Result of the relocation decision.
+    pub result: RelocationResult,
+}
+
+/// Structured relocation batch report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelocationBatchReport {
+    /// PLT binding policy used for this batch.
+    pub policy: PltBindingPolicy,
+    /// Per-relocation trace events in application order.
+    pub events: Vec<RelocationTraceEvent>,
+    /// Aggregate counters derived from `events`.
+    pub stats: RelocationStats,
+}
+
+impl RelocationBatchReport {
+    /// Return the legacy `(index, result)` view for callers that only need status.
+    pub fn results(&self) -> Vec<(usize, RelocationResult)> {
+        self.events
+            .iter()
+            .map(|event| (event.index, event.result))
+            .collect()
+    }
 }
 
 impl LoadedObject {
@@ -516,6 +579,14 @@ pub trait SymbolLookup {
     fn lookup_versioned(&self, name: &str, _version: Option<&str>) -> Option<u64> {
         self.lookup(name)
     }
+
+    /// Resolve a GNU IFUNC resolver address to the selected implementation.
+    ///
+    /// The core loader stays safe Rust, so the environment embedding it owns the
+    /// actual call into resolver machine code and returns the resolved address.
+    fn resolve_ifunc(&self, _resolver_address: u64) -> Option<u64> {
+        None
+    }
 }
 
 /// Simple symbol lookup that returns None for all queries.
@@ -582,6 +653,7 @@ impl ElfLoader {
             symbol_versions,
             rela_dyn,
             rela_plt,
+            relr_dyn,
             init_array,
             fini_array,
         ) = if let Some(dyn_phdr) = dynamic_phdr {
@@ -592,6 +664,7 @@ impl ElfLoader {
                 Vec::new(),
                 None,
                 None,
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -628,6 +701,7 @@ impl ElfLoader {
             symbol_versions,
             rela_dyn,
             rela_plt,
+            relr_dyn,
             init_array,
             fini_array,
             relro_start,
@@ -790,6 +864,7 @@ impl ElfLoader {
         Vec<Elf64Rela>,
         Vec<u64>,
         Vec<u64>,
+        Vec<u64>,
     )> {
         let mut dynsym = Vec::new();
         let mut dynstr = Vec::new();
@@ -798,6 +873,7 @@ impl ElfLoader {
         let mut elf_hash = None;
         let mut rela_dyn = Vec::new();
         let mut rela_plt = Vec::new();
+        let mut relr_dyn = Vec::new();
         let mut init_array = Vec::new();
         let mut fini_array = Vec::new();
 
@@ -829,6 +905,14 @@ impl ElfLoader {
                     } else {
                         rela_dyn.extend(relocs);
                     }
+                }
+                _ if section_is_relr(
+                    section,
+                    shstrtab.and_then(|table| section_name(section, table)),
+                ) =>
+                {
+                    let entries = parse_relr_entries(data, section.sh_offset, section.sh_size)?;
+                    relr_dyn.extend(expand_relr_entries(&entries)?);
                 }
                 SectionType::InitArray => {
                     if let Some(bytes) = section_data(data, section) {
@@ -875,6 +959,7 @@ impl ElfLoader {
             symbol_versions,
             rela_dyn,
             rela_plt,
+            relr_dyn,
             init_array,
             fini_array,
         ))
@@ -897,14 +982,76 @@ impl ElfLoader {
         memory: &mut [u8],
         resolver: &S,
     ) -> Vec<(usize, RelocationResult)> {
-        let mut results = Vec::new();
+        self.apply_relocations_with_policy(obj, memory, resolver, PltBindingPolicy::Eager)
+            .results()
+    }
 
-        for (i, reloc) in obj.rela_dyn.iter().chain(obj.rela_plt.iter()).enumerate() {
-            let result = self.apply_single_relocation(obj, memory, reloc, resolver);
-            results.push((i, result));
+    /// Apply relocations and return a structured batch report.
+    pub fn apply_relocations_with_policy<S: SymbolLookup>(
+        &self,
+        obj: &LoadedObject,
+        memory: &mut [u8],
+        resolver: &S,
+        policy: PltBindingPolicy,
+    ) -> RelocationBatchReport {
+        let mut events =
+            Vec::with_capacity(obj.relr_dyn.len() + obj.rela_dyn.len() + obj.rela_plt.len());
+        let mut index = 0;
+
+        for &offset in &obj.relr_dyn {
+            let (result, write_size) = self.apply_relr_relative(memory, offset);
+            events.push(RelocationTraceEvent {
+                index,
+                table: RelocationTable::RelrDyn,
+                reloc_type: RelocationType::Relative,
+                symbol_index: 0,
+                offset,
+                write_size,
+                result,
+            });
+            index += 1;
         }
 
-        results
+        for reloc in &obj.rela_dyn {
+            let (result, write_size) = self.apply_single_relocation(obj, memory, reloc, resolver);
+            events.push(RelocationTraceEvent {
+                index,
+                table: RelocationTable::RelaDyn,
+                reloc_type: reloc.reloc_type(),
+                symbol_index: reloc.symbol_index(),
+                offset: reloc.r_offset,
+                write_size,
+                result,
+            });
+            index += 1;
+        }
+
+        for reloc in &obj.rela_plt {
+            let (result, write_size) = if policy == PltBindingPolicy::Lazy
+                && reloc.reloc_type() == RelocationType::JumpSlot
+            {
+                (RelocationResult::Deferred, 0)
+            } else {
+                self.apply_single_relocation(obj, memory, reloc, resolver)
+            };
+            events.push(RelocationTraceEvent {
+                index,
+                table: RelocationTable::RelaPlt,
+                reloc_type: reloc.reloc_type(),
+                symbol_index: reloc.symbol_index(),
+                offset: reloc.r_offset,
+                write_size,
+                result,
+            });
+            index += 1;
+        }
+
+        let stats = RelocationStats::from_events(&events);
+        RelocationBatchReport {
+            policy,
+            events,
+            stats,
+        }
     }
 
     /// Apply a single relocation.
@@ -914,7 +1061,11 @@ impl ElfLoader {
         memory: &mut [u8],
         reloc: &Elf64Rela,
         resolver: &S,
-    ) -> RelocationResult {
+    ) -> (RelocationResult, usize) {
+        if reloc.reloc_type() == RelocationType::IRelative {
+            return self.apply_irelative_relocation(memory, reloc, resolver);
+        }
+
         let sym_idx = reloc.symbol_index();
 
         // Get symbol value
@@ -923,23 +1074,34 @@ impl ElfLoader {
         } else {
             let sym = match obj.dynsym.get(sym_idx as usize) {
                 Some(s) => s,
-                None => return RelocationResult::SymbolNotFound,
+                None => return (RelocationResult::SymbolNotFound, 0),
             };
 
             if sym.is_defined() {
                 // Symbol defined in this object
-                self.ctx.base + sym.st_value
+                let symbol_address = match self.ctx.base.checked_add(sym.st_value) {
+                    Some(value) => value,
+                    None => return (RelocationResult::Overflow, 0),
+                };
+                if sym.is_ifunc() {
+                    match resolver.resolve_ifunc(symbol_address) {
+                        Some(addr) => addr,
+                        None => return (RelocationResult::Unsupported(37), 0),
+                    }
+                } else {
+                    symbol_address
+                }
             } else {
                 // Need external resolution
                 let name = match get_string(&obj.dynstr, sym.st_name) {
                     Ok(n) => n,
-                    Err(_) => return RelocationResult::SymbolNotFound,
+                    Err(_) => return (RelocationResult::SymbolNotFound, 0),
                 };
                 let version = obj.symbol_version_by_index(sym_idx as usize);
                 match resolver.lookup_versioned(name, version) {
                     Some(addr) => addr,
                     None if sym.is_weak() => 0, // Weak symbols resolve to 0 if not found
-                    None => return RelocationResult::SymbolNotFound,
+                    None => return (RelocationResult::SymbolNotFound, 0),
                 }
             }
         };
@@ -947,27 +1109,92 @@ impl ElfLoader {
         // Compute relocation value
         let (value, size) = match compute_relocation(reloc, symbol_value, &self.ctx) {
             Ok(v) => v,
-            Err(r) => return r,
+            Err(r) => return (r, 0),
         };
 
-        // Apply to memory
-        let offset = reloc.r_offset as usize;
-        if offset + size > memory.len() {
-            return RelocationResult::Overflow;
+        match write_relocation_value(memory, reloc.r_offset, value, size) {
+            RelocationResult::Applied => (RelocationResult::Applied, size),
+            result => (result, 0),
         }
-
-        match size {
-            4 => {
-                memory[offset..offset + 4].copy_from_slice(&(value as u32).to_le_bytes());
-            }
-            8 => {
-                memory[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
-            }
-            _ => return RelocationResult::Overflow,
-        }
-
-        RelocationResult::Applied
     }
+
+    fn apply_irelative_relocation<S: SymbolLookup>(
+        &self,
+        memory: &mut [u8],
+        reloc: &Elf64Rela,
+        resolver: &S,
+    ) -> (RelocationResult, usize) {
+        let resolver_address = match add_signed_to_u64(self.ctx.base, reloc.r_addend) {
+            Some(value) => value,
+            None => return (RelocationResult::Overflow, 0),
+        };
+        let Some(value) = resolver.resolve_ifunc(resolver_address) else {
+            return (RelocationResult::Unsupported(37), 0);
+        };
+        match write_relocation_value(memory, reloc.r_offset, value, 8) {
+            RelocationResult::Applied => (RelocationResult::Applied, 8),
+            result => (result, 0),
+        }
+    }
+
+    fn apply_relr_relative(&self, memory: &mut [u8], offset: u64) -> (RelocationResult, usize) {
+        let Some(addend) = read_relocation_value(memory, offset, 8) else {
+            return (RelocationResult::Overflow, 0);
+        };
+        let Some(value) = self.ctx.base.checked_add(addend) else {
+            return (RelocationResult::Overflow, 0);
+        };
+        match write_relocation_value(memory, offset, value, 8) {
+            RelocationResult::Applied => (RelocationResult::Applied, 8),
+            result => (result, 0),
+        }
+    }
+}
+
+fn add_signed_to_u64(lhs: u64, rhs: i64) -> Option<u64> {
+    let value = i128::from(lhs) + i128::from(rhs);
+    if value < 0 || value > i128::from(u64::MAX) {
+        None
+    } else {
+        Some(value as u64)
+    }
+}
+
+fn read_relocation_value(memory: &[u8], offset: u64, size: usize) -> Option<u64> {
+    let offset = usize::try_from(offset).ok()?;
+    let end = offset.checked_add(size)?;
+    let bytes = memory.get(offset..end)?;
+    match size {
+        8 => Some(u64::from_le_bytes(bytes.try_into().ok()?)),
+        _ => None,
+    }
+}
+
+fn write_relocation_value(
+    memory: &mut [u8],
+    offset: u64,
+    value: u64,
+    size: usize,
+) -> RelocationResult {
+    let Ok(offset) = usize::try_from(offset) else {
+        return RelocationResult::Overflow;
+    };
+    let Some(end) = offset.checked_add(size) else {
+        return RelocationResult::Overflow;
+    };
+    let Some(target) = memory.get_mut(offset..end) else {
+        return RelocationResult::Overflow;
+    };
+
+    match size {
+        1 => target.copy_from_slice(&[value as u8]),
+        2 => target.copy_from_slice(&(value as u16).to_le_bytes()),
+        4 => target.copy_from_slice(&(value as u32).to_le_bytes()),
+        8 => target.copy_from_slice(&value.to_le_bytes()),
+        _ => return RelocationResult::Overflow,
+    }
+
+    RelocationResult::Applied
 }
 
 fn validate_load_segment(data_len: usize, header: &Elf64ProgramHeader) -> ElfResult<()> {
@@ -1158,6 +1385,11 @@ fn parse_u64_array(data: &[u8]) -> Vec<u64> {
             ])
         })
         .collect()
+}
+
+fn section_is_relr(section: &Elf64SectionHeader, section_name: Option<&str>) -> bool {
+    matches!(section.sh_type, SectionType::Unknown(19 | 0x6fff_ff00))
+        || section_name.is_some_and(|name| name == ".relr.dyn" || name == ".relr.plt")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1391,7 +1623,7 @@ fn parse_verneed_section(data: &[u8], strings: &[u8], version_map: &mut BTreeMap
 }
 
 /// Statistics about relocation processing.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RelocationStats {
     /// Total relocations processed
     pub total: usize,
@@ -1429,6 +1661,15 @@ impl RelocationStats {
         }
 
         stats
+    }
+
+    /// Collect statistics from structured relocation trace events.
+    pub fn from_events(events: &[RelocationTraceEvent]) -> Self {
+        let results: Vec<(usize, RelocationResult)> = events
+            .iter()
+            .map(|event| (event.index, event.result))
+            .collect();
+        Self::from_results(&results)
     }
 
     /// Check if all relocations were successful.
@@ -1472,6 +1713,7 @@ mod tests {
             symbol_versions: Vec::new(),
             rela_dyn: Vec::new(),
             rela_plt: Vec::new(),
+            relr_dyn: Vec::new(),
             init_array: Vec::new(),
             fini_array: Vec::new(),
             relro_start: None,
@@ -2107,5 +2349,161 @@ mod tests {
             resolver.calls.into_inner(),
             vec![("malloc".to_owned(), Some("GLIBC_2.2.5".to_owned()))]
         );
+    }
+
+    #[test]
+    fn relocation_batch_defers_lazy_jump_slots_and_applies_eager() {
+        let loader = ElfLoader::new(0x7f00_0000_0000);
+        let mut obj = empty_loaded_object();
+        obj.dynstr = b"\0puts\0".to_vec();
+        obj.dynsym = vec![
+            Elf64Symbol {
+                st_name: 0,
+                st_info: 0,
+                st_other: 0,
+                st_shndx: 0,
+                st_value: 0,
+                st_size: 0,
+            },
+            Elf64Symbol {
+                st_name: 1,
+                st_info: 0x12,
+                st_other: 0,
+                st_shndx: 0,
+                st_value: 0,
+                st_size: 0,
+            },
+        ];
+        obj.symbol_versions = vec![None, None];
+        obj.rela_plt = vec![Elf64Rela {
+            r_offset: 0,
+            r_info: ((1u64) << 32) | RelocationType::JumpSlot.to_u32() as u64,
+            r_addend: 0,
+        }];
+
+        let resolver = TestResolver {
+            symbols: vec![("puts", 0x7f00_dead_beef)],
+        };
+        let mut memory = [0u8; 8];
+        let lazy_report = loader.apply_relocations_with_policy(
+            &obj,
+            &mut memory,
+            &resolver,
+            PltBindingPolicy::Lazy,
+        );
+
+        assert_eq!(lazy_report.stats.total, 1);
+        assert_eq!(lazy_report.stats.deferred, 1);
+        assert_eq!(lazy_report.events[0].table, RelocationTable::RelaPlt);
+        assert_eq!(lazy_report.events[0].write_size, 0);
+        assert_eq!(u64::from_le_bytes(memory), 0);
+
+        let eager_report = loader.apply_relocations_with_policy(
+            &obj,
+            &mut memory,
+            &resolver,
+            PltBindingPolicy::Eager,
+        );
+        assert_eq!(eager_report.stats.applied, 1);
+        assert_eq!(eager_report.events[0].write_size, 8);
+        assert_eq!(u64::from_le_bytes(memory), 0x7f00_dead_beef);
+    }
+
+    #[test]
+    fn relocation_batch_applies_relr_relative_targets() {
+        let loader = ElfLoader::new(0x1000);
+        let mut obj = empty_loaded_object();
+        obj.relr_dyn = vec![0, 8];
+
+        let mut memory = [0u8; 16];
+        memory[0..8].copy_from_slice(&0x20u64.to_le_bytes());
+        memory[8..16].copy_from_slice(&0x30u64.to_le_bytes());
+
+        let report = loader.apply_relocations_with_policy(
+            &obj,
+            &mut memory,
+            &NullSymbolLookup,
+            PltBindingPolicy::Eager,
+        );
+
+        assert_eq!(report.stats.applied, 2);
+        assert_eq!(report.events[0].table, RelocationTable::RelrDyn);
+        assert_eq!(report.events[0].reloc_type, RelocationType::Relative);
+        assert_eq!(report.events[0].write_size, 8);
+        assert_eq!(u64::from_le_bytes(memory[0..8].try_into().unwrap()), 0x1020);
+        assert_eq!(
+            u64::from_le_bytes(memory[8..16].try_into().unwrap()),
+            0x1030
+        );
+    }
+
+    #[test]
+    fn relocation_batch_reports_out_of_bounds_without_panicking() {
+        let loader = ElfLoader::new(0x1000);
+        let mut obj = empty_loaded_object();
+        obj.rela_dyn = vec![Elf64Rela {
+            r_offset: 6,
+            r_info: RelocationType::Relative.to_u32() as u64,
+            r_addend: 0x20,
+        }];
+
+        let mut memory = [0u8; 8];
+        let report = loader.apply_relocations_with_policy(
+            &obj,
+            &mut memory,
+            &NullSymbolLookup,
+            PltBindingPolicy::Eager,
+        );
+
+        assert_eq!(report.stats.overflow, 1);
+        assert_eq!(report.events[0].result, RelocationResult::Overflow);
+        assert_eq!(report.events[0].write_size, 0);
+    }
+
+    #[test]
+    fn irelative_relocation_uses_resolver_callback() {
+        struct IfuncResolver {
+            calls: RefCell<Vec<u64>>,
+        }
+
+        impl SymbolLookup for IfuncResolver {
+            fn lookup(&self, _name: &str) -> Option<u64> {
+                None
+            }
+
+            fn resolve_ifunc(&self, resolver_address: u64) -> Option<u64> {
+                self.calls.borrow_mut().push(resolver_address);
+                if resolver_address == 0x1040 {
+                    Some(0xfeed_face_cafe_beef)
+                } else {
+                    None
+                }
+            }
+        }
+
+        let loader = ElfLoader::new(0x1000);
+        let mut obj = empty_loaded_object();
+        obj.rela_dyn = vec![Elf64Rela {
+            r_offset: 0,
+            r_info: RelocationType::IRelative.to_u32() as u64,
+            r_addend: 0x40,
+        }];
+
+        let resolver = IfuncResolver {
+            calls: RefCell::new(Vec::new()),
+        };
+        let mut memory = [0u8; 8];
+        let report = loader.apply_relocations_with_policy(
+            &obj,
+            &mut memory,
+            &resolver,
+            PltBindingPolicy::Eager,
+        );
+
+        assert_eq!(report.stats.applied, 1);
+        assert_eq!(report.events[0].reloc_type, RelocationType::IRelative);
+        assert_eq!(report.events[0].write_size, 8);
+        assert_eq!(u64::from_le_bytes(memory), 0xfeed_face_cafe_beef);
+        assert_eq!(resolver.calls.into_inner(), vec![0x1040]);
     }
 }

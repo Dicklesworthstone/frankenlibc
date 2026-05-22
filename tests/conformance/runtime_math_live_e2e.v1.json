@@ -1,0 +1,26 @@
+{
+  "schema_version": "runtime_math_live_e2e.v1",
+  "bead_id": "bd-06bxm.8",
+  "generated_at_utc": "2026-05-22T05:58:27Z",
+  "tests_run": 9,
+  "tests_passed": 9,
+  "component_tests": {
+    "runtime_ready_arming": "bd-06bxm.1",
+    "observe_feedback_enabled": "bd-06bxm.2",
+    "strict_mode_observation": "bd-06bxm.3",
+    "submodular_scheduler": "bd-06bxm.4",
+    "pcc_certificate_soundness": "bd-06bxm.5",
+    "liveness_gates": "bd-06bxm.6",
+    "heavyweight_perf": "bd-06bxm.7",
+    "killswitch": "bd-06bxm.9"
+  },
+  "verification": {
+    "exotic_kernel_states_nonzero": "verified via liveness gates",
+    "decision_changed_by_runtime_math": "verified via observe_feedback",
+    "per_call_monitor_budget": "verified via submodular_scheduler",
+    "no_deadlock_cxx_ctors": "pass",
+    "strict_mode_no_rewrites": "verified via strict_observation",
+    "killswitch_disables_math": "verified via killswitch test"
+  },
+  "overall_status": "pass"
+}
