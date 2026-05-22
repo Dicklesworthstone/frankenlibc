@@ -35,6 +35,10 @@ fn read_json(path: &Path) -> TestResult<Value> {
     Ok(serde_json::from_str(&contents)?)
 }
 
+fn read_text(path: &Path) -> TestResult<String> {
+    Ok(std::fs::read_to_string(path)?)
+}
+
 fn write_json(path: &Path, value: &Value) -> TestResult {
     std::fs::write(path, serde_json::to_string_pretty(value)? + "\n")?;
     Ok(())
@@ -107,6 +111,47 @@ fn string_set(value: &Value) -> TestResult<BTreeSet<String>> {
         );
     }
     Ok(set)
+}
+
+#[test]
+fn readme_and_feature_parity_agree_on_proof_status() -> TestResult {
+    let root = workspace_root()?;
+    let readme = read_text(&root.join("README.md"))?;
+    let feature_parity = read_text(&root.join("FEATURE_PARITY.md"))?;
+
+    for (name, contents) in [
+        ("README.md", readme.as_str()),
+        ("FEATURE_PARITY.md", feature_parity.as_str()),
+    ] {
+        assert!(
+            contents.contains("no machine-checked formal proof artifacts")
+                || contents.contains("no machine-checked proof artifacts"),
+            "{name} must state that machine-checked proof artifacts are not committed yet"
+        );
+        assert!(
+            contents.contains("proof notes"),
+            "{name} must describe docs/proofs as proof notes"
+        );
+        assert!(
+            contents.contains("not completed machine-checked proof artifacts")
+                || contents.contains("future mechanization"),
+            "{name} must distinguish proof notes from completed mechanized artifacts"
+        );
+    }
+
+    for forbidden in [
+        "9 formal proofs",
+        "nine formal proofs",
+        "machine-checked formal proofs are committed",
+        "machine-checked formal proof artifacts are committed",
+    ] {
+        assert!(
+            !readme.contains(forbidden) && !feature_parity.contains(forbidden),
+            "proof-status docs must not contain stale overclaim: {forbidden}"
+        );
+    }
+
+    Ok(())
 }
 
 #[test]
