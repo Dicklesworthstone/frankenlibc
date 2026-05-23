@@ -450,7 +450,7 @@ pub fn wcwidth(wc: u32) -> i32 {
         return -1;
     }
 
-    // CJK Unified Ideographs and common fullwidth ranges.
+    // CJK Unified Ideographs, Emoji, and common fullwidth ranges.
     if (0x1100..=0x115F).contains(&wc)    // Hangul Jamo
         || (0x2E80..=0x303E).contains(&wc)  // CJK Radicals
         || (0x3041..=0x33BF).contains(&wc)  // Hiragana, Katakana, CJK compatibility
@@ -460,6 +460,8 @@ pub fn wcwidth(wc: u32) -> i32 {
         || (0xFE30..=0xFE6F).contains(&wc)  // CJK Compatibility Forms
         || (0xFF01..=0xFF60).contains(&wc)  // Fullwidth forms
         || (0xFFE0..=0xFFE6).contains(&wc)  // Fullwidth signs
+        || (0x1F300..=0x1F9FF).contains(&wc) // Emoji (Miscellaneous Symbols/Pictographs/Emoticons)
+        || (0x1FA00..=0x1FAFF).contains(&wc) // Emoji Symbols and Pictographs Extended-A
         || (0x20000..=0x2FFFD).contains(&wc) // CJK Extension B+
         || (0x30000..=0x3FFFD).contains(&wc)
     // CJK Extension G+
@@ -618,6 +620,15 @@ mod tests {
         assert_eq!(wcwidth(0x2029), -1); // PARAGRAPH SEPARATOR
         // Language tag chars (Cf, treated as -1 by glibc).
         assert_eq!(wcwidth(0xE0000), -1);
+    }
+
+    #[test]
+    fn wcwidth_emoji() {
+        // Emoji pictographs are width 2 (matching glibc).
+        assert_eq!(wcwidth(0x1F600), 2); // 😀 GRINNING FACE
+        assert_eq!(wcwidth(0x1F4A9), 2); // 💩 PILE OF POO
+        assert_eq!(wcwidth(0x1F914), 2); // 🤔 THINKING FACE
+        assert_eq!(wcwidth(0x1FA80), 2); // 🪀 YO-YO (Extended-A)
     }
 
     // ---- decode_utf8_lossy ----
