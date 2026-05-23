@@ -323,7 +323,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 129] = [
         encoding: Encoding::Cp1257,
         canonical: "CP1257",
         normalized: "CP1257",
-        aliases: &["WINDOWS1257", "1257"],
+        aliases: &["WINDOWS1257", "1257", "WINBALTRIM"],
     },
     CodecSpec {
         encoding: Encoding::Cp1258,
