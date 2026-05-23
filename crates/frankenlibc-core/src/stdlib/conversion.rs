@@ -73,12 +73,17 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
 
     let mut effective_base = base as u64;
 
-    // Check for "0x" or "0X" prefix
+    // Check for "0x"/"0X" and "0b"/"0B" prefixes
     let has_0x_prefix = i + 1 < len && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X');
+    let has_0b_prefix = i + 1 < len && s[i] == b'0' && (s[i + 1] == b'b' || s[i + 1] == b'B');
+    let is_binary_digit = |c: u8| c == b'0' || c == b'1';
 
     if base == 0 {
         if has_0x_prefix && i + 2 < len && s[i + 2].is_ascii_hexdigit() {
             effective_base = 16;
+            i += 2;
+        } else if has_0b_prefix && i + 2 < len && is_binary_digit(s[i + 2]) {
+            effective_base = 2;
             i += 2;
         } else if i < len && s[i] == b'0' {
             effective_base = 8;
@@ -86,6 +91,8 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
             effective_base = 10;
         }
     } else if base == 16 && has_0x_prefix && i + 2 < len && s[i + 2].is_ascii_hexdigit() {
+        i += 2;
+    } else if base == 2 && has_0b_prefix && i + 2 < len && is_binary_digit(s[i + 2]) {
         i += 2;
     }
 
@@ -202,12 +209,17 @@ pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
 
     let mut effective_base = base as u64;
 
-    // Check for "0x" or "0X" prefix
+    // Check for "0x"/"0X" and "0b"/"0B" prefixes
     let has_0x_prefix = i + 1 < len && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X');
+    let has_0b_prefix = i + 1 < len && s[i] == b'0' && (s[i + 1] == b'b' || s[i + 1] == b'B');
+    let is_binary_digit = |c: u8| c == b'0' || c == b'1';
 
     if base == 0 {
         if has_0x_prefix && i + 2 < len && s[i + 2].is_ascii_hexdigit() {
             effective_base = 16;
+            i += 2;
+        } else if has_0b_prefix && i + 2 < len && is_binary_digit(s[i + 2]) {
+            effective_base = 2;
             i += 2;
         } else if i < len && s[i] == b'0' {
             effective_base = 8;
@@ -215,6 +227,8 @@ pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
             effective_base = 10;
         }
     } else if base == 16 && has_0x_prefix && i + 2 < len && s[i + 2].is_ascii_hexdigit() {
+        i += 2;
+    } else if base == 2 && has_0b_prefix && i + 2 < len && is_binary_digit(s[i + 2]) {
         i += 2;
     }
 
@@ -1023,6 +1037,46 @@ mod tests {
         let (val, len) = strtol(b"0x1", 0);
         assert_eq!(val, 1);
         assert_eq!(len, 3);
+    }
+
+    #[test]
+    fn test_strtol_binary_prefix() {
+        // "0b1010" base 0 -> parses as binary, returns 10
+        let (val, len) = strtol(b"0b1010", 0);
+        assert_eq!(val, 10);
+        assert_eq!(len, 6);
+
+        // "0B1111" uppercase also works
+        let (val, len) = strtol(b"0B1111", 0);
+        assert_eq!(val, 15);
+        assert_eq!(len, 6);
+
+        // "0b1010" base 2 -> skips prefix
+        let (val, len) = strtol(b"0b1010", 2);
+        assert_eq!(val, 10);
+        assert_eq!(len, 6);
+
+        // "0b" without digits -> parses "0", stops at 'b'
+        let (val, len) = strtol(b"0b", 0);
+        assert_eq!(val, 0);
+        assert_eq!(len, 1);
+
+        // "0bz" invalid digit after prefix -> parses "0"
+        let (val, len) = strtol(b"0bz", 0);
+        assert_eq!(val, 0);
+        assert_eq!(len, 1);
+
+        // "-0b1010" negative binary
+        let (val, len) = strtol(b"-0b1010", 0);
+        assert_eq!(val, -10);
+        assert_eq!(len, 7);
+    }
+
+    #[test]
+    fn test_strtoul_binary_prefix() {
+        let (val, len) = strtoul(b"0b11111111", 0);
+        assert_eq!(val, 255);
+        assert_eq!(len, 10);
     }
 
     #[test]
