@@ -891,7 +891,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Iso88596,
         canonical: "ISO-8859-6",
         normalized: "ISO88596",
-        aliases: &["ISO88596", "ARABIC", "CSISOLATINARABIC", "ASMO708", "ECMA114"],
+        aliases: &["ISO88596", "ARABIC", "CSISOLATINARABIC", "ASMO708", "ECMA114", "CP1089", "IBM1089"],
     },
     CodecSpec {
         encoding: Encoding::Iso88597,
@@ -9791,6 +9791,14 @@ mod tests {
     fn iso88596_accepts_arabic_alias() {
         let cd = iconv_open(b"UTF-8", b"ARABIC");
         assert!(cd.is_some());
+    }
+
+    #[test]
+    fn iso88596_accepts_cp1089_alias() {
+        let cd = iconv_open(b"UTF-8", b"CP1089");
+        assert!(cd.is_some());
+        let cd2 = iconv_open(b"UTF-8", b"IBM1089");
+        assert!(cd2.is_some());
     }
 
     #[test]
