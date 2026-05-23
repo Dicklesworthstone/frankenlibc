@@ -2197,4 +2197,51 @@ mod tests {
             "^abc should match after newline with REG_NEWLINE even with REG_NOTBOL"
         );
     }
+
+    #[test]
+    fn glibc_empty_pattern_matches_anywhere() {
+        // glibc: regcomp("", REG_EXTENDED) succeeds, regexec matches anywhere
+        let compiled = regex_compile(b"", REG_EXTENDED).unwrap();
+        let m = regex_match_bounds(&compiled, b"anything\0", 0);
+        assert!(m.is_some(), "empty pattern should match");
+        // Empty pattern matches at position 0 with length 0.
+        let (start, end) = m.unwrap();
+        assert_eq!((start, end), (0, 0));
+    }
+
+    #[test]
+    fn glibc_dot_matches_newline_without_reg_newline() {
+        // glibc: without REG_NEWLINE, '.' matches '\n'
+        let compiled = regex_compile(b"a.c", REG_EXTENDED).unwrap();
+        let m = regex_match_bounds(&compiled, b"a\nc\0", 0);
+        assert!(m.is_some(), "'.' should match newline without REG_NEWLINE");
+    }
+
+    #[test]
+    fn glibc_optional_matches_empty() {
+        // glibc: 'a?' matches empty string at position 0
+        let compiled = regex_compile(b"a?", REG_EXTENDED).unwrap();
+        let m = regex_match_bounds(&compiled, b"\0", 0);
+        assert!(m.is_some(), "'a?' should match empty string");
+        let (start, end) = m.unwrap();
+        assert_eq!((start, end), (0, 0));
+    }
+
+    #[test]
+    fn glibc_invalid_interval_returns_reg_badbr() {
+        // glibc: a{{5,3}} returns REG_BADBR (invalid interval)
+        let result = regex_compile(b"a{5,3}", REG_EXTENDED);
+        assert!(result.is_err(), "a{{5,3}} should fail to compile");
+        let err = result.unwrap_err();
+        assert_eq!(err, REG_BADBR, "should return REG_BADBR");
+    }
+
+    #[test]
+    fn glibc_unmatched_star_returns_reg_badrpt() {
+        // glibc: '*' without preceding atom returns REG_BADRPT
+        let result = regex_compile(b"*", REG_EXTENDED);
+        assert!(result.is_err(), "'*' alone should fail to compile");
+        let err = result.unwrap_err();
+        assert_eq!(err, REG_BADRPT, "should return REG_BADRPT");
+    }
 }
