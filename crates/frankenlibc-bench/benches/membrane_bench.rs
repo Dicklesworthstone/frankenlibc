@@ -15,7 +15,9 @@ use frankenlibc_membrane::fingerprint::{AllocationFingerprint, CANARY_SIZE, FING
 use frankenlibc_membrane::lattice::SafetyState;
 use frankenlibc_membrane::page_oracle::PageOracle;
 use frankenlibc_membrane::ptr_validator::ValidationPipeline;
-use frankenlibc_membrane::tls_cache::{CachedValidation, TlsValidationCache};
+use frankenlibc_membrane::tls_cache::{
+    CachedValidation, TlsValidationCache, snapshot_shard_epochs,
+};
 
 #[derive(Default)]
 struct BenchStats {
@@ -160,7 +162,7 @@ fn bench_membrane(c: &mut Criterion) {
                 generation: 7,
                 state: SafetyState::Readable,
             },
-            1,
+            &snapshot_shard_epochs(),
         );
 
         let stats = RefCell::new(BenchStats::default());
