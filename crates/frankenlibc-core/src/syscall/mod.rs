@@ -8119,4 +8119,44 @@ mod tests {
         assert!(fd >= 0, "fd should be non-negative");
         assert!(sys_close(fd).is_ok(), "close should succeed");
     }
+
+    // ===== glibc parity tests =====
+    // Verified against Linux x86_64 syscall numbers (glibc <sys/syscall.h>)
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn glibc_x86_64_syscall_numbers() {
+        // Core I/O syscalls
+        assert_eq!(SYS_READ, 0);
+        assert_eq!(SYS_WRITE, 1);
+        assert_eq!(SYS_OPEN, 2);
+        assert_eq!(SYS_CLOSE, 3);
+        assert_eq!(SYS_FSTAT, 5);
+        assert_eq!(SYS_LSEEK, 8);
+
+        // Memory management
+        assert_eq!(SYS_MMAP, 9);
+        assert_eq!(SYS_MPROTECT, 10);
+        assert_eq!(SYS_MUNMAP, 11);
+        assert_eq!(SYS_BRK, 12);
+
+        // File descriptors
+        assert_eq!(SYS_IOCTL, 16);
+        assert_eq!(SYS_PIPE, 22);
+        assert_eq!(SYS_DUP, 32);
+        assert_eq!(SYS_DUP2, 33);
+        assert_eq!(SYS_FCNTL, 72);
+
+        // Process
+        assert_eq!(SYS_GETPID, 39);
+        assert_eq!(SYS_CLONE, 56);
+        assert_eq!(SYS_FORK, 57);
+        assert_eq!(SYS_EXECVE, 59);
+        assert_eq!(SYS_EXIT, 60);
+        assert_eq!(SYS_WAIT4, 61);
+        assert_eq!(SYS_GETEUID, 107);
+
+        // Network
+        assert_eq!(SYS_SOCKET, 41);
+    }
 }
