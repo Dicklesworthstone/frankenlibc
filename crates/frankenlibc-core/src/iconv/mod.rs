@@ -255,7 +255,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Koi8R,
         canonical: "KOI8-R",
         normalized: "KOI8R",
-        aliases: &["KOI8R", "CSKOI8R"],
+        aliases: &["KOI8R", "CSKOI8R", "KOI8"],
     },
     CodecSpec {
         encoding: Encoding::Koi8U,
@@ -969,7 +969,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Big5,
         canonical: "BIG5",
         normalized: "BIG5",
-        aliases: &["CSBIG5", "BIG5TW", "BIGFIVE"],
+        aliases: &["CSBIG5", "BIG5TW", "BIGFIVE", "CNBIG5"],
     },
 ];
 
