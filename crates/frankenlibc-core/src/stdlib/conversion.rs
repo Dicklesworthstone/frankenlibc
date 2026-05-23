@@ -1737,4 +1737,46 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn strtoul_negative_one_wraps_to_max_without_overflow() {
+        // POSIX: strtoul("-1") should return ULONG_MAX via 2's complement
+        // wrapping, WITHOUT setting ERANGE. The negative sign is valid and
+        // the magnitude (1) is within range, so the result is u64::MAX.
+        let (val, consumed, status) = strtoul_impl(b"-1", 10);
+        assert_eq!(val, u64::MAX);
+        assert_eq!(consumed, 2);
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn strtoul_negative_value_wraps_correctly() {
+        // strtoul("-123") should return (u64::MAX - 122) = wrapping_neg(123)
+        let (val, consumed, status) = strtoul_impl(b"-123", 10);
+        assert_eq!(val, 123u64.wrapping_neg());
+        assert_eq!(consumed, 4);
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn strtol_invalid_base_returns_zero() {
+        // Base 1 and base 37 are invalid
+        let (val, consumed, status) = strtol_impl(b"123", 1);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+        assert_eq!(status, ConversionStatus::InvalidBase);
+
+        let (val, consumed, status) = strtol_impl(b"123", 37);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+        assert_eq!(status, ConversionStatus::InvalidBase);
+    }
+
+    #[test]
+    fn strtol_whitespace_only_returns_zero() {
+        // Just whitespace should return 0 with consumed=0
+        let (val, consumed, _) = strtol_impl(b"   ", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+    }
 }
