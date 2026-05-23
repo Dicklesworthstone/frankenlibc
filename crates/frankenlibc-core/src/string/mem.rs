@@ -409,4 +409,38 @@ mod tests {
             prop_assert_eq!(&buf[expected..], &original[expected..]);
         }
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_string_edge.c
+
+    #[test]
+    fn glibc_memchr_n_zero_returns_none() {
+        // memchr("hello", 'h', 0) = NULL even though 'h' is at position 0
+        assert_eq!(memchr(b"hello", b'h', 0), None);
+    }
+
+    #[test]
+    fn glibc_memcmp_n_zero_returns_equal() {
+        // memcmp("a", "b", 0) = 0 regardless of content
+        assert_eq!(memcmp(b"a", b"b", 0), core::cmp::Ordering::Equal);
+        assert_eq!(memcmp(b"xyz", b"abc", 0), core::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn glibc_memcmp_partial_compare() {
+        // memcmp("abc", "abx", 2) = 0 (only compares first 2 bytes)
+        assert_eq!(memcmp(b"abc", b"abx", 2), core::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn glibc_memmem_empty_needle_returns_zero() {
+        // memmem(haystack, 11, "", 0) returns start of haystack
+        assert_eq!(memmem(b"hello world", 11, b"", 0), Some(0));
+    }
+
+    #[test]
+    fn glibc_memrchr_finds_last_occurrence() {
+        // memrchr("hello", 'l', 5) = offset 3 (last 'l')
+        assert_eq!(memrchr(b"hello", b'l', 5), Some(3));
+    }
 }

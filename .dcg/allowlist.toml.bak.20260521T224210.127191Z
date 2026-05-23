@@ -1,0 +1,6 @@
+
+[[allow]]
+rule = "core.filesystem:rm-rf-general"
+reason = "Authorized by project owner (jeff) 2026-05-21: swarm-orchestrator stale build-artifact cleanup of .rch-target-*/rch_target_* scratch only"
+added_by = "ubuntu"
+added_at = "2026-05-21T06:40:42Z"

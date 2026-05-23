@@ -1285,4 +1285,81 @@ mod tests {
             prop_assert_eq!(strstr(&hay_c, &needle_c), expected);
         }
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_string_edge.c
+
+    #[test]
+    fn glibc_strchr_finds_nul_terminator() {
+        // strchr("hello", '\0') returns offset 5 (the NUL terminator)
+        assert_eq!(strchr(b"hello\0", 0), Some(5));
+    }
+
+    #[test]
+    fn glibc_strchr_not_found_returns_none() {
+        // strchr("hello", 'x') = NULL
+        assert_eq!(strchr(b"hello\0", b'x'), None);
+    }
+
+    #[test]
+    fn glibc_strstr_empty_needle_returns_zero() {
+        // strstr("hello world", "") returns offset 0
+        assert_eq!(strstr(b"hello world\0", b"\0"), Some(0));
+    }
+
+    #[test]
+    fn glibc_strstr_not_found_returns_none() {
+        // strstr("hello", "xyz") = NULL
+        assert_eq!(strstr(b"hello\0", b"xyz\0"), None);
+    }
+
+    #[test]
+    fn glibc_strncpy_no_nul_when_src_ge_n() {
+        // strncpy(buf, "hello", 3) does NOT NUL-terminate
+        let mut buf = [b'x'; 8];
+        strncpy(&mut buf, b"hello\0", 3);
+        assert_eq!(&buf[..4], b"helx"); // 4th byte unchanged
+    }
+
+    #[test]
+    fn glibc_strncpy_nul_pads_when_src_lt_n() {
+        // strncpy(buf, "hi", 10) NUL-pads remainder
+        let mut buf = [b'x'; 12];
+        strncpy(&mut buf, b"hi\0", 10);
+        assert_eq!(buf[5], 0); // NUL padding
+    }
+
+    #[test]
+    fn glibc_strcmp_empty_strings() {
+        // strcmp("", "") = 0
+        assert_eq!(strcmp(b"\0", b"\0"), 0);
+    }
+
+    #[test]
+    fn glibc_strncmp_truncated_compare() {
+        // strncmp("abcdef", "abcxyz", 3) = 0 (only first 3 bytes)
+        assert_eq!(strncmp(b"abcdef\0", b"abcxyz\0", 3), 0);
+    }
+
+    #[test]
+    fn glibc_strcasecmp_case_insensitive() {
+        // strcasecmp("Hello", "HELLO") = 0
+        assert_eq!(strcasecmp(b"Hello\0", b"HELLO\0"), 0);
+    }
+
+    #[test]
+    fn glibc_strspn_counts_initial_accept() {
+        // strspn("aaabcd", "a") = 3
+        assert_eq!(strspn(b"aaabcd\0", b"a\0"), 3);
+        // strspn("xyz", "abc") = 0
+        assert_eq!(strspn(b"xyz\0", b"abc\0"), 0);
+    }
+
+    #[test]
+    fn glibc_strcspn_counts_initial_reject() {
+        // strcspn("hello", "aeiou") = 1 (stops at 'e')
+        assert_eq!(strcspn(b"hello\0", b"aeiou\0"), 1);
+        // strcspn("hello", "xyz") = 5 (entire string)
+        assert_eq!(strcspn(b"hello\0", b"xyz\0"), 5);
+    }
 }
