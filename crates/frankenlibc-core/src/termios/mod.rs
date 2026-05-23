@@ -1045,4 +1045,66 @@ mod tests {
         // IEXTEN is 0o100000 which is well above input flag range 0o1..0o10000
         assert_eq!(all_iflag & IEXTEN, 0);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <termios.h> constants
+
+    #[test]
+    fn glibc_tcsetattr_action_constants() {
+        // TCSANOW=0, TCSADRAIN=1, TCSAFLUSH=2
+        assert_eq!(TCSANOW, 0);
+        assert_eq!(TCSADRAIN, 1);
+        assert_eq!(TCSAFLUSH, 2);
+    }
+
+    #[test]
+    fn glibc_standard_baud_rates() {
+        // Standard baud rates match glibc values
+        assert_eq!(B0, 0);
+        assert_eq!(B9600, 13);
+        assert_eq!(B19200, 14);
+        assert_eq!(B38400, 15);
+        assert_eq!(B115200, 0o10002);
+    }
+
+    #[test]
+    fn glibc_cc_indices() {
+        // c_cc indices match glibc
+        assert_eq!(VINTR, 0);
+        assert_eq!(VQUIT, 1);
+        assert_eq!(VERASE, 2);
+        assert_eq!(VKILL, 3);
+        assert_eq!(VEOF, 4);
+        assert_eq!(VTIME, 5);
+        assert_eq!(VMIN, 6);
+        assert_eq!(NCCS, 32);
+    }
+
+    #[test]
+    fn glibc_input_flag_values() {
+        // Input flags match glibc octal values
+        assert_eq!(IGNBRK, 0o1);
+        assert_eq!(BRKINT, 0o2);
+        assert_eq!(ICRNL, 0o400);
+        assert_eq!(IXON, 0o2000);
+    }
+
+    #[test]
+    fn glibc_local_flag_values() {
+        // Local flags match glibc
+        assert_eq!(ISIG, 0o1);
+        assert_eq!(ICANON, 0o2);
+        assert_eq!(ECHO, 0o10);
+        assert_eq!(ECHONL, 0o100);
+    }
+
+    #[test]
+    fn glibc_csize_values() {
+        // Character size flags
+        assert_eq!(CS5, 0o0);
+        assert_eq!(CS6, 0o20);
+        assert_eq!(CS7, 0o40);
+        assert_eq!(CS8, 0o60);
+        assert_eq!(CSIZE, 0o60);
+    }
 }
