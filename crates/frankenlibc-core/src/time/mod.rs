@@ -1005,6 +1005,30 @@ mod tests {
     }
 
     #[test]
+    fn strftime_iso_week_year_boundary() {
+        // Jan 1, 2021 is a Friday - belongs to ISO week 53 of 2020
+        // (ISO year differs from calendar year)
+        let mut bd = BrokenDownTime::default();
+        bd.tm_year = 121;  // 2021
+        bd.tm_mon = 0;     // January
+        bd.tm_mday = 1;
+        bd.tm_wday = 5;    // Friday
+        bd.tm_yday = 0;
+        let mut buf = [0u8; 64];
+        let n = format_strftime(b"%G-W%V-%u", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"2020-W53-5");
+
+        // Dec 31, 2020 is Thursday - ISO week 53 of 2020
+        bd.tm_year = 120;  // 2020
+        bd.tm_mon = 11;    // December
+        bd.tm_mday = 31;
+        bd.tm_wday = 4;    // Thursday
+        bd.tm_yday = 365;  // leap year
+        let n = format_strftime(b"%G-W%V-%u", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"2020-W53-4");
+    }
+
+    #[test]
     fn strftime_newline_and_tab() {
         let bd = epoch_to_broken_down(0);
         let mut buf = [0u8; 64];
