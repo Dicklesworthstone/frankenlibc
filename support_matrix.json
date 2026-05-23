@@ -17226,7 +17226,7 @@
     },
     {
       "symbol": "__asprintf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17261,7 +17261,7 @@
     },
     {
       "symbol": "__clone",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17396,7 +17396,7 @@
     },
     {
       "symbol": "__fdelt_warn",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17421,7 +17421,7 @@
     },
     {
       "symbol": "__fork",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17476,12 +17476,12 @@
     },
     {
       "symbol": "__getauxval",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__getdelim",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17491,7 +17491,7 @@
     },
     {
       "symbol": "__getpagesize",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17521,12 +17521,12 @@
     },
     {
       "symbol": "__inet_ntop_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__inet_pton_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17828,7 +17828,7 @@
     },
     {
       "symbol": "__mempcpy_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17848,7 +17848,7 @@
     },
     {
       "symbol": "__mq_open_2",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17858,7 +17858,7 @@
     },
     {
       "symbol": "__newlocale",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17923,27 +17923,27 @@
     },
     {
       "symbol": "__overflow",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__pipe",
-      "status": "WrapsHostLibc",
-      "module": "glibc_internal_abi"
+      "status": "Implemented",
+      "module": "io_abi"
     },
     {
       "symbol": "__poll",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__posix_getopt",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__pread64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18129,7 +18129,7 @@
     },
     {
       "symbol": "__read",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18164,7 +18164,7 @@
     },
     {
       "symbol": "__res_mkquery",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18179,7 +18179,7 @@
     },
     {
       "symbol": "__res_nmkquery",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18189,7 +18189,7 @@
     },
     {
       "symbol": "__res_nquerydomain",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18199,7 +18199,7 @@
     },
     {
       "symbol": "__res_nsend",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18214,7 +18214,7 @@
     },
     {
       "symbol": "__res_querydomain",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18294,12 +18294,12 @@
     },
     {
       "symbol": "__secure_getenv",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__select",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18319,7 +18319,7 @@
     },
     {
       "symbol": "__sigaction",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18349,12 +18349,12 @@
     },
     {
       "symbol": "__sigsetjmp",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__sigsuspend",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18448,12 +18448,12 @@
     },
     {
       "symbol": "__strlcat_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__strlcpy_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18536,7 +18536,7 @@
     },
     {
       "symbol": "__strtof128_internal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18637,12 +18637,12 @@
     },
     {
       "symbol": "__sysconf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__sysctl",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18703,12 +18703,12 @@
     },
     {
       "symbol": "__uflow",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__underflow",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18718,17 +18718,17 @@
     },
     {
       "symbol": "__vfork",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__vfscanf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__vsnprintf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18748,17 +18748,17 @@
     },
     {
       "symbol": "__wcpcpy_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__wcpncpy_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__wcrtomb_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18778,12 +18778,12 @@
     },
     {
       "symbol": "__wcslcat_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__wcslcpy_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18883,12 +18883,12 @@
     },
     {
       "symbol": "__wmempcpy_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__woverflow",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18898,12 +18898,12 @@
     },
     {
       "symbol": "__wuflow",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__wunderflow",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18913,7 +18913,7 @@
     },
     {
       "symbol": "__xmknod",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18923,7 +18923,7 @@
     },
     {
       "symbol": "__xpg_sigpause",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18953,7 +18953,7 @@
     },
     {
       "symbol": "_flushlbf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19088,7 +19088,7 @@
     },
     {
       "symbol": "adjtime",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19098,7 +19098,7 @@
     },
     {
       "symbol": "arch_prctl",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19153,7 +19153,7 @@
     },
     {
       "symbol": "bdflush",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19183,22 +19183,22 @@
     },
     {
       "symbol": "cfsetbaud",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "cfsetibaud",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "cfsetobaud",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "chflags",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19273,7 +19273,7 @@
     },
     {
       "symbol": "create_module",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19293,7 +19293,7 @@
     },
     {
       "symbol": "dladdr1",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19303,7 +19303,7 @@
     },
     {
       "symbol": "dlmopen",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19345,17 +19345,17 @@
     },
     {
       "symbol": "fattach",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "fchflags",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "fdetach",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19390,7 +19390,7 @@
     },
     {
       "symbol": "get_kernel_syms",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19405,22 +19405,22 @@
     },
     {
       "symbol": "getdirentries",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "getdirentries64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "getipv4sourcefilter",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "getmsg",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19430,7 +19430,7 @@
     },
     {
       "symbol": "getpmsg",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19440,7 +19440,7 @@
     },
     {
       "symbol": "getpw",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19455,7 +19455,7 @@
     },
     {
       "symbol": "getsourcefilter",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19475,7 +19475,7 @@
     },
     {
       "symbol": "gtty",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19665,7 +19665,7 @@
     },
     {
       "symbol": "isfdtype",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19812,7 +19812,7 @@
     },
     {
       "symbol": "lchmod",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19857,22 +19857,22 @@
     },
     {
       "symbol": "mkostemp64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "mkostemps64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "mkstemp64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "mkstemps64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20285,12 +20285,12 @@
     },
     {
       "symbol": "ns_name_compress",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ns_name_ntop",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20300,7 +20300,7 @@
     },
     {
       "symbol": "ns_name_pton",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20310,7 +20310,7 @@
     },
     {
       "symbol": "ns_name_uncompress",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20365,12 +20365,12 @@
     },
     {
       "symbol": "pidfd_spawn",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "pidfd_spawnp",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20475,22 +20475,22 @@
     },
     {
       "symbol": "putgrent",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "putmsg",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "putpmsg",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "putpwent",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20500,17 +20500,17 @@
     },
     {
       "symbol": "query_module",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "rcmd",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "rcmd_af",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20535,22 +20535,22 @@
     },
     {
       "symbol": "register_printf_function",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_modifier",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_specifier",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_type",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20584,12 +20584,12 @@
     },
     {
       "symbol": "res_mkquery",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_nmkquery",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20599,7 +20599,7 @@
     },
     {
       "symbol": "res_nquerydomain",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20609,7 +20609,7 @@
     },
     {
       "symbol": "res_nsend",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20619,27 +20619,27 @@
     },
     {
       "symbol": "res_querydomain",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_send",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "revoke",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "rexec",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "rexec_af",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20654,12 +20654,12 @@
     },
     {
       "symbol": "rresvport",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "rresvport_af",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20689,17 +20689,17 @@
     },
     {
       "symbol": "scandirat",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "scandirat64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "sem_clockwait",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20719,22 +20719,22 @@
     },
     {
       "symbol": "sethostid",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "setipv4sourcefilter",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "setlogin",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "setsourcefilter",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20754,12 +20754,12 @@
     },
     {
       "symbol": "sprofil",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "sstk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20769,7 +20769,7 @@
     },
     {
       "symbol": "stime",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -20816,57 +20816,57 @@
     },
     {
       "symbol": "strtof128",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof128_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof32",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof32_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof32x",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof32x_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof64_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof64x",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "strtof64x_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "stty",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -21011,7 +21011,7 @@
     },
     {
       "symbol": "sysctl",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -21062,7 +21062,7 @@
     },
     {
       "symbol": "ulimit",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -21082,7 +21082,7 @@
     },
     {
       "symbol": "ustat",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -21102,12 +21102,12 @@
     },
     {
       "symbol": "vlimit",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "vtimes",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -21172,12 +21172,12 @@
     },
     {
       "symbol": "wcstoq",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "wcstouq",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -21865,7 +21865,7 @@
     },
     {
       "symbol": "nfsservctl",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -22068,7 +22068,7 @@
     },
     {
       "symbol": "__fseeko64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22077,7 +22077,7 @@
     },
     {
       "symbol": "__ftello64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22104,7 +22104,7 @@
     },
     {
       "symbol": "__mktemp",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22140,7 +22140,7 @@
     },
     {
       "symbol": "__inet6_scopeid_pton",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22329,7 +22329,7 @@
     },
     {
       "symbol": "__gconv_close",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": "Native GLIBC_PRIVATE shim over frankenlibc iconv_close",
@@ -22338,7 +22338,7 @@
     },
     {
       "symbol": "__gconv_open",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": "Native GLIBC_PRIVATE shim over frankenlibc iconv_open",
@@ -22401,7 +22401,7 @@
     },
     {
       "symbol": "__resolv_context_get_override",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22410,7 +22410,7 @@
     },
     {
       "symbol": "__resolv_context_freeres",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22419,7 +22419,7 @@
     },
     {
       "symbol": "__resolv_context_get",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22428,7 +22428,7 @@
     },
     {
       "symbol": "__resolv_context_get_preinit",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22437,7 +22437,7 @@
     },
     {
       "symbol": "__resolv_context_put",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22455,7 +22455,7 @@
     },
     {
       "symbol": "__idna_to_dns_encoding",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": "Native Punycode/IDNA encoding per RFC 3492",
@@ -22464,7 +22464,7 @@
     },
     {
       "symbol": "__idna_from_dns_encoding",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": "Native Punycode/IDNA encoding per RFC 3492",
@@ -22473,7 +22473,7 @@
     },
     {
       "symbol": "__ns_name_ntop",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22482,7 +22482,7 @@
     },
     {
       "symbol": "__ns_name_pton",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22500,7 +22500,7 @@
     },
     {
       "symbol": "__ns_name_pack",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22509,7 +22509,7 @@
     },
     {
       "symbol": "__ns_name_compress",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22518,7 +22518,7 @@
     },
     {
       "symbol": "__ns_name_uncompress",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22527,7 +22527,7 @@
     },
     {
       "symbol": "__ns_name_unpack",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22536,7 +22536,7 @@
     },
     {
       "symbol": "__ns_name_skip",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22545,7 +22545,7 @@
     },
     {
       "symbol": "__ns_samename",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -22572,7 +22572,7 @@
     },
     {
       "symbol": "__file_change_detection_for_fp",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23841,7 +23841,7 @@
     },
     {
       "symbol": "__libc_malloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23850,7 +23850,7 @@
     },
     {
       "symbol": "__libc_calloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23859,7 +23859,7 @@
     },
     {
       "symbol": "__libc_realloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23868,7 +23868,7 @@
     },
     {
       "symbol": "__libc_free",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23877,7 +23877,7 @@
     },
     {
       "symbol": "__libc_memalign",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23886,7 +23886,7 @@
     },
     {
       "symbol": "__libc_valloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23895,7 +23895,7 @@
     },
     {
       "symbol": "__libc_pvalloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23904,7 +23904,7 @@
     },
     {
       "symbol": "__libc_reallocarray",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23922,7 +23922,7 @@
     },
     {
       "symbol": "__libc_fork",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23931,7 +23931,7 @@
     },
     {
       "symbol": "__libc_system",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23940,7 +23940,7 @@
     },
     {
       "symbol": "__libc_pread",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23949,7 +23949,7 @@
     },
     {
       "symbol": "__libc_pwrite",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -23958,7 +23958,7 @@
     },
     {
       "symbol": "__libc_sigaction",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
