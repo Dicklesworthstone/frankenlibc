@@ -270,7 +270,7 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
         libc::ALT_DIGITS => b"\0",
         libc::YESEXPR => b"^[yY]\0",
         libc::NOEXPR => b"^[nN]\0",
-        libc::CRNCYSTR => b"\0",
+        libc::CRNCYSTR => b"-\0", // glibc C locale: "-" (currency precedes, no sign)
         _ => EMPTY_LOCALE_STR,
     };
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
@@ -731,6 +731,15 @@ mod tests {
         assert!(!result.is_null());
         let val = unsafe { CStr::from_ptr(result) };
         assert_eq!(val.to_bytes(), b"ANSI_X3.4-1968");
+    }
+
+    #[test]
+    fn nl_langinfo_crncystr_returns_dash() {
+        // glibc C locale returns "-" for CRNCYSTR (currency precedes negative amounts).
+        let result = unsafe { nl_langinfo(libc::CRNCYSTR) };
+        assert!(!result.is_null());
+        let val = unsafe { CStr::from_ptr(result) };
+        assert_eq!(val.to_bytes(), b"-");
     }
 
     #[test]
