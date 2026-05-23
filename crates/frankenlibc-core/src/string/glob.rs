@@ -71,12 +71,19 @@ fn has_magic(pat: &[u8], noescape: bool) -> bool {
 
 /// Split pattern into directory prefix (no metacharacters) and the rest.
 /// Returns (dir, pattern_tail).
-fn split_pattern(pat: &[u8]) -> (&[u8], &[u8]) {
+///
+/// Mirrors `has_magic` in honoring `GLOB_NOESCAPE`: under `noescape`, `\` is a
+/// literal byte rather than an escape, so the metacharacter scan must not skip
+/// past it. If it did, a pattern such as `foo\*bar/baz` would have its magic
+/// `*` folded into the literal directory prefix and `read_dir` would be called
+/// on the literal path `foo\*bar` instead of pattern-matching `foo\*bar` as a
+/// directory-component pattern with `\` literal and `*` wild.
+fn split_pattern(pat: &[u8], noescape: bool) -> (&[u8], &[u8]) {
     // Find the last '/' before the first metacharacter.
     let mut first_meta = pat.len();
     let mut i = 0;
     while i < pat.len() {
-        if pat[i] == b'\\' {
+        if pat[i] == b'\\' && !noescape {
             i += 2;
             continue;
         }
@@ -185,7 +192,7 @@ where
     }
 
     let mut results = Vec::new();
-    glob_recursive(pat, flags, &mut results, &mut errfunc)?;
+    glob_recursive(b"", pat, flags, &mut results, &mut errfunc)?;
 
     if results.is_empty() {
         if flags & GLOB_NOCHECK != 0 {
@@ -205,8 +212,18 @@ where
 }
 
 /// Recursively expand a glob pattern with directory traversal.
+///
+/// `resolved_prefix` is the already-resolved literal directory path produced by
+/// matching outer pattern components (or empty at the top level). It is treated
+/// as literal bytes and never re-split for metacharacters, so a real directory
+/// whose name legally contains `*`, `?`, or `[` is not re-interpreted as a
+/// pattern on subsequent recursions. The previous design rebuilt the full path
+/// (`resolved + name + "/" + rest`) and re-ran `split_pattern` on the whole
+/// string, which let a literal `*` in a resolved directory name match
+/// outer-level siblings and could recurse without progress.
 fn glob_recursive<F>(
-    pat: &[u8],
+    resolved_prefix: &[u8],
+    pattern: &[u8],
     flags: i32,
     results: &mut Vec<Vec<u8>>,
     errfunc: &mut F,
@@ -214,20 +231,25 @@ fn glob_recursive<F>(
 where
     F: FnMut(&[u8], i32) -> bool,
 {
-    let (dir_prefix, tail) = split_pattern(pat);
+    let noescape = flags & GLOB_NOESCAPE != 0;
+    let (dir_prefix, tail) = split_pattern(pattern, noescape);
 
     // Split tail at the next '/' to get the component pattern.
     let (component_pat, rest) = match tail.iter().position(|&b| b == b'/') {
         Some(pos) => (&tail[..pos], &tail[pos + 1..]),
         None => (tail, &[] as &[u8]),
     };
-    let noescape = flags & GLOB_NOESCAPE != 0;
 
-    // Determine the directory to read.
-    let dir_path = if dir_prefix.is_empty() {
+    // The directory to read is the literal resolved_prefix concatenated with
+    // the pattern's pre-magic literal prefix that split_pattern just returned.
+    let mut full_dir = Vec::with_capacity(resolved_prefix.len() + dir_prefix.len());
+    full_dir.extend_from_slice(resolved_prefix);
+    full_dir.extend_from_slice(dir_prefix);
+
+    let dir_path = if full_dir.is_empty() {
         Path::new(".")
     } else {
-        Path::new(OsStr::from_bytes(dir_prefix))
+        Path::new(OsStr::from_bytes(&full_dir))
     };
 
     // Read directory entries.
@@ -238,7 +260,7 @@ where
             if errno == crate::errno::ENOTDIR {
                 return Ok(());
             }
-            let failed_path = failed_directory_path(dir_prefix);
+            let failed_path = failed_directory_path(&full_dir);
             let callback_aborted = errfunc(&failed_path, errno);
             if callback_aborted || flags & GLOB_ERR != 0 {
                 return Err(GLOB_ABORTED);
@@ -268,11 +290,9 @@ where
             continue;
         }
 
-        // Build the full path.
-        let mut full_path = Vec::new();
-        if !dir_prefix.is_empty() {
-            full_path.extend_from_slice(dir_prefix);
-        }
+        // Build the full path = resolved_prefix + dir_prefix + name.
+        let mut full_path = Vec::with_capacity(full_dir.len() + name_bytes.len());
+        full_path.extend_from_slice(&full_dir);
         full_path.extend_from_slice(name_bytes);
 
         // Resolve whether this entry is (or points to) a directory.
@@ -298,10 +318,14 @@ where
             }
             results.push(full_path);
         } else if resolves_to_dir {
-            // More pattern components remain — recurse into directory.
+            // More pattern components remain — recurse with the matched
+            // directory absorbed into resolved_prefix (treated as literal),
+            // and `rest` as the new pattern to split. This prevents
+            // metacharacters in the resolved name (`*`, `?`, `[` are all
+            // legal POSIX filename bytes) from being re-interpreted as
+            // pattern syntax on subsequent recursions.
             full_path.push(b'/');
-            full_path.extend_from_slice(rest);
-            glob_recursive(&full_path, flags, results, errfunc)?;
+            glob_recursive(&full_path, rest, flags, results, errfunc)?;
         }
     }
 
@@ -364,17 +388,37 @@ mod tests {
 
     #[test]
     fn test_split_pattern() {
-        let (dir, tail) = split_pattern(b"/usr/lib/*.so");
+        let (dir, tail) = split_pattern(b"/usr/lib/*.so", false);
         assert_eq!(dir, b"/usr/lib/");
         assert_eq!(tail, b"*.so");
 
-        let (dir, tail) = split_pattern(b"*.txt");
+        let (dir, tail) = split_pattern(b"*.txt", false);
         assert_eq!(dir, b"");
         assert_eq!(tail, b"*.txt");
 
-        let (dir, tail) = split_pattern(b"/absolute/path");
+        let (dir, tail) = split_pattern(b"/absolute/path", false);
         assert_eq!(dir, b"/absolute/");
         assert_eq!(tail, b"path");
+    }
+
+    #[test]
+    fn split_pattern_honors_glob_noescape() {
+        // Without GLOB_NOESCAPE the backslash escapes the next byte, so the
+        // metacharacter scan correctly skips past `\*` and `*` does not count
+        // as magic; the whole prefix `foo\*bar/` is the literal directory.
+        let (dir, tail) = split_pattern(b"foo\\*bar/baz", false);
+        assert_eq!(dir, b"foo\\*bar/");
+        assert_eq!(tail, b"baz");
+
+        // Under GLOB_NOESCAPE the backslash is a literal byte; the `*` keeps
+        // its magic meaning, so the literal directory prefix is empty (there
+        // is no `/` before the first metacharacter).
+        let (dir, tail) = split_pattern(b"foo\\*bar/baz", true);
+        assert_eq!(dir, b"");
+        assert_eq!(tail, b"foo\\*bar/baz");
+
+        // Agreement with has_magic, which is the contract this split assumes.
+        assert!(has_magic(b"foo\\*bar/baz", true));
     }
 
     #[test]
@@ -592,6 +636,41 @@ mod tests {
             marked.paths[0].ends_with(b"/"),
             "symlinked directory must be marked with trailing slash"
         );
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn glob_does_not_reinterpret_resolved_directory_names_as_patterns() {
+        // A real directory whose name legally contains a glob metacharacter
+        // (here `*`) must not be re-interpreted as a pattern when the glob
+        // recursion descends through it. The previous design rebuilt the
+        // full path (`dir_prefix + name + "/" + rest`) and re-ran
+        // `split_pattern` on the whole string, which let the literal `*` in
+        // the resolved name re-match outer-level siblings on each recursion
+        // and could recurse without progress (effectively unbounded).
+        let temp = unique_glob_test_dir("literal_star_dir");
+        let star_dir = temp.join("a*b");
+        let sibling = temp.join("axxb");
+        std::fs::create_dir_all(&star_dir).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        std::fs::write(star_dir.join("inside.txt"), b"target").unwrap();
+        std::fs::write(sibling.join("inside.txt"), b"decoy").unwrap();
+
+        // Outer-level pattern `a*b` legitimately matches both `a*b` (a
+        // wildcard-style match against the literal `*` in the name) and
+        // `axxb`; within each, `inside.txt` is matched literally. What must
+        // NOT happen is unbounded recursion or duplicate hits from
+        // re-running the splitter on the resolved name.
+        let mut pat = temp.as_os_str().as_bytes().to_vec();
+        pat.extend_from_slice(b"/a*b/inside.txt\0");
+
+        let res = glob_expand(&pat, 0).expect("must match across both real dirs");
+        let mut found: Vec<&[u8]> = res.paths.iter().map(|p| p.as_slice()).collect();
+        found.sort();
+        assert_eq!(found.len(), 2, "got {:?}", res.paths);
+        assert!(found[0].ends_with(b"/a*b/inside.txt"));
+        assert!(found[1].ends_with(b"/axxb/inside.txt"));
 
         let _ = std::fs::remove_dir_all(&temp);
     }
