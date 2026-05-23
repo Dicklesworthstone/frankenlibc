@@ -20,7 +20,13 @@ use crate::tls_cache::bump_shard_epoch;
 const QUARANTINE_MAX_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 
 /// Number of shards for arena locks (power of 2).
-const NUM_SHARDS: usize = 16;
+///
+/// MUST equal `crate::tls_cache::NUM_TLS_CACHE_SHARDS`. The two constants
+/// share the same `(addr >> 12) % N` derivation so that a free of a slot in
+/// arena shard `s` bumps the matching `tls_cache::SHARD_EPOCHS[s]`. Drift
+/// would let cached `Valid` hits survive across frees in the same address
+/// region. The invariant is pinned by a `const _` assertion in `tls_cache.rs`.
+pub(crate) const NUM_SHARDS: usize = 16;
 
 /// Metadata for a single allocation slot.
 #[derive(Debug, Clone, Copy)]
@@ -1203,9 +1209,12 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════
     // INTEGRATION: Concurrent arena alloc/free with TLS cache
     //
-    // Multiple threads concurrently allocating and freeing while
-    // the TLS cache epoch is being bumped by frees. Validates that
-    // epochs remain monotonically non-decreasing.
+    // Multiple threads concurrently allocate and free while the
+    // per-shard TLS-cache epochs are bumped by frees. `current_epoch()`
+    // is the max across all 16 shards (a compat summary; the live
+    // invalidation tag is now per-shard, see `tls_cache.rs`); since
+    // each shard's atomic counter is monotonic, the max across them is
+    // also monotonic from any single thread's perspective.
     // ═══════════════════════════════════════════════════════════════
 
     #[test]
@@ -1232,11 +1241,15 @@ mod tests {
                     }
                     assert_eq!(result, FreeResult::Freed);
 
-                    // Epoch must be monotonically non-decreasing
+                    // `current_epoch()` = max across shards — non-decreasing
+                    // per thread because each individual shard atomic is
+                    // monotonic and a thread always sees at least its own
+                    // post-free bump (Acquire after Release on same location).
                     let epoch = current_epoch();
                     assert!(
                         epoch >= prev_epoch,
-                        "TLS cache epoch must be monotonic: {epoch} < {prev_epoch}"
+                        "TLS cache epoch (max across shards) must be \
+                         non-decreasing per-thread: {epoch} < {prev_epoch}"
                     );
                     prev_epoch = epoch;
                 }

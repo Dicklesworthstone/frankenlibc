@@ -53,6 +53,24 @@ const CACHE_MASK: usize = CACHE_SIZE - 1;
 /// `SHARD_EPOCHS` is indexed by that shard id.
 pub const NUM_TLS_CACHE_SHARDS: usize = 16;
 
+// Drift between the arena's sharding and the TLS cache's would let a free in
+// arena shard `s` bump the wrong `SHARD_EPOCHS` entry (or none at all),
+// allowing stale `Valid` cache hits to survive across the free. Pin the
+// invariant at compile time.
+const _: () = assert!(
+    NUM_TLS_CACHE_SHARDS == crate::arena::NUM_SHARDS,
+    "NUM_TLS_CACHE_SHARDS must equal arena::NUM_SHARDS so per-shard \
+     invalidation matches arena's shard placement",
+);
+
+// `CacheEntry::shard_idx` is `u8` to keep cache entries compact (the array
+// has 1024 of them on every thread). Catch a future increase of the shard
+// count past what u8 can index before it silently truncates.
+const _: () = assert!(
+    NUM_TLS_CACHE_SHARDS <= 256,
+    "CacheEntry::shard_idx is u8; raise its type before pushing past 256 shards",
+);
+
 /// Per-shard invalidation stamps.
 ///
 /// `arena::free` for a slot in shard `s` bumps `SHARD_EPOCHS[s]`. Cached

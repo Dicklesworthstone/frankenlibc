@@ -1584,8 +1584,10 @@ impl ValidationPipeline {
         // Runtime-math fast profile in strict mode skips deep integrity checks.
         if !deep_decision.requires_full_validation() && !mode.heals_enabled() {
             let abs = self.abstraction_from_slot(addr, &slot);
-            if let Some(snapshot) = validation_shard_epochs {
-                self.cache_validation(addr, &slot, &snapshot);
+            // Borrow the snapshot rather than copying — `[u64; NUM_TLS_CACHE_SHARDS]`
+            // is 128 bytes and we hit this path on every cached fast-profile hit.
+            if let Some(snapshot) = validation_shard_epochs.as_ref() {
+                self.cache_validation(addr, &slot, snapshot);
             }
             self.runtime_math.note_check_order_outcome(
                 mode,
@@ -1771,8 +1773,11 @@ impl ValidationPipeline {
         }
 
         let abs = self.abstraction_from_slot(addr, &slot);
-        if let Some(snapshot) = validation_shard_epochs {
-            self.cache_validation(addr, &slot, &snapshot);
+        // Borrow the snapshot rather than copying — `[u64; NUM_TLS_CACHE_SHARDS]`
+        // is 128 bytes; the full-validation path here is rarer than the fast
+        // profile above but the borrow still costs nothing extra.
+        if let Some(snapshot) = validation_shard_epochs.as_ref() {
+            self.cache_validation(addr, &slot, snapshot);
         }
         self.runtime_math.note_check_order_outcome(
             mode,
