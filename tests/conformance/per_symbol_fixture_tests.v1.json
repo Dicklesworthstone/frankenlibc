@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-05-15T17:42:32Z",
+  "generated_at": "2026-05-23T16:12:56Z",
   "report_hash": "b3f2882c9aa1009b",
   "summary": {
     "total_symbols": 4119,
     "symbols_with_fixtures": 1160,
     "symbols_without_fixtures": 2959,
     "fixture_coverage_pct": 28.2,
-    "implemented_coverage_pct": 27.0,
+    "implemented_coverage_pct": 24.9,
     "total_fixture_files": 126,
     "total_cases": 2774,
     "total_format_issues": 0,
     "symbols_with_edge_cases": 690,
     "symbols_with_errno_checks": 1157,
-    "total_quality_issues": 3409,
-    "uncovered_action_count": 2959
+    "total_quality_issues": 3330,
+    "uncovered_action_count": 2880
   },
   "fixture_file_analyses": [
     {
@@ -1214,7 +1214,7 @@
     },
     {
       "symbol": "_IO_default_pbackfail",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1223,13 +1223,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_default_uflow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1238,13 +1236,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_default_xsgetn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1253,13 +1249,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_default_xsputn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1268,13 +1262,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_do_write",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1283,9 +1275,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_doallocbuf",
@@ -1330,7 +1320,7 @@
     },
     {
       "symbol": "_IO_fclose",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1339,13 +1329,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fdopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1354,13 +1342,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_feof",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -1380,7 +1366,7 @@
     },
     {
       "symbol": "_IO_ferror",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -1400,7 +1386,7 @@
     },
     {
       "symbol": "_IO_fflush",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1409,13 +1395,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fgetpos",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1424,13 +1408,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fgetpos64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1439,13 +1421,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fgets",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1454,13 +1434,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_attach",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1469,13 +1447,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_close",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1484,13 +1460,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_close_it",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1499,9 +1473,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_doallocate",
@@ -1535,7 +1507,7 @@
     },
     {
       "symbol": "_IO_file_fopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1544,9 +1516,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_init",
@@ -1586,7 +1556,7 @@
     },
     {
       "symbol": "_IO_file_open",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1595,13 +1565,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_overflow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1610,13 +1578,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_read",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1625,13 +1591,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_seek",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1640,13 +1604,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_seekoff",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1655,13 +1617,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_setbuf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1670,13 +1630,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_stat",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1685,13 +1643,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_sync",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1700,13 +1656,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_underflow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1715,13 +1669,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_write",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1730,13 +1682,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_file_xsputn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1745,13 +1695,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_flockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -1771,7 +1719,7 @@
     },
     {
       "symbol": "_IO_flush_all",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1780,13 +1728,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_flush_all_linebuffered",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1795,13 +1741,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1810,13 +1754,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fprintf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1825,13 +1767,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fputs",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1840,13 +1780,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fread",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1855,9 +1793,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_free_backup_area",
@@ -1903,7 +1839,7 @@
     },
     {
       "symbol": "_IO_fsetpos",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1912,13 +1848,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_fsetpos64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1927,13 +1861,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_ftell",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1942,13 +1874,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_ftrylockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -1968,7 +1898,7 @@
     },
     {
       "symbol": "_IO_funlockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -1988,7 +1918,7 @@
     },
     {
       "symbol": "_IO_fwrite",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -1997,13 +1927,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_getc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2023,7 +1951,7 @@
     },
     {
       "symbol": "_IO_getline",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2032,13 +1960,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_getline_info",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2047,13 +1973,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_gets",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2062,9 +1986,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_init",
@@ -2344,7 +2266,7 @@
     },
     {
       "symbol": "_IO_padn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2364,7 +2286,7 @@
     },
     {
       "symbol": "_IO_peekc_locked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2384,7 +2306,7 @@
     },
     {
       "symbol": "_IO_popen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2393,13 +2315,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_printf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2408,13 +2328,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_proc_close",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2423,13 +2341,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_proc_open",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2438,13 +2354,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_putc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2464,7 +2378,7 @@
     },
     {
       "symbol": "_IO_puts",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2521,7 +2435,7 @@
     },
     {
       "symbol": "_IO_seekoff",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2541,7 +2455,7 @@
     },
     {
       "symbol": "_IO_seekpos",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2591,7 +2505,7 @@
     },
     {
       "symbol": "_IO_setbuffer",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2600,13 +2514,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_setvbuf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2615,13 +2527,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_sgetn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2641,7 +2551,7 @@
     },
     {
       "symbol": "_IO_sprintf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2650,13 +2560,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_sputbackc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2665,13 +2573,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_sputbackwc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2680,9 +2586,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_sscanf",
@@ -2845,7 +2749,7 @@
     },
     {
       "symbol": "_IO_switch_to_get_mode",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2854,9 +2758,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_switch_to_main_wget_area",
@@ -2890,7 +2792,7 @@
     },
     {
       "symbol": "_IO_switch_to_wget_mode",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -2932,7 +2834,7 @@
     },
     {
       "symbol": "_IO_ungetc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2941,9 +2843,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_unsave_markers",
@@ -2977,7 +2877,7 @@
     },
     {
       "symbol": "_IO_vfprintf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -2986,13 +2886,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_vfscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3001,13 +2899,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_vsprintf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3016,9 +2912,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_wdefault_doallocate",
@@ -3058,7 +2952,7 @@
     },
     {
       "symbol": "_IO_wdefault_pbackfail",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3067,13 +2961,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_wdefault_uflow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -3094,7 +2986,7 @@
     },
     {
       "symbol": "_IO_wdefault_xsgetn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3103,13 +2995,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_wdefault_xsputn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3118,9 +3008,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_wdo_write",
@@ -3169,7 +3057,7 @@
     },
     {
       "symbol": "_IO_wfile_overflow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3178,13 +3066,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_wfile_seekoff",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3193,13 +3079,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_wfile_sync",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -3220,7 +3104,7 @@
     },
     {
       "symbol": "_IO_wfile_underflow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3229,13 +3113,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_wfile_xsputn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "io_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -3244,9 +3126,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_IO_wmarker_delta",
@@ -4701,7 +4581,7 @@
     },
     {
       "symbol": "__cxa_thread_atexit_impl",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "startup_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -4710,9 +4590,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "__cyg_profile_func_enter",
@@ -5703,7 +5581,7 @@
     },
     {
       "symbol": "__frankenlibc_startup_phase0",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "startup_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -5723,7 +5601,7 @@
     },
     {
       "symbol": "__frankenlibc_startup_snapshot",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "startup_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -7047,7 +6925,7 @@
     },
     {
       "symbol": "__isoc23_fscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -7087,7 +6965,7 @@
     },
     {
       "symbol": "__isoc23_scanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -7299,7 +7177,7 @@
     },
     {
       "symbol": "__isoc23_vfscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -7339,7 +7217,7 @@
     },
     {
       "symbol": "__isoc23_vscanf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -9013,7 +8891,7 @@
     },
     {
       "symbol": "__libc_start_main",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "startup_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -10332,7 +10210,7 @@
     {
       "symbol": "__pipe",
       "status": "Implemented",
-      "module": "glibc_internal_abi",
+      "module": "io_abi",
       "perf_class": "",
       "has_fixtures": false,
       "case_count": 0,
@@ -10759,7 +10637,7 @@
     },
     {
       "symbol": "__pthread_mutex_lock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10799,7 +10677,7 @@
     },
     {
       "symbol": "__pthread_mutex_unlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10879,7 +10757,7 @@
     },
     {
       "symbol": "__pthread_once",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10979,7 +10857,7 @@
     },
     {
       "symbol": "__pthread_rwlock_rdlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -11039,7 +10917,7 @@
     },
     {
       "symbol": "__pthread_rwlock_unlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -11059,7 +10937,7 @@
     },
     {
       "symbol": "__pthread_rwlock_wrlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -11139,7 +11017,7 @@
     },
     {
       "symbol": "__pthread_unwind_next",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -16851,7 +16729,7 @@
     },
     {
       "symbol": "aligned_alloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -19425,7 +19303,7 @@
     },
     {
       "symbol": "calloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -21021,7 +20899,7 @@
     },
     {
       "symbol": "cfree",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -21378,7 +21256,7 @@
     },
     {
       "symbol": "clearerr",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -21398,7 +21276,7 @@
     },
     {
       "symbol": "clearerr_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -24649,7 +24527,7 @@
     },
     {
       "symbol": "dl_iterate_phdr",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -24669,7 +24547,7 @@
     },
     {
       "symbol": "dladdr",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -24705,7 +24583,7 @@
     },
     {
       "symbol": "dlclose",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -24747,7 +24625,7 @@
     },
     {
       "symbol": "dlinfo",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -24784,7 +24662,7 @@
     },
     {
       "symbol": "dlopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -24805,7 +24683,7 @@
     },
     {
       "symbol": "dlsym",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -24826,7 +24704,7 @@
     },
     {
       "symbol": "dlvsym",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -28740,7 +28618,7 @@
     },
     {
       "symbol": "fclose",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -28762,7 +28640,7 @@
     },
     {
       "symbol": "fcloseall",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -29050,7 +28928,7 @@
     },
     {
       "symbol": "fdopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_fast",
       "has_fixtures": true,
@@ -29245,7 +29123,7 @@
     },
     {
       "symbol": "feof",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -29266,7 +29144,7 @@
     },
     {
       "symbol": "feof_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -29306,7 +29184,7 @@
     },
     {
       "symbol": "ferror",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -29326,7 +29204,7 @@
     },
     {
       "symbol": "ferror_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -29511,7 +29389,7 @@
     },
     {
       "symbol": "fflush",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -29531,7 +29409,7 @@
     },
     {
       "symbol": "fflush_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -29626,7 +29504,7 @@
     },
     {
       "symbol": "fgetc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -29646,7 +29524,7 @@
     },
     {
       "symbol": "fgetc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -29706,7 +29584,7 @@
     },
     {
       "symbol": "fgetpos",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_fast",
       "has_fixtures": true,
@@ -29726,7 +29604,7 @@
     },
     {
       "symbol": "fgetpos64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -29786,7 +29664,7 @@
     },
     {
       "symbol": "fgets",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -29806,7 +29684,7 @@
     },
     {
       "symbol": "fgets_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -29911,7 +29789,7 @@
     },
     {
       "symbol": "fgetwc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -29946,7 +29824,7 @@
     },
     {
       "symbol": "fgetws_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -29986,7 +29864,7 @@
     },
     {
       "symbol": "fileno",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -30006,7 +29884,7 @@
     },
     {
       "symbol": "fileno_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -30122,7 +30000,7 @@
     },
     {
       "symbol": "flockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -31106,7 +30984,7 @@
     },
     {
       "symbol": "fmemopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -32042,7 +31920,7 @@
     },
     {
       "symbol": "fopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -32062,7 +31940,7 @@
     },
     {
       "symbol": "fopen64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -32082,7 +31960,7 @@
     },
     {
       "symbol": "fopencookie",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -32184,7 +32062,7 @@
     },
     {
       "symbol": "fputc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -32205,7 +32083,7 @@
     },
     {
       "symbol": "fputc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -32225,7 +32103,7 @@
     },
     {
       "symbol": "fputs",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -32245,7 +32123,7 @@
     },
     {
       "symbol": "fputs_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -32280,7 +32158,7 @@
     },
     {
       "symbol": "fputwc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -32315,7 +32193,7 @@
     },
     {
       "symbol": "fputws_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -32335,7 +32213,7 @@
     },
     {
       "symbol": "fread",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -32355,7 +32233,7 @@
     },
     {
       "symbol": "fread_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -32375,7 +32253,7 @@
     },
     {
       "symbol": "free",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -32494,7 +32372,7 @@
     },
     {
       "symbol": "freopen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "has_fixtures": true,
@@ -32514,7 +32392,7 @@
     },
     {
       "symbol": "freopen64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -32934,7 +32812,7 @@
     },
     {
       "symbol": "fseek",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -32957,7 +32835,7 @@
     },
     {
       "symbol": "fseeko",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -32977,7 +32855,7 @@
     },
     {
       "symbol": "fseeko64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -32997,7 +32875,7 @@
     },
     {
       "symbol": "fsetpos",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_fast",
       "has_fixtures": true,
@@ -33017,7 +32895,7 @@
     },
     {
       "symbol": "fsetpos64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -33357,7 +33235,7 @@
     },
     {
       "symbol": "ftell",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -33379,7 +33257,7 @@
     },
     {
       "symbol": "ftello",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -33399,7 +33277,7 @@
     },
     {
       "symbol": "ftello64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -33494,7 +33372,7 @@
     },
     {
       "symbol": "ftrylockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -33731,7 +33609,7 @@
     },
     {
       "symbol": "funlockfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -33891,7 +33769,7 @@
     },
     {
       "symbol": "fwrite",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -33913,7 +33791,7 @@
     },
     {
       "symbol": "fwrite_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -34315,7 +34193,7 @@
     },
     {
       "symbol": "getc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -34335,7 +34213,7 @@
     },
     {
       "symbol": "getc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -34355,7 +34233,7 @@
     },
     {
       "symbol": "getchar",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -34375,7 +34253,7 @@
     },
     {
       "symbol": "getchar_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -34489,7 +34367,7 @@
     },
     {
       "symbol": "getdelim",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "has_fixtures": true,
@@ -35047,7 +34925,7 @@
     },
     {
       "symbol": "getline",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "has_fixtures": true,
@@ -36736,7 +36614,7 @@
     },
     {
       "symbol": "getw",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -42891,7 +42769,7 @@
     },
     {
       "symbol": "malloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -42912,7 +42790,7 @@
     },
     {
       "symbol": "malloc_info",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "cold",
       "has_fixtures": true,
@@ -43274,7 +43152,7 @@
     },
     {
       "symbol": "memalign",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -43778,7 +43656,7 @@
     },
     {
       "symbol": "mktemp",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -46417,7 +46295,7 @@
     },
     {
       "symbol": "open_memstream",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -46668,7 +46546,7 @@
     },
     {
       "symbol": "pclose",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -46701,7 +46579,7 @@
     },
     {
       "symbol": "perror",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -47044,7 +46922,7 @@
     },
     {
       "symbol": "popen",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -47146,7 +47024,7 @@
     },
     {
       "symbol": "posix_memalign",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -48954,7 +48832,7 @@
     },
     {
       "symbol": "pthread_barrier_wait",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -49054,7 +48932,7 @@
     },
     {
       "symbol": "pthread_cancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -49074,7 +48952,7 @@
     },
     {
       "symbol": "pthread_clockjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -49152,7 +49030,7 @@
     },
     {
       "symbol": "pthread_cond_init",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -49334,7 +49212,7 @@
     },
     {
       "symbol": "pthread_create",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -49355,7 +49233,7 @@
     },
     {
       "symbol": "pthread_detach",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -49394,7 +49272,7 @@
     },
     {
       "symbol": "pthread_exit",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -49403,9 +49281,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_getaffinity_np",
@@ -49552,7 +49428,7 @@
     },
     {
       "symbol": "pthread_join",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -49645,7 +49521,7 @@
     },
     {
       "symbol": "pthread_mutex_clocklock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -49654,9 +49530,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_mutex_consistent",
@@ -49744,7 +49618,7 @@
     },
     {
       "symbol": "pthread_mutex_lock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -49779,7 +49653,7 @@
     },
     {
       "symbol": "pthread_mutex_timedlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -49788,9 +49662,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_mutex_trylock",
@@ -49813,7 +49685,7 @@
     },
     {
       "symbol": "pthread_mutex_unlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -50073,7 +49945,7 @@
     },
     {
       "symbol": "pthread_once",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -50082,13 +49954,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_rwlock_clockrdlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -50097,13 +49967,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_rwlock_clockwrlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -50112,9 +49980,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_rwlock_destroy",
@@ -50148,7 +50014,7 @@
     },
     {
       "symbol": "pthread_rwlock_rdlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": false,
@@ -50157,13 +50023,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_rwlock_timedrdlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -50172,13 +50036,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_rwlock_timedwrlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -50187,9 +50049,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_rwlock_tryrdlock",
@@ -50223,7 +50083,7 @@
     },
     {
       "symbol": "pthread_rwlock_unlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": false,
@@ -50232,13 +50092,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_rwlock_wrlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": false,
@@ -50247,9 +50105,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_rwlockattr_destroy",
@@ -50393,7 +50249,7 @@
     },
     {
       "symbol": "pthread_setcancelstate",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "has_fixtures": false,
@@ -50402,13 +50258,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_setcanceltype",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "has_fixtures": false,
@@ -50417,9 +50271,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_setconcurrency",
@@ -50612,7 +50464,7 @@
     },
     {
       "symbol": "pthread_testcancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "has_fixtures": false,
@@ -50621,13 +50473,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "pthread_timedjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -50647,7 +50497,7 @@
     },
     {
       "symbol": "pthread_tryjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -50722,7 +50572,7 @@
     },
     {
       "symbol": "putc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -50742,7 +50592,7 @@
     },
     {
       "symbol": "putc_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": true,
@@ -50762,7 +50612,7 @@
     },
     {
       "symbol": "putchar",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -50782,7 +50632,7 @@
     },
     {
       "symbol": "putchar_unlocked",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -50877,7 +50727,7 @@
     },
     {
       "symbol": "puts",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -50957,7 +50807,7 @@
     },
     {
       "symbol": "putw",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -51037,7 +50887,7 @@
     },
     {
       "symbol": "pvalloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -51798,7 +51648,7 @@
     },
     {
       "symbol": "realloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -52258,7 +52108,7 @@
     },
     {
       "symbol": "remove",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "has_fixtures": true,
@@ -52726,7 +52576,7 @@
     },
     {
       "symbol": "rewind",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -54624,7 +54474,7 @@
     },
     {
       "symbol": "setbuf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -54644,7 +54494,7 @@
     },
     {
       "symbol": "setbuffer",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -54653,9 +54503,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "setcontext",
@@ -54940,7 +54788,7 @@
     },
     {
       "symbol": "setlinebuf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "fast",
       "has_fixtures": false,
@@ -54949,9 +54797,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "setlocale",
@@ -55705,7 +55551,7 @@
     },
     {
       "symbol": "setvbuf",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -62507,7 +62353,7 @@
     },
     {
       "symbol": "tmpfile",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "has_fixtures": false,
@@ -62516,13 +62362,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "tmpfile64",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "default",
       "has_fixtures": false,
@@ -62531,9 +62375,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "tmpnam",
@@ -63763,7 +63605,7 @@
     },
     {
       "symbol": "ungetc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -64061,7 +63903,7 @@
     },
     {
       "symbol": "valloc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -68325,104 +68167,6 @@
   ],
   "uncovered_action_list": [
     {
-      "symbol": "_IO_default_pbackfail",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_default_uflow",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_default_xsgetn",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_default_xsputn",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_do_write",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fclose",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fdopen",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fflush",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fgetpos",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fgetpos64",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fgets",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_attach",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_close",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_close_it",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_file_doallocate",
       "status": "Implemented",
       "module": "io_internal_abi",
@@ -68437,182 +68181,7 @@
       "priority": "normal"
     },
     {
-      "symbol": "_IO_file_fopen",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_file_jumps",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_open",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_overflow",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_read",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_seek",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_seekoff",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_setbuf",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_stat",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_sync",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_underflow",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_write",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_file_xsputn",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_flush_all",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_flush_all_linebuffered",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fopen",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fprintf",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fputs",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fread",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fsetpos",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fsetpos64",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_ftell",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_fwrite",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_getline",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_getline_info",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_gets",
       "status": "Implemented",
       "module": "io_internal_abi",
       "action": "create fixture cases",
@@ -68661,34 +68230,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "_IO_popen",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_printf",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_proc_close",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_proc_open",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_remove_marker",
       "status": "Implemented",
       "module": "io_internal_abi",
@@ -68704,41 +68245,6 @@
     },
     {
       "symbol": "_IO_setb",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_setbuffer",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_setvbuf",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_sprintf",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_sputbackc",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_sputbackwc",
       "status": "Implemented",
       "module": "io_internal_abi",
       "action": "create fixture cases",
@@ -68780,13 +68286,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "_IO_switch_to_get_mode",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_switch_to_main_wget_area",
       "status": "Implemented",
       "module": "io_internal_abi",
@@ -68795,13 +68294,6 @@
     },
     {
       "symbol": "_IO_switch_to_wbackup_area",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_ungetc",
       "status": "Implemented",
       "module": "io_internal_abi",
       "action": "create fixture cases",
@@ -68822,49 +68314,7 @@
       "priority": "normal"
     },
     {
-      "symbol": "_IO_vfprintf",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_vfscanf",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_vsprintf",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_IO_wdefault_finish",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_wdefault_pbackfail",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_wdefault_xsgetn",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_wdefault_xsputn",
       "status": "Implemented",
       "module": "io_internal_abi",
       "action": "create fixture cases",
@@ -68886,34 +68336,6 @@
     },
     {
       "symbol": "_IO_wfile_jumps",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_wfile_overflow",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_wfile_seekoff",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_wfile_underflow",
-      "status": "Implemented",
-      "module": "io_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "_IO_wfile_xsputn",
       "status": "Implemented",
       "module": "io_internal_abi",
       "action": "create fixture cases",
@@ -69056,13 +68478,6 @@
       "symbol": "__cxa_at_quick_exit",
       "status": "Implemented",
       "module": "stdlib_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "__cxa_thread_atexit_impl",
-      "status": "Implemented",
-      "module": "startup_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -70665,7 +70080,7 @@
     {
       "symbol": "__pipe",
       "status": "Implemented",
-      "module": "glibc_internal_abi",
+      "module": "io_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -82857,13 +82272,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "pthread_exit",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "pthread_getaffinity_np",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -82920,13 +82328,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "pthread_mutex_clocklock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "pthread_mutex_consistent",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -82951,13 +82352,6 @@
       "symbol": "pthread_mutex_setprioceiling",
       "status": "Implemented",
       "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_mutex_timedlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -83074,27 +82468,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "pthread_once",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_rwlock_clockrdlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_rwlock_clockwrlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "pthread_rwlock_destroy",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -83109,27 +82482,6 @@
       "priority": "high"
     },
     {
-      "symbol": "pthread_rwlock_rdlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
-      "symbol": "pthread_rwlock_timedrdlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_rwlock_timedwrlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "pthread_rwlock_tryrdlock",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -83142,20 +82494,6 @@
       "module": "pthread_abi",
       "action": "create fixture cases",
       "priority": "normal"
-    },
-    {
-      "symbol": "pthread_rwlock_unlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
-      "symbol": "pthread_rwlock_wrlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "high"
     },
     {
       "symbol": "pthread_rwlockattr_destroy",
@@ -83208,20 +82546,6 @@
     },
     {
       "symbol": "pthread_setattr_default_np",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_setcancelstate",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_setcanceltype",
       "status": "Implemented",
       "module": "pthread_abi",
       "action": "create fixture cases",
@@ -83292,13 +82616,6 @@
     },
     {
       "symbol": "pthread_spin_unlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "pthread_testcancel",
       "status": "Implemented",
       "module": "pthread_abi",
       "action": "create fixture cases",
@@ -84775,13 +84092,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "setbuffer",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "setcontext",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -84897,13 +84207,6 @@
       "symbol": "setkey_r",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "setlinebuf",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -86801,20 +86104,6 @@
       "symbol": "tkill",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "tmpfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "tmpfile64",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-05-18T15:21:56Z",
+  "generated_at": "2026-05-23T16:10:14Z",
   "summary": {
     "total_symbols": 4119,
     "symbols_with_fixtures": 1160,
@@ -52,7 +52,7 @@
       "pct": 46
     },
     "glibc_internal_abi": {
-      "total": 570,
+      "total": 569,
       "covered": 40,
       "pct": 7
     },
@@ -72,9 +72,9 @@
       "pct": 41
     },
     "io_abi": {
-      "total": 28,
+      "total": 29,
       "covered": 1,
-      "pct": 4
+      "pct": 3
     },
     "io_internal_abi": {
       "total": 114,
@@ -2293,7 +2293,7 @@
     },
     "memcpy_strict": {
       "file": "memcpy_strict.json",
-      "sha256": "f45b08bdb0453439d0404f3d1b7f707424c5b84ab6bff2f00bc5355ef54e098e",
+      "sha256": "6bdd6fb00bff508d07eb985bdc7c258a1a10f8ea96de72cf7e392483e886c233",
       "case_count": 9,
       "functions": [
         "memcpy"

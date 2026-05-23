@@ -1810,19 +1810,20 @@
       "module": "glibc_internal_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 53002,
+      "severity_score": 52902,
       "status_breakdown": {
-        "Implemented": 548,
-        "RawSyscall": 22
+        "Implemented": 546,
+        "RawSyscall": 22,
+        "WrapsHostLibc": 1
       },
-      "target_coverage_pct": 7.02,
-      "target_covered": 40,
+      "target_coverage_pct": 6.87,
+      "target_covered": 39,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
-      "target_total": 570,
-      "target_uncovered": 530,
+      "target_total": 568,
+      "target_uncovered": 529,
       "target_uncovered_symbols": [
         "__ctype32_toupper",
         "__ctype_init",
@@ -1969,7 +1970,6 @@
         "__open64_nocancel",
         "__open_nocancel",
         "__overflow",
-        "__pipe",
         "__poll",
         "__posix_getopt",
         "__pread64",
@@ -2355,9 +2355,9 @@
         "xprt_register",
         "xprt_unregister"
       ],
-      "total_symbols": 570,
+      "total_symbols": 569,
       "track": "glibc_internal",
-      "uncovered_symbols": 530,
+      "uncovered_symbols": 529,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -2793,202 +2793,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 27,
-      "milestone_beads": [],
-      "module": "io_internal_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 8702,
-      "status_breakdown": {
-        "Implemented": 114
-      },
-      "target_coverage_pct": 23.68,
-      "target_covered": 27,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 114,
-      "target_uncovered": 87,
-      "target_uncovered_symbols": [
-        "_IO_default_pbackfail",
-        "_IO_default_uflow",
-        "_IO_default_xsgetn",
-        "_IO_default_xsputn",
-        "_IO_do_write",
-        "_IO_fclose",
-        "_IO_fdopen",
-        "_IO_fflush",
-        "_IO_fgetpos",
-        "_IO_fgetpos64",
-        "_IO_fgets",
-        "_IO_file_attach",
-        "_IO_file_close",
-        "_IO_file_close_it",
-        "_IO_file_doallocate",
-        "_IO_file_finish",
-        "_IO_file_fopen",
-        "_IO_file_jumps",
-        "_IO_file_open",
-        "_IO_file_overflow",
-        "_IO_file_read",
-        "_IO_file_seek",
-        "_IO_file_seekoff",
-        "_IO_file_setbuf",
-        "_IO_file_stat",
-        "_IO_file_sync",
-        "_IO_file_underflow",
-        "_IO_file_write",
-        "_IO_file_xsputn",
-        "_IO_flush_all",
-        "_IO_flush_all_linebuffered",
-        "_IO_fopen",
-        "_IO_fprintf",
-        "_IO_fputs",
-        "_IO_fread",
-        "_IO_fsetpos",
-        "_IO_fsetpos64",
-        "_IO_ftell",
-        "_IO_fwrite",
-        "_IO_getline",
-        "_IO_getline_info",
-        "_IO_gets",
-        "_IO_init_marker",
-        "_IO_init_wmarker",
-        "_IO_iter_file",
-        "_IO_iter_next",
-        "_IO_least_wmarker",
-        "_IO_list_all",
-        "_IO_popen",
-        "_IO_printf",
-        "_IO_proc_close",
-        "_IO_proc_open",
-        "_IO_remove_marker",
-        "_IO_seekwmark",
-        "_IO_setb",
-        "_IO_setbuffer",
-        "_IO_setvbuf",
-        "_IO_sprintf",
-        "_IO_sputbackc",
-        "_IO_sputbackwc",
-        "_IO_sscanf",
-        "_IO_str_init_readonly",
-        "_IO_str_init_static",
-        "_IO_str_pbackfail",
-        "_IO_str_seekoff",
-        "_IO_switch_to_get_mode",
-        "_IO_switch_to_main_wget_area",
-        "_IO_switch_to_wbackup_area",
-        "_IO_ungetc",
-        "_IO_unsave_markers",
-        "_IO_unsave_wmarkers",
-        "_IO_vfprintf",
-        "_IO_vfscanf",
-        "_IO_vsprintf",
-        "_IO_wdefault_finish",
-        "_IO_wdefault_pbackfail",
-        "_IO_wdefault_xsgetn",
-        "_IO_wdefault_xsputn",
-        "_IO_wdo_write",
-        "_IO_wdoallocbuf",
-        "_IO_wfile_jumps",
-        "_IO_wfile_overflow",
-        "_IO_wfile_seekoff",
-        "_IO_wfile_underflow",
-        "_IO_wfile_xsputn",
-        "_IO_wmarker_delta",
-        "_IO_wsetb"
-      ],
-      "total_symbols": 114,
-      "track": "io_internal",
-      "uncovered_symbols": 87,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 87,
-      "milestone_beads": [
-        "bd-yos",
-        "bd-z84"
-      ],
-      "module": "pthread_abi",
-      "recommended_bead": "bd-yos",
-      "severity": "high",
-      "severity_score": 5402,
-      "status_breakdown": {
-        "Implemented": 141
-      },
-      "target_coverage_pct": 61.7,
-      "target_covered": 87,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 141,
-      "target_uncovered": 54,
-      "target_uncovered_symbols": [
-        "pthread_condattr_init",
-        "pthread_condattr_setclock",
-        "pthread_condattr_setpshared",
-        "pthread_exit",
-        "pthread_getaffinity_np",
-        "pthread_getattr_default_np",
-        "pthread_getconcurrency",
-        "pthread_getcpuclockid",
-        "pthread_getname_np",
-        "pthread_gettid_np",
-        "pthread_kill",
-        "pthread_mutex_clocklock",
-        "pthread_mutex_consistent",
-        "pthread_mutex_timedlock",
-        "pthread_mutexattr_destroy",
-        "pthread_mutexattr_getprotocol",
-        "pthread_mutexattr_getpshared",
-        "pthread_mutexattr_getrobust",
-        "pthread_mutexattr_gettype",
-        "pthread_mutexattr_init",
-        "pthread_mutexattr_setprotocol",
-        "pthread_mutexattr_setpshared",
-        "pthread_mutexattr_setrobust",
-        "pthread_mutexattr_settype",
-        "pthread_once",
-        "pthread_rwlock_clockrdlock",
-        "pthread_rwlock_clockwrlock",
-        "pthread_rwlock_destroy",
-        "pthread_rwlock_init",
-        "pthread_rwlock_rdlock",
-        "pthread_rwlock_timedrdlock",
-        "pthread_rwlock_timedwrlock",
-        "pthread_rwlock_tryrdlock",
-        "pthread_rwlock_trywrlock",
-        "pthread_rwlock_unlock",
-        "pthread_rwlock_wrlock",
-        "pthread_rwlockattr_destroy",
-        "pthread_rwlockattr_getpshared",
-        "pthread_rwlockattr_init",
-        "pthread_rwlockattr_setpshared",
-        "pthread_setaffinity_np",
-        "pthread_setattr_default_np",
-        "pthread_setcancelstate",
-        "pthread_setcanceltype",
-        "pthread_setconcurrency",
-        "pthread_setname_np",
-        "pthread_sigqueue",
-        "pthread_spin_destroy",
-        "pthread_spin_init",
-        "pthread_spin_lock",
-        "pthread_spin_trylock",
-        "pthread_spin_unlock",
-        "pthread_testcancel",
-        "pthread_yield"
-      ],
-      "total_symbols": 141,
-      "track": "threading",
-      "uncovered_symbols": 54,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 36,
       "milestone_beads": [],
       "module": "fortify_abi",
@@ -3053,6 +2857,76 @@
       "total_symbols": 78,
       "track": "fortify",
       "uncovered_symbols": 42,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 87,
+      "milestone_beads": [
+        "bd-yos",
+        "bd-z84"
+      ],
+      "module": "pthread_abi",
+      "recommended_bead": "bd-yos",
+      "severity": "high",
+      "severity_score": 4002,
+      "status_breakdown": {
+        "Implemented": 109,
+        "WrapsHostLibc": 32
+      },
+      "target_coverage_pct": 63.3,
+      "target_covered": 69,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 109,
+      "target_uncovered": 40,
+      "target_uncovered_symbols": [
+        "pthread_condattr_init",
+        "pthread_condattr_setclock",
+        "pthread_condattr_setpshared",
+        "pthread_getaffinity_np",
+        "pthread_getattr_default_np",
+        "pthread_getconcurrency",
+        "pthread_getcpuclockid",
+        "pthread_getname_np",
+        "pthread_gettid_np",
+        "pthread_kill",
+        "pthread_mutex_consistent",
+        "pthread_mutexattr_destroy",
+        "pthread_mutexattr_getprotocol",
+        "pthread_mutexattr_getpshared",
+        "pthread_mutexattr_getrobust",
+        "pthread_mutexattr_gettype",
+        "pthread_mutexattr_init",
+        "pthread_mutexattr_setprotocol",
+        "pthread_mutexattr_setpshared",
+        "pthread_mutexattr_setrobust",
+        "pthread_mutexattr_settype",
+        "pthread_rwlock_destroy",
+        "pthread_rwlock_init",
+        "pthread_rwlock_tryrdlock",
+        "pthread_rwlock_trywrlock",
+        "pthread_rwlockattr_destroy",
+        "pthread_rwlockattr_getpshared",
+        "pthread_rwlockattr_init",
+        "pthread_rwlockattr_setpshared",
+        "pthread_setaffinity_np",
+        "pthread_setattr_default_np",
+        "pthread_setconcurrency",
+        "pthread_setname_np",
+        "pthread_sigqueue",
+        "pthread_spin_destroy",
+        "pthread_spin_init",
+        "pthread_spin_lock",
+        "pthread_spin_trylock",
+        "pthread_spin_unlock",
+        "pthread_yield"
+      ],
+      "total_symbols": 141,
+      "track": "threading",
+      "uncovered_symbols": 54,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -3126,20 +3000,21 @@
       "module": "io_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 2702,
+      "severity_score": 2802,
       "status_breakdown": {
-        "Implemented": 3,
+        "Implemented": 4,
         "RawSyscall": 25
       },
-      "target_coverage_pct": 3.57,
+      "target_coverage_pct": 3.45,
       "target_covered": 1,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
-      "target_total": 28,
-      "target_uncovered": 27,
+      "target_total": 29,
+      "target_uncovered": 28,
       "target_uncovered_symbols": [
+        "__pipe",
         "alphasort64",
         "copy_file_range",
         "dup",
@@ -3168,9 +3043,63 @@
         "vmsplice",
         "writev"
       ],
-      "total_symbols": 28,
+      "total_symbols": 29,
       "track": "io",
-      "uncovered_symbols": 27,
+      "uncovered_symbols": 28,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 27,
+      "milestone_beads": [],
+      "module": "io_internal_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 2702,
+      "status_breakdown": {
+        "Implemented": 51,
+        "WrapsHostLibc": 63
+      },
+      "target_coverage_pct": 47.06,
+      "target_covered": 24,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 51,
+      "target_uncovered": 27,
+      "target_uncovered_symbols": [
+        "_IO_file_doallocate",
+        "_IO_file_finish",
+        "_IO_file_jumps",
+        "_IO_init_marker",
+        "_IO_init_wmarker",
+        "_IO_iter_file",
+        "_IO_iter_next",
+        "_IO_least_wmarker",
+        "_IO_list_all",
+        "_IO_remove_marker",
+        "_IO_seekwmark",
+        "_IO_setb",
+        "_IO_sscanf",
+        "_IO_str_init_readonly",
+        "_IO_str_init_static",
+        "_IO_str_pbackfail",
+        "_IO_str_seekoff",
+        "_IO_switch_to_main_wget_area",
+        "_IO_switch_to_wbackup_area",
+        "_IO_unsave_markers",
+        "_IO_unsave_wmarkers",
+        "_IO_wdefault_finish",
+        "_IO_wdo_write",
+        "_IO_wdoallocbuf",
+        "_IO_wfile_jumps",
+        "_IO_wmarker_delta",
+        "_IO_wsetb"
+      ],
+      "total_symbols": 114,
+      "track": "io_internal",
+      "uncovered_symbols": 87,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -3224,45 +3153,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 113,
-      "milestone_beads": [],
-      "module": "stdio_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "severity_score": 1301,
-      "status_breakdown": {
-        "Implemented": 126
-      },
-      "target_coverage_pct": 89.68,
-      "target_covered": 113,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 126,
-      "target_uncovered": 13,
-      "target_uncovered_symbols": [
-        "setbuffer",
-        "setlinebuf",
-        "stderr",
-        "stdin",
-        "stdout",
-        "tmpfile",
-        "tmpfile64",
-        "tmpnam",
-        "vfprintf",
-        "vfscanf",
-        "vprintf",
-        "vscanf",
-        "vsscanf"
-      ],
-      "total_symbols": 126,
-      "track": "stdio",
-      "uncovered_symbols": 13,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 7,
       "milestone_beads": [],
       "module": "inet_abi",
@@ -3295,6 +3185,42 @@
       "total_symbols": 17,
       "track": "network/inet",
       "uncovered_symbols": 10,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 113,
+      "milestone_beads": [],
+      "module": "stdio_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 902,
+      "status_breakdown": {
+        "Implemented": 34,
+        "WrapsHostLibc": 92
+      },
+      "target_coverage_pct": 73.53,
+      "target_covered": 25,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 34,
+      "target_uncovered": 9,
+      "target_uncovered_symbols": [
+        "stderr",
+        "stdin",
+        "stdout",
+        "tmpnam",
+        "vfprintf",
+        "vfscanf",
+        "vprintf",
+        "vscanf",
+        "vsscanf"
+      ],
+      "total_symbols": 126,
+      "track": "stdio",
+      "uncovered_symbols": 13,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -3538,33 +3464,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 3,
-      "milestone_beads": [],
-      "module": "startup_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 102,
-      "status_breakdown": {
-        "Implemented": 4
-      },
-      "target_coverage_pct": 75.0,
-      "target_covered": 3,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 4,
-      "target_uncovered": 1,
-      "target_uncovered_symbols": [
-        "__cxa_thread_atexit_impl"
-      ],
-      "total_symbols": 4,
-      "track": "startup",
-      "uncovered_symbols": 1,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 7,
       "milestone_beads": [
         "bd-3rn"
@@ -3574,15 +3473,16 @@
       "severity": "covered",
       "severity_score": 0,
       "status_breakdown": {
-        "Implemented": 7
+        "Implemented": 1,
+        "WrapsHostLibc": 6
       },
       "target_coverage_pct": 100.0,
-      "target_covered": 7,
+      "target_covered": 1,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
-      "target_total": 7,
+      "target_total": 1,
       "target_uncovered": 0,
       "target_uncovered_symbols": [],
       "total_symbols": 7,
@@ -3751,15 +3651,16 @@
       "severity": "covered",
       "severity_score": 0,
       "status_breakdown": {
-        "Implemented": 21
+        "Implemented": 10,
+        "WrapsHostLibc": 11
       },
       "target_coverage_pct": 100.0,
-      "target_covered": 21,
+      "target_covered": 10,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
-      "target_total": 21,
+      "target_total": 10,
       "target_uncovered": 0,
       "target_uncovered_symbols": [],
       "total_symbols": 21,
@@ -3923,6 +3824,31 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 3,
+      "milestone_beads": [],
+      "module": "startup_abi",
+      "recommended_bead": null,
+      "severity": "n/a",
+      "severity_score": 0,
+      "status_breakdown": {
+        "WrapsHostLibc": 4
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 0,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 0,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 4,
+      "track": "startup",
+      "uncovered_symbols": 1,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 70,
       "milestone_beads": [],
       "module": "stdbit_abi",
@@ -4029,7 +3955,7 @@
     ],
     "unique_fixture_functions_total": 1179
   },
-  "generated_at_utc": "2026-02-18T04:49:26Z",
+  "generated_at_utc": "2026-05-23T12:39:21Z",
   "inputs": {
     "c_fixture_spec": "tests/conformance/c_fixture_spec.json",
     "fixtures_dir": "tests/conformance/fixtures",
@@ -5815,7 +5741,7 @@
       "module": "glibc_internal_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 530,
+      "target_uncovered_count": 529,
       "target_uncovered_symbols": [
         "__ctype32_toupper",
         "__ctype_init",
@@ -5962,7 +5888,6 @@
         "__open64_nocancel",
         "__open_nocancel",
         "__overflow",
-        "__pipe",
         "__poll",
         "__posix_getopt",
         "__pread64",
@@ -6743,174 +6668,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "io_internal_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 87,
-      "target_uncovered_symbols": [
-        "_IO_default_pbackfail",
-        "_IO_default_uflow",
-        "_IO_default_xsgetn",
-        "_IO_default_xsputn",
-        "_IO_do_write",
-        "_IO_fclose",
-        "_IO_fdopen",
-        "_IO_fflush",
-        "_IO_fgetpos",
-        "_IO_fgetpos64",
-        "_IO_fgets",
-        "_IO_file_attach",
-        "_IO_file_close",
-        "_IO_file_close_it",
-        "_IO_file_doallocate",
-        "_IO_file_finish",
-        "_IO_file_fopen",
-        "_IO_file_jumps",
-        "_IO_file_open",
-        "_IO_file_overflow",
-        "_IO_file_read",
-        "_IO_file_seek",
-        "_IO_file_seekoff",
-        "_IO_file_setbuf",
-        "_IO_file_stat",
-        "_IO_file_sync",
-        "_IO_file_underflow",
-        "_IO_file_write",
-        "_IO_file_xsputn",
-        "_IO_flush_all",
-        "_IO_flush_all_linebuffered",
-        "_IO_fopen",
-        "_IO_fprintf",
-        "_IO_fputs",
-        "_IO_fread",
-        "_IO_fsetpos",
-        "_IO_fsetpos64",
-        "_IO_ftell",
-        "_IO_fwrite",
-        "_IO_getline",
-        "_IO_getline_info",
-        "_IO_gets",
-        "_IO_init_marker",
-        "_IO_init_wmarker",
-        "_IO_iter_file",
-        "_IO_iter_next",
-        "_IO_least_wmarker",
-        "_IO_list_all",
-        "_IO_popen",
-        "_IO_printf",
-        "_IO_proc_close",
-        "_IO_proc_open",
-        "_IO_remove_marker",
-        "_IO_seekwmark",
-        "_IO_setb",
-        "_IO_setbuffer",
-        "_IO_setvbuf",
-        "_IO_sprintf",
-        "_IO_sputbackc",
-        "_IO_sputbackwc",
-        "_IO_sscanf",
-        "_IO_str_init_readonly",
-        "_IO_str_init_static",
-        "_IO_str_pbackfail",
-        "_IO_str_seekoff",
-        "_IO_switch_to_get_mode",
-        "_IO_switch_to_main_wget_area",
-        "_IO_switch_to_wbackup_area",
-        "_IO_ungetc",
-        "_IO_unsave_markers",
-        "_IO_unsave_wmarkers",
-        "_IO_vfprintf",
-        "_IO_vfscanf",
-        "_IO_vsprintf",
-        "_IO_wdefault_finish",
-        "_IO_wdefault_pbackfail",
-        "_IO_wdefault_xsgetn",
-        "_IO_wdefault_xsputn",
-        "_IO_wdo_write",
-        "_IO_wdoallocbuf",
-        "_IO_wfile_jumps",
-        "_IO_wfile_overflow",
-        "_IO_wfile_seekoff",
-        "_IO_wfile_underflow",
-        "_IO_wfile_xsputn",
-        "_IO_wmarker_delta",
-        "_IO_wsetb"
-      ],
-      "track": "io_internal",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [
-        "bd-yos",
-        "bd-z84"
-      ],
-      "module": "pthread_abi",
-      "recommended_bead": "bd-yos",
-      "severity": "high",
-      "target_uncovered_count": 54,
-      "target_uncovered_symbols": [
-        "pthread_condattr_init",
-        "pthread_condattr_setclock",
-        "pthread_condattr_setpshared",
-        "pthread_exit",
-        "pthread_getaffinity_np",
-        "pthread_getattr_default_np",
-        "pthread_getconcurrency",
-        "pthread_getcpuclockid",
-        "pthread_getname_np",
-        "pthread_gettid_np",
-        "pthread_kill",
-        "pthread_mutex_clocklock",
-        "pthread_mutex_consistent",
-        "pthread_mutex_timedlock",
-        "pthread_mutexattr_destroy",
-        "pthread_mutexattr_getprotocol",
-        "pthread_mutexattr_getpshared",
-        "pthread_mutexattr_getrobust",
-        "pthread_mutexattr_gettype",
-        "pthread_mutexattr_init",
-        "pthread_mutexattr_setprotocol",
-        "pthread_mutexattr_setpshared",
-        "pthread_mutexattr_setrobust",
-        "pthread_mutexattr_settype",
-        "pthread_once",
-        "pthread_rwlock_clockrdlock",
-        "pthread_rwlock_clockwrlock",
-        "pthread_rwlock_destroy",
-        "pthread_rwlock_init",
-        "pthread_rwlock_rdlock",
-        "pthread_rwlock_timedrdlock",
-        "pthread_rwlock_timedwrlock",
-        "pthread_rwlock_tryrdlock",
-        "pthread_rwlock_trywrlock",
-        "pthread_rwlock_unlock",
-        "pthread_rwlock_wrlock",
-        "pthread_rwlockattr_destroy",
-        "pthread_rwlockattr_getpshared",
-        "pthread_rwlockattr_init",
-        "pthread_rwlockattr_setpshared",
-        "pthread_setaffinity_np",
-        "pthread_setattr_default_np",
-        "pthread_setcancelstate",
-        "pthread_setcanceltype",
-        "pthread_setconcurrency",
-        "pthread_setname_np",
-        "pthread_sigqueue",
-        "pthread_spin_destroy",
-        "pthread_spin_init",
-        "pthread_spin_lock",
-        "pthread_spin_trylock",
-        "pthread_spin_unlock",
-        "pthread_testcancel",
-        "pthread_yield"
-      ],
-      "track": "threading",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "fortify_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -6960,6 +6717,61 @@
         "__wprintf_chk"
       ],
       "track": "fortify",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [
+        "bd-yos",
+        "bd-z84"
+      ],
+      "module": "pthread_abi",
+      "recommended_bead": "bd-yos",
+      "severity": "high",
+      "target_uncovered_count": 40,
+      "target_uncovered_symbols": [
+        "pthread_condattr_init",
+        "pthread_condattr_setclock",
+        "pthread_condattr_setpshared",
+        "pthread_getaffinity_np",
+        "pthread_getattr_default_np",
+        "pthread_getconcurrency",
+        "pthread_getcpuclockid",
+        "pthread_getname_np",
+        "pthread_gettid_np",
+        "pthread_kill",
+        "pthread_mutex_consistent",
+        "pthread_mutexattr_destroy",
+        "pthread_mutexattr_getprotocol",
+        "pthread_mutexattr_getpshared",
+        "pthread_mutexattr_getrobust",
+        "pthread_mutexattr_gettype",
+        "pthread_mutexattr_init",
+        "pthread_mutexattr_setprotocol",
+        "pthread_mutexattr_setpshared",
+        "pthread_mutexattr_setrobust",
+        "pthread_mutexattr_settype",
+        "pthread_rwlock_destroy",
+        "pthread_rwlock_init",
+        "pthread_rwlock_tryrdlock",
+        "pthread_rwlock_trywrlock",
+        "pthread_rwlockattr_destroy",
+        "pthread_rwlockattr_getpshared",
+        "pthread_rwlockattr_init",
+        "pthread_rwlockattr_setpshared",
+        "pthread_setaffinity_np",
+        "pthread_setattr_default_np",
+        "pthread_setconcurrency",
+        "pthread_setname_np",
+        "pthread_sigqueue",
+        "pthread_spin_destroy",
+        "pthread_spin_init",
+        "pthread_spin_lock",
+        "pthread_spin_trylock",
+        "pthread_spin_unlock",
+        "pthread_yield"
+      ],
+      "track": "threading",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -7018,8 +6830,9 @@
       "module": "io_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 27,
+      "target_uncovered_count": 28,
       "target_uncovered_symbols": [
+        "__pipe",
         "alphasort64",
         "copy_file_range",
         "dup",
@@ -7049,6 +6862,45 @@
         "writev"
       ],
       "track": "io",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "io_internal_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 27,
+      "target_uncovered_symbols": [
+        "_IO_file_doallocate",
+        "_IO_file_finish",
+        "_IO_file_jumps",
+        "_IO_init_marker",
+        "_IO_init_wmarker",
+        "_IO_iter_file",
+        "_IO_iter_next",
+        "_IO_least_wmarker",
+        "_IO_list_all",
+        "_IO_remove_marker",
+        "_IO_seekwmark",
+        "_IO_setb",
+        "_IO_sscanf",
+        "_IO_str_init_readonly",
+        "_IO_str_init_static",
+        "_IO_str_pbackfail",
+        "_IO_str_seekoff",
+        "_IO_switch_to_main_wget_area",
+        "_IO_switch_to_wbackup_area",
+        "_IO_unsave_markers",
+        "_IO_unsave_wmarkers",
+        "_IO_wdefault_finish",
+        "_IO_wdo_write",
+        "_IO_wdoallocbuf",
+        "_IO_wfile_jumps",
+        "_IO_wmarker_delta",
+        "_IO_wsetb"
+      ],
+      "track": "io_internal",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -7089,31 +6941,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "stdio_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "target_uncovered_count": 13,
-      "target_uncovered_symbols": [
-        "setbuffer",
-        "setlinebuf",
-        "stderr",
-        "stdin",
-        "stdout",
-        "tmpfile",
-        "tmpfile64",
-        "tmpnam",
-        "vfprintf",
-        "vfscanf",
-        "vprintf",
-        "vscanf",
-        "vsscanf"
-      ],
-      "track": "stdio",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "inet_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -7131,6 +6958,27 @@
         "inet_ntoa"
       ],
       "track": "network/inet",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "stdio_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 9,
+      "target_uncovered_symbols": [
+        "stderr",
+        "stdin",
+        "stdout",
+        "tmpnam",
+        "vfprintf",
+        "vfscanf",
+        "vprintf",
+        "vscanf",
+        "vsscanf"
+      ],
+      "track": "stdio",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -7259,47 +7107,40 @@
       "track": "runtime_policy",
       "workload_blocked_count": 0,
       "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
-      "module": "startup_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 1,
-      "target_uncovered_symbols": [
-        "__cxa_thread_atexit_impl"
-      ],
-      "track": "startup",
-      "workload_blocked_count": 0,
-      "workload_ids": []
     }
   ],
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 26.99,
-      "covered": 1000,
-      "total": 3705,
-      "uncovered": 2705
+      "coverage_pct": 24.89,
+      "covered": 870,
+      "total": 3496,
+      "uncovered": 2626
     },
     "RawSyscall": {
       "coverage_pct": 39.13,
       "covered": 162,
       "total": 414,
       "uncovered": 252
+    },
+    "WrapsHostLibc": {
+      "coverage_pct": 62.2,
+      "covered": 130,
+      "total": 209,
+      "uncovered": 79
     }
   },
   "summary": {
     "coverage_pct": 28.21,
     "covered_exported_symbols": 1162,
-    "target_coverage_pct": 28.21,
-    "target_covered_symbols": 1162,
+    "target_coverage_pct": 26.39,
+    "target_covered_symbols": 1032,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
-    "target_total_symbols": 4119,
-    "target_uncovered_symbols": 2957,
+    "target_total_symbols": 3910,
+    "target_uncovered_symbols": 2878,
     "total_exported_symbols": 4119,
     "uncovered_exported_symbols": 2957,
     "uncovered_target_families": 1,
@@ -8935,7 +8776,7 @@
       ],
       "module": "dlfcn_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "dl_iterate_phdr"
     },
     {
@@ -8957,7 +8798,7 @@
       ],
       "module": "dlfcn_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "dladdr"
     },
     {
@@ -8982,7 +8823,7 @@
       ],
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "dlclose"
     },
     {
@@ -9029,7 +8870,7 @@
       ],
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "dlopen"
     },
     {
@@ -9054,7 +8895,7 @@
       ],
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "dlsym"
     },
     {
@@ -9077,7 +8918,7 @@
       ],
       "module": "dlfcn_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "dlvsym"
     },
     {
@@ -13804,20 +13645,6 @@
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "Implemented",
-      "symbol": "__pipe"
-    },
-    {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
-      "module": "glibc_internal_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
       "symbol": "__poll"
     },
     {
@@ -16049,7 +15876,7 @@
       ],
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "dlinfo"
     },
     {
@@ -19907,6 +19734,20 @@
       "module": "io_abi",
       "perf_class": "unknown",
       "status": "Implemented",
+      "symbol": "__pipe"
+    },
+    {
+      "c_fixture_mentions": 0,
+      "covered": false,
+      "fixture_case_count": 0,
+      "fixture_families": [],
+      "fixture_files": [],
+      "fixture_ids": [],
+      "fixture_modes": [],
+      "fixture_sources": [],
+      "module": "io_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
       "symbol": "alphasort64"
     },
     {
@@ -20398,7 +20239,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_default_pbackfail"
     },
     {
@@ -20412,7 +20253,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_default_uflow"
     },
     {
@@ -20426,7 +20267,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_default_xsgetn"
     },
     {
@@ -20440,7 +20281,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_default_xsputn"
     },
     {
@@ -20454,7 +20295,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_do_write"
     },
     {
@@ -20490,7 +20331,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fclose"
     },
     {
@@ -20504,7 +20345,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fdopen"
     },
     {
@@ -20518,7 +20359,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fflush"
     },
     {
@@ -20532,7 +20373,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fgetpos"
     },
     {
@@ -20546,7 +20387,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fgetpos64"
     },
     {
@@ -20560,7 +20401,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fgets"
     },
     {
@@ -20574,7 +20415,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_attach"
     },
     {
@@ -20588,7 +20429,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_close"
     },
     {
@@ -20602,7 +20443,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_close_it"
     },
     {
@@ -20644,7 +20485,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_fopen"
     },
     {
@@ -20694,7 +20535,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_open"
     },
     {
@@ -20708,7 +20549,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_overflow"
     },
     {
@@ -20722,7 +20563,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_read"
     },
     {
@@ -20736,7 +20577,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_seek"
     },
     {
@@ -20750,7 +20591,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_seekoff"
     },
     {
@@ -20764,7 +20605,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_setbuf"
     },
     {
@@ -20778,7 +20619,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_stat"
     },
     {
@@ -20792,7 +20633,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_sync"
     },
     {
@@ -20806,7 +20647,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_underflow"
     },
     {
@@ -20820,7 +20661,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_write"
     },
     {
@@ -20834,7 +20675,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_file_xsputn"
     },
     {
@@ -20848,7 +20689,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_flush_all"
     },
     {
@@ -20862,7 +20703,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_flush_all_linebuffered"
     },
     {
@@ -20876,7 +20717,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fopen"
     },
     {
@@ -20890,7 +20731,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fprintf"
     },
     {
@@ -20904,7 +20745,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fputs"
     },
     {
@@ -20918,7 +20759,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fread"
     },
     {
@@ -20976,7 +20817,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fsetpos"
     },
     {
@@ -20990,7 +20831,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fsetpos64"
     },
     {
@@ -21004,7 +20845,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_ftell"
     },
     {
@@ -21018,7 +20859,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_fwrite"
     },
     {
@@ -21032,7 +20873,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_getline"
     },
     {
@@ -21046,7 +20887,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_getline_info"
     },
     {
@@ -21060,7 +20901,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_gets"
     },
     {
@@ -21356,7 +21197,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_popen"
     },
     {
@@ -21370,7 +21211,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_printf"
     },
     {
@@ -21384,7 +21225,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_proc_close"
     },
     {
@@ -21398,7 +21239,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_proc_open"
     },
     {
@@ -21476,7 +21317,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_setbuffer"
     },
     {
@@ -21490,7 +21331,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_setvbuf"
     },
     {
@@ -21504,7 +21345,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_sprintf"
     },
     {
@@ -21518,7 +21359,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_sputbackc"
     },
     {
@@ -21532,7 +21373,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_sputbackwc"
     },
     {
@@ -21704,7 +21545,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_switch_to_get_mode"
     },
     {
@@ -21754,7 +21595,7 @@
       ],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_switch_to_wget_mode"
     },
     {
@@ -21790,7 +21631,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_ungetc"
     },
     {
@@ -21832,7 +21673,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_vfprintf"
     },
     {
@@ -21846,7 +21687,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_vfscanf"
     },
     {
@@ -21860,7 +21701,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_vsprintf"
     },
     {
@@ -21910,7 +21751,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wdefault_pbackfail"
     },
     {
@@ -21932,7 +21773,7 @@
       ],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wdefault_uflow"
     },
     {
@@ -21946,7 +21787,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wdefault_xsgetn"
     },
     {
@@ -21960,7 +21801,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wdefault_xsputn"
     },
     {
@@ -22016,7 +21857,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wfile_overflow"
     },
     {
@@ -22030,7 +21871,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wfile_seekoff"
     },
     {
@@ -22052,7 +21893,7 @@
       ],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wfile_sync"
     },
     {
@@ -22066,7 +21907,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wfile_underflow"
     },
     {
@@ -22080,7 +21921,7 @@
       "fixture_sources": [],
       "module": "io_internal_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_wfile_xsputn"
     },
     {
@@ -22701,7 +22542,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "aligned_alloc"
     },
     {
@@ -22728,7 +22569,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "calloc"
     },
     {
@@ -22751,7 +22592,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "cfree"
     },
     {
@@ -22778,7 +22619,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "free"
     },
     {
@@ -22851,7 +22692,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "malloc"
     },
     {
@@ -22874,7 +22715,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "cold",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "malloc_info"
     },
     {
@@ -22989,7 +22830,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "memalign"
     },
     {
@@ -23012,7 +22853,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "posix_memalign"
     },
     {
@@ -23035,7 +22876,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pvalloc"
     },
     {
@@ -23062,7 +22903,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "realloc"
     },
     {
@@ -23085,7 +22926,7 @@
       ],
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "valloc"
     },
     {
@@ -42653,7 +42494,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__pthread_mutex_lock"
     },
     {
@@ -42697,7 +42538,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__pthread_mutex_unlock"
     },
     {
@@ -42789,7 +42630,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__pthread_once"
     },
     {
@@ -42904,7 +42745,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__pthread_rwlock_rdlock"
     },
     {
@@ -42973,7 +42814,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__pthread_rwlock_unlock"
     },
     {
@@ -42996,7 +42837,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__pthread_rwlock_wrlock"
     },
     {
@@ -43088,7 +42929,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__pthread_unwind_next"
     },
     {
@@ -43732,7 +43573,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_barrier_wait"
     },
     {
@@ -43847,7 +43688,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_cancel"
     },
     {
@@ -43869,7 +43710,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_clockjoin_np"
     },
     {
@@ -43957,7 +43798,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_cond_init"
     },
     {
@@ -44161,7 +44002,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_create"
     },
     {
@@ -44184,7 +44025,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_detach"
     },
     {
@@ -44224,7 +44065,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_exit"
     },
     {
@@ -44380,7 +44221,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_join"
     },
     {
@@ -44452,7 +44293,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_mutex_clocklock"
     },
     {
@@ -44548,7 +44389,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_mutex_lock"
     },
     {
@@ -44562,7 +44403,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_mutex_timedlock"
     },
     {
@@ -44616,7 +44457,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_mutex_unlock"
     },
     {
@@ -44770,7 +44611,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_once"
     },
     {
@@ -44784,7 +44625,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_rwlock_clockrdlock"
     },
     {
@@ -44798,7 +44639,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_rwlock_clockwrlock"
     },
     {
@@ -44840,7 +44681,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_rwlock_rdlock"
     },
     {
@@ -44854,7 +44695,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_rwlock_timedrdlock"
     },
     {
@@ -44868,7 +44709,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_rwlock_timedwrlock"
     },
     {
@@ -44910,7 +44751,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_rwlock_unlock"
     },
     {
@@ -44924,7 +44765,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_rwlock_wrlock"
     },
     {
@@ -45048,7 +44889,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_setcancelstate"
     },
     {
@@ -45062,7 +44903,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_setcanceltype"
     },
     {
@@ -45210,7 +45051,7 @@
       "fixture_sources": [],
       "module": "pthread_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_testcancel"
     },
     {
@@ -45232,7 +45073,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_timedjoin_np"
     },
     {
@@ -45254,7 +45095,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_tryjoin_np"
     },
     {
@@ -49814,7 +49655,7 @@
       "fixture_sources": [],
       "module": "startup_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__cxa_thread_atexit_impl"
     },
     {
@@ -49841,7 +49682,7 @@
       ],
       "module": "startup_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__frankenlibc_startup_phase0"
     },
     {
@@ -49864,7 +49705,7 @@
       ],
       "module": "startup_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__frankenlibc_startup_snapshot"
     },
     {
@@ -49886,7 +49727,7 @@
       ],
       "module": "startup_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__libc_start_main"
     },
     {
@@ -51518,7 +51359,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_feof"
     },
     {
@@ -51541,7 +51382,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_ferror"
     },
     {
@@ -51564,7 +51405,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_flockfile"
     },
     {
@@ -51587,7 +51428,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_ftrylockfile"
     },
     {
@@ -51610,7 +51451,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_funlockfile"
     },
     {
@@ -51633,7 +51474,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_getc"
     },
     {
@@ -51656,7 +51497,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_padn"
     },
     {
@@ -51679,7 +51520,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_peekc_locked"
     },
     {
@@ -51702,7 +51543,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_putc"
     },
     {
@@ -51725,7 +51566,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_puts"
     },
     {
@@ -51748,7 +51589,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_seekoff"
     },
     {
@@ -51771,7 +51612,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_seekpos"
     },
     {
@@ -51794,7 +51635,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_IO_sgetn"
     },
     {
@@ -51817,7 +51658,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__isoc23_fscanf"
     },
     {
@@ -51840,7 +51681,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__isoc23_scanf"
     },
     {
@@ -51886,7 +51727,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__isoc23_vfscanf"
     },
     {
@@ -51909,7 +51750,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "__isoc23_vscanf"
     },
     {
@@ -52143,7 +51984,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "clearerr"
     },
     {
@@ -52166,7 +52007,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "clearerr_unlocked"
     },
     {
@@ -52219,7 +52060,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fclose"
     },
     {
@@ -52242,7 +52083,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fcloseall"
     },
     {
@@ -52265,7 +52106,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fdopen"
     },
     {
@@ -52287,7 +52128,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "feof"
     },
     {
@@ -52310,7 +52151,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "feof_unlocked"
     },
     {
@@ -52333,7 +52174,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "ferror"
     },
     {
@@ -52356,7 +52197,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "ferror_unlocked"
     },
     {
@@ -52383,7 +52224,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fflush"
     },
     {
@@ -52406,7 +52247,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fflush_unlocked"
     },
     {
@@ -52433,7 +52274,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fgetc"
     },
     {
@@ -52456,7 +52297,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fgetc_unlocked"
     },
     {
@@ -52479,7 +52320,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fgetpos"
     },
     {
@@ -52502,7 +52343,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fgetpos64"
     },
     {
@@ -52529,7 +52370,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fgets"
     },
     {
@@ -52552,7 +52393,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fgets_unlocked"
     },
     {
@@ -52575,7 +52416,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fgetwc_unlocked"
     },
     {
@@ -52598,7 +52439,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fgetws_unlocked"
     },
     {
@@ -52625,7 +52466,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fileno"
     },
     {
@@ -52648,7 +52489,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fileno_unlocked"
     },
     {
@@ -52671,7 +52512,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "flockfile"
     },
     {
@@ -52694,7 +52535,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fmemopen"
     },
     {
@@ -52721,7 +52562,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fopen"
     },
     {
@@ -52744,7 +52585,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fopen64"
     },
     {
@@ -52767,7 +52608,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fopencookie"
     },
     {
@@ -52820,7 +52661,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fputc"
     },
     {
@@ -52843,7 +52684,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fputc_unlocked"
     },
     {
@@ -52870,7 +52711,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fputs"
     },
     {
@@ -52893,7 +52734,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fputs_unlocked"
     },
     {
@@ -52916,7 +52757,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fputwc_unlocked"
     },
     {
@@ -52939,7 +52780,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fputws_unlocked"
     },
     {
@@ -52966,7 +52807,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fread"
     },
     {
@@ -52989,7 +52830,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fread_unlocked"
     },
     {
@@ -53012,7 +52853,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_slow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "freopen"
     },
     {
@@ -53035,7 +52876,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "freopen64"
     },
     {
@@ -53080,7 +52921,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fseek"
     },
     {
@@ -53103,7 +52944,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fseeko"
     },
     {
@@ -53126,7 +52967,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fseeko64"
     },
     {
@@ -53149,7 +52990,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fsetpos"
     },
     {
@@ -53172,7 +53013,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fsetpos64"
     },
     {
@@ -53194,7 +53035,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "ftell"
     },
     {
@@ -53217,7 +53058,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "ftello"
     },
     {
@@ -53240,7 +53081,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "ftello64"
     },
     {
@@ -53263,7 +53104,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "ftrylockfile"
     },
     {
@@ -53286,7 +53127,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "funlockfile"
     },
     {
@@ -53312,7 +53153,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fwrite"
     },
     {
@@ -53335,7 +53176,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fwrite_unlocked"
     },
     {
@@ -53358,7 +53199,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "getc"
     },
     {
@@ -53381,7 +53222,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "getc_unlocked"
     },
     {
@@ -53404,7 +53245,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "getchar"
     },
     {
@@ -53427,7 +53268,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "getchar_unlocked"
     },
     {
@@ -53450,7 +53291,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_slow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "getdelim"
     },
     {
@@ -53473,7 +53314,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_slow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "getline"
     },
     {
@@ -53496,7 +53337,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "getw"
     },
     {
@@ -53519,7 +53360,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "mktemp"
     },
     {
@@ -53542,7 +53383,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "open_memstream"
     },
     {
@@ -53565,7 +53406,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "pclose"
     },
     {
@@ -53587,7 +53428,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "perror"
     },
     {
@@ -53610,7 +53451,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "popen"
     },
     {
@@ -53660,7 +53501,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "putc"
     },
     {
@@ -53683,7 +53524,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "putc_unlocked"
     },
     {
@@ -53706,7 +53547,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "putchar"
     },
     {
@@ -53729,7 +53570,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_hotpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "putchar_unlocked"
     },
     {
@@ -53752,7 +53593,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "puts"
     },
     {
@@ -53775,7 +53616,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "unknown",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "putw"
     },
     {
@@ -53798,7 +53639,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "strict_slow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "remove"
     },
     {
@@ -53821,7 +53662,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "rewind"
     },
     {
@@ -53871,7 +53712,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "setbuf"
     },
     {
@@ -53885,7 +53726,7 @@
       "fixture_sources": [],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "setbuffer"
     },
     {
@@ -53899,7 +53740,7 @@
       "fixture_sources": [],
       "module": "stdio_abi",
       "perf_class": "fast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "setlinebuf"
     },
     {
@@ -53926,7 +53767,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "setvbuf"
     },
     {
@@ -54060,7 +53901,7 @@
       "fixture_sources": [],
       "module": "stdio_abi",
       "perf_class": "strict_slow",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "tmpfile"
     },
     {
@@ -54074,7 +53915,7 @@
       "fixture_sources": [],
       "module": "stdio_abi",
       "perf_class": "default",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "tmpfile64"
     },
     {
@@ -54115,7 +53956,7 @@
       ],
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "ungetc"
     },
     {
@@ -75652,8 +75493,8 @@
       "module": "glibc_internal_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 7.02,
-      "target_uncovered_count": 530,
+      "target_coverage_pct": 6.87,
+      "target_uncovered_count": 529,
       "target_uncovered_symbols": [
         "__ctype32_toupper",
         "__ctype_init",
@@ -75800,7 +75641,6 @@
         "__open64_nocancel",
         "__open_nocancel",
         "__overflow",
-        "__pipe",
         "__poll",
         "__posix_getopt",
         "__pread64",
@@ -76232,9 +76072,10 @@
       "module": "io_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 3.57,
-      "target_uncovered_count": 27,
+      "target_coverage_pct": 3.45,
+      "target_uncovered_count": 28,
       "target_uncovered_symbols": [
+        "__pipe",
         "alphasort64",
         "copy_file_range",
         "dup",
@@ -76271,94 +76112,34 @@
       "module": "io_internal_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 23.68,
-      "target_uncovered_count": 87,
+      "target_coverage_pct": 47.06,
+      "target_uncovered_count": 27,
       "target_uncovered_symbols": [
-        "_IO_default_pbackfail",
-        "_IO_default_uflow",
-        "_IO_default_xsgetn",
-        "_IO_default_xsputn",
-        "_IO_do_write",
-        "_IO_fclose",
-        "_IO_fdopen",
-        "_IO_fflush",
-        "_IO_fgetpos",
-        "_IO_fgetpos64",
-        "_IO_fgets",
-        "_IO_file_attach",
-        "_IO_file_close",
-        "_IO_file_close_it",
         "_IO_file_doallocate",
         "_IO_file_finish",
-        "_IO_file_fopen",
         "_IO_file_jumps",
-        "_IO_file_open",
-        "_IO_file_overflow",
-        "_IO_file_read",
-        "_IO_file_seek",
-        "_IO_file_seekoff",
-        "_IO_file_setbuf",
-        "_IO_file_stat",
-        "_IO_file_sync",
-        "_IO_file_underflow",
-        "_IO_file_write",
-        "_IO_file_xsputn",
-        "_IO_flush_all",
-        "_IO_flush_all_linebuffered",
-        "_IO_fopen",
-        "_IO_fprintf",
-        "_IO_fputs",
-        "_IO_fread",
-        "_IO_fsetpos",
-        "_IO_fsetpos64",
-        "_IO_ftell",
-        "_IO_fwrite",
-        "_IO_getline",
-        "_IO_getline_info",
-        "_IO_gets",
         "_IO_init_marker",
         "_IO_init_wmarker",
         "_IO_iter_file",
         "_IO_iter_next",
         "_IO_least_wmarker",
         "_IO_list_all",
-        "_IO_popen",
-        "_IO_printf",
-        "_IO_proc_close",
-        "_IO_proc_open",
         "_IO_remove_marker",
         "_IO_seekwmark",
         "_IO_setb",
-        "_IO_setbuffer",
-        "_IO_setvbuf",
-        "_IO_sprintf",
-        "_IO_sputbackc",
-        "_IO_sputbackwc",
         "_IO_sscanf",
         "_IO_str_init_readonly",
         "_IO_str_init_static",
         "_IO_str_pbackfail",
         "_IO_str_seekoff",
-        "_IO_switch_to_get_mode",
         "_IO_switch_to_main_wget_area",
         "_IO_switch_to_wbackup_area",
-        "_IO_ungetc",
         "_IO_unsave_markers",
         "_IO_unsave_wmarkers",
-        "_IO_vfprintf",
-        "_IO_vfscanf",
-        "_IO_vsprintf",
         "_IO_wdefault_finish",
-        "_IO_wdefault_pbackfail",
-        "_IO_wdefault_xsgetn",
-        "_IO_wdefault_xsputn",
         "_IO_wdo_write",
         "_IO_wdoallocbuf",
         "_IO_wfile_jumps",
-        "_IO_wfile_overflow",
-        "_IO_wfile_seekoff",
-        "_IO_wfile_underflow",
-        "_IO_wfile_xsputn",
         "_IO_wmarker_delta",
         "_IO_wsetb"
       ],
@@ -77610,13 +77391,12 @@
       "module": "pthread_abi",
       "recommended_bead": "bd-yos",
       "severity": "high",
-      "target_coverage_pct": 61.7,
-      "target_uncovered_count": 54,
+      "target_coverage_pct": 63.3,
+      "target_uncovered_count": 40,
       "target_uncovered_symbols": [
         "pthread_condattr_init",
         "pthread_condattr_setclock",
         "pthread_condattr_setpshared",
-        "pthread_exit",
         "pthread_getaffinity_np",
         "pthread_getattr_default_np",
         "pthread_getconcurrency",
@@ -77624,9 +77404,7 @@
         "pthread_getname_np",
         "pthread_gettid_np",
         "pthread_kill",
-        "pthread_mutex_clocklock",
         "pthread_mutex_consistent",
-        "pthread_mutex_timedlock",
         "pthread_mutexattr_destroy",
         "pthread_mutexattr_getprotocol",
         "pthread_mutexattr_getpshared",
@@ -77637,26 +77415,16 @@
         "pthread_mutexattr_setpshared",
         "pthread_mutexattr_setrobust",
         "pthread_mutexattr_settype",
-        "pthread_once",
-        "pthread_rwlock_clockrdlock",
-        "pthread_rwlock_clockwrlock",
         "pthread_rwlock_destroy",
         "pthread_rwlock_init",
-        "pthread_rwlock_rdlock",
-        "pthread_rwlock_timedrdlock",
-        "pthread_rwlock_timedwrlock",
         "pthread_rwlock_tryrdlock",
         "pthread_rwlock_trywrlock",
-        "pthread_rwlock_unlock",
-        "pthread_rwlock_wrlock",
         "pthread_rwlockattr_destroy",
         "pthread_rwlockattr_getpshared",
         "pthread_rwlockattr_init",
         "pthread_rwlockattr_setpshared",
         "pthread_setaffinity_np",
         "pthread_setattr_default_np",
-        "pthread_setcancelstate",
-        "pthread_setcanceltype",
         "pthread_setconcurrency",
         "pthread_setname_np",
         "pthread_sigqueue",
@@ -77665,7 +77433,6 @@
         "pthread_spin_lock",
         "pthread_spin_trylock",
         "pthread_spin_unlock",
-        "pthread_testcancel",
         "pthread_yield"
       ],
       "track": "threading",
@@ -77872,15 +77639,23 @@
       "workload_ids": []
     },
     {
-      "module": "startup_abi",
+      "module": "stdio_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 75.0,
-      "target_uncovered_count": 1,
+      "target_coverage_pct": 73.53,
+      "target_uncovered_count": 9,
       "target_uncovered_symbols": [
-        "__cxa_thread_atexit_impl"
+        "stderr",
+        "stdin",
+        "stdout",
+        "tmpnam",
+        "vfprintf",
+        "vfscanf",
+        "vprintf",
+        "vscanf",
+        "vsscanf"
       ],
-      "track": "startup",
+      "track": "stdio",
       "workload_blocked_count": 0,
       "workload_ids": []
     },

@@ -151,22 +151,22 @@
   },
   "coverage_expectations": {
     "symbol_fixture_coverage": {
-      "target_total_symbols": 4119,
-      "target_covered_symbols": 1126,
-      "target_uncovered_symbols": 2993,
-      "target_coverage_pct": 27.34
+      "target_total_symbols": 3910,
+      "target_covered_symbols": 1032,
+      "target_uncovered_symbols": 2878,
+      "target_coverage_pct": 26.39
     },
     "per_symbol_fixture_tests": {
       "total_symbols": 4119,
-      "symbols_with_fixtures": 1124,
-      "total_cases": 2702,
-      "uncovered_action_count": 2995,
+      "symbols_with_fixtures": 1160,
+      "total_cases": 2774,
+      "uncovered_action_count": 2880,
       "total_format_issues": 0
     },
     "fixture_coverage_prioritizer": {
       "campaign_count": 8,
-      "selected_target_uncovered_symbols": 2639,
-      "all_uncovered_target_symbols": 2993,
+      "selected_target_uncovered_symbols": 2603,
+      "all_uncovered_target_symbols": 2957,
       "total_first_wave_fixture_count": 96,
       "required_covered_modules": [
         "fortify_abi",
@@ -258,10 +258,10 @@
     "current_campaign_first_wave": [
       {
         "campaign_id": "fcq-unistd-process-filesystem",
-        "first_wave_symbols": ["fgetpwent", "fgetpwent_r", "fgetspent", "fgetspent_r", "fgetxattr", "flistxattr", "flock", "fmtmsg", "forkpty", "fpathconf", "freeifaddrs", "fremovexattr"],
-        "current_coverage_pct": 22.51,
-        "target_covered": 167,
-        "target_uncovered": 575
+        "first_wave_symbols": ["fts_open", "fts_read", "fts_set", "ftw", "ftw64", "futex", "futex_requeue", "futex_wait", "futex_waitv", "futex_wake", "gai_cancel", "gai_error"],
+        "current_coverage_pct": 27.36,
+        "target_covered": 203,
+        "target_uncovered": 539
       },
       {
         "campaign_id": "fcq-stdio-libio",

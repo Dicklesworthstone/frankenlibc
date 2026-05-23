@@ -784,7 +784,7 @@
       ]
     }
   ],
-  "generated_at_utc": "2026-05-11T09:57:04Z",
+  "generated_at_utc": "2026-05-23T12:39:21Z",
   "inputs": {
     "abi_symbol_universe": "tests/conformance/symbol_universe_normalization.v1.json",
     "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
