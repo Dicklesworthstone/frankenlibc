@@ -1189,13 +1189,38 @@ mod tests {
         let _g = lock_and_reset();
         rcu_register_thread(700).unwrap();
 
-        // Spawn synchronize in a background thread (it increments epoch then waits).
-        let handle = std::thread::spawn(|| {
-            synchronize_rcu();
+        // Use a barrier to ensure synchronize_rcu increments the epoch BEFORE
+        // the main thread calls rcu_quiescent_state. Without this, there's a race:
+        // if quiescent_state runs first and stores epoch=1, then synchronize_rcu
+        // increments to epoch=2, the synchronize call spins forever.
+        use std::sync::{Arc, Barrier};
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_clone = Arc::clone(&barrier);
+
+        let handle = std::thread::spawn(move || {
+            // Increment epoch first (what synchronize_rcu does internally).
+            let new_epoch = GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+            // Signal that epoch is incremented.
+            barrier_clone.wait();
+            // Now wait for readers to catch up.
+            for slot in &READER_SLOTS {
+                loop {
+                    let slot_tid = slot.tid.load(Ordering::Acquire);
+                    if slot_tid == SLOT_EMPTY || slot_tid == SLOT_TOMBSTONE {
+                        break;
+                    }
+                    let reader_epoch = slot.epoch.load(Ordering::Acquire);
+                    if reader_epoch == EPOCH_OFFLINE || reader_epoch >= new_epoch {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         });
 
-        // Give writer time to start, then advance reader.
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Wait until the spawned thread has incremented the epoch.
+        barrier.wait();
+        // Now quiescent_state will read the new epoch and store it.
         rcu_quiescent_state(700);
 
         handle.join().expect("synchronize_rcu thread panicked");
@@ -1208,20 +1233,33 @@ mod tests {
         let _g = lock_and_reset();
         let idx = rcu_register_thread(800).unwrap();
 
-        // Reader is at epoch 1. Start synchronize in another thread.
-        let handle = std::thread::spawn(|| {
-            synchronize_rcu();
+        use std::sync::{Arc, Barrier};
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_clone = Arc::clone(&barrier);
+
+        let handle = std::thread::spawn(move || {
+            let new_epoch = GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+            barrier_clone.wait();
+            for slot in &READER_SLOTS {
+                loop {
+                    let slot_tid = slot.tid.load(Ordering::Acquire);
+                    if slot_tid == SLOT_EMPTY || slot_tid == SLOT_TOMBSTONE {
+                        break;
+                    }
+                    let reader_epoch = slot.epoch.load(Ordering::Acquire);
+                    if reader_epoch == EPOCH_OFFLINE || reader_epoch >= new_epoch {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         });
 
-        // Give the writer time to start spinning.
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // Reader marks quiescent state — this should unblock synchronize.
+        barrier.wait();
         rcu_quiescent_state(800);
 
         handle.join().expect("synchronize_rcu thread panicked");
 
-        // Verify reader caught up.
         let reader_epoch = READER_SLOTS[idx].epoch.load(Ordering::Acquire);
         let global_epoch = GLOBAL_EPOCH.load(Ordering::Acquire);
         assert!(reader_epoch >= global_epoch);
@@ -1247,20 +1285,36 @@ mod tests {
             rcu_register_thread(tid).unwrap();
         }
 
+        use std::sync::{Arc, Barrier};
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_clone = Arc::clone(&barrier);
+
         let tids_clone = tids;
         let handle = std::thread::spawn(move || {
-            synchronize_rcu();
+            let new_epoch = GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+            barrier_clone.wait();
+            for slot in &READER_SLOTS {
+                loop {
+                    let slot_tid = slot.tid.load(Ordering::Acquire);
+                    if slot_tid == SLOT_EMPTY || slot_tid == SLOT_TOMBSTONE {
+                        break;
+                    }
+                    let reader_epoch = slot.epoch.load(Ordering::Acquire);
+                    if reader_epoch == EPOCH_OFFLINE || reader_epoch >= new_epoch {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         });
 
-        // Stagger quiescent states.
-        for (i, &tid) in tids_clone.iter().enumerate() {
-            std::thread::sleep(std::time::Duration::from_millis(5 * (i as u64 + 1)));
+        barrier.wait();
+        for &tid in tids_clone.iter() {
             rcu_quiescent_state(tid);
         }
 
         handle.join().expect("synchronize_rcu thread panicked");
 
-        // All readers should have caught up.
         let ge = GLOBAL_EPOCH.load(Ordering::Acquire);
         for &tid in &tids {
             let start = (tid as usize) % MAX_RCU_THREADS;
@@ -1331,6 +1385,7 @@ mod tests {
     fn test_call_rcu_and_process() {
         let _g = lock_and_reset();
         use std::sync::atomic::AtomicBool;
+        use std::sync::{Arc, Barrier};
 
         static CALLED: AtomicBool = AtomicBool::new(false);
 
@@ -1340,30 +1395,60 @@ mod tests {
 
         CALLED.store(false, Ordering::Release);
 
-        // Register a reader so synchronize has something to track.
         rcu_register_thread(1100).unwrap();
 
         unsafe {
             call_rcu(my_callback, 0).unwrap();
         }
 
-        // Advance epoch: spawn synchronize in background, then advance reader.
-        let handle = std::thread::spawn(|| {
-            synchronize_rcu();
+        // First grace period with barrier synchronization.
+        let barrier1 = Arc::new(Barrier::new(2));
+        let b1_clone = Arc::clone(&barrier1);
+        let handle = std::thread::spawn(move || {
+            let new_epoch = GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+            b1_clone.wait();
+            for slot in &READER_SLOTS {
+                loop {
+                    let slot_tid = slot.tid.load(Ordering::Acquire);
+                    if slot_tid == SLOT_EMPTY || slot_tid == SLOT_TOMBSTONE {
+                        break;
+                    }
+                    let reader_epoch = slot.epoch.load(Ordering::Acquire);
+                    if reader_epoch == EPOCH_OFFLINE || reader_epoch >= new_epoch {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         });
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        barrier1.wait();
         rcu_quiescent_state(1100);
         handle.join().expect("synchronize_rcu thread panicked");
 
-        // Do another round to ensure callback epoch is past.
-        let handle2 = std::thread::spawn(|| {
-            synchronize_rcu();
+        // Second grace period to ensure callback epoch is past.
+        let barrier2 = Arc::new(Barrier::new(2));
+        let b2_clone = Arc::clone(&barrier2);
+        let handle2 = std::thread::spawn(move || {
+            let new_epoch = GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+            b2_clone.wait();
+            for slot in &READER_SLOTS {
+                loop {
+                    let slot_tid = slot.tid.load(Ordering::Acquire);
+                    if slot_tid == SLOT_EMPTY || slot_tid == SLOT_TOMBSTONE {
+                        break;
+                    }
+                    let reader_epoch = slot.epoch.load(Ordering::Acquire);
+                    if reader_epoch == EPOCH_OFFLINE || reader_epoch >= new_epoch {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         });
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        barrier2.wait();
         rcu_quiescent_state(1100);
         handle2.join().expect("synchronize_rcu thread panicked");
 
-        // Process callbacks.
         process_rcu_callbacks();
 
         assert!(CALLED.load(Ordering::Acquire));
@@ -1373,6 +1458,7 @@ mod tests {
     fn test_call_rcu_preserves_arg() {
         let _g = lock_and_reset();
         use std::sync::atomic::AtomicUsize as AU;
+        use std::sync::{Arc, Barrier};
 
         static RECEIVED_ARG: AU = AU::new(0);
 
@@ -1387,18 +1473,49 @@ mod tests {
             call_rcu(capture_arg, 0xDEAD_BEEF).unwrap();
         }
 
-        // Advance epoch: spawn synchronize in background, then advance reader.
-        let handle = std::thread::spawn(|| {
-            synchronize_rcu();
+        let barrier1 = Arc::new(Barrier::new(2));
+        let b1_clone = Arc::clone(&barrier1);
+        let handle = std::thread::spawn(move || {
+            let new_epoch = GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+            b1_clone.wait();
+            for slot in &READER_SLOTS {
+                loop {
+                    let slot_tid = slot.tid.load(Ordering::Acquire);
+                    if slot_tid == SLOT_EMPTY || slot_tid == SLOT_TOMBSTONE {
+                        break;
+                    }
+                    let reader_epoch = slot.epoch.load(Ordering::Acquire);
+                    if reader_epoch == EPOCH_OFFLINE || reader_epoch >= new_epoch {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         });
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        barrier1.wait();
         rcu_quiescent_state(1200);
         handle.join().expect("synchronize_rcu thread panicked");
 
-        let handle2 = std::thread::spawn(|| {
-            synchronize_rcu();
+        let barrier2 = Arc::new(Barrier::new(2));
+        let b2_clone = Arc::clone(&barrier2);
+        let handle2 = std::thread::spawn(move || {
+            let new_epoch = GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+            b2_clone.wait();
+            for slot in &READER_SLOTS {
+                loop {
+                    let slot_tid = slot.tid.load(Ordering::Acquire);
+                    if slot_tid == SLOT_EMPTY || slot_tid == SLOT_TOMBSTONE {
+                        break;
+                    }
+                    let reader_epoch = slot.epoch.load(Ordering::Acquire);
+                    if reader_epoch == EPOCH_OFFLINE || reader_epoch >= new_epoch {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         });
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        barrier2.wait();
         rcu_quiescent_state(1200);
         handle2.join().expect("synchronize_rcu thread panicked");
 
@@ -1486,8 +1603,8 @@ mod tests {
     #[test]
     fn test_grace_period_end_to_end() {
         let _g = lock_and_reset();
+        use std::sync::{Arc, Barrier};
 
-        // Setup: writer publishes data, readers access it.
         let domain: RcuDomain<u64> = RcuDomain::new();
         let v1 = Box::into_raw(Box::new(100u64));
 
@@ -1498,14 +1615,12 @@ mod tests {
             domain.update(v1);
         }
 
-        // Both readers see v1.
         rcu_read_lock();
         unsafe {
             assert_eq!(*domain.read().unwrap(), 100);
         }
         rcu_read_unlock();
 
-        // Writer publishes v2.
         let v2 = Box::into_raw(Box::new(200u64));
         let old;
         unsafe {
@@ -1513,22 +1628,31 @@ mod tests {
         }
         assert_eq!(old, v1);
 
-        // Start grace period in background.
-        // synchronize_rcu increments epoch, then waits for ALL readers to advance.
-        let handle = std::thread::spawn(|| {
-            synchronize_rcu();
+        let barrier = Arc::new(Barrier::new(2));
+        let b_clone = Arc::clone(&barrier);
+        let handle = std::thread::spawn(move || {
+            let new_epoch = GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+            b_clone.wait();
+            for slot in &READER_SLOTS {
+                loop {
+                    let slot_tid = slot.tid.load(Ordering::Acquire);
+                    if slot_tid == SLOT_EMPTY || slot_tid == SLOT_TOMBSTONE {
+                        break;
+                    }
+                    let reader_epoch = slot.epoch.load(Ordering::Acquire);
+                    if reader_epoch == EPOCH_OFFLINE || reader_epoch >= new_epoch {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         });
 
-        // Give writer time to start spinning.
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // Both readers mark quiescent AFTER synchronize starts — this is key.
-        // Readers must advance AFTER the epoch increment to unblock the writer.
+        barrier.wait();
         rcu_quiescent_state(1400);
         rcu_quiescent_state(1401);
         handle.join().unwrap();
 
-        // Grace period complete — safe to free old value.
         unsafe {
             let _ = Box::from_raw(old);
             let _ = Box::from_raw(v2);
