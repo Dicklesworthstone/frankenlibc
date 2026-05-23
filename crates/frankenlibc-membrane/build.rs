@@ -726,7 +726,15 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     MemoryModelSource {
         relative_path: "src/tls_cache.rs",
         domain: "tsm",
-        expected_sites: 2,
+        // Atomic-ordering sites in tls_cache.rs after the per-shard
+        // invalidation refactor. The previous global-epoch design had 2
+        // sites (one load+Acquire, one fetch_add+Release). The new design
+        // exposes more sites because the same Acquire/Release pattern is
+        // now applied per-shard (current_shard_epoch, snapshot_shard_epochs,
+        // bump_shard_epoch, bump_tls_cache_epoch, current_epoch) and the
+        // race-safety + cross-shard isolation tests each touch SHARD_EPOCHS
+        // directly. Adjust here when the in-file barrier surface changes.
+        expected_sites: 8,
         stop_at_cfg_test: false,
         optional: false,
     },

@@ -1,10 +1,17 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "bead_id": "bd-66wz.2.1",
   "original_bead_id": "bd-66wz.2",
   "subject": "tls_cache_epoch_invalidation",
   "cache_size_entries": 1024,
-  "epoch_source": "GLOBAL_TLS_CACHE_EPOCH",
+  "epoch_source": "SHARD_EPOCHS[tls_cache_shard_for(user_base)]",
+  "num_shards": 16,
+  "schema_version_2_notes": [
+    "Schema bumped from 1 to 2 when the cross-thread invalidation stamp was sharded across NUM_TLS_CACHE_SHARDS atomics.",
+    "Cache entries now record (shard_idx, shard_epoch) instead of a single global epoch.",
+    "Each case below is interpreted as: free a slot whose home shard matches the cached entry, so the relevant shard epoch bumps from E to E+1.",
+    "A free in a different shard MUST NOT invalidate this entry; that property is pinned by tls_cache.rs::bump_of_unrelated_shard_does_not_invalidate_entry."
+  ],
   "cases": [
     {
       "id": "lookup_epoch_mismatch_forces_miss",

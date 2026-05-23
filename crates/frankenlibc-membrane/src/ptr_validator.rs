@@ -23,7 +23,9 @@ use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};
 use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
-use crate::tls_cache::{CachedValidation, with_tls_cache};
+use crate::tls_cache::{
+    CachedValidation, NUM_TLS_CACHE_SHARDS, snapshot_shard_epochs, with_tls_cache,
+};
 use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
 use serde::Serialize;
@@ -912,7 +914,13 @@ impl ValidationPipeline {
         let mut saw_fingerprint = false;
         let mut saw_canary = false;
         let mut epoch_guard: Option<PinnedEpochGuard<'_>> = None;
-        let mut validation_epoch = None;
+        // Snapshot of all per-shard TLS-cache epochs, captured lazily on the
+        // first stage that needs to record a cache insertion. Sampling once
+        // up front (rather than once per insert) preserves the TOCTOU-safety
+        // of the old global-epoch design: a free that races with this
+        // validation will leave the snapshot lagging the live value, and the
+        // cached entry will mismatch on the next lookup.
+        let mut validation_shard_epochs: Option<[u64; NUM_TLS_CACHE_SHARDS]> = None;
 
         for (idx, stage) in ordering.iter().enumerate() {
             self.emit_validation_log(
@@ -1188,8 +1196,8 @@ impl ValidationPipeline {
                     if epoch_guard.is_none() {
                         epoch_guard = Some(self.pin_epoch());
                     }
-                    let slot_validation_epoch =
-                        *validation_epoch.get_or_insert_with(crate::tls_cache::current_epoch);
+                    let slot_validation_shard_epochs =
+                        *validation_shard_epochs.get_or_insert_with(snapshot_shard_epochs);
                     elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Arena.cost_ns()));
                     MembraneMetrics::inc(&metrics.arena_lookups);
                     let Some(found) = self.arena.lookup(addr) else {
@@ -1286,7 +1294,10 @@ impl ValidationPipeline {
                         return ValidationOutcome::TemporalViolation(abs);
                     }
                     slot = Some(found);
-                    debug_assert_eq!(validation_epoch, Some(slot_validation_epoch));
+                    debug_assert_eq!(
+                        validation_shard_epochs,
+                        Some(slot_validation_shard_epochs)
+                    );
                 }
                 CheckStage::Fingerprint => {
                     if let Some(s) = slot {
@@ -1573,8 +1584,8 @@ impl ValidationPipeline {
         // Runtime-math fast profile in strict mode skips deep integrity checks.
         if !deep_decision.requires_full_validation() && !mode.heals_enabled() {
             let abs = self.abstraction_from_slot(addr, &slot);
-            if let Some(validation_epoch) = validation_epoch {
-                self.cache_validation(addr, &slot, validation_epoch);
+            if let Some(snapshot) = validation_shard_epochs {
+                self.cache_validation(addr, &slot, &snapshot);
             }
             self.runtime_math.note_check_order_outcome(
                 mode,
@@ -1760,8 +1771,8 @@ impl ValidationPipeline {
         }
 
         let abs = self.abstraction_from_slot(addr, &slot);
-        if let Some(validation_epoch) = validation_epoch {
-            self.cache_validation(addr, &slot, validation_epoch);
+        if let Some(snapshot) = validation_shard_epochs {
+            self.cache_validation(addr, &slot, &snapshot);
         }
         self.runtime_math.note_check_order_outcome(
             mode,
@@ -1923,7 +1934,12 @@ impl ValidationPipeline {
         PointerAbstraction::validated(addr, state, cv.user_base, remaining, cv.generation)
     }
 
-    fn cache_validation(&self, addr: usize, slot: &ArenaSlot, epoch: u64) {
+    fn cache_validation(
+        &self,
+        addr: usize,
+        slot: &ArenaSlot,
+        shard_epochs: &[u64; NUM_TLS_CACHE_SHARDS],
+    ) {
         with_tls_cache(|cache| {
             cache.insert(
                 addr,
@@ -1933,7 +1949,7 @@ impl ValidationPipeline {
                     generation: slot.generation,
                     state: slot.state,
                 },
-                epoch,
+                shard_epochs,
             );
         });
     }

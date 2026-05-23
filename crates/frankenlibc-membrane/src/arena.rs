@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 
 use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::lattice::SafetyState;
-use crate::tls_cache::bump_tls_cache_epoch;
+use crate::tls_cache::bump_shard_epoch;
 
 /// Maximum quarantine queue size in bytes.
 const QUARANTINE_MAX_BYTES: usize = 64 * 1024 * 1024; // 64 MB
@@ -278,15 +278,20 @@ impl AllocationArena {
             // Verify canary before freeing
             let canary_ok = self.verify_canary_for_slot(slot);
 
-            // Move to quarantine. Mark state FIRST, then bump the global TLS-cache epoch
-            // so that any thread that Acquires the new epoch is guaranteed to see the
-            // Quarantined state.
+            // Move to quarantine. Mark state FIRST, then bump only THIS slot's
+            // home shard epoch in the TLS cache so that any thread which
+            // Acquires the new shard epoch is guaranteed to see the
+            // Quarantined state. Bumping a single shard instead of a global
+            // counter spares cached entries in unrelated shards from being
+            // invalidated by every free; the per-shard isolation invariant
+            // is pinned by
+            // `tls_cache::bump_of_unrelated_shard_does_not_invalidate_entry`.
             slot.state = SafetyState::Quarantined;
             slot.generation = self
                 .next_generation
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-            bump_tls_cache_epoch();
+            bump_shard_epoch(shard_idx);
 
             let raw_base = slot.raw_base;
             let offset = user_base - raw_base;
@@ -1089,12 +1094,14 @@ mod tests {
     #[test]
     fn arena_free_bumps_tls_cache_epoch() {
         use crate::tls_cache::{
-            CachedValidation, TlsValidationCache, current_epoch, lock_tls_cache_epoch_for_tests,
+            CachedValidation, TlsValidationCache, current_shard_epoch,
+            lock_tls_cache_epoch_for_tests, snapshot_shard_epochs, tls_cache_shard_for,
         };
 
         let arena = AllocationArena::new();
         let ptr = arena.allocate(256).expect("alloc");
         let addr = ptr.ptr as usize;
+        let shard = tls_cache_shard_for(addr);
 
         // Insert a cached validation for this pointer
         let mut cache = TlsValidationCache::new();
@@ -1105,41 +1112,43 @@ mod tests {
             state: SafetyState::Valid,
         };
 
-        let epoch_before;
+        let shard_epoch_before;
         {
             let _guard = lock_tls_cache_epoch_for_tests();
-            epoch_before = current_epoch();
-            cache.insert(addr, cached, epoch_before);
+            shard_epoch_before = current_shard_epoch(shard);
+            cache.insert(addr, cached, &snapshot_shard_epochs());
             assert!(
                 cache.lookup(addr).is_some(),
                 "cache should hit before arena free"
             );
         }
 
-        // Free the allocation - this bumps the TLS cache epoch
+        // Free the allocation; this bumps the freed slot's home shard epoch.
         let (result, drained) = arena.free(ptr.ptr);
         unsafe {
             AllocationArena::deallocate_drained(&drained);
         }
         assert_eq!(result, FreeResult::Freed);
 
-        let epoch_after = current_epoch();
+        let shard_epoch_after = current_shard_epoch(shard);
         assert!(
-            epoch_after > epoch_before,
-            "arena free must bump TLS cache epoch: before={epoch_before}, after={epoch_after}"
+            shard_epoch_after > shard_epoch_before,
+            "arena free must bump the freed slot's home shard epoch: \
+             shard={shard}, before={shard_epoch_before}, after={shard_epoch_after}"
         );
 
-        // Cached entry should now miss due to epoch mismatch
+        // Cached entry should now miss due to shard-epoch mismatch
         assert!(
             cache.lookup(addr).is_none(),
-            "cache should miss after arena free bumped epoch"
+            "cache should miss after arena free bumped shard epoch"
         );
     }
 
     #[test]
     fn tls_cache_reinsert_after_arena_free_uses_new_epoch() {
         use crate::tls_cache::{
-            CachedValidation, TlsValidationCache, current_epoch, lock_tls_cache_epoch_for_tests,
+            CachedValidation, TlsValidationCache, lock_tls_cache_epoch_for_tests,
+            snapshot_shard_epochs,
         };
 
         let arena = AllocationArena::new();
@@ -1148,7 +1157,7 @@ mod tests {
 
         let mut cache = TlsValidationCache::new();
 
-        // Insert at current epoch
+        // Insert at current shard epoch.
         {
             let _guard = lock_tls_cache_epoch_for_tests();
             cache.insert(
@@ -1159,20 +1168,20 @@ mod tests {
                     generation: 1,
                     state: SafetyState::Valid,
                 },
-                current_epoch(),
+                &snapshot_shard_epochs(),
             );
         }
 
-        // Free bumps epoch
+        // Free bumps the relevant shard epoch.
         let (_, drained) = arena.free(ptr.ptr);
         unsafe {
             AllocationArena::deallocate_drained(&drained);
         }
 
-        // Re-insert with new epoch (simulating re-validation after free)
+        // Re-insert with the new shard-epoch snapshot (simulating
+        // re-validation after free).
         {
             let _guard = lock_tls_cache_epoch_for_tests();
-            let new_epoch = current_epoch();
             cache.insert(
                 addr,
                 CachedValidation {
@@ -1181,7 +1190,7 @@ mod tests {
                     generation: 2,
                     state: SafetyState::Quarantined,
                 },
-                new_epoch,
+                &snapshot_shard_epochs(),
             );
 
             // Should hit with the new quarantined state

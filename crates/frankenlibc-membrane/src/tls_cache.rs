@@ -3,6 +3,43 @@
 //! 1024-entry direct-mapped cache indexed by `ptr >> 4` (16-byte granularity).
 //! Avoids global lock contention on the hot path by caching recent
 //! validation results per-thread.
+//!
+//! ## Cross-thread invalidation: per-shard epochs
+//!
+//! Pointer validity can change without the owning thread's involvement (for
+//! example, another thread frees an allocation). Cached entries must therefore
+//! be tagged with an invalidation generation so that a stale `Valid` hit
+//! cannot survive across a free.
+//!
+//! Earlier revisions used a single `GLOBAL_TLS_CACHE_EPOCH` atomic. That was
+//! correct but coarse: any free of any allocation invalidated every cached
+//! entry on every thread. Long-running threads paid a wave of cache misses
+//! every time an unrelated allocation was freed.
+//!
+//! This revision shards invalidation across `NUM_TLS_CACHE_SHARDS` (16) atomic
+//! counters, indexed by `tls_cache_shard_for(user_base)` to match
+//! `arena::shard_for` exactly. A free only bumps the shard that owns the
+//! freed slot, so on average a free invalidates ~1/16th of the address space
+//! a thread cared about; caches in the other 15 shards stay warm. The
+//! cross-shard isolation invariant is asserted by
+//! `bump_of_unrelated_shard_does_not_invalidate_entry`.
+//!
+//! ## Race semantics
+//!
+//! The per-shard design preserves the same TOCTOU guarantee as the old global
+//! epoch: a free that races with a concurrent validation cannot produce a
+//! stale `Valid` cache hit. The pattern is unchanged at the call-site level;
+//! callers snapshot epochs once at validation entry (now an array of 16 u64s
+//! instead of one) and pass that snapshot through to `insert`. If a free
+//! intervenes between snapshot and insert, the inserted entry's
+//! `shard_epoch` lags the live `SHARD_EPOCHS[shard_idx]`, and the very next
+//! lookup will mismatch and self-clean (same observable behaviour as the old
+//! global-epoch design).
+//!
+//! `bump_tls_cache_epoch()` is retained as a "bump every shard" compatibility
+//! wrapper for callers (and tests) that want to nuke the cache wholesale.
+//! `current_epoch()` is retained as the max across all shards, for the rare
+//! monotonicity-only consumer; it is no longer used as the cache-entry tag.
 
 use crate::lattice::SafetyState;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,35 +48,121 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const CACHE_SIZE: usize = 1024;
 const CACHE_MASK: usize = CACHE_SIZE - 1;
 
-// Cross-thread invalidation stamp.
-//
-// Any operation that changes pointer validity (e.g. free) bumps this epoch.
-// Cache entries are tagged with the epoch at insertion time; lookups only hit
-// when epochs match. This prevents stale CachedValid hits after frees.
-static GLOBAL_TLS_CACHE_EPOCH: AtomicU64 = AtomicU64::new(1);
+/// Number of invalidation shards. Must match `arena::NUM_SHARDS`. The home
+/// shard of any address is `tls_cache_shard_for(addr)` and the array
+/// `SHARD_EPOCHS` is indexed by that shard id.
+pub const NUM_TLS_CACHE_SHARDS: usize = 16;
+
+/// Per-shard invalidation stamps.
+///
+/// `arena::free` for a slot in shard `s` bumps `SHARD_EPOCHS[s]`. Cached
+/// entries record `(shard_idx, shard_epoch)` at insert time; lookup compares
+/// against the live shard epoch and misses on mismatch.
+static SHARD_EPOCHS: [AtomicU64; NUM_TLS_CACHE_SHARDS] = [
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+    AtomicU64::new(1),
+];
 
 // Test-only synchronization to avoid flaky cache-hit expectations when other
-// concurrently-running tests bump the global epoch (via allocator free paths).
+// concurrently-running tests bump shard epochs (via allocator free paths).
 //
-// WARNING: Do not hold this lock while calling code paths that bump the epoch
-// (e.g. arena free), or you'll deadlock.
+// WARNING: Do not hold this lock while calling code paths that bump a shard
+// epoch (e.g. arena free), or you'll deadlock.
 #[cfg(test)]
 static TLS_CACHE_EPOCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Map an address to its TLS-cache invalidation shard.
+///
+/// Must match `arena::shard_for` exactly so that the shard a slot lives in
+/// (and that the arena's free path bumps) matches the shard cached entries
+/// for that slot record. Uses `(addr >> 12) % NUM_TLS_CACHE_SHARDS`.
 #[inline]
-pub(crate) fn current_epoch() -> u64 {
-    GLOBAL_TLS_CACHE_EPOCH.load(Ordering::Acquire)
+#[must_use]
+pub fn tls_cache_shard_for(addr: usize) -> usize {
+    (addr >> 12) % NUM_TLS_CACHE_SHARDS
 }
 
-pub(crate) fn bump_tls_cache_epoch() {
+/// Current epoch of a specific shard. Used by lookup to detect invalidation.
+#[inline]
+#[must_use]
+pub fn current_shard_epoch(shard_idx: usize) -> u64 {
+    SHARD_EPOCHS[shard_idx].load(Ordering::Acquire)
+}
+
+/// Snapshot every shard's current epoch in a single pass.
+///
+/// Callers performing a validation pipeline take this snapshot before the
+/// arena lookup so the recorded shard epoch for the eventually-discovered
+/// `user_base` shard is sampled *before* any racing free could bump it.
+#[must_use]
+pub fn snapshot_shard_epochs() -> [u64; NUM_TLS_CACHE_SHARDS] {
+    let mut out = [0u64; NUM_TLS_CACHE_SHARDS];
+    for (slot, atomic) in out.iter_mut().zip(SHARD_EPOCHS.iter()) {
+        *slot = atomic.load(Ordering::Acquire);
+    }
+    out
+}
+
+/// Bump a single shard's epoch.
+///
+/// `arena::free` invokes this from within the shard's mutex critical section,
+/// so the post-bump value is the one any later `current_shard_epoch` call
+/// from another thread will observe with Acquire ordering.
+pub fn bump_shard_epoch(shard_idx: usize) {
     #[cfg(test)]
     let _guard = TLS_CACHE_EPOCH_TEST_LOCK
         .lock()
         .expect("TLS cache epoch test lock poisoned");
-    // Use Release ordering to ensure all prior state changes (like marking a slot
-    // as Quarantined) are visible to any thread that performs an Acquire load
+    // Release ordering ensures all prior state changes (like marking a slot
+    // Quarantined) are visible to any thread that performs an Acquire load
     // of the new epoch.
-    let _ = GLOBAL_TLS_CACHE_EPOCH.fetch_add(1, Ordering::Release);
+    let _ = SHARD_EPOCHS[shard_idx].fetch_add(1, Ordering::Release);
+}
+
+/// Compatibility wrapper: bump every shard's epoch.
+///
+/// Equivalent to "nuke every TLS cache across all threads". The per-shard
+/// design exists specifically to avoid this on the common-case free path,
+/// but callers that genuinely need a global invalidation (test fixtures,
+/// process-wide teardown) can still ask for it explicitly.
+pub fn bump_tls_cache_epoch() {
+    #[cfg(test)]
+    let _guard = TLS_CACHE_EPOCH_TEST_LOCK
+        .lock()
+        .expect("TLS cache epoch test lock poisoned");
+    for atomic in SHARD_EPOCHS.iter() {
+        let _ = atomic.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// Monotonic-ish epoch across all shards, retained for callers that want a
+/// single u64 summary (legacy telemetry). Not used as a cache entry tag; see
+/// `snapshot_shard_epochs` for the correct sampling primitive.
+#[inline]
+#[must_use]
+pub fn current_epoch() -> u64 {
+    let mut max = 0u64;
+    for atomic in SHARD_EPOCHS.iter() {
+        let v = atomic.load(Ordering::Acquire);
+        if v > max {
+            max = v;
+        }
+    }
+    max
 }
 
 #[cfg(test)]
@@ -62,8 +185,14 @@ struct CacheEntry {
     generation: u64,
     /// The safety state at time of validation.
     state: SafetyState,
-    /// Global invalidation epoch at time of insertion.
-    epoch: u64,
+    /// Shard that owns this allocation, computed via `tls_cache_shard_for`
+    /// on `user_base` at insert time. The arena's free path bumps
+    /// `SHARD_EPOCHS[shard_idx]` when it disposes of this slot.
+    shard_idx: u8,
+    /// Shard epoch captured at validation start. A free of this slot will
+    /// leave the live `SHARD_EPOCHS[shard_idx]` ahead of this value,
+    /// turning the next lookup into a miss.
+    shard_epoch: u64,
     /// Whether this entry is populated.
     valid: bool,
 }
@@ -75,7 +204,8 @@ impl CacheEntry {
         user_size: 0,
         generation: 0,
         state: SafetyState::Unknown,
-        epoch: 0,
+        shard_idx: 0,
+        shard_epoch: 0,
         valid: false,
     };
 }
@@ -100,67 +230,84 @@ impl TlsValidationCache {
 
     /// Look up a pointer in the cache.
     ///
-    /// Returns `Some((user_base, user_size, generation, state))` on hit.
+    /// Returns `Some(CachedValidation)` on hit. On a shard-epoch mismatch
+    /// (the slot's home shard has been bumped since insertion, indicating
+    /// a free) the entry is self-cleaned so subsequent lookups skip the
+    /// mismatch comparison.
     pub fn lookup(&mut self, addr: usize) -> Option<CachedValidation> {
         let idx = Self::index(addr);
         let entry = &mut self.entries[idx];
-        let epoch = current_epoch();
 
-        if entry.valid && entry.addr == addr && entry.epoch == epoch {
-            self.hits += 1;
-            Some(CachedValidation {
-                user_base: entry.user_base,
-                user_size: entry.user_size,
-                generation: entry.generation,
-                state: entry.state,
-            })
-        } else {
-            // If the address matches but the epoch does not, invalidate this entry
-            // so we don't pay repeated epoch-mismatch checks on the hot path.
-            if entry.valid && entry.addr == addr && entry.epoch != epoch {
-                entry.valid = false;
+        if entry.valid && entry.addr == addr {
+            let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
+            if entry.shard_epoch == live_shard_epoch {
+                self.hits += 1;
+                return Some(CachedValidation {
+                    user_base: entry.user_base,
+                    user_size: entry.user_size,
+                    generation: entry.generation,
+                    state: entry.state,
+                });
             }
-            self.misses += 1;
-            None
+            // Shard epoch advanced; the slot was freed (or another slot in
+            // the same shard was freed). Self-clean so we don't repay the
+            // mismatch on the next lookup.
+            entry.valid = false;
         }
+        self.misses += 1;
+        None
     }
 
     /// Look up a pointer and return only a valid hit.
     ///
-    /// Unlike [`Self::lookup`], this intentionally does not count misses. It is
-    /// used by speculative fast paths that fall back to the full pipeline, where
-    /// the authoritative miss accounting still happens.
+    /// Unlike [`Self::lookup`], this intentionally does not count misses. It
+    /// is used by speculative fast paths that fall back to the full pipeline,
+    /// where the authoritative miss accounting still happens.
     pub(crate) fn lookup_hit_only(&mut self, addr: usize) -> Option<CachedValidation> {
         let idx = Self::index(addr);
         let entry = &mut self.entries[idx];
-        let epoch = current_epoch();
 
-        if entry.valid && entry.addr == addr && entry.epoch == epoch {
-            self.hits += 1;
-            Some(CachedValidation {
-                user_base: entry.user_base,
-                user_size: entry.user_size,
-                generation: entry.generation,
-                state: entry.state,
-            })
-        } else {
-            if entry.valid && entry.addr == addr && entry.epoch != epoch {
-                entry.valid = false;
+        if entry.valid && entry.addr == addr {
+            let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
+            if entry.shard_epoch == live_shard_epoch {
+                self.hits += 1;
+                return Some(CachedValidation {
+                    user_base: entry.user_base,
+                    user_size: entry.user_size,
+                    generation: entry.generation,
+                    state: entry.state,
+                });
             }
-            None
+            entry.valid = false;
         }
+        None
     }
 
     /// Insert or update a cache entry.
-    pub fn insert(&mut self, addr: usize, validation: CachedValidation, epoch: u64) {
+    ///
+    /// `shard_epochs` is a snapshot taken at validation entry. The shard for
+    /// the cached entry is derived from `validation.user_base`, and the
+    /// recorded epoch is the snapshot's value for that shard, *not* the
+    /// live `SHARD_EPOCHS[shard]` at insert time. This is what makes the
+    /// per-shard scheme race-free: if a free intervened between snapshot
+    /// and insert, the recorded `shard_epoch` lags the live value and the
+    /// very next lookup will mismatch.
+    pub fn insert(
+        &mut self,
+        addr: usize,
+        validation: CachedValidation,
+        shard_epochs: &[u64; NUM_TLS_CACHE_SHARDS],
+    ) {
         let idx = Self::index(addr);
+        let shard_idx = tls_cache_shard_for(validation.user_base);
         self.entries[idx] = CacheEntry {
             addr,
             user_base: validation.user_base,
             user_size: validation.user_size,
             generation: validation.generation,
             state: validation.state,
-            epoch,
+            shard_idx: shard_idx as u8,
+            shard_epoch: shard_epochs[shard_idx],
             valid: true,
         };
     }
@@ -276,6 +423,7 @@ mod tests {
         subject: String,
         cache_size_entries: usize,
         epoch_source: String,
+        num_shards: usize,
         cases: Vec<EpochGoldenCase>,
     }
 
@@ -361,12 +509,16 @@ mod tests {
     fn tls_cache_epoch_invalidation_golden_contract_is_current() {
         let contract = load_epoch_golden_contract();
 
-        assert_eq!(contract.schema_version, 1);
+        assert_eq!(contract.schema_version, 2);
         assert_eq!(contract.bead_id, "bd-66wz.2.1");
         assert_eq!(contract.original_bead_id, "bd-66wz.2");
         assert_eq!(contract.subject, "tls_cache_epoch_invalidation");
         assert_eq!(contract.cache_size_entries, CACHE_SIZE);
-        assert_eq!(contract.epoch_source, "GLOBAL_TLS_CACHE_EPOCH");
+        assert_eq!(
+            contract.epoch_source,
+            "SHARD_EPOCHS[tls_cache_shard_for(user_base)]"
+        );
+        assert_eq!(contract.num_shards, NUM_TLS_CACHE_SHARDS);
 
         let case_ids: Vec<&str> = contract.cases.iter().map(|case| case.id.as_str()).collect();
         assert_eq!(
@@ -396,7 +548,7 @@ mod tests {
 
         {
             let _epoch_guard = lock_tls_cache_epoch_for_tests();
-            cache.insert(addr, val, current_epoch());
+            cache.insert(addr, val, &snapshot_shard_epochs());
             assert!(
                 cache.lookup(addr).is_some(),
                 "case_id={} setup must hit before epoch bump",
@@ -406,7 +558,7 @@ mod tests {
 
         let hits_before = cache.hits();
         let misses_before = cache.misses();
-        bump_tls_cache_epoch();
+        bump_shard_epoch(tls_cache_shard_for(addr));
 
         let result = cache.lookup(addr);
         let idx = TlsValidationCache::index(addr);
@@ -437,7 +589,7 @@ mod tests {
 
         {
             let _epoch_guard = lock_tls_cache_epoch_for_tests();
-            cache.insert(addr, val, current_epoch());
+            cache.insert(addr, val, &snapshot_shard_epochs());
             assert!(
                 cache.lookup_hit_only(addr).is_some(),
                 "case_id={} setup must hit before epoch bump",
@@ -447,7 +599,7 @@ mod tests {
 
         let hits_before = cache.hits();
         let misses_before = cache.misses();
-        bump_tls_cache_epoch();
+        bump_shard_epoch(tls_cache_shard_for(addr));
 
         let result = cache.lookup_hit_only(addr);
         let idx = TlsValidationCache::index(addr);
@@ -477,7 +629,7 @@ mod tests {
 
         {
             let _epoch_guard = lock_tls_cache_epoch_for_tests();
-            cache.insert(addr, val, current_epoch());
+            cache.insert(addr, val, &snapshot_shard_epochs());
             assert!(
                 cache.lookup(addr).is_some(),
                 "case_id={} setup must hit before epoch bump",
@@ -485,7 +637,7 @@ mod tests {
             );
         }
 
-        bump_tls_cache_epoch();
+        bump_shard_epoch(tls_cache_shard_for(addr));
         assert!(
             cache.lookup(addr).is_none(),
             "case_id={} first stale lookup must self-clean",
@@ -522,7 +674,7 @@ mod tests {
             state: SafetyState::Valid,
         };
         let _epoch_guard = lock_tls_cache_epoch_for_tests();
-        cache.insert(0x1000, val, current_epoch());
+        cache.insert(0x1000, val, &snapshot_shard_epochs());
 
         let result = cache.lookup(0x1000).expect("should hit");
         assert_eq!(result.user_base, 0x1000);
@@ -541,11 +693,11 @@ mod tests {
             generation: 7,
             state: SafetyState::Valid,
         };
-        let epoch = current_epoch();
+        let snapshot = snapshot_shard_epochs();
 
         with_tls_cache(|cache| {
             assert!(cache.lookup(addr).is_none());
-            cache.insert(addr, validation, epoch);
+            cache.insert(addr, validation, &snapshot);
             let observed = cache.lookup(addr).expect("inserted value should hit");
             assert_eq!(observed.user_base, validation.user_base);
             assert_eq!(observed.user_size, validation.user_size);
@@ -579,7 +731,7 @@ mod tests {
             state: SafetyState::Valid,
         };
         let _epoch_guard = lock_tls_cache_epoch_for_tests();
-        cache.insert(0x2000, val, current_epoch());
+        cache.insert(0x2000, val, &snapshot_shard_epochs());
         assert!(cache.lookup(0x2000).is_some());
 
         cache.invalidate(0x2000);
@@ -590,6 +742,7 @@ mod tests {
     fn invalidate_all_clears_everything() {
         let mut cache = TlsValidationCache::new();
         let _epoch_guard = lock_tls_cache_epoch_for_tests();
+        let snapshot = snapshot_shard_epochs();
         for i in 0..10 {
             let addr = (i + 1) * 0x1000;
             cache.insert(
@@ -600,7 +753,7 @@ mod tests {
                     generation: 1,
                     state: SafetyState::Valid,
                 },
-                current_epoch(),
+                &snapshot,
             );
         }
         cache.invalidate_all();
@@ -623,14 +776,14 @@ mod tests {
 
         {
             let _epoch_guard = lock_tls_cache_epoch_for_tests();
-            cache.insert(addr, val, current_epoch());
+            cache.insert(addr, val, &snapshot_shard_epochs());
             assert!(
                 cache.lookup(addr).is_some(),
                 "expected cache hit before epoch bump"
             );
         }
 
-        bump_tls_cache_epoch();
+        bump_shard_epoch(tls_cache_shard_for(addr));
 
         let idx = TlsValidationCache::index(addr);
         assert!(
@@ -644,11 +797,135 @@ mod tests {
 
         {
             let _epoch_guard = lock_tls_cache_epoch_for_tests();
-            cache.insert(addr, val, current_epoch());
+            cache.insert(addr, val, &snapshot_shard_epochs());
             assert!(
                 cache.lookup(addr).is_some(),
                 "expected cache hit after reinsert at current epoch"
             );
         }
+    }
+
+    /// Bump of one shard's epoch must not invalidate a cached entry whose
+    /// home shard is different. This is the core property the per-shard
+    /// design buys over the previous global epoch.
+    #[test]
+    fn bump_of_unrelated_shard_does_not_invalidate_entry() {
+        let _epoch_guard = lock_tls_cache_epoch_for_tests();
+        let mut cache = TlsValidationCache::new();
+        // Choose an address whose home shard differs from shard 0 so the
+        // test exercises a real cross-shard isolation.
+        let addr = 0x4000; // (0x4000 >> 12) % 16 == 4
+        let home_shard = tls_cache_shard_for(addr);
+        assert_ne!(home_shard, 0, "test invariant: home shard must not be 0");
+
+        let val = CachedValidation {
+            user_base: addr,
+            user_size: 64,
+            generation: 9,
+            state: SafetyState::Valid,
+        };
+
+        cache.insert(addr, val, &snapshot_shard_epochs());
+        assert!(cache.lookup(addr).is_some(), "must hit before any bump");
+
+        // Bump every shard EXCEPT the entry's home shard. We use the raw
+        // atomic increments rather than the public helper because we already
+        // hold the test lock; the helper would deadlock.
+        for (s, atomic) in SHARD_EPOCHS.iter().enumerate() {
+            if s != home_shard {
+                atomic.fetch_add(1, Ordering::Release);
+            }
+        }
+
+        assert!(
+            cache.lookup(addr).is_some(),
+            "entry must survive bumps of unrelated shards"
+        );
+
+        // Now bump the home shard and confirm the entry IS invalidated.
+        SHARD_EPOCHS[home_shard].fetch_add(1, Ordering::Release);
+        assert!(
+            cache.lookup(addr).is_none(),
+            "entry must be invalidated when its own shard bumps"
+        );
+    }
+
+    /// Compatibility check: `bump_tls_cache_epoch()` (the "bump all shards"
+    /// wrapper) must still nuke every entry regardless of which shard each
+    /// entry resides in.
+    #[test]
+    fn bump_tls_cache_epoch_nukes_every_shard() {
+        let mut cache = TlsValidationCache::new();
+        // Insert entries across multiple shards.
+        let addrs: [usize; 4] = [0x1000, 0x4000, 0xA000, 0xF000];
+        let mut home_shards = std::collections::HashSet::new();
+        for &addr in &addrs {
+            home_shards.insert(tls_cache_shard_for(addr));
+        }
+        assert!(
+            home_shards.len() > 1,
+            "test invariant: insertions must span multiple shards"
+        );
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            let snapshot = snapshot_shard_epochs();
+            for &addr in &addrs {
+                cache.insert(
+                    addr,
+                    CachedValidation {
+                        user_base: addr,
+                        user_size: 64,
+                        generation: 1,
+                        state: SafetyState::Valid,
+                    },
+                    &snapshot,
+                );
+            }
+            for &addr in &addrs {
+                assert!(cache.lookup(addr).is_some(), "setup hit for {:#x}", addr);
+            }
+        }
+
+        bump_tls_cache_epoch();
+
+        for &addr in &addrs {
+            assert!(
+                cache.lookup(addr).is_none(),
+                "bump_tls_cache_epoch must invalidate addr={:#x}",
+                addr
+            );
+        }
+    }
+
+    /// Race-safety: if a free intervenes between snapshot and insert, the
+    /// inserted entry's `shard_epoch` lags the live `SHARD_EPOCHS[shard]`,
+    /// and the next lookup must miss. This is the moral equivalent of the
+    /// "epoch captured before arena lookup" invariant in the old global
+    /// design.
+    #[test]
+    fn insert_with_stale_snapshot_self_cleans_on_next_lookup() {
+        let mut cache = TlsValidationCache::new();
+        let addr = 0x8000;
+        let val = CachedValidation {
+            user_base: addr,
+            user_size: 64,
+            generation: 11,
+            state: SafetyState::Valid,
+        };
+
+        let _epoch_guard = lock_tls_cache_epoch_for_tests();
+        // Snapshot the world before the racing free.
+        let snapshot = snapshot_shard_epochs();
+        // Racing free completes before insert.
+        SHARD_EPOCHS[tls_cache_shard_for(addr)].fetch_add(1, Ordering::Release);
+        // Insert with the now-stale snapshot.
+        cache.insert(addr, val, &snapshot);
+
+        // Lookup must miss; the recorded shard_epoch is one behind live.
+        assert!(
+            cache.lookup(addr).is_none(),
+            "stale-snapshot insert must self-clean on next lookup"
+        );
     }
 }
