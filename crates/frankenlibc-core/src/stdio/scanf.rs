@@ -1384,6 +1384,24 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_auto_int_binary_invalid() {
+        // glibc returns 0 conversions when 0b is followed by non-binary digit
+        let dirs = parse_scanf_format(b"%i");
+
+        // 0b followed by invalid digit '2'
+        let result = scan_input(b"0b2", &dirs);
+        assert_eq!(result.count, 0);
+
+        // Just 0b with nothing after
+        let result = scan_input(b"0b", &dirs);
+        assert_eq!(result.count, 0);
+
+        // 0b followed by letter
+        let result = scan_input(b"0bx", &dirs);
+        assert_eq!(result.count, 0);
+    }
+
+    #[test]
     fn test_scan_long_modifier_is_64bit() {
         // %ld must store a full 64-bit `long`, not truncate to 32 bits.
         let dirs = parse_scanf_format(b"%ld");
