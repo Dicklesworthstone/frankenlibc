@@ -287,4 +287,78 @@ mod tests {
             prop_assert!(!set_after.is_member(sig));
         }
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_signal_edge.c
+
+    #[test]
+    fn glibc_signal_constants_match_linux() {
+        // Verify signal numbers match Linux/glibc values
+        assert_eq!(SIGHUP, 1);
+        assert_eq!(SIGINT, 2);
+        assert_eq!(SIGQUIT, 3);
+        assert_eq!(SIGILL, 4);
+        assert_eq!(SIGABRT, 6);
+        assert_eq!(SIGFPE, 8);
+        assert_eq!(SIGKILL, 9);
+        assert_eq!(SIGUSR1, 10);
+        assert_eq!(SIGSEGV, 11);
+        assert_eq!(SIGUSR2, 12);
+        assert_eq!(SIGPIPE, 13);
+        assert_eq!(SIGALRM, 14);
+        assert_eq!(SIGTERM, 15);
+        assert_eq!(SIGCHLD, 17);
+        assert_eq!(SIGCONT, 18);
+        assert_eq!(SIGSTOP, 19);
+        assert_eq!(SIGTSTP, 20);
+    }
+
+    #[test]
+    fn glibc_valid_signal_range_1_to_64() {
+        // glibc NSIG = 65, signals range from 1 to 64
+        assert!(!valid_signal(0));
+        assert!(valid_signal(1));
+        assert!(valid_signal(64));
+        assert!(!valid_signal(65));
+        assert!(!valid_signal(-1));
+    }
+
+    #[test]
+    fn glibc_sigkill_sigstop_not_catchable() {
+        // SIGKILL (9) and SIGSTOP (19) cannot be caught
+        assert!(!catchable_signal(SIGKILL));
+        assert!(!catchable_signal(SIGSTOP));
+        // All other valid signals are catchable
+        assert!(catchable_signal(SIGINT));
+        assert!(catchable_signal(SIGTERM));
+    }
+
+    #[test]
+    fn glibc_sigset_ismember_invalid_returns_false() {
+        // sigismember with invalid signal returns -1/EINVAL in glibc
+        // Our implementation returns false for invalid signals
+        let set = SigSet::empty();
+        assert!(!set.is_member(0));
+        assert!(!set.is_member(-1));
+        assert!(!set.is_member(65));
+        assert!(!set.is_member(200));
+    }
+
+    #[test]
+    fn glibc_sigset_full_contains_all_valid() {
+        // sigfillset sets all signals 1..=64
+        let full = SigSet::full();
+        for sig in 1..=64 {
+            assert!(full.is_member(sig), "full set must contain signal {sig}");
+        }
+    }
+
+    #[test]
+    fn glibc_sigset_empty_contains_none() {
+        // sigemptyset clears all signals
+        let empty = SigSet::empty();
+        for sig in 1..=64 {
+            assert!(!empty.is_member(sig), "empty set must not contain signal {sig}");
+        }
+    }
 }
