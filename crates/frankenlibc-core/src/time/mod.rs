@@ -448,11 +448,29 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             break;
         }
 
+        // Parse optional explicit width (e.g., %6Y for 6-character zero-padded year)
+        let mut width_override: Option<usize> = None;
+        while i < fmt.len() && fmt[i].is_ascii_digit() {
+            let digit = (fmt[i] - b'0') as usize;
+            width_override = Some(width_override.unwrap_or(0) * 10 + digit);
+            i += 1;
+        }
+        if i >= fmt.len() {
+            break;
+        }
+
         // Macro to apply the override or use default padding
         macro_rules! push_dec_mod {
             ($val:expr, $width:expr, $default:expr) => {{
-                let p = pad_override.unwrap_or($default);
-                push_dec_pad!($val, $width, p);
+                let w = width_override.unwrap_or($width);
+                // With explicit width, `-` means space-pad instead of zero-pad.
+                // Without explicit width, `-` means no padding (Pad::None).
+                let p = match (pad_override, width_override) {
+                    (Some(Pad::None), Some(_)) => Pad::Space,
+                    (Some(p), _) => p,
+                    (None, _) => $default,
+                };
+                push_dec_pad!($val, w, p);
             }};
         }
 
@@ -665,9 +683,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_mod!((bd.tm_year as i64 + 1900).rem_euclid(100), 2, Pad::Zero);
             }
             b'Y' => {
-                // glibc emits bare %d for %Y — no width, no zero-padding.
-                // Year 50 prints as "50", year 200 as "200".
-                push_dec!(bd.tm_year as i64 + 1900, 0);
+                // Default: bare decimal (width 0). With explicit width (e.g. %6Y),
+                // zero-pads to that width. Year 50 prints as "50", %6Y prints "000050".
+                push_dec_mod!(bd.tm_year as i64 + 1900, 0, Pad::Zero);
             }
             b'z' => {
                 // UTC offset: +0000 (we only support UTC for now)
@@ -1081,6 +1099,17 @@ mod tests {
         bd.tm_hour = 9;
         let n = format_strftime(b"[%H] [%-H] [%_H]", &bd, &mut buf);
         assert_eq!(&buf[..n], b"[09] [9] [ 9]");
+
+        // Explicit width specifier (glibc extension)
+        bd.tm_year = 124; // 2024
+        let n = format_strftime(b"%Y", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"2024"); // default: no padding
+        let n = format_strftime(b"%6Y", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"002024"); // width 6, zero-padded
+        let n = format_strftime(b"%-6Y", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"  2024"); // width 6, space-padded (- suppresses zeros)
+        let n = format_strftime(b"%_6Y", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"  2024"); // width 6, space-padded
     }
 
     // --- valid_clock_id_extended tests ---
