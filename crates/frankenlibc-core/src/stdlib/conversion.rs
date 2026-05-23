@@ -1822,4 +1822,110 @@ mod tests {
         assert_eq!(val, 1295);
         assert_eq!(consumed, 2);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_strtox_edge.c
+
+    #[test]
+    fn glibc_strtoul_negative_wraps() {
+        // strtoul("-1", 10) = ULONG_MAX (wraps via two's complement)
+        let (val, consumed, _) = strtoul_impl(b"-1", 10);
+        assert_eq!(val, u64::MAX);
+        assert_eq!(consumed, 2);
+
+        // strtoul("-2", 10) = ULONG_MAX - 1
+        let (val, consumed, _) = strtoul_impl(b"-2", 10);
+        assert_eq!(val, u64::MAX - 1);
+        assert_eq!(consumed, 2);
+    }
+
+    #[test]
+    fn glibc_strtol_binary_prefix_0b() {
+        // strtol("0b1010", 0) = 10 (C23 binary prefix)
+        let (val, consumed, _) = strtol_impl(b"0b1010", 0);
+        assert_eq!(val, 10);
+        assert_eq!(consumed, 6);
+
+        // Also works with uppercase
+        let (val, consumed, _) = strtol_impl(b"0B1111", 0);
+        assert_eq!(val, 15);
+        assert_eq!(consumed, 6);
+    }
+
+    #[test]
+    fn glibc_strtol_overflow_returns_max() {
+        // strtol(huge positive) returns LONG_MAX with Overflow status
+        let (val, consumed, status) = strtol_impl(b"99999999999999999999", 10);
+        assert_eq!(val, i64::MAX);
+        assert!(consumed > 0);
+        assert_eq!(status, ConversionStatus::Overflow);
+    }
+
+    #[test]
+    fn glibc_strtol_underflow_returns_min() {
+        // strtol(huge negative) returns LONG_MIN with Underflow status
+        let (val, consumed, status) = strtol_impl(b"-99999999999999999999", 10);
+        assert_eq!(val, i64::MIN);
+        assert!(consumed > 0);
+        assert_eq!(status, ConversionStatus::Underflow);
+    }
+
+    #[test]
+    fn glibc_strtol_only_whitespace_no_consumption() {
+        // strtol("   ", 10) returns 0 with endptr pointing to start
+        let (val, consumed, _) = strtol_impl(b"   ", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn glibc_strtol_empty_no_consumption() {
+        // strtol("", 10) returns 0 with endptr == nptr
+        let (val, consumed, _) = strtol_impl(b"", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn glibc_strtol_no_digits_no_consumption() {
+        // strtol("abc", 10) returns 0 with endptr pointing to "abc"
+        let (val, consumed, _) = strtol_impl(b"abc", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn glibc_strtod_hex_float() {
+        // strtod("0x1.8p1") = 3.0 (1.5 * 2^1)
+        let (val, consumed) = strtod(b"0x1.8p1\0");
+        assert!((val - 3.0).abs() < 1e-10);
+        assert_eq!(consumed, 7);
+
+        // strtod("0xABCp-4") = 2748 / 16 = 171.75
+        let (val, consumed) = strtod(b"0xABCp-4\0");
+        assert!((val - 171.75).abs() < 1e-10);
+        assert_eq!(consumed, 8);
+    }
+
+    #[test]
+    fn glibc_strtod_overflow_returns_inf() {
+        // strtod("1e309") returns inf
+        let (val, _consumed) = strtod(b"1e309\0");
+        assert!(val.is_infinite() && val > 0.0);
+    }
+
+    #[test]
+    fn glibc_strtod_underflow_returns_zero() {
+        // strtod("1e-400") returns 0.0 (subnormal underflow)
+        let (val, _consumed) = strtod(b"1e-400\0");
+        assert_eq!(val, 0.0);
+    }
+
+    #[test]
+    fn glibc_strtod_partial_parse() {
+        // strtod("3.14abc") = 3.14, endptr points to "abc"
+        let (val, consumed) = strtod(b"3.14abc\0");
+        assert!((val - 3.14).abs() < 1e-10);
+        assert_eq!(consumed, 4);
+    }
 }
