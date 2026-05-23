@@ -248,4 +248,48 @@ mod tests {
         assert_eq!(LC_MIN, 0);
         assert_eq!(LC_MAX, 6);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_locale_edge.c
+
+    #[test]
+    fn glibc_lc_constants_match() {
+        // LC_* constants must match glibc values exactly
+        assert_eq!(LC_CTYPE, 0);
+        assert_eq!(LC_NUMERIC, 1);
+        assert_eq!(LC_TIME, 2);
+        assert_eq!(LC_COLLATE, 3);
+        assert_eq!(LC_MONETARY, 4);
+        assert_eq!(LC_MESSAGES, 5);
+        assert_eq!(LC_ALL, 6);
+    }
+
+    #[test]
+    fn glibc_c_locale_conv_decimal_point() {
+        // C locale decimal_point is "."
+        let lc = c_locale_conv();
+        assert_eq!(lc.decimal_point, b".");
+    }
+
+    #[test]
+    fn glibc_c_locale_conv_thousands_sep_empty() {
+        // C locale thousands_sep is ""
+        let lc = c_locale_conv();
+        assert_eq!(lc.thousands_sep, b"");
+    }
+
+    #[test]
+    fn glibc_c_locale_conv_frac_digits_char_max() {
+        // C locale frac_digits is CHAR_MAX (127)
+        let lc = c_locale_conv();
+        assert_eq!(lc.frac_digits, 127);
+        assert_eq!(lc.p_cs_precedes, 127);
+    }
+
+    #[test]
+    fn glibc_posix_is_same_as_c() {
+        // setlocale(LC_ALL, "POSIX") returns "C" in glibc
+        assert!(is_c_locale(b"POSIX"));
+        assert!(is_c_locale(b"C"));
+    }
 }

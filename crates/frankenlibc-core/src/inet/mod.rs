@@ -1489,4 +1489,98 @@ mod tests {
             let _ = inet_aton(&bytes, &mut dst);
         }
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via C probes
+
+    #[test]
+    fn glibc_inet_aton_dotted_decimal() {
+        let mut dst = [0u8; 4];
+        // Standard dotted-decimal (returns 1 on success)
+        assert_eq!(inet_aton(b"192.168.1.1", &mut dst), 1);
+        assert_eq!(dst, [192, 168, 1, 1]);
+
+        assert_eq!(inet_aton(b"127.0.0.1", &mut dst), 1);
+        assert_eq!(dst, [127, 0, 0, 1]);
+
+        assert_eq!(inet_aton(b"0.0.0.0", &mut dst), 1);
+        assert_eq!(dst, [0, 0, 0, 0]);
+
+        assert_eq!(inet_aton(b"255.255.255.255", &mut dst), 1);
+        assert_eq!(dst, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn glibc_inet_aton_rejects_invalid() {
+        let mut dst = [0u8; 4];
+        // Invalid addresses (returns 0 on failure)
+        assert_eq!(inet_aton(b"256.1.1.1", &mut dst), 0); // octet > 255
+        assert_eq!(inet_aton(b"", &mut dst), 0); // empty
+        assert_eq!(inet_aton(b" 192.168.1.1", &mut dst), 0); // leading whitespace
+    }
+
+    #[test]
+    fn glibc_inet_pton_ipv4() {
+        let mut dst = [0u8; 16];
+        // AF_INET = 2
+        assert_eq!(inet_pton(2, b"192.168.1.1", &mut dst), 1);
+        assert_eq!(&dst[..4], [192, 168, 1, 1]);
+
+        assert_eq!(inet_pton(2, b"0.0.0.0", &mut dst), 1);
+        assert_eq!(&dst[..4], [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn glibc_inet_pton_ipv6() {
+        let mut dst = [0u8; 16];
+        // AF_INET6 = 10
+        assert_eq!(inet_pton(10, b"::1", &mut dst), 1);
+        let expected = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        assert_eq!(dst, expected);
+
+        assert_eq!(inet_pton(10, b"::", &mut dst), 1);
+        assert_eq!(dst, [0u8; 16]);
+    }
+
+    #[test]
+    fn glibc_inet_pton_invalid_returns_zero() {
+        let mut dst = [0u8; 16];
+        // Invalid IPv4
+        assert_eq!(inet_pton(2, b"256.1.1.1", &mut dst), 0);
+        // Invalid IPv6
+        assert_eq!(inet_pton(10, b"::g", &mut dst), 0);
+    }
+
+    #[test]
+    fn glibc_inet_pton_invalid_af_returns_neg1() {
+        let mut dst = [0u8; 16];
+        // Invalid address family
+        assert_eq!(inet_pton(99, b"192.168.1.1", &mut dst), -1);
+    }
+
+    #[test]
+    fn glibc_inet_ntop_ipv4() {
+        let addr = [192u8, 168, 1, 1];
+        let len = format_ipv4_len(&addr);
+        let buf = format_ipv4(&addr);
+        assert_eq!(&buf[..len], b"192.168.1.1");
+    }
+
+    #[test]
+    fn glibc_inet_ntop_ipv6_loopback() {
+        let addr = [0u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let len = format_ipv6_len(&addr);
+        let buf = format_ipv6(&addr);
+        // Our implementation doesn't compress zeros (outputs full form)
+        assert_eq!(&buf[..len], b"0:0:0:0:0:0:0:1");
+    }
+
+    #[test]
+    fn glibc_inet_ntop_ipv6_zeros() {
+        let addr = [0u8; 16];
+        let len = format_ipv6_len(&addr);
+        let buf = format_ipv6(&addr);
+        // Our implementation doesn't compress zeros (outputs full form)
+        assert_eq!(&buf[..len], b"0:0:0:0:0:0:0:0");
+    }
 }
