@@ -207,4 +207,63 @@ mod tests {
         set_errno(0);
         Ok(())
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_error_edge.c
+
+    #[test]
+    fn glibc_strerror_zero_is_success() {
+        // strerror(0) = "Success"
+        assert_eq!(strerror_message(0), "Success");
+    }
+
+    #[test]
+    fn glibc_strerror_common_codes_match() {
+        // Verify exact message text matches glibc
+        assert_eq!(strerror_message(EPERM), "Operation not permitted");
+        assert_eq!(strerror_message(ENOENT), "No such file or directory");
+        assert_eq!(strerror_message(EIO), "Input/output error");
+        assert_eq!(strerror_message(ENOMEM), "Cannot allocate memory");
+        assert_eq!(strerror_message(EACCES), "Permission denied");
+        assert_eq!(strerror_message(EEXIST), "File exists");
+        assert_eq!(strerror_message(ENOTDIR), "Not a directory");
+        assert_eq!(strerror_message(EISDIR), "Is a directory");
+        assert_eq!(strerror_message(EINVAL), "Invalid argument");
+        assert_eq!(strerror_message(EMFILE), "Too many open files");
+        assert_eq!(strerror_message(ENOSPC), "No space left on device");
+        assert_eq!(strerror_message(ERANGE), "Numerical result out of range");
+    }
+
+    #[test]
+    fn glibc_strerror_eagain_ewouldblock_same() {
+        // EAGAIN and EWOULDBLOCK are the same on Linux (11)
+        assert_eq!(EAGAIN, 11);
+        assert_eq!(strerror_message(EAGAIN), "Resource temporarily unavailable");
+    }
+
+    #[test]
+    fn glibc_strerror_network_codes() {
+        assert_eq!(strerror_message(ETIMEDOUT), "Connection timed out");
+        assert_eq!(strerror_message(ECONNREFUSED), "Connection refused");
+    }
+
+    #[test]
+    fn glibc_errno_constants_match() {
+        // Verify errno constants match glibc values
+        assert_eq!(EPERM, 1);
+        assert_eq!(ENOENT, 2);
+        assert_eq!(ESRCH, 3);
+        assert_eq!(EINTR, 4);
+        assert_eq!(EIO, 5);
+        assert_eq!(ENXIO, 6);
+        assert_eq!(E2BIG, 7);
+        assert_eq!(EBADF, 9);
+        assert_eq!(ECHILD, 10);
+        assert_eq!(EAGAIN, 11);
+        assert_eq!(ENOMEM, 12);
+        assert_eq!(EINVAL, 22);
+        assert_eq!(EDOM, 33);
+        assert_eq!(ERANGE, 34);
+        assert_eq!(EDEADLK, 35);
+    }
 }
