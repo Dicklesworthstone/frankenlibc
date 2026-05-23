@@ -1122,8 +1122,11 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'M' => {
-                    // Minute [00,59]
+                    // Minute [00,59] — glibc rejects 60..=99.
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if val > 59 {
+                            return std::ptr::null_mut();
+                        }
                         unsafe { (*tm).tm_min = val };
                         si = new_si;
                     } else {
@@ -1131,8 +1134,11 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'S' => {
-                    // Second [00,60] (60 for leap second)
+                    // Second [00,61] — glibc accepts 0-61 (60-61 for leap seconds).
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if val > 61 {
+                            return std::ptr::null_mut();
+                        }
                         unsafe { (*tm).tm_sec = val };
                         si = new_si;
                     } else {

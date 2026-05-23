@@ -1008,6 +1008,71 @@ fn strptime_time_24h() {
 }
 
 #[test]
+fn strptime_rejects_invalid_minute() {
+    let fmt = b"%H:%M:%S\0";
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+
+    let valid59 = b"12:59:00\0";
+    let result = unsafe {
+        time_abi::strptime(
+            valid59.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null(), "minute 59 should be valid");
+    assert_eq!(tm.tm_min, 59);
+
+    let invalid60 = b"12:60:00\0";
+    let result = unsafe {
+        time_abi::strptime(
+            invalid60.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(result.is_null(), "minute 60 should be rejected");
+}
+
+#[test]
+fn strptime_accepts_leap_seconds() {
+    let fmt = b"%H:%M:%S\0";
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+
+    let valid60 = b"23:59:60\0";
+    let result = unsafe {
+        time_abi::strptime(
+            valid60.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null(), "second 60 (leap second) should be valid");
+    assert_eq!(tm.tm_sec, 60);
+
+    let valid61 = b"23:59:61\0";
+    let result = unsafe {
+        time_abi::strptime(
+            valid61.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null(), "second 61 should be valid per glibc");
+    assert_eq!(tm.tm_sec, 61);
+
+    let invalid62 = b"23:59:62\0";
+    let result = unsafe {
+        time_abi::strptime(
+            invalid62.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(result.is_null(), "second 62 should be rejected");
+}
+
+#[test]
 fn strptime_month_name() {
     let input = b"Jan 15\0";
     let fmt = b"%b %d\0";
