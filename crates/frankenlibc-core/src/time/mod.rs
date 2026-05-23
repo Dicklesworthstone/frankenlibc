@@ -336,42 +336,17 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         };
     }
 
-    // Helper: write zero-padded decimal of a given width
-    macro_rules! push_dec {
-        ($val:expr, $width:expr) => {{
-            let mut tmp = [0u8; 20];
-            let v = $val as i64;
-            let negative = v < 0;
-            let mut uv = if negative { (-v) as u64 } else { v as u64 };
-            let mut len = 0usize;
-            if uv == 0 {
-                tmp[0] = b'0';
-                len = 1;
-            } else {
-                while uv > 0 {
-                    tmp[len] = b'0' + (uv % 10) as u8;
-                    uv /= 10;
-                    len += 1;
-                }
-            }
-            if negative {
-                push!(b'-');
-            }
-            let w: usize = $width;
-            if len < w {
-                for _ in 0..(w - len) {
-                    push!(b'0');
-                }
-            }
-            for j in (0..len).rev() {
-                push!(tmp[j]);
-            }
-        }};
+    // Padding style for numeric conversions
+    #[derive(Clone, Copy)]
+    enum Pad {
+        Zero,
+        Space,
+        None,
     }
 
-    // Helper: write space-padded decimal
-    macro_rules! push_dec_space {
-        ($val:expr, $width:expr) => {{
+    // Helper: write decimal with specified padding style and width
+    macro_rules! push_dec_pad {
+        ($val:expr, $width:expr, $pad:expr) => {{
             let mut tmp = [0u8; 20];
             let v = $val as i64;
             let negative = v < 0;
@@ -389,17 +364,50 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             let w: usize = $width;
             let total_len = if negative { len + 1 } else { len };
-            if total_len < w {
-                for _ in 0..(w - total_len) {
-                    push!(b' ');
+            match $pad {
+                Pad::Zero => {
+                    if negative {
+                        push!(b'-');
+                    }
+                    if len < w {
+                        for _ in 0..(w - len) {
+                            push!(b'0');
+                        }
+                    }
                 }
-            }
-            if negative {
-                push!(b'-');
+                Pad::Space => {
+                    if total_len < w {
+                        for _ in 0..(w - total_len) {
+                            push!(b' ');
+                        }
+                    }
+                    if negative {
+                        push!(b'-');
+                    }
+                }
+                Pad::None => {
+                    if negative {
+                        push!(b'-');
+                    }
+                }
             }
             for j in (0..len).rev() {
                 push!(tmp[j]);
             }
+        }};
+    }
+
+    // Convenience: zero-padded decimal (default)
+    macro_rules! push_dec {
+        ($val:expr, $width:expr) => {{
+            push_dec_pad!($val, $width, Pad::Zero);
+        }};
+    }
+
+    // Convenience: space-padded decimal
+    macro_rules! push_dec_space {
+        ($val:expr, $width:expr) => {{
+            push_dec_pad!($val, $width, Pad::Space);
         }};
     }
 
@@ -413,6 +421,41 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         if i >= fmt.len() {
             break;
         }
+
+        // Parse optional modifier flags: '-' (no padding), '_' (space), '0' (zero)
+        let mut pad_override: Option<Pad> = None;
+        loop {
+            if i >= fmt.len() {
+                break;
+            }
+            match fmt[i] {
+                b'-' => {
+                    pad_override = Some(Pad::None);
+                    i += 1;
+                }
+                b'_' => {
+                    pad_override = Some(Pad::Space);
+                    i += 1;
+                }
+                b'0' => {
+                    pad_override = Some(Pad::Zero);
+                    i += 1;
+                }
+                _ => break,
+            }
+        }
+        if i >= fmt.len() {
+            break;
+        }
+
+        // Macro to apply the override or use default padding
+        macro_rules! push_dec_mod {
+            ($val:expr, $width:expr, $default:expr) => {{
+                let p = pad_override.unwrap_or($default);
+                push_dec_pad!($val, $width, p);
+            }};
+        }
+
         match fmt[i] {
             b'a' => {
                 let wday = bd.tm_wday.rem_euclid(7) as usize;
@@ -462,7 +505,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!(century, 0);
             }
             b'd' => {
-                push_dec!(bd.tm_mday, 2);
+                push_dec_mod!(bd.tm_mday, 2, Pad::Zero);
             }
             b'D' => {
                 // %m/%d/%y
@@ -473,7 +516,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!((bd.tm_year as i64 + 1900).rem_euclid(100), 2);
             }
             b'e' => {
-                push_dec_space!(bd.tm_mday, 2);
+                push_dec_mod!(bd.tm_mday, 2, Pad::Space);
             }
             b'F' => {
                 // %Y-%m-%d — %Y is bare-decimal (no width padding).
@@ -492,27 +535,27 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!(iso_y.rem_euclid(100), 2);
             }
             b'H' => {
-                push_dec!(bd.tm_hour, 2);
+                push_dec_mod!(bd.tm_hour, 2, Pad::Zero);
             }
             b'I' => {
                 let h = bd.tm_hour % 12;
-                push_dec!(if h == 0 { 12 } else { h }, 2);
+                push_dec_mod!(if h == 0 { 12 } else { h }, 2, Pad::Zero);
             }
             b'j' => {
-                push_dec!(bd.tm_yday as i64 + 1, 3);
+                push_dec_mod!(bd.tm_yday as i64 + 1, 3, Pad::Zero);
             }
             b'k' => {
-                push_dec_space!(bd.tm_hour, 2);
+                push_dec_mod!(bd.tm_hour, 2, Pad::Space);
             }
             b'l' => {
                 let h = bd.tm_hour % 12;
-                push_dec_space!(if h == 0 { 12 } else { h }, 2);
+                push_dec_mod!(if h == 0 { 12 } else { h }, 2, Pad::Space);
             }
             b'm' => {
-                push_dec!(bd.tm_mon as i64 + 1, 2);
+                push_dec_mod!(bd.tm_mon as i64 + 1, 2, Pad::Zero);
             }
             b'M' => {
-                push_dec!(bd.tm_min, 2);
+                push_dec_mod!(bd.tm_min, 2, Pad::Zero);
             }
             b'n' => {
                 push!(b'\n');
@@ -558,7 +601,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!(epoch, 1);
             }
             b'S' => {
-                push_dec!(bd.tm_sec, 2);
+                push_dec_mod!(bd.tm_sec, 2, Pad::Zero);
             }
             b't' => {
                 push!(b'\t');
@@ -581,11 +624,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 // arbitrary out-of-range tm_yday/tm_wday without
                 // overflowing i32 (bd-7rxtm).
                 let wnum = (bd.tm_yday as i64 + 7 - bd.tm_wday as i64) / 7;
-                push_dec!(wnum, 2);
+                push_dec_mod!(wnum, 2, Pad::Zero);
             }
             b'V' => {
                 let (_, w) = iso_week(bd);
-                push_dec!(w, 2);
+                push_dec_mod!(w, 2, Pad::Zero);
             }
             b'w' => {
                 push_dec!(bd.tm_wday, 1);
@@ -600,7 +643,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                     bd.tm_wday as i64 - 1
                 };
                 let wnum = (bd.tm_yday as i64 + 7 - monday_wday) / 7;
-                push_dec!(wnum, 2);
+                push_dec_mod!(wnum, 2, Pad::Zero);
             }
             b'x' => {
                 // Preferred date: %m/%d/%y
@@ -619,7 +662,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!(bd.tm_sec, 2);
             }
             b'y' => {
-                push_dec!((bd.tm_year as i64 + 1900).rem_euclid(100), 2);
+                push_dec_mod!((bd.tm_year as i64 + 1900).rem_euclid(100), 2, Pad::Zero);
             }
             b'Y' => {
                 // glibc emits bare %d for %Y — no width, no zero-padding.
@@ -967,6 +1010,53 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = format_strftime(b"a%nb%tc", &bd, &mut buf);
         assert_eq!(&buf[..n], b"a\nb\tc");
+    }
+
+    #[test]
+    fn strftime_padding_modifiers() {
+        // March 5, 2025 14:30:45 (mday=5 tests padding)
+        let mut bd = BrokenDownTime::default();
+        bd.tm_year = 125; // 2025
+        bd.tm_mon = 2;    // March
+        bd.tm_mday = 5;
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        bd.tm_sec = 45;
+        bd.tm_wday = 3;   // Wednesday
+        bd.tm_yday = 63;
+
+        let mut buf = [0u8; 64];
+
+        // %d default is zero-padded
+        let n = format_strftime(b"%d", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"05");
+
+        // %-d no padding
+        let n = format_strftime(b"%-d", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"5");
+
+        // %_d space padding
+        let n = format_strftime(b"%_d", &bd, &mut buf);
+        assert_eq!(&buf[..n], b" 5");
+
+        // %0d explicit zero padding
+        let n = format_strftime(b"%0d", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"05");
+
+        // %e default is space-padded, %-e removes padding
+        let n = format_strftime(b"%e", &bd, &mut buf);
+        assert_eq!(&buf[..n], b" 5");
+        let n = format_strftime(b"%-e", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"5");
+
+        // %H, %M, %S modifiers
+        let n = format_strftime(b"%-H:%-M:%-S", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"14:30:45"); // all two-digit, no change
+
+        // Test with single-digit hour (9 AM)
+        bd.tm_hour = 9;
+        let n = format_strftime(b"[%H] [%-H] [%_H]", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"[09] [9] [ 9]");
     }
 
     // --- valid_clock_id_extended tests ---
