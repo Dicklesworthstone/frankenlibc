@@ -57,4 +57,31 @@ mod tests {
         assert!(!valid_fcntl_cmd(-1));
         assert!(!valid_fcntl_cmd(999));
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <fcntl.h>
+
+    #[test]
+    fn glibc_fcntl_cmd_constants() {
+        // fcntl command constants must match glibc values
+        assert_eq!(F_DUPFD, 0);
+        assert_eq!(F_GETFD, 1);
+        assert_eq!(F_SETFD, 2);
+        assert_eq!(F_GETFL, 3);
+        assert_eq!(F_SETFL, 4);
+        assert_eq!(F_DUPFD_CLOEXEC, 1030);
+    }
+
+    #[test]
+    fn glibc_fd_flags() {
+        // FD flags must match glibc values
+        assert_eq!(FD_CLOEXEC, 1);
+    }
+
+    #[test]
+    fn glibc_open_flags() {
+        // Open flags must match glibc values
+        assert_eq!(O_NONBLOCK, 2048); // 0x800
+        assert_eq!(O_CLOEXEC, 0x80000);
+    }
 }

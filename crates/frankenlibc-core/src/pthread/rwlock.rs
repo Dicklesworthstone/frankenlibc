@@ -73,4 +73,16 @@ mod tests {
         assert_eq!(sanitize_rwlock_kind(i32::MIN), PTHREAD_RWLOCK_DEFAULT_NP);
         assert_eq!(sanitize_rwlock_kind(i32::MAX), PTHREAD_RWLOCK_DEFAULT_NP);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <pthread.h> (GNU extension constants)
+
+    #[test]
+    fn glibc_rwlock_kind_constants() {
+        // rwlock preference constants must match glibc values
+        assert_eq!(PTHREAD_RWLOCK_PREFER_READER_NP, 0);
+        assert_eq!(PTHREAD_RWLOCK_PREFER_WRITER_NP, 1);
+        assert_eq!(PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP, 2);
+        assert_eq!(PTHREAD_RWLOCK_DEFAULT_NP, 0);
+    }
 }

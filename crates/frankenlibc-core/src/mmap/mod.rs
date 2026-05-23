@@ -322,4 +322,61 @@ mod tests {
         assert_eq!(sanitize_madvise(100), MADV_NORMAL);
         assert_eq!(sanitize_madvise(MADV_WILLNEED), MADV_WILLNEED);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <sys/mman.h>
+
+    #[test]
+    fn glibc_prot_flags() {
+        // Protection flags must match glibc values
+        assert_eq!(PROT_NONE, 0x0);
+        assert_eq!(PROT_READ, 0x1);
+        assert_eq!(PROT_WRITE, 0x2);
+        assert_eq!(PROT_EXEC, 0x4);
+    }
+
+    #[test]
+    fn glibc_map_flags() {
+        // Core mapping flags must match glibc values
+        assert_eq!(MAP_SHARED, 0x01);
+        assert_eq!(MAP_PRIVATE, 0x02);
+        assert_eq!(MAP_FIXED, 0x10);
+        assert_eq!(MAP_ANONYMOUS, 0x20);
+    }
+
+    #[test]
+    fn glibc_map_linux_extensions() {
+        // Linux-specific mapping flags
+        assert_eq!(MAP_GROWSDOWN, 0x0100);
+        assert_eq!(MAP_DENYWRITE, 0x0800);
+        assert_eq!(MAP_EXECUTABLE, 0x1000);
+        assert_eq!(MAP_LOCKED, 0x2000);
+        assert_eq!(MAP_NORESERVE, 0x4000);
+        assert_eq!(MAP_POPULATE, 0x8000);
+        assert_eq!(MAP_NONBLOCK, 0x10000);
+        assert_eq!(MAP_STACK, 0x20000);
+        assert_eq!(MAP_HUGETLB, 0x40000);
+        assert_eq!(MAP_SYNC, 0x80000);
+        assert_eq!(MAP_FIXED_NOREPLACE, 0x100000);
+    }
+
+    #[test]
+    fn glibc_msync_flags() {
+        // msync flags must match glibc values
+        assert_eq!(MS_ASYNC, 1);
+        assert_eq!(MS_SYNC, 4);
+        assert_eq!(MS_INVALIDATE, 2);
+    }
+
+    #[test]
+    fn glibc_madvise_values() {
+        // madvise values must match glibc
+        assert_eq!(MADV_NORMAL, 0);
+        assert_eq!(MADV_RANDOM, 1);
+        assert_eq!(MADV_SEQUENTIAL, 2);
+        assert_eq!(MADV_WILLNEED, 3);
+        assert_eq!(MADV_DONTNEED, 4);
+        assert_eq!(MADV_HUGEPAGE, 14);
+        assert_eq!(MADV_NOHUGEPAGE, 15);
+    }
 }

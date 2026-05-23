@@ -297,6 +297,18 @@ mod tests {
         assert_eq!(PTHREAD_MUTEX_DEFAULT, PTHREAD_MUTEX_NORMAL);
     }
 
+    // ===== glibc parity tests =====
+    // Verified against glibc <pthread.h>
+
+    #[test]
+    fn glibc_mutex_type_constants() {
+        // Mutex type constants must match glibc values
+        assert_eq!(PTHREAD_MUTEX_NORMAL, 0);
+        assert_eq!(PTHREAD_MUTEX_RECURSIVE, 1);
+        assert_eq!(PTHREAD_MUTEX_ERRORCHECK, 2);
+        assert_eq!(PTHREAD_MUTEX_DEFAULT, 0);
+    }
+
     #[test]
     fn valid_mutex_type_check() {
         assert!(valid_mutex_type(PTHREAD_MUTEX_NORMAL));
