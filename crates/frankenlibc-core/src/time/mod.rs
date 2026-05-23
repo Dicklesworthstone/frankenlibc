@@ -419,10 +419,15 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         }
         i += 1; // skip '%'
         if i >= fmt.len() {
+            // Trailing '%' with no conversion specifier - output literal '%'
+            // to match glibc behavior.
+            push!(b'%');
             break;
         }
 
         // Parse optional modifier flags: '-' (no padding), '_' (space), '0' (zero)
+        // Track start position so we can output the literal if incomplete.
+        let spec_start = i - 1; // points to the '%'
         let mut pad_override: Option<Pad> = None;
         loop {
             if i >= fmt.len() {
@@ -445,6 +450,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
         }
         if i >= fmt.len() {
+            // Incomplete specifier after flags - output literal (e.g. "%-" → "%-")
+            for j in spec_start..fmt.len() {
+                push!(fmt[j]);
+            }
             break;
         }
 
@@ -456,6 +465,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             i += 1;
         }
         if i >= fmt.len() {
+            // Incomplete specifier after width - output literal (e.g. "%-5" → "%-5")
+            for j in spec_start..fmt.len() {
+                push!(fmt[j]);
+            }
             break;
         }
 
@@ -951,6 +964,19 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = format_strftime(b"100%%", &bd, &mut buf);
         assert_eq!(&buf[..n], b"100%");
+    }
+
+    #[test]
+    fn strftime_trailing_percent_is_literal() {
+        // glibc outputs a trailing '%' literally (no conversion specifier follows).
+        let bd = epoch_to_broken_down(0);
+        let mut buf = [0u8; 64];
+        let n = format_strftime(b"foo%", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"foo%");
+
+        // Same for trailing '%-' (flag but no conversion)
+        let n = format_strftime(b"bar%-", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"bar%-");
     }
 
     #[test]
