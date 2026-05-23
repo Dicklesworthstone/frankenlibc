@@ -203,9 +203,14 @@ where
         return Err(GLOB_NOMATCH);
     }
 
-    // Sort unless GLOB_NOSORT
+    // Sort unless GLOB_NOSORT. glibc's glob() collates via strcoll() rather
+    // than raw byte order so non-C locales sort by the user's collation rules.
+    // Our strcoll currently degrades to strcmp under the C/POSIX locale (the
+    // default), so behavior matches the previous byte-order sort there; this
+    // routing means glob picks up real locale-aware collation automatically
+    // when strcoll grows it.
     if flags & GLOB_NOSORT == 0 {
-        results.sort();
+        results.sort_by(|a, b| super::str::strcoll(a, b).cmp(&0));
     }
 
     Ok(GlobResult { paths: results })
@@ -635,6 +640,45 @@ mod tests {
         assert!(
             marked.paths[0].ends_with(b"/"),
             "symlinked directory must be marked with trailing slash"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn glob_expand_sorts_via_strcoll() {
+        // glibc's glob() collates results via strcoll() rather than raw byte
+        // order; FrankenLibC's strcoll degrades to strcmp under the C/POSIX
+        // locale so the ordering still matches byte order. This regression
+        // pins that the routing exists (glob_expand calls strcoll, not just
+        // Vec::sort), and that under the default locale ordering is the
+        // expected C-locale byte order with uppercase ASCII before lowercase.
+        let temp = unique_glob_test_dir("strcoll_sort");
+        std::fs::create_dir_all(&temp).unwrap();
+        for name in [
+            b"Apple" as &[u8],
+            b"banana",
+            b"Cherry",
+            b"apple",
+        ] {
+            std::fs::write(temp.join(OsStr::from_bytes(name)), b"").unwrap();
+        }
+
+        let mut pat = temp.as_os_str().as_bytes().to_vec();
+        pat.extend_from_slice(b"/*\0");
+        let res = glob_expand(&pat, 0).expect("glob must match files");
+        let basenames: Vec<&[u8]> = res
+            .paths
+            .iter()
+            .map(|p| p.rsplit(|&b| b == b'/').next().unwrap_or(p))
+            .collect();
+
+        // C-locale strcmp byte order: uppercase ASCII (0x41..) precedes
+        // lowercase ASCII (0x61..).
+        assert_eq!(
+            basenames,
+            vec![&b"Apple"[..], b"Cherry", b"apple", b"banana"],
+            "glob results must collate via strcoll (byte order under C locale)"
         );
 
         let _ = std::fs::remove_dir_all(&temp);
