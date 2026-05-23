@@ -454,10 +454,16 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
     let mut effective_base = base as u64;
     let has_0x_prefix =
         i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
+    let has_0b_prefix =
+        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'b' as u32 || s[i + 1] == b'B' as u32);
+    let wide_is_binary_digit = |c: u32| c == b'0' as u32 || c == b'1' as u32;
 
     if base == 0 {
         if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
             effective_base = 16;
+            i += 2;
+        } else if has_0b_prefix && i + 2 < len && wide_is_binary_digit(s[i + 2]) {
+            effective_base = 2;
             i += 2;
         } else if s[i] == b'0' as u32 {
             effective_base = 8;
@@ -465,6 +471,8 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
             effective_base = 10;
         }
     } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+        i += 2;
+    } else if base == 2 && has_0b_prefix && i + 2 < len && wide_is_binary_digit(s[i + 2]) {
         i += 2;
     }
 
@@ -554,10 +562,16 @@ pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
     let mut effective_base = base as u64;
     let has_0x_prefix =
         i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
+    let has_0b_prefix =
+        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'b' as u32 || s[i + 1] == b'B' as u32);
+    let wide_is_binary_digit = |c: u32| c == b'0' as u32 || c == b'1' as u32;
 
     if base == 0 {
         if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
             effective_base = 16;
+            i += 2;
+        } else if has_0b_prefix && i + 2 < len && wide_is_binary_digit(s[i + 2]) {
+            effective_base = 2;
             i += 2;
         } else if s[i] == b'0' as u32 {
             effective_base = 8;
@@ -565,6 +579,8 @@ pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
             effective_base = 10;
         }
     } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+        i += 2;
+    } else if base == 2 && has_0b_prefix && i + 2 < len && wide_is_binary_digit(s[i + 2]) {
         i += 2;
     }
 
@@ -1523,6 +1539,27 @@ mod tests {
         let s = ws("42");
         let (val, _, _) = wcstol_impl(&s, 0);
         assert_eq!(val, 42);
+    }
+
+    #[test]
+    fn wcstol_auto_base_binary() {
+        let s = ws("0b1010");
+        let (val, consumed, _) = wcstol_impl(&s, 0);
+        assert_eq!(val, 10);
+        assert_eq!(consumed, 6);
+
+        let s = ws("0B1111");
+        let (val, consumed, _) = wcstol_impl(&s, 0);
+        assert_eq!(val, 15);
+        assert_eq!(consumed, 6);
+    }
+
+    #[test]
+    fn wcstol_explicit_base2_consumes_0b_prefix() {
+        let s = ws("0b101");
+        let (val, consumed, _) = wcstol_impl(&s, 2);
+        assert_eq!(val, 5);
+        assert_eq!(consumed, 5);
     }
 
     #[test]
