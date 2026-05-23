@@ -9677,6 +9677,12 @@ mod tests {
     }
 
     #[test]
+    fn cp1252_accepts_msansi_alias() {
+        let cd = iconv_open(b"UTF-8", b"MS-ANSI");
+        assert!(cd.is_some());
+    }
+
+    #[test]
     fn koi8u_to_utf8_round_trip() {
         // KOI8-U bytes for "Київ" (Kyiv with Ukrainian-specific chars)
         // К=0xEB, и=0xC9, ї=0xB7, в=0xD7
