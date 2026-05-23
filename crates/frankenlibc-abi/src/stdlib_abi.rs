@@ -652,6 +652,11 @@ pub unsafe extern "C" fn strtol(
         unsafe { set_abi_errno(libc::ERANGE) };
     } else if status == frankenlibc_core::stdlib::conversion::ConversionStatus::InvalidBase {
         unsafe { set_abi_errno(libc::EINVAL) };
+        // glibc sets endptr to NULL for invalid base
+        if !endptr.is_null() {
+            unsafe { *endptr = std::ptr::null_mut() };
+        }
+        return 0;
     }
 
     if !endptr.is_null() {
@@ -728,6 +733,10 @@ pub unsafe extern "C" fn strtoimax(
         unsafe { set_abi_errno(libc::ERANGE) };
     } else if status == frankenlibc_core::stdlib::conversion::ConversionStatus::InvalidBase {
         unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = std::ptr::null_mut() };
+        }
+        return 0;
     }
 
     if !endptr.is_null() {
@@ -817,6 +826,10 @@ pub unsafe extern "C" fn strtoul(
         unsafe { set_abi_errno(libc::ERANGE) };
     } else if status == frankenlibc_core::stdlib::conversion::ConversionStatus::InvalidBase {
         unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = std::ptr::null_mut() };
+        }
+        return 0;
     }
 
     if !endptr.is_null() {
@@ -893,6 +906,10 @@ pub unsafe extern "C" fn strtoumax(
         unsafe { set_abi_errno(libc::ERANGE) };
     } else if status == frankenlibc_core::stdlib::conversion::ConversionStatus::InvalidBase {
         unsafe { set_abi_errno(libc::EINVAL) };
+        if !endptr.is_null() {
+            unsafe { *endptr = std::ptr::null_mut() };
+        }
+        return 0;
     }
 
     if !endptr.is_null() {

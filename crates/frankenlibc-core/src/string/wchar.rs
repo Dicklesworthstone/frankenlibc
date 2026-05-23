@@ -631,6 +631,17 @@ mod tests {
         assert_eq!(wcwidth(0x1FA80), 2); // 🪀 YO-YO (Extended-A)
     }
 
+    #[test]
+    fn wcwidth_space_characters() {
+        // Various space characters return width 1 in glibc C.UTF-8 locale.
+        assert_eq!(wcwidth(0x0020), 1); // SPACE
+        assert_eq!(wcwidth(0x00A0), 1); // NO-BREAK SPACE (NBSP)
+        assert_eq!(wcwidth(0x1680), 1); // OGHAM SPACE MARK
+        assert_eq!(wcwidth(0x2000), 1); // EN QUAD
+        assert_eq!(wcwidth(0x2007), 1); // FIGURE SPACE
+        assert_eq!(wcwidth(0x202F), 1); // NARROW NO-BREAK SPACE (NNBSP)
+    }
+
     // ---- decode_utf8_lossy ----
 
     #[test]
