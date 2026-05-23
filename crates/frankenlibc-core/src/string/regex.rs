@@ -2176,4 +2176,25 @@ mod tests {
         assert!(compile_and_match("(a+)+$", "aaaa", REG_EXTENDED));
         assert!(compile_and_match("([a-z]+)*$", "abcxyz", REG_EXTENDED));
     }
+
+    #[test]
+    fn reg_notbol_prevents_caret_match_at_start() {
+        // Without REG_NOTBOL, "^abc" matches "abc" at position 0.
+        let compiled = regex_compile(b"^abc", REG_EXTENDED).unwrap();
+        let m1 = regex_match_bounds(&compiled, b"abc\0", 0);
+        assert!(m1.is_some(), "^abc should match 'abc' without REG_NOTBOL");
+
+        // With REG_NOTBOL, "^abc" does not match "abc" because the start
+        // is not treated as beginning-of-line.
+        let m2 = regex_match_bounds(&compiled, b"abc\0", REG_NOTBOL);
+        assert!(m2.is_none(), "^abc should NOT match 'abc' with REG_NOTBOL");
+
+        // "^" still matches after embedded newline if REG_NEWLINE is set.
+        let compiled2 = regex_compile(b"^abc", REG_EXTENDED | REG_NEWLINE).unwrap();
+        let m3 = regex_match_bounds(&compiled2, b"\nabc\0", REG_NOTBOL);
+        assert!(
+            m3.is_some(),
+            "^abc should match after newline with REG_NEWLINE even with REG_NOTBOL"
+        );
+    }
 }
