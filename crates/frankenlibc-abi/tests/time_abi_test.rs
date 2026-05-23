@@ -1053,6 +1053,132 @@ fn strptime_returns_null_on_mismatch() {
 }
 
 #[test]
+fn strptime_epoch_seconds() {
+    // 1710505845 = 2024-03-15 12:30:45 UTC
+    // Note: FrankenLibC returns UTC (C locale), glibc returns local time
+    let input = b"1710505845\0";
+    let fmt = b"%s\0";
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null());
+    assert_eq!(tm.tm_year, 124); // 2024 - 1900
+    assert_eq!(tm.tm_mon, 2); // March (0-indexed)
+    assert_eq!(tm.tm_mday, 15);
+    assert_eq!(tm.tm_hour, 12); // UTC time
+    assert_eq!(tm.tm_min, 30);
+    assert_eq!(tm.tm_sec, 45);
+    assert_eq!(tm.tm_wday, 5); // Friday
+}
+
+#[test]
+fn strptime_timezone_offset() {
+    let input = b"-0500\0";
+    let fmt = b"%z\0";
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null());
+    #[cfg(target_os = "linux")]
+    assert_eq!(tm.tm_gmtoff, -5 * 3600);
+}
+
+#[test]
+fn strptime_timezone_offset_with_colon() {
+    let input = b"+05:30\0";
+    let fmt = b"%z\0";
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null());
+    #[cfg(target_os = "linux")]
+    assert_eq!(tm.tm_gmtoff, 5 * 3600 + 30 * 60);
+}
+
+#[test]
+fn strptime_week_numbers() {
+    // %U - week number (Sunday start)
+    let input = b"52\0";
+    let fmt = b"%U\0";
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null());
+
+    // %W - week number (Monday start)
+    let input = b"01\0";
+    let fmt = b"%W\0";
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null());
+
+    // %V - ISO week number (01-53)
+    let input = b"53\0";
+    let fmt = b"%V\0";
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null());
+}
+
+#[test]
+fn strptime_iso_week_year() {
+    // %G - ISO week-based year (4 digits)
+    let input = b"2024\0";
+    let fmt = b"%G\0";
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null());
+
+    // %g - ISO week-based year (2 digits)
+    let input = b"24\0";
+    let fmt = b"%g\0";
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    assert!(!result.is_null());
+}
+
+#[test]
 fn strptime_rejects_tracked_short_tm() {
     let input = b"2026-02-25\0";
     let fmt = b"%Y-%m-%d\0";

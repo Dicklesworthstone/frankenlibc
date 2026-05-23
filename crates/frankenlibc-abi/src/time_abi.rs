@@ -988,7 +988,8 @@ static ABBR_DAYS: [&[u8]; 7] = [b"sun", b"mon", b"tue", b"wed", b"thu", b"fri", 
 /// `%n`/`%t` (whitespace), `%%` (literal `%`), `%C` (century),
 /// `%y` (2-digit year), `%I` (12-hour), `%p` (AM/PM), `%e` (day with
 /// leading space), `%D` (`%m/%d/%y`), `%T` (`%H:%M:%S`),
-/// `%R` (`%H:%M`), `%F` (`%Y-%m-%d`).
+/// `%R` (`%H:%M`), `%F` (`%Y-%m-%d`), `%s` (seconds since epoch),
+/// `%U`/`%W` (week number), `%V`/`%G`/`%g` (ISO week), `%z` (timezone offset).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strptime(
     s: *const std::ffi::c_char,
@@ -1284,6 +1285,155 @@ pub unsafe extern "C" fn strptime(
                     }
                     si = si.saturating_add(consumed as usize);
                     if si > input.len() {
+                        return std::ptr::null_mut();
+                    }
+                }
+                b's' => {
+                    // Seconds since epoch (GNU extension, also in POSIX 2024).
+                    // Parse digits and convert to broken-down time.
+                    let start = si;
+                    let mut epoch: i64 = 0;
+                    let negative = input.get(si).copied() == Some(b'-');
+                    if negative {
+                        si += 1;
+                    }
+                    while si < input.len() && input[si].is_ascii_digit() {
+                        epoch = epoch.saturating_mul(10).saturating_add((input[si] - b'0') as i64);
+                        si += 1;
+                    }
+                    if si == start || (negative && si == start + 1) {
+                        return std::ptr::null_mut();
+                    }
+                    if negative {
+                        // glibc rejects negative epoch
+                        return std::ptr::null_mut();
+                    }
+                    // Convert epoch to tm (UTC)
+                    let secs_per_min = 60i64;
+                    let secs_per_hour = 3600i64;
+                    let secs_per_day = 86400i64;
+                    let mut days = epoch / secs_per_day;
+                    let mut rem = epoch % secs_per_day;
+                    unsafe {
+                        (*tm).tm_hour = (rem / secs_per_hour) as i32;
+                        rem %= secs_per_hour;
+                        (*tm).tm_min = (rem / secs_per_min) as i32;
+                        (*tm).tm_sec = (rem % secs_per_min) as i32;
+                    }
+                    // Days since 1970-01-01
+                    let mut year = 1970i32;
+                    loop {
+                        let days_in_year =
+                            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
+                        if days < days_in_year as i64 {
+                            break;
+                        }
+                        days -= days_in_year as i64;
+                        year += 1;
+                    }
+                    unsafe {
+                        (*tm).tm_year = year - 1900;
+                        (*tm).tm_yday = days as i32;
+                    }
+                    // Convert yday to mon/mday
+                    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+                    let mdays: [i32; 12] = if leap {
+                        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+                    } else {
+                        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+                    };
+                    let mut yday_rem = days as i32;
+                    let mut mon = 0;
+                    while mon < 12 && yday_rem >= mdays[mon] {
+                        yday_rem -= mdays[mon];
+                        mon += 1;
+                    }
+                    unsafe {
+                        (*tm).tm_mon = mon as i32;
+                        (*tm).tm_mday = yday_rem + 1;
+                        // wday: 1970-01-01 was Thursday (4)
+                        (*tm).tm_wday = ((epoch / secs_per_day + 4) % 7) as i32;
+                    }
+                }
+                b'U' => {
+                    // Week number (Sunday-starting weeks, 00-53).
+                    // glibc parses this but uses it in combination with weekday.
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if val > 53 {
+                            return std::ptr::null_mut();
+                        }
+                        // Store in tm for potential later use (not standard field)
+                        si = new_si;
+                    } else {
+                        return std::ptr::null_mut();
+                    }
+                }
+                b'W' => {
+                    // Week number (Monday-starting weeks, 00-53).
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if val > 53 {
+                            return std::ptr::null_mut();
+                        }
+                        si = new_si;
+                    } else {
+                        return std::ptr::null_mut();
+                    }
+                }
+                b'V' => {
+                    // ISO week number (01-53).
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if !(1..=53).contains(&val) {
+                            return std::ptr::null_mut();
+                        }
+                        si = new_si;
+                    } else {
+                        return std::ptr::null_mut();
+                    }
+                }
+                b'G' => {
+                    // ISO week-based year (4 digits).
+                    if let Some((_, new_si)) = parse_digits(input, si, 4) {
+                        si = new_si;
+                    } else {
+                        return std::ptr::null_mut();
+                    }
+                }
+                b'g' => {
+                    // ISO week-based year (2 digits).
+                    if let Some((_, new_si)) = parse_digits(input, si, 2) {
+                        si = new_si;
+                    } else {
+                        return std::ptr::null_mut();
+                    }
+                }
+                b'z' => {
+                    // Timezone offset: +HHMM, -HHMM, or +HH:MM, -HH:MM
+                    let sign = match input.get(si).copied() {
+                        Some(b'+') => 1i32,
+                        Some(b'-') => -1i32,
+                        _ => return std::ptr::null_mut(),
+                    };
+                    si += 1;
+                    // Parse hours (2 digits)
+                    if let Some((hh, new_si)) = parse_digits(input, si, 2) {
+                        si = new_si;
+                        // Optional colon
+                        if input.get(si).copied() == Some(b':') {
+                            si += 1;
+                        }
+                        // Parse minutes (2 digits)
+                        if let Some((mm, new_si2)) = parse_digits(input, si, 2) {
+                            si = new_si2;
+                            // Store in tm_gmtoff if available (glibc extension)
+                            #[cfg(target_os = "linux")]
+                            unsafe {
+                                (*tm).tm_gmtoff = sign as i64 * (hh as i64 * 3600 + mm as i64 * 60);
+                            }
+                            let _ = (sign, hh, mm); // silence unused warnings on non-Linux
+                        } else {
+                            return std::ptr::null_mut();
+                        }
+                    } else {
                         return std::ptr::null_mut();
                     }
                 }
