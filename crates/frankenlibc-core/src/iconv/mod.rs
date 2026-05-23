@@ -74,6 +74,7 @@ enum Encoding {
     Utf16Be,
     Utf32,
     Utf32Be,
+    Utf32Le,
     Koi8R,
     Koi8U,
     Koi8Ru,
@@ -209,7 +210,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 128] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 129] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -251,6 +252,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 128] = [
         canonical: "UTF-32BE",
         normalized: "UTF32BE",
         aliases: &["UTF32BE"],
+    },
+    CodecSpec {
+        encoding: Encoding::Utf32Le,
+        canonical: "UTF-32LE",
+        normalized: "UTF32LE",
+        aliases: &["UTF32LE"],
     },
     CodecSpec {
         encoding: Encoding::Koi8R,
@@ -1282,6 +1289,18 @@ fn decode_utf32be(input: &[u8]) -> Result<(char, usize), DecodeError> {
     }
 
     let cp = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
+    if let Some(ch) = char::from_u32(cp) {
+        return Ok((ch, 4));
+    }
+    Err(DecodeError::Invalid)
+}
+
+fn decode_utf32le(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.len() < 4 {
+        return Err(DecodeError::Incomplete);
+    }
+
+    let cp = u32::from_le_bytes([input[0], input[1], input[2], input[3]]);
     if let Some(ch) = char::from_u32(cp) {
         return Ok((ch, 4));
     }
@@ -7983,6 +8002,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf16Be => decode_utf16be(input),
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Utf32Be => decode_utf32be(input),
+        Encoding::Utf32Le => decode_utf32le(input),
         Encoding::Koi8R => decode_koi8r(input),
         Encoding::Koi8U => decode_koi8u(input),
         Encoding::Koi8Ru => decode_koi8ru(input),
@@ -8181,6 +8201,14 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
                 return Err(EncodeError::NoSpace);
             }
             let bytes = (ch as u32).to_be_bytes();
+            out[..4].copy_from_slice(&bytes);
+            Ok(4)
+        }
+        Encoding::Utf32Le => {
+            if out.len() < 4 {
+                return Err(EncodeError::NoSpace);
+            }
+            let bytes = (ch as u32).to_le_bytes();
             out[..4].copy_from_slice(&bytes);
             Ok(4)
         }
