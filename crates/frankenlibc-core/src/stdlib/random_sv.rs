@@ -275,4 +275,31 @@ mod tests {
         let one_seeded: Vec<i64> = (0..6).map(|_| random()).collect();
         assert_eq!(zero_seeded, one_seeded);
     }
+
+    #[test]
+    fn glibc_random_sequence_parity() {
+        // Verify exact glibc random() sequence with default seed (1).
+        // These values were captured from glibc 2.38 on x86_64-linux.
+        let _guard = test_global_random_lock();
+        srandom(1);
+        let expected = [1804289383i64, 846930886, 1681692777, 1714636915, 1957747793];
+        for (i, &exp) in expected.iter().enumerate() {
+            let got = random();
+            assert_eq!(got, exp, "random()[{i}] mismatch: expected {exp}, got {got}");
+        }
+    }
+
+    #[test]
+    fn glibc_srandom_42_sequence_parity() {
+        // Verify glibc random() sequence with seed 42.
+        // These values were captured from glibc 2.38 on x86_64-linux using srandom(42)/random().
+        // Note: srand/rand use a different algorithm than srandom/random.
+        let _guard = test_global_random_lock();
+        srandom(42);
+        let expected = [71876166i64, 708592740, 1483128881, 907283241, 442951012];
+        for (i, &exp) in expected.iter().enumerate() {
+            let got = random();
+            assert_eq!(got, exp, "random()[{i}] with seed 42 mismatch: expected {exp}, got {got}");
+        }
+    }
 }
