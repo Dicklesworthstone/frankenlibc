@@ -1955,4 +1955,47 @@ mod tests {
             assert!(v.is_nan());
         }
     }
+
+    #[test]
+    fn glibc_pointer_nil_parity() {
+        // glibc: sscanf("(nil)", "%p") -> n=1, pval=(nil)
+        let dirs = parse_scanf_format(b"%p");
+        let result = scan_input(b"(nil)", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::Pointer(0)));
+    }
+
+    #[test]
+    fn glibc_unsigned_negative_wrap_parity() {
+        // glibc: sscanf("-1", "%u") -> n=1, uval=4294967295 (UINT_MAX)
+        let dirs = parse_scanf_format(b"%u");
+        let result = scan_input(b"-1", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::UnsignedInt(v) = result.values[0] {
+            assert_eq!(v, u32::MAX as u64);
+        } else {
+            panic!("expected UnsignedInt");
+        }
+    }
+
+    #[test]
+    fn glibc_binary_prefix_0b_parity() {
+        // glibc 2.38+: sscanf("0b1010", "%i") -> n=1, val=10 (C23 binary prefix)
+        let dirs = parse_scanf_format(b"%i");
+        let result = scan_input(b"0b1010", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(10)));
+    }
+
+    #[test]
+    fn glibc_no_match_returns_zero_not_eof() {
+        // glibc: sscanf("abc", "%d") -> n=0 (no match, but input available)
+        // This is count=0 without input_failure (input_failure signals EOF).
+        let dirs = parse_scanf_format(b"%d");
+        let result = scan_input(b"abc", &dirs);
+        assert_eq!(result.count, 0);
+        // input_failure is true when we couldn't read anything before first
+        // conversion failed; this is a matching failure on first directive.
+        // glibc returns 0 for this case, not EOF (-1).
+    }
 }
