@@ -193,4 +193,56 @@ mod tests {
             prop_assert!((lhs - rhs).abs() <= 1e-11);
         }
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_math_edge.c
+
+    #[test]
+    fn glibc_sin_cos_at_zero() {
+        assert_eq!(sin(0.0), 0.0);
+        assert_eq!(cos(0.0), 1.0);
+        assert_eq!(tan(0.0), 0.0);
+    }
+
+    #[test]
+    fn glibc_sin_at_pi_half() {
+        // sin(pi/2) = 1.0
+        assert!((sin(PI / 2.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn glibc_cos_at_pi() {
+        // cos(pi) = -1.0
+        assert!((cos(PI) - (-1.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn glibc_asin_domain_error_outside_range() {
+        // asin(2.0) is NaN (domain error)
+        assert!(asin(2.0).is_nan());
+        assert!(asin(-2.0).is_nan());
+    }
+
+    #[test]
+    fn glibc_asin_acos_at_boundaries() {
+        // asin(0) = 0, asin(1) = pi/2
+        assert!((asin(0.0) - 0.0).abs() < 1e-12);
+        assert!((asin(1.0) - PI / 2.0).abs() < 1e-12);
+        // acos(1) = 0
+        assert!((acos(1.0) - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn glibc_atan_at_one() {
+        // atan(1) = pi/4
+        assert!((atan(1.0) - PI / 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn glibc_atan2_quadrant_aware() {
+        // atan2(1, 1) = pi/4
+        assert!((atan2(1.0, 1.0) - PI / 4.0).abs() < 1e-12);
+        // atan2(0, 0) = 0 in glibc
+        assert_eq!(atan2(0.0, 0.0), 0.0);
+    }
 }
