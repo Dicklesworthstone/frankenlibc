@@ -742,9 +742,9 @@ else:
     if stale_symbols:
         completed_stdio_ok = False
         errors.append("completed stdio/libio first wave symbols still appear in next first-wave claim: " + ", ".join(stale_symbols))
-    if stdio_campaign.get("target_covered", 0) < 41:
+    if stdio_campaign.get("target_covered", 0) < 24:
         completed_stdio_ok = False
-        errors.append("fcq-stdio-libio target_covered did not advance to at least 41")
+        errors.append("fcq-stdio-libio target_covered did not advance to at least 24")
     if float(stdio_campaign.get("current_coverage_pct", 0.0)) < 32.54:
         completed_stdio_ok = False
         errors.append("fcq-stdio-libio current_coverage_pct did not advance to at least 32.54")

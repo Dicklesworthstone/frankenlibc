@@ -59,26 +59,23 @@
     },
     {
       "campaign_id": "fcq-stdio-libio",
-      "current_coverage_pct": 89.68,
+      "current_coverage_pct": 73.53,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 99.21,
-      "first_wave_fixture_count": 12,
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 9,
       "first_wave_symbols": [
-        "setbuffer",
-        "setlinebuf",
         "stderr",
         "stdin",
         "stdout",
-        "tmpfile",
-        "tmpfile64",
         "tmpnam",
         "vfprintf",
         "vfscanf",
         "vprintf",
-        "vscanf"
+        "vscanf",
+        "vsscanf"
       ],
       "module": "stdio_abi",
       "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
@@ -91,20 +88,20 @@
         "stdio_libio_divergence"
       ],
       "scores": {
-        "coverage_gap_score": 13,
+        "coverage_gap_score": 9,
         "feature_gap_risk_score": 3,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 3,
         "parity_risk_score": 5,
-        "priority_score": 2363,
+        "priority_score": 2359,
         "semantic_risk_score": 0,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "FILE state, _IO compatibility names, locking, formatted IO, buffering, and stream errors",
-      "target_covered": 113,
-      "target_total": 126,
-      "target_uncovered": 13,
+      "target_covered": 25,
+      "target_total": 34,
+      "target_uncovered": 9,
       "title": "stdio/libio stream semantics fixture wave",
       "workload_domains": [
         "stdio_libio",
@@ -115,18 +112,17 @@
     },
     {
       "campaign_id": "fcq-pthread-sync",
-      "current_coverage_pct": 61.7,
+      "current_coverage_pct": 63.3,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 70.21,
+      "expected_coverage_after_first_wave_pct": 74.31,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "pthread_condattr_init",
         "pthread_condattr_setclock",
         "pthread_condattr_setpshared",
-        "pthread_exit",
         "pthread_getaffinity_np",
         "pthread_getattr_default_np",
         "pthread_getconcurrency",
@@ -134,7 +130,8 @@
         "pthread_getname_np",
         "pthread_gettid_np",
         "pthread_kill",
-        "pthread_mutex_clocklock"
+        "pthread_mutex_consistent",
+        "pthread_mutexattr_destroy"
       ],
       "module": "pthread_abi",
       "next_step": "Prioritize deterministic mode-pair tests for pthread primitives that real runtimes and services depend on.",
@@ -148,22 +145,22 @@
         "threading"
       ],
       "scores": {
-        "coverage_gap_score": 54,
+        "coverage_gap_score": 40,
         "feature_gap_risk_score": 3,
         "hard_parts_risk_tags": [
           "threading"
         ],
         "implementation_complexity_score": 4,
         "parity_risk_score": 5,
-        "priority_score": 2354,
+        "priority_score": 2340,
         "semantic_risk_score": 2,
         "workload_risk_score": 5
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "pthread lifecycle, mutex, condvar, TLS keys, cancellation, and GNU extensions",
-      "target_covered": 87,
-      "target_total": 141,
-      "target_uncovered": 54,
+      "target_covered": 69,
+      "target_total": 109,
+      "target_uncovered": 40,
       "title": "pthread synchronization and cancellation fixture wave",
       "workload_domains": [
         "threaded_services",
@@ -340,11 +337,11 @@
     },
     {
       "campaign_id": "fcq-glibc-internal-compat",
-      "current_coverage_pct": 7.02,
+      "current_coverage_pct": 6.87,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 9.12,
+      "expected_coverage_after_first_wave_pct": 8.98,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "__ctype32_toupper",
@@ -382,9 +379,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "exported glibc internals, compatibility names, diagnostics, backtrace, argz, and resolver helpers",
-      "target_covered": 40,
-      "target_total": 570,
-      "target_uncovered": 530,
+      "target_covered": 39,
+      "target_total": 568,
+      "target_uncovered": 529,
       "title": "glibc internal compatibility triage fixture wave",
       "workload_domains": [
         "startup_linking",
@@ -463,19 +460,6 @@
     },
     {
       "coverage_state": "weak",
-      "current_coverage_pct": 23.68,
-      "deferral_reason": "Internal I/O coverage is related to stdio and low-level I/O waves but needs a narrower oracle plan before it should displace user-facing campaigns.",
-      "module": "io_internal_abi",
-      "next_step": "Split internal I/O fixtures by public behavior proxy after stdio and syscall fixture logs identify the shared surface.",
-      "status_breakdown": {
-        "Implemented": 114
-      },
-      "target_covered": 27,
-      "target_total": 114,
-      "target_uncovered": 87
-    },
-    {
-      "coverage_state": "weak",
       "current_coverage_pct": 22.45,
       "deferral_reason": "Character classification is important for locale users but has less immediate standalone replacement risk than the selected locale, wchar, and stdio campaigns.",
       "module": "ctype_abi",
@@ -489,16 +473,30 @@
     },
     {
       "coverage_state": "weak",
-      "current_coverage_pct": 3.57,
+      "current_coverage_pct": 3.45,
       "deferral_reason": "Low-level I/O is partially represented by unistd, process, poll, socket, and stdio campaigns; a separate wave should avoid duplicate syscall fixture coverage.",
       "module": "io_abi",
       "next_step": "Derive an io_abi campaign from syscall coverage deltas after the unistd and poll waves land.",
       "status_breakdown": {
-        "Implemented": 3,
+        "Implemented": 4,
         "RawSyscall": 25
       },
       "target_covered": 1,
-      "target_total": 28,
+      "target_total": 29,
+      "target_uncovered": 28
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 47.06,
+      "deferral_reason": "Internal I/O coverage is related to stdio and low-level I/O waves but needs a narrower oracle plan before it should displace user-facing campaigns.",
+      "module": "io_internal_abi",
+      "next_step": "Split internal I/O fixtures by public behavior proxy after stdio and syscall fixture logs identify the shared surface.",
+      "status_breakdown": {
+        "Implemented": 51,
+        "WrapsHostLibc": 63
+      },
+      "target_covered": 24,
+      "target_total": 51,
       "target_uncovered": 27
     },
     {
@@ -631,19 +629,6 @@
       "target_covered": 0,
       "target_total": 1,
       "target_uncovered": 1
-    },
-    {
-      "coverage_state": "weak",
-      "current_coverage_pct": 75.0,
-      "deferral_reason": "Startup coverage has a small residual gap and is already represented in loader, process, and user workload smoke evidence.",
-      "module": "startup_abi",
-      "next_step": "Close the remaining startup fixture in the L0/L1 real-program smoke suite.",
-      "status_breakdown": {
-        "Implemented": 4
-      },
-      "target_covered": 3,
-      "target_total": 4,
-      "target_uncovered": 1
     }
   ],
   "fully_covered_workload_domain_sources": [
@@ -651,8 +636,8 @@
       "coverage_state": "covered",
       "current_coverage_pct": 100.0,
       "module": "dlfcn_abi",
-      "target_covered": 7,
-      "target_total": 7,
+      "target_covered": 1,
+      "target_total": 1,
       "target_uncovered": 0,
       "workload_domains": [
         "startup_linking",
@@ -678,8 +663,8 @@
       "coverage_state": "covered",
       "current_coverage_pct": 100.0,
       "module": "malloc_abi",
-      "target_covered": 21,
-      "target_total": 21,
+      "target_covered": 10,
+      "target_total": 10,
       "target_uncovered": 0,
       "workload_domains": [
         "allocator",
@@ -856,7 +841,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 2957,
+    "all_uncovered_target_symbols": 2878,
     "campaign_count": 8,
     "covered_modules": [
       "fortify_abi",
@@ -868,8 +853,8 @@
       "unistd_abi",
       "wchar_abi"
     ],
-    "deferred_module_count": 15,
-    "deferred_target_uncovered_symbols": 354,
+    "deferred_module_count": 14,
+    "deferred_target_uncovered_symbols": 294,
     "highest_priority_campaign": "fcq-unistd-process-filesystem",
     "lowest_priority_campaign": "fcq-rpc-legacy-network",
     "required_workload_domains_covered": [
@@ -885,7 +870,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 2603,
-    "total_first_wave_fixture_count": 96
+    "selected_target_uncovered_symbols": 2584,
+    "total_first_wave_fixture_count": 93
   }
 }

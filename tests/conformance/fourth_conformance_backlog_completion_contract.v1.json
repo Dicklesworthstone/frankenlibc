@@ -165,9 +165,9 @@
     },
     "fixture_coverage_prioritizer": {
       "campaign_count": 8,
-      "selected_target_uncovered_symbols": 2603,
-      "all_uncovered_target_symbols": 2957,
-      "total_first_wave_fixture_count": 96,
+      "selected_target_uncovered_symbols": 2584,
+      "all_uncovered_target_symbols": 2878,
+      "total_first_wave_fixture_count": 93,
       "required_covered_modules": [
         "fortify_abi",
         "glibc_internal_abi",
@@ -265,17 +265,17 @@
       },
       {
         "campaign_id": "fcq-stdio-libio",
-        "first_wave_symbols": ["setbuffer", "setlinebuf", "stderr", "stdin", "stdout", "tmpfile", "tmpfile64", "tmpnam", "vfprintf", "vfscanf", "vprintf", "vscanf"],
-        "current_coverage_pct": 89.68,
-        "target_covered": 113,
-        "target_uncovered": 13
+        "first_wave_symbols": ["stderr", "stdin", "stdout", "tmpnam", "vfprintf", "vfscanf", "vprintf", "vscanf", "vsscanf"],
+        "current_coverage_pct": 73.53,
+        "target_covered": 25,
+        "target_uncovered": 9
       },
       {
         "campaign_id": "fcq-pthread-sync",
-        "first_wave_symbols": ["pthread_condattr_init", "pthread_condattr_setclock", "pthread_condattr_setpshared", "pthread_exit", "pthread_getaffinity_np", "pthread_getattr_default_np", "pthread_getconcurrency", "pthread_getcpuclockid", "pthread_getname_np", "pthread_gettid_np", "pthread_kill", "pthread_mutex_clocklock"],
-        "current_coverage_pct": 61.7,
-        "target_covered": 87,
-        "target_uncovered": 54
+        "first_wave_symbols": ["pthread_condattr_init", "pthread_condattr_setclock", "pthread_condattr_setpshared", "pthread_getaffinity_np", "pthread_getattr_default_np", "pthread_getconcurrency", "pthread_getcpuclockid", "pthread_getname_np", "pthread_gettid_np", "pthread_kill", "pthread_mutex_consistent", "pthread_mutexattr_destroy"],
+        "current_coverage_pct": 63.3,
+        "target_covered": 69,
+        "target_uncovered": 40
       },
       {
         "campaign_id": "fcq-wchar-locale-encoding",
@@ -301,9 +301,9 @@
       {
         "campaign_id": "fcq-glibc-internal-compat",
         "first_wave_symbols": ["__ctype32_toupper", "__ctype_init", "__curbrk", "__daylight", "__dcgettext", "__default_morecore", "__dgettext", "__dn_comp", "__dn_expand", "__dn_skipname", "__dup2", "__duplocale"],
-        "current_coverage_pct": 7.02,
-        "target_covered": 40,
-        "target_uncovered": 530
+        "current_coverage_pct": 6.87,
+        "target_covered": 39,
+        "target_uncovered": 529
       },
       {
         "campaign_id": "fcq-rpc-legacy-network",
