@@ -1088,4 +1088,91 @@ mod tests {
         assert_eq!(rint(-0.5), -0.0); // -0.5 rounds to -0 (even)
         assert_eq!(rint(-1.5), -2.0); // -1.5 rounds to -2 (even)
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_math_edge.c
+
+    #[test]
+    fn glibc_round_ties_to_away() {
+        // round() ties to away from zero, not to even
+        assert_eq!(round(2.5), 3.0);
+        assert_eq!(round(-2.5), -3.0);
+        assert_eq!(round(2.4), 2.0);
+        assert_eq!(round(-2.4), -2.0);
+    }
+
+    #[test]
+    fn glibc_floor_ceil_negative() {
+        // floor(-3.7) = -4.0, ceil(-3.3) = -3.0
+        assert_eq!(floor(3.7), 3.0);
+        assert_eq!(floor(-3.7), -4.0);
+        assert_eq!(ceil(3.3), 4.0);
+        assert_eq!(ceil(-3.3), -3.0);
+    }
+
+    #[test]
+    fn glibc_trunc_toward_zero() {
+        // trunc always toward zero
+        assert_eq!(trunc(3.7), 3.0);
+        assert_eq!(trunc(-3.7), -3.0);
+    }
+
+    #[test]
+    fn glibc_fabs_clears_sign_bit() {
+        assert_eq!(fabs(-3.14), 3.14);
+        assert_eq!(fabs(3.14), 3.14);
+        // fabs(-0.0) = 0.0 (sign bit cleared)
+        assert_eq!(fabs(-0.0), 0.0);
+        assert_eq!(signbit(fabs(-0.0)), 0);
+    }
+
+    #[test]
+    fn glibc_sqrt_negative_is_nan() {
+        assert!(sqrt(-1.0).is_nan());
+    }
+
+    #[test]
+    fn glibc_cbrt_handles_negative() {
+        // cbrt(-8.0) = -2.0 (unlike sqrt)
+        assert!((cbrt(8.0) - 2.0).abs() < 1e-12);
+        assert!((cbrt(-8.0) - (-2.0)).abs() < 1e-12);
+        assert_eq!(cbrt(0.0), 0.0);
+    }
+
+    #[test]
+    fn glibc_copysign_transfers_sign() {
+        assert_eq!(copysign(3.0, -1.0), -3.0);
+        assert_eq!(copysign(-3.0, 1.0), 3.0);
+    }
+
+    #[test]
+    fn glibc_signbit_negative_zero() {
+        // signbit(-0.0) = 1
+        assert_eq!(signbit(-0.0), 1);
+        assert_eq!(signbit(0.0), 0);
+        assert_eq!(signbit(f64::NEG_INFINITY), 1);
+    }
+
+    #[test]
+    fn glibc_isinf_returns_sign() {
+        // isinf(INFINITY) = 1, isinf(-INFINITY) = -1
+        assert_eq!(isinf(f64::INFINITY), 1);
+        assert_eq!(isinf(f64::NEG_INFINITY), -1);
+        assert_eq!(isinf(0.0), 0);
+        assert_eq!(isinf(f64::NAN), 0);
+    }
+
+    #[test]
+    fn glibc_fmod_sign_follows_dividend() {
+        // fmod(-5.0, 3.0) = -2.0 (sign follows dividend)
+        assert!((fmod(5.0, 3.0) - 2.0).abs() < 1e-12);
+        assert!((fmod(-5.0, 3.0) - (-2.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn glibc_hypot_inf_dominates_nan() {
+        // hypot(INFINITY, NAN) = INFINITY
+        assert_eq!(hypot(f64::INFINITY, f64::NAN), f64::INFINITY);
+        assert_eq!(hypot(f64::NAN, f64::INFINITY), f64::INFINITY);
+    }
 }
