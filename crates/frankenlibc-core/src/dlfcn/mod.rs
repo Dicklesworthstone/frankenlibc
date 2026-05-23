@@ -65,4 +65,25 @@ mod tests {
         assert!(is_pseudo_handle(RTLD_NEXT));
         assert!(!is_pseudo_handle(0x12345678));
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <dlfcn.h>
+
+    #[test]
+    fn glibc_rtld_flag_constants() {
+        // RTLD_* mode flags must match glibc
+        assert_eq!(RTLD_LAZY, 0x00001);
+        assert_eq!(RTLD_NOW, 0x00002);
+        assert_eq!(RTLD_GLOBAL, 0x00100);
+        assert_eq!(RTLD_LOCAL, 0x00000);
+        assert_eq!(RTLD_NOLOAD, 0x00004);
+        assert_eq!(RTLD_NODELETE, 0x01000);
+    }
+
+    #[test]
+    fn glibc_rtld_pseudo_handles() {
+        // RTLD_DEFAULT = NULL (0), RTLD_NEXT = (void*)-1
+        assert_eq!(RTLD_DEFAULT, 0);
+        assert_eq!(RTLD_NEXT, usize::MAX);
+    }
 }
