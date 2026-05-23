@@ -317,4 +317,66 @@ mod tests {
 
         assert_eq!(SOMAXCONN, 4096);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <sys/socket.h>
+
+    #[test]
+    fn glibc_address_family_constants() {
+        // AF_* constants must match glibc
+        assert_eq!(AF_UNSPEC, 0);
+        assert_eq!(AF_UNIX, 1);
+        assert_eq!(AF_INET, 2);
+        assert_eq!(AF_INET6, 10);
+        assert_eq!(AF_NETLINK, 16);
+    }
+
+    #[test]
+    fn glibc_socket_type_constants() {
+        // SOCK_* type constants must match glibc
+        assert_eq!(SOCK_STREAM, 1);
+        assert_eq!(SOCK_DGRAM, 2);
+        assert_eq!(SOCK_RAW, 3);
+        assert_eq!(SOCK_SEQPACKET, 5);
+        assert_eq!(SOCK_NONBLOCK, 0x800);
+        assert_eq!(SOCK_CLOEXEC, 0x80000);
+    }
+
+    #[test]
+    fn glibc_shutdown_constants() {
+        // SHUT_* constants must match glibc
+        assert_eq!(SHUT_RD, 0);
+        assert_eq!(SHUT_WR, 1);
+        assert_eq!(SHUT_RDWR, 2);
+    }
+
+    #[test]
+    fn glibc_socket_option_constants() {
+        // SOL_SOCKET and SO_* must match glibc
+        assert_eq!(SOL_SOCKET, 1);
+        assert_eq!(SO_REUSEADDR, 2);
+        assert_eq!(SO_TYPE, 3);
+        assert_eq!(SO_ERROR, 4);
+        assert_eq!(SO_SNDBUF, 7);
+        assert_eq!(SO_RCVBUF, 8);
+        assert_eq!(SO_KEEPALIVE, 9);
+        assert_eq!(SO_LINGER, 13);
+        assert_eq!(SO_RCVTIMEO, 20);
+        assert_eq!(SO_SNDTIMEO, 21);
+    }
+
+    #[test]
+    fn glibc_msg_flag_constants() {
+        // MSG_* constants must match glibc
+        assert_eq!(MSG_PEEK, 2);
+        assert_eq!(MSG_DONTWAIT, 64);
+        assert_eq!(MSG_WAITALL, 256);
+        assert_eq!(MSG_NOSIGNAL, 0x4000);
+    }
+
+    #[test]
+    fn glibc_somaxconn() {
+        // SOMAXCONN must match glibc (Linux 5.4+)
+        assert_eq!(SOMAXCONN, 4096);
+    }
 }
