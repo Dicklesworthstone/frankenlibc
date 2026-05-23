@@ -177,4 +177,34 @@ mod tests {
         assert_eq!(clamp_select_nfds(512), 512);
         assert_eq!(clamp_select_nfds(2000), 2000);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <poll.h> and <sys/select.h>
+
+    #[test]
+    fn glibc_poll_event_constants() {
+        // Poll event flags must match glibc values
+        assert_eq!(POLLIN, 0x001);
+        assert_eq!(POLLPRI, 0x002);
+        assert_eq!(POLLOUT, 0x004);
+        assert_eq!(POLLERR, 0x008);
+        assert_eq!(POLLHUP, 0x010);
+        assert_eq!(POLLNVAL, 0x020);
+    }
+
+    #[test]
+    fn glibc_poll_linux_specific() {
+        // Linux-specific poll flags
+        assert_eq!(POLLRDNORM, 0x040);
+        assert_eq!(POLLRDBAND, 0x080);
+        assert_eq!(POLLWRNORM, 0x100);
+        assert_eq!(POLLWRBAND, 0x200);
+        assert_eq!(POLLRDHUP, 0x2000);
+    }
+
+    #[test]
+    fn glibc_fd_setsize() {
+        // FD_SETSIZE is 1024 on Linux/glibc
+        assert_eq!(FD_SETSIZE, 1024);
+    }
 }
