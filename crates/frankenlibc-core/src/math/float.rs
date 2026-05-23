@@ -1050,4 +1050,42 @@ mod tests {
         assert_eq!(isnan(f64::INFINITY), 0);
         assert_eq!(isnan(1.0), 0);
     }
+
+    #[test]
+    fn test_pow_ieee_special_cases() {
+        use crate::math::pow;
+        // IEEE 754 special cases for pow
+        assert_eq!(pow(0.0, 0.0), 1.0);
+        assert_eq!(pow(-1.0, f64::INFINITY), 1.0);
+        assert_eq!(pow(-1.0, f64::NEG_INFINITY), 1.0);
+        assert_eq!(pow(1.0, f64::NAN), 1.0);
+        assert_eq!(pow(f64::NAN, 0.0), 1.0);
+        // Basic sanity
+        assert!((pow(2.0, 10.0) - 1024.0).abs() < 1e-12);
+        assert!((pow(10.0, -1.0) - 0.1).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_hypot_ieee_special_cases() {
+        // hypot(inf, x) = inf even if x is NaN
+        assert_eq!(hypot(f64::INFINITY, f64::NAN), f64::INFINITY);
+        assert_eq!(hypot(f64::NAN, f64::INFINITY), f64::INFINITY);
+        assert_eq!(hypot(f64::NEG_INFINITY, f64::NAN), f64::INFINITY);
+        // hypot with finite NaN returns NaN
+        assert!(hypot(f64::NAN, 1.0).is_nan());
+        assert!(hypot(1.0, f64::NAN).is_nan());
+        // Basic sanity
+        assert!((hypot(3.0, 4.0) - 5.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_rint_bankers_rounding() {
+        // Banker's rounding (round to even on ties)
+        assert_eq!(rint(0.5), 0.0);  // 0.5 rounds to 0 (even)
+        assert_eq!(rint(1.5), 2.0);  // 1.5 rounds to 2 (even)
+        assert_eq!(rint(2.5), 2.0);  // 2.5 rounds to 2 (even)
+        assert_eq!(rint(3.5), 4.0);  // 3.5 rounds to 4 (even)
+        assert_eq!(rint(-0.5), -0.0); // -0.5 rounds to -0 (even)
+        assert_eq!(rint(-1.5), -2.0); // -1.5 rounds to -2 (even)
+    }
 }
