@@ -897,4 +897,11 @@ mod tests {
         assert_eq!(towupper(0xFFFFFFFF), 0xFFFFFFFF);
         assert_eq!(towlower(0xFFFFFFFF), 0xFFFFFFFF);
     }
+
+    #[test]
+    fn glibc_towupper_digit_unchanged_parity() {
+        // glibc: towupper(L'5') = L'5' (unchanged)
+        assert_eq!(towupper(0x35), 0x35);
+        assert_eq!(towlower(0x35), 0x35);
+    }
 }
