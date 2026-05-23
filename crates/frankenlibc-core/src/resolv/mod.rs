@@ -2127,4 +2127,15 @@ mod tests {
         let (buf, _, _) = parse_addr_binary("255.255.255.255").unwrap();
         assert_eq!(&buf[..4], &[0xff; 4]);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <netdb.h>
+
+    #[test]
+    fn glibc_eai_error_constants() {
+        // EAI_* error codes must match glibc
+        assert_eq!(EAI_NONAME, -2);
+        assert_eq!(EAI_SERVICE, -8);
+        assert_eq!(EAI_FAMILY, -6);
+    }
 }
