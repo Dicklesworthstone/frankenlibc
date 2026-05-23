@@ -17,6 +17,9 @@ Cargo.lock
 /test_*.c
 /test_*.rs
 
+# C probe files for glibc parity testing
+scripts/c_probes/
+
 # bv (beads viewer) local config and caches
 .bv/
 
