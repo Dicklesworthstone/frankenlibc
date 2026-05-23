@@ -219,7 +219,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Ascii,
         canonical: "ASCII",
         normalized: "ASCII",
-        aliases: &["USASCII", "ANSIX3.41968", "ANSIX341968", "ISO646US"],
+        aliases: &["USASCII", "ANSIX3.41968", "ANSIX341968", "ISO646US", "CSASCII", "US"],
     },
     CodecSpec {
         encoding: Encoding::Latin1,
