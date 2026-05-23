@@ -1264,4 +1264,61 @@ mod tests {
         let _ = format_strftime(b"%F", &bd_max, &mut buf);
         let _ = format_strftime(b"%x", &bd_max, &mut buf);
     }
+
+    #[test]
+    fn glibc_gmtime_epoch_zero_parity() {
+        // glibc: gmtime(0) = 1970-01-01 00:00:00 UTC
+        let bd = epoch_to_broken_down(0);
+        assert_eq!(bd.tm_year, 70);  // 1970 - 1900
+        assert_eq!(bd.tm_mon, 0);    // January
+        assert_eq!(bd.tm_mday, 1);
+        assert_eq!(bd.tm_hour, 0);
+        assert_eq!(bd.tm_min, 0);
+        assert_eq!(bd.tm_sec, 0);
+        assert_eq!(bd.tm_wday, 4);   // Thursday
+        assert_eq!(bd.tm_yday, 0);
+    }
+
+    #[test]
+    fn glibc_mktime_normalizes_feb30() {
+        // glibc: mktime(2024-02-30) normalizes to 2024-03-01
+        let bd = BrokenDownTime {
+            tm_year: 124,  // 2024
+            tm_mon: 1,     // February
+            tm_mday: 30,   // Invalid for Feb
+            tm_hour: 0,
+            tm_min: 0,
+            tm_sec: 0,
+            tm_wday: 0,
+            tm_yday: 0,
+            tm_isdst: -1,
+        };
+        // broken_down_to_epoch normalizes and epoch_to_broken_down gives us back
+        let epoch = broken_down_to_epoch(&bd);
+        let normalized = epoch_to_broken_down(epoch);
+        // Feb has 29 days in 2024 (leap year), so Feb 30 → Mar 1
+        assert_eq!(normalized.tm_mon, 2);   // March
+        assert_eq!(normalized.tm_mday, 1);
+    }
+
+    #[test]
+    fn glibc_strftime_buffer_exact_fit() {
+        // glibc: strftime returns length written when buffer is exact size
+        let bd = BrokenDownTime {
+            tm_year: 126,  // 2026
+            tm_mon: 4,     // May
+            tm_mday: 23,
+            tm_hour: 14,
+            tm_min: 30,
+            tm_sec: 45,
+            tm_wday: 5,
+            tm_yday: 142,
+            tm_isdst: 0,
+        };
+        // "%Y-%m-%d" = "2026-05-23" = 10 chars + NUL = 11 bytes
+        let mut buf = [0u8; 11];
+        let ret = format_strftime(b"%Y-%m-%d", &bd, &mut buf);
+        assert_eq!(ret, 10);
+        assert_eq!(&buf[..10], b"2026-05-23");
+    }
 }
