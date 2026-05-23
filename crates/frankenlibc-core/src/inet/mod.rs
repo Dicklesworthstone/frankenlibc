@@ -1583,4 +1583,12 @@ mod tests {
         // Our implementation doesn't compress zeros (outputs full form)
         assert_eq!(&buf[..len], b"0:0:0:0:0:0:0:0");
     }
+
+    #[test]
+    fn glibc_inaddr_constants() {
+        // INADDR_* constants must match glibc
+        assert_eq!(INADDR_ANY, 0);
+        assert_eq!(INADDR_BROADCAST, u32::MAX);
+        assert_eq!(INADDR_NONE, u32::MAX);
+    }
 }
