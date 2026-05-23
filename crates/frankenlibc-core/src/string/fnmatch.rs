@@ -717,4 +717,39 @@ mod tests {
         assert!(m("[[.a.]xyz]", "y", none));
         assert!(m("[[.a.]xyz]", "a", none));
     }
+
+    #[test]
+    fn glibc_caret_negation_parity() {
+        // glibc: [^abc] same as [!abc] for negation.
+        let none = FnmatchFlags::NONE;
+        assert!(m("[^abc]", "d", none));
+        assert!(!m("[^abc]", "a", none));
+        assert!(!m("[^abc]", "b", none));
+    }
+
+    #[test]
+    fn glibc_dash_literal_at_boundaries() {
+        // glibc: dash at start or end of bracket is literal, not range.
+        let none = FnmatchFlags::NONE;
+        assert!(m("[-a]", "-", none));
+        assert!(m("[-a]", "a", none));
+        assert!(!m("[-a]", "b", none));
+        assert!(m("[a-]", "-", none));
+        assert!(m("[a-]", "a", none));
+        assert!(!m("[a-]", "b", none));
+    }
+
+    #[test]
+    fn glibc_empty_pattern_matches_empty_text() {
+        // glibc: fnmatch("", "", 0) = 0 (match)
+        assert!(m("", "", FnmatchFlags::NONE));
+        assert!(!m("", "a", FnmatchFlags::NONE));
+    }
+
+    #[test]
+    fn glibc_star_matches_empty_string() {
+        // glibc: fnmatch("*", "", 0) = 0
+        assert!(m("*", "", FnmatchFlags::NONE));
+        assert!(m("**", "", FnmatchFlags::NONE));
+    }
 }
