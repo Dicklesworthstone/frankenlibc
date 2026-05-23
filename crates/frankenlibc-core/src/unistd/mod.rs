@@ -600,4 +600,18 @@ mod tests {
         assert_eq!(s, 0);
         assert_eq!(e, 0); // caller substitutes "."
     }
+
+    #[test]
+    fn basename_empty_path() {
+        let (s, e) = basename_range(b"");
+        assert_eq!(s, 0);
+        assert_eq!(e, 0); // glibc returns ".", caller substitutes
+    }
+
+    #[test]
+    fn dirname_empty_path() {
+        let (s, e) = dirname_range(b"");
+        assert_eq!(s, 0);
+        assert_eq!(e, 0); // glibc returns ".", caller substitutes
+    }
 }
