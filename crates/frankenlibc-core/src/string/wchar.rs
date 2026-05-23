@@ -294,22 +294,32 @@ pub fn iswprint(wc: u32) -> bool {
 
 /// Convert wide character to uppercase.
 ///
-/// Mirrors glibc semantics: when the Unicode case folding produces multiple
-/// codepoints (e.g. ß → SS, ﬀ → FF), POSIX `towupper` must return a single
-/// wchar_t, so glibc returns the input unchanged. Rust's `char::to_uppercase`
-/// is an iterator, so we check the iteration length and only apply the mapping
-/// when it folds 1:1.
+/// Mirrors glibc semantics:
+/// - 1:1 mappings: return the uppercase char
+/// - 1:N where N > 1 and all are base letters (ß → SS, ﬀ → FF): return unchanged
+/// - 1:N where base letter + combining marks: return the base letter (drop marks)
+///
+/// This matches glibc's `towupper(3)` in UTF-8 locales.
 pub fn towupper(wc: u32) -> u32 {
     let Some(c) = char::from_u32(wc) else {
         return wc;
     };
     let mut iter = c.to_uppercase();
-    let first = iter.next();
-    if iter.next().is_some() {
-        // Multi-char folding (ß → SS, ligature → expansion). Stay put.
+    let Some(first) = iter.next() else {
         return wc;
+    };
+    match iter.next() {
+        None => first as u32, // 1:1 mapping
+        Some(second) => {
+            // Multi-char expansion. Glibc drops combining marks but keeps
+            // unchanged if all chars are base letters (like ß → SS).
+            if is_combining_mark(second) {
+                first as u32
+            } else {
+                wc
+            }
+        }
     }
-    first.map_or(wc, |c| c as u32)
 }
 
 /// Convert wide character to lowercase.
@@ -320,11 +330,37 @@ pub fn towlower(wc: u32) -> u32 {
         return wc;
     };
     let mut iter = c.to_lowercase();
-    let first = iter.next();
-    if iter.next().is_some() {
+    let Some(first) = iter.next() else {
         return wc;
+    };
+    match iter.next() {
+        None => first as u32,
+        Some(second) => {
+            if is_combining_mark(second) {
+                first as u32
+            } else {
+                wc
+            }
+        }
     }
-    first.map_or(wc, |c| c as u32)
+}
+
+/// Check if a character is a Unicode combining mark (Mn, Mc, or Me category).
+fn is_combining_mark(c: char) -> bool {
+    let cp = c as u32;
+    // Combining Diacritical Marks (0300–036F)
+    // Combining Diacritical Marks Extended (1AB0–1AFF)
+    // Combining Diacritical Marks Supplement (1DC0–1DFF)
+    // Combining Diacritical Marks for Symbols (20D0–20FF)
+    // Combining Half Marks (FE20–FE2F)
+    matches!(
+        cp,
+        0x0300..=0x036F
+            | 0x1AB0..=0x1AFF
+            | 0x1DC0..=0x1DFF
+            | 0x20D0..=0x20FF
+            | 0xFE20..=0xFE2F
+    )
 }
 
 /// Compute display width of a wide character (simplified, glibc-aligned).
@@ -800,5 +836,42 @@ mod tests {
         // Importantly the loop terminates — every iteration advances by
         // at least 1 byte.
         assert_eq!(i, stream.len());
+    }
+
+    #[test]
+    fn towupper_towlower_unicode_extended() {
+        // Latin extended
+        assert_eq!(towupper(0x00F1), 0x00D1); // ñ → Ñ
+        assert_eq!(towlower(0x00D1), 0x00F1); // Ñ → ñ
+
+        // Greek
+        assert_eq!(towupper(0x03B1), 0x0391); // α → Α
+        assert_eq!(towlower(0x03A9), 0x03C9); // Ω → ω
+
+        // Cyrillic
+        assert_eq!(towupper(0x044F), 0x042F); // я → Я
+        assert_eq!(towlower(0x042F), 0x044F); // Я → я
+
+        // Turkish dotless i (U+0131) → ASCII I
+        assert_eq!(towupper(0x0131), 0x0049); // ı → I
+        // Turkish dotted I (U+0130) lowercases to i + combining dot (U+0307),
+        // but glibc drops the combining mark and returns just 'i'.
+        assert_eq!(towlower(0x0130), 0x0069); // İ → i
+
+        // German sharp s stays unchanged (1:N mapping to multiple base letters)
+        assert_eq!(towupper(0x00DF), 0x00DF); // ß unchanged (→ SS dropped)
+        // Capital sharp s (U+1E9E) → lowercase ß (1:1)
+        assert_eq!(towlower(0x1E9E), 0x00DF); // ẞ → ß
+
+        // Ligatures stay unchanged (expand to multiple base letters)
+        assert_eq!(towupper(0xFB00), 0xFB00); // ﬀ unchanged (→ FF dropped)
+
+        // Non-letter unchanged
+        assert_eq!(towupper(0x0035), 0x0035); // '5'
+        assert_eq!(towlower(0x0021), 0x0021); // '!'
+
+        // Invalid codepoint unchanged
+        assert_eq!(towupper(0xFFFFFFFF), 0xFFFFFFFF);
+        assert_eq!(towlower(0xFFFFFFFF), 0xFFFFFFFF);
     }
 }
