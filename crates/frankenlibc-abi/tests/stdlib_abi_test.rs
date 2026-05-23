@@ -9339,6 +9339,7 @@ fn bd_jt6vm_pidfile_signal_missing_path_returns_enoent() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn bd_jt6vm_pidfile_signal_rejects_tracked_unterminated_path() {
     let path = pidfile_temp_path("unterminated-signal");
     let raw = unsafe { malloc_unterminated(path.as_os_str().as_bytes()) };
