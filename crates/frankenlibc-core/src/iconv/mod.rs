@@ -158,6 +158,7 @@ enum Encoding {
     Isiri3342,
     Mik,
     Koi8T,
+    EcmaCyrillic,
     Cp866Nav,
     DecMcs,
     HpRoman9,
@@ -208,7 +209,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 128] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -748,6 +749,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         canonical: "KOI8-T",
         normalized: "KOI8T",
         aliases: &["KOI8T"],
+    },
+    CodecSpec {
+        encoding: Encoding::EcmaCyrillic,
+        canonical: "ECMA-CYRILLIC",
+        normalized: "ECMACYRILLIC",
+        aliases: &["ECMACYRILLIC", "ISOIR111", "CSISO111ECMACYRILLIC"],
     },
     CodecSpec {
         encoding: Encoding::Cp866Nav,
@@ -6856,6 +6863,58 @@ fn encode_koi8t(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// ECMA-CYRILLIC (ISO-IR-111) to Unicode mapping for bytes 0x80-0xFF.
+/// Different layout from ISO-8859-5, with Serbian/Macedonian letters.
+const ECMA_CYRILLIC_TO_UNICODE: [u16; 128] = [
+    0x0080, 0x0081, 0x0082, 0x0083, 0x0084, 0x0085, 0x0086, 0x0087, // 80-87
+    0x0088, 0x0089, 0x008A, 0x008B, 0x008C, 0x008D, 0x008E, 0x008F, // 88-8F
+    0x0090, 0x0091, 0x0092, 0x0093, 0x0094, 0x0095, 0x0096, 0x0097, // 90-97
+    0x0098, 0x0099, 0x009A, 0x009B, 0x009C, 0x009D, 0x009E, 0x009F, // 98-9F
+    0x00A0, 0x0452, 0x0453, 0x0451, 0x0454, 0x0455, 0x0456, 0x0457, // A0-A7
+    0x0458, 0x0459, 0x045A, 0x045B, 0x045C, 0x00AD, 0x045E, 0x045F, // A8-AF
+    0x2116, 0x0402, 0x0403, 0x0401, 0x0404, 0x0405, 0x0406, 0x0407, // B0-B7
+    0x0408, 0x0409, 0x040A, 0x040B, 0x040C, 0x00A4, 0x040E, 0x040F, // B8-BF
+    0x044E, 0x0430, 0x0431, 0x0446, 0x0434, 0x0435, 0x0444, 0x0433, // C0-C7
+    0x0445, 0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, // C8-CF
+    0x043F, 0x044F, 0x0440, 0x0441, 0x0442, 0x0443, 0x0436, 0x0432, // D0-D7
+    0x044C, 0x044B, 0x0437, 0x0448, 0x044D, 0x0449, 0x0447, 0x044A, // D8-DF
+    0x042E, 0x0410, 0x0411, 0x0426, 0x0414, 0x0415, 0x0424, 0x0413, // E0-E7
+    0x0425, 0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, // E8-EF
+    0x041F, 0x042F, 0x0420, 0x0421, 0x0422, 0x0423, 0x0416, 0x0412, // F0-F7
+    0x042C, 0x042B, 0x0417, 0x0428, 0x042D, 0x0429, 0x0427, 0x042A, // F8-FF
+];
+
+fn decode_ecma_cyrillic(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = ECMA_CYRILLIC_TO_UNICODE[(b - 0x80) as usize];
+        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    }
+}
+
+fn encode_ecma_cyrillic(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in ECMA_CYRILLIC_TO_UNICODE.iter().enumerate() {
+        if u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 const CP866NAV_TO_UNICODE: [u16; 128] = [
     // 0x80-0x8F (Cyrillic capital А-П)
     0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, // 80-87
@@ -8026,6 +8085,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Isiri3342 => decode_isiri3342(input),
         Encoding::Mik => decode_mik(input),
         Encoding::Koi8T => decode_koi8t(input),
+        Encoding::EcmaCyrillic => decode_ecma_cyrillic(input),
         Encoding::Cp866Nav => decode_cp866nav(input),
         Encoding::DecMcs => decode_decmcs(input),
         Encoding::HpRoman9 => decode_hproman9(input),
@@ -8226,6 +8286,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Isiri3342 => encode_isiri3342(ch, out),
         Encoding::Mik => encode_mik(ch, out),
         Encoding::Koi8T => encode_koi8t(ch, out),
+        Encoding::EcmaCyrillic => encode_ecma_cyrillic(ch, out),
         Encoding::Cp866Nav => encode_cp866nav(ch, out),
         Encoding::DecMcs => encode_decmcs(ch, out),
         Encoding::HpRoman9 => encode_hproman9(ch, out),
