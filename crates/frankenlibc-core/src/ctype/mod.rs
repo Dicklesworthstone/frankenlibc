@@ -554,4 +554,97 @@ mod tests {
             }
         }
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_ctype_edge.c
+
+    #[test]
+    fn glibc_isspace_includes_vertical_tab_and_formfeed() {
+        // C locale isspace includes \v (0x0b) and \f (0x0c)
+        assert!(is_space(b' '));
+        assert!(is_space(b'\t'));
+        assert!(is_space(b'\n'));
+        assert!(is_space(b'\r'));
+        assert!(is_space(0x0B)); // vertical tab
+        assert!(is_space(0x0C)); // form feed
+        assert!(!is_space(b'a'));
+    }
+
+    #[test]
+    fn glibc_isblank_only_space_and_tab() {
+        // isblank is ONLY space and tab in C locale
+        assert!(is_blank(b' '));
+        assert!(is_blank(b'\t'));
+        assert!(!is_blank(b'\n'));
+        assert!(!is_blank(b'\r'));
+        assert!(!is_blank(0x0B)); // vertical tab is NOT blank
+        assert!(!is_blank(0x0C)); // form feed is NOT blank
+    }
+
+    #[test]
+    fn glibc_isgraph_excludes_space() {
+        // isgraph(' ') = 0 (space is printable but not graphical)
+        assert!(!is_graph(b' '));
+        assert!(is_graph(b'A'));
+        assert!(is_graph(b'!'));
+        assert!(!is_graph(0x7F)); // DEL is not graphical
+    }
+
+    #[test]
+    fn glibc_iscntrl_includes_del() {
+        // iscntrl(0x7F) is true (DEL is a control character)
+        assert!(is_cntrl(0x00));
+        assert!(is_cntrl(b'\n'));
+        assert!(is_cntrl(0x1F));
+        assert!(is_cntrl(0x7F)); // DEL
+        assert!(!is_cntrl(b' ')); // space is NOT control
+        assert!(!is_cntrl(b'A'));
+    }
+
+    #[test]
+    fn glibc_isxdigit_includes_af_and_AF() {
+        // isxdigit accepts 0-9, a-f, A-F
+        for c in b'0'..=b'9' {
+            assert!(is_xdigit(c));
+        }
+        for c in b'a'..=b'f' {
+            assert!(is_xdigit(c));
+        }
+        for c in b'A'..=b'F' {
+            assert!(is_xdigit(c));
+        }
+        assert!(!is_xdigit(b'g'));
+        assert!(!is_xdigit(b'G'));
+    }
+
+    #[test]
+    fn glibc_ispunct_excludes_space() {
+        // ispunct is printable && !alnum && !space
+        assert!(is_punct(b'!'));
+        assert!(is_punct(b'.'));
+        assert!(is_punct(b'@'));
+        assert!(!is_punct(b' ')); // space is NOT punct
+        assert!(!is_punct(b'a'));
+        assert!(!is_punct(b'5'));
+    }
+
+    #[test]
+    fn glibc_toupper_tolower_nonletters_unchanged() {
+        // Non-letters pass through unchanged
+        assert_eq!(to_upper(b'5'), b'5');
+        assert_eq!(to_lower(b'$'), b'$');
+        assert_eq!(to_upper(0x00), 0x00);
+        assert_eq!(to_lower(0x7F), 0x7F);
+    }
+
+    #[test]
+    fn glibc_ascii_classification_boundaries() {
+        // Verify exact ASCII boundaries
+        assert!(is_alpha(b'A') && is_alpha(b'Z'));
+        assert!(!is_alpha(b'@') && !is_alpha(b'[')); // before A, after Z
+        assert!(is_alpha(b'a') && is_alpha(b'z'));
+        assert!(!is_alpha(b'`') && !is_alpha(b'{')); // before a, after z
+        assert!(is_digit(b'0') && is_digit(b'9'));
+        assert!(!is_digit(b'/') && !is_digit(b':')); // before 0, after 9
+    }
 }
