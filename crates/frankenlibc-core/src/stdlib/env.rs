@@ -126,4 +126,43 @@ mod tests {
         assert_eq!(entry_value(b"HOME"), None);
         assert_eq!(entry_value(b""), None);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc via scripts/c_probes/probe_env_edge.c
+
+    #[test]
+    fn glibc_setenv_rejects_equals_in_name() {
+        // setenv("BAD=NAME", ...) returns -1, errno=EINVAL
+        assert!(!valid_env_name(b"BAD=NAME"));
+    }
+
+    #[test]
+    fn glibc_setenv_rejects_empty_name() {
+        // setenv("", "value", 1) returns -1, errno=EINVAL
+        assert!(!valid_env_name(b""));
+    }
+
+    #[test]
+    fn glibc_setenv_accepts_empty_value() {
+        // setenv("VAR", "", 1) is valid (empty string)
+        assert!(valid_env_value(b""));
+    }
+
+    #[test]
+    fn glibc_setenv_accepts_equals_in_value() {
+        // setenv("VAR", "a=b=c", 1) is valid
+        assert!(valid_env_value(b"a=b=c"));
+    }
+
+    #[test]
+    fn glibc_entry_value_extracts_after_first_equals() {
+        // NAME=a=b=c should extract "a=b=c" as the value
+        assert_eq!(entry_value(b"NAME=a=b=c"), Some(&b"a=b=c"[..]));
+    }
+
+    #[test]
+    fn glibc_entry_value_empty_after_equals() {
+        // NAME= should extract "" as the value
+        assert_eq!(entry_value(b"NAME="), Some(&b""[..]));
+    }
 }
