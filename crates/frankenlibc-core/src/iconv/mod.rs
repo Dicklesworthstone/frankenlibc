@@ -916,7 +916,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 128] = [
         encoding: Encoding::Iso88599,
         canonical: "ISO-8859-9",
         normalized: "ISO88599",
-        aliases: &["ISO88599", "LATIN5", "CSISOLATIN5", "TURKISH", "CP920", "IBM920", "8859_9", "ISOIR148"],
+        aliases: &["ISO88599", "LATIN5", "CSISOLATIN5", "TURKISH", "CP920", "IBM920", "8859_9", "ISOIR148", "ECMA128"],
     },
     CodecSpec {
         encoding: Encoding::Iso88599e,
