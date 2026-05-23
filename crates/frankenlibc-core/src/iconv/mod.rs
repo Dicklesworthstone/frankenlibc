@@ -411,7 +411,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Tcvn,
         canonical: "TCVN",
         normalized: "TCVN",
-        aliases: &["TCVN5712-1", "VN3"],
+        aliases: &["TCVN57121", "VN3"],
     },
     CodecSpec {
         encoding: Encoding::Armscii8,
@@ -447,7 +447,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Rk1048,
         canonical: "RK1048",
         normalized: "RK1048",
-        aliases: &["STRK1048-2002", "KZ-1048"],
+        aliases: &["STRK10482002", "KZ1048"],
     },
     CodecSpec {
         encoding: Encoding::Mulelao,
@@ -663,7 +663,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Cp1133,
         canonical: "CP1133",
         normalized: "CP1133",
-        aliases: &["IBM1133", "IBM-1133", "CSIBM1133"],
+        aliases: &["IBM1133", "CSIBM1133"],
     },
     CodecSpec {
         encoding: Encoding::Cp774,
@@ -861,7 +861,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Cp1252,
         canonical: "CP1252",
         normalized: "CP1252",
-        aliases: &["WINDOWS1252", "MS-ANSI", "1252"],
+        aliases: &["WINDOWS1252", "MSANSI", "1252"],
     },
     CodecSpec {
         encoding: Encoding::Iso88592,
