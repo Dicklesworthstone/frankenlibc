@@ -882,6 +882,47 @@ mod tests {
         assert_eq!(broken_down_to_epoch(&bd), ts);
     }
 
+    #[test]
+    fn broken_down_to_epoch_normalizes_day_overflow() {
+        // January 32 should normalize to February 1
+        let bd = BrokenDownTime {
+            tm_year: 70, // 1970
+            tm_mon: 0,   // January
+            tm_mday: 32, // 32nd day = Feb 1
+            tm_hour: 0,
+            tm_min: 0,
+            tm_sec: 0,
+            tm_wday: 0,
+            tm_yday: 0,
+            tm_isdst: 0,
+        };
+        let epoch = broken_down_to_epoch(&bd);
+        let normalized = epoch_to_broken_down(epoch);
+        assert_eq!(normalized.tm_mon, 1); // February
+        assert_eq!(normalized.tm_mday, 1);
+    }
+
+    #[test]
+    fn broken_down_to_epoch_normalizes_month_overflow() {
+        // Month 13 should normalize to February of next year
+        let bd = BrokenDownTime {
+            tm_year: 70,  // 1970
+            tm_mon: 13,   // 14th month = February 1971
+            tm_mday: 15,
+            tm_hour: 0,
+            tm_min: 0,
+            tm_sec: 0,
+            tm_wday: 0,
+            tm_yday: 0,
+            tm_isdst: 0,
+        };
+        let epoch = broken_down_to_epoch(&bd);
+        let normalized = epoch_to_broken_down(epoch);
+        assert_eq!(normalized.tm_year, 71); // 1971
+        assert_eq!(normalized.tm_mon, 1);   // February
+        assert_eq!(normalized.tm_mday, 15);
+    }
+
     // --- format_asctime tests ---
 
     #[test]
