@@ -1321,4 +1321,17 @@ mod tests {
         assert_eq!(ret, 10);
         assert_eq!(&buf[..10], b"2026-05-23");
     }
+
+    #[test]
+    fn glibc_clock_id_constants() {
+        // CLOCK_* constants must match glibc/Linux values
+        assert_eq!(CLOCK_REALTIME, 0);
+        assert_eq!(CLOCK_MONOTONIC, 1);
+        assert_eq!(CLOCK_PROCESS_CPUTIME_ID, 2);
+        assert_eq!(CLOCK_THREAD_CPUTIME_ID, 3);
+        assert_eq!(CLOCK_MONOTONIC_RAW, 4);
+        assert_eq!(CLOCK_REALTIME_COARSE, 5);
+        assert_eq!(CLOCK_MONOTONIC_COARSE, 6);
+        assert_eq!(CLOCK_BOOTTIME, 7);
+    }
 }
