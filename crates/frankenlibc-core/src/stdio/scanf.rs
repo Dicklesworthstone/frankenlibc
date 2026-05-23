@@ -1598,6 +1598,30 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_char_does_not_skip_whitespace() {
+        let dirs = parse_scanf_format(b"%c");
+        let result = scan_input(b"  x", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Char(ref c) = result.values[0] {
+            assert_eq!(c, b" ");
+        } else {
+            panic!("expected Char");
+        }
+    }
+
+    #[test]
+    fn test_scan_space_then_char_skips_whitespace() {
+        let dirs = parse_scanf_format(b" %c");
+        let result = scan_input(b"  x", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Char(ref c) = result.values[0] {
+            assert_eq!(c, b"x");
+        } else {
+            panic!("expected Char");
+        }
+    }
+
+    #[test]
     fn test_scan_float() {
         let dirs = parse_scanf_format(b"%f");
         let result = scan_input(b"3.25", &dirs);
