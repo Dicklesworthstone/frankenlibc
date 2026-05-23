@@ -219,13 +219,13 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 127] = [
         encoding: Encoding::Ascii,
         canonical: "ASCII",
         normalized: "ASCII",
-        aliases: &["USASCII", "ANSIX3.41968", "ANSIX341968", "ISO646US", "CSASCII", "US"],
+        aliases: &["USASCII", "ANSIX3.41968", "ANSIX341968", "ISO646US", "CSASCII", "US", "CP367", "IBM367"],
     },
     CodecSpec {
         encoding: Encoding::Latin1,
         canonical: "ISO-8859-1",
         normalized: "ISO88591",
-        aliases: &["ISO88591", "LATIN1", "8859_1", "CSISOLATIN1", "ISOIR100"],
+        aliases: &["ISO88591", "LATIN1", "8859_1", "CSISOLATIN1", "ISOIR100", "CP819", "IBM819"],
     },
     CodecSpec {
         encoding: Encoding::Utf16Le,
