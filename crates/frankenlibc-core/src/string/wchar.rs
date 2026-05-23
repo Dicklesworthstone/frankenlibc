@@ -504,6 +504,15 @@ pub fn wcwidth(wc: u32) -> i32 {
     {
         return 2;
     }
+
+    // Non-characters: glibc returns -1 for these.
+    // U+FDD0..U+FDEF and U+xxFFFE..U+xxFFFF for each plane.
+    if (0xFDD0..=0xFDEF).contains(&wc)
+        || (wc & 0xFFFE) == 0xFFFE // catches FFFE and FFFF in every plane
+    {
+        return -1;
+    }
+
     1
 }
 
@@ -676,6 +685,20 @@ mod tests {
         assert_eq!(wcwidth(0x2000), 1); // EN QUAD
         assert_eq!(wcwidth(0x2007), 1); // FIGURE SPACE
         assert_eq!(wcwidth(0x202F), 1); // NARROW NO-BREAK SPACE (NNBSP)
+    }
+
+    #[test]
+    fn wcwidth_noncharacters_return_negative_one() {
+        // Unicode non-characters: glibc returns -1 for these.
+        assert_eq!(wcwidth(0xFFFE), -1);
+        assert_eq!(wcwidth(0xFFFF), -1);
+        assert_eq!(wcwidth(0xFDD0), -1);
+        assert_eq!(wcwidth(0xFDEF), -1);
+        // Non-characters in supplementary planes.
+        assert_eq!(wcwidth(0x1FFFE), -1);
+        assert_eq!(wcwidth(0x1FFFF), -1);
+        assert_eq!(wcwidth(0x10FFFE), -1);
+        assert_eq!(wcwidth(0x10FFFF), -1);
     }
 
     // ---- decode_utf8_lossy ----
