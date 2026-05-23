@@ -1162,6 +1162,28 @@ mod tests {
     }
 
     #[test]
+    fn test_strsep_consecutive_delimiters_produce_empty_tokens() {
+        // Unlike strtok which skips consecutive delimiters, strsep returns
+        // empty tokens. "a::b" with ":" produces ["a", "", "b"].
+        let mut s = *b"a::b\0";
+        // First call: find first ":" at index 1
+        let idx1 = strsep(&mut s, b":\0");
+        assert_eq!(idx1, Some(1));
+        assert_eq!(s[1], 0); // NUL-terminated "a"
+
+        // Second call on remaining "::b\0" starting at index 2
+        let mut s2 = s[2..].to_vec();
+        let idx2 = strsep(&mut s2, b":\0");
+        assert_eq!(idx2, Some(0)); // empty token at position 0
+        assert_eq!(s2[0], 0); // NUL-terminated empty string
+
+        // Third call on remaining "b\0"
+        let mut s3 = s2[1..].to_vec();
+        let idx3 = strsep(&mut s3, b":\0");
+        assert_eq!(idx3, None); // "b" has no delimiter, returns None
+    }
+
+    #[test]
     fn test_strlcpy_basic() {
         let mut dest = [0u8; 10];
         let result = strlcpy(&mut dest, b"hello\0");
