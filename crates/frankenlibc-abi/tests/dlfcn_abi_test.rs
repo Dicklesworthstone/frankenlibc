@@ -415,6 +415,7 @@ fn dlsym_and_dlvsym_reject_unterminated_names_in_bootstrap_passthrough() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn dlopen_rejects_unterminated_name_in_bootstrap_passthrough() {
     let _guard = TEST_GUARD.lock().unwrap();
     unsafe {

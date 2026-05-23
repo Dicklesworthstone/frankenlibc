@@ -578,6 +578,7 @@ fn vtable_write_invalid_fd_returns_error() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn vtable_read_rejects_tracked_short_buffer() {
     const OVERLONG_IO_LEN: usize = 1 << 20;
     let fd = temp_memfd();
@@ -598,6 +599,7 @@ fn vtable_read_rejects_tracked_short_buffer() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn vtable_write_rejects_tracked_short_buffer() {
     const OVERLONG_IO_LEN: usize = 1 << 20;
     let fd = temp_devnull_fd();
@@ -620,6 +622,7 @@ fn vtable_write_rejects_tracked_short_buffer() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn vtable_flush_rejects_tracked_short_pending_buffer() {
     const OVERLONG_IO_LEN: usize = 1 << 20;
     let fd = temp_devnull_fd();

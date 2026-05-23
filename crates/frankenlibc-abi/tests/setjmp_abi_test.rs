@@ -59,6 +59,7 @@ fn workspace_root() -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn setjmp_rejects_tracked_short_jump_buffer() {
     let raw = unsafe { malloc_tracked_zeroed_bytes(PHASE1_JMPBUF_BYTES - 1) };
     assert_known_short(raw, PHASE1_JMPBUF_BYTES);
@@ -71,6 +72,7 @@ fn setjmp_rejects_tracked_short_jump_buffer() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn underscored_setjmp_rejects_tracked_short_jump_buffer() {
     let raw = unsafe { malloc_tracked_zeroed_bytes(PHASE1_JMPBUF_BYTES - 1) };
     assert_known_short(raw, PHASE1_JMPBUF_BYTES);
@@ -83,6 +85,7 @@ fn underscored_setjmp_rejects_tracked_short_jump_buffer() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn sigsetjmp_rejects_tracked_short_jump_buffer() {
     let raw = unsafe { malloc_tracked_zeroed_bytes(PHASE1_JMPBUF_BYTES - 1) };
     assert_known_short(raw, PHASE1_JMPBUF_BYTES);

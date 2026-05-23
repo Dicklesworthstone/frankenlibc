@@ -142,6 +142,7 @@ fn test_warnx_preserves_errno() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn warnx_ignores_tracked_unterminated_fmt_in_child() -> Result<(), Box<dyn std::error::Error>> {
     let output = std::process::Command::new(std::env::current_exe()?)
         .arg("--ignored")

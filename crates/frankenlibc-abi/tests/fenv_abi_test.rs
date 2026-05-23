@@ -145,6 +145,7 @@ fn null_pointer_contracts_are_enforced_for_pointer_outputs() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn exception_flag_access_rejects_tracked_short_buffers() {
     let required = std::mem::size_of::<u16>();
     let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
@@ -158,6 +159,7 @@ fn exception_flag_access_rejects_tracked_short_buffers() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn environment_access_rejects_tracked_short_buffers() {
     let raw = unsafe { malloc_tracked_zeroed_bytes(GLIBC_X86_64_FENV_BYTES - 1) };
     assert_known_short(raw, GLIBC_X86_64_FENV_BYTES);

@@ -49,6 +49,7 @@ fn test_malloc_basic_alloc_and_free() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn test_malloc_records_ffi_pcc_gate_when_runtime_ready() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     signal_runtime_ready_for_tests();

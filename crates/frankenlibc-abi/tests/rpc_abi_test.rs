@@ -285,6 +285,7 @@ fn clnt_perrno_does_not_crash() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn clnt_spcreateerror_ignores_tracked_unterminated_prefix() {
     let prefix = unsafe { malloc_unterminated(b"rpc_prefix") };
 

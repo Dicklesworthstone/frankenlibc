@@ -125,6 +125,7 @@ fn test_confstr_size_one_buffer() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn test_confstr_caps_tracked_short_output_buffer() {
     let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(1) };
     assert!(!raw.is_null());

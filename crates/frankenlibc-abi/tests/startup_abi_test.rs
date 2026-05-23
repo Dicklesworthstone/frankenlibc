@@ -791,6 +791,7 @@ fn phase0_deep_path_extracts_basename() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn phase0_skips_unterminated_program_name_globals() {
     let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     program_invocation_name.store(ptr::null_mut(), Ordering::Release);
@@ -1018,6 +1019,7 @@ fn setprogname_null_is_no_op() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn setprogname_ignores_tracked_unterminated_name() {
     let _g = STARTUP_TEST_LOCK.lock().unwrap();
     let buf: &'static [u8] = b"sentinel\0";

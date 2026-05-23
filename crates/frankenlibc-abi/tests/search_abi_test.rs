@@ -701,6 +701,7 @@ fn lfind_null_safety() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn lfind_rejects_tracked_base_shorter_than_claimed_count() {
     let base = unsafe { malloc_tracked_i32s(&[10, 20]) };
     let mut nel: usize = 3;

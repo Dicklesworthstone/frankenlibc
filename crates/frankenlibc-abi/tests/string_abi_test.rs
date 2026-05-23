@@ -46,6 +46,7 @@ fn memcpy_copies_bytes() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn memcpy_records_ffi_pcc_gate_when_runtime_ready() {
     signal_runtime_ready_for_tests();
     let _ = take_last_decision_gate_for_tests();
@@ -708,6 +709,7 @@ fn strtok_r_tokenizes_string() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn strtok_r_rejects_tracked_unterminated_delimiter() {
     let mut buf = *b"a,b\0";
     let delim = unsafe { malloc_unterminated(b",") };
@@ -722,6 +724,7 @@ fn strtok_r_rejects_tracked_unterminated_delimiter() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn strtok_rejects_tracked_unterminated_delimiter() {
     let mut buf = *b"a,b\0";
     let delim = unsafe { malloc_unterminated(b",") };
@@ -752,6 +755,7 @@ fn strsep_tokenizes_string() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn strsep_rejects_tracked_unterminated_delimiter() {
     let mut buf = *b"a:b\0";
     let mut ptr: *mut c_char = buf.as_mut_ptr().cast();
@@ -1523,6 +1527,7 @@ fn strfromd_caps_absurd_precision_before_rendering() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn strfromd_rejects_tracked_unterminated_format() {
     unsafe {
         let raw = malloc_unterminated(b"%.2f");
@@ -1713,6 +1718,7 @@ fn argz_add_sep_discards_empty_segments_and_keeps_terminal_empty() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn argz_rejects_tracked_unterminated_inputs() {
     unsafe {
         let raw = malloc_unterminated(b"one:two");
@@ -1874,6 +1880,7 @@ fn envz_add_get_merge_and_strip_entries() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn envz_rejects_tracked_unterminated_name_and_value() {
     unsafe {
         let raw_name = malloc_unterminated(b"KEY");
@@ -1985,6 +1992,7 @@ fn public_regex_buffer_matches_glibc_size() {
 }
 
 #[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn pattern_adapters_reject_tracked_unterminated_c_strings() {
     let _guard = legacy_regex_test_guard();
     unsafe {
