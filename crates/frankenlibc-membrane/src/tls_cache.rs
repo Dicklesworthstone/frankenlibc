@@ -76,24 +76,16 @@ const _: () = assert!(
 /// `arena::free` for a slot in shard `s` bumps `SHARD_EPOCHS[s]`. Cached
 /// entries record `(shard_idx, shard_epoch)` at insert time; lookup compares
 /// against the live shard epoch and misses on mismatch.
-static SHARD_EPOCHS: [AtomicU64; NUM_TLS_CACHE_SHARDS] = [
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-    AtomicU64::new(1),
-];
+///
+/// Each cell is initialised to 1 (not 0) so that the `EMPTY` cache entry's
+/// `shard_epoch == 0` can never spuriously match a live shard's epoch even
+/// if some code path reads a sentinel-zero entry.
+///
+/// The array is sized off `NUM_TLS_CACHE_SHARDS` and initialised via an inline
+/// `const` block so changing the shard count requires only updating the
+/// constant — no need to maintain a hand-listed array literal in lock-step.
+static SHARD_EPOCHS: [AtomicU64; NUM_TLS_CACHE_SHARDS] =
+    [const { AtomicU64::new(1) }; NUM_TLS_CACHE_SHARDS];
 
 // Test-only synchronization to avoid flaky cache-hit expectations when other
 // concurrently-running tests bump shard epochs (via allocator free paths).
