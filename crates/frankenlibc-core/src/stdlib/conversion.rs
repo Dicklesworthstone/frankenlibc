@@ -652,6 +652,24 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
         }
         if word.eq_ignore_ascii_case(b"nan") {
             i += 3;
+            // glibc accepts an optional `(n-char-sequence)` payload after NaN.
+            // The payload may contain alphanumerics and underscores; we ignore
+            // the actual value (no NaN payload encoding) but must consume it.
+            if i < slice.len() && slice[i] == b'(' {
+                let paren_start = i;
+                i += 1;
+                while i < slice.len()
+                    && (slice[i].is_ascii_alphanumeric() || slice[i] == b'_')
+                {
+                    i += 1;
+                }
+                if i < slice.len() && slice[i] == b')' {
+                    i += 1; // consume closing paren
+                } else {
+                    // No closing paren — rewind to before the '('
+                    i = paren_start;
+                }
+            }
             // Preserve sign bit: -NaN and +NaN are distinct per IEEE 754.
             // Cannot use `special_sign * NAN` — IEEE 754 §6.3 says the sign
             // of a NaN result from arithmetic is undefined.  Use direct bit
@@ -1078,6 +1096,40 @@ mod tests {
         assert_eq!(consumed, 4);
         // Negative NaN: sign bit must be set (IEEE 754 sign-bit semantics).
         assert_eq!(val.to_bits() >> 63, 1, "-nan must have sign bit set");
+    }
+
+    #[test]
+    fn test_strtod_nan_payload() {
+        // glibc accepts nan(n-char-sequence) forms.
+        let (val, consumed) = strtod(b"nan(12345)\0");
+        assert!(val.is_nan());
+        assert_eq!(consumed, 10);
+
+        let (val, consumed) = strtod(b"nan(abc)\0");
+        assert!(val.is_nan());
+        assert_eq!(consumed, 8);
+
+        let (val, consumed) = strtod(b"nan()\0");
+        assert!(val.is_nan());
+        assert_eq!(consumed, 5);
+
+        let (val, consumed) = strtod(b"nan(0x123)\0");
+        assert!(val.is_nan());
+        assert_eq!(consumed, 10);
+
+        let (val, consumed) = strtod(b"nan(_foo_bar_)\0");
+        assert!(val.is_nan());
+        assert_eq!(consumed, 14);
+
+        // Missing closing paren: don't consume the '('
+        let (val, consumed) = strtod(b"nan(123\0");
+        assert!(val.is_nan());
+        assert_eq!(consumed, 3);
+
+        // Invalid char in payload: stop at the invalid char, don't consume '('
+        let (val, consumed) = strtod(b"nan(a-b)\0");
+        assert!(val.is_nan());
+        assert_eq!(consumed, 3);
     }
 
     #[test]
