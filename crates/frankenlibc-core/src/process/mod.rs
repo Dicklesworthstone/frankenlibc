@@ -155,4 +155,33 @@ mod tests {
         assert_eq!(clamp_exit_status(256), 0);
         assert_eq!(clamp_exit_status(-1), 255);
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <sys/wait.h>
+
+    #[test]
+    fn glibc_wait_option_constants() {
+        // wait option flags must match glibc
+        assert_eq!(WNOHANG, 1);
+        assert_eq!(WUNTRACED, 2);
+        assert_eq!(WCONTINUED, 8);
+    }
+
+    #[test]
+    fn glibc_wait_status_macros() {
+        // Test WIFEXITED/WEXITSTATUS encoding (glibc: exit_code << 8)
+        let status_42 = 42 << 8;
+        assert!(wifexited(status_42));
+        assert_eq!(wexitstatus(status_42), 42);
+
+        // Test WIFSIGNALED/WTERMSIG encoding (glibc: signal in low 7 bits)
+        let killed_by_9 = 9; // SIGKILL
+        assert!(wifsignaled(killed_by_9));
+        assert_eq!(wtermsig(killed_by_9), 9);
+
+        // Test WIFSTOPPED/WSTOPSIG encoding (glibc: 0x7f in low byte, signal in second byte)
+        let stopped_by_19 = (19 << 8) | 0x7f; // SIGSTOP
+        assert!(wifstopped(stopped_by_19));
+        assert_eq!(wstopsig(stopped_by_19), 19);
+    }
 }

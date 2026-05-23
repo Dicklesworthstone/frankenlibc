@@ -614,4 +614,67 @@ mod tests {
         assert_eq!(s, 0);
         assert_eq!(e, 0); // glibc returns ".", caller substitutes
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <unistd.h> and <sys/stat.h>
+
+    #[test]
+    fn glibc_lseek_whence_constants() {
+        // lseek whence values must match glibc
+        assert_eq!(SEEK_SET, 0);
+        assert_eq!(SEEK_CUR, 1);
+        assert_eq!(SEEK_END, 2);
+    }
+
+    #[test]
+    fn glibc_access_mode_constants() {
+        // access() mode flags must match glibc
+        assert_eq!(F_OK, 0);
+        assert_eq!(X_OK, 1);
+        assert_eq!(W_OK, 2);
+        assert_eq!(R_OK, 4);
+    }
+
+    #[test]
+    fn glibc_standard_fd_constants() {
+        // Standard file descriptor constants must match glibc
+        assert_eq!(STDIN_FILENO, 0);
+        assert_eq!(STDOUT_FILENO, 1);
+        assert_eq!(STDERR_FILENO, 2);
+    }
+
+    #[test]
+    fn glibc_file_type_mode_constants() {
+        // S_IF* file type bits must match glibc
+        assert_eq!(S_IFMT, 0o170000);
+        assert_eq!(S_IFREG, 0o100000);
+        assert_eq!(S_IFDIR, 0o040000);
+        assert_eq!(S_IFLNK, 0o120000);
+        assert_eq!(S_IFIFO, 0o010000);
+        assert_eq!(S_IFSOCK, 0o140000);
+        assert_eq!(S_IFCHR, 0o020000);
+        assert_eq!(S_IFBLK, 0o060000);
+    }
+
+    #[test]
+    fn glibc_special_mode_bits() {
+        // Special mode bits must match glibc
+        assert_eq!(S_ISUID, 0o4000);
+        assert_eq!(S_ISGID, 0o2000);
+        assert_eq!(S_ISVTX, 0o1000);
+    }
+
+    #[test]
+    fn glibc_permission_mode_bits() {
+        // Permission bits must match glibc
+        assert_eq!(S_IRUSR, 0o400);
+        assert_eq!(S_IWUSR, 0o200);
+        assert_eq!(S_IXUSR, 0o100);
+        assert_eq!(S_IRGRP, 0o040);
+        assert_eq!(S_IWGRP, 0o020);
+        assert_eq!(S_IXGRP, 0o010);
+        assert_eq!(S_IROTH, 0o004);
+        assert_eq!(S_IWOTH, 0o002);
+        assert_eq!(S_IXOTH, 0o001);
+    }
 }

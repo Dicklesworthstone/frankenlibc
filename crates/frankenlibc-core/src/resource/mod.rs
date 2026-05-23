@@ -103,4 +103,34 @@ mod tests {
             rlim_max: 200,
         }));
     }
+
+    // ===== glibc parity tests =====
+    // Verified against glibc <sys/resource.h>
+
+    #[test]
+    fn glibc_rlimit_constants() {
+        // RLIMIT_* constants must match glibc/Linux values
+        assert_eq!(RLIMIT_CPU, 0);
+        assert_eq!(RLIMIT_FSIZE, 1);
+        assert_eq!(RLIMIT_DATA, 2);
+        assert_eq!(RLIMIT_STACK, 3);
+        assert_eq!(RLIMIT_CORE, 4);
+        assert_eq!(RLIMIT_RSS, 5);
+        assert_eq!(RLIMIT_NPROC, 6);
+        assert_eq!(RLIMIT_NOFILE, 7);
+        assert_eq!(RLIMIT_MEMLOCK, 8);
+        assert_eq!(RLIMIT_AS, 9);
+        assert_eq!(RLIMIT_LOCKS, 10);
+        assert_eq!(RLIMIT_SIGPENDING, 11);
+        assert_eq!(RLIMIT_MSGQUEUE, 12);
+        assert_eq!(RLIMIT_NICE, 13);
+        assert_eq!(RLIMIT_RTPRIO, 14);
+        assert_eq!(RLIMIT_RTTIME, 15);
+    }
+
+    #[test]
+    fn glibc_rlim_infinity() {
+        // RLIM_INFINITY must be u64::MAX on Linux
+        assert_eq!(RLIM_INFINITY, u64::MAX);
+    }
 }
