@@ -739,7 +739,7 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
         false
     };
 
-    // Detect base.
+    // Detect base (hex 0x, binary 0b, octal 0, decimal otherwise).
     let base = if i < input.len() && chars_read < max_chars && input[i] == b'0' {
         if i + 1 < input.len()
             && chars_read + 1 < max_chars
@@ -748,6 +748,13 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
             i += 2;
             chars_read += 2;
             16u32
+        } else if i + 1 < input.len()
+            && chars_read + 1 < max_chars
+            && (input[i + 1] == b'b' || input[i + 1] == b'B')
+        {
+            i += 2;
+            chars_read += 2;
+            2u32
         } else {
             8u32
             // Don't consume the '0' yet — it's a valid octal digit.
@@ -1356,6 +1363,24 @@ mod tests {
         let result = scan_input(b"010", &dirs);
         assert_eq!(result.count, 1);
         assert!(matches!(result.values[0], ScanValue::SignedInt(8)));
+    }
+
+    #[test]
+    fn test_scan_auto_int_binary() {
+        let dirs = parse_scanf_format(b"%i");
+        let result = scan_input(b"0b1010", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(10)));
+
+        // Uppercase 0B also works
+        let result = scan_input(b"0B1111", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(15)));
+
+        // Negative binary
+        let result = scan_input(b"-0b1010", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(-10)));
     }
 
     #[test]
