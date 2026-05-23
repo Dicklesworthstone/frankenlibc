@@ -1779,4 +1779,47 @@ mod tests {
         assert_eq!(val, 0);
         assert_eq!(consumed, 0);
     }
+
+    #[test]
+    fn strtol_double_sign_returns_zero_no_consumption() {
+        // glibc: "++42" returns 0 with consumed=0 (no conversion performed)
+        // Only a single sign is allowed before digits
+        let (val, consumed, status) = strtol_impl(b"++42", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+        assert_eq!(status, ConversionStatus::Success);
+
+        let (val, consumed, _) = strtol_impl(b"+-42", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+
+        let (val, consumed, _) = strtol_impl(b"-+42", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+
+        let (val, consumed, _) = strtol_impl(b"--42", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn strtol_base10_stops_at_hex_prefix() {
+        // glibc: strtol("0x10", base=10) returns 0, endp points to "x10"
+        let (val, consumed, _) = strtol_impl(b"0x10", 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 1); // consumed only the '0'
+    }
+
+    #[test]
+    fn strtol_base36_high_digits() {
+        // glibc: "zz" in base 36 = 35*36 + 35 = 1295
+        let (val, consumed, _) = strtol_impl(b"zz", 36);
+        assert_eq!(val, 1295);
+        assert_eq!(consumed, 2);
+
+        // "ZZ" should be the same (case insensitive)
+        let (val, consumed, _) = strtol_impl(b"ZZ", 36);
+        assert_eq!(val, 1295);
+        assert_eq!(consumed, 2);
+    }
 }
