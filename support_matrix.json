@@ -145,10 +145,10 @@
     },
     {
       "symbol": "__cxa_thread_atexit_impl",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "startup_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Register thread-local destructor",
+      "strict_semantics": "Native TLS destructor registration with host fallback",
       "hardened_semantics": "Same",
       "default_stub": false
     },
@@ -280,19 +280,19 @@
     },
     {
       "symbol": "__frankenlibc_startup_phase0",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "startup_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-0 startup skeleton for controlled fixtures; validates argc/argv/envp and captures auxv/secure-mode invariants",
+      "strict_semantics": "Native phase-0 startup implementation",
       "hardened_semantics": "Phase-0 startup with hardened membrane routing; deterministic startup invariant capture for fixture binaries",
       "default_stub": false
     },
     {
       "symbol": "__frankenlibc_startup_snapshot",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "startup_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-0 startup skeleton for controlled fixtures; validates argc/argv/envp and captures auxv/secure-mode invariants",
+      "strict_semantics": "Native invariant snapshot export",
       "hardened_semantics": "Phase-0 startup with hardened membrane routing; deterministic startup invariant capture for fixture binaries",
       "default_stub": false
     },
@@ -529,10 +529,10 @@
     },
     {
       "symbol": "__libc_start_main",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "startup_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-0 startup skeleton for controlled fixtures; validates argc/argv/envp and captures auxv/secure-mode invariants",
+      "strict_semantics": "Owns CRT bootstrap path with host-delegation fallback (bd-73h55.1)",
       "hardened_semantics": "Phase-0 startup with hardened membrane routing; deterministic startup invariant capture for fixture binaries",
       "default_stub": false
     },
@@ -19298,8 +19298,9 @@
     },
     {
       "symbol": "dlinfo",
-      "status": "WrapsHostLibc",
-      "module": "glibc_internal_abi"
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "strict_semantics": "Native self-handle path for RTLD_DI_LINKMAP/ORIGIN, host delegation for others"
     },
     {
       "symbol": "dlmopen",
