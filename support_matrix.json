@@ -9823,10 +9823,10 @@
     },
     {
       "symbol": "pthread_barrier_wait",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Passthrough",
       "default_stub": false
     },
@@ -9868,19 +9868,19 @@
     },
     {
       "symbol": "pthread_cancel",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
-      "strict_semantics": "Native cooperative cancellation via per-thread registry; sets pending flag; async mode consumes immediately",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native cooperative cancellation with ESRCH for invalid thread handle",
       "default_stub": false
     },
     {
       "symbol": "pthread_clockjoin_np",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Managed-thread clock-aware timed join with CLOCK_REALTIME/CLOCK_MONOTONIC deadline conversion and deterministic ESRCH/EINVAL handling for consumed handles.",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same native deadline conversion and deterministic managed-thread error contract.",
       "default_stub": false
     },
@@ -9913,10 +9913,10 @@
     },
     {
       "symbol": "pthread_cond_init",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native condvar initialization with deterministic default clock and null/attr validation contract",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native condvar initialization with deterministic pointer validation and explicit unsupported-attribute rejection",
       "default_stub": false
     },
@@ -10003,19 +10003,19 @@
     },
     {
       "symbol": "pthread_create",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native clone-backed thread creation via core ThreadHandle; null thread_out/start rejected with EINVAL and non-null attr rejected deterministically",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native clone-backed thread creation with membrane policy gating and deterministic handle-registry ownership checks",
       "default_stub": false
     },
     {
       "symbol": "pthread_detach",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native detach on managed ThreadHandle registry; unknown or already-consumed thread ids return deterministic ESRCH",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native detach with membrane policy gating and deterministic registry ownership enforcement",
       "default_stub": false
     },
@@ -10031,9 +10031,10 @@
     {
       "symbol": "pthread_exit",
       "header": "<pthread.h>",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "Delegates to glibc pthread_exit",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
     },
     {
       "symbol": "pthread_getaffinity_np",
@@ -10115,10 +10116,10 @@
     },
     {
       "symbol": "pthread_join",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native join on managed ThreadHandle registry with deterministic ESRCH for unknown ids and core join errno propagation",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native join with membrane policy gating and deterministic registry ownership enforcement",
       "default_stub": false
     },
@@ -10151,10 +10152,10 @@
     },
     {
       "symbol": "pthread_mutex_clocklock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Clock-aware timed mutex lock",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Clock lock with null/clock validation",
       "default_stub": false
     },
@@ -10187,19 +10188,19 @@
     },
     {
       "symbol": "pthread_mutex_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same futex-managed core with deterministic spin/wait/wake telemetry and identical errno contract",
       "default_stub": false
     },
     {
       "symbol": "pthread_mutex_timedlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Timed mutex lock with abstime deadline",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Timed lock with null/abstime validation",
       "default_stub": false
     },
@@ -10214,10 +10215,10 @@
     },
     {
       "symbol": "pthread_mutex_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same futex-managed core with deterministic spin/wait/wake telemetry and identical errno contract",
       "default_stub": false
     },
@@ -10313,28 +10314,28 @@
     },
     {
       "symbol": "pthread_once",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "One-time initialization with futex-based once control.",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same.",
       "default_stub": "Returns EINVAL"
     },
     {
       "symbol": "pthread_rwlock_clockrdlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Clock-aware timed read lock",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Clock rdlock with null/clock validation",
       "default_stub": false
     },
     {
       "symbol": "pthread_rwlock_clockwrlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Clock-aware timed write lock",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Clock wrlock with null/clock validation",
       "default_stub": false
     },
@@ -10358,28 +10359,28 @@
     },
     {
       "symbol": "pthread_rwlock_rdlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native futex-backed read lock with reader-count state machine and deterministic EINVAL for unmanaged storage",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native futex-backed read lock with deterministic state validation and bounded wait behavior",
       "default_stub": false
     },
     {
       "symbol": "pthread_rwlock_timedrdlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Timed read lock on rwlock",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Timed rdlock with null validation",
       "default_stub": false
     },
     {
       "symbol": "pthread_rwlock_timedwrlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Timed write lock on rwlock",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Timed wrlock with null validation",
       "default_stub": false
     },
@@ -10403,19 +10404,19 @@
     },
     {
       "symbol": "pthread_rwlock_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native futex-backed unlock for writer/reader holders; deterministic EPERM for unlocked state and EINVAL for unmanaged storage",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native futex-backed unlock with deterministic holder-state checks and wake-on-last-release behavior",
       "default_stub": false
     },
     {
       "symbol": "pthread_rwlock_wrlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native futex-backed write lock with exclusive writer state and deterministic EINVAL for unmanaged storage",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native futex-backed write lock with deterministic state validation and bounded wait behavior",
       "default_stub": false
     },
@@ -10482,19 +10483,19 @@
     },
     {
       "symbol": "pthread_setcancelstate",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
-      "strict_semantics": "Native thread-local cancel state (enable/disable); returns EINVAL for invalid state",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native thread-local cancel state; EINVAL for invalid; null oldstate safe",
       "default_stub": false
     },
     {
       "symbol": "pthread_setcanceltype",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
-      "strict_semantics": "Native thread-local cancel type (deferred/async); returns EINVAL for invalid type",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native thread-local cancel type; EINVAL for invalid; null oldtype safe",
       "default_stub": false
     },
@@ -10599,28 +10600,28 @@
     },
     {
       "symbol": "pthread_testcancel",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
-      "strict_semantics": "Native cancellation point; consumes pending cancel if enabled",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Native cancellation point; consumes pending cancel if enabled; no-op when disabled",
       "default_stub": false
     },
     {
       "symbol": "pthread_timedjoin_np",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Managed-thread timed join with realtime abstime validation, futex-based timeout, and deterministic ESRCH/EINVAL/EDEADLK handling.",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same native futex timeout path with deterministic validation and timeout contract.",
       "default_stub": false
     },
     {
       "symbol": "pthread_tryjoin_np",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Managed-thread non-blocking join that returns EBUSY until the target reaches FINISHED and then performs the native join.",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same native FINISHED-state check and deterministic managed-thread errno contract.",
       "default_stub": false
     },
@@ -17993,9 +17994,10 @@
     },
     {
       "symbol": "__pthread_mutex_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
     },
     {
       "symbol": "__pthread_mutex_trylock",
@@ -18005,9 +18007,10 @@
     },
     {
       "symbol": "__pthread_mutex_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
     },
     {
       "symbol": "__pthread_mutexattr_destroy",
@@ -18029,9 +18032,10 @@
     },
     {
       "symbol": "__pthread_once",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
     },
     {
       "symbol": "__pthread_register_cancel",
@@ -18059,9 +18063,10 @@
     },
     {
       "symbol": "__pthread_rwlock_rdlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
     },
     {
       "symbol": "__pthread_rwlock_tryrdlock",
@@ -18077,15 +18082,17 @@
     },
     {
       "symbol": "__pthread_rwlock_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
     },
     {
       "symbol": "__pthread_rwlock_wrlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
     },
     {
       "symbol": "__pthread_setspecific",
@@ -18107,9 +18114,10 @@
     },
     {
       "symbol": "__pthread_unwind_next",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
     },
     {
       "symbol": "__pwrite64",

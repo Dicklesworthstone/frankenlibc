@@ -277,10 +277,18 @@ fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<
 
 #[inline]
 fn force_native_threading_enabled() -> bool {
-    with_pthread_tls(|tls| {
-        tls.force_native_threading_override
-            .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire))
-    })
+    // In standalone mode, always use native threading (no host pthreads)
+    #[cfg(feature = "standalone")]
+    {
+        true
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        with_pthread_tls(|tls| {
+            tls.force_native_threading_override
+                .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire))
+        })
+    }
 }
 
 #[inline]
