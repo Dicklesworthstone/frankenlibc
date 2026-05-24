@@ -2179,7 +2179,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "clearerr_unlocked",
@@ -2188,7 +2189,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Clear error/EOF indicators without locking",
       "hardened_semantics": "Same",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "clock",
@@ -3646,7 +3648,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fcloseall",
@@ -3655,7 +3658,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "GNU fcloseall; flushes all streams via fflush(NULL)",
       "hardened_semantics": "Close all streams with flush verification",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fcntl",
@@ -3728,7 +3732,8 @@
       "perf_class": "strict_fast",
       "strict_semantics": "Associate a FILE stream with an existing fd; mode validation",
       "hardened_semantics": "Same as strict; invalid mode returns NULL",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fdopendir",
@@ -3789,7 +3794,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "feof_unlocked",
@@ -3798,7 +3804,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "GNU unlocked feof; delegates to feof without locking",
       "hardened_semantics": "Unlocked EOF check with stream validation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "feraiseexcept",
@@ -3816,7 +3823,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "ferror_unlocked",
@@ -3825,7 +3833,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "GNU unlocked ferror; delegates to ferror without locking",
       "hardened_semantics": "Unlocked error check with stream validation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fesetenv",
@@ -3886,7 +3895,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fflush_unlocked",
@@ -3895,7 +3905,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "GNU unlocked fflush; delegates to fflush without locking",
       "hardened_semantics": "Unlocked flush with stream validation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "ffs",
@@ -3931,13 +3942,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fgetc_unlocked",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "fgetgrent",
@@ -3962,7 +3975,8 @@
       "perf_class": "strict_fast",
       "strict_semantics": "Store current stream position into fpos_t",
       "hardened_semantics": "Same as strict with null-pointer validation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fgetpos64",
@@ -3971,7 +3985,8 @@
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native fgetpos implementation",
       "hardened_semantics": "LP64 alias to native fgetpos implementation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fgetpwent",
@@ -3996,7 +4011,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fgets_unlocked",
@@ -4005,7 +4021,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "String input without locking",
       "hardened_semantics": "Same (delegates to fgets)",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fgetsgent",
@@ -4052,7 +4069,8 @@
       "header": "<wchar.h>",
       "status": "WrapsHostLibc",
       "notes": "Delegates to fgetwc (no separate lock path)",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "fgetws",
@@ -4067,7 +4085,8 @@
       "header": "<wchar.h>",
       "status": "WrapsHostLibc",
       "notes": "Delegates to fgetws (no separate lock path)",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "fgetxattr",
@@ -4085,7 +4104,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fileno_unlocked",
@@ -4094,7 +4114,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Get fd from stream without locking",
       "hardened_semantics": "Same",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "finite",
@@ -4134,7 +4155,8 @@
       "symbol": "flockfile",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "floor",
@@ -4196,7 +4218,8 @@
       "symbol": "fmemopen",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "fmin",
@@ -4260,7 +4283,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fopen64",
@@ -4269,7 +4293,8 @@
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native fopen implementation",
       "hardened_semantics": "LP64 alias to native fopen implementation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fopencookie",
@@ -4277,7 +4302,8 @@
       "module": "stdio_abi",
       "perf_class": "fast",
       "strict_semantics": "Native cookie-based stream with user-defined I/O callbacks",
-      "hardened_semantics": "Same as strict with pointer validation on cookie and funcs"
+      "hardened_semantics": "Same as strict with pointer validation on cookie and funcs",
+      "standalone_ready": true
     },
     {
       "symbol": "fork",
@@ -4322,13 +4348,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fputc_unlocked",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "fputs",
@@ -4337,7 +4365,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fputs_unlocked",
@@ -4346,7 +4375,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "String output without locking",
       "hardened_semantics": "Same (delegates to fputs)",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fputwc",
@@ -4361,7 +4391,8 @@
       "header": "<wchar.h>",
       "status": "WrapsHostLibc",
       "notes": "Delegates to fputwc (no separate lock path)",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "fputws",
@@ -4376,7 +4407,8 @@
       "header": "<wchar.h>",
       "status": "WrapsHostLibc",
       "notes": "Delegates to fputws (no separate lock path)",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "fread",
@@ -4385,7 +4417,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fread_unlocked",
@@ -4394,7 +4427,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Binary input without locking",
       "hardened_semantics": "Same (delegates to fread)",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "free",
@@ -4451,7 +4485,8 @@
       "perf_class": "strict_slow",
       "strict_semantics": "Close stream and reopen with new file/mode",
       "hardened_semantics": "Same as strict; flushes pending writes before close",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "freopen64",
@@ -4460,7 +4495,8 @@
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native freopen implementation",
       "hardened_semantics": "LP64 alias to native freopen implementation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "frexp",
@@ -4507,7 +4543,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream registry with SYS_lseek syscall; flushes pending writes, discards read buffer, updates logical offset",
       "hardened_semantics": "Native implementation; membrane validates stream ID, sets EINVAL on invalid whence; heals invalid offsets via safe default",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fseeko",
@@ -4516,7 +4553,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Aliases fseek on LP64 (off_t == long).",
       "hardened_semantics": "Same.",
-      "default_stub": "Returns -1"
+      "default_stub": "Returns -1",
+      "standalone_ready": true
     },
     {
       "symbol": "fseeko64",
@@ -4525,7 +4563,8 @@
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native fseeko implementation",
       "hardened_semantics": "LP64 alias to native fseeko implementation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fsetpos",
@@ -4534,7 +4573,8 @@
       "perf_class": "strict_fast",
       "strict_semantics": "Restore stream position from fpos_t (delegates to fseek)",
       "hardened_semantics": "Same as strict with null-pointer validation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fsetpos64",
@@ -4543,7 +4583,8 @@
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native fsetpos implementation",
       "hardened_semantics": "LP64 alias to native fsetpos implementation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fsetxattr",
@@ -4667,7 +4708,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Returns logical file offset from internal StdioStream state; no host glibc delegation",
       "hardened_semantics": "Native implementation; membrane validates stream ID, returns -1 with EBADF for invalid streams",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "ftello",
@@ -4676,7 +4718,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Aliases ftell on LP64 (off_t == long).",
       "hardened_semantics": "Same.",
-      "default_stub": "Returns -1"
+      "default_stub": "Returns -1",
+      "standalone_ready": true
     },
     {
       "symbol": "ftello64",
@@ -4685,7 +4728,8 @@
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native ftello implementation",
       "hardened_semantics": "LP64 alias to native ftello implementation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "ftok",
@@ -4716,7 +4760,8 @@
       "symbol": "ftrylockfile",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "fts64_children",
@@ -4818,7 +4863,8 @@
       "symbol": "funlockfile",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "futex",
@@ -4888,7 +4934,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fwrite_unlocked",
@@ -4897,7 +4944,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Binary output without locking",
       "hardened_semantics": "Same (delegates to fwrite)",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "fwscanf",
@@ -5087,13 +5135,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Function alias for fgetc; reads one byte from stream",
       "hardened_semantics": "Same as strict; inherits fgetc membrane checks",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "getc_unlocked",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "getchar",
@@ -5102,7 +5152,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "getchar_unlocked",
@@ -5111,7 +5162,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Read char from stdin without locking",
       "hardened_semantics": "Same (delegates to getchar)",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "getcontext",
@@ -5163,7 +5215,8 @@
       "perf_class": "strict_slow",
       "strict_semantics": "Read until delimiter with dynamic buffer allocation via malloc",
       "hardened_semantics": "Same as strict; validates all pointer arguments",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "getdents64",
@@ -5437,7 +5490,8 @@
       "perf_class": "strict_slow",
       "strict_semantics": "Read line (newline-delimited); delegates to getdelim",
       "hardened_semantics": "Same as strict; validates all pointer arguments",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "getloadavg",
@@ -6182,7 +6236,8 @@
       "header": "<stdio.h>",
       "status": "WrapsHostLibc",
       "notes": "Read int from stream",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "getwc",
@@ -8237,7 +8292,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Generate unique temp filename; replaces trailing X chars (deprecated)",
       "hardened_semantics": "Temp filename generation with template validation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "mktime",
@@ -8872,7 +8928,8 @@
       "symbol": "open_memstream",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "open_tree",
@@ -8955,7 +9012,8 @@
       "header": "stdio.h",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "notes": ""
+      "notes": "",
+      "standalone_ready": true
     },
     {
       "symbol": "perf_event_open",
@@ -8973,7 +9031,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native errno-to-message mapping with direct write to stderr fd; no host glibc delegation",
       "hardened_semantics": "Native implementation; membrane validates optional prefix string, logs TruncateWithNull for unterminated strings",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "personality",
@@ -9102,7 +9161,8 @@
       "header": "stdio.h",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "notes": ""
+      "notes": "",
+      "standalone_ready": true
     },
     {
       "symbol": "posix_close",
@@ -10668,13 +10728,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Function alias for fputc; writes one byte to stream",
       "hardened_semantics": "Same as strict; inherits fputc membrane checks",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "putc_unlocked",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "putchar",
@@ -10683,7 +10745,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "putchar_unlocked",
@@ -10692,7 +10755,8 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Write char to stdout without locking",
       "hardened_semantics": "Same (delegates to putchar)",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "putenv",
@@ -10708,7 +10772,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native string scan with direct write to stdout fd plus trailing newline; no host glibc delegation",
       "hardened_semantics": "Native implementation; membrane bounds string scan, logs TruncateWithNull for unterminated strings",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "putsgent",
@@ -10751,7 +10816,8 @@
       "header": "<stdio.h>",
       "status": "WrapsHostLibc",
       "notes": "Write int to stream",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "putwc",
@@ -11204,7 +11270,8 @@
       "perf_class": "strict_slow",
       "strict_semantics": "Remove file via unlinkat; falls back to rmdir for directories",
       "hardened_semantics": "Same as strict with null-pointer guard",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "removexattr",
@@ -11300,7 +11367,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "rewinddir",
@@ -11810,7 +11878,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "setbuffer",
@@ -11819,7 +11888,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "BSD setbuffer via setvbuf",
       "hardened_semantics": "Same",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "setcontext",
@@ -11938,7 +12008,8 @@
       "symbol": "setlinebuf",
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "standalone_ready": true
     },
     {
       "symbol": "setlocale",
@@ -12203,7 +12274,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "setxattr",
@@ -14759,7 +14831,8 @@
       "perf_class": "strict_slow",
       "strict_semantics": "Create temporary file via O_TMPFILE with fallback to mkstemp+unlink",
       "hardened_semantics": "Same as strict; auto-deleted on close",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "tmpfile64",
@@ -14768,7 +14841,8 @@
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native tmpfile implementation",
       "hardened_semantics": "LP64 alias to native tmpfile implementation",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "tmpnam",
@@ -15053,7 +15127,8 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
-      "default_stub": false
+      "default_stub": false,
+      "standalone_ready": true
     },
     {
       "symbol": "ungetwc",
@@ -16120,7 +16195,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal putc wrapper",
       "hardened_semantics": "Same as strict — glibc internal putc wrapper",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_getc",
@@ -16129,7 +16205,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal getc wrapper",
       "hardened_semantics": "Same as strict — glibc internal getc wrapper",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_puts",
@@ -16138,7 +16215,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal puts wrapper",
       "hardened_semantics": "Same as strict — glibc internal puts wrapper",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_feof",
@@ -16147,7 +16225,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal feof wrapper",
       "hardened_semantics": "Same as strict — glibc internal feof wrapper",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_ferror",
@@ -16156,7 +16235,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal ferror wrapper",
       "hardened_semantics": "Same as strict — glibc internal ferror wrapper",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_flockfile",
@@ -16165,7 +16245,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal flockfile wrapper",
       "hardened_semantics": "Same as strict — glibc internal flockfile wrapper",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_funlockfile",
@@ -16174,7 +16255,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal funlockfile wrapper",
       "hardened_semantics": "Same as strict — glibc internal funlockfile wrapper",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_ftrylockfile",
@@ -16183,7 +16265,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "glibc internal ftrylockfile wrapper",
       "hardened_semantics": "Same as strict — glibc internal ftrylockfile wrapper",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_peekc_locked",
@@ -16192,7 +16275,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "peek at next char under lock",
       "hardened_semantics": "Same as strict — peek at next char under lock",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_padn",
@@ -16201,7 +16285,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "write padding chars to stream",
       "hardened_semantics": "Same as strict — write padding chars to stream",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_sgetn",
@@ -16210,7 +16295,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "read bytes from stream into buffer",
       "hardened_semantics": "Same as strict — read bytes from stream into buffer",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_seekoff",
@@ -16219,7 +16305,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "seek to offset in stream",
       "hardened_semantics": "Same as strict — seek to offset in stream",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_seekpos",
@@ -16228,7 +16315,8 @@
       "performance_class": "coldpath",
       "strict_semantics": "seek to absolute position",
       "hardened_semantics": "Same as strict — seek to absolute position",
-      "support_policy_applicable": true
+      "support_policy_applicable": true,
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_2_1_stdin_",
@@ -16415,7 +16503,8 @@
       "family": "stdio",
       "status": "WrapsHostLibc",
       "notes": "C23/internal alias forwarding to existing implementation",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "__isoc23_fscanf",
@@ -16423,7 +16512,8 @@
       "family": "stdio",
       "status": "WrapsHostLibc",
       "notes": "C23/internal alias forwarding to existing implementation",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "__isoc23_sscanf",
@@ -16439,7 +16529,8 @@
       "family": "stdio",
       "status": "WrapsHostLibc",
       "notes": "C23/internal alias forwarding to existing implementation",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "__isoc23_vfscanf",
@@ -16447,7 +16538,8 @@
       "family": "stdio",
       "status": "WrapsHostLibc",
       "notes": "C23/internal alias forwarding to existing implementation",
-      "module": "stdio_abi"
+      "module": "stdio_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "__isoc23_vsscanf",
@@ -16648,27 +16740,32 @@
     {
       "symbol": "_IO_default_pbackfail",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_default_uflow",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_default_xsgetn",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_default_xsputn",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_do_write",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_doallocbuf",
@@ -16678,47 +16775,56 @@
     {
       "symbol": "_IO_fclose",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fdopen",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fflush",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fgetpos",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fgetpos64",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fgets",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_attach",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_close",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_close_it",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_doallocate",
@@ -16733,7 +16839,8 @@
     {
       "symbol": "_IO_file_fopen",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_init",
@@ -16748,87 +16855,104 @@
     {
       "symbol": "_IO_file_open",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_overflow",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_read",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_seek",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_seekoff",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_setbuf",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_stat",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_sync",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_underflow",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_write",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_file_xsputn",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_flush_all",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_flush_all_linebuffered",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fopen",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fprintf",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fputs",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fread",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_free_backup_area",
@@ -16843,37 +16967,44 @@
     {
       "symbol": "_IO_fsetpos",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fsetpos64",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_ftell",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_fwrite",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_getline",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_getline_info",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_gets",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_init",
@@ -16953,22 +17084,26 @@
     {
       "symbol": "_IO_popen",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_printf",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_proc_close",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_proc_open",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_remove_marker",
@@ -16993,27 +17128,32 @@
     {
       "symbol": "_IO_setbuffer",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_setvbuf",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_sprintf",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_sputbackc",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_sputbackwc",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_sscanf",
@@ -17063,7 +17203,8 @@
     {
       "symbol": "_IO_switch_to_get_mode",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_switch_to_main_wget_area",
@@ -17078,7 +17219,8 @@
     {
       "symbol": "_IO_switch_to_wget_mode",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_un_link",
@@ -17088,7 +17230,8 @@
     {
       "symbol": "_IO_ungetc",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_unsave_markers",
@@ -17103,17 +17246,20 @@
     {
       "symbol": "_IO_vfprintf",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_vfscanf",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_vsprintf",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wdefault_doallocate",
@@ -17128,22 +17274,26 @@
     {
       "symbol": "_IO_wdefault_pbackfail",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wdefault_uflow",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wdefault_xsgetn",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wdefault_xsputn",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wdo_write",
@@ -17163,27 +17313,32 @@
     {
       "symbol": "_IO_wfile_overflow",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wfile_seekoff",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wfile_sync",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wfile_underflow",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wfile_xsputn",
       "status": "WrapsHostLibc",
-      "module": "io_internal_abi"
+      "module": "io_internal_abi",
+      "standalone_ready": true
     },
     {
       "symbol": "_IO_wmarker_delta",

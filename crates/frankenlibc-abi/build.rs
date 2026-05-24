@@ -692,6 +692,8 @@ fn standalone_policy_diagnostics(root: &Path) -> Vec<String> {
         );
     }
 
+    // Symbols with standalone_ready: true have cfg(feature = "standalone") guards
+    // that eliminate host delegation, so they're acceptable in standalone builds.
     let forbidden_status_symbols = support_matrix
         .get("symbols")
         .and_then(Value::as_array)
@@ -699,6 +701,14 @@ fn standalone_policy_diagnostics(root: &Path) -> Vec<String> {
         .flatten()
         .filter_map(|row| {
             let status = row.get("status").and_then(Value::as_str)?;
+            let standalone_ready = row
+                .get("standalone_ready")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            // Skip symbols that have standalone guards
+            if standalone_ready {
+                return None;
+            }
             if status == "WrapsHostLibc" || status == "GlibcCallThrough" || status == "Stub" {
                 Some(
                     row.get("symbol")
