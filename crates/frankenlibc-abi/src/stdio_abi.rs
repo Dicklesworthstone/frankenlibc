@@ -1455,6 +1455,8 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_fgetc) = unsafe { host_fgetc_fn() }
     {
@@ -1614,7 +1616,8 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
         drop(reg);
-        // Not in our registry — delegate to host libc fputc (real FILE*).
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fputc) = unsafe { host_fputc_fn() } {
             let rc = unsafe { host_fputc(c, stream) };
             if rc == libc::EOF {
@@ -1716,6 +1719,8 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         return buf;
     }
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_fgets) = unsafe { host_fgets_fn() }
     {
@@ -1976,7 +1981,8 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(stream_obj) = reg.streams.get_mut(&id) else {
         drop(reg);
-        // Not in our registry — delegate to host libc fputs (real FILE*).
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fputs) = unsafe { host_fputs_fn() } {
             let rc = unsafe { host_fputs(s, stream) };
             if rc == libc::EOF {
@@ -2665,6 +2671,8 @@ pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
     if id == 0 {
         return 0;
     }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_feof) = unsafe { host_feof_fn() }
     {
@@ -2685,6 +2693,8 @@ pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
     if id == 0 {
         return 0;
     }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_ferror) = unsafe { host_ferror_fn() }
     {
@@ -2705,6 +2715,8 @@ pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
     if id == 0 {
         return;
     }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id) {
         if let Some(host_clearerr) = unsafe { host_clearerr_fn() } {
             unsafe { host_clearerr(stream) };
@@ -2724,6 +2736,8 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
         return libc::EOF;
     }
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_ungetc) = unsafe { host_ungetc_fn() }
     {
@@ -2751,6 +2765,8 @@ pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
     }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_fileno) = unsafe { host_fileno_fn() }
     {
