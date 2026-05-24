@@ -1430,10 +1430,10 @@
     },
     {
       "symbol": "aligned_alloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
     },
@@ -1978,10 +1978,10 @@
     },
     {
       "symbol": "calloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
     },
@@ -2099,10 +2099,10 @@
     },
     {
       "symbol": "cfree",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "BSD legacy free alias; delegates to free()",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same as free() hardened semantics",
       "default_stub": false
     },
@@ -4398,10 +4398,10 @@
     },
     {
       "symbol": "free",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
     },
@@ -7841,19 +7841,19 @@
     },
     {
       "symbol": "malloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
     },
     {
       "symbol": "malloc_info",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "cold",
-      "strict_semantics": "Prints allocation statistics as XML to a FILE stream",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same as strict",
       "default_stub": false
     },
@@ -8008,10 +8008,10 @@
     },
     {
       "symbol": "memalign",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
     },
@@ -9158,10 +9158,10 @@
     },
     {
       "symbol": "posix_memalign",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
     },
@@ -10783,10 +10783,10 @@
     },
     {
       "symbol": "pvalloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Page-aligned allocation with size rounded up to page boundary",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same as strict; membrane-governed page-aligned allocation",
       "default_stub": false
     },
@@ -11047,10 +11047,10 @@
     },
     {
       "symbol": "realloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
     },
@@ -15169,10 +15169,10 @@
     },
     {
       "symbol": "valloc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Page-aligned allocation via memalign delegation",
+      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
       "hardened_semantics": "Same as strict; membrane-governed page-aligned allocation",
       "default_stub": false
     },

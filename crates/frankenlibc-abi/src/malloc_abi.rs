@@ -643,59 +643,78 @@ pub fn malloc_htm_snapshot_for_tests() -> crate::htm_fast_path::HtmSiteSnapshot 
 
 #[inline]
 unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
-    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC) else {
+    // In standalone mode, use bump allocator directly (no host glibc)
+    #[cfg(feature = "standalone")]
+    {
         return unsafe { bump_alloc(size) };
-    };
-    let ptr = if let Some(&ptr) = HOST_MALLOC_FN.get() {
-        ptr
-    } else if let Some(raw_host_malloc) = crate::host_resolve::host_malloc_raw() {
-        HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
-        raw_host_malloc as usize
-    } else {
-        HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
-        let resolved = unsafe { resolve_host_allocator_symbol(b"malloc\0") as usize };
-        let _ = HOST_MALLOC_FN.set(resolved);
-        resolved
-    };
-    if ptr != 0 {
-        let f: HostMallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host malloc symbol is resolved as this exact ABI fn pointer.
-        unsafe { f(size) }
-    } else {
-        unsafe { bump_alloc(size) }
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC) else {
+            return unsafe { bump_alloc(size) };
+        };
+        let ptr = if let Some(&ptr) = HOST_MALLOC_FN.get() {
+            ptr
+        } else if let Some(raw_host_malloc) = crate::host_resolve::host_malloc_raw() {
+            HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
+            raw_host_malloc as usize
+        } else {
+            HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
+            let resolved = unsafe { resolve_host_allocator_symbol(b"malloc\0") as usize };
+            let _ = HOST_MALLOC_FN.set(resolved);
+            resolved
+        };
+        if ptr != 0 {
+            let f: HostMallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host malloc symbol is resolved as this exact ABI fn pointer.
+            unsafe { f(size) }
+        } else {
+            unsafe { bump_alloc(size) }
+        }
     }
 }
 
 #[inline]
 unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
-    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_CALLOC) else {
+    // In standalone mode, use bump allocator directly (no host glibc)
+    #[cfg(feature = "standalone")]
+    {
         let Some(total) = nmemb.checked_mul(size) else {
             return std::ptr::null_mut();
         };
-        let ptr = unsafe { bump_alloc(total) };
-        // bump_alloc returns zeroed memory (static initializer).
-        return ptr;
-    };
-    let ptr = if let Some(&ptr) = HOST_CALLOC_FN.get() {
-        ptr
-    } else if let Some(raw_host_calloc) = crate::host_resolve::host_calloc_raw() {
-        HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
-        raw_host_calloc as usize
-    } else {
-        HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
-        let resolved = unsafe { resolve_host_allocator_symbol(b"calloc\0") as usize };
-        let _ = HOST_CALLOC_FN.set(resolved);
-        resolved
-    };
-    if ptr != 0 {
-        let host_calloc: HostCallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host calloc symbol is resolved as this exact ABI fn pointer.
-        unsafe { host_calloc(nmemb, size) }
-    } else {
-        let total = nmemb.checked_mul(size).unwrap_or(0);
-        if total == 0 && nmemb != 0 && size != 0 {
-            // Overflow: return null
-            std::ptr::null_mut()
+        return unsafe { bump_alloc(total) };
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_CALLOC) else {
+            let Some(total) = nmemb.checked_mul(size) else {
+                return std::ptr::null_mut();
+            };
+            let ptr = unsafe { bump_alloc(total) };
+            // bump_alloc returns zeroed memory (static initializer).
+            return ptr;
+        };
+        let ptr = if let Some(&ptr) = HOST_CALLOC_FN.get() {
+            ptr
+        } else if let Some(raw_host_calloc) = crate::host_resolve::host_calloc_raw() {
+            HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
+            raw_host_calloc as usize
         } else {
-            unsafe { bump_alloc(total) }
+            HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
+            let resolved = unsafe { resolve_host_allocator_symbol(b"calloc\0") as usize };
+            let _ = HOST_CALLOC_FN.set(resolved);
+            resolved
+        };
+        if ptr != 0 {
+            let host_calloc: HostCallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host calloc symbol is resolved as this exact ABI fn pointer.
+            unsafe { host_calloc(nmemb, size) }
+        } else {
+            let total = nmemb.checked_mul(size).unwrap_or(0);
+            if total == 0 && nmemb != 0 && size != 0 {
+                // Overflow: return null
+                std::ptr::null_mut()
+            } else {
+                unsafe { bump_alloc(total) }
+            }
         }
     }
 }
@@ -715,34 +734,42 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         }
         return out;
     }
-    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_REALLOC) else {
+    // In standalone mode, all allocations are from bump allocator
+    #[cfg(feature = "standalone")]
+    {
         return unsafe { bump_alloc(size) };
-    };
-    let host_ptr = if let Some(&host_ptr) = HOST_REALLOC_FN.get() {
-        host_ptr
-    } else if let Some(raw_host_realloc) = crate::host_resolve::host_realloc_raw() {
-        HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
-        raw_host_realloc as usize
-    } else {
-        HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
-        let resolved = unsafe { resolve_host_allocator_symbol(b"realloc\0") as usize };
-        let _ = HOST_REALLOC_FN.set(resolved);
-        resolved
-    };
-    if host_ptr != 0 {
-        let host_realloc: HostReallocFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host realloc symbol is resolved as this exact ABI fn pointer.
-        unsafe { host_realloc(ptr, size) }
-    } else if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
-        let out = unsafe { bump_alloc(size) };
-        if !out.is_null() {
-            let copy_size = old_size.min(size);
-            unsafe {
-                std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_REALLOC) else {
+            return unsafe { bump_alloc(size) };
+        };
+        let host_ptr = if let Some(&host_ptr) = HOST_REALLOC_FN.get() {
+            host_ptr
+        } else if let Some(raw_host_realloc) = crate::host_resolve::host_realloc_raw() {
+            HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
+            raw_host_realloc as usize
+        } else {
+            HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
+            let resolved = unsafe { resolve_host_allocator_symbol(b"realloc\0") as usize };
+            let _ = HOST_REALLOC_FN.set(resolved);
+            resolved
+        };
+        if host_ptr != 0 {
+            let host_realloc: HostReallocFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host realloc symbol is resolved as this exact ABI fn pointer.
+            unsafe { host_realloc(ptr, size) }
+        } else if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
+            let out = unsafe { bump_alloc(size) };
+            if !out.is_null() {
+                let copy_size = old_size.min(size);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
+                }
             }
+            out
+        } else {
+            unsafe { bump_alloc(size) }
         }
-        out
-    } else {
-        unsafe { bump_alloc(size) }
     }
 }
 
@@ -751,23 +778,31 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
     if is_bump_ptr(ptr) {
         return; // Bump allocator: free is a no-op.
     }
-    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_FREE) else {
-        return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
-    };
-    let host_ptr = if let Some(&host_ptr) = HOST_FREE_FN.get() {
-        host_ptr
-    } else if let Some(raw_host_free) = crate::host_resolve::host_free_raw() {
-        HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
-        raw_host_free as usize
-    } else {
-        HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
-        let resolved = unsafe { resolve_host_allocator_symbol(b"free\0") as usize };
-        let _ = HOST_FREE_FN.set(resolved);
-        resolved
-    };
-    if host_ptr != 0 {
-        let host_free: HostFreeFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host free symbol is resolved as this exact ABI fn pointer.
-        unsafe { host_free(ptr) };
+    // In standalone mode, free is a no-op (bump allocator doesn't support freeing)
+    #[cfg(feature = "standalone")]
+    {
+        return;
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_FREE) else {
+            return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
+        };
+        let host_ptr = if let Some(&host_ptr) = HOST_FREE_FN.get() {
+            host_ptr
+        } else if let Some(raw_host_free) = crate::host_resolve::host_free_raw() {
+            HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
+            raw_host_free as usize
+        } else {
+            HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
+            let resolved = unsafe { resolve_host_allocator_symbol(b"free\0") as usize };
+            let _ = HOST_FREE_FN.set(resolved);
+            resolved
+        };
+        if host_ptr != 0 {
+            let host_free: HostFreeFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host free symbol is resolved as this exact ABI fn pointer.
+            unsafe { host_free(ptr) };
+        }
     }
 }
 
@@ -797,12 +832,20 @@ unsafe fn native_libc_posix_memalign(
 
 #[inline]
 unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
-    let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MEMALIGN) else {
+    // In standalone mode, use bump allocator directly
+    #[cfg(feature = "standalone")]
+    {
         return unsafe { bump_alloc_aligned(size, alignment) };
-    };
-    match unsafe { host_memalign_fn() } {
-        Some(host_memalign) => unsafe { host_memalign(alignment, size) },
-        None => unsafe { bump_alloc_aligned(size, alignment) },
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MEMALIGN) else {
+            return unsafe { bump_alloc_aligned(size, alignment) };
+        };
+        match unsafe { host_memalign_fn() } {
+            Some(host_memalign) => unsafe { host_memalign(alignment, size) },
+            None => unsafe { bump_alloc_aligned(size, alignment) },
+        }
     }
 }
 
@@ -1407,7 +1450,15 @@ pub(crate) unsafe fn mprobe_status(ptr: *mut c_void) -> c_int {
 
 #[inline]
 fn strict_allocator_host_path_active() -> bool {
-    !runtime_policy::mode().heals_enabled()
+    // In standalone mode, always use native arena (no host glibc available)
+    #[cfg(feature = "standalone")]
+    {
+        false
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        !runtime_policy::mode().heals_enabled()
+    }
 }
 
 #[inline]

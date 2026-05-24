@@ -1304,7 +1304,9 @@ pub unsafe extern "C" fn strptime(
                         si += 1;
                     }
                     while si < input.len() && input[si].is_ascii_digit() {
-                        epoch = epoch.saturating_mul(10).saturating_add((input[si] - b'0') as i64);
+                        epoch = epoch
+                            .saturating_mul(10)
+                            .saturating_add((input[si] - b'0') as i64);
                         si += 1;
                     }
                     if si == start || (negative && si == start + 1) {
@@ -1329,8 +1331,12 @@ pub unsafe extern "C" fn strptime(
                     // Days since 1970-01-01
                     let mut year = 1970i32;
                     loop {
-                        let days_in_year =
-                            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
+                        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+                        {
+                            366
+                        } else {
+                            365
+                        };
                         if days < days_in_year as i64 {
                             break;
                         }
