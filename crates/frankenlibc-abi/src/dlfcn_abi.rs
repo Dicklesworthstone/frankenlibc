@@ -240,6 +240,22 @@ fn close_main_program_handle() -> c_int {
 /// `RTLD_LAZY` or `RTLD_NOW` set; additional modifier flags are allowed.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
+    // In standalone mode, only NULL filename (main program) is supported
+    #[cfg(feature = "standalone")]
+    {
+        if filename.is_null() {
+            clear_dlerror();
+            return open_main_program_handle();
+        }
+        if !dlfcn_core::valid_flags(flags) {
+            set_dlerror(dlfcn_core::ERR_INVALID_FLAGS);
+            return std::ptr::null_mut();
+        }
+        // Standalone mode: dynamic loading not supported
+        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+        return std::ptr::null_mut();
+    }
+    #[cfg(not(feature = "standalone"))]
     if runtime_policy::bootstrap_passthrough_active() {
         if filename.is_null() {
             clear_dlerror();
@@ -364,6 +380,36 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 /// `RTLD_DEFAULT` / `RTLD_NEXT`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void {
+    // Standalone mode: only resolve exported symbols for main program handle
+    #[cfg(feature = "standalone")]
+    {
+        if symbol.is_null() {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
+        let (symbol_len, symbol_terminated) = unsafe {
+            crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize))
+        };
+        if !symbol_terminated {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
+        let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
+        // In standalone mode, only main program handle and RTLD_DEFAULT are valid
+        if is_main_program_handle(handle) || is_rtld_default(handle) {
+            let sym = resolve_exported_symbol(symbol_name);
+            if sym.is_null() {
+                set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            } else {
+                clear_dlerror();
+            }
+            return sym;
+        }
+        // Other handles not supported in standalone mode
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        return std::ptr::null_mut();
+    }
+    #[cfg(not(feature = "standalone"))]
     if runtime_policy::bootstrap_passthrough_active() {
         if symbol.is_null() {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
@@ -492,6 +538,45 @@ pub unsafe extern "C" fn dlvsym(
     symbol: *const c_char,
     version: *const c_char,
 ) -> *mut c_void {
+    // Standalone mode: only resolve exported symbols for main program handle
+    #[cfg(feature = "standalone")]
+    {
+        if symbol.is_null() || version.is_null() {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
+        let (symbol_len, symbol_terminated) = unsafe {
+            crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize))
+        };
+        let (version_len, version_terminated) = unsafe {
+            crate::util::scan_c_string(
+                version,
+                crate::malloc_abi::known_remaining(version as usize),
+            )
+        };
+        if !symbol_terminated || !version_terminated {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
+        let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
+        let version_name = unsafe { std::slice::from_raw_parts(version as *const u8, version_len) };
+        // In standalone mode, only main program handle and RTLD_DEFAULT are valid
+        if is_main_program_handle(handle) || is_rtld_default(handle) {
+            if version_supported(version_name) {
+                let sym = resolve_exported_symbol(symbol_name);
+                if !sym.is_null() {
+                    clear_dlerror();
+                    return sym;
+                }
+            }
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
+        // Other handles not supported in standalone mode
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        return std::ptr::null_mut();
+    }
+    #[cfg(not(feature = "standalone"))]
     if runtime_policy::bootstrap_passthrough_active() {
         if symbol.is_null() || version.is_null() {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
@@ -633,6 +718,27 @@ pub unsafe extern "C" fn dlvsym(
 /// Returns 0 on success, non-zero on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
+    // Standalone mode: only main program handle is valid
+    #[cfg(feature = "standalone")]
+    {
+        if handle.is_null() {
+            set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+            return -1;
+        }
+        if is_main_program_handle(handle) {
+            let rc = close_main_program_handle();
+            if rc == 0 {
+                clear_dlerror();
+            } else {
+                set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+            }
+            return rc;
+        }
+        // Other handles not supported in standalone mode
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        return -1;
+    }
+    #[cfg(not(feature = "standalone"))]
     if runtime_policy::bootstrap_passthrough_active() {
         if handle.is_null() {
             set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
@@ -766,23 +872,32 @@ pub unsafe extern "C" fn dl_iterate_phdr(
     callback: Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
     data: *mut c_void,
 ) -> c_int {
-    type DlIteratePhdrFn = unsafe extern "C" fn(
-        Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
-        *mut c_void,
-    ) -> c_int;
-    if callback.is_none() {
+    // Standalone mode: no DSOs to enumerate
+    #[cfg(feature = "standalone")]
+    {
+        let _ = (callback, data);
         return 0;
     }
-    let host_addr = crate::host_resolve::host_dl_iterate_phdr_cached().or_else(|| {
-        crate::host_resolve::bootstrap_host_symbols();
-        crate::host_resolve::host_dl_iterate_phdr_cached()
-    });
-    if let Some(addr) = host_addr {
-        let host_fn: DlIteratePhdrFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-        return unsafe { host_fn(callback, data) };
+    #[cfg(not(feature = "standalone"))]
+    {
+        type DlIteratePhdrFn = unsafe extern "C" fn(
+            Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
+            *mut c_void,
+        ) -> c_int;
+        if callback.is_none() {
+            return 0;
+        }
+        let host_addr = crate::host_resolve::host_dl_iterate_phdr_cached().or_else(|| {
+            crate::host_resolve::bootstrap_host_symbols();
+            crate::host_resolve::host_dl_iterate_phdr_cached()
+        });
+        if let Some(addr) = host_addr {
+            let host_fn: DlIteratePhdrFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+            return unsafe { host_fn(callback, data) };
+        }
+        // During early bootstrap before symbols are resolved, return 0 (no entries).
+        0
     }
-    // During early bootstrap before symbols are resolved, return 0 (no entries).
-    0
 }
 
 /// `dladdr` — resolve address to shared object info.
@@ -794,17 +909,26 @@ pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         return 0;
     }
-    type DladdrFn = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
-    if let Some(host_addr) = crate::host_resolve::host_dladdr_cached() {
-        let host_fn: DladdrFn = unsafe { core::mem::transmute(host_addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-        let rc = unsafe { host_fn(addr, info) };
-        if rc != 0 {
-            clear_dlerror();
-            return rc;
-        }
+    // Standalone mode: no DSO metadata available
+    #[cfg(feature = "standalone")]
+    {
+        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+        return 0;
     }
-    set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
-    0
+    #[cfg(not(feature = "standalone"))]
+    {
+        type DladdrFn = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
+        if let Some(host_addr) = crate::host_resolve::host_dladdr_cached() {
+            let host_fn: DladdrFn = unsafe { core::mem::transmute(host_addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+            let rc = unsafe { host_fn(addr, info) };
+            if rc != 0 {
+                clear_dlerror();
+                return rc;
+            }
+        }
+        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+        0
+    }
 }
 
 // ---------------------------------------------------------------------------
