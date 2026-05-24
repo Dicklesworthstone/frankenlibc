@@ -8754,8 +8754,24 @@ pub struct TlsIndex {
 ///
 /// Slot 0 is the generation counter; slots 1..N point to TLS blocks.
 #[cfg(feature = "owned-tls-cache")]
-static DTV_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<*mut u8>> =
-    crate::owned_tls_cache::OwnedTlsCache::new(|| Vec::new());
+struct DtvStorage(Vec<*mut u8>);
+
+#[cfg(feature = "owned-tls-cache")]
+impl DtvStorage {
+    const fn new() -> Self {
+        Self(Vec::new())
+    }
+}
+
+// SAFETY: DtvStorage is only accessed through OwnedTlsCache which serializes
+// all access behind a Mutex. The pointers are per-thread TLS block addresses
+// that are only accessed by the owning thread after lookup.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for DtvStorage {}
+
+#[cfg(feature = "owned-tls-cache")]
+static DTV_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<DtvStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(DtvStorage::new);
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
@@ -8768,7 +8784,7 @@ std::thread_local! {
 fn with_dtv<R>(f: impl FnOnce(&mut Vec<*mut u8>) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
-        DTV_OWNED_TLS.with(f)
+        DTV_OWNED_TLS.with(|storage| f(&mut storage.0))
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
