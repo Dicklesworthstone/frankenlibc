@@ -1,0 +1,1 @@
+{"event": "finish", "exit_code": 0, "frankenlibc_log_files": 1, "frankenlibc_mode": "hardened", "instrumented_phase_events": 1, "package": "sys-devel/binutils", "portage_enabled": "1", "result": "success", "timestamp": "2026-05-10T04:34:29Z"}
