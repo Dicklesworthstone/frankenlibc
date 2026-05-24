@@ -451,8 +451,8 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         }
         if i >= fmt.len() {
             // Incomplete specifier after flags - output literal (e.g. "%-" → "%-")
-            for j in spec_start..fmt.len() {
-                push!(fmt[j]);
+            for &b in &fmt[spec_start..] {
+                push!(b);
             }
             break;
         }
@@ -466,8 +466,8 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         }
         if i >= fmt.len() {
             // Incomplete specifier after width - output literal (e.g. "%-5" → "%-5")
-            for j in spec_start..fmt.len() {
-                push!(fmt[j]);
+            for &b in &fmt[spec_start..] {
+                push!(b);
             }
             break;
         }

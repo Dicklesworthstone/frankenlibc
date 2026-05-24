@@ -90,9 +90,9 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
         } else {
             effective_base = 10;
         }
-    } else if base == 16 && has_0x_prefix && i + 2 < len && s[i + 2].is_ascii_hexdigit() {
-        i += 2;
-    } else if base == 2 && has_0b_prefix && i + 2 < len && is_binary_digit(s[i + 2]) {
+    } else if (base == 16 && has_0x_prefix && i + 2 < len && s[i + 2].is_ascii_hexdigit())
+        || (base == 2 && has_0b_prefix && i + 2 < len && is_binary_digit(s[i + 2]))
+    {
         i += 2;
     }
 
@@ -226,9 +226,9 @@ pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
         } else {
             effective_base = 10;
         }
-    } else if base == 16 && has_0x_prefix && i + 2 < len && s[i + 2].is_ascii_hexdigit() {
-        i += 2;
-    } else if base == 2 && has_0b_prefix && i + 2 < len && is_binary_digit(s[i + 2]) {
+    } else if (base == 16 && has_0x_prefix && i + 2 < len && s[i + 2].is_ascii_hexdigit())
+        || (base == 2 && has_0b_prefix && i + 2 < len && is_binary_digit(s[i + 2]))
+    {
         i += 2;
     }
 
@@ -470,9 +470,9 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
         } else {
             effective_base = 10;
         }
-    } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
-        i += 2;
-    } else if base == 2 && has_0b_prefix && i + 2 < len && wide_is_binary_digit(s[i + 2]) {
+    } else if (base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]))
+        || (base == 2 && has_0b_prefix && i + 2 < len && wide_is_binary_digit(s[i + 2]))
+    {
         i += 2;
     }
 
@@ -578,9 +578,9 @@ pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
         } else {
             effective_base = 10;
         }
-    } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
-        i += 2;
-    } else if base == 2 && has_0b_prefix && i + 2 < len && wide_is_binary_digit(s[i + 2]) {
+    } else if (base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]))
+        || (base == 2 && has_0b_prefix && i + 2 < len && wide_is_binary_digit(s[i + 2]))
+    {
         i += 2;
     }
 
