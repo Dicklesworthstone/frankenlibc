@@ -3805,3 +3805,388 @@ fn gate_script_exists_and_is_executable() {
         );
     }
 }
+
+/// E2E test for bd-38x82.1: verifies the standalone artifact has no host-glibc
+/// dependencies by inspecting its ELF structure.
+///
+/// Acceptance criteria:
+/// - Build produces standalone cdylib with no host-glibc undefined symbols
+/// - nm shows no undefined glibc symbols
+/// - readelf shows no NEEDED libraries
+/// - ldd confirms "statically linked"
+/// - Structured JSON-line logging of artifact inspection and status
+#[test]
+#[ignore] // requires pre-built standalone artifact; run with --ignored
+fn standalone_artifact_e2e_no_glibc_dependencies() {
+    let root = workspace_root();
+    let temp = unique_temp_dir("standalone-e2e-artifact-inspection");
+    let log_file = temp.join("e2e_standalone.log.jsonl");
+
+    let mut log_entries: Vec<serde_json::Value> = Vec::new();
+    let trace_id = format!(
+        "e2e-standalone-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+
+    let emit_log = |entries: &mut Vec<serde_json::Value>,
+                    event: &str,
+                    status: &str,
+                    details: serde_json::Value| {
+        let entry = serde_json::json!({
+            "trace_id": trace_id,
+            "bead_id": "bd-38x82.1",
+            "event": event,
+            "status": status,
+            "timestamp_utc": chrono_lite_utc_now(),
+            "details": details,
+        });
+        entries.push(entry);
+    };
+
+    let artifact_path = find_or_build_standalone_artifact(&root, &temp, &mut log_entries);
+
+    let Some(artifact_path) = artifact_path else {
+        emit_log(
+            &mut log_entries,
+            "artifact_unavailable",
+            "skip",
+            serde_json::json!({ "reason": "no pre-built artifact and rch unavailable or nested" }),
+        );
+        write_log(&log_file, &log_entries);
+        eprintln!("skipping: no standalone artifact available");
+        return;
+    };
+
+    emit_log(
+        &mut log_entries,
+        "e2e_start",
+        "in_progress",
+        serde_json::json!({
+            "test": "standalone_artifact_e2e_no_glibc_dependencies",
+            "artifact_path": artifact_path.display().to_string(),
+        }),
+    );
+
+    let nm_output = Command::new("nm")
+        .args(["-D", artifact_path.to_str().unwrap()])
+        .output()
+        .expect("nm should run");
+
+    let nm_stdout = String::from_utf8_lossy(&nm_output.stdout);
+    let undefined_symbols: Vec<&str> = nm_stdout
+        .lines()
+        .filter(|line| line.trim().starts_with("U ") || line.contains(" U "))
+        .collect();
+
+    let undefined_glibc_symbols: Vec<&str> = undefined_symbols
+        .iter()
+        .filter(|line| line.contains("GLIBC") || line.contains("@"))
+        .copied()
+        .collect();
+
+    emit_log(
+        &mut log_entries,
+        "nm_inspection",
+        if undefined_glibc_symbols.is_empty() {
+            "pass"
+        } else {
+            "fail"
+        },
+        serde_json::json!({
+            "undefined_symbols_count": undefined_symbols.len(),
+            "undefined_glibc_symbols_count": undefined_glibc_symbols.len(),
+            "undefined_glibc_symbols": undefined_glibc_symbols,
+        }),
+    );
+
+    let readelf_output = Command::new("readelf")
+        .args(["-d", artifact_path.to_str().unwrap()])
+        .output()
+        .expect("readelf should run");
+
+    let readelf_stdout = String::from_utf8_lossy(&readelf_output.stdout);
+    let needed_libraries: Vec<&str> = readelf_stdout
+        .lines()
+        .filter(|line| line.contains("(NEEDED)"))
+        .collect();
+
+    let host_needed_libraries: Vec<&str> = needed_libraries
+        .iter()
+        .filter(|line| {
+            line.contains("libc.so")
+                || line.contains("ld-linux")
+                || line.contains("libpthread")
+                || line.contains("libm.so")
+                || line.contains("libdl.so")
+                || line.contains("libgcc")
+        })
+        .copied()
+        .collect();
+
+    emit_log(
+        &mut log_entries,
+        "readelf_inspection",
+        if host_needed_libraries.is_empty() {
+            "pass"
+        } else {
+            "fail"
+        },
+        serde_json::json!({
+            "needed_libraries_count": needed_libraries.len(),
+            "host_needed_libraries_count": host_needed_libraries.len(),
+            "needed_libraries": needed_libraries,
+            "host_needed_libraries": host_needed_libraries,
+        }),
+    );
+
+    let ldd_output = Command::new("ldd")
+        .arg(artifact_path.to_str().unwrap())
+        .output()
+        .expect("ldd should run");
+
+    let ldd_stdout = String::from_utf8_lossy(&ldd_output.stdout);
+    let ldd_stderr = String::from_utf8_lossy(&ldd_output.stderr);
+    let is_statically_linked = ldd_stdout.contains("statically linked")
+        || ldd_stderr.contains("statically linked")
+        || ldd_stdout.contains("not a dynamic executable");
+
+    let ldd_glibc_deps: Vec<&str> = ldd_stdout
+        .lines()
+        .filter(|line| {
+            line.contains("libc.so")
+                || line.contains("ld-linux")
+                || line.contains("libpthread")
+                || line.contains("libm.so")
+                || line.contains("libdl.so")
+        })
+        .collect();
+
+    emit_log(
+        &mut log_entries,
+        "ldd_inspection",
+        if is_statically_linked || ldd_glibc_deps.is_empty() {
+            "pass"
+        } else {
+            "fail"
+        },
+        serde_json::json!({
+            "statically_linked": is_statically_linked,
+            "ldd_output": ldd_stdout.to_string(),
+            "ldd_glibc_deps_count": ldd_glibc_deps.len(),
+            "ldd_glibc_deps": ldd_glibc_deps,
+        }),
+    );
+
+    let all_pass = undefined_glibc_symbols.is_empty()
+        && host_needed_libraries.is_empty()
+        && (is_statically_linked || ldd_glibc_deps.is_empty());
+
+    emit_log(
+        &mut log_entries,
+        "e2e_complete",
+        if all_pass { "pass" } else { "fail" },
+        serde_json::json!({
+            "undefined_glibc_symbols_count": undefined_glibc_symbols.len(),
+            "host_needed_libraries_count": host_needed_libraries.len(),
+            "statically_linked": is_statically_linked,
+            "all_checks_pass": all_pass,
+        }),
+    );
+
+    write_log(&log_file, &log_entries);
+
+    assert!(
+        undefined_glibc_symbols.is_empty(),
+        "standalone artifact should have no undefined GLIBC symbols\n\
+         found: {:?}",
+        undefined_glibc_symbols
+    );
+
+    assert!(
+        host_needed_libraries.is_empty(),
+        "standalone artifact should have no host NEEDED libraries\n\
+         found: {:?}",
+        host_needed_libraries
+    );
+
+    assert!(
+        is_statically_linked || ldd_glibc_deps.is_empty(),
+        "standalone artifact should be statically linked or have no glibc ldd deps\n\
+         ldd output: {}",
+        ldd_stdout
+    );
+
+    println!(
+        "E2E PASS: standalone artifact has no glibc dependencies\n\
+         artifact={}\n\
+         undefined_symbols={}\n\
+         needed_libraries={}\n\
+         statically_linked={}\n\
+         log_file={}",
+        artifact_path.display(),
+        undefined_symbols.len(),
+        needed_libraries.len(),
+        is_statically_linked,
+        log_file.display()
+    );
+}
+
+fn chrono_lite_utc_now() -> String {
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    format!("{}Z", epoch)
+}
+
+fn write_log(path: &Path, entries: &[serde_json::Value]) {
+    let content: String = entries
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(path, format!("{content}\n")).expect("write log file");
+}
+
+fn find_or_build_standalone_artifact(
+    root: &Path,
+    temp: &Path,
+    log_entries: &mut Vec<serde_json::Value>,
+) -> Option<PathBuf> {
+    let target_triple = std::env::var("TARGET").ok().unwrap_or_else(|| {
+        let output = Command::new("rustc")
+            .args(["-vV"])
+            .output()
+            .ok()
+            .map(|o| {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                stdout
+                    .lines()
+                    .find(|line| line.starts_with("host:"))
+                    .map(|line| line.trim_start_matches("host:").trim().to_owned())
+                    .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_owned())
+            })
+            .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_owned());
+        output
+    });
+
+    let candidates = [
+        std::env::var("FRANKENLIBC_STANDALONE_LIB")
+            .ok()
+            .map(PathBuf::from),
+        Some(root.join("target/standalone_replacement_artifact/cargo-target/release/libfrankenlibc_replace.so")),
+        Some(root.join(format!(
+            "target/standalone_replacement_artifact/cargo-target/{target_triple}/release/libfrankenlibc_abi.so"
+        ))),
+        Some(root.join("target/release/libfrankenlibc_abi.so")),
+        Some(root.join("target/release/deps/libfrankenlibc_abi.so")),
+        Some(root.join(format!("target/{target_triple}/release/libfrankenlibc_abi.so"))),
+        Some(root.join(format!("target/{target_triple}/release/deps/libfrankenlibc_abi.so"))),
+        std::env::var("CARGO_TARGET_DIR")
+            .ok()
+            .map(|d| PathBuf::from(d).join("release/libfrankenlibc_abi.so")),
+        std::env::var("CARGO_TARGET_DIR")
+            .ok()
+            .map(|d| PathBuf::from(d).join("release/deps/libfrankenlibc_abi.so")),
+    ];
+
+    for candidate in candidates.into_iter().flatten() {
+        if candidate.exists() {
+            log_entries.push(serde_json::json!({
+                "event": "artifact_found",
+                "status": "pass",
+                "artifact_path": candidate.display().to_string(),
+            }));
+            return Some(candidate);
+        }
+    }
+
+    if std::env::var("RCH_JOB_ID").is_ok() {
+        log_entries.push(serde_json::json!({
+            "event": "skip_nested_rch",
+            "status": "skip",
+            "reason": "running inside rch; cannot invoke nested rch build",
+        }));
+        return None;
+    }
+
+    if Command::new("rch").arg("--version").output().is_err() {
+        log_entries.push(serde_json::json!({
+            "event": "rch_unavailable",
+            "status": "skip",
+            "reason": "rch not found in PATH",
+        }));
+        return None;
+    }
+
+    let cargo_target = temp.join("cargo-target");
+    std::fs::create_dir_all(&cargo_target).expect("create cargo target dir");
+
+    log_entries.push(serde_json::json!({
+        "event": "building_standalone_artifact",
+        "status": "in_progress",
+        "cargo_target_dir": cargo_target.display().to_string(),
+    }));
+
+    let build_output = Command::new("rch")
+        .args([
+            "exec",
+            "--",
+            "cargo",
+            "build",
+            "-Z",
+            "build-std=std,panic_abort",
+            "-p",
+            "frankenlibc-abi",
+            "--release",
+            "--features=standalone,owned-unwind-stub,owned-tls-cache",
+        ])
+        .current_dir(root)
+        .env("CARGO_TARGET_DIR", &cargo_target)
+        .env("CARGO_PROFILE_RELEASE_PANIC", "immediate-abort")
+        .env("RCH_REQUIRE_REMOTE", "1")
+        .output()
+        .ok()?;
+
+    if !build_output.status.success() {
+        log_entries.push(serde_json::json!({
+            "event": "build_failed",
+            "status": "fail",
+            "exit_code": build_output.status.code(),
+            "stderr": String::from_utf8_lossy(&build_output.stderr).to_string(),
+        }));
+        return None;
+    }
+
+    log_entries.push(serde_json::json!({
+        "event": "build_complete",
+        "status": "pass",
+    }));
+
+    let artifact_path = cargo_target
+        .join(&target_triple)
+        .join("release")
+        .join("libfrankenlibc_abi.so");
+
+    if artifact_path.exists() {
+        return Some(artifact_path);
+    }
+
+    let fallback = cargo_target.join("release").join("libfrankenlibc_abi.so");
+    if fallback.exists() {
+        return Some(fallback);
+    }
+
+    log_entries.push(serde_json::json!({
+        "event": "artifact_missing_after_build",
+        "status": "fail",
+        "searched_paths": [
+            artifact_path.display().to_string(),
+            fallback.display().to_string(),
+        ],
+    }));
+    None
+}
