@@ -2813,11 +2813,13 @@ pub unsafe extern "C" fn setvbuf(
         }
     } else {
         drop(reg);
+        #[cfg(not(feature = "standalone"))]
         if host_stream_io_started(id) {
             unsafe { set_abi_errno(errno::EINVAL) };
             return -1;
         }
-        // Not in our registry — delegate to host libc setvbuf (real FILE*).
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fn) = unsafe { host_setvbuf_fn() } {
             let rc = unsafe { host_fn(stream, _buf, mode, size) };
             if rc != 0 {
@@ -4923,6 +4925,8 @@ pub unsafe extern "C" fn vfscanf(
         return -1;
     }
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_vfscanf) = unsafe { host_vfscanf_fn() }
     {
@@ -5128,6 +5132,8 @@ pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) ->
         return -1;
     }
 
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_fgetpos) = unsafe { host_fgetpos_fn() }
     {
@@ -5171,6 +5177,8 @@ pub unsafe extern "C" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) 
     }
 
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_fsetpos) = unsafe { host_fsetpos_fn() }
     {
@@ -5330,6 +5338,8 @@ pub unsafe extern "C" fn freopen(
         return std::ptr::null_mut();
     };
 
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_freopen) = unsafe { host_freopen_fn() }
     {
@@ -5497,6 +5507,8 @@ pub unsafe extern "C" fn getdelim(
     }
 
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_getdelim) = unsafe { host_getdelim_fn() }
     {
@@ -5508,7 +5520,6 @@ pub unsafe extern "C" fn getdelim(
         }
         return rc;
     }
-    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -5589,6 +5600,8 @@ pub unsafe extern "C" fn getline(
     }
 
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_getline) = unsafe { host_getline_fn() }
     {
@@ -6367,6 +6380,8 @@ pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
             // Per bd-9chy.17: locking for these is a no-op until fully migrated to NativeFile.
         }
         StreamType::Foreign => {
+            // Host delegation path - not available in standalone mode
+            #[cfg(not(feature = "standalone"))]
             if let Some(host_flockfile) = unsafe { host_flockfile_fn() } {
                 unsafe { host_flockfile(stream) };
             }
@@ -6396,6 +6411,8 @@ pub unsafe extern "C" fn ftrylockfile(stream: *mut c_void) -> c_int {
             0
         }
         StreamType::Foreign => {
+            // Host delegation path - not available in standalone mode
+            #[cfg(not(feature = "standalone"))]
             if let Some(host_ftrylockfile) = unsafe { host_ftrylockfile_fn() } {
                 return unsafe { host_ftrylockfile(stream) };
             }
@@ -6423,6 +6440,8 @@ pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
             // Legacy StdioStream: no-op
         }
         StreamType::Foreign => {
+            // Host delegation path - not available in standalone mode
+            #[cfg(not(feature = "standalone"))]
             if let Some(host_funlockfile) = unsafe { host_funlockfile_fn() } {
                 unsafe { host_funlockfile(stream) };
             }
