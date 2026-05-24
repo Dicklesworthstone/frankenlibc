@@ -354,6 +354,12 @@ fn resolve_symbol_from_data(base: usize, data: &[u8], symbol: &str) -> Option<us
 }
 
 fn load_glibc_image() -> Option<&'static LoadedGlibcImage> {
+    // Standalone mode: no host glibc to load
+    #[cfg(feature = "standalone")]
+    {
+        return None;
+    }
+    #[cfg(not(feature = "standalone"))]
     if let Some(image) = HOST_IMAGE.get() {
         return Some(image);
     }
