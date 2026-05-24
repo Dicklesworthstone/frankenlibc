@@ -750,6 +750,8 @@ unsafe fn write_bytes_without_runtime_policy(
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(stream_obj) = reg.streams.get_mut(&id) else {
         drop(reg);
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
             if written == 0 {
@@ -1225,6 +1227,8 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
     if id == 0 {
         return libc::EOF;
     }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_fclose) = unsafe { host_fclose_fn() }
     {
@@ -1347,6 +1351,8 @@ pub unsafe fn fflush_managed_only_for_abort() -> c_int {
 pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
     if !stream.is_null() {
         let id = canonical_stream_id(stream);
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if !registry_contains_stream(id)
             && let Some(host_fflush) = unsafe { host_fflush_fn() }
         {
@@ -1372,7 +1378,10 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 
     // NULL stream: flush all open streams.
     if stream.is_null() {
+        #[allow(unused_mut)]
         let mut host_fail = false;
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fflush) = unsafe { host_fflush_fn() } {
             let rc = unsafe { host_fflush(std::ptr::null_mut()) };
             if rc != 0 {
@@ -2093,6 +2102,8 @@ pub unsafe extern "C" fn fread(
     }
 
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_fread) = unsafe { host_fread_fn() }
     {
@@ -2330,7 +2341,8 @@ pub unsafe extern "C" fn fwrite(
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
         drop(reg);
-        // Not in our registry — delegate to host libc fwrite (real FILE*).
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let rc = unsafe { host_fwrite(ptr, size, nmemb, stream) };
             if rc == 0 {
@@ -2452,6 +2464,8 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
         return -1;
     }
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_fseek) = unsafe { host_fseek_fn() }
     {
@@ -2585,6 +2599,8 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
         return -1;
     }
     let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
         && let Some(host_ftell) = unsafe { host_ftell_fn() }
     {
@@ -3526,7 +3542,8 @@ pub unsafe extern "C" fn fprintf(
         }
     } else {
         drop(reg);
-        // Not in our registry — delegate to host via fwrite on the rendered output.
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
                 unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stream) };
@@ -3681,6 +3698,8 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
         }
     } else {
         drop(reg);
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
                 unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stdout_ptr) };
@@ -4209,7 +4228,8 @@ pub unsafe extern "C" fn vfprintf(
         }
     } else {
         drop(reg);
-        // Not in our registry — delegate to host via fwrite on the rendered output.
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
                 unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stream) };
@@ -4361,6 +4381,8 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
         }
     } else {
         drop(reg);
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
                 unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stdout_ptr) };
