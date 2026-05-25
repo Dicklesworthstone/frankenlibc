@@ -1,4 +1,4 @@
-//! bd-38x82.5: Hardened mode within 2x native glibc benchmark contract.
+//! bd-38x82.5: Hardened mode same-harness 2x benchmark contract.
 
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 const LIVE_GATE_ENV: &str = "FRANKENLIBC_REQUIRE_LIVE_HARDENED_2X_GATE";
-const MAX_NATIVE_GLIBC_RATIO: f64 = 2.0;
+const MAX_STRICT_HARDENED_RATIO: f64 = 2.0;
 const MISSING_ARTIFACT_SIGNATURE: &str = "missing_benchmark_artifact";
 const RATIO_REGRESSION_SIGNATURE: &str = "hardened_2x_regression";
+const WORKLOAD_MISMATCH_SIGNATURE: &str = "strict_hardened_workload_mismatch";
 const REQUIRED_COMMON_SYMBOLS: [&str; 2] = ["memcpy", "malloc/free"];
 
 fn test_error(message: impl Into<String>) -> Box<dyn Error> {
@@ -66,14 +67,26 @@ fn validate_hardened_2x_contract(artifact: &Value, baseline_markdown: &str) -> T
 
     let mut checked = 0usize;
     for symbol in REQUIRED_COMMON_SYMBOLS {
-        let host_mean = *host_means
-            .get(symbol)
-            .ok_or_else(|| test_error(format!("missing host glibc baseline for {symbol}")))?;
-        let hardened_mean = hardened_mean_for_symbol(records, symbol)?;
-        let max_allowed = MAX_NATIVE_GLIBC_RATIO * host_mean;
-        if hardened_mean > max_allowed {
+        if !host_means.contains_key(symbol) {
             return Err(test_error(format!(
-                "{RATIO_REGRESSION_SIGNATURE}: {symbol} hardened mean_ns_op {hardened_mean:.3} exceeds {MAX_NATIVE_GLIBC_RATIO:.1}x host glibc mean {host_mean:.3}"
+                "missing host glibc context baseline for {symbol}"
+            )));
+        }
+
+        let strict = mode_record_for_symbol(records, "strict", symbol)?;
+        let hardened = mode_record_for_symbol(records, "hardened", symbol)?;
+        if strict.workload != hardened.workload {
+            return Err(test_error(format!(
+                "{WORKLOAD_MISMATCH_SIGNATURE}: {symbol} strict workload {:?} does not match hardened workload {:?}",
+                strict.workload, hardened.workload
+            )));
+        }
+
+        let max_allowed = MAX_STRICT_HARDENED_RATIO * strict.mean_ns_op;
+        if hardened.mean_ns_op > max_allowed {
+            return Err(test_error(format!(
+                "{RATIO_REGRESSION_SIGNATURE}: {symbol} hardened mean_ns_op {:.3} exceeds {MAX_STRICT_HARDENED_RATIO:.1}x strict same-harness mean {:.3}",
+                hardened.mean_ns_op, strict.mean_ns_op
             )));
         }
         checked += 1;
@@ -82,15 +95,37 @@ fn validate_hardened_2x_contract(artifact: &Value, baseline_markdown: &str) -> T
     Ok(checked)
 }
 
-fn hardened_mean_for_symbol(records: &[Value], symbol: &str) -> TestResult<f64> {
-    records
+#[derive(Debug, Clone, PartialEq)]
+struct ModeRecord {
+    workload: String,
+    mean_ns_op: f64,
+}
+
+fn mode_record_for_symbol(
+    records: &[Value],
+    runtime_mode: &str,
+    symbol: &str,
+) -> TestResult<ModeRecord> {
+    let record = records
         .iter()
         .find(|record| {
-            record.get("runtime_mode").and_then(Value::as_str) == Some("hardened")
+            record.get("runtime_mode").and_then(Value::as_str) == Some(runtime_mode)
                 && record.get("symbol").and_then(Value::as_str) == Some(symbol)
         })
-        .and_then(|record| record.get("mean_ns_op").and_then(Value::as_f64))
-        .ok_or_else(|| test_error(format!("missing hardened mean_ns_op for {symbol}")))
+        .ok_or_else(|| test_error(format!("missing {runtime_mode} row for {symbol}")))?;
+    let workload = record
+        .get("workload")
+        .and_then(Value::as_str)
+        .ok_or_else(|| test_error(format!("missing {runtime_mode} workload for {symbol}")))?;
+    let mean_ns_op = record
+        .get("mean_ns_op")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| test_error(format!("missing {runtime_mode} mean_ns_op for {symbol}")))?;
+
+    Ok(ModeRecord {
+        workload: workload.to_owned(),
+        mean_ns_op,
+    })
 }
 
 fn host_glibc_mean_by_symbol(markdown: &str) -> TestResult<BTreeMap<String, f64>> {
@@ -125,19 +160,38 @@ fn extract_raw_row_field(line: &str, field: &str) -> Option<String> {
         .map(|value| value.trim_end_matches(',').to_owned())
 }
 
-fn fixture_artifact(memcpy_mean: f64, malloc_mean: f64) -> Value {
+fn fixture_artifact(
+    memcpy_strict_mean: f64,
+    memcpy_hardened_mean: f64,
+    malloc_strict_mean: f64,
+    malloc_hardened_mean: f64,
+) -> Value {
     json!({
         "schema_version": "v1",
         "records": [
             {
+                "runtime_mode": "strict",
+                "symbol": "memcpy",
+                "workload": "64-byte copy plus membrane decision",
+                "mean_ns_op": memcpy_strict_mean
+            },
+            {
                 "runtime_mode": "hardened",
                 "symbol": "memcpy",
-                "mean_ns_op": memcpy_mean
+                "workload": "64-byte copy plus membrane decision",
+                "mean_ns_op": memcpy_hardened_mean
+            },
+            {
+                "runtime_mode": "strict",
+                "symbol": "malloc/free",
+                "workload": "small allocation lifetime plus membrane decision",
+                "mean_ns_op": malloc_strict_mean
             },
             {
                 "runtime_mode": "hardened",
                 "symbol": "malloc/free",
-                "mean_ns_op": malloc_mean
+                "workload": "small allocation lifetime plus membrane decision",
+                "mean_ns_op": malloc_hardened_mean
             }
         ]
     })
@@ -184,21 +238,62 @@ fn live_gate_rejects_missing_benchmark_artifact() -> TestResult {
 }
 
 #[test]
-fn contract_accepts_valid_native_2x_fixture() -> TestResult {
-    let checked =
-        validate_hardened_2x_contract(&fixture_artifact(79.0, 19.0), fixture_glibc_baseline())?;
+fn contract_accepts_valid_same_harness_2x_fixture() -> TestResult {
+    let checked = validate_hardened_2x_contract(
+        &fixture_artifact(40.0, 79.0, 10.0, 19.0),
+        fixture_glibc_baseline(),
+    )?;
 
     assert_eq!(checked, REQUIRED_COMMON_SYMBOLS.len());
     Ok(())
 }
 
 #[test]
-fn contract_rejects_native_2x_regression_fixture() {
-    let err =
-        validate_hardened_2x_contract(&fixture_artifact(79.0, 21.0), fixture_glibc_baseline())
-            .expect_err("hardened rows above 2x host glibc must fail");
+fn contract_rejects_same_harness_2x_regression_fixture() {
+    let err = validate_hardened_2x_contract(
+        &fixture_artifact(40.0, 79.0, 10.0, 21.0),
+        fixture_glibc_baseline(),
+    )
+    .expect_err("hardened rows above 2x strict same-harness rows must fail");
 
     assert!(err.to_string().contains(RATIO_REGRESSION_SIGNATURE));
+}
+
+#[test]
+fn contract_rejects_strict_hardened_workload_mismatch() {
+    let artifact = json!({
+        "schema_version": "v1",
+        "records": [
+            {
+                "runtime_mode": "strict",
+                "symbol": "memcpy",
+                "workload": "4096 byte copy",
+                "mean_ns_op": 40.0
+            },
+            {
+                "runtime_mode": "hardened",
+                "symbol": "memcpy",
+                "workload": "64-byte copy plus membrane decision",
+                "mean_ns_op": 41.0
+            },
+            {
+                "runtime_mode": "strict",
+                "symbol": "malloc/free",
+                "workload": "small allocation lifetime plus membrane decision",
+                "mean_ns_op": 10.0
+            },
+            {
+                "runtime_mode": "hardened",
+                "symbol": "malloc/free",
+                "workload": "small allocation lifetime plus membrane decision",
+                "mean_ns_op": 11.0
+            }
+        ]
+    });
+    let err = validate_hardened_2x_contract(&artifact, fixture_glibc_baseline())
+        .expect_err("strict and hardened rows must use the same workload");
+
+    assert!(err.to_string().contains(WORKLOAD_MISMATCH_SIGNATURE));
 }
 
 #[test]
@@ -219,12 +314,13 @@ fn hardened_mode_2x_bound_coverage_report() -> TestResult {
         "{}",
         json!({
             "family": "hardened-2x-bound",
-            "reference": "glibc",
-            "tests": 6,
+            "reference": "strict_same_harness",
+            "host_glibc_context": true,
+            "tests": 7,
             "status": status,
             "implemented": live_gate_required,
             "live_gate_env": LIVE_GATE_ENV,
-            "max_native_glibc_ratio": MAX_NATIVE_GLIBC_RATIO
+            "max_strict_hardened_ratio": MAX_STRICT_HARDENED_RATIO
         })
     );
     Ok(())

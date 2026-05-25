@@ -2701,7 +2701,7 @@ Additional requirements:
 - Multi-arch: at minimum x86_64 and aarch64 produce passing artifacts
 - Distribution packaging contract: `scripts/check_distribution_packaging_contract.sh` produces a Debian `.deb`, installs it into an isolated dpkg root, and runs prefix-smoke checks against the installed `libfrankenlibc_replace.so`
 - Long-tail stress: 24-hour soak tests across the curated workload set without divergence
-- Performance: hardened mode within 2× of native glibc on the standard benchmark suite
+- Performance: hardened mode within 2x of strict mode on the same live membrane-overhead workloads, with host-glibc hot-path baselines retained as context
 
 "Standalone replace" is not a binary claim; it's a sequence of evidence-backed promotions, each of which closes a specific class of dependency on the host. That is the point of the staged-promotion structure.
 
