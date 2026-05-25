@@ -358,7 +358,10 @@ mod tests {
         // sigemptyset clears all signals
         let empty = SigSet::empty();
         for sig in 1..=64 {
-            assert!(!empty.is_member(sig), "empty set must not contain signal {sig}");
+            assert!(
+                !empty.is_member(sig),
+                "empty set must not contain signal {sig}"
+            );
         }
     }
 }

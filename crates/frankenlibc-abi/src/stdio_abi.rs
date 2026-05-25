@@ -342,15 +342,18 @@ fn registry_contains_stream(id: usize) -> bool {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 struct HostStreamState {
     io_started: bool,
 }
 
+#[allow(dead_code)]
 fn host_stream_registry() -> &'static Mutex<ArtifactHashMap<usize, HostStreamState>> {
     static HOST_STREAMS: OnceLock<Mutex<ArtifactHashMap<usize, HostStreamState>>> = OnceLock::new();
     HOST_STREAMS.get_or_init(|| Mutex::new(artifact_hash_map()))
 }
 
+#[allow(dead_code)]
 fn register_host_stream(stream: *mut c_void) {
     if stream.is_null() {
         return;
@@ -367,6 +370,7 @@ fn register_host_stream(stream: *mut c_void) {
         .or_insert(HostStreamState { io_started: false });
 }
 
+#[allow(dead_code)]
 fn mark_host_io_started(stream: *mut c_void) {
     if stream.is_null() {
         return;
@@ -384,6 +388,7 @@ fn mark_host_io_started(stream: *mut c_void) {
         .or_insert(HostStreamState { io_started: true });
 }
 
+#[allow(dead_code)]
 fn host_stream_io_started(id: usize) -> bool {
     let guard = host_stream_registry()
         .lock()
@@ -394,6 +399,7 @@ fn host_stream_io_started(id: usize) -> bool {
         .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 fn unregister_host_stream(stream: *mut c_void) {
     if stream.is_null() {
         return;
@@ -461,155 +467,181 @@ unsafe fn host_stdio_symbol(slot: &OnceLock<usize>, symbol: &'static str) -> Opt
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn sync_host_errno(default_errno: c_int) {
     unsafe { set_abi_errno(crate::host_resolve::host_errno(default_errno)) };
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fwrite_fn() -> Option<HostFwriteFn> {
     unsafe { host_stdio_symbol(&HOST_FWRITE_FN, "fwrite") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fputs_fn() -> Option<HostFputsFn> {
     unsafe { host_stdio_symbol(&HOST_FPUTS_FN, "fputs") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fputc_fn() -> Option<HostFputcFn> {
     unsafe { host_stdio_symbol(&HOST_FPUTC_FN, "fputc") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fclose_fn() -> Option<HostFcloseFn> {
     unsafe { host_stdio_symbol(&HOST_FCLOSE_FN, "fclose") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fileno_fn() -> Option<HostFilenoFn> {
     unsafe { host_stdio_symbol(&HOST_FILENO_FN, "fileno") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_feof_fn() -> Option<HostFeofFn> {
     unsafe { host_stdio_symbol(&HOST_FEOF_FN, "feof") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_ferror_fn() -> Option<HostFerrorFn> {
     unsafe { host_stdio_symbol(&HOST_FERROR_FN, "ferror") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_clearerr_fn() -> Option<HostClearerrFn> {
     unsafe { host_stdio_symbol(&HOST_CLEARERR_FN, "clearerr") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fgetc_fn() -> Option<HostFgetcFn> {
     unsafe { host_stdio_symbol(&HOST_FGETC_FN, "fgetc") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fgets_fn() -> Option<HostFgetsFn> {
     unsafe { host_stdio_symbol(&HOST_FGETS_FN, "fgets") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fread_fn() -> Option<HostFreadFn> {
     unsafe { host_stdio_symbol(&HOST_FREAD_FN, "fread") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_ungetc_fn() -> Option<HostUngetcFn> {
     unsafe { host_stdio_symbol(&HOST_UNGETC_FN, "ungetc") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fseek_fn() -> Option<HostFseekFn> {
     unsafe { host_stdio_symbol(&HOST_FSEEK_FN, "fseek") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_ftell_fn() -> Option<HostFtellFn> {
     unsafe { host_stdio_symbol(&HOST_FTELL_FN, "ftell") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fflush_fn() -> Option<HostFflushFn> {
     unsafe { host_stdio_symbol(&HOST_FFLUSH_FN, "fflush") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_getdelim_fn() -> Option<HostGetdelimFn> {
     unsafe { host_stdio_symbol(&HOST_GETDELIM_FN, "getdelim") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_getline_fn() -> Option<HostGetlineFn> {
     unsafe { host_stdio_symbol(&HOST_GETLINE_FN, "getline") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_setvbuf_fn() -> Option<HostSetvbufFn> {
     unsafe { host_stdio_symbol(&HOST_SETVBUF_FN, "setvbuf") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_vfscanf_fn() -> Option<HostVfscanfFn> {
     unsafe { host_stdio_symbol(&HOST_VFSCANF_FN, "vfscanf") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fgetpos_fn() -> Option<HostFgetposFn> {
     unsafe { host_stdio_symbol(&HOST_FGETPOS_FN, "fgetpos") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_fsetpos_fn() -> Option<HostFsetposFn> {
     unsafe { host_stdio_symbol(&HOST_FSETPOS_FN, "fsetpos") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_freopen_fn() -> Option<HostFreopenFn> {
     unsafe { host_stdio_symbol(&HOST_FREOPEN_FN, "freopen") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_flockfile_fn() -> Option<HostFlockfileFn> {
     unsafe { host_stdio_symbol(&HOST_FLOCKFILE_FN, "flockfile") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_funlockfile_fn() -> Option<HostFunlockfileFn> {
     unsafe { host_stdio_symbol(&HOST_FUNLOCKFILE_FN, "funlockfile") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
 #[inline]
+#[allow(dead_code)]
 unsafe fn host_ftrylockfile_fn() -> Option<HostFtrylockfileFn> {
     unsafe { host_stdio_symbol(&HOST_FTRYLOCKFILE_FN, "ftrylockfile") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
@@ -695,7 +727,7 @@ fn stream_exists(id: usize) -> bool {
 
 unsafe fn write_bytes_without_runtime_policy(
     id: usize,
-    stream: *mut c_void,
+    _stream: *mut c_void,
     bytes: &[u8],
 ) -> usize {
     if bytes.is_empty() {
@@ -753,11 +785,11 @@ unsafe fn write_bytes_without_runtime_policy(
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
-            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), _stream) };
             if written == 0 {
                 unsafe { sync_host_errno(0) };
             } else {
-                mark_host_io_started(stream);
+                mark_host_io_started(_stream);
             }
             return written.min(bytes.len());
         }
@@ -1350,10 +1382,10 @@ pub unsafe fn fflush_managed_only_for_abort() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
     if !stream.is_null() {
-        let id = canonical_stream_id(stream);
+        let _id = canonical_stream_id(stream);
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if !registry_contains_stream(id)
+        if !registry_contains_stream(_id)
             && let Some(host_fflush) = unsafe { host_fflush_fn() }
         {
             let rc = unsafe { host_fflush(stream) };
@@ -5176,13 +5208,13 @@ pub unsafe extern "C" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) 
         return -1;
     }
 
-    let id = canonical_stream_id(stream);
+    let _id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if !registry_contains_stream(_id)
         && let Some(host_fsetpos) = unsafe { host_fsetpos_fn() }
     {
-        let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+        let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, _id, 0, false, false, 0);
         if matches!(decision.action, MembraneAction::Deny) {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return -1;
@@ -5599,10 +5631,10 @@ pub unsafe extern "C" fn getline(
         return -1;
     }
 
-    let id = canonical_stream_id(stream);
+    let _id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if !registry_contains_stream(_id)
         && let Some(host_getline) = unsafe { host_getline_fn() }
     {
         let rc = unsafe { host_getline(lineptr, n, stream) };

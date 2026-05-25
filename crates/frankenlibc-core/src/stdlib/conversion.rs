@@ -688,9 +688,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
             if i < slice.len() && slice[i] == b'(' {
                 let paren_start = i;
                 i += 1;
-                while i < slice.len()
-                    && (slice[i].is_ascii_alphanumeric() || slice[i] == b'_')
-                {
+                while i < slice.len() && (slice[i].is_ascii_alphanumeric() || slice[i] == b'_') {
                     i += 1;
                 }
                 if i < slice.len() && slice[i] == b')' {

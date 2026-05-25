@@ -285,7 +285,10 @@ mod tests {
         let expected = [1804289383i64, 846930886, 1681692777, 1714636915, 1957747793];
         for (i, &exp) in expected.iter().enumerate() {
             let got = random();
-            assert_eq!(got, exp, "random()[{i}] mismatch: expected {exp}, got {got}");
+            assert_eq!(
+                got, exp,
+                "random()[{i}] mismatch: expected {exp}, got {got}"
+            );
         }
     }
 
@@ -299,7 +302,10 @@ mod tests {
         let expected = [71876166i64, 708592740, 1483128881, 907283241, 442951012];
         for (i, &exp) in expected.iter().enumerate() {
             let got = random();
-            assert_eq!(got, exp, "random()[{i}] with seed 42 mismatch: expected {exp}, got {got}");
+            assert_eq!(
+                got, exp,
+                "random()[{i}] with seed 42 mismatch: expected {exp}, got {got}"
+            );
         }
     }
 }

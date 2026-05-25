@@ -906,8 +906,8 @@ mod tests {
     fn broken_down_to_epoch_normalizes_month_overflow() {
         // Month 13 should normalize to February of next year
         let bd = BrokenDownTime {
-            tm_year: 70,  // 1970
-            tm_mon: 13,   // 14th month = February 1971
+            tm_year: 70, // 1970
+            tm_mon: 13,  // 14th month = February 1971
             tm_mday: 15,
             tm_hour: 0,
             tm_min: 0,
@@ -919,7 +919,7 @@ mod tests {
         let epoch = broken_down_to_epoch(&bd);
         let normalized = epoch_to_broken_down(epoch);
         assert_eq!(normalized.tm_year, 71); // 1971
-        assert_eq!(normalized.tm_mon, 1);   // February
+        assert_eq!(normalized.tm_mon, 1); // February
         assert_eq!(normalized.tm_mday, 15);
     }
 
@@ -1094,21 +1094,21 @@ mod tests {
         // Jan 1, 2021 is a Friday - belongs to ISO week 53 of 2020
         // (ISO year differs from calendar year)
         let mut bd = BrokenDownTime::default();
-        bd.tm_year = 121;  // 2021
-        bd.tm_mon = 0;     // January
+        bd.tm_year = 121; // 2021
+        bd.tm_mon = 0; // January
         bd.tm_mday = 1;
-        bd.tm_wday = 5;    // Friday
+        bd.tm_wday = 5; // Friday
         bd.tm_yday = 0;
         let mut buf = [0u8; 64];
         let n = format_strftime(b"%G-W%V-%u", &bd, &mut buf);
         assert_eq!(&buf[..n], b"2020-W53-5");
 
         // Dec 31, 2020 is Thursday - ISO week 53 of 2020
-        bd.tm_year = 120;  // 2020
-        bd.tm_mon = 11;    // December
+        bd.tm_year = 120; // 2020
+        bd.tm_mon = 11; // December
         bd.tm_mday = 31;
-        bd.tm_wday = 4;    // Thursday
-        bd.tm_yday = 365;  // leap year
+        bd.tm_wday = 4; // Thursday
+        bd.tm_yday = 365; // leap year
         let n = format_strftime(b"%G-W%V-%u", &bd, &mut buf);
         assert_eq!(&buf[..n], b"2020-W53-4");
     }
@@ -1126,12 +1126,12 @@ mod tests {
         // March 5, 2025 14:30:45 (mday=5 tests padding)
         let mut bd = BrokenDownTime::default();
         bd.tm_year = 125; // 2025
-        bd.tm_mon = 2;    // March
+        bd.tm_mon = 2; // March
         bd.tm_mday = 5;
         bd.tm_hour = 14;
         bd.tm_min = 30;
         bd.tm_sec = 45;
-        bd.tm_wday = 3;   // Wednesday
+        bd.tm_wday = 3; // Wednesday
         bd.tm_yday = 63;
 
         let mut buf = [0u8; 64];
@@ -1269,13 +1269,13 @@ mod tests {
     fn glibc_gmtime_epoch_zero_parity() {
         // glibc: gmtime(0) = 1970-01-01 00:00:00 UTC
         let bd = epoch_to_broken_down(0);
-        assert_eq!(bd.tm_year, 70);  // 1970 - 1900
-        assert_eq!(bd.tm_mon, 0);    // January
+        assert_eq!(bd.tm_year, 70); // 1970 - 1900
+        assert_eq!(bd.tm_mon, 0); // January
         assert_eq!(bd.tm_mday, 1);
         assert_eq!(bd.tm_hour, 0);
         assert_eq!(bd.tm_min, 0);
         assert_eq!(bd.tm_sec, 0);
-        assert_eq!(bd.tm_wday, 4);   // Thursday
+        assert_eq!(bd.tm_wday, 4); // Thursday
         assert_eq!(bd.tm_yday, 0);
     }
 
@@ -1283,9 +1283,9 @@ mod tests {
     fn glibc_mktime_normalizes_feb30() {
         // glibc: mktime(2024-02-30) normalizes to 2024-03-01
         let bd = BrokenDownTime {
-            tm_year: 124,  // 2024
-            tm_mon: 1,     // February
-            tm_mday: 30,   // Invalid for Feb
+            tm_year: 124, // 2024
+            tm_mon: 1,    // February
+            tm_mday: 30,  // Invalid for Feb
             tm_hour: 0,
             tm_min: 0,
             tm_sec: 0,
@@ -1297,7 +1297,7 @@ mod tests {
         let epoch = broken_down_to_epoch(&bd);
         let normalized = epoch_to_broken_down(epoch);
         // Feb has 29 days in 2024 (leap year), so Feb 30 → Mar 1
-        assert_eq!(normalized.tm_mon, 2);   // March
+        assert_eq!(normalized.tm_mon, 2); // March
         assert_eq!(normalized.tm_mday, 1);
     }
 
@@ -1305,8 +1305,8 @@ mod tests {
     fn glibc_strftime_buffer_exact_fit() {
         // glibc: strftime returns length written when buffer is exact size
         let bd = BrokenDownTime {
-            tm_year: 126,  // 2026
-            tm_mon: 4,     // May
+            tm_year: 126, // 2026
+            tm_mon: 4,    // May
             tm_mday: 23,
             tm_hour: 14,
             tm_min: 30,

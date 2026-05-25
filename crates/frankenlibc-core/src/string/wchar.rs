@@ -507,8 +507,8 @@ pub fn wcwidth(wc: u32) -> i32 {
 
     // Non-characters: glibc returns -1 for these.
     // U+FDD0..U+FDEF and U+xxFFFE..U+xxFFFF for each plane.
-    if (0xFDD0..=0xFDEF).contains(&wc)
-        || (wc & 0xFFFE) == 0xFFFE // catches FFFE and FFFF in every plane
+    if (0xFDD0..=0xFDEF).contains(&wc) || (wc & 0xFFFE) == 0xFFFE
+    // catches FFFE and FFFF in every plane
     {
         return -1;
     }

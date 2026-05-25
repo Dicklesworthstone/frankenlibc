@@ -1081,10 +1081,10 @@ mod tests {
     #[test]
     fn test_rint_bankers_rounding() {
         // Banker's rounding (round to even on ties)
-        assert_eq!(rint(0.5), 0.0);  // 0.5 rounds to 0 (even)
-        assert_eq!(rint(1.5), 2.0);  // 1.5 rounds to 2 (even)
-        assert_eq!(rint(2.5), 2.0);  // 2.5 rounds to 2 (even)
-        assert_eq!(rint(3.5), 4.0);  // 3.5 rounds to 4 (even)
+        assert_eq!(rint(0.5), 0.0); // 0.5 rounds to 0 (even)
+        assert_eq!(rint(1.5), 2.0); // 1.5 rounds to 2 (even)
+        assert_eq!(rint(2.5), 2.0); // 2.5 rounds to 2 (even)
+        assert_eq!(rint(3.5), 4.0); // 3.5 rounds to 4 (even)
         assert_eq!(rint(-0.5), -0.0); // -0.5 rounds to -0 (even)
         assert_eq!(rint(-1.5), -2.0); // -1.5 rounds to -2 (even)
     }

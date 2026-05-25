@@ -238,6 +238,7 @@ fn close_main_program_handle() -> c_int {
 /// If `filename` is null, returns a handle to the main program. Otherwise
 /// loads the named shared object. `flags` must have exactly one of
 /// `RTLD_LAZY` or `RTLD_NOW` set; additional modifier flags are allowed.
+#[allow(unreachable_code)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
     // In standalone mode, only NULL filename (main program) is supported
@@ -378,6 +379,7 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 ///
 /// `handle` may be a real handle from `dlopen`, or one of the pseudo-handles
 /// `RTLD_DEFAULT` / `RTLD_NEXT`.
+#[allow(unreachable_code)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void {
     // Standalone mode: only resolve exported symbols for main program handle
@@ -532,6 +534,7 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
 }
 
 /// Find a symbol with a specific version in a shared object.
+#[allow(unreachable_code)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlvsym(
     handle: *mut c_void,
@@ -716,6 +719,7 @@ pub unsafe extern "C" fn dlvsym(
 /// Close a shared object handle.
 ///
 /// Returns 0 on success, non-zero on error.
+#[allow(unreachable_code)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
     // Standalone mode: only main program handle is valid
@@ -867,6 +871,7 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
 /// backtrace libraries, and any caller that enumerates DSOs works correctly.
 /// Uses the cached host address (resolved during bootstrap) to avoid recursion
 /// into resolve_host_symbol_raw.
+#[allow(clippy::needless_return)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dl_iterate_phdr(
     callback: Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
@@ -903,6 +908,7 @@ pub unsafe extern "C" fn dl_iterate_phdr(
 /// `dladdr` — resolve address to shared object info.
 ///
 /// Delegates to the host dynamic linker for correct DSO metadata.
+#[allow(clippy::needless_return)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int {
     if addr.is_null() || info.is_null() {

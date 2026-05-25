@@ -77,10 +77,15 @@ pub struct HostAllocatorResolutionMetrics {
 const ALLOCATOR_REENTRY_SLOT_COUNT: usize = 4096;
 const ALLOCATOR_REENTRY_SLOT_MASK: usize = ALLOCATOR_REENTRY_SLOT_COUNT - 1;
 const ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT: usize = 64;
+#[allow(dead_code)]
 const NATIVE_REENTRY_MALLOC: u8 = 1 << 0;
+#[allow(dead_code)]
 const NATIVE_REENTRY_CALLOC: u8 = 1 << 1;
+#[allow(dead_code)]
 const NATIVE_REENTRY_REALLOC: u8 = 1 << 2;
+#[allow(dead_code)]
 const NATIVE_REENTRY_FREE: u8 = 1 << 3;
+#[allow(dead_code)]
 const NATIVE_REENTRY_MEMALIGN: u8 = 1 << 4;
 
 struct AllocatorReentrySlot {
@@ -315,6 +320,7 @@ fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     Some(slot)
 }
 
+#[allow(dead_code)]
 struct NativeAllocatorReentryGuard {
     slot: &'static AllocatorReentrySlot,
     mask: u8,
@@ -329,6 +335,7 @@ impl Drop for NativeAllocatorReentryGuard {
 }
 
 #[inline]
+#[allow(dead_code)]
 fn enter_native_reentry_guard(mask: u8) -> Option<NativeAllocatorReentryGuard> {
     let slot = current_allocator_reentry_slot()?;
     let previous = slot.native_guard_bits.fetch_or(mask, Ordering::AcqRel);
@@ -642,6 +649,7 @@ pub fn malloc_htm_snapshot_for_tests() -> crate::htm_fast_path::HtmSiteSnapshot 
 }
 
 #[inline]
+#[allow(clippy::needless_return)]
 unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
     // In standalone mode, use bump allocator directly (no host glibc)
     #[cfg(feature = "standalone")]
@@ -674,6 +682,7 @@ unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
 }
 
 #[inline]
+#[allow(clippy::needless_return)]
 unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
     // In standalone mode, use bump allocator directly (no host glibc)
     #[cfg(feature = "standalone")]
@@ -720,6 +729,7 @@ unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
 }
 
 #[inline]
+#[allow(clippy::needless_return)]
 unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     if ptr.is_null() {
         return unsafe { native_libc_malloc(size) };
@@ -774,6 +784,7 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 }
 
 #[inline]
+#[allow(clippy::needless_return)]
 unsafe fn native_libc_free(ptr: *mut c_void) {
     if is_bump_ptr(ptr) {
         return; // Bump allocator: free is a no-op.
@@ -831,6 +842,7 @@ unsafe fn native_libc_posix_memalign(
 }
 
 #[inline]
+#[allow(clippy::needless_return)]
 unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
     // In standalone mode, use bump allocator directly
     #[cfg(feature = "standalone")]

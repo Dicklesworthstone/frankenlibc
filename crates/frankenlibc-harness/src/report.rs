@@ -777,7 +777,9 @@ pub struct FamilyHostParitySummary {
 }
 
 /// Aggregate host-parity statistics by family from verification results.
-pub fn aggregate_host_parity_by_family(results: &[VerificationResult]) -> Vec<FamilyHostParitySummary> {
+pub fn aggregate_host_parity_by_family(
+    results: &[VerificationResult],
+) -> Vec<FamilyHostParitySummary> {
     use std::collections::BTreeMap;
 
     let mut by_family: BTreeMap<String, (u64, u64, u64, u64)> = BTreeMap::new();
@@ -801,21 +803,23 @@ pub fn aggregate_host_parity_by_family(results: &[VerificationResult]) -> Vec<Fa
 
     by_family
         .into_iter()
-        .map(|(family, (total, parity_true, parity_false, parity_missing))| {
-            let parity_pct = if total > 0 {
-                (parity_true as f64 / total as f64) * 100.0
-            } else {
-                0.0
-            };
-            FamilyHostParitySummary {
-                family,
-                total_with_parity: total,
-                parity_true,
-                parity_false,
-                parity_missing,
-                parity_pct,
-            }
-        })
+        .map(
+            |(family, (total, parity_true, parity_false, parity_missing))| {
+                let parity_pct = if total > 0 {
+                    (parity_true as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                };
+                FamilyHostParitySummary {
+                    family,
+                    total_with_parity: total,
+                    parity_true,
+                    parity_false,
+                    parity_missing,
+                    parity_pct,
+                }
+            },
+        )
         .collect()
 }
 
@@ -2100,9 +2104,8 @@ fn load_fixture_sets_from_dir(fixture_dir: &Path) -> Result<Vec<FixtureSet>, Str
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_host_parity_by_family, DecisionTraceReport, ErrnoEdgeCaseReport,
-        PosixCaseCategoryCounts, PosixConformanceReport, PosixObligationMatrixReport,
-        RealityCounts, RealityReport,
+        DecisionTraceReport, ErrnoEdgeCaseReport, PosixCaseCategoryCounts, PosixConformanceReport,
+        PosixObligationMatrixReport, RealityCounts, RealityReport, aggregate_host_parity_by_family,
     };
     use crate::FixtureSet;
 

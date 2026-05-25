@@ -1079,7 +1079,14 @@ mod tests {
     #[test]
     fn glibc_wcschr_finds_terminator() {
         // glibc: wcschr(L"hello", L'\0') returns pointer to terminating NUL
-        let s = &[b'h' as u32, b'e' as u32, b'l' as u32, b'l' as u32, b'o' as u32, 0];
+        let s = &[
+            b'h' as u32,
+            b'e' as u32,
+            b'l' as u32,
+            b'l' as u32,
+            b'o' as u32,
+            0,
+        ];
         let result = wcschr(s, 0);
         assert!(result.is_some(), "wcschr should find NUL terminator");
         assert_eq!(result.unwrap(), 5, "NUL is at offset 5");
@@ -1088,7 +1095,14 @@ mod tests {
     #[test]
     fn glibc_wcsrchr_finds_last_occurrence() {
         // glibc: wcsrchr(L"hello", L'l') returns pointer to last 'l'
-        let s = &[b'h' as u32, b'e' as u32, b'l' as u32, b'l' as u32, b'o' as u32, 0];
+        let s = &[
+            b'h' as u32,
+            b'e' as u32,
+            b'l' as u32,
+            b'l' as u32,
+            b'o' as u32,
+            0,
+        ];
         let result = wcsrchr(s, b'l' as u32);
         assert!(result.is_some(), "wcsrchr should find 'l'");
         assert_eq!(result.unwrap(), 3, "last 'l' is at offset 3");

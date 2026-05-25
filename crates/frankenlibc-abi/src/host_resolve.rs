@@ -353,6 +353,7 @@ fn resolve_symbol_from_data(base: usize, data: &[u8], symbol: &str) -> Option<us
     None
 }
 
+#[allow(unreachable_code)]
 fn load_glibc_image() -> Option<&'static LoadedGlibcImage> {
     // Standalone mode: no host glibc to load
     #[cfg(feature = "standalone")]

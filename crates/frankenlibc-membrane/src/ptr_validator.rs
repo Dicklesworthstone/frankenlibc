@@ -1294,10 +1294,7 @@ impl ValidationPipeline {
                         return ValidationOutcome::TemporalViolation(abs);
                     }
                     slot = Some(found);
-                    debug_assert_eq!(
-                        validation_shard_epochs,
-                        Some(slot_validation_shard_epochs)
-                    );
+                    debug_assert_eq!(validation_shard_epochs, Some(slot_validation_shard_epochs));
                 }
                 CheckStage::Fingerprint => {
                     if let Some(s) = slot {

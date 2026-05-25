@@ -308,10 +308,9 @@ where
         // gets a trailing '/' under GLOB_MARK, and is accepted under
         // GLOB_ONLYDIR. Use a symlink-following stat to match. A broken
         // symlink errors out and is treated as a non-directory.
-        let resolves_to_dir =
-            std::fs::metadata(Path::new(OsStr::from_bytes(&full_path)))
-                .map(|m| m.is_dir())
-                .unwrap_or(false);
+        let resolves_to_dir = std::fs::metadata(Path::new(OsStr::from_bytes(&full_path)))
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
 
         if rest.is_empty() {
             // No more pattern components — this is a final match.
@@ -655,12 +654,7 @@ mod tests {
         // expected C-locale byte order with uppercase ASCII before lowercase.
         let temp = unique_glob_test_dir("strcoll_sort");
         std::fs::create_dir_all(&temp).unwrap();
-        for name in [
-            b"Apple" as &[u8],
-            b"banana",
-            b"Cherry",
-            b"apple",
-        ] {
+        for name in [b"Apple" as &[u8], b"banana", b"Cherry", b"apple"] {
             std::fs::write(temp.join(OsStr::from_bytes(name)), b"").unwrap();
         }
 
