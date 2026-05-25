@@ -102,6 +102,10 @@ pack_path = Path(sys.argv[1])
 checksums_path = Path(sys.argv[2])
 pack = json.loads(pack_path.read_text(encoding="utf-8"))
 checksums = json.loads(checksums_path.read_text(encoding="utf-8"))
+repo_root = Path.cwd()
+source_ledger = pack.get("source_ledger", {})
+ledger_path = repo_root / source_ledger.get("path", "")
+ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
 
 if pack.get("schema_version") != "v1":
     raise SystemExit("pack schema_version must be v1")
@@ -113,8 +117,19 @@ if checksums.get("bead") != "bd-13ya":
     raise SystemExit("checksums bead must be bd-13ya")
 
 tables = pack.get("included_codec_tables")
-if not isinstance(tables, list) or len(tables) != 4:
-    raise SystemExit("expected exactly four phase-1 included codec tables")
+if not isinstance(tables, list):
+    raise SystemExit("included_codec_tables must be a list")
+ledger_included = ledger.get("included_codecs")
+if not isinstance(ledger_included, list):
+    raise SystemExit("source ledger included_codecs must be a list")
+if len(tables) != len(ledger_included):
+    raise SystemExit(
+        f"expected {len(ledger_included)} phase-1 included codec tables, got {len(tables)}"
+    )
+table_names = {row.get("canonical") for row in tables}
+ledger_names = {row.get("canonical") for row in ledger_included}
+if table_names != ledger_names:
+    raise SystemExit("included codec tables drifted from source ledger included_codecs")
 
 for row in tables:
     recorded = row.get("table_sha256")

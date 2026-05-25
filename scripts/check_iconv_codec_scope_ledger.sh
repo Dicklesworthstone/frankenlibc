@@ -59,7 +59,7 @@ def read_json(path: Path):
 
 
 def parse_string_array(source: str, const_name: str):
-    pattern = rf"pub const {const_name}: \[&str; \d+\] = \[(.*?)\];"
+    pattern = rf"pub const {const_name}: \[&str; \d+\]\s*=\s*\[(.*?)\];"
     match = re.search(pattern, source, re.S)
     if match is None:
         raise SystemExit(f"unable to locate {const_name} in iconv core module")

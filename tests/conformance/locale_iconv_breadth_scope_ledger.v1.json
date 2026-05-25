@@ -5,7 +5,7 @@
   "owner_bead": "bd-b92jd.5",
   "generated_utc": "2026-05-05T01:00:00Z",
   "source_commit": "2349e608b9a71970c4c79632dfa943d9d282db2c",
-  "purpose": "Table-driven ledger that separates the IMPLEMENTED phase-1 iconv/locale bootstrap surface (already covered by tests/conformance/iconv_codec_scope_ledger.v1.json) from the next-wave PLANNED codec breadth and the explicit UNSUPPORTED codec/locale families. Each row carries a fixture obligation that must land before docs/support_matrix/release surfaces can advertise the row, and every row must carry an explicit skip_reason or fixture_obligation so docs/support promotion cannot bypass the gate by silence.",
+  "purpose": "Table-driven ledger that separates the IMPLEMENTED phase-1 iconv/locale bootstrap surface (already covered by tests/conformance/iconv_codec_scope_ledger.v1.json) from the next-wave PLANNED codec breadth and the explicit UNSUPPORTED codec/locale families. WS-6 Japanese, Big5, and KOI8 bootstrap coverage is admitted only where fixture and table-pack evidence exists; ISO-2022 and large-table families remain explicitly blocked.",
   "phase": "phase2-breadth-survey",
   "inputs": {
     "iconv_codec_scope_ledger": "tests/conformance/iconv_codec_scope_ledger.v1.json",
@@ -93,6 +93,70 @@
       "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[ASCII]",
       "expected_iconv_open_decision": "ok",
       "rationale": "Strict 7-bit single-byte subset with high-bit rejection parity."
+    },
+    {
+      "row_id": "phase1-koi8-r",
+      "canonical": "KOI8-R",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[KOI8-R];tests/conformance/fixtures/iconv_phase1.json#/cases/strict_koi8r_to_utf8_cyrillic",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "WS-6 KOI8 Cyrillic bootstrap path has strict fixture and table-pack evidence."
+    },
+    {
+      "row_id": "phase1-koi8-u",
+      "canonical": "KOI8-U",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[KOI8-U]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "KOI8-U is included in the canonical phase-1 scope ledger."
+    },
+    {
+      "row_id": "phase1-koi8-ru",
+      "canonical": "KOI8-RU",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[KOI8-RU]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "KOI8-RU is included in the canonical phase-1 scope ledger."
+    },
+    {
+      "row_id": "phase1-koi8-t",
+      "canonical": "KOI8-T",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[KOI8-T]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "KOI8-T is included in the canonical phase-1 scope ledger."
+    },
+    {
+      "row_id": "phase1-euc-jp",
+      "canonical": "EUC-JP",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[EUC-JP];tests/conformance/fixtures/iconv_phase1.json#/cases/strict_eucjp_halfwidth_katakana_to_utf8",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "WS-6 EUC-JP bootstrap path has strict fixture coverage for ASCII-compatible and JIS X 0201 kana conversion."
+    },
+    {
+      "row_id": "phase1-shift-jis-cp932",
+      "canonical": "SHIFT_JIS",
+      "alias": "CP932",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[SHIFT_JIS];tests/conformance/fixtures/iconv_phase1.json#/cases/strict_cp932_halfwidth_katakana_to_utf8",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "WS-6 CP932 alias routes through the in-tree SHIFT_JIS bootstrap path."
+    },
+    {
+      "row_id": "phase1-big5",
+      "canonical": "BIG5",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[BIG5];tests/conformance/fixtures/iconv_phase1.json#/cases/strict_big5_ascii_to_utf8",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "WS-6 BIG5 bootstrap path is admitted for deterministic ASCII-compatible conversion while BIG5-HKSCS remains excluded."
     }
   ],
   "planned_breadth_codecs": [
@@ -142,15 +206,6 @@
       "rationale": "Common Western European modern encoding."
     },
     {
-      "row_id": "phase2-koi8-r",
-      "canonical": "KOI8-R",
-      "phase": "phase2",
-      "support_status": "planned",
-      "fixture_obligation": "KOI8-R -> UTF-8 single-byte table fixture against host glibc; provenance via iconv_table_checksums.v1.json.",
-      "expected_iconv_open_decision": "ok_after_phase2",
-      "rationale": "Cyrillic single-byte coverage."
-    },
-    {
       "row_id": "phase2-windows-1252",
       "canonical": "WINDOWS-1252",
       "phase": "phase2",
@@ -176,24 +231,6 @@
       "phase": "phase1",
       "support_status": "unsupported",
       "skip_reason": "Shift-state machine + table corpus deferred until phase-3.",
-      "expected_iconv_open_decision": "einval",
-      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
-    },
-    {
-      "row_id": "unsupported-euc-jp",
-      "canonical": "EUC-JP",
-      "phase": "phase1",
-      "support_status": "unsupported",
-      "skip_reason": "Multibyte table pipeline deferred.",
-      "expected_iconv_open_decision": "einval",
-      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
-    },
-    {
-      "row_id": "unsupported-shift-jis",
-      "canonical": "SHIFT_JIS",
-      "phase": "phase1",
-      "support_status": "unsupported",
-      "skip_reason": "Multibyte table pipeline deferred.",
       "expected_iconv_open_decision": "einval",
       "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
     },
@@ -261,7 +298,7 @@
   "minimum_row_counts": {
     "implemented_bootstrap_codecs": 4,
     "planned_breadth_codecs": 6,
-    "unsupported_breadth_codecs": 6,
+    "unsupported_breadth_codecs": 4,
     "locale_breadth_rows": 4
   }
 }

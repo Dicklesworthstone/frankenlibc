@@ -75,10 +75,10 @@
       "expected_errno": 22,
       "mode": "strict"
     },
-    {
-      "name": "strict_utf8_to_utf32_with_bom",
-      "function": "iconv",
-      "spec_section": "POSIX iconv",
+  {
+    "name": "strict_utf8_to_utf32_with_bom",
+    "function": "iconv",
+    "spec_section": "POSIX iconv",
       "inputs": {
         "tocode": "UTF-32",
         "fromcode": "UTF-8",
@@ -86,12 +86,98 @@
         "out_len": 8
       },
       "expected_output": "ok nonrev=0 in_left=0 out_left=0 out=[255, 254, 0, 0, 65, 0, 0, 0]",
-      "expected_errno": 0,
-      "mode": "strict"
+    "expected_errno": 0,
+    "mode": "strict"
+  },
+  {
+    "name": "strict_cp932_halfwidth_katakana_to_utf8",
+    "function": "iconv",
+    "spec_section": "POSIX iconv WS-6 CP932 alias bootstrap",
+    "inputs": {
+      "tocode": "UTF-8",
+      "fromcode": "CP932",
+      "input": [
+        177
+      ],
+      "out_len": 8
     },
-    {
-      "name": "hardened_utf16le_to_utf8",
-      "function": "iconv",
+    "expected_output": "ok nonrev=0 in_left=0 out_left=5 out=[239, 189, 177]",
+    "expected_errno": 0,
+    "mode": "strict"
+  },
+  {
+    "name": "strict_eucjp_halfwidth_katakana_to_utf8",
+    "function": "iconv",
+    "spec_section": "POSIX iconv WS-6 EUC-JP bootstrap",
+    "inputs": {
+      "tocode": "UTF-8",
+      "fromcode": "EUC-JP",
+      "input": [
+        142,
+        177
+      ],
+      "out_len": 8
+    },
+    "expected_output": "ok nonrev=0 in_left=0 out_left=5 out=[239, 189, 177]",
+    "expected_errno": 0,
+    "mode": "strict"
+  },
+  {
+    "name": "strict_big5_ascii_to_utf8",
+    "function": "iconv",
+    "spec_section": "POSIX iconv WS-6 BIG5 bootstrap",
+    "inputs": {
+      "tocode": "UTF-8",
+      "fromcode": "BIG5",
+      "input": [
+        72,
+        75
+      ],
+      "out_len": 4
+    },
+    "expected_output": "ok nonrev=0 in_left=0 out_left=2 out=[72, 75]",
+    "expected_errno": 0,
+    "mode": "strict"
+  },
+  {
+    "name": "strict_koi8r_to_utf8_cyrillic",
+    "function": "iconv",
+    "spec_section": "POSIX iconv WS-6 KOI8-R bootstrap",
+    "inputs": {
+      "tocode": "UTF-8",
+      "fromcode": "KOI8-R",
+      "input": [
+        193
+      ],
+      "out_len": 4
+    },
+    "expected_output": "ok nonrev=0 in_left=0 out_left=2 out=[208, 176]",
+    "expected_errno": 0,
+    "mode": "strict"
+  },
+  {
+    "name": "hardened_iso2022jp_deferred_denied",
+    "function": "iconv",
+    "spec_section": "TSM hardened iconv WS-6 ISO-2022-JP deferred deny",
+    "inputs": {
+      "tocode": "UTF-8",
+      "fromcode": "ISO-2022-JP",
+      "input": [
+        27,
+        36,
+        66,
+        36,
+        34
+      ],
+      "out_len": 8
+    },
+    "expected_output": "open_err errno=22",
+    "expected_errno": 22,
+    "mode": "hardened"
+  },
+  {
+    "name": "hardened_utf16le_to_utf8",
+    "function": "iconv",
       "spec_section": "TSM hardened iconv",
       "inputs": {
         "tocode": "UTF-8",

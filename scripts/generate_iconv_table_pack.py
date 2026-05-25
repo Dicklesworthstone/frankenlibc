@@ -15,7 +15,7 @@ from typing import Any
 
 BEAD_ID = "bd-13ya"
 SCHEMA_VERSION = "v1"
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.1.0"
 
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parent.parent
@@ -91,6 +91,17 @@ def codec_template(normalized_name: str) -> dict[str, Any]:
             ],
             "notes": "Phase-1 UTF-16LE conversion table with surrogate-pair coverage.",
         },
+        "UTF16BE": {
+            "family": "utf",
+            "unit_kind": "fixed-width",
+            "max_units_per_scalar": 2,
+            "endianness": "big",
+            "deterministic_vectors": [
+                {"input_hex": "004120AC", "expected_scalar_sequence": ["U+0041", "U+20AC"]},
+                {"input_hex": "D83DDE00", "expected_scalar_sequence": ["U+1F600"]},
+            ],
+            "notes": "Phase-1 UTF-16BE conversion table with surrogate-pair coverage.",
+        },
         "UTF32": {
             "family": "utf",
             "unit_kind": "fixed-width",
@@ -103,10 +114,91 @@ def codec_template(normalized_name: str) -> dict[str, Any]:
             ],
             "notes": "Phase-1 UTF-32LE conversion table with deterministic BOM policy.",
         },
+        "UTF32BE": {
+            "family": "utf",
+            "unit_kind": "fixed-width",
+            "max_units_per_scalar": 1,
+            "endianness": "big",
+            "deterministic_vectors": [
+                {"input_hex": "00000041", "expected_scalar_sequence": ["U+0041"]},
+                {"input_hex": "000020AC", "expected_scalar_sequence": ["U+20AC"]},
+            ],
+            "notes": "Phase-1 UTF-32BE conversion table with explicit big-endian scalar vectors.",
+        },
+        "EUCJP": {
+            "family": "multibyte",
+            "unit_kind": "variable-width",
+            "max_units_per_scalar": 3,
+            "endianness": "n/a",
+            "deterministic_vectors": [
+                {"input_hex": "41", "expected_scalar_sequence": ["U+0041"]},
+                {"input_hex": "8EB1", "expected_scalar_sequence": ["U+FF71"]},
+            ],
+            "notes": "WS-6 EUC-JP bootstrap coverage: ASCII plus JIS X 0201 kana path.",
+        },
+        "SHIFTJIS": {
+            "family": "multibyte",
+            "unit_kind": "variable-width",
+            "max_units_per_scalar": 2,
+            "endianness": "n/a",
+            "deterministic_vectors": [
+                {"input_hex": "41", "expected_scalar_sequence": ["U+0041"]},
+                {"input_hex": "B1", "expected_scalar_sequence": ["U+FF71"]},
+            ],
+            "notes": "WS-6 SHIFT_JIS/CP932 bootstrap coverage: ASCII plus halfwidth kana path.",
+        },
+        "BIG5": {
+            "family": "multibyte",
+            "unit_kind": "variable-width",
+            "max_units_per_scalar": 2,
+            "endianness": "n/a",
+            "deterministic_vectors": [
+                {"input_hex": "48", "expected_scalar_sequence": ["U+0048"]},
+                {"input_hex": "4B", "expected_scalar_sequence": ["U+004B"]},
+            ],
+            "notes": "WS-6 BIG5 bootstrap coverage: deterministic ASCII-compatible path; HKSCS remains excluded.",
+        },
     }
-    if normalized_name not in templates:
-        raise ValueError(f"Unsupported phase-1 codec in ledger: {normalized_name}")
-    return templates[normalized_name].copy()
+    if normalized_name in templates:
+        return templates[normalized_name].copy()
+
+    if normalized_name.startswith("KOI8"):
+        return {
+            "family": "single-byte",
+            "unit_kind": "fixed-width",
+            "max_units_per_scalar": 1,
+            "endianness": "n/a",
+            "deterministic_vectors": [
+                {"input_hex": "41", "expected_scalar_sequence": ["U+0041"]},
+                {"input_hex": "C1", "expected_scalar_sequence": ["U+0430"]},
+            ],
+            "notes": "KOI8-family single-byte bootstrap table with ASCII and Cyrillic vectors.",
+        }
+
+    if normalized_name.startswith("ISO8859") or normalized_name.startswith("CP"):
+        return {
+            "family": "single-byte",
+            "unit_kind": "fixed-width",
+            "max_units_per_scalar": 1,
+            "endianness": "n/a",
+            "deterministic_vectors": [
+                {"input_hex": "41", "expected_scalar_sequence": ["U+0041"]},
+                {"input_hex": "7E", "expected_scalar_sequence": ["U+007E"]},
+            ],
+            "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        }
+
+    return {
+        "family": "single-byte",
+        "unit_kind": "fixed-width",
+        "max_units_per_scalar": 1,
+        "endianness": "n/a",
+        "deterministic_vectors": [
+            {"input_hex": "41", "expected_scalar_sequence": ["U+0041"]},
+            {"input_hex": "7E", "expected_scalar_sequence": ["U+007E"]},
+        ],
+        "notes": "Phase-1 bootstrap row for an in-tree deterministic single-byte codec.",
+    }
 
 
 def build_codec_tables(ledger: dict[str, Any]) -> list[dict[str, Any]]:

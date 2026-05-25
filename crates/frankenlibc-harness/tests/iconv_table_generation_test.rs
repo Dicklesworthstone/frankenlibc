@@ -62,6 +62,7 @@ fn iconv_table_pack_schema_is_locked() -> TestResult {
     let root = repo_root()?;
     let pack = load_json(&root.join("tests/conformance/iconv_table_pack.v1.json"))?;
     let checksums = load_json(&root.join("tests/conformance/iconv_table_checksums.v1.json"))?;
+    let ledger = load_json(&root.join("tests/conformance/iconv_codec_scope_ledger.v1.json"))?;
 
     assert_eq!(pack["schema_version"].as_str(), Some("v1"));
     assert_eq!(pack["bead"].as_str(), Some("bd-13ya"));
@@ -71,13 +72,28 @@ fn iconv_table_pack_schema_is_locked() -> TestResult {
     let tables = pack["included_codec_tables"]
         .as_array()
         .ok_or_else(|| String::from("included_codec_tables must be array"))?;
+    let ledger_included = ledger["included_codecs"]
+        .as_array()
+        .ok_or_else(|| String::from("ledger included_codecs must be array"))?;
     assert_eq!(
         tables.len(),
-        4,
-        "expected exactly four phase-1 codec tables"
+        ledger_included.len(),
+        "phase-1 codec table count must match source ledger"
     );
 
-    let expected = ["UTF-8", "ISO-8859-1", "UTF-16LE", "UTF-32"];
+    let expected = [
+        "UTF-8",
+        "ISO-8859-1",
+        "UTF-16LE",
+        "UTF-32",
+        "KOI8-R",
+        "KOI8-U",
+        "KOI8-RU",
+        "KOI8-T",
+        "EUC-JP",
+        "SHIFT_JIS",
+        "BIG5",
+    ];
     for canonical in expected {
         assert!(
             tables

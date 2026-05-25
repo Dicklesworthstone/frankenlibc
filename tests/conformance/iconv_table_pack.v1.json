@@ -8,12 +8,6 @@
       "reason": "Large mapping table not admitted until deterministic generation+checksum controls land."
     },
     {
-      "canonical": "EUC-JP",
-      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
-      "normalized": "EUCJP",
-      "reason": "Requires additional deterministic multibyte table pipeline beyond phase-1 scope."
-    },
-    {
       "canonical": "GB18030",
       "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
       "normalized": "GB18030",
@@ -30,19 +24,985 @@
       "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
       "normalized": "ISO2022JP",
       "reason": "Shift-state machine and table corpus are out of phase-1 minimal scope."
-    },
-    {
-      "canonical": "SHIFT_JIS",
-      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
-      "normalized": "SHIFTJIS",
-      "reason": "Requires additional deterministic multibyte table pipeline beyond phase-1 scope."
     }
   ],
   "generator": {
     "path": "scripts/generate_iconv_table_pack.py",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "included_codec_tables": [
+    {
+      "aliases": [
+        "armscii8"
+      ],
+      "canonical": "ARMSCII-8",
+      "compatibility_intent": "Supported as an in-tree deterministic Armenian single-byte codec.",
+      "normalized": "ARMSCII8",
+      "normalized_aliases": [
+        "ARMSCII8"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Phase-1 bootstrap row for an in-tree deterministic single-byte codec.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "01df8854a7b990dbede30b3d572f0b3cf5d1c3e3c2f95e688865b7c93ce792b6"
+    },
+    {
+      "aliases": [
+        "usascii",
+        "ansi_x3.4-1968",
+        "ansi-x3-4-1968",
+        "iso646-us"
+      ],
+      "canonical": "ASCII",
+      "compatibility_intent": "Supported as a strict 7-bit single-byte codec; non-ASCII input or output fails with EILSEQ.",
+      "normalized": "ASCII",
+      "normalized_aliases": [
+        "ANSIX3.41968",
+        "ANSIX341968",
+        "ASCII",
+        "ISO646US",
+        "USASCII"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Phase-1 bootstrap row for an in-tree deterministic single-byte codec.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "1b316c2c87018fd877172328d294c22cc42b9997561dff101c8664f124565bc0"
+    },
+    {
+      "aliases": [
+        "csbig5",
+        "bigfive"
+      ],
+      "canonical": "BIG5",
+      "compatibility_intent": "Supported for WS-6 BIG5 bootstrap coverage; BIG5-HKSCS remains explicitly excluded.",
+      "normalized": "BIG5",
+      "normalized_aliases": [
+        "BIG5",
+        "BIGFIVE",
+        "CSBIG5"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0048"
+            ],
+            "input_hex": "48"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+004B"
+            ],
+            "input_hex": "4B"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "multibyte",
+        "max_units_per_scalar": 2,
+        "notes": "WS-6 BIG5 bootstrap coverage: deterministic ASCII-compatible path; HKSCS remains excluded.",
+        "unit_kind": "variable-width"
+      },
+      "table_sha256": "7198f7897fbdefc4e408cb4573f1fab50b74fde0f31de8a3e6b5ca04df7bbcda"
+    },
+    {
+      "aliases": [
+        "windows1250",
+        "1250"
+      ],
+      "canonical": "CP1250",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1250",
+      "normalized_aliases": [
+        "1250",
+        "CP1250",
+        "WINDOWS1250"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "0f6cc5440c3c5951923e5c0f1c8cba7310aada058d3cf098d86767c3a136a98d"
+    },
+    {
+      "aliases": [
+        "windows1251",
+        "1251"
+      ],
+      "canonical": "CP1251",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1251",
+      "normalized_aliases": [
+        "1251",
+        "CP1251",
+        "WINDOWS1251"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "a66a1f0f3d404f45bc49d5b532c0fce52f4f2c69b70402fdaf34afee29bfb780"
+    },
+    {
+      "aliases": [
+        "windows1252",
+        "1252"
+      ],
+      "canonical": "CP1252",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1252",
+      "normalized_aliases": [
+        "1252",
+        "CP1252",
+        "WINDOWS1252"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "85c02b4d9b08a7c55de8c5fa5c6e29540e88f86bda49b4859a7c1736d8cc7c4e"
+    },
+    {
+      "aliases": [
+        "windows1253",
+        "1253"
+      ],
+      "canonical": "CP1253",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1253",
+      "normalized_aliases": [
+        "1253",
+        "CP1253",
+        "WINDOWS1253"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "2822314883ced5c8db05f4f42f1721f5b7c8854486d58c611c91b6c63175cc0f"
+    },
+    {
+      "aliases": [
+        "windows1254",
+        "1254"
+      ],
+      "canonical": "CP1254",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1254",
+      "normalized_aliases": [
+        "1254",
+        "CP1254",
+        "WINDOWS1254"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "269d2511e7cab8e214bd91820aa40b8a0c75ba1e9ed8ebae9da832374e8b415c"
+    },
+    {
+      "aliases": [
+        "windows1255",
+        "1255"
+      ],
+      "canonical": "CP1255",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1255",
+      "normalized_aliases": [
+        "1255",
+        "CP1255",
+        "WINDOWS1255"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "c2c203b693a25ebbc6ecdb4e8771c80babb61c15848f95a6d0fcc2371fb3e25f"
+    },
+    {
+      "aliases": [
+        "windows1256",
+        "1256"
+      ],
+      "canonical": "CP1256",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1256",
+      "normalized_aliases": [
+        "1256",
+        "CP1256",
+        "WINDOWS1256"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "b4ebfcd31049ec19858a338134b71812490aee5615c202699de2670a899af91c"
+    },
+    {
+      "aliases": [
+        "windows1257",
+        "1257"
+      ],
+      "canonical": "CP1257",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1257",
+      "normalized_aliases": [
+        "1257",
+        "CP1257",
+        "WINDOWS1257"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "648c74bb11210603c8f9ed641b0ea4082c8f0cc98619885b6b86021f54f574b3"
+    },
+    {
+      "aliases": [
+        "windows1258",
+        "1258"
+      ],
+      "canonical": "CP1258",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec.",
+      "normalized": "CP1258",
+      "normalized_aliases": [
+        "1258",
+        "CP1258",
+        "WINDOWS1258"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "43eb1f400024b8a7af71d9ccbe0b0aeb912ab43643d260ce8a4aa90839b478bf"
+    },
+    {
+      "aliases": [
+        "ibm437",
+        "437"
+      ],
+      "canonical": "CP437",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP437",
+      "normalized_aliases": [
+        "437",
+        "CP437",
+        "IBM437"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "c42c5b0070972e9ce05ff14816fca73baf9da1dc75ac65ceacd3171c5ac88527"
+    },
+    {
+      "aliases": [
+        "ibm775",
+        "775"
+      ],
+      "canonical": "CP775",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP775",
+      "normalized_aliases": [
+        "775",
+        "CP775",
+        "IBM775"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "43b01a9140c125d6d1076ffedc632404be3c55e037f6dd352150bc099a70cefc"
+    },
+    {
+      "aliases": [
+        "ibm850",
+        "850"
+      ],
+      "canonical": "CP850",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP850",
+      "normalized_aliases": [
+        "850",
+        "CP850",
+        "IBM850"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "73923df63d00991aef96ca192e91bf10552bfd23f9883afff69710ef91f8aa71"
+    },
+    {
+      "aliases": [
+        "ibm855",
+        "855"
+      ],
+      "canonical": "CP855",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP855",
+      "normalized_aliases": [
+        "855",
+        "CP855",
+        "IBM855"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "72ca8b8a4fa65c8b4d18e0e58e3e5c691c031cc74b8ed09782e21c97d158f11e"
+    },
+    {
+      "aliases": [
+        "ibm857",
+        "857"
+      ],
+      "canonical": "CP857",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP857",
+      "normalized_aliases": [
+        "857",
+        "CP857",
+        "IBM857"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "2191ab8048c78354033efae4d9884e81e0acf5777ee38e6df01e84c64310f8d6"
+    },
+    {
+      "aliases": [
+        "ibm860",
+        "860"
+      ],
+      "canonical": "CP860",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP860",
+      "normalized_aliases": [
+        "860",
+        "CP860",
+        "IBM860"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "887437bfd5d98acaeae6ab5e5353f293d343e3057b219334552ba4e774d46c30"
+    },
+    {
+      "aliases": [
+        "ibm861",
+        "861"
+      ],
+      "canonical": "CP861",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP861",
+      "normalized_aliases": [
+        "861",
+        "CP861",
+        "IBM861"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "d044d169bd2923ada539fcf4300cfc0b4fb3e8f8a9d77667b578e9463f23a58f"
+    },
+    {
+      "aliases": [
+        "ibm862",
+        "862"
+      ],
+      "canonical": "CP862",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP862",
+      "normalized_aliases": [
+        "862",
+        "CP862",
+        "IBM862"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "1aa7a66e2f4ef32213b59889ed9891bb0f07b6bcc172d3ceff569d6054d7af07"
+    },
+    {
+      "aliases": [
+        "ibm863",
+        "863"
+      ],
+      "canonical": "CP863",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP863",
+      "normalized_aliases": [
+        "863",
+        "CP863",
+        "IBM863"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "ad18a4f4693caaa3662a282b345ca2afe9d19f98475e842a35ef0b8cd901a8f3"
+    },
+    {
+      "aliases": [
+        "ibm864",
+        "864"
+      ],
+      "canonical": "CP864",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP864",
+      "normalized_aliases": [
+        "864",
+        "CP864",
+        "IBM864"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "cb0d3ef527868a40fd26c0922cd7343df662beefd593aa0ed11fe60010d40ce0"
+    },
+    {
+      "aliases": [
+        "ibm865",
+        "865"
+      ],
+      "canonical": "CP865",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP865",
+      "normalized_aliases": [
+        "865",
+        "CP865",
+        "IBM865"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "7c3105b0b3058f351f8a2c46d7e3cb0505ac209b445103334f1146c64119625e"
+    },
+    {
+      "aliases": [
+        "ibm866",
+        "866"
+      ],
+      "canonical": "CP866",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP866",
+      "normalized_aliases": [
+        "866",
+        "CP866",
+        "IBM866"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "f3b6f783ab6433f4dd56cfed288722cac26284c4203c35385c0f213769e5e676"
+    },
+    {
+      "aliases": [
+        "ibm869",
+        "869"
+      ],
+      "canonical": "CP869",
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec.",
+      "normalized": "CP869",
+      "normalized_aliases": [
+        "869",
+        "CP869",
+        "IBM869"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "ab91cb4b832e32f6a6de134b6b07ffed19c0a652bda111d662aa31685bdadd16"
+    },
+    {
+      "aliases": [
+        "windows874",
+        "874"
+      ],
+      "canonical": "CP874",
+      "compatibility_intent": "Supported as an in-tree deterministic Windows Thai single-byte codec.",
+      "normalized": "CP874",
+      "normalized_aliases": [
+        "874",
+        "CP874",
+        "WINDOWS874"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "ab8d240e86989faee0dddd2b9376415749d9139f3b82211e425d73a5b76c995b"
+    },
+    {
+      "aliases": [
+        "eucjp",
+        "ujis"
+      ],
+      "canonical": "EUC-JP",
+      "compatibility_intent": "Supported for WS-6 EUC-JP bootstrap coverage: ASCII plus JIS X 0201 kana conversion.",
+      "normalized": "EUCJP",
+      "normalized_aliases": [
+        "EUCJP",
+        "UJIS"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+FF71"
+            ],
+            "input_hex": "8EB1"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "multibyte",
+        "max_units_per_scalar": 3,
+        "notes": "WS-6 EUC-JP bootstrap coverage: ASCII plus JIS X 0201 kana path.",
+        "unit_kind": "variable-width"
+      },
+      "table_sha256": "e5d33f34a55f0b2c8c8c11a1f841059f383ae00b8f2004dd446a141242f17566"
+    },
     {
       "aliases": [
         "latin1"
@@ -77,6 +1037,775 @@
         "unit_kind": "fixed-width"
       },
       "table_sha256": "a2224e81756023540839404090b606bd5ec5b8809dbb806db5bf7cd8e77dcd48"
+    },
+    {
+      "aliases": [
+        "latin6",
+        "iso885910"
+      ],
+      "canonical": "ISO-8859-10",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO885910",
+      "normalized_aliases": [
+        "ISO885910",
+        "LATIN6"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "f875b0c4a756992906d274b3c95a9198bf008d64ebb25540cd4a17b5291c1615"
+    },
+    {
+      "aliases": [
+        "iso885911"
+      ],
+      "canonical": "ISO-8859-11",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO885911",
+      "normalized_aliases": [
+        "ISO885911"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "19d26aea623cb769045f799c267d0803da53cc49dcc7d8071791294947534e10"
+    },
+    {
+      "aliases": [
+        "latin7",
+        "iso885913"
+      ],
+      "canonical": "ISO-8859-13",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO885913",
+      "normalized_aliases": [
+        "ISO885913",
+        "LATIN7"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "9cc97ee5d729548c080281ead623d0d78747e950c5250c3f890993522b41ce92"
+    },
+    {
+      "aliases": [
+        "latin8",
+        "iso885914"
+      ],
+      "canonical": "ISO-8859-14",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO885914",
+      "normalized_aliases": [
+        "ISO885914",
+        "LATIN8"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "9cc0c06159364f7673fb3017d750614f02f9fd7657713d837ec8a3d78f97c266"
+    },
+    {
+      "aliases": [
+        "latin9",
+        "iso885915"
+      ],
+      "canonical": "ISO-8859-15",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO885915",
+      "normalized_aliases": [
+        "ISO885915",
+        "LATIN9"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "4ba52aa1e2f07685181ea60e423e86d488722ff68d4f46477ab4f3890a4306e8"
+    },
+    {
+      "aliases": [
+        "latin10",
+        "iso885916"
+      ],
+      "canonical": "ISO-8859-16",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO885916",
+      "normalized_aliases": [
+        "ISO885916",
+        "LATIN10"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "6fc22b9d48dd5e6343c30a90d9389657b9b93c83a3a66f4e4ad0d467f71d93da"
+    },
+    {
+      "aliases": [
+        "latin2",
+        "iso88592"
+      ],
+      "canonical": "ISO-8859-2",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO88592",
+      "normalized_aliases": [
+        "ISO88592",
+        "LATIN2"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "a1e7eb64e9a2c3e748e75655914eca0c0256360f462ccb80f735962d8c549f3f"
+    },
+    {
+      "aliases": [
+        "latin3",
+        "iso88593"
+      ],
+      "canonical": "ISO-8859-3",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO88593",
+      "normalized_aliases": [
+        "ISO88593",
+        "LATIN3"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "db464ec66da4a894b0830de4f29339bd6b9aabd46057ad358b37ba4c6af6a0ec"
+    },
+    {
+      "aliases": [
+        "latin4",
+        "iso88594"
+      ],
+      "canonical": "ISO-8859-4",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO88594",
+      "normalized_aliases": [
+        "ISO88594",
+        "LATIN4"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "3dc617bac6f1db15751c766e0e1b3d1617a6576b41fb348e7863310030a7fee8"
+    },
+    {
+      "aliases": [
+        "cyrillic",
+        "iso88595"
+      ],
+      "canonical": "ISO-8859-5",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO88595",
+      "normalized_aliases": [
+        "CYRILLIC",
+        "ISO88595"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "b2bd731d457665ce1bdb8d23f0cf06c4ee69a514e09853d637a80f835e8327fb"
+    },
+    {
+      "aliases": [
+        "arabic",
+        "iso88596"
+      ],
+      "canonical": "ISO-8859-6",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO88596",
+      "normalized_aliases": [
+        "ARABIC",
+        "ISO88596"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "c2777dd6f447d5539d37d6f5d4669e6e253289eb33a111f298e25e64bcf27340"
+    },
+    {
+      "aliases": [
+        "greek",
+        "iso88597"
+      ],
+      "canonical": "ISO-8859-7",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO88597",
+      "normalized_aliases": [
+        "GREEK",
+        "ISO88597"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "df6b5293e7f3e1ffdbbbb3929c7b0aa479bacad2e5990fd0aa7f2ac6114e4ab2"
+    },
+    {
+      "aliases": [
+        "hebrew",
+        "iso88598"
+      ],
+      "canonical": "ISO-8859-8",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO88598",
+      "normalized_aliases": [
+        "HEBREW",
+        "ISO88598"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "98058ae4e7f2a23ca741f605b1ab321768e0c9b0204cb66a3b0dfbc391b164ca"
+    },
+    {
+      "aliases": [
+        "latin5",
+        "iso88599"
+      ],
+      "canonical": "ISO-8859-9",
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec.",
+      "normalized": "ISO88599",
+      "normalized_aliases": [
+        "ISO88599",
+        "LATIN5"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Single-byte phase-1 table pack row with deterministic ASCII baseline vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "2053adf797e87022f858a02768c8ec605d516661c724e4778c5a09f73546f528"
+    },
+    {
+      "aliases": [
+        "koi8r",
+        "cskoi8r",
+        "koi8"
+      ],
+      "canonical": "KOI8-R",
+      "compatibility_intent": "Supported for WS-6 Cyrillic single-byte conversion coverage.",
+      "normalized": "KOI8R",
+      "normalized_aliases": [
+        "CSKOI8R",
+        "KOI8",
+        "KOI8R"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+0430"
+            ],
+            "input_hex": "C1"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "KOI8-family single-byte bootstrap table with ASCII and Cyrillic vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "5c4d5c1e8f69989dd2d2669120990487503e5f6e345f3b880ce58c4277016f51"
+    },
+    {
+      "aliases": [
+        "koi8ru"
+      ],
+      "canonical": "KOI8-RU",
+      "compatibility_intent": "Supported for WS-6 mixed Russian/Ukrainian KOI8 single-byte conversion coverage.",
+      "normalized": "KOI8RU",
+      "normalized_aliases": [
+        "KOI8RU"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+0430"
+            ],
+            "input_hex": "C1"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "KOI8-family single-byte bootstrap table with ASCII and Cyrillic vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "a5189be11b5f14474a7560ebb78e07ceae6b0b9aed75d7d06af358d2cabc5f85"
+    },
+    {
+      "aliases": [
+        "koi8t"
+      ],
+      "canonical": "KOI8-T",
+      "compatibility_intent": "Supported for WS-6 Tajik KOI8 single-byte conversion coverage.",
+      "normalized": "KOI8T",
+      "normalized_aliases": [
+        "KOI8T"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+0430"
+            ],
+            "input_hex": "C1"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "KOI8-family single-byte bootstrap table with ASCII and Cyrillic vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "6a73efc6724ecdb5c14d7aafdcc7db42879e446a2df8a3b970545d7f9f0d8d8a"
+    },
+    {
+      "aliases": [
+        "koi8u"
+      ],
+      "canonical": "KOI8-U",
+      "compatibility_intent": "Supported for WS-6 Ukrainian KOI8 single-byte conversion coverage.",
+      "normalized": "KOI8U",
+      "normalized_aliases": [
+        "KOI8U"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+0430"
+            ],
+            "input_hex": "C1"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "KOI8-family single-byte bootstrap table with ASCII and Cyrillic vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "3d9be4d8a5016a62fa5efffca4ea25c134085c27ef9794969994e66a4a870b7d"
+    },
+    {
+      "aliases": [
+        "mac",
+        "csmacintosh"
+      ],
+      "canonical": "MACROMAN",
+      "compatibility_intent": "Supported as an in-tree deterministic Macintosh single-byte codec.",
+      "normalized": "MACROMAN",
+      "normalized_aliases": [
+        "CSMACINTOSH",
+        "MAC",
+        "MACROMAN"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Phase-1 bootstrap row for an in-tree deterministic single-byte codec.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "a451c0b2e31e99b07646657e3a48414f97497c659780a548a3c64bf3abe105f8"
+    },
+    {
+      "aliases": [
+        "shiftjis",
+        "sjis",
+        "cp932",
+        "ms_kanji"
+      ],
+      "canonical": "SHIFT_JIS",
+      "compatibility_intent": "Supported for WS-6 SHIFT_JIS/CP932 bootstrap coverage: ASCII plus halfwidth kana conversion.",
+      "normalized": "SHIFTJIS",
+      "normalized_aliases": [
+        "CP932",
+        "MSKANJI",
+        "SHIFTJIS",
+        "SJIS"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+FF71"
+            ],
+            "input_hex": "B1"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "multibyte",
+        "max_units_per_scalar": 2,
+        "notes": "WS-6 SHIFT_JIS/CP932 bootstrap coverage: ASCII plus halfwidth kana path.",
+        "unit_kind": "variable-width"
+      },
+      "table_sha256": "bbc8423824d6da6cfcfcd96983ea981a524f6a38a6e7bfae811c101d0171fdaa"
+    },
+    {
+      "aliases": [
+        "tcvn5712-1",
+        "vn3"
+      ],
+      "canonical": "TCVN",
+      "compatibility_intent": "Supported as an in-tree deterministic Vietnamese single-byte codec.",
+      "normalized": "TCVN",
+      "normalized_aliases": [
+        "TCVN",
+        "TCVN57121",
+        "VN3"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Phase-1 bootstrap row for an in-tree deterministic single-byte codec.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "55f5165d908eb36f9c8a9d3cbc25d04405784d95fde7fb24ad2f30ab46d26fe0"
+    },
+    {
+      "aliases": [
+        "utf16be"
+      ],
+      "canonical": "UTF-16BE",
+      "compatibility_intent": "Supported for deterministic big-endian wide-char conversion coverage.",
+      "normalized": "UTF16BE",
+      "normalized_aliases": [
+        "UTF16BE"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041",
+              "U+20AC"
+            ],
+            "input_hex": "004120AC"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+1F600"
+            ],
+            "input_hex": "D83DDE00"
+          }
+        ],
+        "endianness": "big",
+        "family": "utf",
+        "max_units_per_scalar": 2,
+        "notes": "Phase-1 UTF-16BE conversion table with surrogate-pair coverage.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "b528b6d686f3ebcde004101463634bb3a5044e2ecf20145095cd39625ff04b14"
     },
     {
       "aliases": [
@@ -148,6 +1877,39 @@
     },
     {
       "aliases": [
+        "utf32be"
+      ],
+      "canonical": "UTF-32BE",
+      "compatibility_intent": "Supported for explicit big-endian UTF-32 conversion coverage.",
+      "normalized": "UTF32BE",
+      "normalized_aliases": [
+        "UTF32BE"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "00000041"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+20AC"
+            ],
+            "input_hex": "000020AC"
+          }
+        ],
+        "endianness": "big",
+        "family": "utf",
+        "max_units_per_scalar": 1,
+        "notes": "Phase-1 UTF-32BE conversion table with explicit big-endian scalar vectors.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "d4b0acc13873a3faec2bf77c9d6c35b6a29f17bb1afaca09d7e71adb0ebf3a2b"
+    },
+    {
+      "aliases": [
         "utf8"
       ],
       "canonical": "UTF-8",
@@ -178,6 +1940,40 @@
         "unit_kind": "variable-width"
       },
       "table_sha256": "33de9f07167d52665dac9e6f8fff33098cc0091bf137a85a89bb46df38441ebf"
+    },
+    {
+      "aliases": [
+        "viscii1.1"
+      ],
+      "canonical": "VISCII",
+      "compatibility_intent": "Supported as an in-tree deterministic Vietnamese single-byte codec.",
+      "normalized": "VISCII",
+      "normalized_aliases": [
+        "VISCII",
+        "VISCII1.1"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+007E"
+            ],
+            "input_hex": "7E"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Phase-1 bootstrap row for an in-tree deterministic single-byte codec.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "3e159b2723049e6b15c174df5cbcdf07d42badb7357078f64d11ce794b308a7e"
     }
   ],
   "phase": "phase1",
@@ -185,18 +1981,18 @@
   "source_ledger": {
     "bead": "bd-7cba",
     "path": "tests/conformance/iconv_codec_scope_ledger.v1.json",
-    "sha256": "ac53c7c8210f2dec1be143a7f9f922dd3256f5373f71201c1b948eb7e7b7d4f9"
+    "sha256": "c31b6da2e7a96d11013097cf5dd3818085aa8f0952788b5fc4275093cbf25457"
   },
   "support_matrix_mapping": {
-    "hardened_semantics": "Phase-1 iconv with hardened membrane routing; deterministic bounds/error behavior",
+    "hardened_semantics": "Phase-1 iconv breadth with hardened membrane routing; deterministic bounds/error behavior",
     "module": "iconv_abi",
     "status": "Implemented",
-    "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE/UTF-32 with deterministic errno semantics",
+    "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
     "symbols": [
       "iconv",
       "iconv_close",
       "iconv_open"
     ]
   },
-  "table_pack_sha256": "80b52aaae5c4e046d0959a79ada6575ba39e3617768dc1cb0212e8b48d648275"
+  "table_pack_sha256": "436e04ddaed691e30e8f41cf346e39a3cebc60e6286d3b8f8c0db39b24de60fc"
 }

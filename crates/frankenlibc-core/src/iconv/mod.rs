@@ -1111,7 +1111,7 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
 ];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
-pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 53] = [
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 55] = [
     "UTF-8",
     "ASCII",
     "ISO-8859-1",
@@ -1121,6 +1121,8 @@ pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 53] = [
     "UTF-32BE",
     "KOI8-R",
     "KOI8-U",
+    "KOI8-RU",
+    "KOI8-T",
     "CP437",
     "CP775",
     "CP850",
@@ -1168,12 +1170,25 @@ pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 53] = [
 ];
 
 /// Canonical alias map for phase-1 supported codecs.
-pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 5] = [
+pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 18] = [
     ("LATIN1", "ISO-8859-1"),
     ("USASCII", "ASCII"),
     ("ANSIX3.41968", "ASCII"),
     ("ANSIX341968", "ASCII"),
     ("ISO646US", "ASCII"),
+    ("KOI8R", "KOI8-R"),
+    ("CSKOI8R", "KOI8-R"),
+    ("KOI8", "KOI8-R"),
+    ("KOI8U", "KOI8-U"),
+    ("KOI8RU", "KOI8-RU"),
+    ("KOI8T", "KOI8-T"),
+    ("EUCJP", "EUC-JP"),
+    ("UJIS", "EUC-JP"),
+    ("CP932", "SHIFT_JIS"),
+    ("SJIS", "SHIFT_JIS"),
+    ("MSKANJI", "SHIFT_JIS"),
+    ("CSBIG5", "BIG5"),
+    ("BIGFIVE", "BIG5"),
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
@@ -8907,6 +8922,8 @@ pub fn iconv_close(_cd: IconvDescriptor) -> i32 {
 mod tests {
     use super::*;
 
+    type IconvVector<'a> = (&'a [u8], &'a [u8], &'a [u8], &'a [u8]);
+
     #[test]
     fn iconv_open_recognizes_phase1_encodings() {
         assert!(iconv_open(b"UTF-8", b"ISO-8859-1").is_some());
@@ -8967,6 +8984,51 @@ mod tests {
             err.dispatch.from_dispatch_path,
             CodecDispatchPath::UnsupportedCodec
         );
+    }
+
+    #[test]
+    fn iconv_open_recognizes_ws6_breadth_codecs_and_aliases() {
+        for (tocode, fromcode) in [
+            (b"UTF-8".as_slice(), b"KOI8-R".as_slice()),
+            (b"UTF-8".as_slice(), b"KOI8-U".as_slice()),
+            (b"UTF-8".as_slice(), b"KOI8-RU".as_slice()),
+            (b"UTF-8".as_slice(), b"KOI8-T".as_slice()),
+            (b"UTF-8".as_slice(), b"EUC-JP".as_slice()),
+            (b"UTF-8".as_slice(), b"UJIS".as_slice()),
+            (b"UTF-8".as_slice(), b"SHIFT_JIS".as_slice()),
+            (b"UTF-8".as_slice(), b"CP932".as_slice()),
+            (b"UTF-8".as_slice(), b"BIG5".as_slice()),
+            (b"UTF-8".as_slice(), b"BIGFIVE".as_slice()),
+        ] {
+            assert!(
+                iconv_open(tocode, fromcode).is_some(),
+                "{} <- {} should open",
+                String::from_utf8_lossy(tocode),
+                String::from_utf8_lossy(fromcode)
+            );
+        }
+    }
+
+    #[test]
+    fn ws6_breadth_codecs_convert_representative_vectors() {
+        let cases: &[IconvVector<'_>] = &[
+            (b"UTF-8", b"CP932", &[0xB1], "ｱ".as_bytes()),
+            (b"UTF-8", b"EUC-JP", &[0x8E, 0xB1], "ｱ".as_bytes()),
+            (b"UTF-8", b"BIG5", b"HK", b"HK"),
+            (b"UTF-8", b"KOI8-R", &[0xC1], "а".as_bytes()),
+            (b"UTF-8", b"KOI8-U", &[0xB6], "і".as_bytes()),
+            (b"UTF-8", b"KOI8-RU", &[0xAD], "ґ".as_bytes()),
+        ];
+
+        for (tocode, fromcode, input, expected) in cases {
+            let mut cd = iconv_open(tocode, fromcode).expect("codec pair should open");
+            let mut out = [0_u8; 8];
+            let result = iconv(&mut cd, Some(input), &mut out).expect("conversion should succeed");
+            assert_eq!(result.in_consumed, input.len());
+            assert_eq!(result.out_written, expected.len());
+            assert_eq!(&out[..expected.len()], *expected);
+            assert_eq!(iconv_close(cd), 0);
+        }
     }
 
     #[test]

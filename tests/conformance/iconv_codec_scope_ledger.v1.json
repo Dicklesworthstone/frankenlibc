@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-7cba",
-  "description": "Explicit phase-1 iconv codec scope/exclusion ledger with compatibility intent. This keeps user-facing claims bounded while deterministic table-generation work remains in progress.",
+  "description": "Explicit phase-1 iconv codec scope/exclusion ledger with compatibility intent. This keeps user-facing claims bounded to the deterministic in-tree codec engine while stateful and large-table work remains in progress.",
   "phase": "phase1",
   "included_codecs": [
     {
@@ -11,7 +11,7 @@
     },
     {
       "canonical": "ASCII",
-      "aliases": ["usascii", "ansi_x3.4-1968", "iso646-us"],
+      "aliases": ["usascii", "ansi_x3.4-1968", "ansi-x3-4-1968", "iso646-us"],
       "compatibility_intent": "Supported as a strict 7-bit single-byte codec; non-ASCII input or output fails with EILSEQ."
     },
     {
@@ -25,9 +25,259 @@
       "compatibility_intent": "Supported for deterministic little-endian wide-char conversion coverage."
     },
     {
+      "canonical": "UTF-16BE",
+      "aliases": ["utf16be"],
+      "compatibility_intent": "Supported for deterministic big-endian wide-char conversion coverage."
+    },
+    {
       "canonical": "UTF-32",
       "aliases": ["utf32"],
       "compatibility_intent": "Supported with deterministic BOM emission and bounds/error behavior."
+    },
+    {
+      "canonical": "UTF-32BE",
+      "aliases": ["utf32be"],
+      "compatibility_intent": "Supported for explicit big-endian UTF-32 conversion coverage."
+    },
+    {
+      "canonical": "KOI8-R",
+      "aliases": ["koi8r", "cskoi8r", "koi8"],
+      "compatibility_intent": "Supported for WS-6 Cyrillic single-byte conversion coverage."
+    },
+    {
+      "canonical": "KOI8-U",
+      "aliases": ["koi8u"],
+      "compatibility_intent": "Supported for WS-6 Ukrainian KOI8 single-byte conversion coverage."
+    },
+    {
+      "canonical": "KOI8-RU",
+      "aliases": ["koi8ru"],
+      "compatibility_intent": "Supported for WS-6 mixed Russian/Ukrainian KOI8 single-byte conversion coverage."
+    },
+    {
+      "canonical": "KOI8-T",
+      "aliases": ["koi8t"],
+      "compatibility_intent": "Supported for WS-6 Tajik KOI8 single-byte conversion coverage."
+    },
+    {
+      "canonical": "CP437",
+      "aliases": ["ibm437", "437"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP775",
+      "aliases": ["ibm775", "775"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP850",
+      "aliases": ["ibm850", "850"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP855",
+      "aliases": ["ibm855", "855"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP857",
+      "aliases": ["ibm857", "857"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP860",
+      "aliases": ["ibm860", "860"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP861",
+      "aliases": ["ibm861", "861"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP862",
+      "aliases": ["ibm862", "862"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP863",
+      "aliases": ["ibm863", "863"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP864",
+      "aliases": ["ibm864", "864"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP865",
+      "aliases": ["ibm865", "865"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP866",
+      "aliases": ["ibm866", "866"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP869",
+      "aliases": ["ibm869", "869"],
+      "compatibility_intent": "Supported as an in-tree deterministic DOS/OEM single-byte codec."
+    },
+    {
+      "canonical": "CP874",
+      "aliases": ["windows874", "874"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows Thai single-byte codec."
+    },
+    {
+      "canonical": "MACROMAN",
+      "aliases": ["mac", "csmacintosh"],
+      "compatibility_intent": "Supported as an in-tree deterministic Macintosh single-byte codec."
+    },
+    {
+      "canonical": "VISCII",
+      "aliases": ["viscii1.1"],
+      "compatibility_intent": "Supported as an in-tree deterministic Vietnamese single-byte codec."
+    },
+    {
+      "canonical": "TCVN",
+      "aliases": ["tcvn5712-1", "vn3"],
+      "compatibility_intent": "Supported as an in-tree deterministic Vietnamese single-byte codec."
+    },
+    {
+      "canonical": "ARMSCII-8",
+      "aliases": ["armscii8"],
+      "compatibility_intent": "Supported as an in-tree deterministic Armenian single-byte codec."
+    },
+    {
+      "canonical": "CP1250",
+      "aliases": ["windows1250", "1250"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "CP1251",
+      "aliases": ["windows1251", "1251"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "CP1252",
+      "aliases": ["windows1252", "1252"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "CP1253",
+      "aliases": ["windows1253", "1253"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "CP1254",
+      "aliases": ["windows1254", "1254"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "CP1255",
+      "aliases": ["windows1255", "1255"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "CP1256",
+      "aliases": ["windows1256", "1256"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "CP1257",
+      "aliases": ["windows1257", "1257"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "CP1258",
+      "aliases": ["windows1258", "1258"],
+      "compatibility_intent": "Supported as an in-tree deterministic Windows single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-2",
+      "aliases": ["latin2", "iso88592"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-3",
+      "aliases": ["latin3", "iso88593"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-4",
+      "aliases": ["latin4", "iso88594"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-5",
+      "aliases": ["cyrillic", "iso88595"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-6",
+      "aliases": ["arabic", "iso88596"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-7",
+      "aliases": ["greek", "iso88597"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-8",
+      "aliases": ["hebrew", "iso88598"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-9",
+      "aliases": ["latin5", "iso88599"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-10",
+      "aliases": ["latin6", "iso885910"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-11",
+      "aliases": ["iso885911"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-13",
+      "aliases": ["latin7", "iso885913"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-14",
+      "aliases": ["latin8", "iso885914"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-15",
+      "aliases": ["latin9", "iso885915"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "ISO-8859-16",
+      "aliases": ["latin10", "iso885916"],
+      "compatibility_intent": "Supported as an in-tree deterministic ISO-8859 single-byte codec."
+    },
+    {
+      "canonical": "EUC-JP",
+      "aliases": ["eucjp", "ujis"],
+      "compatibility_intent": "Supported for WS-6 EUC-JP bootstrap coverage: ASCII plus JIS X 0201 kana conversion."
+    },
+    {
+      "canonical": "SHIFT_JIS",
+      "aliases": ["shiftjis", "sjis", "cp932", "ms_kanji"],
+      "compatibility_intent": "Supported for WS-6 SHIFT_JIS/CP932 bootstrap coverage: ASCII plus halfwidth kana conversion."
+    },
+    {
+      "canonical": "BIG5",
+      "aliases": ["csbig5", "bigfive"],
+      "compatibility_intent": "Supported for WS-6 BIG5 bootstrap coverage; BIG5-HKSCS remains explicitly excluded."
     }
   ],
   "excluded_codec_families": [
@@ -39,16 +289,6 @@
     {
       "canonical": "ISO-2022-JP",
       "reason": "Shift-state machine and table corpus are out of phase-1 minimal scope.",
-      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL."
-    },
-    {
-      "canonical": "EUC-JP",
-      "reason": "Requires additional deterministic multibyte table pipeline beyond phase-1 scope.",
-      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL."
-    },
-    {
-      "canonical": "SHIFT_JIS",
-      "reason": "Requires additional deterministic multibyte table pipeline beyond phase-1 scope.",
       "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL."
     },
     {
@@ -66,7 +306,7 @@
     "module": "iconv_abi",
     "symbols": ["iconv", "iconv_close", "iconv_open"],
     "status": "Implemented",
-    "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE/UTF-32 with deterministic errno semantics",
-    "hardened_semantics": "Phase-1 iconv with hardened membrane routing; deterministic bounds/error behavior"
+    "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
+    "hardened_semantics": "Phase-1 iconv breadth with hardened membrane routing; deterministic bounds/error behavior"
   }
 }

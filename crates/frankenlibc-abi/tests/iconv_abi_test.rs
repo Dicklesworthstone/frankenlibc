@@ -25,6 +25,35 @@ fn iconv_error_handle() -> *mut c_void {
     usize::MAX as *mut c_void
 }
 
+fn convert_via_abi(
+    tocode: &[u8],
+    fromcode: &[u8],
+    input: &[u8],
+    out_len: usize,
+) -> (usize, Vec<u8>, usize, usize, i32) {
+    unsafe {
+        let cd = iconv_open(c_str(tocode), c_str(fromcode));
+        assert_ne!(cd, iconv_error_handle());
+
+        let mut input = input.to_vec();
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let mut in_left = input.len();
+
+        let mut output = vec![0_u8; out_len];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let mut out_left = output.len();
+
+        *__errno_location() = 0;
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        let errno = *__errno_location();
+        let written = out_len.saturating_sub(out_left);
+        output.truncate(written);
+
+        assert_eq!(iconv_close(cd), 0);
+        (rc, output, in_left, out_left, errno)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // iconv_open — supported encodings
 // ---------------------------------------------------------------------------
@@ -67,6 +96,32 @@ fn iconv_open_reverse_direction() {
     assert!(!cd.is_null());
     assert_ne!(cd, iconv_error_handle());
     assert_eq!(unsafe { iconv_close(cd) }, 0);
+}
+
+#[test]
+fn iconv_open_ws6_breadth_codecs_and_aliases() {
+    for (tocode, fromcode) in [
+        (b"UTF-8\0".as_slice(), b"KOI8-R\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"KOI8-U\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"KOI8-RU\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"KOI8-T\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"EUC-JP\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"UJIS\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"SHIFT_JIS\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"CP932\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"BIG5\0".as_slice()),
+        (b"UTF-8\0".as_slice(), b"BIGFIVE\0".as_slice()),
+    ] {
+        let cd = unsafe { iconv_open(c_str(tocode), c_str(fromcode)) };
+        assert_ne!(
+            cd,
+            iconv_error_handle(),
+            "{} <- {} should open",
+            String::from_utf8_lossy(tocode),
+            String::from_utf8_lossy(fromcode)
+        );
+        assert_eq!(unsafe { iconv_close(cd) }, 0);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -712,6 +767,59 @@ fn iconv_utf8_multibyte_to_utf16le() {
         assert_eq!(&output[..2], &[0xAC, 0x20]);
 
         assert_eq!(iconv_close(cd), 0);
+    }
+}
+
+#[test]
+fn iconv_cp932_alias_halfwidth_katakana_to_utf8() {
+    let (rc, output, in_left, out_left, errno) =
+        convert_via_abi(b"UTF-8\0", b"CP932\0", &[0xB1], 8);
+    assert_eq!(rc, 0);
+    assert_eq!(in_left, 0);
+    assert_eq!(out_left, 5);
+    assert_eq!(errno, 0);
+    assert_eq!(output, "ｱ".as_bytes());
+}
+
+#[test]
+fn iconv_eucjp_halfwidth_katakana_to_utf8() {
+    let (rc, output, in_left, out_left, errno) =
+        convert_via_abi(b"UTF-8\0", b"EUC-JP\0", &[0x8E, 0xB1], 8);
+    assert_eq!(rc, 0);
+    assert_eq!(in_left, 0);
+    assert_eq!(out_left, 5);
+    assert_eq!(errno, 0);
+    assert_eq!(output, "ｱ".as_bytes());
+}
+
+#[test]
+fn iconv_big5_ascii_subset_to_utf8() {
+    let (rc, output, in_left, out_left, errno) = convert_via_abi(b"UTF-8\0", b"BIG5\0", b"HK", 4);
+    assert_eq!(rc, 0);
+    assert_eq!(in_left, 0);
+    assert_eq!(out_left, 2);
+    assert_eq!(errno, 0);
+    assert_eq!(output, b"HK");
+}
+
+#[test]
+fn iconv_koi8r_cyrillic_to_utf8() {
+    let (rc, output, in_left, out_left, errno) =
+        convert_via_abi(b"UTF-8\0", b"KOI8-R\0", &[0xC1], 4);
+    assert_eq!(rc, 0);
+    assert_eq!(in_left, 0);
+    assert_eq!(out_left, 2);
+    assert_eq!(errno, 0);
+    assert_eq!(output, "а".as_bytes());
+}
+
+#[test]
+fn iconv_iso2022jp_remains_explicitly_unsupported() {
+    unsafe {
+        *__errno_location() = 0;
+        let cd = iconv_open(c_str(b"UTF-8\0"), c_str(b"ISO-2022-JP\0"));
+        assert_eq!(cd, iconv_error_handle());
+        assert_eq!(*__errno_location(), core_iconv::ICONV_EINVAL);
     }
 }
 

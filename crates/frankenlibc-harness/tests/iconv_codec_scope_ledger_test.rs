@@ -61,10 +61,66 @@ fn iconv_scope_ledger_included_set_matches_phase1_contract() {
             )
         })
         .collect();
-    let expected: BTreeSet<String> = ["UTF-8", "ASCII", "ISO-8859-1", "UTF-16LE", "UTF-32"]
-        .into_iter()
-        .map(normalize_codec)
-        .collect();
+    let expected: BTreeSet<String> = [
+        "UTF-8",
+        "ASCII",
+        "ISO-8859-1",
+        "UTF-16LE",
+        "UTF-16BE",
+        "UTF-32",
+        "UTF-32BE",
+        "KOI8-R",
+        "KOI8-U",
+        "KOI8-RU",
+        "KOI8-T",
+        "CP437",
+        "CP775",
+        "CP850",
+        "CP855",
+        "CP857",
+        "CP860",
+        "CP861",
+        "CP862",
+        "CP863",
+        "CP864",
+        "CP865",
+        "CP866",
+        "CP869",
+        "CP874",
+        "MACROMAN",
+        "VISCII",
+        "TCVN",
+        "ARMSCII-8",
+        "CP1250",
+        "CP1251",
+        "CP1252",
+        "CP1253",
+        "CP1254",
+        "CP1255",
+        "CP1256",
+        "CP1257",
+        "CP1258",
+        "ISO-8859-2",
+        "ISO-8859-3",
+        "ISO-8859-4",
+        "ISO-8859-5",
+        "ISO-8859-6",
+        "ISO-8859-7",
+        "ISO-8859-8",
+        "ISO-8859-9",
+        "ISO-8859-10",
+        "ISO-8859-11",
+        "ISO-8859-13",
+        "ISO-8859-14",
+        "ISO-8859-15",
+        "ISO-8859-16",
+        "EUC-JP",
+        "SHIFT_JIS",
+        "BIG5",
+    ]
+    .into_iter()
+    .map(normalize_codec)
+    .collect();
 
     assert_eq!(
         canonical, expected,
