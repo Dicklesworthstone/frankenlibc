@@ -5,10 +5,12 @@ use frankenlibc_abi::owned_unwind_abi::{
     _Unwind_Backtrace, _Unwind_GetDataRelBase, _Unwind_GetGR, _Unwind_GetIP, _Unwind_GetIPInfo,
     _Unwind_GetLanguageSpecificData, _Unwind_GetRegionStart, _Unwind_GetTextRelBase, _Unwind_SetGR,
     _Unwind_SetIP, OwnedContextInstallError, OwnedLandingPadInstall, OwnedLandingPadInstallInput,
-    OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedUnwindDecodeError, UnwindContext,
-    owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
-    owned_evaluate_cfi_row_for_tests, owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
+    OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedProgramHeaderForTests,
+    OwnedUnwindDecodeError, UnwindContext, owned_decode_sleb128_for_tests,
+    owned_decode_uleb128_for_tests, owned_evaluate_cfi_row_for_tests,
+    owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
     owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
+    owned_loaded_eh_frame_ranges_for_tests, owned_loaded_eh_frame_ranges_from_phdrs_for_tests,
     owned_phase1_search_for_tests, owned_phase2_cleanup_for_tests,
     owned_prepare_landing_pad_install_for_tests, owned_summarize_eh_frame_for_tests,
     owned_validate_cfi_program_for_tests,
@@ -25,6 +27,8 @@ const URC_CONTINUE_UNWIND: i32 = 8;
 const UA_SEARCH_PHASE: i32 = 1;
 const UA_CLEANUP_PHASE: i32 = 2;
 const UA_HANDLER_FRAME: i32 = 4;
+const TEST_PT_LOAD: u32 = 1;
+const TEST_PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const TEST_EXCEPTION_CLASS: u64 = 0x4652_4b4e_432b_2b00;
 const TEST_LANDING_PAD: usize = 0x5eed_baad;
 static TEST_LSDA: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
@@ -119,6 +123,83 @@ fn frame_registration_records_and_removes_fde_sources() {
 
     unsafe { __deregister_frame(fde) };
     assert!(!owned_frame_is_registered_for_tests(fde.cast_const()));
+}
+
+#[test]
+fn loaded_eh_frame_catalog_accepts_gnu_header_inside_load_segment() {
+    let object_base = 0x1000_0000usize;
+    let ranges = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        object_base,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x4000),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x1800, 0x80),
+        ],
+    );
+
+    assert_eq!(ranges.len(), 1);
+    let range = ranges[0];
+    assert_eq!(range.object_base, object_base);
+    assert_eq!(range.load_start, object_base + 0x1000);
+    assert_eq!(range.load_end, object_base + 0x5000);
+    assert_eq!(range.eh_frame_hdr_start, object_base + 0x1800);
+    assert_eq!(range.eh_frame_hdr_len, 0x80);
+}
+
+#[test]
+fn loaded_eh_frame_catalog_fails_closed_without_gnu_header() {
+    let ranges = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        0x2000_0000,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x4000),
+            phdr(0x6474_e551, 0x1800, 0x80),
+        ],
+    );
+
+    assert!(ranges.is_empty());
+}
+
+#[test]
+fn loaded_eh_frame_catalog_rejects_malformed_ranges() {
+    let outside_load = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        0x3000_0000,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x1000),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x2800, 0x80),
+        ],
+    );
+    let empty_header = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        0x3000_0000,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x1000),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x1800, 0),
+        ],
+    );
+    let overflowing_header = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        usize::MAX - 0x10,
+        &[
+            phdr(TEST_PT_LOAD, 0, 0x10),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x20, 0x80),
+        ],
+    );
+
+    assert!(outside_load.is_empty());
+    assert!(empty_header.is_empty());
+    assert!(overflowing_header.is_empty());
+}
+
+#[test]
+fn live_loaded_eh_frame_catalog_returns_well_formed_ranges() {
+    let ranges = owned_loaded_eh_frame_ranges_for_tests();
+    for range in ranges {
+        assert!(range.load_start < range.load_end);
+        assert!(range.eh_frame_hdr_len > 0);
+        assert!(range.load_start <= range.eh_frame_hdr_start);
+        let eh_frame_hdr_end = range
+            .eh_frame_hdr_start
+            .checked_add(range.eh_frame_hdr_len)
+            .expect("catalog range should not overflow");
+        assert!(eh_frame_hdr_end <= range.load_end);
+    }
 }
 
 #[test]
@@ -564,6 +645,14 @@ fn compiled_test_binary_eh_frame_has_lookupable_fde() {
         row.cfa_offset >= core::mem::size_of::<usize>() as isize,
         "compiled row should carry a caller-frame CFA offset, got {row:?}"
     );
+}
+
+fn phdr(p_type: u32, p_vaddr: usize, p_memsz: usize) -> OwnedProgramHeaderForTests {
+    OwnedProgramHeaderForTests {
+        p_type,
+        p_vaddr,
+        p_memsz,
+    }
 }
 
 fn synthetic_eh_frame(
