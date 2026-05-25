@@ -237,10 +237,10 @@ fn restore_entrypoint(env: *mut c_void, val: c_int, is_signal_variant: bool) -> 
 }
 
 // ===========================================================================
-// Native x86_64 setjmp/longjmp via global_asm!
+// Native setjmp/longjmp via per-ISA global_asm!
 // ===========================================================================
 //
-// jmp_buf layout (our own, self-consistent under LD_PRELOAD):
+// x86_64 jmp_buf layout (our own, self-consistent under LD_PRELOAD):
 //   [0]:  rbx         (8 bytes)
 //   [8]:  rbp         (8 bytes)
 //   [16]: r12         (8 bytes)
@@ -257,7 +257,7 @@ fn restore_entrypoint(env: *mut c_void, val: c_int, is_signal_variant: bool) -> 
 // Under LD_PRELOAD, both setjmp and longjmp are our implementations,
 // so the jmp_buf layout only needs to be self-consistent.
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
 core::arch::global_asm!(
     // __sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int
     // rdi = env, esi = savemask
@@ -364,12 +364,118 @@ core::arch::global_asm!(
     "  jmp rcx",
 );
 
+// aarch64 jmp_buf layout:
+//   [0]:   x19/x20     (16 bytes)
+//   [16]:  x21/x22     (16 bytes)
+//   [32]:  x23/x24     (16 bytes)
+//   [48]:  x25/x26     (16 bytes)
+//   [64]:  x27/x28     (16 bytes)
+//   [80]:  x29/x30     (16 bytes)
+//   [96]:  sp          (8 bytes)
+//   [104]: d8/d9       (16 bytes)
+//   [120]: d10/d11     (16 bytes)
+//   [136]: d12/d13     (16 bytes)
+//   [152]: d14/d15     (16 bytes)
+//   [168]: savemask    (4 bytes)
+//   [176]: saved_mask  (kernel sigset_t, 8 bytes)
+//
+// The no-mask path writes through byte 171, which fits the glibc aarch64
+// jmp_buf footprint. sigsetjmp callers provide sigjmp_buf storage, so the
+// optional signal-mask slot is also in-bounds.
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
+core::arch::global_asm!(
+    ".global __sigsetjmp",
+    ".global sigsetjmp",
+    ".global setjmp",
+    ".global _setjmp",
+    ".type __sigsetjmp, %function",
+    ".type sigsetjmp, %function",
+    ".type setjmp, %function",
+    ".type _setjmp, %function",
+    "setjmp:",
+    "  mov w1, wzr",
+    "  b __sigsetjmp",
+    "_setjmp:",
+    "  mov w1, wzr",
+    "  b __sigsetjmp",
+    "sigsetjmp:",
+    "__sigsetjmp:",
+    "  stp x19, x20, [x0, #0]",
+    "  stp x21, x22, [x0, #16]",
+    "  stp x23, x24, [x0, #32]",
+    "  stp x25, x26, [x0, #48]",
+    "  stp x27, x28, [x0, #64]",
+    "  stp x29, x30, [x0, #80]",
+    "  mov x2, sp",
+    "  str x2, [x0, #96]",
+    "  stp d8, d9, [x0, #104]",
+    "  stp d10, d11, [x0, #120]",
+    "  stp d12, d13, [x0, #136]",
+    "  stp d14, d15, [x0, #152]",
+    "  str w1, [x0, #168]",
+    "  cbz w1, 1f",
+    "  mov x4, x0",
+    "  add x2, x0, #176",
+    "  mov x0, xzr",
+    "  mov x1, xzr",
+    "  mov x3, #8",
+    "  mov x8, #135",
+    "  svc #0",
+    "  mov x0, x4",
+    "1:",
+    "  mov w0, wzr",
+    "  ret",
+    ".global longjmp",
+    ".global _longjmp",
+    ".global siglongjmp",
+    ".type longjmp, %function",
+    ".type _longjmp, %function",
+    ".type siglongjmp, %function",
+    "siglongjmp:",
+    "_longjmp:",
+    "longjmp:",
+    "  mov w2, w1",
+    "  cbnz w2, 2f",
+    "  mov w2, #1",
+    "2:",
+    "  ldr w3, [x0, #168]",
+    "  cbz w3, 3f",
+    "  mov x4, x0",
+    "  mov w5, w2",
+    "  mov x0, #2",
+    "  add x1, x4, #176",
+    "  mov x2, xzr",
+    "  mov x3, #8",
+    "  mov x8, #135",
+    "  svc #0",
+    "  mov x0, x4",
+    "  mov w2, w5",
+    "3:",
+    "  ldp x19, x20, [x0, #0]",
+    "  ldp x21, x22, [x0, #16]",
+    "  ldp x23, x24, [x0, #32]",
+    "  ldp x25, x26, [x0, #48]",
+    "  ldp x27, x28, [x0, #64]",
+    "  ldp x29, x30, [x0, #80]",
+    "  ldr x3, [x0, #96]",
+    "  ldp d8, d9, [x0, #104]",
+    "  ldp d10, d11, [x0, #120]",
+    "  ldp d12, d13, [x0, #136]",
+    "  ldp d14, d15, [x0, #152]",
+    "  mov sp, x3",
+    "  mov w0, w2",
+    "  br x30",
+);
+
 // Rust-callable wrappers that dispatch to either our global_asm symbols
 // (release) or the deterministic phase-1 capture/restore path (debug/test).
 // These are needed because other modules (e.g., glibc_internal_abi) call
 // these as Rust functions.
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(
+    not(debug_assertions),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 unsafe extern "C" {
     #[link_name = "setjmp"]
     fn asm_setjmp(env: *mut c_void) -> c_int;
@@ -385,32 +491,50 @@ unsafe extern "C" {
     fn asm_siglongjmp(env: *mut c_void, val: c_int) -> !;
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(
+    not(debug_assertions),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub unsafe extern "C" fn setjmp(env: *mut c_void) -> c_int {
     unsafe { asm_setjmp(env) }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(
+    not(debug_assertions),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub unsafe extern "C" fn _setjmp(env: *mut c_void) -> c_int {
     unsafe { asm__setjmp(env) }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(
+    not(debug_assertions),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub unsafe extern "C" fn sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int {
     unsafe { asm_sigsetjmp(env, savemask) }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(
+    not(debug_assertions),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub unsafe extern "C" fn longjmp(env: *mut c_void, val: c_int) -> ! {
     unsafe { asm_longjmp(env, val) }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(
+    not(debug_assertions),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub unsafe extern "C" fn _longjmp(env: *mut c_void, val: c_int) -> ! {
     unsafe { asm__longjmp(env, val) }
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(
+    not(debug_assertions),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub unsafe extern "C" fn siglongjmp(env: *mut c_void, val: c_int) -> ! {
     unsafe { asm_siglongjmp(env, val) }
 }

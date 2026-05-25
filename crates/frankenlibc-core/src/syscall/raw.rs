@@ -437,7 +437,9 @@ pub unsafe fn clone_thread_asm(
             "mov x29, xzr",
             "ldr x9, [sp], #8",
             "ldr x0, [sp], #8",
-            "and sp, sp, #-16",
+            "mov x10, sp",
+            "bic x10, x10, #0xf",
+            "mov sp, x10",
             "blr x9",
             "mov x8, {exit_nr}",
             "svc 0",
@@ -453,6 +455,7 @@ pub unsafe fn clone_thread_asm(
             lateout("x0") ret,
             lateout("x8") _,
             lateout("x9") _,
+            lateout("x10") _,
             options(nostack),
         );
     }
