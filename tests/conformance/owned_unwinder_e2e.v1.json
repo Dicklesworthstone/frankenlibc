@@ -1,23 +1,33 @@
 {
   "schema_version": "owned_unwinder_e2e.v1",
   "bead_id": "bd-73h55.3",
-  "generated_at_utc": "2026-05-22T06:15:20Z",
+  "generated_at_utc": "2026-05-25T12:37:23Z",
   "tests": {
     "source_symbols_defined": "pass",
     "feature_flags_defined": "pass",
     "module_gating_correct": "pass",
     "conformance_artifacts_present": "pass",
-    "conformance_tests_present": "pass"
+    "conformance_tests_present": "pass",
+    "owned_shared_fixture_no_libgcc": "pass",
+    "owned_shared_fixture_throw_catch": "pass"
   },
   "implementation_status": {
     "source_file": "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
     "feature_flags": ["standalone", "owned-unwind-stub"],
     "behavior": {
-      "_Unwind_Backtrace": "returns URC_END_OF_STACK immediately (abort-mode stub)",
-      "_Unwind_RaiseException": "aborts (panic=abort design)",
-      "_Unwind_Resume": "aborts (panic=abort design)",
-      "_Unwind_SetGR": "aborts (panic=abort design)",
-      "_Unwind_SetIP": "aborts (panic=abort design)"
+      "_Unwind_Backtrace": "performs bounded frame-pointer walk",
+      "_Unwind_RaiseException": "performs owned phase-1 search, phase-2 cleanup, and guarded x86_64 landing-pad transfer when the handler context validates",
+      "_Unwind_Resume": "aborts until phase-2 context transfer lands",
+      "_Unwind_Resume_or_Rethrow": "re-enters the owned raise path for rethrow-style edges",
+      "_Unwind_GetGR": "reads owned cursor general-register state and returns zero for invalid slots",
+      "_Unwind_SetGR": "mutates owned cursor general-register state for personality-requested landing-pad install",
+      "_Unwind_SetIP": "mutates owned cursor instruction-pointer state for personality-requested landing-pad install",
+      "x86_64_context_install": "validates landing-pad IP, physical frame/stack cursor, CFA register, and saved RIP before the non-returning jump"
+    },
+    "owned_throw_catch_fixture": {
+      "library": "/data/tmp/frankenlibc-bd-gq1kz7-4-release/release/libfrankenlibc_abi.so",
+      "shared_object": "/data/projects/frankenlibc/target/owned_unwinder_e2e/minimal_throw_catch_owned.so",
+      "dependency_policy": "no libgcc_s or libunwind DT_NEEDED entries; _Unwind_RaiseException is unresolved until FrankenLibC is loaded RTLD_GLOBAL"
     },
     "requirement_for_default": "Complete L2 standalone-readiness (WS-6) to remove feature flag gating"
   },

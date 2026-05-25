@@ -1087,11 +1087,17 @@ fn owned_phase1_search_current_stack(
         let Some(instruction_pointer) = read_word(return_address_slot) else {
             break;
         };
+        trace_owned_unwind(format_args!(
+            "phase1 frame_index={frame_index} fp={frame_pointer:#x} next={next_frame:#x} ip={instruction_pointer:#x}"
+        ));
 
         if instruction_pointer != 0 {
             match find_registered_fde_record_for_ip(instruction_pointer) {
                 Ok(Some(record)) => {
                     let Some(personality) = record.fde.personality else {
+                        trace_owned_unwind(format_args!(
+                            "phase1 frame_index={frame_index} ip={instruction_pointer:#x} no personality"
+                        ));
                         frame_index += 1;
                         continue;
                     };
@@ -1116,6 +1122,9 @@ fn owned_phase1_search_current_stack(
                         exception,
                         &mut context,
                     );
+                    trace_owned_unwind(format_args!(
+                        "phase1 frame_index={frame_index} ip={instruction_pointer:#x} code={code}"
+                    ));
                     match code {
                         URC_HANDLER_FOUND => {
                             return OwnedPhase1SearchOutcome::HandlerFound {

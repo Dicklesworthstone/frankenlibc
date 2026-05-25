@@ -12,6 +12,23 @@ public:
     }
 };
 
+#ifdef FRANKENLIBC_WRAP_CXA_THROW
+extern "C" [[noreturn]] void __real___cxa_throw(
+    void* thrown_exception,
+    void* type_info,
+    void (*destructor)(void*)
+);
+
+extern "C" __attribute__((noinline, noreturn)) void __wrap___cxa_throw(
+    void* thrown_exception,
+    void* type_info,
+    void (*destructor)(void*)
+) {
+    __real___cxa_throw(thrown_exception, type_info, destructor);
+    __builtin_unreachable();
+}
+#endif
+
 int throw_and_catch() {
     try {
         throw TestException();
@@ -25,7 +42,7 @@ int throw_and_catch() {
     return 2; // Should not reach
 }
 
-int main() {
+extern "C" int minimal_throw_catch_entry() {
     printf("minimal_throw_catch: starting\n");
 
     int result = throw_and_catch();
@@ -37,4 +54,8 @@ int main() {
     }
 
     return result;
+}
+
+int main() {
+    return minimal_throw_catch_entry();
 }
