@@ -4,7 +4,10 @@
 //! for real system binaries.
 //! Run: cargo test -p frankenlibc-harness --test elf_loader_conformance_test
 
-use frankenlibc_core::elf::{Elf64Header, ElfClass, ElfData, ElfLoader, ElfMachine, ElfType};
+use frankenlibc_core::elf::{
+    DependencyGraph, Elf64Header, ElfClass, ElfData, ElfLoader, ElfMachine, ElfResult, ElfType,
+    LinkMapObject, RtldLookupScope, RtldVisibility, ScopedSymbolResolver,
+};
 use serde::Deserialize;
 use std::{
     collections::BTreeSet,
@@ -29,6 +32,10 @@ impl std::error::Error for TestFailure {}
 
 fn test_failure(message: impl Into<String>) -> TestFailure {
     TestFailure(message.into())
+}
+
+fn elf_test_result<T>(context: &str, result: ElfResult<T>) -> TestResult<T> {
+    result.map_err(|err| test_failure(format!("{context}: {err:?}")).into())
 }
 
 fn repo_root() -> TestResult<PathBuf> {
@@ -338,7 +345,7 @@ fn parse_dynsym_summary(output: &str) -> TestResult<(usize, BTreeSet<String>)> {
             let tokens: Vec<&str> = line.split_whitespace().collect();
             tokens
                 .iter()
-                .position(|token| *token == "contains")
+                .position(|token| matches!(*token, "contains"))
                 .and_then(|index| tokens.get(index + 1))
                 .copied()
         })
@@ -918,4 +925,220 @@ fn elf_loader_binary_fixtures_match_readelf() -> TestResult {
         eprintln!("Skipping ELF binary conformance: no fixture binaries available");
     }
     Ok(())
+}
+
+#[test]
+fn elf_loader_two_dso_dependency_fixture_resolves_and_fails_closed() -> TestResult {
+    let root = repo_root()?;
+    let fixture = build_two_dso_dependency_fixture(&root)?;
+    let loader = ElfLoader::new(0x7f00_1000_0000);
+
+    let user_data = fs::read(&fixture.user_dso).map_err(|err| {
+        test_failure(format!(
+            "failed to read {}: {err}",
+            fixture.user_dso.display()
+        ))
+    })?;
+    let provider_data = fs::read(&fixture.provider_dso).map_err(|err| {
+        test_failure(format!(
+            "failed to read {}: {err}",
+            fixture.provider_dso.display()
+        ))
+    })?;
+    let user = loader
+        .parse(&user_data)
+        .map_err(|err| test_failure(format!("failed to parse user DSO: {err}")))?;
+    let provider = loader
+        .parse(&provider_data)
+        .map_err(|err| test_failure(format!("failed to parse provider DSO: {err}")))?;
+
+    assert_eq!(user.soname.as_deref(), Some("libfranken_user.so"));
+    assert_eq!(
+        user.needed_libraries,
+        vec![String::from("libfranken_provider.so")],
+        "user DSO must carry the provider DT_NEEDED edge"
+    );
+    assert_eq!(provider.soname.as_deref(), Some("libfranken_provider.so"));
+    assert!(
+        provider.lookup_symbol("franken_provider_value").is_some(),
+        "provider DSO must export the dependency symbol"
+    );
+    assert!(
+        user.undefined_symbols()
+            .any(|(_, symbol)| { user.symbol_name(symbol) == Some("franken_provider_value") }),
+        "user DSO must import the provider symbol"
+    );
+
+    if let Some(dynamic) = run_readelf(&fixture.user_dso, &["-d"])? {
+        assert!(
+            dynamic.contains("Shared library: [libfranken_provider.so]"),
+            "readelf should confirm the fixture DT_NEEDED edge:\n{dynamic}"
+        );
+    }
+
+    let objects = vec![
+        LinkMapObject {
+            name: "libfranken_user.so",
+            object: &user,
+            visibility: RtldVisibility::Global,
+        },
+        LinkMapObject {
+            name: "libfranken_provider.so",
+            object: &provider,
+            visibility: RtldVisibility::Global,
+        },
+    ];
+    let graph = elf_test_result(
+        "failed to build two-DSO dependency graph",
+        DependencyGraph::build(&objects),
+    )?;
+    assert!(!graph.has_unresolved_dependencies());
+    assert_eq!(graph.nodes[0].dependencies, vec![1]);
+    assert_eq!(graph.nodes[0].unresolved_needed, Vec::<String>::new());
+    assert_eq!(graph.topological_order, vec![1, 0]);
+    assert_eq!(
+        elf_test_result(
+            "failed to compute local lookup order for user DSO",
+            graph.local_lookup_order(0),
+        )?,
+        vec![0, 1]
+    );
+
+    let resolver = elf_test_result(
+        "failed to build scoped symbol resolver",
+        ScopedSymbolResolver::new(objects),
+    )?;
+    let report = elf_test_result(
+        "failed to resolve provider symbol through dependency scope",
+        resolver.resolve_with_trace(
+            "franken_provider_value",
+            None,
+            RtldLookupScope::Local { object_index: 0 },
+        ),
+    )?;
+    let resolved = report
+        .symbol
+        .ok_or_else(|| test_failure("provider symbol should resolve through dependency scope"))?;
+    assert_eq!(resolved.object_index, 1);
+    assert!(
+        report
+            .trace
+            .iter()
+            .any(|event| event.object_index == 1 && event.matched),
+        "resolution trace should show a native provider match: {:?}",
+        report.trace
+    );
+
+    let missing_provider_objects = vec![LinkMapObject {
+        name: "libfranken_user.so",
+        object: &user,
+        visibility: RtldVisibility::Global,
+    }];
+    let missing_provider_graph = elf_test_result(
+        "failed to build missing-provider dependency graph",
+        DependencyGraph::build(&missing_provider_objects),
+    )?;
+    assert!(missing_provider_graph.has_unresolved_dependencies());
+    assert_eq!(
+        missing_provider_graph.nodes[0].unresolved_needed,
+        vec![String::from("libfranken_provider.so")],
+        "missing provider should be reported as a precise unresolved DT_NEEDED edge"
+    );
+    Ok(())
+}
+
+struct TwoDsoDependencyFixture {
+    user_dso: PathBuf,
+    provider_dso: PathBuf,
+}
+
+fn build_two_dso_dependency_fixture(root: &Path) -> TestResult<TwoDsoDependencyFixture> {
+    let dir = root.join("target/conformance/native-loader-two-dso-dependency");
+    fs::create_dir_all(&dir)
+        .map_err(|err| test_failure(format!("failed to create {}: {err}", dir.display())))?;
+    let provider_src = dir.join("franken_provider.c");
+    let user_src = dir.join("franken_user.c");
+    let provider_dso = dir.join("libfranken_provider.so");
+    let user_dso = dir.join("libfranken_user.so");
+
+    fs::write(
+        &provider_src,
+        r#"
+__attribute__((visibility("default")))
+int franken_provider_value(void) {
+    return 41;
+}
+"#,
+    )
+    .map_err(|err| test_failure(format!("failed to write {}: {err}", provider_src.display())))?;
+    fs::write(
+        &user_src,
+        r#"
+extern int franken_provider_value(void);
+
+__attribute__((visibility("default")))
+int franken_user_value(void) {
+    return franken_provider_value() + 1;
+}
+"#,
+    )
+    .map_err(|err| test_failure(format!("failed to write {}: {err}", user_src.display())))?;
+
+    run_cc(
+        &dir,
+        &[
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-Wl,-soname,libfranken_provider.so",
+            "-o",
+            path_arg(&provider_dso)?,
+            path_arg(&provider_src)?,
+        ],
+    )?;
+    run_cc(
+        &dir,
+        &[
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-Wl,--no-as-needed",
+            "-Wl,-soname,libfranken_user.so",
+            "-Wl,-rpath,$ORIGIN",
+            "-o",
+            path_arg(&user_dso)?,
+            path_arg(&user_src)?,
+            "-L",
+            path_arg(&dir)?,
+            "-lfranken_provider",
+        ],
+    )?;
+
+    Ok(TwoDsoDependencyFixture {
+        user_dso,
+        provider_dso,
+    })
+}
+
+fn run_cc(current_dir: &Path, args: &[&str]) -> TestResult {
+    let output = Command::new("cc")
+        .current_dir(current_dir)
+        .args(args)
+        .output()
+        .map_err(|err| test_failure(format!("failed to execute cc: {err}")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(test_failure(format!(
+        "cc failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
+    .into())
+}
+
+fn path_arg(path: &Path) -> TestResult<&str> {
+    path.to_str()
+        .ok_or_else(|| test_failure(format!("non-UTF-8 path: {}", path.display())).into())
 }
