@@ -65,6 +65,26 @@ fn generate_maintenance_report(output_path: &Path) -> std::process::Output {
         .expect("failed to execute maintenance validator")
 }
 
+fn generate_maintenance_report_with_proof_manifest(
+    output_path: &Path,
+    proof_manifest_path: &Path,
+) -> std::process::Output {
+    let root = repo_root();
+    Command::new("python3")
+        .args([
+            root.join("scripts/generate_support_matrix_maintenance.py")
+                .to_str()
+                .unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--promotion-proof-manifest",
+            proof_manifest_path.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator")
+}
+
 fn stable_report_sections(report: &serde_json::Value) -> serde_json::Value {
     let mut stable = serde_json::Map::new();
     // These are the current-state sections. We intentionally exclude the
@@ -160,6 +180,10 @@ const HOST_WRAPPED_SYMBOLS: &[&str] = &[
     "_IO_flockfile",
     "_IO_funlockfile",
     "_IO_ftrylockfile",
+];
+
+const MATH_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "acos", "asin", "exp", "fmod", "lgamma", "log", "log10", "pow", "tgamma",
 ];
 
 #[test]
@@ -519,6 +543,144 @@ fn maintenance_report_has_no_implemented_host_census_symbols() {
     assert!(
         implemented_host_symbols.is_empty(),
         "host-delegating census symbols must be reclassified out of Implemented: {implemented_host_symbols:?}"
+    );
+}
+
+#[test]
+fn math_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/math_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("math_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-h1fbda"));
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        MATH_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("math_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn generated_report_accepts_math_abi_errno_bridge_tranche() {
+    let generated_path = unique_generated_report_path("math_abi_promotion_tranche");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in MATH_PROMOTION_TRANCHE_SYMBOLS {
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after math ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn math_abi_promotion_proof_manifest_requires_both_modes() {
+    let root = repo_root();
+    let manifest_path = root.join("tests/conformance/math_abi_promotion_tranche.v1.json");
+    let mut manifest = load_json(&manifest_path);
+    let symbols = manifest["symbols"]
+        .as_array_mut()
+        .expect("symbols should be an array");
+    let acos = symbols
+        .iter_mut()
+        .find(|row| row["symbol"].as_str() == Some("acos"))
+        .expect("acos proof row should exist");
+    acos["hardened_conformance"]["total"] = serde_json::json!(0);
+    acos["hardened_conformance"]["passed"] = serde_json::json!(0);
+
+    let broken_manifest_path = unique_generated_report_path("math_abi_broken_proof_manifest");
+    std::fs::write(
+        &broken_manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("failed to write broken proof manifest");
+
+    let generated_path = unique_generated_report_path("math_abi_broken_proof_report");
+    let output =
+        generate_maintenance_report_with_proof_manifest(&generated_path, &broken_manifest_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator should emit findings rather than crash:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+    let acos_issue = issues
+        .iter()
+        .find(|issue| issue["symbol"].as_str() == Some("acos"))
+        .expect("acos should return to invalid census status when hardened proof is missing");
+    assert_eq!(acos_issue["valid"].as_bool(), Some(false));
+    assert!(
+        acos_issue["findings"].as_array().is_some_and(|findings| {
+            findings.iter().any(|finding| {
+                finding.as_str() == Some("Implemented but host delegation census detected")
+            })
+        }),
+        "missing hardened proof should not suppress host census finding: {acos_issue:?}"
     );
 }
 

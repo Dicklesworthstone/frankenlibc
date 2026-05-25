@@ -1,0 +1,208 @@
+{
+  "schema_version": "math_abi_promotion_tranche.v1",
+  "bead": "bd-h1fbda",
+  "trace_id": "bd-h1fbda-math-abi-promotion-tranche-v1",
+  "description": "First bounded math_abi promotion tranche proving Rust libm-owned ABI paths whose host-delegation census hits only errno bridge helpers.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/math_abi.rs",
+    "core_sources": [
+      "crates/frankenlibc-core/src/math/trig.rs",
+      "crates/frankenlibc-core/src/math/exp.rs",
+      "crates/frankenlibc-core/src/math/float.rs",
+      "crates/frankenlibc-core/src/math/special.rs"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-libm-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "lgamma_r",
+      "load_host_symbol",
+      "set_abi_errno",
+      "set_domain_errno",
+      "set_range_errno",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The math result path is owned by frankenlibc_core::math via the Rust libm crate. The only host-reachable path in this tranche is errno storage interop through __errno_location, which is ABI state bridging rather than delegating the mathematical operation to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "acos",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::acos",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "asin",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::asin",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "exp",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::exp",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "fmod",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::fmod",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "lgamma",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::lgamma",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "log",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::log",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "log10",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::log10",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "pow",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::pow",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "tgamma",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::tgamma",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}

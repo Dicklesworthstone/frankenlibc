@@ -28,6 +28,9 @@ CONFORMANCE_MATRIX_PATH = REPO_ROOT / "tests" / "conformance" / "conformance_mat
 HOST_DELEGATION_CENSUS_PATH = (
     REPO_ROOT / "tests" / "conformance" / "host_delegation_census.v1.json"
 )
+PROMOTION_PROOF_MANIFEST_PATH = (
+    REPO_ROOT / "tests" / "conformance" / "math_abi_promotion_tranche.v1.json"
+)
 
 # Patterns indicating actual host libc call expressions.
 # Type/constant references like `libc::timex` or `libc::EINVAL` are not calls.
@@ -182,6 +185,70 @@ def conformance_mode_passed(mode_entry):
     )
 
 
+def load_promotion_proofs(path: Path):
+    """Load bounded promotion proofs that classify census hits as non-delegating."""
+    if not path.is_file():
+        return {}
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    policy = data.get("policy", {})
+    if not isinstance(policy, dict):
+        policy = {}
+    required_modes = tuple(policy.get("required_modes", ["strict", "hardened"]))
+    accepted_host_symbols = set(policy.get("accepted_host_symbols", []))
+    accepted_delegation_kinds = set(policy.get("accepted_delegation_kinds", []))
+    classification = str(policy.get("classification", ""))
+    support_matrix_status = str(policy.get("support_matrix_status", "Implemented"))
+
+    proofs = {}
+    for row in data.get("symbols", []):
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol", ""))
+        if not symbol:
+            continue
+        if row.get("decision") != "proven":
+            continue
+        modes_ok = True
+        for mode in required_modes:
+            modes_ok = modes_ok and conformance_mode_passed(row.get(f"{mode}_conformance"))
+        if not modes_ok:
+            continue
+        proofs[symbol] = {
+            "module": str(row.get("module", "")),
+            "classification": classification,
+            "support_matrix_status": support_matrix_status,
+            "accepted_host_symbols": accepted_host_symbols,
+            "accepted_delegation_kinds": accepted_delegation_kinds,
+            "required_modes": required_modes,
+        }
+    return proofs
+
+
+def promotion_proof_covers_census(symbol, status, module, host_delegation_entry, proof):
+    """Return true when a proof manifest explains all census hits for a symbol."""
+    if not isinstance(host_delegation_entry, dict) or not isinstance(proof, dict):
+        return False
+    if status != proof.get("support_matrix_status", "Implemented"):
+        return False
+    if module != proof.get("module"):
+        return False
+    if proof.get("classification") != "native-libm-with-errno-bridge":
+        return False
+
+    host_symbols = set(host_delegation_entry.get("host_symbols", []))
+    delegation_kinds = set(host_delegation_entry.get("delegation_kinds", []))
+    accepted_host_symbols = proof.get("accepted_host_symbols", set())
+    accepted_delegation_kinds = proof.get("accepted_delegation_kinds", set())
+    if not host_symbols or not delegation_kinds:
+        return False
+    return host_symbols <= accepted_host_symbols and delegation_kinds <= accepted_delegation_kinds
+
+
 def count_statuses_from_map(status_map):
     counts = {}
     for status in status_map.values():
@@ -328,7 +395,15 @@ def is_type_or_constant(name):
     return name in lowercase_types
 
 
-def validate_status(symbol, status, module, source, module_analysis, host_delegation_entry):
+def validate_status(
+    symbol,
+    status,
+    module,
+    source,
+    module_analysis,
+    host_delegation_entry,
+    promotion_proof,
+):
     """Validate that a symbol's code matches its declared status.
 
     Returns (is_valid, findings: list of str, warnings: list of str).
@@ -342,7 +417,18 @@ def validate_status(symbol, status, module, source, module_analysis, host_delega
 
     findings = []
     warnings = []
-    census_detected_host_delegation = isinstance(host_delegation_entry, dict)
+    proof_covers_census = promotion_proof_covers_census(
+        symbol,
+        status,
+        module,
+        host_delegation_entry,
+        promotion_proof,
+    )
+    census_detected_host_delegation = (
+        isinstance(host_delegation_entry, dict) and not proof_covers_census
+    )
+    if proof_covers_census:
+        warnings.append("host delegation census covered by promotion proof manifest")
     host_resolve_aliases = module_analysis.get("host_resolve_aliases", set())
     host_helper_functions = module_analysis.get("host_helper_functions", set())
     wraps_host_libc = bool(
@@ -644,6 +730,11 @@ def main():
         default=str(HOST_DELEGATION_CENSUS_PATH),
         help="Path to canonical host delegation census used for taxonomy validation",
     )
+    parser.add_argument(
+        "--promotion-proof-manifest",
+        default=str(PROMOTION_PROOF_MANIFEST_PATH),
+        help="Path to bounded promotion proof manifest used to classify non-core host bridge census hits",
+    )
     parser.add_argument("--self-test", action="store_true", help="Run self-test")
     args = parser.parse_args()
 
@@ -654,6 +745,7 @@ def main():
     previous_report = load_previous_report(Path(args.previous_report))
     conformance_by_symbol = load_conformance_matrix(Path(args.conformance_matrix))
     host_delegation_by_symbol = load_host_delegation_census(Path(args.host_delegation_census))
+    promotion_proofs = load_promotion_proofs(Path(args.promotion_proof_manifest))
 
     matrix = load_matrix()
     symbols = matrix.get("symbols", [])
@@ -704,6 +796,7 @@ def main():
             source,
             module_analysis_cache.get(module, {}),
             host_delegation_by_symbol.get(sym),
+            promotion_proofs.get(sym),
         )
         warnings += len(warn_list)
         if is_valid:
@@ -927,6 +1020,8 @@ def main():
             "baseline_report_path": str(Path(args.previous_report)),
             "baseline_loaded": baseline_loaded,
             "baseline_symbol_map_loaded": baseline_symbol_map_loaded,
+            "promotion_proof_manifest_path": str(Path(args.promotion_proof_manifest)),
+            "promotion_proof_symbol_count": len(promotion_proofs),
             "status_count_delta": status_count_delta,
             "native_coverage_pct_delta": native_delta,
             "reclassified_symbol_count": len(reclassified_symbols),
@@ -1033,6 +1128,8 @@ def run_self_test():
                 module,
                 source,
                 module_analysis,
+                None,
+                None,
             )
             details = [*findings, *warnings] or ["ok"]
             mark = "pass" if is_valid else "fail"
