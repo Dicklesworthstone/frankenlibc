@@ -1,0 +1,9 @@
+frankenlibc (0.1.0-1) unstable; urgency=medium
+
+  * Initial release.
+  * Standalone glibc replacement artifact (libfrankenlibc_replace.so)
+  * No host glibc dependencies
+  * 3550+ implemented symbols
+  * 414 raw syscall symbols
+
+ -- FrankenLibC Maintainers <noreply@example.com>  Sat, 25 May 2026 01:30:00 +0000

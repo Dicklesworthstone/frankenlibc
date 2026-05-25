@@ -1,0 +1,120 @@
+{
+  "schema_version": "distribution_packaging_contract.v1",
+  "manifest_id": "ws8-distribution-packaging-contract",
+  "bead": "bd-38x82.3",
+  "parent_bead": "bd-38x82",
+  "prerequisite_beads": [
+    "bd-38x82.1"
+  ],
+  "generated_utc": "2026-05-25T00:00:00Z",
+  "purpose": "Fail-closed distribution packaging contract for the WS-8 L3 standalone replacement path. The checker builds an installable Debian binary package from the current libfrankenlibc_replace.so artifact, installs it into an isolated dpkg root, and runs prefix-based ELF/symbol/dependency smoke checks against the installed artifact.",
+  "source_artifact": {
+    "packaging_spec": "tests/conformance/packaging_spec.json",
+    "artifact_id": "replace",
+    "artifact_name": "libfrankenlibc_replace.so",
+    "default_candidates": [
+      "target/release/libfrankenlibc_replace.so",
+      "target/standalone_replacement_artifact/cargo-target/release/libfrankenlibc_replace.so"
+    ],
+    "override_env": "FRANKENLIBC_DISTRIBUTION_SOURCE_LIB",
+    "must_be_named": "libfrankenlibc_replace.so",
+    "must_be_non_empty": true,
+    "must_be_fresh_against_head": true
+  },
+  "package": {
+    "format": "deb",
+    "distribution_family": "Debian",
+    "package_name": "frankenlibc-replace",
+    "version_prefix": "0.0.0+ws8.3",
+    "architecture_command": "dpkg --print-architecture",
+    "install_prefix": "/usr/lib/frankenlibc",
+    "installed_artifact": "/usr/lib/frankenlibc/libfrankenlibc_replace.so",
+    "doc_dir": "/usr/share/doc/frankenlibc-replace",
+    "install_method": "dpkg --root=<isolated-root> --admindir=<isolated-root>/var/lib/dpkg --instdir=<isolated-root> --force-not-root --force-script-chrootless --install <package.deb>",
+    "system_paths_touched": false
+  },
+  "smoke_battery": {
+    "description": "Prefix-local smoke checks after package installation. These checks intentionally validate the installed artifact from the package root rather than a build-tree artifact.",
+    "required_checks": [
+      "package_built",
+      "dpkg_metadata_valid",
+      "dpkg_isolated_install",
+      "installed_prefix_artifact_present",
+      "installed_artifact_is_elf_shared_object",
+      "installed_artifact_has_required_symbols",
+      "installed_artifact_has_no_host_needed_libraries",
+      "installed_artifact_has_no_glibc_versioned_undefined_symbols"
+    ],
+    "required_symbols": [
+      "__libc_start_main",
+      "malloc",
+      "free",
+      "printf"
+    ],
+    "host_library_needles": [
+      "libc.so",
+      "ld-linux",
+      "libpthread",
+      "libm.so",
+      "libdl.so",
+      "libgcc_s"
+    ]
+  },
+  "required_tools": [
+    "dpkg-deb",
+    "dpkg",
+    "fakeroot",
+    "file",
+    "readelf",
+    "nm"
+  ],
+  "output_policy": {
+    "out_dir_env": "FRANKENLIBC_DISTRIBUTION_PACKAGE_OUT_DIR",
+    "report_env": "FRANKENLIBC_DISTRIBUTION_PACKAGE_REPORT",
+    "log_env": "FRANKENLIBC_DISTRIBUTION_PACKAGE_LOG",
+    "default_report": "target/conformance/distribution_packaging_contract.report.json",
+    "default_log": "target/conformance/distribution_packaging_contract.log.jsonl",
+    "required_evidence_files": [
+      "package.deb",
+      "dpkg.info.txt",
+      "dpkg.contents.txt",
+      "dpkg.install.stdout.txt",
+      "dpkg.install.stderr.txt",
+      "installed.file.txt",
+      "installed.readelf.header.txt",
+      "installed.readelf.dynamic.txt",
+      "installed.nm.dynamic.txt",
+      "installed.nm.undefined.txt"
+    ]
+  },
+  "required_log_fields": [
+    "timestamp",
+    "trace_id",
+    "bead_id",
+    "event",
+    "status",
+    "claim_status",
+    "package_path",
+    "install_root",
+    "artifact_path",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "expected_failure_signatures": [
+    "missing_required_tool",
+    "missing_source_artifact",
+    "empty_source_artifact",
+    "wrong_source_artifact_name",
+    "stale_source_artifact",
+    "package_build_failed",
+    "package_install_failed",
+    "installed_artifact_missing",
+    "installed_smoke_failed"
+  ],
+  "evidence": {
+    "checker": "scripts/check_distribution_packaging_contract.sh",
+    "test_source": "crates/frankenlibc-harness/tests/distribution_packaging_contract_test.rs",
+    "report_path": "target/conformance/distribution_packaging_contract.report.json",
+    "log_path": "target/conformance/distribution_packaging_contract.log.jsonl"
+  }
+}

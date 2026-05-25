@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export CARGO_HOME = $(CURDIR)/.cargo
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --features standalone,owned-unwind-stub,owned-tls-cache \
+		--manifest-path crates/frankenlibc-abi/Cargo.toml
+	mkdir -p debian/tmp/usr/lib/frankenlibc
+	cp target/release/libfrankenlibc_abi.so debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so
+
+override_dh_auto_install:
+	mkdir -p debian/libfrankenlibc/usr/lib/frankenlibc
+	cp debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so \
+		debian/libfrankenlibc/usr/lib/frankenlibc/
+
+override_dh_auto_test:
+	# Verify the artifact has no glibc dependencies
+	! nm -u debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so 2>/dev/null | grep -q GLIBC
+	! readelf -d debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so 2>/dev/null | grep -E "NEEDED.*lib(c|pthread|dl)" || true
+
+override_dh_auto_clean:
+	cargo clean || true
+	rm -rf .cargo target debian/tmp

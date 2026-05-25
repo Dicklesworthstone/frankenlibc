@@ -1,0 +1,19 @@
+Source: frankenlibc
+Section: libs
+Priority: optional
+Maintainer: FrankenLibC Maintainers <noreply@example.com>
+Build-Depends: debhelper-compat (= 13), rustc, cargo
+Standards-Version: 4.6.0
+Homepage: https://github.com/Dicklesworthstone/frankenlibc
+
+Package: libfrankenlibc
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Standalone glibc replacement library
+ FrankenLibC is a standalone glibc-compatible library that provides
+ libc functionality without depending on host glibc. It can be used
+ as an LD_PRELOAD interposer or as a full libc replacement.
+ .
+ This package contains the standalone replacement artifact
+ (libfrankenlibc_replace.so) which can run processes without
+ requiring host glibc.
