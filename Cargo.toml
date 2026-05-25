@@ -51,3 +51,15 @@ frankenlibc-fixture-exec = { path = "crates/frankenlibc-fixture-exec" }
 # Companion crates (build tooling only)
 asupersync-conformance = "0.3.1"
 ftui-harness = "0.3.1"
+
+# Profiling profile: release optimizations with debug symbols for flamegraphs
+[profile.release-perf]
+inherits = "release"
+debug = "line-tables-only"
+strip = false
+
+# Benchmark profile: release with LTO for accurate perf measurement
+[profile.bench]
+inherits = "release"
+lto = "thin"
+codegen-units = 1

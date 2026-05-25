@@ -8,10 +8,14 @@ description = "Benchmarks for FrankenLibC"
 [lints.rust]
 unsafe_code = "allow"
 
+[features]
+default = []
+abi-bench = ["dep:frankenlibc-abi"]
+
 [dependencies]
 frankenlibc-membrane = { workspace = true }
 frankenlibc-core = { workspace = true }
-frankenlibc-abi = { workspace = true }
+frankenlibc-abi = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -60,6 +64,7 @@ harness = false
 [[bench]]
 name = "baseline_capture_bench"
 harness = false
+required-features = ["abi-bench"]
 
 [[bench]]
 name = "elimination_bench"
@@ -76,6 +81,7 @@ harness = false
 [[bench]]
 name = "errno_bench"
 harness = false
+required-features = ["abi-bench"]
 
 [[bench]]
 name = "resolv_parsers_bench"

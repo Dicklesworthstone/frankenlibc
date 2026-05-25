@@ -839,7 +839,15 @@ fn main() {
         enforce_standalone_policy(&repo_root);
     }
 
-    if !debug_assertions_enabled && !fuzzing_build && std::path::Path::new(&version_script).exists()
+    // The version script includes _Unwind_* symbols which are only present when
+    // standalone+owned-unwind-stub features are enabled. Without those features,
+    // the linker will fail because the symbols don't exist.
+    let owned_unwind_enabled = std::env::var_os("CARGO_FEATURE_OWNED_UNWIND_STUB").is_some();
+    if !debug_assertions_enabled
+        && !fuzzing_build
+        && standalone_enabled
+        && owned_unwind_enabled
+        && std::path::Path::new(&version_script).exists()
     {
         println!("cargo:rustc-cdylib-link-arg=-Wl,--version-script={version_script}");
     }
