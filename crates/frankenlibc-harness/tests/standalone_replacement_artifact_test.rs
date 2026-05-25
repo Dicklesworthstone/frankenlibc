@@ -4057,7 +4057,7 @@ fn find_or_build_standalone_artifact(
     log_entries: &mut Vec<serde_json::Value>,
 ) -> Option<PathBuf> {
     let target_triple = std::env::var("TARGET").ok().unwrap_or_else(|| {
-        let output = Command::new("rustc")
+        Command::new("rustc")
             .args(["-vV"])
             .output()
             .ok()
@@ -4069,8 +4069,7 @@ fn find_or_build_standalone_artifact(
                     .map(|line| line.trim_start_matches("host:").trim().to_owned())
                     .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_owned())
             })
-            .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_owned());
-        output
+            .unwrap_or_else(|| "x86_64-unknown-linux-gnu".to_owned())
     });
 
     let candidates = [

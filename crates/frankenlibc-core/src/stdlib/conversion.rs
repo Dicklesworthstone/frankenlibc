@@ -1921,9 +1921,9 @@ mod tests {
 
     #[test]
     fn glibc_strtod_partial_parse() {
-        // strtod("3.14abc") = 3.14, endptr points to "abc"
-        let (val, consumed) = strtod(b"3.14abc\0");
-        assert!((val - 3.14).abs() < 1e-10);
-        assert_eq!(consumed, 4);
+        // strtod("3.125abc") = 3.125, endptr points to "abc"
+        let (val, consumed) = strtod(b"3.125abc\0");
+        assert!((val - 3.125).abs() < 1e-10);
+        assert_eq!(consumed, 5);
     }
 }

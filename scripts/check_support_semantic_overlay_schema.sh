@@ -506,6 +506,143 @@ for entry in entries:
 
 checks["overlay_rows"] = "pass" if row_ok else "fail"
 
+guard_ok = True
+claim_guard_blocker_count = 0
+guard_contract = schema.get("standalone_claim_guard_contract", {})
+guard = overlay.get("standalone_claim_guard")
+if not isinstance(guard_contract, dict):
+    guard_ok = False
+    fail(
+        "standalone_claim_guard",
+        "nss_standalone_claim_guard: schema standalone_claim_guard_contract must be an object",
+        expected="object",
+        actual=type(guard_contract).__name__,
+        failure_signature="nss_standalone_claim_guard",
+    )
+    guard_contract = {}
+if not isinstance(guard, dict):
+    guard_ok = False
+    fail(
+        "standalone_claim_guard",
+        "nss_standalone_claim_guard: overlay standalone_claim_guard must be an object",
+        expected="object",
+        actual=type(guard).__name__,
+        failure_signature="nss_standalone_claim_guard",
+    )
+    guard = {}
+
+for field in guard_contract.get("required_guard_fields", []):
+    if field not in guard:
+        guard_ok = False
+        fail(
+            "standalone_claim_guard",
+            f"nss_standalone_claim_guard: standalone_claim_guard missing {field}",
+            expected=field,
+            actual="missing",
+            failure_signature="nss_standalone_claim_guard",
+        )
+
+required_guard_ids = set(str(value) for value in guard_contract.get("required_row_ids", []))
+guard_ids = set(str(value) for value in guard.get("required_row_ids", []) if isinstance(value, str))
+missing_guard_ids = sorted(required_guard_ids - guard_ids)
+missing_overlay_rows = sorted(required_guard_ids - row_ids)
+if missing_guard_ids:
+    guard_ok = False
+    fail(
+        "standalone_claim_guard",
+        f"nss_standalone_claim_guard: missing required guard rows {missing_guard_ids}",
+        expected=str(sorted(required_guard_ids)),
+        actual=str(sorted(guard_ids)),
+        failure_signature="nss_standalone_claim_guard",
+    )
+if missing_overlay_rows:
+    guard_ok = False
+    fail(
+        "standalone_claim_guard",
+        f"nss_standalone_claim_guard: required guard rows absent from audited_entries {missing_overlay_rows}",
+        expected=str(sorted(required_guard_ids)),
+        actual=str(sorted(row_ids)),
+        failure_signature="nss_standalone_claim_guard",
+    )
+
+required_blocked_levels = set(
+    str(value) for value in guard_contract.get("required_blocked_replacement_levels", [])
+)
+blocked_levels = set(
+    str(value) for value in guard.get("blocked_replacement_levels", []) if isinstance(value, str)
+)
+missing_blocked_levels = sorted(required_blocked_levels - blocked_levels)
+unknown_blocked_levels = sorted(blocked_levels - replacement_level_names)
+if missing_blocked_levels:
+    guard_ok = False
+    fail(
+        "standalone_claim_guard",
+        f"nss_standalone_claim_guard: standalone_claim_guard must block {sorted(required_blocked_levels)}",
+        expected=str(sorted(required_blocked_levels)),
+        actual=str(sorted(blocked_levels)),
+        failure_signature="nss_standalone_claim_guard",
+    )
+if unknown_blocked_levels:
+    guard_ok = False
+    fail(
+        "standalone_claim_guard",
+        f"nss_standalone_claim_guard: unknown blocked replacement levels {unknown_blocked_levels}",
+        expected=str(sorted(replacement_level_names)),
+        actual=str(sorted(blocked_levels)),
+        failure_signature="nss_standalone_claim_guard",
+    )
+
+required_guard_artifacts = set(
+    str(value) for value in guard_contract.get("required_evidence_artifacts", [])
+)
+guard_artifacts = set(
+    str(value) for value in guard.get("required_evidence_artifacts", []) if isinstance(value, str)
+)
+missing_guard_artifacts = sorted(required_guard_artifacts - guard_artifacts)
+if missing_guard_artifacts:
+    guard_ok = False
+    fail(
+        "standalone_claim_guard",
+        f"nss_standalone_claim_guard: missing required evidence artifacts {missing_guard_artifacts}",
+        expected=str(sorted(required_guard_artifacts)),
+        actual=str(sorted(guard_artifacts)),
+        failure_signature="nss_standalone_claim_guard",
+    )
+for artifact in sorted(guard_artifacts):
+    artifact_path = root / artifact
+    if not artifact_path.exists():
+        guard_ok = False
+        fail(
+            "standalone_claim_guard",
+            f"nss_standalone_claim_guard: missing evidence artifact {artifact}",
+            expected="existing evidence artifact",
+            actual=artifact,
+            failure_signature="nss_standalone_claim_guard",
+        )
+
+if str(guard.get("failure_signature", "")) != str(
+    guard_contract.get("failure_signature", "nss_standalone_claim_guard")
+):
+    guard_ok = False
+    fail(
+        "standalone_claim_guard",
+        "nss_standalone_claim_guard: failure_signature must match schema contract",
+        expected=str(guard_contract.get("failure_signature")),
+        actual=str(guard.get("failure_signature")),
+        failure_signature="nss_standalone_claim_guard",
+    )
+
+claim_guard_blocker_count = len(required_guard_ids & guard_ids & row_ids)
+checks["standalone_claim_guard"] = "pass" if guard_ok else "fail"
+if guard_ok:
+    event(
+        "standalone_claim_guard",
+        row_id="standalone_claim_guard",
+        symbol="NSS",
+        expected="NSS bootstrap rows block L2/L3 standalone claims",
+        actual=f"rows={sorted(required_guard_ids)} levels={sorted(blocked_levels)}",
+    )
+
 summary_ok = True
 audited_summary = overlay.get("audited_summary", {})
 if audited_summary.get("entries") != len(entries):
@@ -575,6 +712,7 @@ summary = {
     "symbol_reference_count": symbol_reference_count,
     "exact_symbol_reference_count": exact_symbol_reference_count,
     "wildcard_symbol_reference_count": wildcard_symbol_reference_count,
+    "standalone_claim_blocker_count": claim_guard_blocker_count,
     "duplicate_symbol_version_count": len(duplicate_symbol_version_nodes),
     "stale_source_ref_count": len(stale_source_refs),
     "semantic_class_count": len(semantic_classes),

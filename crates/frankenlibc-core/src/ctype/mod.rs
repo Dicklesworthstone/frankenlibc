@@ -602,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn glibc_isxdigit_includes_af_and_AF() {
+    fn glibc_isxdigit_includes_af_and_af() {
         // isxdigit accepts 0-9, a-f, A-F
         for c in b'0'..=b'9' {
             assert!(is_xdigit(c));

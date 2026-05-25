@@ -178,6 +178,7 @@ fn schema_declares_required_rules_replays_and_log_contract() {
             "duplicate_symbol",
             "stale_source_ref",
             "incompatible_replacement_level",
+            "standalone_claim_guard",
             "malformed_json"
         ]
         .into_iter()
@@ -222,6 +223,10 @@ fn gate_passes_current_overlay_and_emits_report_log_and_normalized_rows() {
     assert_eq!(
         report["summary"]["wildcard_symbol_reference_count"].as_u64(),
         Some(4)
+    );
+    assert_eq!(
+        report["summary"]["standalone_claim_blocker_count"].as_u64(),
+        Some(2)
     );
     assert_eq!(
         report["summary"]["duplicate_symbol_version_count"].as_u64(),
@@ -355,6 +360,21 @@ fn incompatible_replacement_level_fails_for_blocked_semantics() {
         "sem-elf-relocation-support: blocked semantic row cannot claim replacement level L3",
     );
     assert_eq!(report["checks"]["overlay_rows"].as_str(), Some("fail"));
+}
+
+#[test]
+fn nss_standalone_claim_guard_fails_when_blocked_level_is_missing() {
+    let root = workspace_root();
+    let mut overlay = load_json(&root.join("tests/conformance/support_semantic_overlay.v1.json"));
+    overlay["standalone_claim_guard"]["blocked_replacement_levels"] = serde_json::json!(["L2"]);
+    let fixture = write_json_fixture("support-overlay-nss-claim-guard", &overlay);
+
+    let output = run_gate_with_env(&[("FLC_SUPPORT_SEMANTIC_OVERLAY", &fixture)]);
+    let report = assert_gate_fails_with(&output, "nss_standalone_claim_guard");
+    assert_eq!(
+        report["checks"]["standalone_claim_guard"].as_str(),
+        Some("fail")
+    );
 }
 
 #[test]

@@ -1119,8 +1119,8 @@ mod tests {
 
     #[test]
     fn glibc_fabs_clears_sign_bit() {
-        assert_eq!(fabs(-3.14), 3.14);
-        assert_eq!(fabs(3.14), 3.14);
+        assert_eq!(fabs(-2.5), 2.5);
+        assert_eq!(fabs(2.5), 2.5);
         // fabs(-0.0) = 0.0 (sign bit cleared)
         assert_eq!(fabs(-0.0), 0.0);
         assert_eq!(signbit(fabs(-0.0)), 0);

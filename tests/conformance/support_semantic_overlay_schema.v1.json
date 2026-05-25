@@ -14,6 +14,7 @@
     "semantic_contract_classes",
     "support_matrix_snapshot",
     "coverage_policy",
+    "standalone_claim_guard",
     "audited_summary",
     "audited_entries"
   ],
@@ -77,6 +78,30 @@
   "blocked_semantic_replacement_levels": [
     "L0"
   ],
+  "standalone_claim_guard_contract": {
+    "required_guard_fields": [
+      "purpose",
+      "blocked_replacement_levels",
+      "required_row_ids",
+      "required_evidence_artifacts",
+      "failure_signature",
+      "user_visible_claim"
+    ],
+    "required_row_ids": [
+      "sem-nss-files-plugin",
+      "sem-nss-configure-lookup"
+    ],
+    "required_blocked_replacement_levels": [
+      "L2",
+      "L3"
+    ],
+    "required_evidence_artifacts": [
+      "tests/conformance/resolver_nss_hard_parts.v1.json",
+      "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+      "tests/conformance/replacement_levels.json"
+    ],
+    "failure_signature": "nss_standalone_claim_guard"
+  },
   "api_family_rules": [
     {
       "id": "elf_loader",
@@ -168,6 +193,13 @@
       "failure_signature": "incompatible_replacement_level"
     },
     {
+      "id": "nss_standalone_claim_guard_missing_blocker",
+      "kind": "standalone_claim_guard",
+      "command": "FLC_SUPPORT_SEMANTIC_OVERLAY=<fixture-nss-claim-guard> scripts/check_support_semantic_overlay_schema.sh",
+      "expected_status": "fail",
+      "failure_signature": "nss_standalone_claim_guard"
+    },
+    {
       "id": "malformed_overlay_json",
       "kind": "malformed_json",
       "command": "FLC_SUPPORT_SEMANTIC_OVERLAY=<fixture-malformed-json> scripts/check_support_semantic_overlay_schema.sh",
@@ -181,6 +213,7 @@
     "symbol_reference_count": 35,
     "exact_symbol_reference_count": 31,
     "wildcard_symbol_reference_count": 4,
+    "standalone_claim_blocker_count": 2,
     "duplicate_symbol_version_count": 0,
     "stale_source_ref_count": 0
   }

@@ -6,9 +6,9 @@
     "artifact": "support_matrix.json",
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 3705,
+      "Implemented": 2368,
       "RawSyscall": 414,
-      "WrapsHostLibc": 0,
+      "WrapsHostLibc": 1337,
       "GlibcCallThrough": 0,
       "Stub": 0
     }
@@ -25,6 +25,24 @@
     "is_exhaustive": false,
     "why_not_exhaustive": "This artifact was created from the current reality-check pass and records high-signal representative drift between taxonomy and semantic completeness. It is intended to become exhaustive in a follow-up gate.",
     "release_blocker": "Do not treat support_matrix.json Stub=0 as proof of full replacement semantics until this overlay is exhaustive and gated."
+  },
+  "standalone_claim_guard": {
+    "purpose": "NSS bootstrap/fallback semantics are explicit L2/L3 standalone claim blockers until a full native backend set, nsswitch ordering, module fallback, and cache-coherence evidence are implemented.",
+    "blocked_replacement_levels": [
+      "L2",
+      "L3"
+    ],
+    "required_row_ids": [
+      "sem-nss-files-plugin",
+      "sem-nss-configure-lookup"
+    ],
+    "required_evidence_artifacts": [
+      "tests/conformance/resolver_nss_hard_parts.v1.json",
+      "tests/conformance/hermetic_nss_resolver_lab.v1.json",
+      "tests/conformance/replacement_levels.json"
+    ],
+    "failure_signature": "nss_standalone_claim_guard",
+    "user_visible_claim": "NSS backend breadth remains L0/L1-only; standalone claims are blocked until files/backend/module-order/cache-coherence evidence passes."
   },
   "audited_entries": [
     {

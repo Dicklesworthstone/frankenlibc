@@ -1093,12 +1093,14 @@ mod tests {
     fn strftime_iso_week_year_boundary() {
         // Jan 1, 2021 is a Friday - belongs to ISO week 53 of 2020
         // (ISO year differs from calendar year)
-        let mut bd = BrokenDownTime::default();
-        bd.tm_year = 121; // 2021
-        bd.tm_mon = 0; // January
-        bd.tm_mday = 1;
-        bd.tm_wday = 5; // Friday
-        bd.tm_yday = 0;
+        let mut bd = BrokenDownTime {
+            tm_year: 121, // 2021
+            tm_mon: 0,    // January
+            tm_mday: 1,
+            tm_wday: 5, // Friday
+            tm_yday: 0,
+            ..Default::default()
+        };
         let mut buf = [0u8; 64];
         let n = format_strftime(b"%G-W%V-%u", &bd, &mut buf);
         assert_eq!(&buf[..n], b"2020-W53-5");
@@ -1124,15 +1126,17 @@ mod tests {
     #[test]
     fn strftime_padding_modifiers() {
         // March 5, 2025 14:30:45 (mday=5 tests padding)
-        let mut bd = BrokenDownTime::default();
-        bd.tm_year = 125; // 2025
-        bd.tm_mon = 2; // March
-        bd.tm_mday = 5;
-        bd.tm_hour = 14;
-        bd.tm_min = 30;
-        bd.tm_sec = 45;
-        bd.tm_wday = 3; // Wednesday
-        bd.tm_yday = 63;
+        let mut bd = BrokenDownTime {
+            tm_year: 125, // 2025
+            tm_mon: 2,    // March
+            tm_mday: 5,
+            tm_hour: 14,
+            tm_min: 30,
+            tm_sec: 45,
+            tm_wday: 3, // Wednesday
+            tm_yday: 63,
+            ..Default::default()
+        };
 
         let mut buf = [0u8; 64];
 
