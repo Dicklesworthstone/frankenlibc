@@ -1,0 +1,242 @@
+{
+  "schema_version": "change_surface_validation_planner.v1",
+  "bead": "bd-zaijr5",
+  "purpose": "Classify changed repo paths and emit a scoped validation_manifest.v1 with rch-only cargo proof commands, local static checks, target-dir isolation guidance, and local-fallback rejection metadata.",
+  "output_schema": "validation_manifest.v1",
+  "classification_contract": {
+    "supported_categories": [
+      "tracker",
+      "rust_crate_code",
+      "rust_crate_test",
+      "script",
+      "contract",
+      "conformance_json",
+      "docs",
+      "other"
+    ],
+    "mixed_change_rule": "mixed is true when more than one supported category is present",
+    "tracker_only_rule": "tracker_only is true only when every changed path is under .beads/",
+    "crate_detection_rule": "crates/<crate>/... paths map to cargo package <crate>; crates/<crate>/tests/<name>.rs prefers --test <name>"
+  },
+  "proof_policy": {
+    "cargo_requires_rch": true,
+    "required_remote_env": [
+      "RCH_REQUIRE_REMOTE=1"
+    ],
+    "required_launcher": "rch exec -- env",
+    "required_target_dir_env": "CARGO_TARGET_DIR=",
+    "target_dir_template": "/data/tmp/frankenlibc-{bead_slug}-{lane}",
+    "local_fallback_invalid": true,
+    "forbidden_output_markers": [
+      "[RCH] local",
+      "remote execution failed",
+      "falling back to local"
+    ],
+    "allowed_local_proof_classes": [
+      "static_diff_check",
+      "static_shell_syntax",
+      "static_json_parse",
+      "tracker_jsonl_parse",
+      "tracker_graph_health"
+    ]
+  },
+  "script_test_mappings": {
+    "scripts/plan_change_surface_validation.sh": "change_surface_validation_planner_test",
+    "scripts/check_changed_surface_validation_checklist.sh": "changed_surface_validation_checklist_test",
+    "scripts/check_ci_rch_cargo_policy.sh": "ci_rch_cargo_policy_test",
+    "scripts/check_completion_contract_rch_proof_manifest_lint.sh": "completion_contract_rch_proof_manifest_lint_test"
+  },
+  "artifact_test_mappings": {
+    "tests/conformance/change_surface_validation_planner.v1.json": "change_surface_validation_planner_test",
+    "tests/conformance/changed_surface_validation_checklist.v1.json": "changed_surface_validation_checklist_test",
+    "tests/conformance/ci_rch_cargo_policy.v1.json": "ci_rch_cargo_policy_test",
+    "tests/conformance/completion_contract_rch_proof_manifest_lint.v1.json": "completion_contract_rch_proof_manifest_lint_test"
+  },
+  "required_result_fields": [
+    "schema_version",
+    "bead_id",
+    "status",
+    "changed_paths",
+    "classifications",
+    "surface_summary",
+    "rch_policy",
+    "commands",
+    "artifact_refs",
+    "agent_mail_handoff",
+    "close_reason_snippet"
+  ],
+  "required_command_fields": [
+    "command_id",
+    "command",
+    "reason",
+    "expected_scope",
+    "proof_class",
+    "source_paths",
+    "requires_rch_remote",
+    "target_dir",
+    "target_dir_isolation_guidance",
+    "reject_local_fallback",
+    "forbidden_output_markers",
+    "artifact_refs"
+  ],
+  "required_failure_signatures": [
+    "invalid_changed_path",
+    "no_changed_paths",
+    "bare_local_cargo_proof",
+    "missing_remote_env",
+    "missing_rch_exec_env",
+    "missing_isolated_target_dir",
+    "local_fallback_marker"
+  ],
+  "sample_cases": [
+    {
+      "case_id": "tracker-only",
+      "changed_paths": [
+        ".beads/issues.jsonl"
+      ],
+      "expected_categories": [
+        "tracker"
+      ],
+      "expected_crates": [],
+      "expected_proof_classes": [
+        "tracker_jsonl_parse",
+        "tracker_graph_health"
+      ],
+      "expected_cargo_required": false,
+      "expected_mixed": false,
+      "expected_tracker_only": true
+    },
+    {
+      "case_id": "rust-crate-src",
+      "changed_paths": [
+        "crates/frankenlibc-core/src/string/mod.rs"
+      ],
+      "expected_categories": [
+        "rust_crate_code"
+      ],
+      "expected_crates": [
+        "frankenlibc-core"
+      ],
+      "expected_proof_classes": [
+        "remote_rch_cargo_check",
+        "remote_rch_cargo_test",
+        "remote_rch_cargo_clippy"
+      ],
+      "expected_cargo_required": true,
+      "expected_mixed": false,
+      "expected_tracker_only": false
+    },
+    {
+      "case_id": "rust-harness-test",
+      "changed_paths": [
+        "crates/frankenlibc-harness/tests/change_surface_validation_planner_test.rs"
+      ],
+      "expected_categories": [
+        "rust_crate_test"
+      ],
+      "expected_crates": [
+        "frankenlibc-harness"
+      ],
+      "expected_proof_classes": [
+        "remote_rch_cargo_check",
+        "remote_rch_cargo_test",
+        "remote_rch_cargo_clippy"
+      ],
+      "expected_cargo_required": true,
+      "expected_mixed": false,
+      "expected_tracker_only": false
+    },
+    {
+      "case_id": "script",
+      "changed_paths": [
+        "scripts/plan_change_surface_validation.sh"
+      ],
+      "expected_categories": [
+        "script"
+      ],
+      "expected_crates": [
+        "frankenlibc-harness"
+      ],
+      "expected_proof_classes": [
+        "static_shell_syntax",
+        "remote_rch_cargo_test"
+      ],
+      "expected_cargo_required": true,
+      "expected_mixed": false,
+      "expected_tracker_only": false
+    },
+    {
+      "case_id": "contract-json",
+      "changed_paths": [
+        "tests/conformance/change_surface_validation_planner.v1.json"
+      ],
+      "expected_categories": [
+        "contract"
+      ],
+      "expected_crates": [
+        "frankenlibc-harness"
+      ],
+      "expected_proof_classes": [
+        "static_json_parse",
+        "remote_rch_cargo_test"
+      ],
+      "expected_cargo_required": true,
+      "expected_mixed": false,
+      "expected_tracker_only": false
+    },
+    {
+      "case_id": "docs",
+      "changed_paths": [
+        "README.md"
+      ],
+      "expected_categories": [
+        "docs"
+      ],
+      "expected_crates": [],
+      "expected_proof_classes": [
+        "static_diff_check"
+      ],
+      "expected_cargo_required": false,
+      "expected_mixed": false,
+      "expected_tracker_only": false
+    },
+    {
+      "case_id": "mixed",
+      "changed_paths": [
+        ".beads/issues.jsonl",
+        "scripts/plan_change_surface_validation.sh",
+        "crates/frankenlibc-core/src/string/mod.rs"
+      ],
+      "expected_categories": [
+        "tracker",
+        "script",
+        "rust_crate_code"
+      ],
+      "expected_crates": [
+        "frankenlibc-core",
+        "frankenlibc-harness"
+      ],
+      "expected_proof_classes": [
+        "tracker_graph_health",
+        "static_shell_syntax",
+        "remote_rch_cargo_check",
+        "remote_rch_cargo_test",
+        "remote_rch_cargo_clippy"
+      ],
+      "expected_cargo_required": true,
+      "expected_mixed": true,
+      "expected_tracker_only": false
+    }
+  ],
+  "required_validation_commands": [
+    "python3 -m json.tool tests/conformance/change_surface_validation_planner.v1.json >/dev/null",
+    "bash -n scripts/plan_change_surface_validation.sh",
+    "scripts/plan_change_surface_validation.sh --bead bd-zaijr5 --output target/conformance/change_surface_validation/sample.validation_manifest.json --log target/conformance/change_surface_validation/sample.log.jsonl .beads/issues.jsonl scripts/plan_change_surface_validation.sh crates/frankenlibc-harness/tests/change_surface_validation_planner_test.rs tests/conformance/change_surface_validation_planner.v1.json",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/change_surface_validation_planner_test.rs",
+    "git diff --check -- scripts/plan_change_surface_validation.sh tests/conformance/change_surface_validation_planner.v1.json crates/frankenlibc-harness/tests/change_surface_validation_planner_test.rs .beads/issues.jsonl",
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-zaijr5-change-surface-planner-test cargo test -p frankenlibc-harness --test change_surface_validation_planner_test -- --nocapture",
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-zaijr5-change-surface-planner-check cargo check -p frankenlibc-harness --test change_surface_validation_planner_test",
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-zaijr5-change-surface-planner-clippy cargo clippy -p frankenlibc-harness --test change_surface_validation_planner_test -- -D warnings",
+    "br dep cycles --json"
+  ]
+}
