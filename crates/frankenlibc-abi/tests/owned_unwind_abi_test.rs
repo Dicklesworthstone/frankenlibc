@@ -4,12 +4,14 @@ use frankenlibc_abi::owned_unwind_abi::{
     __deregister_frame, __deregister_frame_info, __register_frame, __register_frame_info,
     _Unwind_Backtrace, _Unwind_GetDataRelBase, _Unwind_GetGR, _Unwind_GetIP,
     _Unwind_GetLanguageSpecificData, _Unwind_GetRegionStart, _Unwind_GetTextRelBase, _Unwind_SetGR,
-    _Unwind_SetIP, OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedUnwindDecodeError,
-    UnwindContext, owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
+    _Unwind_SetIP, OwnedContextInstallError, OwnedLandingPadInstall, OwnedLandingPadInstallInput,
+    OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedUnwindDecodeError, UnwindContext,
+    owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
     owned_evaluate_cfi_row_for_tests, owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
     owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
     owned_phase1_search_for_tests, owned_phase2_cleanup_for_tests,
-    owned_summarize_eh_frame_for_tests, owned_validate_cfi_program_for_tests,
+    owned_prepare_landing_pad_install_for_tests, owned_summarize_eh_frame_for_tests,
+    owned_validate_cfi_program_for_tests,
 };
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -264,7 +266,7 @@ fn phase1_search_distinguishes_no_handler_and_fatal_personality_results() {
 }
 
 #[test]
-fn phase2_cleanup_records_install_context_without_transfer() {
+fn phase2_cleanup_records_install_context_for_owned_cursor() {
     assert_eq!(unsafe { _Unwind_GetGR(std::ptr::null_mut(), 0) }, 0);
     assert_eq!(unsafe { _Unwind_GetGR(std::ptr::null_mut(), -1) }, 0);
 
@@ -302,7 +304,7 @@ fn phase2_cleanup_records_install_context_without_transfer() {
 }
 
 #[test]
-fn phase2_cleanup_classifies_continue_and_fatal_without_transfer() {
+fn phase2_cleanup_classifies_continue_and_fatal_for_owned_cursor() {
     let section_addr = 0x540000usize;
     let pc_begin = 0x542000usize;
     let pc_range = 0x40usize;
@@ -333,6 +335,127 @@ fn phase2_cleanup_classifies_continue_and_fatal_without_transfer() {
             frame_index: 0,
             code: URC_FATAL_PHASE1_ERROR,
         }
+    );
+}
+
+#[test]
+fn x86_64_landing_pad_install_descriptor_uses_validated_frame_cursor() {
+    let section_addr = 0x550000usize;
+    let pc_begin = 0x551000usize;
+    let pc_range = 0x40usize;
+    let common_frame_pointer_cfi = [0x41, 0x86, 0x02, 0x0e, 0x10, 0x43, 0x0d, 0x06];
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &common_frame_pointer_cfi);
+
+    let install = owned_prepare_landing_pad_install_for_tests(
+        &eh_frame,
+        section_addr,
+        OwnedLandingPadInstallInput {
+            call_site_ip: pc_begin + 4,
+            landing_pad_ip: TEST_LANDING_PAD,
+            frame_pointer: 0x7000,
+            stack_pointer: 0x6000,
+            general_register_0: 0x1111,
+            general_register_1: 0x2222,
+        },
+    )
+    .expect("valid x86_64 handler cursor should produce install descriptor");
+
+    assert_eq!(
+        install,
+        OwnedLandingPadInstall {
+            ip: TEST_LANDING_PAD,
+            stack_pointer: 0x6000,
+            frame_pointer: 0x7000,
+            general_register_0: 0x1111,
+            general_register_1: 0x2222,
+        }
+    );
+}
+
+#[test]
+fn x86_64_landing_pad_install_reports_bad_contexts() {
+    let section_addr = 0x560000usize;
+    let pc_begin = 0x561000usize;
+    let pc_range = 0x40usize;
+    let common_frame_pointer_cfi = [0x41, 0x86, 0x02, 0x0e, 0x10, 0x43, 0x0d, 0x06];
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &common_frame_pointer_cfi);
+
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &eh_frame,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin + 4,
+                landing_pad_ip: 0,
+                frame_pointer: 0x7000,
+                stack_pointer: 0x6000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::NullLandingPad)
+    );
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &eh_frame,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin + 4,
+                landing_pad_ip: TEST_LANDING_PAD,
+                frame_pointer: 0,
+                stack_pointer: 0x6000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::MissingPhysicalCursor)
+    );
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &eh_frame,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin + 4,
+                landing_pad_ip: TEST_LANDING_PAD,
+                frame_pointer: 0x7003,
+                stack_pointer: 0x6000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::MisalignedFramePointer)
+    );
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &eh_frame,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin + 4,
+                landing_pad_ip: TEST_LANDING_PAD,
+                frame_pointer: 0x7000,
+                stack_pointer: 0x8000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::StackPointerEscapesHandlerFrame)
+    );
+
+    let unsupported_cfa = synthetic_eh_frame(section_addr, pc_begin, pc_range, &[0x0c, 0x0c, 0x08]);
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &unsupported_cfa,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin,
+                landing_pad_ip: TEST_LANDING_PAD,
+                frame_pointer: 0x7000,
+                stack_pointer: 0x6000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::UnsupportedCfaRegister(12))
     );
 }
 

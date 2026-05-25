@@ -138,11 +138,12 @@ cat > "${SUMMARY_FILE}" <<EOF
     "feature_flags": ["standalone", "owned-unwind-stub"],
     "behavior": {
       "_Unwind_Backtrace": "performs bounded frame-pointer walk",
-      "_Unwind_RaiseException": "performs owned phase-1 search and returns fatal phase-2 until context transfer lands",
+      "_Unwind_RaiseException": "performs owned phase-1 search, phase-2 cleanup, and guarded x86_64 landing-pad transfer when the handler context validates",
       "_Unwind_Resume": "aborts until phase-2 context transfer lands",
       "_Unwind_GetGR": "reads owned cursor general-register state and returns zero for invalid slots",
-      "_Unwind_SetGR": "mutates owned cursor general-register state without transferring control",
-      "_Unwind_SetIP": "mutates owned cursor instruction-pointer state without transferring control"
+      "_Unwind_SetGR": "mutates owned cursor general-register state for personality-requested landing-pad install",
+      "_Unwind_SetIP": "mutates owned cursor instruction-pointer state for personality-requested landing-pad install",
+      "x86_64_context_install": "validates landing-pad IP, physical frame/stack cursor, CFA register, and saved RIP before the non-returning jump"
     },
     "requirement_for_default": "Complete L2 standalone-readiness (WS-6) to remove feature flag gating"
   },

@@ -8,9 +8,9 @@
     "compile_command": "g++ -o target/conformance/minimal_throw_catch tests/conformance/fixtures/unwind/minimal_throw_catch.cpp -static-libgcc -static-libstdc++"
   },
   "expected_status": {
-    "current": "expected_fail",
-    "reason": "owned_unwind_abi can perform phase-1 search and can record phase-2 cursor mutations requested by cleanup personalities, but architecture-specific context transfer is not implemented yet",
-    "when_implemented": "pass"
+    "current": "owned_x86_64_transfer_guarded",
+    "reason": "owned_unwind_abi performs phase-1 search, records phase-2 cursor mutations, validates x86_64 handler-frame CFI/stack state, and has a non-returning landing-pad transfer path. The static minimal_throw_catch fixture embeds local _Unwind_* symbols via -static-libgcc, so LD_PRELOAD alone cannot prove interposition ownership for that binary.",
+    "when_implemented": "owned transfer is covered by focused ABI tests; replacement-level C++ proof needs a fixture whose _Unwind_* symbols resolve to FrankenLibC rather than static libgcc text."
   },
   "validation": {
     "must_not_link": ["libgcc_s.so", "libunwind.so"],
@@ -25,8 +25,8 @@
     },
     "under_frankenlibc": {
       "command": "LD_PRELOAD=target/release/deps/libfrankenlibc_abi.so ./target/conformance/minimal_throw_catch",
-      "expected_current": "phase-1 metadata/search and phase-2 cursor-mutation proofs exist; full throw/catch still fails before architecture-specific context transfer",
-      "expected_phase2": "PASS: exception caught correctly"
+      "expected_current": "native catch output may pass through the fixture's embedded static libgcc unwinder; this is not accepted as proof that FrankenLibC owned _Unwind_RaiseException",
+      "expected_phase2": "PASS: exception caught correctly with _Unwind_* resolved to FrankenLibC-owned symbols"
     },
     "standalone": {
       "command": "Run with libfrankenlibc_replace.so as interpreter",
@@ -39,8 +39,9 @@
     "Fixture compiles without host libgcc_s",
     "Native run produces PASS output",
     "Owned phase-1 search discovers personality/LSDA-backed frames without host unwinder delegation",
-    "Owned phase-2 cleanup can record SetGR/SetIP cursor mutations without transferring control",
-    "Under frankenlibc standalone: exception propagates without abort",
+    "Owned phase-2 cleanup can record SetGR/SetIP cursor mutations and validate x86_64 landing-pad transfer descriptors",
+    "Bad x86_64 landing-pad contexts return explicit typed fatal diagnostics",
+    "Under frankenlibc standalone with owned _Unwind_* resolution: exception propagates without abort",
     "No _Unwind_* symbols resolved from host"
   ]
 }

@@ -4,8 +4,9 @@
 //! They are not a general unwinder. The experiment lane can now perform a
 //! bounded phase-1 search over registered `.eh_frame` data and invoke frame
 //! personalities with LSDA/region context. Phase-2 cleanup personalities can
-//! now mutate an owned cursor, but control transfer is still deliberately
-//! fail-closed until the architecture-specific context handoff lands.
+//! mutate an owned cursor, and x86_64 handler frames now have a guarded
+//! landing-pad transfer path that validates the physical frame cursor before
+//! installing the requested IP/register state.
 
 #![allow(non_snake_case)]
 
@@ -197,10 +198,45 @@ pub enum OwnedPhase2CleanupOutcome {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnedContextInstallError {
+    UnsupportedArchitecture,
+    NullLandingPad,
+    MissingPhysicalCursor,
+    MisalignedFramePointer,
+    MisalignedStackPointer,
+    StackPointerEscapesHandlerFrame,
+    UnsupportedCfaRegister(usize),
+    MissingSavedInstructionPointer,
+    CfaOverflow,
+    Decode(OwnedUnwindDecodeError),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnedLandingPadInstall {
+    pub ip: usize,
+    pub stack_pointer: usize,
+    pub frame_pointer: usize,
+    pub general_register_0: usize,
+    pub general_register_1: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnedLandingPadInstallInput {
+    pub call_site_ip: usize,
+    pub landing_pad_ip: usize,
+    pub frame_pointer: usize,
+    pub stack_pointer: usize,
+    pub general_register_0: usize,
+    pub general_register_1: usize,
+}
+
 #[repr(C)]
 pub struct UnwindContext {
     ip: UnwindWord,
     frame_index: usize,
+    frame_pointer: UnwindWord,
+    stack_pointer: UnwindWord,
     language_specific_data: UnwindWord,
     region_start: UnwindWord,
     text_rel_base: UnwindWord,
@@ -263,6 +299,8 @@ pub unsafe extern "C" fn _Unwind_Backtrace(
             let mut context = UnwindContext {
                 ip: instruction_pointer,
                 frame_index,
+                frame_pointer,
+                stack_pointer,
                 language_specific_data: 0,
                 region_start: 0,
                 text_rel_base: 0,
@@ -386,7 +424,9 @@ pub unsafe extern "C" fn _Unwind_RaiseException(
     exception: *mut UnwindException,
 ) -> UnwindReasonCode {
     match owned_phase1_search_current_stack(exception) {
-        OwnedPhase1SearchOutcome::HandlerFound { ip, .. } => {
+        OwnedPhase1SearchOutcome::HandlerFound {
+            frame_index, ip, ..
+        } => {
             if !exception.is_null() {
                 // SAFETY: the exception header is supplied by the language
                 // runtime. private_1/private_2 are reserved for the unwinder.
@@ -395,7 +435,7 @@ pub unsafe extern "C" fn _Unwind_RaiseException(
                     (*exception).private_2 = ip;
                 }
             }
-            URC_FATAL_PHASE2_ERROR
+            owned_phase2_cleanup_current_stack(exception, frame_index)
         }
         OwnedPhase1SearchOutcome::NoHandler => URC_END_OF_STACK,
         OwnedPhase1SearchOutcome::Fatal { code, .. } => code,
@@ -567,6 +607,26 @@ pub fn owned_phase2_cleanup_for_tests(
         private_2: 0,
     };
     phase2_cleanup_ip(eh_frame, section_addr, ip, &mut exception, false)
+}
+
+#[doc(hidden)]
+pub fn owned_prepare_landing_pad_install_for_tests(
+    eh_frame: &[u8],
+    section_addr: usize,
+    input: OwnedLandingPadInstallInput,
+) -> Result<OwnedLandingPadInstall, OwnedContextInstallError> {
+    let fde = find_fde_for_ip(eh_frame, section_addr, input.call_site_ip, false)
+        .map_err(OwnedContextInstallError::Decode)?
+        .ok_or(OwnedContextInstallError::Decode(
+            OwnedUnwindDecodeError::MalformedRecord,
+        ))?;
+    let mut context = context_for_fde(input.call_site_ip, 0, fde);
+    context.ip = input.landing_pad_ip;
+    context.frame_pointer = input.frame_pointer;
+    context.stack_pointer = input.stack_pointer;
+    context.general_registers[0] = input.general_register_0;
+    context.general_registers[1] = input.general_register_1;
+    prepare_landing_pad_install(&context, eh_frame, fde, input.call_site_ip)
 }
 
 #[doc(hidden)]
@@ -768,6 +828,104 @@ fn phase2_cleanup_ip(
     }
 }
 
+fn owned_phase2_cleanup_current_stack(
+    exception: *mut UnwindException,
+    handler_frame_index: usize,
+) -> UnwindReasonCode {
+    let mut frame_pointer = current_frame_pointer();
+    let stack_pointer = current_stack_pointer();
+    let Some(stack_limit) = stack_pointer.checked_add(MAX_STACK_SCAN_BYTES) else {
+        return URC_FATAL_PHASE2_ERROR;
+    };
+
+    let exception_class = if exception.is_null() {
+        0
+    } else {
+        // SAFETY: non-null exception pointers are supplied by the language
+        // runtime following the unwind ABI header layout.
+        unsafe { (*exception).exception_class }
+    };
+
+    let mut frame_index = 0usize;
+    while frame_index < MAX_BACKTRACE_FRAMES
+        && valid_frame_pointer(frame_pointer, stack_pointer, stack_limit)
+    {
+        let Some(next_frame) = read_word(frame_pointer) else {
+            break;
+        };
+        let Some(return_address_slot) = frame_pointer.checked_add(core::mem::size_of::<usize>())
+        else {
+            break;
+        };
+        let Some(instruction_pointer) = read_word(return_address_slot) else {
+            break;
+        };
+
+        if instruction_pointer != 0 {
+            let record = match find_registered_fde_record_for_ip(instruction_pointer) {
+                Ok(Some(record)) => Some(record),
+                Ok(None) => None,
+                Err(_) => return URC_FATAL_PHASE2_ERROR,
+            };
+            if let Some(record) = record
+                && let Some(personality) = record.fde.personality
+            {
+                let mut context = context_for_physical_fde(
+                    instruction_pointer,
+                    frame_index,
+                    record.fde,
+                    frame_pointer,
+                    stack_pointer,
+                );
+                let mut actions = UA_CLEANUP_PHASE;
+                if frame_index == handler_frame_index {
+                    actions |= UA_HANDLER_FRAME;
+                }
+                let code = call_personality(
+                    personality,
+                    actions,
+                    exception_class,
+                    exception,
+                    &mut context,
+                );
+                match code {
+                    URC_INSTALL_CONTEXT if frame_index == handler_frame_index => {
+                        let install = match prepare_landing_pad_install(
+                            &context,
+                            &record.eh_frame,
+                            record.fde,
+                            instruction_pointer,
+                        ) {
+                            Ok(install) => install,
+                            Err(_) => return URC_FATAL_PHASE2_ERROR,
+                        };
+                        // SAFETY: prepare_landing_pad_install validated the
+                        // physical stack/frame cursor and landing-pad IP for
+                        // this architecture-specific non-returning transfer.
+                        unsafe { install_landing_pad_context(install) };
+                    }
+                    URC_INSTALL_CONTEXT => return URC_FATAL_PHASE2_ERROR,
+                    URC_CONTINUE_UNWIND | URC_NO_REASON => {}
+                    other => return other,
+                }
+            }
+            if frame_index == handler_frame_index {
+                break;
+            }
+            frame_index += 1;
+        }
+
+        if next_frame <= frame_pointer
+            || !valid_frame_pointer(next_frame, stack_pointer, stack_limit)
+        {
+            break;
+        }
+        frame_pointer = next_frame;
+    }
+
+    URC_FATAL_PHASE2_ERROR
+}
+
 fn owned_phase1_search_current_stack(exception: *mut UnwindException) -> OwnedPhase1SearchOutcome {
     let mut frame_pointer = current_frame_pointer();
     let stack_pointer = current_stack_pointer();
@@ -791,13 +949,19 @@ fn owned_phase1_search_current_stack(exception: *mut UnwindException) -> OwnedPh
         };
 
         if instruction_pointer != 0 {
-            match find_registered_fde_for_ip(instruction_pointer) {
-                Ok(Some(fde)) => {
-                    let Some(personality) = fde.personality else {
+            match find_registered_fde_record_for_ip(instruction_pointer) {
+                Ok(Some(record)) => {
+                    let Some(personality) = record.fde.personality else {
                         frame_index += 1;
                         continue;
                     };
-                    let mut context = context_for_fde(instruction_pointer, frame_index, fde);
+                    let mut context = context_for_physical_fde(
+                        instruction_pointer,
+                        frame_index,
+                        record.fde,
+                        frame_pointer,
+                        stack_pointer,
+                    );
                     let exception_class = if exception.is_null() {
                         0
                     } else {
@@ -852,12 +1016,19 @@ fn owned_phase1_search_current_stack(exception: *mut UnwindException) -> OwnedPh
     OwnedPhase1SearchOutcome::NoHandler
 }
 
-fn find_registered_fde_for_ip(ip: usize) -> Result<Option<OwnedFdeRecord>, OwnedUnwindDecodeError> {
+struct RegisteredFdeRecord {
+    fde: OwnedFdeRecord,
+    eh_frame: Vec<u8>,
+}
+
+fn find_registered_fde_record_for_ip(
+    ip: usize,
+) -> Result<Option<RegisteredFdeRecord>, OwnedUnwindDecodeError> {
     let registry = *frame_registry();
     for slot in registry.iter().filter(|slot| slot.fde != 0) {
         let eh_frame = copy_registered_eh_frame(slot.fde)?;
         if let Some(fde) = find_fde_for_ip(&eh_frame, slot.fde, ip, true)? {
-            return Ok(Some(fde));
+            return Ok(Some(RegisteredFdeRecord { fde, eh_frame }));
         }
     }
     Ok(None)
@@ -908,11 +1079,131 @@ fn context_for_fde(ip: usize, frame_index: usize, fde: OwnedFdeRecord) -> Unwind
     UnwindContext {
         ip,
         frame_index,
+        frame_pointer: 0,
+        stack_pointer: 0,
         language_specific_data: fde.language_specific_data.unwrap_or(0),
         region_start: fde.pc_begin,
         text_rel_base: fde.text_rel_base,
         data_rel_base: fde.data_rel_base,
         general_registers: empty_general_registers(),
+    }
+}
+
+fn context_for_physical_fde(
+    ip: usize,
+    frame_index: usize,
+    fde: OwnedFdeRecord,
+    frame_pointer: usize,
+    stack_pointer: usize,
+) -> UnwindContext {
+    let mut context = context_for_fde(ip, frame_index, fde);
+    context.frame_pointer = frame_pointer;
+    context.stack_pointer = stack_pointer;
+    context
+}
+
+fn prepare_landing_pad_install(
+    context: &UnwindContext,
+    eh_frame: &[u8],
+    fde: OwnedFdeRecord,
+    call_site_ip: usize,
+) -> Result<OwnedLandingPadInstall, OwnedContextInstallError> {
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (context, eh_frame, fde, call_site_ip);
+        return Err(OwnedContextInstallError::UnsupportedArchitecture);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let row = evaluate_cfi_row(eh_frame, fde, call_site_ip)
+            .map_err(OwnedContextInstallError::Decode)?;
+        prepare_x86_64_landing_pad_install(context, row)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn prepare_x86_64_landing_pad_install(
+    context: &UnwindContext,
+    row: OwnedCfiRow,
+) -> Result<OwnedLandingPadInstall, OwnedContextInstallError> {
+    if context.ip == 0 {
+        return Err(OwnedContextInstallError::NullLandingPad);
+    }
+    if context.frame_pointer == 0 || context.stack_pointer == 0 {
+        return Err(OwnedContextInstallError::MissingPhysicalCursor);
+    }
+    if !context
+        .frame_pointer
+        .is_multiple_of(core::mem::align_of::<usize>())
+    {
+        return Err(OwnedContextInstallError::MisalignedFramePointer);
+    }
+    if !context
+        .stack_pointer
+        .is_multiple_of(core::mem::align_of::<usize>())
+    {
+        return Err(OwnedContextInstallError::MisalignedStackPointer);
+    }
+    if context.stack_pointer >= context.frame_pointer {
+        return Err(OwnedContextInstallError::StackPointerEscapesHandlerFrame);
+    }
+    if row.saved_rip_offset.is_none() {
+        return Err(OwnedContextInstallError::MissingSavedInstructionPointer);
+    }
+    let cfa_base = match row.cfa_register {
+        X86_64_DWARF_RBP => context.frame_pointer,
+        X86_64_DWARF_RSP => context.stack_pointer,
+        other => return Err(OwnedContextInstallError::UnsupportedCfaRegister(other)),
+    };
+    let _cfa = checked_add_signed_usize(cfa_base, row.cfa_offset)
+        .ok_or(OwnedContextInstallError::CfaOverflow)?;
+
+    Ok(OwnedLandingPadInstall {
+        ip: context.ip,
+        stack_pointer: context.stack_pointer,
+        frame_pointer: context.frame_pointer,
+        general_register_0: context.general_registers[0],
+        general_register_1: context.general_registers[1],
+    })
+}
+
+#[cfg(target_arch = "x86_64")]
+fn checked_add_signed_usize(base: usize, offset: isize) -> Option<usize> {
+    if offset >= 0 {
+        base.checked_add(offset as usize)
+    } else {
+        base.checked_sub(offset.unsigned_abs())
+    }
+}
+
+unsafe fn install_landing_pad_context(install: OwnedLandingPadInstall) -> ! {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the caller validated that the target IP, frame pointer, and
+        // stack pointer describe an in-stack x86_64 handler frame. This path
+        // never returns to Rust; it installs the Itanium ABI landing-pad
+        // registers (GR0/GR1 map to RAX/RDX on x86_64 SysV) and jumps to the
+        // personality-selected landing pad.
+        unsafe {
+            core::arch::asm!(
+                "mov rbp, r8",
+                "mov rsp, r9",
+                "jmp r10",
+                in("r8") install.frame_pointer,
+                in("r9") install.stack_pointer,
+                in("r10") install.ip,
+                in("rax") install.general_register_0,
+                in("rdx") install.general_register_1,
+                options(noreturn)
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = install;
+        std::process::abort()
     }
 }
 
