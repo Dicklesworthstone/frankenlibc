@@ -2699,7 +2699,7 @@ Additional requirements:
 
 - Replacement artifact (`libfrankenlibc_replace.so`) builds and runs without `LD_PRELOAD` (used as the *primary* libc for a test process)
 - Multi-arch: at minimum x86_64 and aarch64 produce passing artifacts
-- Distribution packaging contract: produces installable packages for at least one Linux distribution
+- Distribution packaging contract: `scripts/check_distribution_packaging_contract.sh` produces a Debian `.deb`, installs it into an isolated dpkg root, and runs prefix-smoke checks against the installed `libfrankenlibc_replace.so`
 - Long-tail stress: 24-hour soak tests across the curated workload set without divergence
 - Performance: hardened mode within 2× of native glibc on the standard benchmark suite
 
@@ -2719,7 +2719,7 @@ Not every libc concern belongs in scope. Listing the non-goals explicitly is par
 - **A modified kernel ABI.** Every syscall path goes through the standard Linux ABI; we don't require kernel patches.
 - **A new memory-safety language.** Rust is the implementation language. C is the interface. We don't propose changes to either.
 - **A new build system.** Standard Cargo. No bespoke build infrastructure beyond `build.rs` for SOS synthesis and barrier audit.
-- **A new package manager or distribution.** Build from source, install into a prefix, point `LD_PRELOAD` at it.
+- **A new package manager or distribution.** The WS-8.3 package gate produces a conventional Debian package for validation, not a new package manager or distro.
 - **An eBPF agent.** eBPF observes the kernel from the inside; FrankenLibC observes libc from the outside. Complementary, not competing.
 
 "What we didn't build" is the same discipline as "what we *can* finish". Bounding the scope tightly is what makes the L2 and L3 promotions achievable rather than aspirational.

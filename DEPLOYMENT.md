@@ -23,12 +23,15 @@ What works today:
 - Strict mode interposition (`FRANKENLIBC_MODE` unset or `strict`)
 - Hardened mode interposition (`FRANKENLIBC_MODE=hardened`)
 - Gentoo validation lanes and Portage-hook-based preload workflows
+- Experimental Debian package generation for the standalone replace artifact,
+  gated by `scripts/check_distribution_packaging_contract.sh` and installed
+  into an isolated root before any prefix-smoke claim
 
 What does not exist yet:
 
 - No standalone `libc.so.6` replacement flow
 - No curl installer
-- No distro package
+- No published distribution repository or system package manager integration
 - No setuid/setgid preload support, because the loader ignores `LD_PRELOAD` there
 
 ## Prerequisites
@@ -195,11 +198,15 @@ Useful supporting checks:
 bash scripts/check_support_matrix_maintenance.sh
 bash scripts/check_c_fixture_suite.sh
 bash scripts/e2e_suite.sh smoke
+bash scripts/check_distribution_packaging_contract.sh
 ```
 
 Interpretation:
 
 - `check_packaging.sh` validates the declared interpose/replace artifact contracts
+- `check_distribution_packaging_contract.sh` builds a Debian `.deb` from the
+  current `libfrankenlibc_replace.so`, installs it into an isolated dpkg root,
+  and validates the installed `/usr/lib/frankenlibc` prefix artifact
 - `check_replacement_levels.sh` validates the current maturity-level claim state
 - `ld_preload_smoke.sh` runs real dynamic programs in strict and hardened modes
 - `e2e_suite.sh` exercises broader replayable scenario packs
