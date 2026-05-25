@@ -32,6 +32,7 @@ REQUIRED_SYMBOLS=(
   "_Unwind_Backtrace"
   "_Unwind_DeleteException"
   "_Unwind_GetDataRelBase"
+  "_Unwind_GetGR"
   "_Unwind_GetIP"
   "_Unwind_GetIPInfo"
   "_Unwind_GetLanguageSpecificData"
@@ -137,10 +138,11 @@ cat > "${SUMMARY_FILE}" <<EOF
     "feature_flags": ["standalone", "owned-unwind-stub"],
     "behavior": {
       "_Unwind_Backtrace": "performs bounded frame-pointer walk",
-      "_Unwind_RaiseException": "performs owned phase-1 search and returns fatal phase-2 until context install lands",
-      "_Unwind_Resume": "aborts until phase-2 context install lands",
-      "_Unwind_SetGR": "aborts (panic=abort design)",
-      "_Unwind_SetIP": "aborts (panic=abort design)"
+      "_Unwind_RaiseException": "performs owned phase-1 search and returns fatal phase-2 until context transfer lands",
+      "_Unwind_Resume": "aborts until phase-2 context transfer lands",
+      "_Unwind_GetGR": "reads owned cursor general-register state and returns zero for invalid slots",
+      "_Unwind_SetGR": "mutates owned cursor general-register state without transferring control",
+      "_Unwind_SetIP": "mutates owned cursor instruction-pointer state without transferring control"
     },
     "requirement_for_default": "Complete L2 standalone-readiness (WS-6) to remove feature flag gating"
   },

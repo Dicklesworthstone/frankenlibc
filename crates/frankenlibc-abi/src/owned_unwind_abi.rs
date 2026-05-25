@@ -3,8 +3,9 @@
 //! These symbols are intentionally gated behind `standalone,owned-unwind-stub`.
 //! They are not a general unwinder. The experiment lane can now perform a
 //! bounded phase-1 search over registered `.eh_frame` data and invoke frame
-//! personalities with LSDA/region context, but phase-2 context installation is
-//! still deliberately fail-closed until the owned context handoff lands.
+//! personalities with LSDA/region context. Phase-2 cleanup personalities can
+//! now mutate an owned cursor, but control transfer is still deliberately
+//! fail-closed until the architecture-specific context handoff lands.
 
 #![allow(non_snake_case)]
 
@@ -21,13 +22,17 @@ const URC_FATAL_PHASE2_ERROR: UnwindReasonCode = 2;
 const URC_FATAL_PHASE1_ERROR: UnwindReasonCode = 3;
 const URC_END_OF_STACK: UnwindReasonCode = 5;
 const URC_HANDLER_FOUND: UnwindReasonCode = 6;
+const URC_INSTALL_CONTEXT: UnwindReasonCode = 7;
 const URC_CONTINUE_UNWIND: UnwindReasonCode = 8;
 const UA_SEARCH_PHASE: UnwindAction = 1;
+const UA_CLEANUP_PHASE: UnwindAction = 2;
+const UA_HANDLER_FRAME: UnwindAction = 4;
 const FRAME_REGISTRY_SLOTS: usize = 128;
 const MAX_BACKTRACE_FRAMES: usize = 64;
 const MAX_STACK_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REGISTERED_EH_FRAME_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REGISTERED_EH_FRAME_RECORDS: usize = 16 * 1024;
+const MAX_UNWIND_GR: usize = 32;
 const DW_EH_PE_OMIT: u8 = 0xff;
 const DW_EH_PE_ABSPTR: u8 = 0x00;
 const DW_EH_PE_ULEB128: u8 = 0x01;
@@ -112,6 +117,21 @@ pub enum OwnedPhase1SearchOutcome {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnedPhase2CleanupOutcome {
+    InstallRequested {
+        frame_index: usize,
+        ip: usize,
+        general_register_0: usize,
+        general_register_1: usize,
+    },
+    ContinueUnwind,
+    Fatal {
+        frame_index: usize,
+        code: UnwindReasonCode,
+    },
+}
+
 #[repr(C)]
 pub struct UnwindContext {
     ip: UnwindWord,
@@ -120,6 +140,7 @@ pub struct UnwindContext {
     region_start: UnwindWord,
     text_rel_base: UnwindWord,
     data_rel_base: UnwindWord,
+    general_registers: [UnwindWord; MAX_UNWIND_GR],
 }
 
 #[repr(C, align(16))]
@@ -181,6 +202,7 @@ pub unsafe extern "C" fn _Unwind_Backtrace(
                 region_start: 0,
                 text_rel_base: 0,
                 data_rel_base: 0,
+                general_registers: empty_general_registers(),
             };
             // SAFETY: the callback receives a pointer to a stack-local context
             // that remains alive for the duration of the call. The callback
@@ -227,6 +249,19 @@ pub unsafe extern "C" fn _Unwind_GetDataRelBase(ctx: *mut UnwindContext) -> Unwi
     // SAFETY: non-null contexts are owned by this module during personality
     // calls or supplied by ABI peers following the opaque context contract.
     unsafe { (*ctx).data_rel_base }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _Unwind_GetGR(ctx: *mut UnwindContext, index: c_int) -> UnwindWord {
+    let Ok(index) = usize::try_from(index) else {
+        return 0;
+    };
+    if ctx.is_null() || index >= MAX_UNWIND_GR {
+        return 0;
+    }
+    // SAFETY: non-null contexts are owned by this module during personality
+    // calls or supplied by ABI peers following the opaque context contract.
+    unsafe { (*ctx).general_registers[index] }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -309,16 +344,29 @@ pub unsafe extern "C" fn _Unwind_Resume(_exception: *mut UnwindException) {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_SetGR(
-    _ctx: *mut UnwindContext,
-    _index: c_int,
-    _new_value: UnwindWord,
+    ctx: *mut UnwindContext,
+    index: c_int,
+    new_value: UnwindWord,
 ) {
-    std::process::abort()
+    let Ok(index) = usize::try_from(index) else {
+        return;
+    };
+    if ctx.is_null() || index >= MAX_UNWIND_GR {
+        return;
+    }
+    // SAFETY: non-null contexts are stack-local owned cursors during this
+    // phase-2 experiment. Mutating them records intent only; no CPU context is
+    // installed by this symbol.
+    unsafe { (*ctx).general_registers[index] = new_value };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _Unwind_SetIP(_ctx: *mut UnwindContext, _new_value: UnwindWord) {
-    std::process::abort()
+pub unsafe extern "C" fn _Unwind_SetIP(ctx: *mut UnwindContext, new_value: UnwindWord) {
+    if ctx.is_null() {
+        return;
+    }
+    // SAFETY: mirrors _Unwind_SetGR's owned-cursor contract.
+    unsafe { (*ctx).ip = new_value };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -438,6 +486,22 @@ pub fn owned_phase1_search_for_tests(
         private_2: 0,
     };
     phase1_search_ips(eh_frame, section_addr, ips, &mut exception, false)
+}
+
+#[doc(hidden)]
+pub fn owned_phase2_cleanup_for_tests(
+    eh_frame: &[u8],
+    section_addr: usize,
+    ip: usize,
+    exception_class: UnwindExceptionClass,
+) -> Result<OwnedPhase2CleanupOutcome, OwnedUnwindDecodeError> {
+    let mut exception = UnwindException {
+        exception_class,
+        exception_cleanup: None,
+        private_1: 0,
+        private_2: 0,
+    };
+    phase2_cleanup_ip(eh_frame, section_addr, ip, &mut exception, false)
 }
 
 #[doc(hidden)]
@@ -584,6 +648,49 @@ fn phase1_search_ips(
     Ok(OwnedPhase1SearchOutcome::NoHandler)
 }
 
+fn phase2_cleanup_ip(
+    eh_frame: &[u8],
+    section_addr: usize,
+    ip: usize,
+    exception: *mut UnwindException,
+    resolve_indirect: bool,
+) -> Result<OwnedPhase2CleanupOutcome, OwnedUnwindDecodeError> {
+    let exception_class = if exception.is_null() {
+        0
+    } else {
+        // SAFETY: non-null exception pointers are supplied by the language
+        // runtime following the unwind ABI header layout.
+        unsafe { (*exception).exception_class }
+    };
+    let Some(fde) = find_fde_for_ip(eh_frame, section_addr, ip, resolve_indirect)? else {
+        return Ok(OwnedPhase2CleanupOutcome::ContinueUnwind);
+    };
+    let Some(personality) = fde.personality else {
+        return Ok(OwnedPhase2CleanupOutcome::ContinueUnwind);
+    };
+    let mut context = context_for_fde(ip, 0, fde);
+    let code = call_personality(
+        personality,
+        UA_CLEANUP_PHASE | UA_HANDLER_FRAME,
+        exception_class,
+        exception,
+        &mut context,
+    );
+    match code {
+        URC_INSTALL_CONTEXT => Ok(OwnedPhase2CleanupOutcome::InstallRequested {
+            frame_index: context.frame_index,
+            ip: context.ip,
+            general_register_0: context.general_registers[0],
+            general_register_1: context.general_registers[1],
+        }),
+        URC_CONTINUE_UNWIND | URC_NO_REASON => Ok(OwnedPhase2CleanupOutcome::ContinueUnwind),
+        other => Ok(OwnedPhase2CleanupOutcome::Fatal {
+            frame_index: context.frame_index,
+            code: other,
+        }),
+    }
+}
+
 fn owned_phase1_search_current_stack(exception: *mut UnwindException) -> OwnedPhase1SearchOutcome {
     let mut frame_pointer = current_frame_pointer();
     let stack_pointer = current_stack_pointer();
@@ -728,7 +835,12 @@ fn context_for_fde(ip: usize, frame_index: usize, fde: OwnedFdeRecord) -> Unwind
         region_start: fde.pc_begin,
         text_rel_base: fde.text_rel_base,
         data_rel_base: fde.data_rel_base,
+        general_registers: empty_general_registers(),
     }
+}
+
+fn empty_general_registers() -> [UnwindWord; MAX_UNWIND_GR] {
+    [0; MAX_UNWIND_GR]
 }
 
 fn call_personality(

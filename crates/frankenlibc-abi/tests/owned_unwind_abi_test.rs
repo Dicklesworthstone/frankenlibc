@@ -2,13 +2,14 @@
 
 use frankenlibc_abi::owned_unwind_abi::{
     __deregister_frame, __deregister_frame_info, __register_frame, __register_frame_info,
-    _Unwind_Backtrace, _Unwind_GetDataRelBase, _Unwind_GetIP, _Unwind_GetLanguageSpecificData,
-    _Unwind_GetRegionStart, _Unwind_GetTextRelBase, OwnedPhase1SearchOutcome,
-    OwnedUnwindDecodeError, UnwindContext, owned_decode_sleb128_for_tests,
-    owned_decode_uleb128_for_tests, owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
+    _Unwind_Backtrace, _Unwind_GetDataRelBase, _Unwind_GetGR, _Unwind_GetIP,
+    _Unwind_GetLanguageSpecificData, _Unwind_GetRegionStart, _Unwind_GetTextRelBase, _Unwind_SetGR,
+    _Unwind_SetIP, OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedUnwindDecodeError,
+    UnwindContext, owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
+    owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
     owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
-    owned_phase1_search_for_tests, owned_summarize_eh_frame_for_tests,
-    owned_validate_cfi_program_for_tests,
+    owned_phase1_search_for_tests, owned_phase2_cleanup_for_tests,
+    owned_summarize_eh_frame_for_tests, owned_validate_cfi_program_for_tests,
 };
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,10 @@ const URC_HANDLER_FOUND: i32 = 6;
 const URC_INSTALL_CONTEXT: i32 = 7;
 const URC_CONTINUE_UNWIND: i32 = 8;
 const UA_SEARCH_PHASE: i32 = 1;
+const UA_CLEANUP_PHASE: i32 = 2;
+const UA_HANDLER_FRAME: i32 = 4;
 const TEST_EXCEPTION_CLASS: u64 = 0x4652_4b4e_432b_2b00;
+const TEST_LANDING_PAD: usize = 0x5eed_baad;
 static TEST_LSDA: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
 
 unsafe extern "C" fn collect_frame_ip(ctx: *mut UnwindContext, arg: *mut c_void) -> i32 {
@@ -207,6 +211,76 @@ fn phase1_search_distinguishes_no_handler_and_fatal_personality_results() {
         OwnedPhase1SearchOutcome::Fatal {
             frame_index: 0,
             code: URC_INSTALL_CONTEXT,
+        }
+    );
+}
+
+#[test]
+fn phase2_cleanup_records_install_context_without_transfer() {
+    assert_eq!(unsafe { _Unwind_GetGR(std::ptr::null_mut(), 0) }, 0);
+    assert_eq!(unsafe { _Unwind_GetGR(std::ptr::null_mut(), -1) }, 0);
+
+    let section_addr = 0x530000usize;
+    let pc_begin = 0x532000usize;
+    let pc_range = 0x40usize;
+    let eh_frame = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        install_context_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+
+    let outcome =
+        owned_phase2_cleanup_for_tests(&eh_frame, section_addr, pc_begin + 1, TEST_EXCEPTION_CLASS)
+            .expect("phase2 cleanup should decode");
+    match outcome {
+        OwnedPhase2CleanupOutcome::InstallRequested {
+            frame_index,
+            ip,
+            general_register_0,
+            general_register_1,
+        } => {
+            assert_eq!(frame_index, 0);
+            assert_eq!(ip, TEST_LANDING_PAD);
+            assert_ne!(general_register_0, 0);
+            assert_eq!(general_register_1, 0x55aa);
+        }
+        other => panic!("expected install request, got {other:?}"),
+    }
+}
+
+#[test]
+fn phase2_cleanup_classifies_continue_and_fatal_without_transfer() {
+    let section_addr = 0x540000usize;
+    let pc_begin = 0x542000usize;
+    let pc_range = 0x40usize;
+    let no_handler = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        continue_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+    assert_eq!(
+        owned_phase2_cleanup_for_tests(&no_handler, section_addr, pc_begin + 1, 0)
+            .expect("continue cleanup should decode"),
+        OwnedPhase2CleanupOutcome::ContinueUnwind
+    );
+
+    let fatal = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        phase2_fatal_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+    assert_eq!(
+        owned_phase2_cleanup_for_tests(&fatal, section_addr, pc_begin + 1, 0)
+            .expect("fatal cleanup should decode"),
+        OwnedPhase2CleanupOutcome::Fatal {
+            frame_index: 0,
+            code: URC_FATAL_PHASE1_ERROR,
         }
     );
 }
@@ -435,6 +509,50 @@ unsafe extern "C" fn continue_personality(
     _ctx: *mut UnwindContext,
 ) -> i32 {
     URC_CONTINUE_UNWIND
+}
+
+unsafe extern "C" fn install_context_personality(
+    version: i32,
+    actions: i32,
+    exception_class: u64,
+    exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    ctx: *mut UnwindContext,
+) -> i32 {
+    if version != 1
+        || actions != (UA_CLEANUP_PHASE | UA_HANDLER_FRAME)
+        || exception_class != TEST_EXCEPTION_CLASS
+        || exception.is_null()
+    {
+        return URC_FATAL_PHASE1_ERROR;
+    }
+
+    unsafe { _Unwind_SetGR(ctx, 0, exception as usize) };
+    unsafe { _Unwind_SetGR(ctx, 1, 0x55aa) };
+    unsafe { _Unwind_SetGR(ctx, 99, 0xfeed) };
+    unsafe { _Unwind_SetGR(ctx, -1, 0xbeef) };
+    unsafe { _Unwind_SetIP(ctx, TEST_LANDING_PAD) };
+
+    if unsafe { _Unwind_GetGR(ctx, 0) } == exception as usize
+        && unsafe { _Unwind_GetGR(ctx, 1) } == 0x55aa
+        && unsafe { _Unwind_GetGR(ctx, 99) } == 0
+        && unsafe { _Unwind_GetGR(ctx, -1) } == 0
+        && unsafe { _Unwind_GetGR(std::ptr::null_mut(), 0) } == 0
+        && unsafe { _Unwind_GetIP(ctx) } == TEST_LANDING_PAD
+    {
+        URC_INSTALL_CONTEXT
+    } else {
+        URC_FATAL_PHASE1_ERROR
+    }
+}
+
+unsafe extern "C" fn phase2_fatal_personality(
+    _version: i32,
+    _actions: i32,
+    _exception_class: u64,
+    _exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    _ctx: *mut UnwindContext,
+) -> i32 {
+    URC_FATAL_PHASE1_ERROR
 }
 
 unsafe extern "C" fn fatal_personality(
