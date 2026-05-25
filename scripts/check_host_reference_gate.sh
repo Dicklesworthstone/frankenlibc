@@ -1,19 +1,29 @@
 #!/bin/bash
-# bd-gq1kz7.10: Zero-host-reference nm/readelf gate preflight
+# bd-gq1kz7.10 / bd-06jgi2.7: Zero-host-reference nm/readelf gate
 # Fail-closed scanner for standalone artifacts that reports residual host-glibc symbol references.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Find standalone artifact
-find_artifact() {
-    local paths=(
+if [[ -n "${FRANKENLIBC_ARTIFACT:-}" ]]; then
+    CANDIDATE_ARTIFACTS=("${FRANKENLIBC_ARTIFACT}")
+else
+    CANDIDATE_ARTIFACTS=(
         "$PROJECT_ROOT/target/standalone_replacement_artifact/cargo-target/release/libfrankenlibc_replace.so"
         "$PROJECT_ROOT/target/release/libfrankenlibc_abi.so"
         "$PROJECT_ROOT/target/release/deps/libfrankenlibc_abi.so"
     )
-    for p in "${paths[@]}"; do
+fi
+
+json_array() {
+    printf '%s\n' "$@" | jq -R . | jq -s .
+}
+
+# Find standalone artifact
+find_artifact() {
+    local p
+    for p in "${CANDIDATE_ARTIFACTS[@]}"; do
         if [[ -f "$p" ]] && [[ -s "$p" ]]; then
             echo "$p"
             return 0
@@ -72,12 +82,33 @@ classify_symbol() {
 main() {
     local artifact
     artifact=$(find_artifact) || {
-        echo '{"status":"error","message":"no standalone artifact found","artifacts_checked":["target/standalone_replacement_artifact/cargo-target/release/libfrankenlibc_replace.so","target/release/libfrankenlibc_abi.so"]}'
+        local checked_json
+        checked_json=$(json_array "${CANDIDATE_ARTIFACTS[@]}")
+        cat <<EOF
+{
+  "status": "error",
+  "message": "no standalone artifact found",
+  "artifacts_checked": $checked_json,
+  "gate": "bd-gq1kz7.10",
+  "promotion_gate": "bd-06jgi2.7"
+}
+EOF
         exit 1
     }
 
     local undefined_syms
-    undefined_syms=$(nm -u "$artifact" 2>/dev/null | awk '{print $NF}' | sort -u)
+    if ! undefined_syms=$(nm -u "$artifact" 2>/dev/null | awk '{print $NF}' | sort -u); then
+        cat <<EOF
+{
+  "status": "error",
+  "message": "nm failed while inspecting artifact",
+  "artifact": "$artifact",
+  "gate": "bd-gq1kz7.10",
+  "promotion_gate": "bd-06jgi2.7"
+}
+EOF
+        exit 1
+    fi
 
     local allowed_count=0
     local disallowed_count=0
@@ -105,7 +136,7 @@ main() {
     done <<< "$undefined_syms"
 
     local pass="true"
-    if [[ $disallowed_count -gt 0 ]]; then
+    if [[ $disallowed_count -gt 0 || $unknown_count -gt 0 ]]; then
         pass="false"
     fi
 
@@ -136,7 +167,12 @@ main() {
   },
   "disallowed": $disallowed_json,
   "unknown": $unknown_json,
-  "gate": "bd-gq1kz7.10"
+  "gate": "bd-gq1kz7.10",
+  "promotion_gate": "bd-06jgi2.7",
+  "policy": {
+    "artifact_override_env": "FRANKENLIBC_ARTIFACT",
+    "fail_closed_unknown_symbols": true
+  }
 }
 EOF
 

@@ -92,6 +92,17 @@ fn gate_emits_valid_json() -> TestResult {
         Some("bd-gq1kz7.10"),
         "gate output must identify as bd-gq1kz7.10"
     );
+    assert_eq!(
+        json.get("promotion_gate").and_then(Value::as_str),
+        Some("bd-06jgi2.7"),
+        "gate output must identify the L2 promotion gate"
+    );
+    assert_eq!(
+        json.pointer("/policy/fail_closed_unknown_symbols")
+            .and_then(Value::as_bool),
+        Some(true),
+        "promotion gate must fail closed on unknown symbols"
+    );
 
     Ok(())
 }

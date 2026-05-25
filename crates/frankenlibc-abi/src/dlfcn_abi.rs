@@ -9,9 +9,10 @@ use std::ffi::{c_char, c_int, c_void};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
+#[cfg(feature = "standalone")]
+use frankenlibc_core::elf::{Elf64ProgramHeader, ProgramType};
 use frankenlibc_core::elf::{
-    Elf64ProgramHeader, ElfLoader, LoadedObject, PltBindingPolicy, ProgramType, RelocationResult,
-    SymbolLookup,
+    ElfLoader, LoadedObject, PltBindingPolicy, RelocationResult, SymbolLookup,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
