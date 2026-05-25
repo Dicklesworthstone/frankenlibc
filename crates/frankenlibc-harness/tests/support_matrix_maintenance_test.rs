@@ -251,6 +251,102 @@ fn maintenance_report_schema_complete() {
 }
 
 #[test]
+fn support_matrix_embedded_counts_match_symbol_rows() {
+    let matrix = load_json(&repo_root().join("support_matrix.json"));
+    let symbols = matrix["symbols"]
+        .as_array()
+        .expect("support_matrix.symbols must be an array");
+    let mut counts = std::collections::BTreeMap::<&str, u64>::new();
+    for symbol in symbols {
+        let status = symbol["status"]
+            .as_str()
+            .expect("support_matrix symbol status must be a string");
+        *counts.entry(status).or_default() += 1;
+    }
+
+    assert_eq!(
+        matrix["total_exported"].as_u64(),
+        Some(symbols.len() as u64),
+        "support_matrix.total_exported must match symbols.len()"
+    );
+    assert_eq!(
+        matrix["summary"]["total"].as_u64(),
+        Some(symbols.len() as u64),
+        "support_matrix.summary.total must match symbols.len()"
+    );
+
+    for (json_key, status) in [
+        ("implemented", "Implemented"),
+        ("raw_syscall", "RawSyscall"),
+        ("wraps_host_libc", "WrapsHostLibc"),
+        ("glibc_call_through", "GlibcCallThrough"),
+        ("stub", "Stub"),
+    ] {
+        let actual = counts.get(status).copied().unwrap_or_default();
+        assert_eq!(
+            matrix[json_key].as_u64(),
+            Some(actual),
+            "support_matrix.{json_key} must be derived from symbols[].status"
+        );
+        assert_eq!(
+            matrix["counts"][json_key].as_u64(),
+            Some(actual),
+            "support_matrix.counts.{json_key} must be derived from symbols[].status"
+        );
+        assert_eq!(
+            matrix["summary"][json_key].as_u64(),
+            Some(actual),
+            "support_matrix.summary.{json_key} must be derived from symbols[].status"
+        );
+    }
+}
+
+#[test]
+fn generated_maintenance_dashboard_counts_match_symbol_rows() {
+    let matrix = load_json(&repo_root().join("support_matrix.json"));
+    let symbols = matrix["symbols"]
+        .as_array()
+        .expect("support_matrix.symbols must be an array");
+    let mut counts = std::collections::BTreeMap::<&str, u64>::new();
+    for symbol in symbols {
+        let status = symbol["status"]
+            .as_str()
+            .expect("support_matrix symbol status must be a string");
+        *counts.entry(status).or_default() += 1;
+    }
+
+    let generated_path = unique_generated_report_path("support_matrix_count_dashboard_test");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&generated_path);
+    let dashboard_counts = report["coverage_dashboard"]["status_counts"]
+        .as_object()
+        .expect("coverage_dashboard.status_counts must be an object");
+    for status in [
+        "Implemented",
+        "RawSyscall",
+        "WrapsHostLibc",
+        "GlibcCallThrough",
+        "Stub",
+    ] {
+        let actual = counts.get(status).copied().unwrap_or_default();
+        assert_eq!(
+            dashboard_counts
+                .get(status)
+                .and_then(serde_json::Value::as_u64),
+            Some(actual),
+            "generated maintenance dashboard count for {status} must be derived from symbols[].status"
+        );
+    }
+}
+
+#[test]
 fn maintenance_status_validation_above_threshold() {
     let root = repo_root();
     let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");

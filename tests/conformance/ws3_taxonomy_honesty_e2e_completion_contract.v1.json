@@ -1,7 +1,7 @@
 {
   "schema_version": "ws3_taxonomy_honesty_e2e_completion_contract.v1",
   "manifest_id": "bd-smp21.5-ws3-taxonomy-honesty-e2e",
-  "generated_utc": "2026-05-22T05:12:00Z",
+    "generated_utc": "2026-05-25T19:48:00Z",
   "description": "Completion evidence binding for the WS-3 taxonomy-honesty E2E gate.",
   "bead": "bd-smp21.5",
   "source_artifacts": {
@@ -18,15 +18,15 @@
   "completion_debt_evidence": {
     "required_summary": {
       "total_symbols": 4119,
-      "implemented": 2368,
+      "implemented": 3550,
       "raw_syscall": 414,
-      "native": 2782,
-      "wraps_host_libc": 1337,
+      "native": 3964,
+      "wraps_host_libc": 155,
       "glibc_callthrough": 0,
-      "callthrough": 1337,
+      "callthrough": 155,
       "stub": 0,
-      "native_pct": 67.5,
-      "callthrough_pct": 32.5,
+      "native_pct": 96.2,
+      "callthrough_pct": 3.8,
       "implemented_host_delegation_count": 0
     },
     "required_checks": [

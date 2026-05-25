@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
-  "generated_at_utc": "2026-05-01T03:40:03Z",
+    "generated_at_utc": "2026-05-25T19:48:00Z",
   "purpose": "Overlay semantic contract classes on top of support_matrix.json status labels. The support taxonomy answers whether an exported symbol has a native/raw-syscall implementation class; this overlay records representative cases where that status is not equivalent to full POSIX/GNU/glibc semantic parity.",
   "support_matrix_snapshot": {
     "artifact": "support_matrix.json",
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 2368,
+      "Implemented": 3550,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1337,
+      "WrapsHostLibc": 155,
       "GlibcCallThrough": 0,
       "Stub": 0
     }

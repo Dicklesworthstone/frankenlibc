@@ -2,9 +2,9 @@
 
 ## Current Reality
 
-Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
-Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, glibc_call_through=0, stub=0.
-Counts below reflect that generated snapshot and will change as matrix drift fixes land. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; `Stub: 0` means zero support-taxonomy rows with status `Stub`, not zero no-op/fallback/bootstrap contracts in the codebase.
+Source of truth for support-taxonomy classification is `support_matrix.json`.
+Reality snapshot: total_exported=4119, implemented=3550, raw_syscall=414, wraps_host_libc=155, glibc_call_through=0, stub=0.
+Counts below reflect the checked-in support matrix symbol rows and will change as matrix drift fixes land. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; `Stub: 0` means zero support-taxonomy rows with status `Stub`, not zero no-op/fallback/bootstrap contracts in the codebase.
 Regenerate deterministically with:
 
 ```bash
@@ -14,9 +14,9 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 ```
 
 Current exported ABI surface is **4119 symbols**, classified as:
-- `Implemented`: 3705
+- `Implemented`: 3550
 - `RawSyscall`: 414
-- `WrapsHostLibc`: 0
+- `WrapsHostLibc`: 155
 - `GlibcCallThrough`: 0
 - `Stub`: 0
 
@@ -71,7 +71,7 @@ This file tracks the current staged parity profile, not a full replacement profi
 |---|---|
 | `Implemented` | `string_abi`, `wchar_abi`, `math_abi`, `stdlib_abi`, `malloc_abi`, `ctype_abi`, `inet_abi`, `errno_abi`, `resolv_abi`, `locale_abi`, `iconv_abi` |
 | `RawSyscall` | `unistd_abi`, `socket_abi`, `termios_abi`, `time_abi`, `dirent_abi`, `process_abi`, `poll_abi`, `io_abi`, `mmap_abi`, `resource_abi`, `signal_abi` |
-| `WrapsHostLibc` | none in current support matrix snapshot |
+| `WrapsHostLibc` | `io_internal_abi`, `stdio_abi` |
 | `GlibcCallThrough` | none in current support matrix snapshot |
 | `Stub` | none (current exported surface) |
 

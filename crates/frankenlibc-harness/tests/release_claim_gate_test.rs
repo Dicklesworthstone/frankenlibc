@@ -922,6 +922,90 @@ fn stubbed_support_matrix_fixture_blocks_l1_claim() -> TestResult {
 }
 
 #[test]
+fn support_matrix_count_drift_blocks_release_claim() -> TestResult {
+    let support = unique_output_path("drifted-support-matrix")?;
+    let claims = unique_output_path("drifted-support-claims")?;
+    let report = unique_output_path("drifted-support-report")?;
+    let log = unique_output_path("drifted-support-log")?;
+    write_file(
+        &support,
+        r#"{
+  "version": 2,
+  "generated_at_utc": "2026-05-25T00:00:00Z",
+  "total_exported": 1,
+  "symbols": [
+    {"symbol": "puts", "status": "Implemented"}
+  ],
+  "summary": {
+    "total": 1,
+    "implemented": 0,
+    "raw_syscall": 0,
+    "wraps_host_libc": 1,
+    "glibc_call_through": 0,
+    "stub": 0
+  },
+  "counts": {
+    "implemented": 0,
+    "raw_syscall": 0,
+    "wraps_host_libc": 1,
+    "glibc_call_through": 0,
+    "stub": 0
+  },
+  "implemented": 0,
+  "raw_syscall": 0,
+  "wraps_host_libc": 1,
+  "glibc_call_through": 0,
+  "stub": 0
+}
+"#,
+    )?;
+    write_file(
+        &claims,
+        &format!(
+            r#"{{
+  "schema_version": "v1",
+  "claims": [
+    {{
+      "id": "drifted-support-l1",
+      "tag": "v9.9.9-L1",
+      "claimed_level": "L1",
+      "artifact_refs": [{}]
+    }}
+  ]
+}}
+"#,
+            release_claim_refs(&[rel_path(&support)?])?
+        ),
+    )?;
+
+    let output = run_gate_with_env(
+        &[
+            "--claims".to_owned(),
+            path_arg(&claims),
+            "--report".to_owned(),
+            path_arg(&report),
+            "--log".to_owned(),
+            path_arg(&log),
+        ],
+        &[("FRANKENLIBC_SUPPORT_MATRIX", path_arg(&support))],
+    )?;
+
+    assert!(
+        !output.status.success(),
+        "support matrix count drift must block release claims"
+    );
+    let report_json = read_report(&report)?;
+    assert!(
+        report_json["claims"][0]["failure_signature"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("release_claim_support_matrix_count_drift"),
+        "count-drift failure not found: {report_json}"
+    );
+    Ok(())
+}
+
+#[test]
 fn contradictory_readme_claim_blocks_current_policy() -> TestResult {
     let readme = unique_output_path("contradictory-readme")?;
     let report = unique_output_path("contradictory-readme-report")?;

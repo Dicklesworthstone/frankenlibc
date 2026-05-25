@@ -339,23 +339,51 @@ def claim_implies_standalone_readiness(claim):
     return any(standalone_readiness_text(text) for text in claim_doc_texts(claim))
 
 
-def support_matrix_counts(data):
+def support_matrix_symbol_counts(data):
     counts = Counter()
-    if isinstance(data.get("counts"), dict):
-        for key, value in data["counts"].items():
-            normalized = {
-                "implemented": "Implemented",
-                "raw_syscall": "RawSyscall",
-                "wraps_host_libc": "WrapsHostLibc",
-                "glibc_call_through": "GlibcCallThrough",
-                "stub": "Stub",
-            }.get(str(key), str(key))
-            counts[normalized] += int(value)
     for symbol in data.get("symbols", []):
         status = symbol.get("status")
         if status is not None:
             counts[str(status)] += 1
     return counts
+
+
+def support_matrix_count_drift_errors(data):
+    errors = []
+    counts = support_matrix_symbol_counts(data)
+    key_map = {
+        "implemented": "Implemented",
+        "raw_syscall": "RawSyscall",
+        "wraps_host_libc": "WrapsHostLibc",
+        "glibc_call_through": "GlibcCallThrough",
+        "stub": "Stub",
+    }
+    exported_total = len(data.get("symbols", []))
+
+    if data.get("total_exported") not in (None, exported_total):
+        errors.append("release_claim_support_matrix_count_drift")
+
+    for field, status in key_map.items():
+        actual = counts.get(status, 0)
+        for container in (data, data.get("counts", {}), data.get("summary", {})):
+            if not isinstance(container, dict) or field not in container:
+                continue
+            try:
+                claimed = int(container[field])
+            except (TypeError, ValueError):
+                errors.append("release_claim_support_matrix_count_drift")
+                continue
+            if claimed != actual:
+                errors.append("release_claim_support_matrix_count_drift")
+
+    summary = data.get("summary", {})
+    if isinstance(summary, dict) and "total" in summary:
+        try:
+            if int(summary["total"]) != exported_total:
+                errors.append("release_claim_support_matrix_count_drift")
+        except (TypeError, ValueError):
+            errors.append("release_claim_support_matrix_count_drift")
+    return sorted(set(errors))
 
 
 def support_matrix_errors(claim, level):
@@ -367,7 +395,8 @@ def support_matrix_errors(claim, level):
     errors.extend(
         stale_evidence_errors(matrix, "support_matrix", default_max_evidence_age_days)
     )
-    counts = support_matrix_counts(matrix)
+    errors.extend(support_matrix_count_drift_errors(matrix))
+    counts = support_matrix_symbol_counts(matrix)
     if counts.get("Stub", 0) > 0:
         errors.append("release_claim_support_matrix_stubs_present")
     if level in ("L2", "L3"):
