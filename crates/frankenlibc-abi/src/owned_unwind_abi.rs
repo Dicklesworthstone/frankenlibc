@@ -33,6 +33,9 @@ const MAX_BACKTRACE_FRAMES: usize = 64;
 const MAX_STACK_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REGISTERED_EH_FRAME_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REGISTERED_EH_FRAME_RECORDS: usize = 16 * 1024;
+const MAX_LOADED_OBJECT_PHDRS: usize = 256;
+const PT_LOAD: u32 = 1;
+const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const MAX_UNWIND_GR: usize = 32;
 const DW_EH_PE_OMIT: u8 = 0xff;
 const DW_EH_PE_ABSPTR: u8 = 0x00;
@@ -166,6 +169,23 @@ pub struct OwnedEhFrameSummary {
     pub fde_count: usize,
     pub personality_fde_count: usize,
     pub lsda_fde_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnedLoadedEhFrameRange {
+    pub object_base: usize,
+    pub load_start: usize,
+    pub load_end: usize,
+    pub eh_frame_hdr_start: usize,
+    pub eh_frame_hdr_len: usize,
+}
+
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnedProgramHeaderForTests {
+    pub p_type: u32,
+    pub p_vaddr: usize,
+    pub p_memsz: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -660,6 +680,134 @@ fn frame_registry() -> MutexGuard<'static, [FrameRegistration; FRAME_REGISTRY_SL
     FRAME_REGISTRY
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[doc(hidden)]
+pub fn owned_loaded_eh_frame_ranges_for_tests() -> Vec<OwnedLoadedEhFrameRange> {
+    collect_loaded_eh_frame_ranges()
+}
+
+#[doc(hidden)]
+pub fn owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+    object_base: usize,
+    phdrs: &[OwnedProgramHeaderForTests],
+) -> Vec<OwnedLoadedEhFrameRange> {
+    loaded_eh_frame_ranges_from_phdrs(object_base, phdrs)
+}
+
+fn collect_loaded_eh_frame_ranges() -> Vec<OwnedLoadedEhFrameRange> {
+    let mut ranges = Vec::new();
+    // SAFETY: the callback keeps `ranges` borrowed only for the duration of
+    // dl_iterate_phdr. It copies bounded program-header metadata and never
+    // retains dynamic-linker pointers after the callback returns.
+    unsafe {
+        crate::dlfcn_abi::dl_iterate_phdr(
+            Some(collect_loaded_eh_frame_ranges_callback),
+            (&mut ranges as *mut Vec<OwnedLoadedEhFrameRange>).cast(),
+        );
+    }
+    ranges
+}
+
+unsafe extern "C" fn collect_loaded_eh_frame_ranges_callback(
+    info: *mut libc::dl_phdr_info,
+    _size: usize,
+    data: *mut c_void,
+) -> c_int {
+    if info.is_null() || data.is_null() {
+        return 0;
+    }
+
+    // SAFETY: dl_iterate_phdr calls this callback synchronously with the
+    // `data` pointer supplied by collect_loaded_eh_frame_ranges.
+    let ranges = unsafe { &mut *data.cast::<Vec<OwnedLoadedEhFrameRange>>() };
+    // SAFETY: `info` is owned by the dynamic linker for this callback.
+    let info = unsafe { &*info };
+    let object_base = info.dlpi_addr as usize;
+    let phnum = usize::from(info.dlpi_phnum).min(MAX_LOADED_OBJECT_PHDRS);
+
+    if info.dlpi_phdr.is_null() || phnum == 0 {
+        return 0;
+    }
+
+    let mut phdrs = Vec::with_capacity(phnum);
+    for index in 0..phnum {
+        // SAFETY: dl_iterate_phdr publishes `dlpi_phnum` entries at
+        // `dlpi_phdr` for the callback lifetime. The loop is capped before
+        // pointer arithmetic to keep malformed counts bounded.
+        if let Some(phdr) = unsafe { copy_dl_phdr(info.dlpi_phdr, index) } {
+            phdrs.push(phdr);
+        }
+    }
+    ranges.extend(loaded_eh_frame_ranges_from_phdrs(object_base, &phdrs));
+    0
+}
+
+#[cfg(target_pointer_width = "64")]
+unsafe fn copy_dl_phdr(
+    phdrs: *const libc::Elf64_Phdr,
+    index: usize,
+) -> Option<OwnedProgramHeaderForTests> {
+    // SAFETY: caller checked the table length and callback lifetime.
+    let phdr = unsafe { *phdrs.add(index) };
+    Some(OwnedProgramHeaderForTests {
+        p_type: phdr.p_type,
+        p_vaddr: phdr.p_vaddr as usize,
+        p_memsz: phdr.p_memsz as usize,
+    })
+}
+
+#[cfg(target_pointer_width = "32")]
+unsafe fn copy_dl_phdr(
+    phdrs: *const libc::Elf32_Phdr,
+    index: usize,
+) -> Option<OwnedProgramHeaderForTests> {
+    // SAFETY: caller checked the table length and callback lifetime.
+    let phdr = unsafe { *phdrs.add(index) };
+    Some(OwnedProgramHeaderForTests {
+        p_type: phdr.p_type,
+        p_vaddr: phdr.p_vaddr as usize,
+        p_memsz: phdr.p_memsz as usize,
+    })
+}
+
+fn loaded_eh_frame_ranges_from_phdrs(
+    object_base: usize,
+    phdrs: &[OwnedProgramHeaderForTests],
+) -> Vec<OwnedLoadedEhFrameRange> {
+    let load_ranges: Vec<_> = phdrs
+        .iter()
+        .filter(|phdr| phdr.p_type == PT_LOAD)
+        .filter_map(|phdr| phdr_range(object_base, phdr))
+        .collect();
+
+    phdrs
+        .iter()
+        .filter(|phdr| phdr.p_type == PT_GNU_EH_FRAME)
+        .filter_map(|phdr| {
+            let (eh_frame_hdr_start, eh_frame_hdr_end) = phdr_range(object_base, phdr)?;
+            let (load_start, load_end) = load_ranges
+                .iter()
+                .copied()
+                .find(|(start, end)| *start <= eh_frame_hdr_start && eh_frame_hdr_end <= *end)?;
+            Some(OwnedLoadedEhFrameRange {
+                object_base,
+                load_start,
+                load_end,
+                eh_frame_hdr_start,
+                eh_frame_hdr_len: eh_frame_hdr_end - eh_frame_hdr_start,
+            })
+        })
+        .collect()
+}
+
+fn phdr_range(object_base: usize, phdr: &OwnedProgramHeaderForTests) -> Option<(usize, usize)> {
+    if phdr.p_memsz == 0 {
+        return None;
+    }
+    let start = object_base.checked_add(phdr.p_vaddr)?;
+    let end = start.checked_add(phdr.p_memsz)?;
+    (end > start).then_some((start, end))
 }
 
 #[doc(hidden)]
@@ -1173,6 +1321,7 @@ struct RegisteredFdeRecord {
 fn find_registered_fde_record_for_ip(
     ip: usize,
 ) -> Result<Option<RegisteredFdeRecord>, OwnedUnwindDecodeError> {
+    // First search explicitly registered frames (__register_frame)
     let registry = *frame_registry();
     for slot in registry.iter().filter(|slot| slot.fde != 0) {
         let eh_frame = copy_registered_eh_frame(slot.fde)?;
@@ -1180,7 +1329,245 @@ fn find_registered_fde_record_for_ip(
             return Ok(Some(RegisteredFdeRecord { fde, eh_frame }));
         }
     }
+
+    // Fall back to searching loaded objects via dl_iterate_phdr
+    find_loaded_object_fde_record_for_ip(ip)
+}
+
+fn find_loaded_object_fde_record_for_ip(
+    ip: usize,
+) -> Result<Option<RegisteredFdeRecord>, OwnedUnwindDecodeError> {
+    let ranges = collect_loaded_eh_frame_ranges();
+    for range in ranges {
+        if ip < range.load_start || ip >= range.load_end {
+            continue;
+        }
+        if let Some(record) = search_eh_frame_hdr_for_ip(&range, ip)? {
+            return Ok(Some(record));
+        }
+    }
     Ok(None)
+}
+
+fn search_eh_frame_hdr_for_ip(
+    range: &OwnedLoadedEhFrameRange,
+    ip: usize,
+) -> Result<Option<RegisteredFdeRecord>, OwnedUnwindDecodeError> {
+    if range.eh_frame_hdr_len < 4 {
+        return Ok(None);
+    }
+
+    // SAFETY: the range comes from dl_iterate_phdr which validates the PT_GNU_EH_FRAME
+    // segment is within the object's PT_LOAD bounds.
+    let hdr = unsafe {
+        core::slice::from_raw_parts(
+            range.eh_frame_hdr_start as *const u8,
+            range.eh_frame_hdr_len,
+        )
+    };
+
+    let version = hdr[0];
+    if version != 1 {
+        return Ok(None);
+    }
+
+    let eh_frame_ptr_enc = hdr[1];
+    let fde_count_enc = hdr[2];
+    let table_enc = hdr[3];
+
+    // Parse eh_frame pointer
+    let mut cursor = 4usize;
+    let (eh_frame_ptr, after_eh_frame) = read_encoded_pointer(
+        hdr,
+        cursor,
+        range.eh_frame_hdr_start + cursor,
+        eh_frame_ptr_enc,
+        true,
+        0,
+        range.eh_frame_hdr_start,
+    )?;
+    cursor = after_eh_frame;
+
+    // Parse FDE count
+    if fde_count_enc == DW_EH_PE_OMIT {
+        return Ok(None);
+    }
+    let (fde_count, after_fde_count) = read_encoded_pointer(
+        hdr,
+        cursor,
+        range.eh_frame_hdr_start + cursor,
+        fde_count_enc,
+        false,
+        0,
+        range.eh_frame_hdr_start,
+    )?;
+    cursor = after_fde_count;
+
+    if fde_count == 0 || table_enc == DW_EH_PE_OMIT {
+        return Ok(None);
+    }
+
+    // Binary search the table for the IP
+    let entry_size = encoded_pointer_size(table_enc & 0x0f)?;
+    let table_start = cursor;
+
+    // Binary search
+    let mut lo = 0usize;
+    let mut hi = fde_count;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let entry_offset = table_start + mid * 2 * entry_size;
+        if entry_offset + entry_size > hdr.len() {
+            break;
+        }
+        let (initial_loc, _) = read_encoded_pointer(
+            hdr,
+            entry_offset,
+            range.eh_frame_hdr_start + entry_offset,
+            table_enc,
+            true,
+            0,
+            range.eh_frame_hdr_start,
+        )?;
+        if ip < initial_loc {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    // lo-1 is the entry whose initial_loc <= ip (if lo > 0)
+    if lo == 0 {
+        return Ok(None);
+    }
+    let entry_index = lo - 1;
+    let entry_offset = table_start + entry_index * 2 * entry_size;
+    if entry_offset + 2 * entry_size > hdr.len() {
+        return Ok(None);
+    }
+
+    let (_, after_initial) = read_encoded_pointer(
+        hdr,
+        entry_offset,
+        range.eh_frame_hdr_start + entry_offset,
+        table_enc,
+        true,
+        0,
+        range.eh_frame_hdr_start,
+    )?;
+    let (fde_ptr, _) = read_encoded_pointer(
+        hdr,
+        after_initial,
+        range.eh_frame_hdr_start + after_initial,
+        table_enc,
+        true,
+        0,
+        range.eh_frame_hdr_start,
+    )?;
+
+    // Read the FDE and verify IP is within range
+    let eh_frame = copy_eh_frame_from_address(eh_frame_ptr, fde_ptr)?;
+    if let Some(fde) = find_fde_for_ip(&eh_frame, eh_frame_ptr, ip, true)?
+        && ip >= fde.pc_begin
+        && ip < fde.pc_end
+    {
+        return Ok(Some(RegisteredFdeRecord { fde, eh_frame }));
+    }
+
+    // If exact match failed, linear scan nearby entries
+    for delta in [-1i32, 1, -2, 2] {
+        let adj_index = entry_index as i32 + delta;
+        if adj_index < 0 || adj_index as usize >= fde_count {
+            continue;
+        }
+        let adj_offset = table_start + (adj_index as usize) * 2 * entry_size;
+        if adj_offset + 2 * entry_size > hdr.len() {
+            continue;
+        }
+        let (_, after_adj_initial) = read_encoded_pointer(
+            hdr,
+            adj_offset,
+            range.eh_frame_hdr_start + adj_offset,
+            table_enc,
+            true,
+            0,
+            range.eh_frame_hdr_start,
+        )?;
+        let (adj_fde_ptr, _) = read_encoded_pointer(
+            hdr,
+            after_adj_initial,
+            range.eh_frame_hdr_start + after_adj_initial,
+            table_enc,
+            true,
+            0,
+            range.eh_frame_hdr_start,
+        )?;
+        let adj_eh_frame = copy_eh_frame_from_address(eh_frame_ptr, adj_fde_ptr)?;
+        if let Some(fde) = find_fde_for_ip(&adj_eh_frame, eh_frame_ptr, ip, true)?
+            && ip >= fde.pc_begin
+            && ip < fde.pc_end
+        {
+            return Ok(Some(RegisteredFdeRecord {
+                fde,
+                eh_frame: adj_eh_frame,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+fn encoded_pointer_size(base_enc: u8) -> Result<usize, OwnedUnwindDecodeError> {
+    match base_enc & 0x0f {
+        DW_EH_PE_ABSPTR => Ok(core::mem::size_of::<usize>()),
+        DW_EH_PE_UDATA2 | DW_EH_PE_SDATA2 => Ok(2),
+        DW_EH_PE_UDATA4 | DW_EH_PE_SDATA4 => Ok(4),
+        DW_EH_PE_UDATA8 | DW_EH_PE_SDATA8 => Ok(8),
+        other => Err(OwnedUnwindDecodeError::UnsupportedPointerEncoding(other)),
+    }
+}
+
+fn copy_eh_frame_from_address(
+    eh_frame_base: usize,
+    fde_ptr: usize,
+) -> Result<Vec<u8>, OwnedUnwindDecodeError> {
+    // Find the CIE that this FDE references, then copy enough .eh_frame data
+    // to include the CIE and FDE.
+    if fde_ptr == 0 || eh_frame_base == 0 {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+
+    // Read FDE length to find its extent
+    let fde_length = unsafe { core::ptr::read_unaligned(fde_ptr as *const u32) };
+    if fde_length == 0 || fde_length == u32::MAX {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+    let fde_end = fde_ptr
+        .checked_add(4)
+        .and_then(|v| v.checked_add(fde_length as usize))
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+
+    // Read CIE pointer from FDE to find CIE location
+    let cie_ptr_offset = unsafe { core::ptr::read_unaligned((fde_ptr + 4) as *const u32) };
+    if cie_ptr_offset == 0 {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+    let cie_ptr = (fde_ptr + 4)
+        .checked_sub(cie_ptr_offset as usize)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+
+    // Copy from CIE start to FDE end
+    let copy_start = cie_ptr.min(eh_frame_base);
+    let copy_len = fde_end
+        .checked_sub(copy_start)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    if copy_len > MAX_REGISTERED_EH_FRAME_BYTES {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+
+    // SAFETY: these addresses come from dl_iterate_phdr and are within mapped memory.
+    let bytes = unsafe { core::slice::from_raw_parts(copy_start as *const u8, copy_len) };
+    Ok(bytes.to_vec())
 }
 
 fn copy_registered_eh_frame(fde: usize) -> Result<Vec<u8>, OwnedUnwindDecodeError> {
