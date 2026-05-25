@@ -1,0 +1,44 @@
+{
+  "schema_version": "v1",
+  "gate": "bd-gq1kz7.2",
+  "purpose": "Minimal C++ throw/catch fixture for owned unwinder lane",
+  "fixture": {
+    "source": "tests/conformance/fixtures/unwind/minimal_throw_catch.cpp",
+    "binary": "target/conformance/minimal_throw_catch",
+    "compile_command": "g++ -o target/conformance/minimal_throw_catch tests/conformance/fixtures/unwind/minimal_throw_catch.cpp -static-libgcc -static-libstdc++"
+  },
+  "expected_status": {
+    "current": "expected_fail",
+    "reason": "owned_unwind_abi uses abort-mode stubs, cannot propagate exceptions",
+    "when_implemented": "pass"
+  },
+  "validation": {
+    "must_not_link": ["libgcc_s.so", "libunwind.so"],
+    "check_command": "ldd target/conformance/minimal_throw_catch | grep -E 'libgcc_s|libunwind'",
+    "expected_check_result": "no matches (static linking)"
+  },
+  "run_modes": {
+    "native": {
+      "command": "./target/conformance/minimal_throw_catch",
+      "expected_output": "PASS: exception caught correctly",
+      "expected_exit": 0
+    },
+    "under_frankenlibc": {
+      "command": "LD_PRELOAD=target/release/deps/libfrankenlibc_abi.so ./target/conformance/minimal_throw_catch",
+      "expected_current": "abort or crash (owned unwinder stubs)",
+      "expected_phase2": "PASS: exception caught correctly"
+    },
+    "standalone": {
+      "command": "Run with libfrankenlibc_replace.so as interpreter",
+      "expected_current": "blocked (no standalone interpreter yet)",
+      "expected_phase2": "PASS: exception caught correctly"
+    }
+  },
+  "blocker_for": ["bd-06jgi2.3", "bd-gq1kz7.3", "bd-gq1kz7.4"],
+  "acceptance_criteria": [
+    "Fixture compiles without host libgcc_s",
+    "Native run produces PASS output",
+    "Under frankenlibc standalone: exception propagates without abort",
+    "No _Unwind_* symbols resolved from host"
+  ]
+}
