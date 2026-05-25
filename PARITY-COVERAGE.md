@@ -111,7 +111,7 @@ The following families have dedicated `glibc_*` parity tests comparing FrankenLi
 
 ## Session Progress (2026-05-25)
 
-Beads closed this session:
+Beads closed this session (13 total):
 - bd-gq1kz7.10: Zero-host-reference gate (86b348b2)
 - bd-gq1kz7.9: Host-backed burndown dashboard (e7a792a0)
 - bd-gq1kz7.15: NSS overlay exhaustiveness (d3730f36)
@@ -119,6 +119,15 @@ Beads closed this session:
 - bd-gq1kz7.14: Soak artifact freshness (668a31c8)
 - bd-gq1kz7.6: Unterminated buffer sweep (e152948c)
 - bd-gq1kz7.12: Aarch64 smoke runner (a26c6e04)
+- bd-gq1kz7.13: WS8 soak handoff ledger (5d342d1a)
+- bd-gq1kz7.7: Native loader phase-2 contract (252f6e01)
+- bd-gq1kz7.8: Two-DSO dependency fixture (1fc1b67c)
+- bd-gq1kz7.1: Owned unwinder design contract (c64b3532)
+- bd-gq1kz7.2: C++ exception fixture (48045a85)
+
+Blocked beads (require implementation):
+- bd-gq1kz7.3: Owned unwinder frame registry (blocked by design acceptance)
+- bd-gq1kz7.4: Owned unwinder phase-1 path (blocked by .2, .3)
 
 ## Audit Trail
 
