@@ -1,0 +1,67 @@
+{
+  "schema_version": "v1",
+  "gate": "bd-gq1kz7.8",
+  "purpose": "Two-DSO dependency fixture to test DT_NEEDED resolution",
+  "fixture": {
+    "lib_provider": {
+      "name": "libprovider.so",
+      "source": "tests/conformance/fixtures/dlfcn/provider.c",
+      "exports": ["provider_get_value", "provider_add"],
+      "description": "Provides symbols that lib_consumer depends on"
+    },
+    "lib_consumer": {
+      "name": "libconsumer.so",
+      "source": "tests/conformance/fixtures/dlfcn/consumer.c",
+      "imports": ["provider_get_value", "provider_add"],
+      "exports": ["consumer_compute"],
+      "dt_needed": ["libprovider.so"],
+      "description": "Depends on libprovider.so via DT_NEEDED"
+    }
+  },
+  "test_cases": [
+    {
+      "id": "load_provider_only",
+      "action": "dlopen libprovider.so",
+      "expected": "success",
+      "reason": "Provider has no dependencies, should load"
+    },
+    {
+      "id": "load_consumer_without_provider",
+      "action": "dlopen libconsumer.so without libprovider.so loaded",
+      "expected_current": "fail_dt_needed_unsupported",
+      "expected_phase2": "fail_dependency_not_found",
+      "reason": "Consumer requires libprovider.so"
+    },
+    {
+      "id": "load_consumer_after_provider",
+      "action": "dlopen libprovider.so, then dlopen libconsumer.so",
+      "expected_current": "fail_dt_needed_unsupported",
+      "expected_phase2": "success",
+      "reason": "Provider symbols available for consumer"
+    },
+    {
+      "id": "call_through_dependency",
+      "action": "Load both, call consumer_compute which uses provider_add",
+      "expected_current": "blocked_by_load_failure",
+      "expected_phase2": "success_returns_correct_value",
+      "reason": "End-to-end dependency resolution"
+    }
+  ],
+  "current_status": {
+    "dt_needed_support": false,
+    "failure_mode": "dlopen returns error for DSOs with DT_NEEDED entries",
+    "error_code": "ENOTSUP or ENOSYS",
+    "documented_in": "tests/conformance/native_loader_phase2.v1.json"
+  },
+  "phase2_requirements": {
+    "search_rpath": true,
+    "search_ld_library_path": true,
+    "search_runpath": true,
+    "search_default_paths": true,
+    "transitive_resolution": true
+  },
+  "build_commands": {
+    "provider": "gcc -shared -fPIC -o libprovider.so provider.c",
+    "consumer": "gcc -shared -fPIC -o libconsumer.so consumer.c -L. -lprovider -Wl,-rpath,."
+  }
+}
