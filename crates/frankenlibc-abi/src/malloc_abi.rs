@@ -1599,10 +1599,11 @@ pub(crate) fn check_ownership(addr: usize) -> bool {
 #[must_use]
 #[inline(never)]
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
-    // Strict mode fast path: skip validation overhead for trusted workloads.
-    // Return None to signal "unknown bounds" - callers fall back to safe defaults.
+    // Strict mode skips the full membrane validator, but allocator-owned
+    // fallback bookkeeping is still cheap and required for bounded C-string
+    // scans that must reject unterminated tracked buffers before host passthrough.
     if runtime_policy::strict_passthrough_active() {
-        return None;
+        return fallback_remaining(addr);
     }
 
     if runtime_policy::in_policy_reentry_context()
