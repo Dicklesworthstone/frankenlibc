@@ -391,7 +391,7 @@ fn x86_64_landing_pad_install_descriptor_uses_validated_frame_cursor() {
         install,
         OwnedLandingPadInstall {
             ip: TEST_LANDING_PAD,
-            stack_pointer: 0x7010,
+            stack_pointer: 0x6000,
             frame_pointer: 0x7000,
             general_register_0: 0x1111,
             general_register_1: 0x2222,

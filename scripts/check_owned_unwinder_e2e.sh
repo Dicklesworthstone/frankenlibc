@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check_owned_unwinder_e2e.sh — E2E test for owned unwinder (bd-73h55.3)
+# check_owned_unwinder_e2e.sh — E2E test for owned unwinder (bd-gq1kz7.4)
 #
 # Verifies that:
 # 1. owned_unwind_abi.rs source exists with all required symbols
@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "=== Owned Unwinder E2E Test (bd-73h55.3) ==="
+echo "=== Owned Unwinder E2E Test (bd-gq1kz7.4) ==="
 echo ""
 
 # Test 1: Verify owned_unwind_abi.rs exists and has all required symbols
@@ -233,7 +233,7 @@ SUMMARY_FILE="${REPO_ROOT}/tests/conformance/owned_unwinder_e2e.v1.json"
 cat > "${SUMMARY_FILE}" <<EOF
 {
   "schema_version": "owned_unwinder_e2e.v1",
-  "bead_id": "bd-73h55.3",
+  "bead_id": "bd-gq1kz7.4",
   "generated_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "tests": {
     "source_symbols_defined": "pass",

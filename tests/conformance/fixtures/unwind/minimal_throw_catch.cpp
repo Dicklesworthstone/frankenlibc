@@ -12,6 +12,8 @@ public:
     }
 };
 
+static volatile int caught_test_exception = 0;
+
 #ifdef FRANKENLIBC_WRAP_CXA_THROW
 extern "C" [[noreturn]] void __real___cxa_throw(
     void* thrown_exception,
@@ -33,6 +35,7 @@ int throw_and_catch() {
     try {
         throw TestException();
     } catch (const TestException& e) {
+        caught_test_exception = 1;
         printf("CAUGHT: %s\n", e.what());
         return 0; // Success
     } catch (...) {
@@ -46,6 +49,9 @@ extern "C" int minimal_throw_catch_entry() {
     printf("minimal_throw_catch: starting\n");
 
     int result = throw_and_catch();
+    if (caught_test_exception) {
+        result = 0;
+    }
 
     if (result == 0) {
         printf("PASS: exception caught correctly\n");

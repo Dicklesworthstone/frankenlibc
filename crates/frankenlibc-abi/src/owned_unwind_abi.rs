@@ -959,6 +959,7 @@ fn owned_phase2_cleanup_current_stack(
     };
 
     let mut frame_index = 0usize;
+    let mut previous_frame_pointer = None;
     while frame_index < MAX_BACKTRACE_FRAMES
         && valid_frame_pointer(frame_pointer, stack_pointer, stack_limit)
     {
@@ -979,7 +980,8 @@ fn owned_phase2_cleanup_current_stack(
             } else {
                 instruction_pointer
             };
-            let record = match find_registered_fde_record_for_ip(effective_ip) {
+            let lookup_ip = frame_lookup_ip(effective_ip);
+            let record = match find_registered_fde_record_for_ip(lookup_ip) {
                 Ok(Some(record)) => Some(record),
                 Ok(None) => None,
                 Err(_) => return URC_FATAL_PHASE2_ERROR,
@@ -987,12 +989,15 @@ fn owned_phase2_cleanup_current_stack(
             if let Some(record) = record
                 && let Some(personality) = record.fde.personality
             {
+                let physical_stack_pointer = previous_frame_pointer
+                    .and_then(|fp: usize| fp.checked_add(2 * core::mem::size_of::<usize>()))
+                    .unwrap_or(stack_pointer);
                 let mut context = context_for_physical_fde(
                     effective_ip,
                     frame_index,
                     record.fde,
                     frame_pointer,
-                    stack_pointer,
+                    physical_stack_pointer,
                 );
                 let mut actions = UA_CLEANUP_PHASE;
                 if frame_index == handler_frame_index {
@@ -1015,7 +1020,7 @@ fn owned_phase2_cleanup_current_stack(
                             &context,
                             &record.eh_frame,
                             record.fde,
-                            effective_ip,
+                            lookup_ip,
                         ) {
                             Ok(install) => install,
                             Err(err) => {
@@ -1052,6 +1057,7 @@ fn owned_phase2_cleanup_current_stack(
         {
             break;
         }
+        previous_frame_pointer = Some(frame_pointer);
         frame_pointer = next_frame;
     }
 
@@ -1062,6 +1068,11 @@ fn trace_owned_unwind(args: std::fmt::Arguments<'_>) {
     if std::env::var_os("FRANKENLIBC_OWNED_UNWIND_TRACE").is_some() {
         eprintln!("[owned-unwind] {args}");
     }
+}
+
+#[inline]
+fn frame_lookup_ip(return_address: usize) -> usize {
+    return_address.saturating_sub(1)
 }
 
 fn owned_phase1_search_current_stack(
@@ -1087,59 +1098,48 @@ fn owned_phase1_search_current_stack(
         let Some(instruction_pointer) = read_word(return_address_slot) else {
             break;
         };
-        trace_owned_unwind(format_args!(
-            "phase1 frame_index={frame_index} fp={frame_pointer:#x} next={next_frame:#x} ip={instruction_pointer:#x}"
-        ));
-
         if instruction_pointer != 0 {
-            match find_registered_fde_record_for_ip(instruction_pointer) {
+            let lookup_ip = frame_lookup_ip(instruction_pointer);
+            match find_registered_fde_record_for_ip(lookup_ip) {
                 Ok(Some(record)) => {
-                    let Some(personality) = record.fde.personality else {
-                        trace_owned_unwind(format_args!(
-                            "phase1 frame_index={frame_index} ip={instruction_pointer:#x} no personality"
-                        ));
-                        frame_index += 1;
-                        continue;
-                    };
-                    let mut context = context_for_physical_fde(
-                        instruction_pointer,
-                        frame_index,
-                        record.fde,
-                        frame_pointer,
-                        stack_pointer,
-                    );
-                    let exception_class = if exception.is_null() {
-                        0
-                    } else {
-                        // SAFETY: non-null exception pointers are supplied by
-                        // the language runtime following the unwind ABI header.
-                        unsafe { (*exception).exception_class }
-                    };
-                    let code = call_personality(
-                        personality,
-                        UA_SEARCH_PHASE,
-                        exception_class,
-                        exception,
-                        &mut context,
-                    );
-                    trace_owned_unwind(format_args!(
-                        "phase1 frame_index={frame_index} ip={instruction_pointer:#x} code={code}"
-                    ));
-                    match code {
-                        URC_HANDLER_FOUND => {
-                            return OwnedPhase1SearchOutcome::HandlerFound {
-                                frame_index,
-                                ip: instruction_pointer,
-                                region_start: context.region_start,
-                                language_specific_data: context.language_specific_data,
-                            };
-                        }
-                        URC_CONTINUE_UNWIND | URC_NO_REASON => {}
-                        other => {
-                            return OwnedPhase1SearchOutcome::Fatal {
-                                frame_index,
-                                code: other,
-                            };
+                    if let Some(personality) = record.fde.personality {
+                        let mut context = context_for_physical_fde(
+                            instruction_pointer,
+                            frame_index,
+                            record.fde,
+                            frame_pointer,
+                            stack_pointer,
+                        );
+                        let exception_class = if exception.is_null() {
+                            0
+                        } else {
+                            // SAFETY: non-null exception pointers are supplied by
+                            // the language runtime following the unwind ABI header.
+                            unsafe { (*exception).exception_class }
+                        };
+                        let code = call_personality(
+                            personality,
+                            UA_SEARCH_PHASE,
+                            exception_class,
+                            exception,
+                            &mut context,
+                        );
+                        match code {
+                            URC_HANDLER_FOUND => {
+                                return OwnedPhase1SearchOutcome::HandlerFound {
+                                    frame_index,
+                                    ip: instruction_pointer,
+                                    region_start: context.region_start,
+                                    language_specific_data: context.language_specific_data,
+                                };
+                            }
+                            URC_CONTINUE_UNWIND | URC_NO_REASON => {}
+                            other => {
+                                return OwnedPhase1SearchOutcome::Fatal {
+                                    frame_index,
+                                    code: other,
+                                };
+                            }
                         }
                     }
                 }
@@ -1154,26 +1154,6 @@ fn owned_phase1_search_current_stack(
             frame_index += 1;
         }
 
-        if next_frame > frame_pointer {
-            match search_transient_handler_ips(
-                exception,
-                frame_index,
-                next_frame,
-                stack_pointer,
-                frame_pointer + (2 * core::mem::size_of::<usize>()),
-                next_frame,
-            ) {
-                Ok(Some(outcome)) => return outcome,
-                Ok(None) => {}
-                Err(_) => {
-                    return OwnedPhase1SearchOutcome::Fatal {
-                        frame_index,
-                        code: URC_FATAL_PHASE1_ERROR,
-                    };
-                }
-            }
-        }
-
         if next_frame <= frame_pointer
             || !valid_frame_pointer(next_frame, stack_pointer, stack_limit)
         {
@@ -1183,72 +1163,6 @@ fn owned_phase1_search_current_stack(
     }
 
     OwnedPhase1SearchOutcome::NoHandler
-}
-
-fn search_transient_handler_ips(
-    exception: *mut UnwindException,
-    frame_index: usize,
-    physical_frame_pointer: usize,
-    stack_pointer: usize,
-    scan_start: usize,
-    scan_end: usize,
-) -> Result<Option<OwnedPhase1SearchOutcome>, OwnedUnwindDecodeError> {
-    let exception_class = if exception.is_null() {
-        0
-    } else {
-        // SAFETY: non-null exception pointers are supplied by the language runtime
-        // following the unwind ABI header.
-        unsafe { (*exception).exception_class }
-    };
-    let mut cursor = scan_start;
-    let scan_limit = scan_start.saturating_add(4096).min(scan_end);
-    while cursor < scan_limit {
-        let Some(candidate_ip) = read_word(cursor) else {
-            cursor = cursor.saturating_add(core::mem::size_of::<usize>());
-            continue;
-        };
-        if candidate_ip != 0
-            && let Some(record) = find_registered_fde_record_for_ip(candidate_ip)?
-            && let Some(personality) = record.fde.personality
-        {
-            let mut context = context_for_physical_fde(
-                candidate_ip,
-                frame_index,
-                record.fde,
-                physical_frame_pointer,
-                stack_pointer,
-            );
-            let code = call_personality(
-                personality,
-                UA_SEARCH_PHASE,
-                exception_class,
-                exception,
-                &mut context,
-            );
-            trace_owned_unwind(format_args!(
-                "phase1 transient frame_index={frame_index} slot={cursor:#x} ip={candidate_ip:#x} code={code}"
-            ));
-            match code {
-                URC_HANDLER_FOUND => {
-                    return Ok(Some(OwnedPhase1SearchOutcome::HandlerFound {
-                        frame_index,
-                        ip: candidate_ip,
-                        region_start: context.region_start,
-                        language_specific_data: context.language_specific_data,
-                    }));
-                }
-                URC_CONTINUE_UNWIND | URC_NO_REASON => {}
-                other => {
-                    return Ok(Some(OwnedPhase1SearchOutcome::Fatal {
-                        frame_index,
-                        code: other,
-                    }));
-                }
-            }
-        }
-        cursor = cursor.saturating_add(core::mem::size_of::<usize>());
-    }
-    Ok(None)
 }
 
 struct RegisteredFdeRecord {
@@ -1391,12 +1305,12 @@ fn prepare_x86_64_landing_pad_install(
         X86_64_DWARF_RSP => context.stack_pointer,
         other => return Err(OwnedContextInstallError::UnsupportedCfaRegister(other)),
     };
-    let cfa = checked_add_signed_usize(cfa_base, row.cfa_offset)
+    let _cfa = checked_add_signed_usize(cfa_base, row.cfa_offset)
         .ok_or(OwnedContextInstallError::CfaOverflow)?;
 
     Ok(OwnedLandingPadInstall {
         ip: context.ip,
-        stack_pointer: cfa,
+        stack_pointer: context.stack_pointer,
         frame_pointer: context.frame_pointer,
         general_register_0: context.general_registers[0],
         general_register_1: context.general_registers[1],
