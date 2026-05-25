@@ -1,0 +1,104 @@
+{
+  "schema_version": "v1",
+  "gate": "bd-gq1kz7.1",
+  "purpose": "Design contract for owned DWARF/C++ exception unwinder replacing abort-mode stubs",
+  "current_state": {
+    "implementation": "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+    "mode": "abort-mode stubs",
+    "behavior": "All _Unwind_* functions call abort() or return error",
+    "feature_gate": "standalone,owned-unwind-stub"
+  },
+  "required_entrypoints": {
+    "_Unwind_RaiseException": {
+      "signature": "fn(exception: *mut _Unwind_Exception) -> _Unwind_Reason_Code",
+      "purpose": "Begin exception propagation (phase 1: search, phase 2: cleanup)"
+    },
+    "_Unwind_Resume": {
+      "signature": "fn(exception: *mut _Unwind_Exception) -> !",
+      "purpose": "Resume propagation after cleanup handler"
+    },
+    "_Unwind_DeleteException": {
+      "signature": "fn(exception: *mut _Unwind_Exception)",
+      "purpose": "Free exception object after catch"
+    },
+    "_Unwind_GetGR": {
+      "signature": "fn(context: *mut _Unwind_Context, reg: c_int) -> _Unwind_Word",
+      "purpose": "Read general register from unwind context"
+    },
+    "_Unwind_SetGR": {
+      "signature": "fn(context: *mut _Unwind_Context, reg: c_int, val: _Unwind_Word)",
+      "purpose": "Set general register in unwind context"
+    },
+    "_Unwind_GetIP": {
+      "signature": "fn(context: *mut _Unwind_Context) -> _Unwind_Ptr",
+      "purpose": "Get instruction pointer from context"
+    },
+    "_Unwind_SetIP": {
+      "signature": "fn(context: *mut _Unwind_Context, ip: _Unwind_Ptr)",
+      "purpose": "Set instruction pointer (for landing pad)"
+    },
+    "_Unwind_GetLanguageSpecificData": {
+      "signature": "fn(context: *mut _Unwind_Context) -> *mut c_void",
+      "purpose": "Get LSDA pointer for current frame"
+    },
+    "_Unwind_GetRegionStart": {
+      "signature": "fn(context: *mut _Unwind_Context) -> _Unwind_Ptr",
+      "purpose": "Get function start address"
+    },
+    "_Unwind_Backtrace": {
+      "signature": "fn(callback: _Unwind_Trace_Fn, arg: *mut c_void) -> _Unwind_Reason_Code",
+      "purpose": "Walk stack frames for backtrace"
+    }
+  },
+  "dwarf_requirements": {
+    "eh_frame": {
+      "description": ".eh_frame section parsing for CFI",
+      "cfi_opcodes": ["DW_CFA_advance_loc", "DW_CFA_def_cfa", "DW_CFA_offset", "..."],
+      "personality_routine": "Parse and call __gxx_personality_v0 or equivalent"
+    },
+    "lsda": {
+      "description": "Language-Specific Data Area for C++ exceptions",
+      "tables": ["call_site_table", "action_table", "type_table"],
+      "encoding": "ULEB128, SLEB128, pointer encodings"
+    },
+    "fde_lookup": {
+      "description": "Find FDE for instruction pointer",
+      "methods": ["linear_search", "binary_search", "sorted_index"],
+      "registration": "_dl_find_object or frame registration"
+    }
+  },
+  "frame_registration": {
+    "__register_frame": "Register single FDE",
+    "__register_frame_info": "Register FDE with object info",
+    "__deregister_frame": "Unregister FDE on dlclose",
+    "__deregister_frame_info": "Unregister with object info",
+    "dl_find_object": "Query loaded objects for unwind info"
+  },
+  "failure_modes": {
+    "no_personality": "Return _URC_FATAL_PHASE1_ERROR",
+    "no_handler": "Return _URC_END_OF_STACK, call std::terminate",
+    "corrupt_cfi": "Return _URC_FATAL_PHASE1_ERROR",
+    "stack_overflow": "Signal SIGSEGV during unwind"
+  },
+  "proof_artifacts": {
+    "report_only": {
+      "path": "tests/conformance/standalone_owned_unwind_experiment.v1.json",
+      "type": "Documents current abort-mode behavior",
+      "executable": false
+    },
+    "executable_proof": {
+      "path": "tests/conformance/owned_unwinder_e2e.v1.json (planned)",
+      "type": "End-to-end C++ exception throw/catch",
+      "requires": ["gcc/clang compiled test binary", "real _Unwind_* implementation"]
+    }
+  },
+  "acceptance_checklist_for_bd_06jgi2_3": [
+    "All _Unwind_* entrypoints implemented (not stubs)",
+    "C++ exception thrown in test binary catches correctly",
+    "Stack unwinding visits correct frames",
+    "Destructors called during unwinding",
+    "No host libgcc_s dependency",
+    "nm shows no undefined _Unwind_* symbols in standalone artifact",
+    "Backtrace via _Unwind_Backtrace produces correct frames"
+  ]
+}
