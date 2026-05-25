@@ -8,21 +8,22 @@ OUT_DIR="${WS8_SOAK_OUT_DIR:-${ROOT}/target/conformance/ws8_soak}"
 REPORT="${WS8_SOAK_REPORT:-${OUT_DIR}/ws8_soak.report.json}"
 LOG="${WS8_SOAK_LOG:-${OUT_DIR}/ws8_soak.log.jsonl}"
 TARGET_ROOT="${WS8_SOAK_TARGET_ROOT:-${ROOT}/target/ws8_soak}"
+LEDGER="${WS8_SOAK_LEDGER:-${ROOT}/target/ws8_soak_ledger.json}"
 RUN_ID="${WS8_SOAK_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 MODE="${1:---run}"
 
 case "${MODE}" in
-  --run|--validate-only|--smoke)
+  --run|--validate-only|--smoke|--start|--poll|--resume|--abort)
     ;;
   *)
-    echo "usage: $0 [--run|--validate-only|--smoke]" >&2
+    echo "usage: $0 [--run|--validate-only|--smoke|--start|--poll|--resume|--abort]" >&2
     exit 2
     ;;
 esac
 
-mkdir -p "${OUT_DIR}" "${TARGET_ROOT}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
+mkdir -p "${OUT_DIR}" "${TARGET_ROOT}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")" "$(dirname "${LEDGER}")"
 
-python3 - "${ROOT}" "${MANIFEST}" "${REPORT}" "${LOG}" "${TARGET_ROOT}" "${RUN_ID}" "${MODE}" <<'PY'
+python3 - "${ROOT}" "${MANIFEST}" "${REPORT}" "${LOG}" "${TARGET_ROOT}" "${LEDGER}" "${RUN_ID}" "${MODE}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -38,8 +39,10 @@ manifest_path = Path(sys.argv[2])
 report_path = Path(sys.argv[3])
 log_path = Path(sys.argv[4])
 target_root = Path(sys.argv[5])
-run_id = sys.argv[6]
-mode = sys.argv[7]
+ledger_path = Path(sys.argv[6])
+run_id = sys.argv[7]
+requested_mode = sys.argv[8]
+mode = "--run" if requested_mode == "--resume" else requested_mode
 
 SCHEMA = "ws8_soak.v1"
 REPORT_SCHEMA = "ws8_soak.report.v1"
@@ -102,6 +105,18 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+
+
+def sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def int_env(name: str, default: int) -> int:
@@ -190,6 +205,126 @@ max_iterations_env = os.environ.get("WS8_SOAK_MAX_ITERATIONS")
 max_iterations = None if max_iterations_env in {None, ""} else int_env("WS8_SOAK_MAX_ITERATIONS", 0)
 sleep_seconds = max(int_env("WS8_SOAK_SLEEP_SECONDS", 0), 0)
 
+
+def artifact_path() -> Path:
+    configured = os.environ.get("WS8_SOAK_FRESHNESS_ARTIFACT") or os.environ.get("FRANKENLIBC_STANDALONE_LIB")
+    if configured:
+        return Path(configured)
+    return root / "target/standalone_replacement_artifact/cargo-target/release/libfrankenlibc_replace.so"
+
+
+def iso_after(seconds: int) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + max(seconds, 0)))
+
+
+def command_for(command_mode: str) -> str:
+    parts = [
+        f"WS8_SOAK_LEDGER={rel(ledger_path)}",
+        f"WS8_SOAK_REPORT={rel(report_path)}",
+        f"WS8_SOAK_LOG={rel(log_path)}",
+        f"WS8_SOAK_TARGET_ROOT={rel(target_root)}",
+        f"WS8_SOAK_RUN_ID={run_id}",
+        f"scripts/run_ws8_soak.sh {command_mode}",
+    ]
+    return " ".join(parts)
+
+
+def remote_resume_command() -> str:
+    return (
+        "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env "
+        "CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-38x82-4-ws8-soak-cargo "
+        f"WS8_SOAK_LEDGER={rel(ledger_path)} "
+        f"WS8_SOAK_REPORT={rel(report_path)} "
+        f"WS8_SOAK_LOG={rel(log_path)} "
+        f"WS8_SOAK_TARGET_ROOT={rel(target_root)} "
+        f"WS8_SOAK_RUN_ID={run_id} scripts/run_ws8_soak.sh --resume"
+    )
+
+
+def load_ledger() -> dict[str, Any] | None:
+    try:
+        value = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def artifact_metadata() -> dict[str, Any]:
+    artifact = artifact_path()
+    exists = artifact.is_file() and artifact.stat().st_size > 0 if artifact.exists() else False
+    return {
+        "path": str(artifact),
+        "exists": exists,
+        "size_bytes": int(artifact.stat().st_size) if exists else 0,
+        "sha256": sha256(artifact) if exists else None,
+    }
+
+
+def base_ledger(status: str, proof_status: str) -> dict[str, Any]:
+    now = utc_now()
+    artifact = artifact_metadata()
+    handoff = manifest.get("handoff_ledger") if isinstance(manifest.get("handoff_ledger"), dict) else {}
+    return {
+        "schema_version": "ws8_soak_ledger.v1",
+        "bead": BEAD,
+        "parent_bead": PARENT,
+        "job_id": f"ws8-soak-{run_id}-{SOURCE_COMMIT[:12]}",
+        "run_id": run_id,
+        "git_rev": SOURCE_COMMIT,
+        "source_commit": SOURCE_COMMIT,
+        "start_time_utc": now,
+        "expected_end_time_utc": iso_after(duration_seconds),
+        "duration_seconds_required": duration_seconds,
+        "minimum_iterations": minimum_iterations,
+        "max_iterations": max_iterations,
+        "status": status,
+        "proof_status": proof_status,
+        "last_poll_time_utc": now,
+        "workloads_completed": 0,
+        "artifact_path": artifact["path"],
+        "artifact_sha256": artifact["sha256"],
+        "artifact_size_bytes": artifact["size_bytes"],
+        "artifact_exists": artifact["exists"],
+        "report_path": str(report_path),
+        "log_path": str(log_path),
+        "target_dir": str(target_root),
+        "errors": [],
+        "failure_signatures": [],
+        "commands": {
+            "start": command_for("--start"),
+            "poll": command_for("--poll"),
+            "resume": command_for("--resume"),
+            "abort": command_for("--abort"),
+            "remote_resume": remote_resume_command(),
+        },
+        "completion_criteria": handoff.get("completion_criteria", {}),
+        "next_safe_action": remote_resume_command(),
+    }
+
+
+def update_ledger_from_report(ledger: dict[str, Any], report_value: dict[str, Any] | None = None) -> dict[str, Any]:
+    ledger["last_poll_time_utc"] = utc_now()
+    report_file = Path(str(ledger.get("report_path") or report_path))
+    report_payload = report_value
+    if report_payload is None and report_file.exists():
+        report_payload = load_json(report_file)
+    if isinstance(report_payload, dict) and report_payload:
+        ledger["report_status"] = report_payload.get("status")
+        ledger["report_proof_status"] = report_payload.get("proof_status")
+        ledger["workloads_completed"] = int(report_payload.get("iteration_count", 0) or 0)
+        ledger["failure_signatures"] = [
+            str(item) for item in list_field(report_payload, "failure_signatures") if isinstance(item, str)
+        ]
+        if report_payload.get("status") == "pass" and report_payload.get("proof_status") == "soak_evidence_passed":
+            ledger["status"] = "passed"
+        elif report_payload.get("status") == "fail":
+            ledger["status"] = "failed"
+        elif ledger.get("status") not in {"aborted", "passed", "failed"}:
+            ledger["status"] = "running"
+    elif ledger.get("status") not in {"aborted", "passed", "failed"}:
+        ledger["status"] = str(ledger.get("status") or "pending")
+    return ledger
+
 if contract_duration < 86400:
     add_error(rel(manifest_path), "ws8_soak_duration_too_short", "contract duration_seconds must be at least 86400")
 if mode == "--run" and duration_seconds < contract_duration:
@@ -215,6 +350,82 @@ for field in [
 ]:
     if field not in required_log_fields:
         add_error(rel(manifest_path), "ws8_soak_invalid_manifest", f"required_log_fields missing {field}")
+
+if requested_mode == "--start":
+    ledger = base_ledger("pending", "handoff_created")
+    ledger["errors"] = errors
+    ledger["failure_signatures"] = sorted({error["failure_signature"] for error in errors})
+    if errors:
+        ledger["status"] = "failed"
+        ledger["proof_status"] = "handoff_invalid"
+    write_json(ledger_path, ledger)
+    print(json.dumps(ledger, indent=2, sort_keys=True))
+    raise SystemExit(0 if not errors else 1)
+
+if requested_mode == "--poll":
+    ledger = load_ledger()
+    if ledger is None:
+        ledger = base_ledger("failed", "handoff_missing")
+        ledger["errors"] = [
+            {
+                "source": rel(ledger_path),
+                "failure_signature": "ws8_soak_ledger_missing",
+                "message": "ledger file is missing or invalid",
+            }
+        ]
+        ledger["failure_signatures"] = ["ws8_soak_ledger_missing"]
+        write_json(ledger_path, ledger)
+        print(json.dumps(ledger, indent=2, sort_keys=True))
+        raise SystemExit(1)
+    ledger = update_ledger_from_report(ledger)
+    write_json(ledger_path, ledger)
+    print(json.dumps(ledger, indent=2, sort_keys=True))
+    raise SystemExit(0 if ledger.get("status") not in {"failed"} else 1)
+
+if requested_mode == "--abort":
+    ledger = load_ledger() or base_ledger("pending", "handoff_created")
+    ledger["status"] = "aborted"
+    ledger["proof_status"] = "handoff_aborted"
+    ledger["aborted_at_utc"] = utc_now()
+    ledger["last_poll_time_utc"] = ledger["aborted_at_utc"]
+    write_json(ledger_path, ledger)
+    print(json.dumps(ledger, indent=2, sort_keys=True))
+    raise SystemExit(0)
+
+if requested_mode == "--resume":
+    ledger = load_ledger()
+    if ledger is None:
+        ledger = base_ledger("failed", "handoff_missing")
+        ledger["errors"] = [
+            {
+                "source": rel(ledger_path),
+                "failure_signature": "ws8_soak_ledger_missing",
+                "message": "run --start before --resume",
+            }
+        ]
+        ledger["failure_signatures"] = ["ws8_soak_ledger_missing"]
+        write_json(ledger_path, ledger)
+        print(json.dumps(ledger, indent=2, sort_keys=True))
+        raise SystemExit(1)
+    if ledger.get("status") == "aborted":
+        ledger["last_poll_time_utc"] = utc_now()
+        ledger.setdefault("errors", []).append(
+            {
+                "source": rel(ledger_path),
+                "failure_signature": "ws8_soak_ledger_aborted",
+                "message": "refusing to resume an aborted soak handoff",
+            }
+        )
+        ledger["failure_signatures"] = sorted(
+            set(str(item) for item in ledger.get("failure_signatures", [])) | {"ws8_soak_ledger_aborted"}
+        )
+        write_json(ledger_path, ledger)
+        print(json.dumps(ledger, indent=2, sort_keys=True))
+        raise SystemExit(1)
+    ledger["status"] = "running"
+    ledger["proof_status"] = "resume_started"
+    ledger["last_poll_time_utc"] = utc_now()
+    write_json(ledger_path, ledger)
 
 artifact_freshness_preflight: dict[str, Any] | None = None
 
@@ -580,6 +791,11 @@ append_event(
 
 write_json(report_path, report)
 write_jsonl(log_path, events)
+if requested_mode == "--resume":
+    ledger = load_ledger() or base_ledger("failed", "handoff_missing")
+    ledger = update_ledger_from_report(ledger, report)
+    ledger["last_resume_time_utc"] = utc_now()
+    write_json(ledger_path, ledger)
 print(json.dumps(report, indent=2, sort_keys=True))
 raise SystemExit(0 if status == "pass" else 1)
 PY

@@ -95,7 +95,7 @@
     "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-38x82-4-ws8-soak-check cargo check -p frankenlibc-harness --test ws8_soak_test",
     "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-38x82-4-ws8-soak-clippy cargo clippy -p frankenlibc-harness --test ws8_soak_test -- -D warnings"
   ],
-  "next_safe_action": "Run the full evidence lane with a current standalone artifact: RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-38x82-4-ws8-soak-cargo WS8_SOAK_DURATION_SECONDS=86400 WS8_SOAK_MINIMUM_ITERATIONS=1 scripts/run_ws8_soak.sh --run. Do not close bd-38x82.4 until the resulting ws8_soak.report.json has status=pass, proof_status=soak_evidence_passed, zero positive divergences, zero crashes, and a current standalone artifact on every iteration.",
+  "next_safe_action": "Create the durable handoff ledger with scripts/run_ws8_soak.sh --start, run the ledger's commands.remote_resume value on rch, and poll with scripts/run_ws8_soak.sh --poll. Do not close bd-38x82.4 until the ledger status is passed and ws8_soak.report.json has status=pass, proof_status=soak_evidence_passed, zero positive divergences, zero crashes, and a current standalone artifact on every iteration.",
   "handoff_ledger": {
     "ledger_path": "target/ws8_soak_ledger.json",
     "fields": {

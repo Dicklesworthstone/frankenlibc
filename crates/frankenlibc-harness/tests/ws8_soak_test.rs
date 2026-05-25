@@ -1,6 +1,6 @@
 //! Integration tests for the WS-8 standalone replacement soak runner (bd-38x82.4).
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -15,6 +15,13 @@ struct SoakRun {
     output: Output,
     report_path: PathBuf,
     log_path: PathBuf,
+}
+
+struct LedgerPaths {
+    ledger: PathBuf,
+    report: PathBuf,
+    log: PathBuf,
+    target: PathBuf,
 }
 
 fn test_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
@@ -90,6 +97,33 @@ fn run_soak(root: &Path, label: &str, mode: &str, manifest: Option<&Path>) -> Te
         report_path: report,
         log_path: log,
     })
+}
+
+fn ledger_paths(root: &Path, label: &str) -> TestResult<LedgerPaths> {
+    let out = unique_out_dir(root, label)?;
+    Ok(LedgerPaths {
+        ledger: out.join("ws8_soak_ledger.json"),
+        report: out.join("ws8_soak.report.json"),
+        log: out.join("ws8_soak.log.jsonl"),
+        target: out.join("target"),
+    })
+}
+
+fn run_ledger_command(
+    root: &Path,
+    paths: &LedgerPaths,
+    run_id: &str,
+    mode: &str,
+) -> TestResult<Output> {
+    Ok(Command::new(root.join(RUNNER_REL))
+        .arg(mode)
+        .current_dir(root)
+        .env("WS8_SOAK_LEDGER", &paths.ledger)
+        .env("WS8_SOAK_REPORT", &paths.report)
+        .env("WS8_SOAK_LOG", &paths.log)
+        .env("WS8_SOAK_TARGET_ROOT", &paths.target)
+        .env("WS8_SOAK_RUN_ID", run_id)
+        .output()?)
 }
 
 fn output_text(output: &Output) -> String {
@@ -208,6 +242,107 @@ fn validate_only_checks_contract_without_claiming_soak_evidence() -> TestResult 
 }
 
 #[test]
+fn handoff_ledger_start_records_remote_resume_contract() -> TestResult {
+    let root = repo_root()?;
+    let paths = ledger_paths(&root, "ledger-start")?;
+    let output = run_ledger_command(&root, &paths, "ledger-start", "--start")?;
+    assert!(
+        output.status.success(),
+        "ledger start failed: {}",
+        output_text(&output)
+    );
+    let ledger = load_json(&paths.ledger)?;
+    assert_eq!(
+        ledger["schema_version"].as_str(),
+        Some("ws8_soak_ledger.v1")
+    );
+    assert_eq!(ledger["status"].as_str(), Some("pending"));
+    assert_eq!(ledger["proof_status"].as_str(), Some("handoff_created"));
+    assert_eq!(ledger["workloads_completed"].as_u64(), Some(0));
+    assert!(
+        ledger["job_id"]
+            .as_str()
+            .is_some_and(|job_id| job_id.starts_with("ws8-soak-ledger-start-")),
+        "ledger should record a stable job id: {ledger:#}"
+    );
+    assert!(
+        ledger["commands"]["remote_resume"]
+            .as_str()
+            .is_some_and(|command| command.contains("rch exec")
+                && command.contains("scripts/run_ws8_soak.sh --resume")),
+        "ledger must preserve the remote resume command: {ledger:#}"
+    );
+    assert!(
+        ledger["commands"]["poll"]
+            .as_str()
+            .is_some_and(|command| command.contains("scripts/run_ws8_soak.sh --poll")),
+        "ledger must preserve the poll command: {ledger:#}"
+    );
+    Ok(())
+}
+
+#[test]
+fn handoff_ledger_poll_promotes_completed_soak_report() -> TestResult {
+    let root = repo_root()?;
+    let paths = ledger_paths(&root, "ledger-poll")?;
+    let start = run_ledger_command(&root, &paths, "ledger-poll", "--start")?;
+    assert!(
+        start.status.success(),
+        "ledger start failed: {}",
+        output_text(&start)
+    );
+    write_json(
+        &paths.report,
+        &json!({
+            "schema_version": "ws8_soak.report.v1",
+            "status": "pass",
+            "proof_status": "soak_evidence_passed",
+            "iteration_count": 1,
+            "failure_signatures": []
+        }),
+    )?;
+
+    let poll = run_ledger_command(&root, &paths, "ledger-poll", "--poll")?;
+    assert!(
+        poll.status.success(),
+        "ledger poll failed: {}",
+        output_text(&poll)
+    );
+    let ledger = load_json(&paths.ledger)?;
+    assert_eq!(ledger["status"].as_str(), Some("passed"));
+    assert_eq!(
+        ledger["report_proof_status"].as_str(),
+        Some("soak_evidence_passed")
+    );
+    assert_eq!(ledger["workloads_completed"].as_u64(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn handoff_ledger_abort_marks_job_without_running_soak() -> TestResult {
+    let root = repo_root()?;
+    let paths = ledger_paths(&root, "ledger-abort")?;
+    let start = run_ledger_command(&root, &paths, "ledger-abort", "--start")?;
+    assert!(
+        start.status.success(),
+        "ledger start failed: {}",
+        output_text(&start)
+    );
+
+    let abort = run_ledger_command(&root, &paths, "ledger-abort", "--abort")?;
+    assert!(
+        abort.status.success(),
+        "ledger abort failed: {}",
+        output_text(&abort)
+    );
+    let ledger = load_json(&paths.ledger)?;
+    assert_eq!(ledger["status"].as_str(), Some("aborted"));
+    assert_eq!(ledger["proof_status"].as_str(), Some("handoff_aborted"));
+    assert!(ledger["aborted_at_utc"].as_str().is_some());
+    Ok(())
+}
+
+#[test]
 fn smoke_mode_replays_standalone_gate_validate_only_as_orchestrator_check() -> TestResult {
     let root = repo_root()?;
     let run = run_soak(&root, "smoke", "--smoke", None)?;
@@ -274,7 +409,7 @@ fn manifest_with_short_contract_duration_fails_closed() -> TestResult {
             .as_array()
             .is_some_and(|items| items.iter().any(|value| value
                 .as_str()
-                .is_some_and(|signature| signature == "ws8_soak_duration_too_short"))),
+                .is_some_and(|signature| matches!(signature, "ws8_soak_duration_too_short")))),
         "duration failure signature missing: {report:#}"
     );
     Ok(())
