@@ -635,6 +635,70 @@ fn generated_report_accepts_math_abi_errno_bridge_tranche() {
 }
 
 #[test]
+fn scanner_classifies_host_census_body_and_alternate_pattern_findings() {
+    let generated_path = unique_generated_report_path("scanner_classification");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    let find_issue = |symbol: &str| {
+        issues
+            .iter()
+            .find(|issue| issue["symbol"].as_str() == Some(symbol))
+            .unwrap_or_else(|| panic!("missing scanner issue for {symbol}"))
+    };
+
+    let proofed = find_issue("acos");
+    assert_eq!(
+        proofed["issue_class"].as_str(),
+        Some("promotion_proof_accepted")
+    );
+    assert_eq!(
+        proofed["scanner_bucket"].as_str(),
+        Some("native_proven_errno_bridge")
+    );
+    assert_eq!(proofed["valid"].as_bool(), Some(true));
+
+    let body_delegation = find_issue("__isoc99_sscanf");
+    assert_eq!(
+        body_delegation["issue_class"].as_str(),
+        Some("true_host_delegation")
+    );
+    assert_eq!(
+        body_delegation["scanner_bucket"].as_str(),
+        Some("source_level_host_call")
+    );
+    assert_eq!(body_delegation["valid"].as_bool(), Some(false));
+
+    let census_only = find_issue("__adjtimex");
+    assert_eq!(
+        census_only["issue_class"].as_str(),
+        Some("host_census_unverified")
+    );
+    assert_eq!(
+        census_only["scanner_bucket"].as_str(),
+        Some("census_only_host_reachability")
+    );
+
+    let alternate_pattern = find_issue("__after_morecore_hook");
+    assert_eq!(
+        alternate_pattern["issue_class"].as_str(),
+        Some("alternate_pattern_unresolved")
+    );
+    assert_eq!(
+        alternate_pattern["scanner_bucket"].as_str(),
+        Some("generated_or_alias_pattern")
+    );
+}
+
+#[test]
 fn math_abi_promotion_proof_manifest_requires_both_modes() {
     let root = repo_root();
     let manifest_path = root.join("tests/conformance/math_abi_promotion_tranche.v1.json");

@@ -68,6 +68,8 @@ STATUS_PROMOTION_RANK = {
     "Implemented": 3,
     "RawSyscall": 4,
 }
+ALTERNATE_PATTERN_MODULES = {"glibc_internal_abi", "rpc_abi"}
+PROMOTION_PROOF_WARNING = "host delegation census covered by promotion proof manifest"
 FN_NAME_PATTERN = re.compile(r'\bfn\s+([A-Za-z_]\w*)\s*\(')
 HOST_RESOLVE_BLOCK_USE_PATTERN = re.compile(
     r'use\s+crate::host_resolve::\{(?P<body>.*?)\};',
@@ -249,6 +251,60 @@ def promotion_proof_covers_census(symbol, status, module, host_delegation_entry,
     return host_symbols <= accepted_host_symbols and delegation_kinds <= accepted_delegation_kinds
 
 
+def classify_status_validation_issue(status, module, findings, warnings):
+    """Attach a stable machine class to maintenance findings without waiving them."""
+    finding_set = set(findings or [])
+    warning_set = set(warnings or [])
+
+    if PROMOTION_PROOF_WARNING in warning_set:
+        return {
+            "issue_class": "promotion_proof_accepted",
+            "scanner_bucket": "native_proven_errno_bridge",
+            "actionable_next_step": "keep proof manifest strict+hardened mode rows current",
+        }
+    if "Implemented but host delegation detected" in finding_set:
+        return {
+            "issue_class": "true_host_delegation",
+            "scanner_bucket": "source_level_host_call",
+            "actionable_next_step": "downgrade status or remove host delegation from the implementation",
+        }
+    if "Implemented but host delegation census detected" in finding_set:
+        return {
+            "issue_class": "host_census_unverified",
+            "scanner_bucket": "census_only_host_reachability",
+            "actionable_next_step": "prove bounded non-core bridge use or downgrade status",
+        }
+    if any(finding.startswith("function body not found") for finding in finding_set):
+        if module in ALTERNATE_PATTERN_MODULES:
+            return {
+                "issue_class": "alternate_pattern_unresolved",
+                "scanner_bucket": "generated_or_alias_pattern",
+                "actionable_next_step": "teach scanner the local macro/alias pattern or classify as scanner-unknown",
+            }
+        return {
+            "issue_class": "missing_body",
+            "scanner_bucket": "scanner_unknown",
+            "actionable_next_step": "add a source locator pattern or update the support-matrix row",
+        }
+    if "module source not found" in finding_set:
+        return {
+            "issue_class": "module_source_missing",
+            "scanner_bucket": "scanner_unknown",
+            "actionable_next_step": "add module source or correct support-matrix module name",
+        }
+    if any("no host delegation detected" in finding for finding in finding_set):
+        return {
+            "issue_class": "taxonomy_overstates_host_dependency",
+            "scanner_bucket": "status_source_mismatch",
+            "actionable_next_step": "promote status only after strict+hardened evidence is present",
+        }
+    return {
+        "issue_class": "status_pattern_mismatch",
+        "scanner_bucket": "scanner_unknown",
+        "actionable_next_step": "inspect findings and add a specific classifier",
+    }
+
+
 def count_statuses_from_map(status_map):
     counts = {}
     for status in status_map.values():
@@ -428,7 +484,7 @@ def validate_status(
         isinstance(host_delegation_entry, dict) and not proof_covers_census
     )
     if proof_covers_census:
-        warnings.append("host delegation census covered by promotion proof manifest")
+        warnings.append(PROMOTION_PROOF_WARNING)
     host_resolve_aliases = module_analysis.get("host_resolve_aliases", set())
     host_helper_functions = module_analysis.get("host_helper_functions", set())
     wraps_host_libc = bool(
@@ -780,12 +836,15 @@ def main():
         source = module_cache[module]
         if source is None:
             status_skipped += 1
+            findings = ["module source not found"]
             status_results.append({
                 "symbol": sym,
                 "status": st,
                 "module": module,
                 "valid": None,
-                "findings": ["module source not found"],
+                "findings": findings,
+                "warnings": [],
+                **classify_status_validation_issue(st, module, findings, []),
             })
             continue
 
@@ -811,6 +870,7 @@ def main():
             "valid": is_valid,
             "findings": findings,
             "warnings": warn_list,
+            **classify_status_validation_issue(st, module, findings, warn_list),
         })
 
     # --- Pass 2: Conformance Linkage ---
