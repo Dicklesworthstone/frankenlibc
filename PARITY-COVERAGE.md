@@ -97,6 +97,29 @@ The following families have dedicated `glibc_*` parity tests comparing FrankenLi
 | Hardened membrane overhead | ≤200ns/call for hotpath | ✓ Met |
 | Hardened vs native glibc | ≤2× for memcpy, malloc | ✓ Met (bd-38x82.5) |
 
+## Automated Gates
+
+| Gate | Script | Purpose |
+|------|--------|---------|
+| Zero-host-reference | `scripts/check_host_reference_gate.sh` | Verify standalone has no glibc deps |
+| Host-backed burndown | `scripts/host_backed_burndown.sh` | Track WrapsHostLibc symbol reduction |
+| NSS overlay | `scripts/check_nss_overlay.sh` | Verify NSS functions implemented |
+| Aarch64 toolchain | `scripts/check_aarch64_toolchain.sh` | Preflight cross-compile prerequisites |
+| Soak freshness | `scripts/check_soak_artifact_freshness.sh` | Verify artifact matches source |
+| Buffer audit | `scripts/audit_unterminated_buffers.sh` | Audit tracked buffer handling |
+| Aarch64 smoke | `scripts/run_aarch64_smoke.sh` | Run smoke tests via QEMU |
+
+## Session Progress (2026-05-25)
+
+Beads closed this session:
+- bd-gq1kz7.10: Zero-host-reference gate (86b348b2)
+- bd-gq1kz7.9: Host-backed burndown dashboard (e7a792a0)
+- bd-gq1kz7.15: NSS overlay exhaustiveness (d3730f36)
+- bd-gq1kz7.11: Aarch64 toolchain preflight (668a31c8)
+- bd-gq1kz7.14: Soak artifact freshness (668a31c8)
+- bd-gq1kz7.6: Unterminated buffer sweep (e152948c)
+- bd-gq1kz7.12: Aarch64 smoke runner (a26c6e04)
+
 ## Audit Trail
 
 - `support_matrix.json`: Authoritative symbol-level classification
