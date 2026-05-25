@@ -1407,7 +1407,7 @@ Qualitative summary; numeric truth lives in `support_matrix.json` and the mainte
 | `resolver` | Native bootstrap path | Numeric, `/etc/hosts`, `/etc/services`, multi-address addrinfo, IDNA, b64, metamorphic round-trip | Full NSS / DNS network backends (out of bootstrap scope) |
 | `locale` | Native bootstrap | C/POSIX, `setlocale`, `localeconv`, `nl_langinfo`, ctype/wchar locale variants, catgets | Full localedata breadth |
 | `iconv` | Phase 1 | UTF-8 ↔ ISO-8859-1 / UTF-16LE / UTF-32; deterministic strict + hardened fixtures; locked scope ledger | Full `iconvdata` breadth |
-| `loader / dlfcn` | Phase-1 native | `dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, `dl_iterate_phdr` | Broader dynamic-loader story for replacement |
+| `loader / dlfcn` | Phase-1 native | Main-program handles plus self-contained pathname ELF64 DSO `dlopen`/`dlsym`/`dlclose`; `dlerror`, `dladdr`, `dl_iterate_phdr` | Dependency-loading, constructors, TLS, and broader replacement loader closure |
 | `startup` | Phase-0 native | `__libc_start_main`, init/fini array order proofs, errno TLS isolation proof, atexit order proof | Full `csu`/TLS init-order hardening for replacement |
 | `runtime_math` | Extensive live code | ~71 controllers, build-time SOS certificates, snapshot goldens, linkage checks | Continued integration and proof-quality closure |
 

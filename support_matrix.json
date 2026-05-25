@@ -2790,8 +2790,8 @@
       "status": "Implemented",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Native phase-1 loader: NULL and recognized libc NOLOAD aliases return a local main-program handle; unsupported libraries return NULL with thread-local dlerror",
-      "hardened_semantics": "Native phase-1 loader: invalid flags heal to RTLD_NOW and NULL / recognized libc NOLOAD aliases return a local main-program handle; unsupported libraries return NULL with thread-local dlerror",
+      "strict_semantics": "Native phase-1 loader: NULL and recognized libc NOLOAD aliases return a local main-program handle; self-contained pathname ELF64 DSOs are mapped, relocated, and returned as native handles; unsupported pathname libraries return NULL with thread-local dlerror",
+      "hardened_semantics": "Native phase-1 loader: invalid flags heal to RTLD_NOW; NULL and recognized libc NOLOAD aliases return a local main-program handle; self-contained pathname ELF64 DSOs are mapped, relocated, and returned as native handles; unsupported pathname libraries return NULL with thread-local dlerror",
       "default_stub": false
     },
     {
@@ -2799,8 +2799,8 @@
       "status": "Implemented",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle with thread-local dlerror on misses",
-      "hardened_semantics": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle with deterministic invalid-handle / symbol-miss dlerror behavior",
+      "strict_semantics": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, the local main-program handle, and native pathname DSO handles with thread-local dlerror on misses",
+      "hardened_semantics": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, the local main-program handle, and native pathname DSO handles with deterministic invalid-handle / symbol-miss dlerror behavior",
       "default_stub": false
     },
     {

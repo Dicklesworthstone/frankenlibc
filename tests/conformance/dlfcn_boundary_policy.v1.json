@@ -79,14 +79,14 @@
     "strict_semantics": "Native phase-1 loader/resolver surface with thread-local dlerror contract and deterministic local main-program handle semantics",
     "hardened_semantics": "Native phase-1 loader/resolver surface with RTLD_NOW healing for invalid dlopen flags and deterministic dlerror behavior",
     "strict_semantics_by_symbol": {
-      "dlopen": "Native phase-1 loader: NULL and recognized libc NOLOAD aliases return a local main-program handle; unsupported libraries return NULL with thread-local dlerror",
-      "dlsym": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle with thread-local dlerror on misses",
-      "dlclose": "Native main-program handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract"
+      "dlopen": "Native phase-1 loader: NULL and recognized libc NOLOAD aliases return a local main-program handle; self-contained pathname ELF64 DSOs are mapped, relocated, and returned as native handles; unsupported pathname libraries return NULL with thread-local dlerror",
+      "dlsym": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, the local main-program handle, and native pathname DSO handles with thread-local dlerror on misses",
+      "dlclose": "Native main-program and pathname DSO handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract"
     },
     "hardened_semantics_by_symbol": {
-      "dlopen": "Native phase-1 loader: invalid flags heal to RTLD_NOW and NULL / recognized libc NOLOAD aliases return a local main-program handle; unsupported libraries return NULL with thread-local dlerror",
-      "dlsym": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle with deterministic invalid-handle / symbol-miss dlerror behavior",
-      "dlclose": "Native main-program handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract"
+      "dlopen": "Native phase-1 loader: invalid flags heal to RTLD_NOW; NULL and recognized libc NOLOAD aliases return a local main-program handle; self-contained pathname ELF64 DSOs are mapped, relocated, and returned as native handles; unsupported pathname libraries return NULL with thread-local dlerror",
+      "dlsym": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, the local main-program handle, and native pathname DSO handles with deterministic invalid-handle / symbol-miss dlerror behavior",
+      "dlclose": "Native main-program and pathname DSO handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract"
     },
     "dlerror_strict_semantics": "Native thread-local dlerror: returns last dl* error message and clears error state per POSIX",
     "dlerror_hardened_semantics": "Native thread-local dlerror with deterministic error-message return and state clearing"

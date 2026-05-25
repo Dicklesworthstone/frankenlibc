@@ -6,8 +6,13 @@
 //! delegating back into the host loader.
 
 use std::ffi::{c_char, c_int, c_void};
+use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
+use frankenlibc_core::elf::{
+    ElfLoader, LoadedObject, PltBindingPolicy, RelocationResult, SymbolLookup,
+};
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
@@ -100,7 +105,10 @@ fn is_rtld_next(handle: *mut c_void) -> bool {
 }
 
 fn is_native_handle(handle: *mut c_void) -> bool {
-    is_rtld_default(handle) || is_rtld_next(handle) || is_main_program_handle(handle)
+    is_rtld_default(handle)
+        || is_rtld_next(handle)
+        || is_main_program_handle(handle)
+        || native_dso_id_from_handle(handle).is_some()
 }
 
 fn library_alias_matches(name: &[u8]) -> bool {
@@ -229,6 +237,230 @@ fn close_main_program_handle() -> c_int {
     }
 }
 
+const NATIVE_DSO_HANDLE_TAG: usize = 0x4d;
+const NATIVE_DSO_HANDLE_MASK: usize = 0xff;
+
+#[derive(Debug)]
+struct NativeDso {
+    id: usize,
+    base: usize,
+    map_len: usize,
+    object: LoadedObject,
+}
+
+static NATIVE_DSOS: OnceLock<Mutex<Vec<NativeDso>>> = OnceLock::new();
+static NEXT_NATIVE_DSO_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn native_dso_registry() -> &'static Mutex<Vec<NativeDso>> {
+    NATIVE_DSOS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn native_dso_handle(id: usize) -> *mut c_void {
+    ((id << 8) | NATIVE_DSO_HANDLE_TAG) as *mut c_void
+}
+
+fn native_dso_id_from_handle(handle: *mut c_void) -> Option<usize> {
+    let raw = handle as usize;
+    if raw & NATIVE_DSO_HANDLE_MASK == NATIVE_DSO_HANDLE_TAG {
+        Some(raw >> 8)
+    } else {
+        None
+    }
+}
+
+#[doc(hidden)]
+pub fn native_dso_handle_for_tests(handle: *mut c_void) -> bool {
+    let Some(id) = native_dso_id_from_handle(handle) else {
+        return false;
+    };
+    native_dso_registry()
+        .lock()
+        .map(|dsos| dsos.iter().any(|dso| dso.id == id))
+        .unwrap_or(false)
+}
+
+fn is_pathname(name: &[u8]) -> bool {
+    name.contains(&b'/')
+}
+
+fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
+    if (flags & dlfcn_core::RTLD_NOLOAD) != 0 {
+        return None;
+    }
+    let path = std::str::from_utf8(name).ok()?;
+    let bytes = std::fs::read(path).ok()?;
+
+    let preview_loader = ElfLoader::new(0);
+    let preview_object = preview_loader.parse(&bytes).ok()?;
+    if !native_dso_object_supported(&preview_object) {
+        return None;
+    }
+    let image = preview_loader
+        .materialize_load_image(&bytes, &preview_object)
+        .ok()?;
+    if image.low_vaddr != 0 || image.memory.is_empty() {
+        return None;
+    }
+
+    let map_len = image.memory.len();
+    // SAFETY: anonymous private mapping, initially writable for loader relocation.
+    let base = match unsafe {
+        raw_syscall::sys_mmap(
+            std::ptr::null_mut(),
+            map_len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    } {
+        Ok(ptr) => ptr,
+        Err(_) => return None,
+    };
+
+    let loaded = (|| {
+        // SAFETY: sys_mmap returned a valid mapping of map_len bytes above.
+        let memory = unsafe { core::slice::from_raw_parts_mut(base, map_len) };
+        memory.copy_from_slice(&image.memory);
+
+        let loader = ElfLoader::new(base as u64);
+        let object = loader.parse(&bytes).ok()?;
+        let registry = native_dso_registry().lock().ok()?;
+        let resolver = NativeDsoResolver {
+            dsos: registry.as_slice(),
+        };
+        let relocation_report = loader.apply_relocations_with_policy(
+            &object,
+            memory,
+            &resolver,
+            PltBindingPolicy::Eager,
+        );
+        if !relocation_report_succeeded(&relocation_report.events) {
+            return None;
+        }
+        drop(registry);
+
+        for segment in &image.segments {
+            let offset = usize::try_from(segment.map_addr).ok()?;
+            // SAFETY: segment.map_addr is bounded by the materialized load image.
+            let addr = unsafe { base.add(offset) };
+            let len = usize::try_from(segment.map_size).ok()?;
+            // SAFETY: addr/len are page-aligned mapping decisions from the ELF load image.
+            if unsafe { raw_syscall::sys_mprotect(addr, len, segment.prot) }.is_err() {
+                return None;
+            }
+        }
+
+        if let Some(relro_range) = image.relro_range {
+            let relro_start = relro_range.start & !0xfff;
+            let relro_end = (relro_range.end + 0xfff) & !0xfff;
+            if relro_end > relro_start {
+                // SAFETY: RELRO range is derived from the materialized load image.
+                let addr = unsafe { base.add(relro_start) };
+                // SAFETY: RELRO is page-rounded and contained in the anonymous DSO mapping.
+                if unsafe {
+                    raw_syscall::sys_mprotect(addr, relro_end - relro_start, libc::PROT_READ)
+                }
+                .is_err()
+                {
+                    return None;
+                }
+            }
+        }
+
+        let id = NEXT_NATIVE_DSO_ID.fetch_add(1, Ordering::Relaxed);
+        native_dso_registry().lock().ok()?.push(NativeDso {
+            id,
+            base: base as usize,
+            map_len,
+            object,
+        });
+        Some(native_dso_handle(id))
+    })();
+
+    if loaded.is_none() {
+        // SAFETY: base/map_len came from the successful sys_mmap call above.
+        let _ = unsafe { raw_syscall::sys_munmap(base, map_len) };
+    }
+
+    loaded
+}
+
+fn native_dso_object_supported(object: &LoadedObject) -> bool {
+    object.needed_libraries.is_empty()
+        && object.tls_segment.is_none()
+        && object.legacy_init.is_none()
+        && object.legacy_fini.is_none()
+        && object.init_array.is_empty()
+        && object.fini_array.is_empty()
+        && !object.has_unsupported_relocations()
+}
+
+fn relocation_report_succeeded(events: &[frankenlibc_core::elf::RelocationTraceEvent]) -> bool {
+    events.iter().all(|event| {
+        matches!(
+            event.result,
+            RelocationResult::Applied | RelocationResult::Skipped
+        )
+    })
+}
+
+struct NativeDsoResolver<'a> {
+    dsos: &'a [NativeDso],
+}
+
+impl SymbolLookup for NativeDsoResolver<'_> {
+    fn lookup(&self, name: &str) -> Option<u64> {
+        self.lookup_versioned(name, None)
+    }
+
+    fn lookup_versioned(&self, name: &str, version: Option<&str>) -> Option<u64> {
+        for dso in self.dsos {
+            if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
+                return Some(dso.object.base + symbol.st_value);
+            }
+        }
+        let exported = resolve_exported_symbol(name.as_bytes());
+        if exported.is_null() {
+            None
+        } else {
+            Some(exported as u64)
+        }
+    }
+}
+
+fn resolve_native_dso_symbol(
+    handle: *mut c_void,
+    symbol_name: &[u8],
+    version_name: Option<&[u8]>,
+) -> Option<Option<*mut c_void>> {
+    let id = native_dso_id_from_handle(handle)?;
+    let symbol = std::str::from_utf8(symbol_name).ok()?;
+    let version = match version_name {
+        Some(bytes) => Some(std::str::from_utf8(bytes).ok()?),
+        None => None,
+    };
+    let dsos = native_dso_registry().lock().ok()?;
+    let dso = dsos.iter().find(|dso| dso.id == id)?;
+    Some(
+        dso.object
+            .lookup_symbol_versioned(symbol, version)
+            .map(|sym| (dso.object.base + sym.st_value) as *mut c_void),
+    )
+}
+
+fn close_native_dso(handle: *mut c_void) -> Option<c_int> {
+    let id = native_dso_id_from_handle(handle)?;
+    let mut dsos = native_dso_registry().lock().ok()?;
+    let index = dsos.iter().position(|dso| dso.id == id)?;
+    let dso = dsos.swap_remove(index);
+    // SAFETY: base/map_len were created by load_native_dso and are still owned by this handle.
+    match unsafe { raw_syscall::sys_munmap(dso.base as *mut u8, dso.map_len) } {
+        Ok(()) => Some(0),
+        Err(_) => Some(-1),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // dlopen
 // ---------------------------------------------------------------------------
@@ -275,6 +507,14 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
         {
             clear_dlerror();
             return open_main_program_handle();
+        }
+        if is_pathname(name) {
+            if let Some(handle) = load_native_dso(name, flags) {
+                clear_dlerror();
+                return handle;
+            }
+            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+            return std::ptr::null_mut();
         }
         // During bootstrap, delegate to host dlopen for actual .so loading.
         type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
@@ -343,10 +583,17 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
             || ((flags & dlfcn_core::RTLD_NOLOAD) != 0 && library_alias_matches(name))
         {
             open_main_program_handle()
+        } else if is_pathname(name) {
+            if let Some(handle) = load_native_dso(name, flags) {
+                clear_dlerror();
+                handle
+            } else {
+                set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+                std::ptr::null_mut()
+            }
         } else {
-            // Delegate to host libc's dlopen for actual shared object loading.
-            // Our dlopen cannot load ELF files natively — the host's dynamic
-            // linker handles symbol resolution, relocations, and dependency loading.
+            // Bare SONAME search/dependency loading remains delegated while
+            // pathname DSOs use the native loader path above.
             type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
             if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") {
                 let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
@@ -424,7 +671,21 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             return std::ptr::null_mut();
         }
+        let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
         if !is_main_program_handle(handle) {
+            if let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, None) {
+                return if let Some(sym) = native_sym {
+                    clear_dlerror();
+                    sym
+                } else {
+                    set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+                    std::ptr::null_mut()
+                };
+            }
+            if native_dso_id_from_handle(handle).is_some() {
+                set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+                return std::ptr::null_mut();
+            }
             let host_handle = if is_rtld_default(handle) {
                 libc::RTLD_DEFAULT
             } else if is_rtld_next(handle) {
@@ -440,7 +701,6 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             }
             return sym;
         }
-        let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
         let sym = unsafe { resolve_main_program_symbol(symbol, symbol_name) };
         if sym.is_null() {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
@@ -499,6 +759,24 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         }
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
         return sym;
+    }
+
+    if let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, None) {
+        let sym = native_sym.unwrap_or(std::ptr::null_mut());
+        let adverse = sym.is_null();
+        if adverse {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+        } else {
+            clear_dlerror();
+        }
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+        return sym;
+    }
+
+    if native_dso_id_from_handle(handle).is_some() {
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return std::ptr::null_mut();
     }
 
     if !is_native_handle(handle) {
@@ -598,7 +876,24 @@ pub unsafe extern "C" fn dlvsym(
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             return std::ptr::null_mut();
         }
+        let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
+        let version_name = unsafe { std::slice::from_raw_parts(version as *const u8, version_len) };
         if !is_main_program_handle(handle) {
+            if let Some(native_sym) =
+                resolve_native_dso_symbol(handle, symbol_name, Some(version_name))
+            {
+                return if let Some(sym) = native_sym {
+                    clear_dlerror();
+                    sym
+                } else {
+                    set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+                    std::ptr::null_mut()
+                };
+            }
+            if native_dso_id_from_handle(handle).is_some() {
+                set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+                return std::ptr::null_mut();
+            }
             let host_handle = if is_rtld_default(handle) {
                 libc::RTLD_DEFAULT
             } else if is_rtld_next(handle) {
@@ -615,8 +910,6 @@ pub unsafe extern "C" fn dlvsym(
             }
             return sym;
         }
-        let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
-        let version_name = unsafe { std::slice::from_raw_parts(version as *const u8, version_len) };
         let sym = unsafe {
             resolve_main_program_versioned_symbol(symbol, version, symbol_name, version_name)
         };
@@ -685,6 +978,24 @@ pub unsafe extern "C" fn dlvsym(
         }
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
         return sym;
+    }
+
+    if let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, Some(version_name)) {
+        let sym = native_sym.unwrap_or(std::ptr::null_mut());
+        let adverse = sym.is_null();
+        if adverse {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+        } else {
+            clear_dlerror();
+        }
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+        return sym;
+    }
+
+    if native_dso_id_from_handle(handle).is_some() {
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return std::ptr::null_mut();
     }
 
     if !is_native_handle(handle) {
@@ -761,6 +1072,18 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
             }
             return rc;
         }
+        if let Some(rc) = close_native_dso(handle) {
+            if rc == 0 {
+                clear_dlerror();
+            } else {
+                set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+            }
+            return rc;
+        }
+        if native_dso_id_from_handle(handle).is_some() {
+            set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+            return -1;
+        }
         // Non-main-program handle during bootstrap: delegate to host dlclose.
         type DlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
         if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlclose") {
@@ -790,6 +1113,23 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
     }
 
     if handle.is_null() {
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return -1;
+    }
+
+    if let Some(rc) = close_native_dso(handle) {
+        let adverse = rc != 0;
+        if adverse {
+            set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        } else {
+            clear_dlerror();
+        }
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+        return rc;
+    }
+
+    if native_dso_id_from_handle(handle).is_some() {
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return -1;

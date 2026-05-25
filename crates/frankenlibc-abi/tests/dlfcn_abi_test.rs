@@ -1,15 +1,60 @@
 #![cfg(target_os = "linux")]
 
 use std::ffi::{CStr, CString, c_int, c_void};
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::dlfcn_abi::{
     __libc_dlclose, __libc_dlopen_mode, __libc_dlsym, dl_iterate_phdr, dladdr, dlclose, dlerror,
-    dlopen, dlsym, dlvsym,
+    dlopen, dlsym, dlvsym, native_dso_handle_for_tests,
 };
 use frankenlibc_abi::malloc_abi::{free, malloc};
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
+
+fn compile_self_contained_test_dso() -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "frankenlibc-native-dso-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("native_answer.c");
+    let output = dir.join("libfranken_native_answer.so");
+    std::fs::write(
+        &source,
+        "__attribute__((visibility(\"default\"))) int franken_native_answer(void) { return 4242; }\n",
+    )
+    .unwrap();
+
+    let cc_output = Command::new("cc")
+        .args([
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-Wl,--build-id=none",
+            "-Wl,-soname,libfranken_native_answer.so",
+            "-o",
+        ])
+        .arg(&output)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "cc failed: status={:?}\nstdout={}\nstderr={}",
+        cc_output.status,
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+    output
+}
 
 #[derive(Default)]
 struct DlIterateProbe {
@@ -237,6 +282,45 @@ fn dlopen_libc_succeeds() {
         "native phase-1 dlopen should surface the main handle for libc NOLOAD aliases"
     );
     unsafe { dlclose(handle) };
+}
+
+#[test]
+fn dlopen_pathname_self_contained_shared_object_uses_native_loader() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let so_path = compile_self_contained_test_dso();
+    let name = CString::new(so_path.as_os_str().as_bytes()).unwrap();
+
+    let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        let err = unsafe { dlerror() };
+        let msg = if err.is_null() {
+            "<no dlerror>".into()
+        } else {
+            unsafe { CStr::from_ptr(err) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        panic!("native pathname dlopen failed for {so_path:?}: {msg}");
+    }
+    assert!(
+        native_dso_handle_for_tests(handle),
+        "pathname dlopen should return a native DSO handle, not a host-loader handle"
+    );
+
+    let sym_name = CString::new("franken_native_answer").unwrap();
+    let sym = unsafe { dlsym(handle, sym_name.as_ptr()) };
+    assert!(
+        !sym.is_null(),
+        "dlsym should resolve the exported symbol from the native DSO"
+    );
+
+    let answer: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(sym) };
+    assert_eq!(unsafe { answer() }, 4242);
+    assert_eq!(unsafe { dlclose(handle) }, 0);
+    assert!(
+        !native_dso_handle_for_tests(handle),
+        "dlclose should retire the native DSO handle"
+    );
 }
 
 #[test]
