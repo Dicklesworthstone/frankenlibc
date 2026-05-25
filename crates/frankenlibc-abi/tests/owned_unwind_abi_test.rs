@@ -2,7 +2,7 @@
 
 use frankenlibc_abi::owned_unwind_abi::{
     __deregister_frame, __deregister_frame_info, __register_frame, __register_frame_info,
-    _Unwind_Backtrace, _Unwind_GetDataRelBase, _Unwind_GetGR, _Unwind_GetIP,
+    _Unwind_Backtrace, _Unwind_GetDataRelBase, _Unwind_GetGR, _Unwind_GetIP, _Unwind_GetIPInfo,
     _Unwind_GetLanguageSpecificData, _Unwind_GetRegionStart, _Unwind_GetTextRelBase, _Unwind_SetGR,
     _Unwind_SetIP, OwnedContextInstallError, OwnedLandingPadInstall, OwnedLandingPadInstallInput,
     OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedUnwindDecodeError, UnwindContext,
@@ -38,6 +38,16 @@ unsafe extern "C" fn collect_frame_ip(ctx: *mut UnwindContext, arg: *mut c_void)
     URC_NO_REASON
 }
 
+unsafe extern "C" fn collect_frame_ip_info(ctx: *mut UnwindContext, arg: *mut c_void) -> i32 {
+    let frames = unsafe { &mut *(arg.cast::<Vec<(usize, i32)>>()) };
+    let mut ip_before_insn = -1;
+    let ip = unsafe { _Unwind_GetIPInfo(ctx, &mut ip_before_insn) };
+    if ip != 0 {
+        frames.push((ip, ip_before_insn));
+    }
+    URC_NO_REASON
+}
+
 #[inline(never)]
 fn walk_from_inner(frames: &mut Vec<usize>) -> i32 {
     unsafe { _Unwind_Backtrace(Some(collect_frame_ip), (frames as *mut Vec<usize>).cast()) }
@@ -61,6 +71,23 @@ fn backtrace_walk_reports_real_instruction_pointers() {
     assert!(
         frames.iter().all(|ip| *ip != 0),
         "reported instruction pointers must be nonzero: {frames:?}"
+    );
+}
+
+#[test]
+fn get_ip_info_marks_return_addresses_after_instruction() {
+    let mut frames = Vec::new();
+    let reason = unsafe {
+        _Unwind_Backtrace(
+            Some(collect_frame_ip_info),
+            (&mut frames as *mut Vec<(usize, i32)>).cast(),
+        )
+    };
+
+    assert_eq!(reason, 5, "walk should finish with _URC_END_OF_STACK");
+    assert!(
+        frames.iter().all(|(_, before)| *before == 0),
+        "normal frame-pointer return addresses should be reported as after-instruction IPs: {frames:?}"
     );
 }
 
@@ -364,7 +391,7 @@ fn x86_64_landing_pad_install_descriptor_uses_validated_frame_cursor() {
         install,
         OwnedLandingPadInstall {
             ip: TEST_LANDING_PAD,
-            stack_pointer: 0x6000,
+            stack_pointer: 0x7010,
             frame_pointer: 0x7000,
             general_register_0: 0x1111,
             general_register_1: 0x2222,

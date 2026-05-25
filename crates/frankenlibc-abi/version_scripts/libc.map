@@ -4717,7 +4717,12 @@ GCC_3.0 {
         _Unwind_SetIP;
 };
 
+GCC_3.3 {
+    global:
+        _Unwind_Resume_or_Rethrow;
+} GCC_3.0;
+
 GCC_4.2.0 {
     global:
         _Unwind_GetIPInfo;
-} GCC_3.0;
+} GCC_3.3;
