@@ -34,7 +34,7 @@
   ],
   "unit_pack_contract": {
     "required_subsystem_count": 4,
-    "required_unit_test_count": 41,
+    "required_unit_test_count": 42,
     "required_fixture_case_count": 17,
     "required_subsystems": [
       {
@@ -50,7 +50,8 @@
           "startup_phase0_rejects_unterminated_auxv_scan_window",
           "startup_phase0_negative_argc_normalizes_to_zero",
           "startup_phase0_main_can_use_stdio_without_bootstrap_crash",
-          "libc_start_main_phase0_disabled_delegates_to_host",
+          "libc_start_main_default_owned_startup_does_not_delegate_to_host",
+          "libc_start_main_explicit_delegate_env_delegates_to_host",
           "libc_start_main_phase0_unsafe_path_falls_back_to_host",
           "libc_start_main_phase0_missing_main_does_not_fallback",
           "startup_capability_lattice_detects_use_before_env_resolution",

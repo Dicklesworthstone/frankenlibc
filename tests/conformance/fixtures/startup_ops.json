@@ -141,14 +141,36 @@
       "note": "AT_SECURE=1 must persist secure-mode invariant in hardened mode"
     },
     {
+      "name": "libc_start_main_default_owned_no_host_delegate_strict",
+      "function": "__libc_start_main",
+      "spec_section": "glibc __libc_start_main",
+      "inputs": {
+        "startup_delegate_env": "0",
+        "phase0_env": "0",
+        "main": "valid_fn_ptr",
+        "argc": 1,
+        "argv": "valid_ptr"
+      },
+      "expected_output": "MAIN_CALLED",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Owned startup is the default even when the legacy phase-0 env var is unset"
+    },
+    {
       "name": "libc_start_main_phase0_disabled_fallback_host_strict",
       "function": "__libc_start_main",
       "spec_section": "glibc __libc_start_main",
-      "inputs": { "phase0_env": "0", "main": "valid_fn_ptr", "argc": 1, "argv": "valid_ptr" },
+      "inputs": {
+        "startup_delegate_env": "1",
+        "phase0_env": "0",
+        "main": "valid_fn_ptr",
+        "argc": 1,
+        "argv": "valid_ptr"
+      },
       "expected_output": "FALLBACK_HOST_DELEGATE",
       "expected_errno": 0,
       "mode": "strict",
-      "note": "When phase-0 is disabled, startup must delegate directly to host"
+      "note": "Legacy case name retained; direct host delegation now requires explicit FRANKENLIBC_STARTUP_DELEGATE=1"
     },
     {
       "name": "libc_start_main_phase0_unsafe_envp_fallback_host_strict",

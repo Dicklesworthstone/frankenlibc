@@ -206,7 +206,7 @@ fn manifest_covers_startup_nss_iconv_setjmp() -> TestResult {
                 .map_or(0, Vec::len)
         })
         .sum();
-    assert_eq!(test_count, 41);
+    assert_eq!(test_count, 42);
     Ok(())
 }
 
@@ -226,7 +226,7 @@ fn checker_accepts_unit_pack_contract() -> TestResult {
     );
     assert_eq!(
         field(summary, "unit_test_count", "summary")?.as_u64(),
-        Some(41)
+        Some(42)
     );
     assert_eq!(
         field(summary, "fixture_case_count", "summary")?.as_u64(),

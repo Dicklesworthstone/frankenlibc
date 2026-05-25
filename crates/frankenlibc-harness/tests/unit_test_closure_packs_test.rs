@@ -176,6 +176,7 @@ fn startup_fixture_expansion_covers_invariant_matrix() {
         "startup_phase0_rejects_unterminated_auxv_hardened",
         "startup_snapshot_secure_mode_nonsecure_strict",
         "startup_snapshot_secure_mode_secure_hardened",
+        "libc_start_main_default_owned_no_host_delegate_strict",
         "libc_start_main_phase0_disabled_fallback_host_strict",
         "libc_start_main_phase0_unsafe_envp_fallback_host_strict",
         "libc_start_main_phase0_missing_main_no_fallback_strict",

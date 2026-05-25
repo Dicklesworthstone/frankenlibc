@@ -165,6 +165,33 @@ fn with_startup_phase0_env<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
     result
 }
 
+fn with_startup_delegate_env<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
+    let key = "FRANKENLIBC_STARTUP_DELEGATE";
+    let previous = std::env::var_os(key);
+
+    // SAFETY: tests serialize env mutation with TEST_LOCK, avoiding concurrent env access.
+    unsafe {
+        if enabled {
+            std::env::set_var(key, "1");
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
+    let result = f();
+
+    // SAFETY: same serialization argument as above.
+    unsafe {
+        if let Some(value) = previous {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
+    result
+}
+
 #[cfg(debug_assertions)]
 #[test]
 fn startup_env_key_matcher_rejects_short_prefixes_without_reading_past_nul() {
@@ -651,7 +678,7 @@ fn startup_phase0_main_can_use_stdio_without_bootstrap_crash() {
 }
 
 #[test]
-fn libc_start_main_phase0_disabled_delegates_to_host() {
+fn libc_start_main_default_owned_startup_does_not_delegate_to_host() {
     let _guard = acquire_test_lock();
     reset_test_counters();
     let arg0 = seeded_cstring("arg", 20);
@@ -665,19 +692,71 @@ fn libc_start_main_phase0_disabled_delegates_to_host() {
     let mut auxv = vec![AT_NULL, 0usize];
 
     let rc = with_host_delegate_override(|| {
-        with_startup_phase0_env(false, || {
-            // SAFETY: host delegation is replaced by deterministic test hook.
-            unsafe {
-                __libc_start_main(
-                    Some(test_main as MainFn),
-                    1,
-                    argv_env.as_mut_ptr(),
-                    None,
-                    None,
-                    None,
-                    auxv.as_mut_ptr().cast::<c_void>(),
-                )
-            }
+        with_startup_delegate_env(false, || {
+            with_startup_phase0_env(false, || {
+                // SAFETY: vectors remain valid for the duration of the startup callback.
+                unsafe {
+                    __libc_start_main(
+                        Some(test_main as MainFn),
+                        1,
+                        argv_env.as_mut_ptr(),
+                        None,
+                        None,
+                        None,
+                        auxv.as_mut_ptr().cast::<c_void>(),
+                    )
+                }
+            })
+        })
+    });
+
+    assert_eq!(rc, 7);
+    assert_eq!(MAIN_ARGC.load(Ordering::Relaxed), 1);
+    assert_eq!(MAIN_ENVP_NONNULL.load(Ordering::Relaxed), 1);
+    assert_eq!(HOST_DELEGATE_CALLS.load(Ordering::Relaxed), 0);
+    assert_eq!(HOST_DELEGATE_LAST_ARGC.load(Ordering::Relaxed), usize::MAX);
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Allow);
+    assert_eq!(policy.failure_reason, StartupFailureReason::None);
+    assert_eq!(policy.last_phase, StartupCheckpoint::Complete);
+    append_startup_trace(
+        "default-owned-startup-no-host-delegate",
+        rc,
+        unsafe { abi_errno() },
+        policy,
+    );
+}
+
+#[test]
+fn libc_start_main_explicit_delegate_env_delegates_to_host() {
+    let _guard = acquire_test_lock();
+    reset_test_counters();
+    let arg0 = seeded_cstring("arg", 30);
+    let env0 = seeded_cstring("env", 30);
+    let mut argv_env = vec![
+        arg0.as_ptr().cast_mut(),
+        ptr::null_mut(),
+        env0.as_ptr().cast_mut(),
+        ptr::null_mut(),
+    ];
+    let mut auxv = vec![AT_NULL, 0usize];
+
+    let rc = with_host_delegate_override(|| {
+        with_startup_delegate_env(true, || {
+            with_startup_phase0_env(false, || {
+                // SAFETY: host delegation is replaced by deterministic test hook.
+                unsafe {
+                    __libc_start_main(
+                        Some(test_main as MainFn),
+                        1,
+                        argv_env.as_mut_ptr(),
+                        None,
+                        None,
+                        None,
+                        auxv.as_mut_ptr().cast::<c_void>(),
+                    )
+                }
+            })
         })
     });
 
@@ -689,7 +768,7 @@ fn libc_start_main_phase0_disabled_delegates_to_host() {
     assert_eq!(policy.failure_reason, StartupFailureReason::None);
     assert_eq!(policy.last_phase, StartupCheckpoint::FallbackHost);
     append_startup_trace(
-        "phase0-disabled-host-delegate",
+        "explicit-delegate-env-host-delegate",
         rc,
         unsafe { abi_errno() },
         policy,
@@ -711,20 +790,22 @@ fn libc_start_main_phase0_unsafe_path_falls_back_to_host() {
     let mut auxv = vec![AT_NULL, 0usize];
 
     let rc = with_host_delegate_override(|| {
-        with_startup_phase0_env(true, || {
-            // SAFETY: pointers remain valid for call duration; envp is intentionally
-            // unterminated in phase-0 scan window to trigger deterministic fallback.
-            unsafe {
-                __libc_start_main(
-                    Some(test_main as MainFn),
-                    1,
-                    argv_env.as_mut_ptr(),
-                    None,
-                    None,
-                    None,
-                    auxv.as_mut_ptr().cast::<c_void>(),
-                )
-            }
+        with_startup_delegate_env(false, || {
+            with_startup_phase0_env(true, || {
+                // SAFETY: pointers remain valid for call duration; envp is intentionally
+                // unterminated in phase-0 scan window to trigger deterministic fallback.
+                unsafe {
+                    __libc_start_main(
+                        Some(test_main as MainFn),
+                        1,
+                        argv_env.as_mut_ptr(),
+                        None,
+                        None,
+                        None,
+                        auxv.as_mut_ptr().cast::<c_void>(),
+                    )
+                }
+            })
         })
     });
 
@@ -754,19 +835,21 @@ fn libc_start_main_phase0_missing_main_does_not_fallback() {
     let mut auxv = vec![AT_NULL, 0usize];
 
     let rc = with_host_delegate_override(|| {
-        with_startup_phase0_env(true, || {
-            // SAFETY: vectors are valid/null-terminated; missing main validates deny path.
-            unsafe {
-                __libc_start_main(
-                    None,
-                    1,
-                    argv_env.as_mut_ptr(),
-                    None,
-                    None,
-                    None,
-                    auxv.as_mut_ptr().cast::<c_void>(),
-                )
-            }
+        with_startup_delegate_env(false, || {
+            with_startup_phase0_env(true, || {
+                // SAFETY: vectors are valid/null-terminated; missing main validates deny path.
+                unsafe {
+                    __libc_start_main(
+                        None,
+                        1,
+                        argv_env.as_mut_ptr(),
+                        None,
+                        None,
+                        None,
+                        auxv.as_mut_ptr().cast::<c_void>(),
+                    )
+                }
+            })
         })
     });
 

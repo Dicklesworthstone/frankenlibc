@@ -28863,7 +28863,7 @@ fn execute_libc_start_main_case(
     ensure_supported_mode(mode)?;
     let output = if startup_input_is(inputs, "main", "null") {
         "DENY_MISSING_MAIN_NO_FALLBACK"
-    } else if startup_input_is(inputs, "phase0_env", "0") {
+    } else if startup_input_is(inputs, "startup_delegate_env", "1") {
         "FALLBACK_HOST_DELEGATE"
     } else if startup_has_invalid_context(inputs) {
         "PHASE0_DENY_THEN_FALLBACK_HOST"
