@@ -1,0 +1,75 @@
+{
+  "schema_version": "v1",
+  "gate": "bd-gq1kz7.7",
+  "purpose": "Phase-2 contract for native pathname DSO loader beyond self-contained shared objects",
+  "loader_capabilities": {
+    "phase1_baseline": {
+      "self_contained_dso": "supported",
+      "no_dt_needed": "supported",
+      "basic_dlopen_dlsym_dlclose": "supported"
+    },
+    "phase2_scope": {
+      "dt_needed_graph": {
+        "status": "planned",
+        "description": "Resolve DT_NEEDED dependencies transitively",
+        "search_order": ["RPATH", "LD_LIBRARY_PATH", "RUNPATH", "default_paths"],
+        "default_paths": ["/lib", "/usr/lib", "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu"]
+      },
+      "constructors_destructors": {
+        "status": "planned",
+        "init_array": "Call DT_INIT_ARRAY entries in order on load",
+        "fini_array": "Call DT_FINI_ARRAY entries in reverse order on unload",
+        "init_fini": "Legacy DT_INIT/DT_FINI also supported"
+      },
+      "tls_handling": {
+        "status": "planned",
+        "static_tls": "Allocate from TLS template on load",
+        "dynamic_tls": "Allocate lazily via __tls_get_addr"
+      },
+      "relro": {
+        "status": "planned",
+        "gnu_relro": "Make PT_GNU_RELRO segment read-only after relocation",
+        "bind_now": "Process all relocations at load time with DF_BIND_NOW"
+      }
+    }
+  },
+  "unsupported_cases": {
+    "ifunc": {
+      "status": "unsupported",
+      "reason": "IFUNC resolvers require runtime dispatch; use direct symbols",
+      "fail_mode": "Return ENOSYS from dlopen for DSOs containing STT_GNU_IFUNC"
+    },
+    "audit": {
+      "status": "unsupported",
+      "reason": "LD_AUDIT and rtld-audit not implemented",
+      "fail_mode": "Ignore LD_AUDIT environment variable"
+    },
+    "namespace": {
+      "status": "unsupported",
+      "reason": "dlmopen and link namespaces not implemented",
+      "fail_mode": "dlmopen returns ENOSYS"
+    },
+    "lazy_binding": {
+      "status": "unsupported",
+      "reason": "All bindings are immediate in standalone mode",
+      "fail_mode": "LD_BIND_NOW always effective"
+    }
+  },
+  "delegation_policy": {
+    "when_standalone": "Use native owned loader for all dlopen/dlsym/dlclose",
+    "when_interpose": "Delegate to host glibc ld.so via WrapsHostLibc",
+    "fallback": "If native loader fails, do NOT fall back to host"
+  },
+  "conformance_tests": {
+    "self_contained": "tests/conformance/dlfcn_self_contained.v1.json",
+    "dt_needed": "tests/conformance/dlfcn_dt_needed.v1.json (planned)",
+    "tls": "tests/conformance/dlfcn_tls.v1.json (planned)"
+  },
+  "support_matrix_update": {
+    "dlopen": "Implemented (native loader in standalone)",
+    "dlsym": "Implemented (native loader in standalone)",
+    "dlclose": "Implemented (native loader in standalone)",
+    "dlmopen": "Stub (returns ENOSYS)",
+    "dlvsym": "Planned (version-aware symbol lookup)"
+  }
+}
