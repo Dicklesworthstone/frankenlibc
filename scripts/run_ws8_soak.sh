@@ -509,6 +509,7 @@ def run_iteration(iteration: int, runner_mode: str) -> dict[str, Any]:
             "STANDALONE_SMOKE_TARGET_DIR": str(smoke_target),
             "STANDALONE_SMOKE_REPORT": str(iteration_report),
             "STANDALONE_SMOKE_LOG": str(iteration_log),
+            "FRANKENLIBC_STANDALONE_LIB": str(artifact_path()),
         }
     )
     started = time.monotonic()
@@ -609,7 +610,10 @@ def classify_iteration(
         and runner_mode == "--validate-only"
         and claim_status == "schema_validated"
         and set(str(error) for error in report_errors)
-        <= {"replacement_levels current_level and release_tag_policy must remain L0"}
+        <= {
+            "replacement_levels current_level and release_tag_policy must remain L0",
+            "replacement_levels current_level and release_tag_policy must remain below L2",
+        }
     ):
         tolerated_runner_errors = [str(error) for error in report_errors]
         runner_failed = False

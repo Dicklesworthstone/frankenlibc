@@ -188,6 +188,14 @@ fn manifest_defines_required_rows_and_log_contract() {
         manifest["current_claim_policy"]["host_glibc_dependency_result"].as_str(),
         Some("claim_blocked")
     );
+    let allowed_levels: HashSet<_> =
+        manifest["current_claim_policy"]["current_levels_allowed_without_standalone_claim"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.as_str().unwrap())
+            .collect();
+    assert_eq!(allowed_levels, HashSet::from(["L0", "L1"]));
     let failure_signatures: HashSet<_> = manifest["expected_failure_classifications"]
         .as_array()
         .unwrap()
@@ -548,9 +556,10 @@ fn dry_run_blocks_l2_claim_without_candidate_artifact() {
     );
 
     let report = load_json(&report_path);
+    let levels = load_json(&workspace_root().join("tests/conformance/replacement_levels.json"));
     let expected_candidate_rows = load_manifest()["smoke_rows"].as_array().unwrap().len() * 2;
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["current_level"].as_str(), Some("L0"));
+    assert_eq!(report["current_level"], levels["current_level"]);
     assert_eq!(report["claim_status"].as_str(), Some("claim_blocked"));
     assert_eq!(
         report["ld_preload_evidence_accepted"].as_bool(),

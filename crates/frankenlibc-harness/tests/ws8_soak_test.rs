@@ -368,8 +368,8 @@ fn smoke_mode_replays_standalone_gate_validate_only_as_orchestrator_check() -> T
     );
     assert_eq!(
         report["iterations"][0]["runner_failure_tolerated"].as_bool(),
-        Some(true),
-        "smoke mode should tolerate the legacy nested L0 guard while preserving the full-run fail-closed path"
+        Some(false),
+        "smoke mode should pass the nested standalone gate without relying on legacy L0 tolerance"
     );
     assert_eq!(report["summary"]["runner_failures"].as_u64(), Some(0));
     assert_eq!(

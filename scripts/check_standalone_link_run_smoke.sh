@@ -50,13 +50,13 @@ import sys
 import time
 from pathlib import Path
 
-root = Path(sys.argv[1])
-manifest_path = Path(sys.argv[2])
-levels_path = Path(sys.argv[3])
-packaging_path = Path(sys.argv[4])
-run_dir = Path(sys.argv[5])
-report_path = Path(sys.argv[6])
-log_path = Path(sys.argv[7])
+root = Path(sys.argv[1]).resolve()
+manifest_path = Path(sys.argv[2]).resolve()
+levels_path = Path(sys.argv[3]).resolve()
+packaging_path = Path(sys.argv[4]).resolve()
+run_dir = Path(sys.argv[5]).resolve()
+report_path = Path(sys.argv[6]).resolve()
+log_path = Path(sys.argv[7]).resolve()
 mode = sys.argv[8]
 
 REQUIRED_LOG_FIELDS = [
@@ -139,6 +139,21 @@ try:
     )
 except Exception:
     head_epoch = 0
+
+source_input_epoch = max(
+    (
+        int(path.stat().st_mtime)
+        for path in [
+            manifest_path,
+            levels_path,
+            packaging_path,
+            root / "scripts" / "check_standalone_link_run_smoke.sh",
+        ]
+        if path.exists()
+    ),
+    default=0,
+)
+freshness_epoch = head_epoch or source_input_epoch
 
 
 def compiler_argv():
@@ -272,12 +287,13 @@ def classify_artifact():
             mtime = int(candidate.stat().st_mtime)
         except OSError:
             mtime = 0
-        if head_epoch and mtime < head_epoch:
+        if freshness_epoch and mtime < freshness_epoch:
             return {
                 "status": "stale",
                 "path": str(candidate),
                 "mtime": mtime,
                 "head_epoch": head_epoch,
+                "freshness_epoch": freshness_epoch,
                 "failure_signature": "standalone_artifact_stale",
                 "loader_error": "standalone artifact predates source HEAD",
             }
@@ -289,6 +305,7 @@ def classify_artifact():
                 "path": str(candidate),
                 "mtime": mtime,
                 "head_epoch": head_epoch,
+                "freshness_epoch": freshness_epoch,
                 "failure_signature": "artifact_dependency_inspection_failed",
                 "loader_error": "dependency inspection failed for standalone artifact",
             }
@@ -306,6 +323,7 @@ def classify_artifact():
                 "path": str(candidate),
                 "mtime": mtime,
                 "head_epoch": head_epoch,
+                "freshness_epoch": freshness_epoch,
                 "failure_signature": "host_glibc_dependency",
                 "loader_error": "standalone artifact still depends on host libc or loader",
             }
@@ -314,6 +332,7 @@ def classify_artifact():
             "path": str(candidate),
             "mtime": mtime,
             "head_epoch": head_epoch,
+            "freshness_epoch": freshness_epoch,
             "failure_signature": "none",
             "loader_error": None,
         }
@@ -387,24 +406,33 @@ def validate_manifest():
         errors.append("required_log_fields do not match bd-bp8fl.6.2 log contract")
 
     policy = manifest.get("current_claim_policy", {})
+    allowed_non_standalone_levels = policy.get(
+        "current_levels_allowed_without_standalone_claim", ["L0"]
+    )
     policy_ok = (
-        policy.get("ld_preload_evidence_accepted") is False
+        isinstance(allowed_non_standalone_levels, list)
+        and set(allowed_non_standalone_levels) == {"L0", "L1"}
+        and policy.get("ld_preload_evidence_accepted") is False
         and policy.get("missing_or_stale_candidate_result") == "claim_blocked"
         and policy.get("host_glibc_dependency_result") == "claim_blocked"
         and policy.get("standalone_evidence_starts_at") == "L2"
-        and policy.get("current_level_must_remain") == "L0"
     )
     checks["claim_policy"] = "pass" if policy_ok else "fail"
     if not policy_ok:
         errors.append("current_claim_policy must reject LD_PRELOAD/host-libc substitution and fail closed")
 
+    allowed_non_standalone_levels = set(
+        allowed_non_standalone_levels
+        if isinstance(allowed_non_standalone_levels, list)
+        else ["L0"]
+    )
     current_level_ok = (
-        levels.get("current_level") == "L0"
-        and levels.get("release_tag_policy", {}).get("current_release_level") == "L0"
+        levels.get("current_level") in allowed_non_standalone_levels
+        and levels.get("release_tag_policy", {}).get("current_release_level") in allowed_non_standalone_levels
     )
     checks["replacement_level_guard"] = "pass" if current_level_ok else "fail"
     if not current_level_ok:
-        errors.append("replacement_levels current_level and release_tag_policy must remain L0")
+        errors.append("replacement_levels current_level and release_tag_policy must remain below L2")
 
     replace_artifact = packaging.get("artifacts", {}).get("replace", {})
     artifact_ok = (

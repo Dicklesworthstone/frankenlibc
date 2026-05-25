@@ -81,7 +81,7 @@
     "failure_signature"
   ],
   "current_claim_policy": {
-    "current_level_must_remain": "L0",
+    "current_levels_allowed_without_standalone_claim": ["L0", "L1"],
     "standalone_evidence_starts_at": "L2",
     "ld_preload_evidence_accepted": false,
     "missing_or_stale_candidate_result": "claim_blocked",

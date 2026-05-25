@@ -35,7 +35,7 @@
       "scripts/check_standalone_link_run_smoke.sh:320",
       "scripts/check_standalone_link_run_smoke.sh:341",
       "scripts/check_standalone_link_run_smoke.sh:389",
-      "scripts/check_standalone_link_run_smoke.sh:401",
+      "scripts/check_standalone_link_run_smoke.sh:402",
       "scripts/check_standalone_link_run_smoke.sh:419",
       "scripts/check_standalone_link_run_smoke.sh:462",
       "scripts/check_standalone_link_run_smoke.sh:636",
@@ -111,7 +111,7 @@
       },
       {
         "id": "source_only_dry_run_claim_block_invariance",
-        "description": "Source-only dry-run replay must keep current_level=L0, ld_preload_evidence_accepted=false, claim_status=claim_blocked, and every strict+hardened candidate row blocked."
+        "description": "Source-only dry-run replay must keep current_level below L2, ld_preload_evidence_accepted=false, claim_status=claim_blocked, and every strict+hardened candidate row blocked."
       },
       {
         "id": "host_baseline_artifact_shape_invariance",
@@ -123,7 +123,7 @@
       "positive_row_count": 8,
       "negative_row_count": 2,
       "runtime_modes": ["strict", "hardened"],
-      "current_level_must_remain": "L0",
+      "current_levels_allowed_without_standalone_claim": ["L0", "L1"],
       "claim_status": "claim_blocked",
       "ld_preload_evidence_accepted": false,
       "source_only_artifact_states_allowed": [

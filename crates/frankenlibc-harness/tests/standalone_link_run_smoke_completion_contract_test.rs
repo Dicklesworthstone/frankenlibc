@@ -437,7 +437,13 @@ fn checker_replays_standalone_smoke_gate_and_preserves_claim_block() -> TestResu
         report["summary"]["claim_status"].as_str(),
         Some("claim_blocked")
     );
-    assert_eq!(report["summary"]["current_level"].as_str(), Some("L0"));
+    assert!(
+        matches!(
+            report["summary"]["current_level"].as_str(),
+            Some("L0" | "L1")
+        ),
+        "dry-run claim block is valid only before L2/L3: {report:#}"
+    );
     assert_eq!(
         report["summary"]["ld_preload_evidence_accepted"].as_bool(),
         Some(false)

@@ -329,10 +329,15 @@ def validate_metamorphic_relations(
     }
 
     summary = smoke_report.get("summary") if isinstance(smoke_report.get("summary"), dict) else {}
+    allowed_levels = set(
+        completion.get("minimum_smoke_expectations", {}).get(
+            "current_levels_allowed_without_standalone_claim", ["L0"]
+        )
+    )
     source_only_ok = (
         smoke_report.get("status") == "pass"
         and smoke_report.get("claim_status") == "claim_blocked"
-        and smoke_report.get("current_level") == "L0"
+        and smoke_report.get("current_level") in allowed_levels
         and smoke_report.get("ld_preload_evidence_accepted") is False
         and summary.get("candidate_blocked", 0) >= expected_candidate_rows
         and smoke_report.get("artifact_state", {}).get("status") != "current"
@@ -484,8 +489,9 @@ if smoke_report.get("status") != "pass":
     err("standalone smoke dry-run report must pass")
 if smoke_report.get("bead") != ORIGINAL_BEAD:
     err(f"standalone smoke dry-run report bead must be {ORIGINAL_BEAD}")
-if smoke_report.get("current_level") != minimums.get("current_level_must_remain", "L0"):
-    err("standalone smoke dry-run report must preserve current_level=L0")
+allowed_levels = set(minimums.get("current_levels_allowed_without_standalone_claim", ["L0"]))
+if smoke_report.get("current_level") not in allowed_levels:
+    err("standalone smoke dry-run report must keep current_level below L2")
 if smoke_report.get("claim_status") != minimums.get("claim_status", "claim_blocked"):
     err("standalone smoke dry-run report must preserve claim_status=claim_blocked")
 if smoke_report.get("ld_preload_evidence_accepted") is not minimums.get("ld_preload_evidence_accepted", False):
