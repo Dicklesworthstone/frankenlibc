@@ -215,3 +215,42 @@ overhead is addressed.
 - Profile artifacts: `target/perf/python3_preload_profile/`
 - Parent bead: bd-35hjg (WS-1 P0 regression fix)
 - Fix attempt: `malloc_abi.rs` TID-to-slot cache (bd-35hjg.3 WIP)
+
+## Known Limitation (2026-05-25)
+
+**Status:** Architectural limitation, mitigated but not fully resolved.
+
+The FFI-PCC certificate coverage was expanded from 12 to 24 symbols (commit 0ad3e6a2),
+adding read-only string functions (strcmp, strncmp, strchr, strrchr, strstr, memchr,
+memrchr, strnlen) and copy operations (memmove, memset, strcpy, strncpy).
+
+However, the fundamental issue remains: **membrane per-call validation is architecturally
+expensive for heavy runtimes** like python3 that make millions of libc calls during startup.
+
+### Trade-off
+
+| Dimension | Value |
+|-----------|-------|
+| Safety | Full membrane validation on every libc call |
+| Performance | ~62× overhead in strict mode, ~137× in hardened mode |
+| Scope | All libc-call-heavy workloads (python3, perl, node, JIT runtimes) |
+
+### Options for Future Work
+
+1. **Accept as documented limitation** — The smoke battery will show python3 as failing
+   for perf, but this is a known architectural trade-off.
+
+2. **Add "light mode"** — A runtime mode that skips most validation for performance,
+   sacrificing safety guarantees for speed.
+
+3. **Continue expanding FFI-PCC** — Diminishing returns; already covers the hottest 24 symbols.
+
+4. **Per-workload perf budgets** — Allow heavy runtimes to have relaxed perf targets
+   (e.g., 100× instead of 2×).
+
+### Recommendation
+
+For production use with heavy runtimes, users should understand that FrankenLibC's
+membrane validation adds significant overhead. The safety benefits may not justify the
+performance cost for workloads like python3 startup where thousands of libc calls occur
+per millisecond.
