@@ -1,0 +1,95 @@
+{
+  "schema_version": "ws8_soak.v1",
+  "bead": "bd-38x82.4",
+  "parent_bead": "bd-38x82",
+  "purpose": "Define the WS-8 24-hour standalone replacement soak contract over the curated direct-link workload battery. The runner repeatedly invokes the standalone link/run smoke gate and accepts L3 soak evidence only when a current libfrankenlibc_replace.so produces zero positive-row divergences and zero crashes for the full duration.",
+  "inputs": {
+    "standalone_link_run_smoke_manifest": "tests/conformance/standalone_link_run_smoke.v1.json",
+    "standalone_link_run_smoke_runner": "scripts/check_standalone_link_run_smoke.sh",
+    "standalone_replacement_artifact_manifest": "tests/conformance/standalone_replacement_artifact.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "workload_matrix": "tests/conformance/workload_matrix.json"
+  },
+  "soak_policy": {
+    "duration_seconds": 86400,
+    "minimum_iterations": 1,
+    "runner_mode_for_evidence": "--run",
+    "validation_only_mode": "--validate-only",
+    "smoke_mode": "--smoke",
+    "smoke_mode_tolerates_legacy_nested_l0_guard": true,
+    "require_current_standalone_artifact": true,
+    "required_artifact_name": "libfrankenlibc_replace.so",
+    "ld_preload_evidence_accepted": false,
+    "accepted_claim_status": "standalone_evidence_passed",
+    "positive_candidate_required_status": "pass",
+    "negative_candidate_required_status": "claim_blocked",
+    "allowed_short_modes": [
+      "--validate-only",
+      "--smoke"
+    ],
+    "short_modes_are_not_soak_evidence": true,
+    "failure_signatures": {
+      "duration_too_short": "ws8_soak_duration_too_short",
+      "standalone_artifact_not_current": "ws8_soak_standalone_artifact_not_current",
+      "positive_divergence": "ws8_soak_positive_divergence",
+      "negative_claim_leak": "ws8_soak_negative_claim_leak",
+      "runner_failed": "ws8_soak_runner_failed",
+      "runner_report_missing": "ws8_soak_runner_report_missing",
+      "runner_log_missing": "ws8_soak_runner_log_missing",
+      "invalid_manifest": "ws8_soak_invalid_manifest"
+    }
+  },
+  "required_report_fields": [
+    "schema_version",
+    "bead",
+    "mode",
+    "status",
+    "proof_status",
+    "duration_seconds_required",
+    "duration_seconds_observed",
+    "iteration_count",
+    "source_commit",
+    "target_dir",
+    "summary",
+    "iterations",
+    "artifact_refs",
+    "failure_signatures",
+    "next_safe_action"
+  ],
+  "required_summary_fields": [
+    "positive_candidate_passed",
+    "positive_candidate_divergences",
+    "negative_candidate_blocked",
+    "negative_candidate_leaks",
+    "baseline_failures",
+    "runner_failures",
+    "crash_count",
+    "claim_blocked_iterations",
+    "current_artifact_iterations"
+  ],
+  "required_log_fields": [
+    "event",
+    "bead",
+    "mode",
+    "iteration",
+    "run_id",
+    "status",
+    "proof_status",
+    "failure_signature",
+    "source_commit",
+    "target_dir",
+    "artifact_refs"
+  ],
+  "required_validation_commands": [
+    "python3 -m json.tool tests/conformance/ws8_soak.v1.json >/dev/null",
+    "bash -n scripts/run_ws8_soak.sh",
+    "WS8_SOAK_DURATION_SECONDS=0 WS8_SOAK_MAX_ITERATIONS=1 scripts/run_ws8_soak.sh --validate-only",
+    "WS8_SOAK_DURATION_SECONDS=0 WS8_SOAK_MAX_ITERATIONS=1 scripts/run_ws8_soak.sh --smoke",
+    "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/ws8_soak_test.rs",
+    "git diff --check -- scripts/run_ws8_soak.sh tests/conformance/ws8_soak.v1.json crates/frankenlibc-harness/tests/ws8_soak_test.rs .beads/issues.jsonl",
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-38x82-4-ws8-soak-test cargo test -p frankenlibc-harness --test ws8_soak_test -- --nocapture",
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-38x82-4-ws8-soak-check cargo check -p frankenlibc-harness --test ws8_soak_test",
+    "RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-38x82-4-ws8-soak-clippy cargo clippy -p frankenlibc-harness --test ws8_soak_test -- -D warnings"
+  ],
+  "next_safe_action": "Run the full evidence lane with a current standalone artifact: RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/frankenlibc-bd-38x82-4-ws8-soak-cargo WS8_SOAK_DURATION_SECONDS=86400 WS8_SOAK_MINIMUM_ITERATIONS=1 scripts/run_ws8_soak.sh --run. Do not close bd-38x82.4 until the resulting ws8_soak.report.json has status=pass, proof_status=soak_evidence_passed, zero positive divergences, zero crashes, and a current standalone artifact on every iteration."
+}
