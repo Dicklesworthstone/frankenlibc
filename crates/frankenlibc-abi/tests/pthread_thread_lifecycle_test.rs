@@ -72,6 +72,31 @@ fn run_create_join_roundtrip_iters(iters: usize) {
     }
 }
 
+fn run_create_join_parallel_batch(batch: usize) {
+    let mut tids = vec![0 as libc::pthread_t; batch];
+    let mut args = vec![std::ptr::null_mut::<c_void>(); batch];
+
+    for idx in 0..batch {
+        args[idx] = (idx + 1) as *mut c_void;
+        let create_rc = unsafe {
+            pthread_create(
+                &mut tids[idx] as *mut libc::pthread_t,
+                std::ptr::null(),
+                Some(start_return_arg),
+                args[idx],
+            )
+        };
+        assert_eq!(create_rc, 0, "pthread_create failed for slot {idx}");
+    }
+
+    for idx in 0..batch {
+        let mut retval: *mut c_void = std::ptr::null_mut();
+        let join_rc = unsafe { pthread_join(tids[idx], &mut retval as *mut *mut c_void) };
+        assert_eq!(join_rc, 0, "pthread_join failed for slot {idx}");
+        assert_eq!(retval, args[idx], "returned arg mismatch for slot {idx}");
+    }
+}
+
 fn run_detach_join_esrch_iters(iters: usize) {
     for i in 0..iters {
         let mut tid: libc::pthread_t = 0;
@@ -181,6 +206,12 @@ fn pthread_create_join_roundtrip_uses_default_native_routing() {
 }
 
 #[test]
+fn pthread_create_join_parallel_batch_uses_default_native_routing() {
+    let _guard = lock_only();
+    run_create_join_parallel_batch(8);
+}
+
+#[test]
 fn pthread_join_and_detach_unknown_thread_are_esrch() {
     let _guard = lock_and_force_native();
 
@@ -212,28 +243,7 @@ fn pthread_create_join_roundtrip_long_stress_profile() {
 fn pthread_create_join_parallel_batch_stress() {
     let _guard = lock_and_force_native();
     let batch = env_usize("FRANKENLIBC_THREAD_PARALLEL_BATCH", 8, 32);
-    let mut tids = vec![0 as libc::pthread_t; batch];
-    let mut args = vec![std::ptr::null_mut::<c_void>(); batch];
-
-    for idx in 0..batch {
-        args[idx] = (idx + 1) as *mut c_void;
-        let create_rc = unsafe {
-            pthread_create(
-                &mut tids[idx] as *mut libc::pthread_t,
-                std::ptr::null(),
-                Some(start_return_arg),
-                args[idx],
-            )
-        };
-        assert_eq!(create_rc, 0, "pthread_create failed for slot {idx}");
-    }
-
-    for idx in 0..batch {
-        let mut retval: *mut c_void = std::ptr::null_mut();
-        let join_rc = unsafe { pthread_join(tids[idx], &mut retval as *mut *mut c_void) };
-        assert_eq!(join_rc, 0, "pthread_join failed for slot {idx}");
-        assert_eq!(retval, args[idx], "returned arg mismatch for slot {idx}");
-    }
+    run_create_join_parallel_batch(batch);
 }
 
 #[test]

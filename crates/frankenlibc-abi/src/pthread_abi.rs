@@ -2290,9 +2290,8 @@ pub unsafe extern "C" fn pthread_create(
         .store(0, std::sync::atomic::Ordering::Release);
     let force_native = force_native_threading_enabled();
     let start = start_routine.unwrap_or_else(|| unreachable!("start routine checked above"));
-    // Prefer host pthread_create for correct TLS setup, stack guard pages,
-    // and compatibility with programs that depend on glibc thread internals
-    // (Python, Node.js, etc.).
+    // Host pthreads are an explicit compatibility opt-out. The default and
+    // standalone paths stay on the native lifecycle.
     if !force_native && let Some(host_create) = resolved_thread_create_raw() {
         ensure_strict_host_thread_tls_gap();
         return unsafe {
