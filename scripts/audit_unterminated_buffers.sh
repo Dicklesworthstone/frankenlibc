@@ -71,11 +71,19 @@ generate_report() {
 
     # Find all files with unterminated buffer handling
     local unterminated_files
-    unterminated_files=$(grep -r "unterminated\|NUL.*terminated" "$PROJECT_ROOT/crates" --include="*.rs" -l 2>/dev/null | wc -l || echo "0")
+    unterminated_files=$(
+        { grep -r -E "unterminated|NUL.*terminated" "$PROJECT_ROOT/crates" --include="*.rs" -l 2>/dev/null || true; } |
+            wc -l |
+            tr -d '[:space:]'
+    )
 
     # Find all skipped tests related to buffers
     local skipped_buffer_tests
-    skipped_buffer_tests=$(grep -r "#\[ignore\]" "$PROJECT_ROOT/crates" --include="*.rs" -A5 2>/dev/null | grep -c "buffer\|string\|c_str" || echo "0")
+    skipped_buffer_tests=$(
+        { grep -r "#\[ignore\]" "$PROJECT_ROOT/crates" --include="*.rs" -A5 2>/dev/null || true; } |
+            grep -Ec "buffer|string|c_str" ||
+            true
+    )
 
     # Audit each family
     local family_results=""
