@@ -5,12 +5,51 @@
 //! NUL-terminated C strings. In this safe Rust model, strings are `&[u8]` slices
 //! where a NUL byte (`0x00`) marks the logical end of the string.
 
+const LO_MAGIC: usize = usize::from_ne_bytes([0x01; size_of::<usize>()]);
+const HI_MAGIC: usize = usize::from_ne_bytes([0x80; size_of::<usize>()]);
+
+#[inline(always)]
+fn has_nul_byte(word: usize) -> bool {
+    word.wrapping_sub(LO_MAGIC) & !word & HI_MAGIC != 0
+}
+
 /// Returns the length of a NUL-terminated byte string (not counting the NUL).
 ///
 /// Equivalent to C `strlen`. Scans `s` for the first `0x00` byte and returns
 /// its index. If no NUL is found, returns the full slice length.
+#[allow(unsafe_code)]
 pub fn strlen(s: &[u8]) -> usize {
-    s.iter().position(|&b| b == 0).unwrap_or(s.len())
+    const WORD_SIZE: usize = size_of::<usize>();
+
+    let mut i = 0;
+
+    // Handle unaligned prefix byte-by-byte
+    while i < s.len() && (s.as_ptr() as usize + i) % WORD_SIZE != 0 {
+        if s[i] == 0 {
+            return i;
+        }
+        i += 1;
+    }
+
+    // Process aligned words
+    while i + WORD_SIZE <= s.len() {
+        // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= s.len()
+        let word = unsafe { core::ptr::read(s.as_ptr().add(i) as *const usize) };
+        if has_nul_byte(word) {
+            break;
+        }
+        i += WORD_SIZE;
+    }
+
+    // Find exact NUL position in remaining bytes
+    while i < s.len() {
+        if s[i] == 0 {
+            return i;
+        }
+        i += 1;
+    }
+
+    s.len()
 }
 
 /// Returns the length of a C string up to a maximum of `maxlen` bytes.
@@ -29,8 +68,45 @@ pub fn strnlen(s: &[u8], maxlen: usize) -> usize {
 /// or both strings reach a NUL terminator.
 ///
 /// Returns a negative value if `s1 < s2`, zero if equal, positive if `s1 > s2`.
+#[allow(unsafe_code)]
 pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
+    const WORD_SIZE: usize = size_of::<usize>();
+
     let mut i = 0;
+
+    // Check if both pointers are aligned to the same offset mod WORD_SIZE
+    let p1 = s1.as_ptr() as usize;
+    let p2 = s2.as_ptr() as usize;
+    let aligned = (p1 % WORD_SIZE) == (p2 % WORD_SIZE);
+
+    if aligned {
+        // Handle unaligned prefix byte-by-byte
+        while i < s1.len() && i < s2.len() && (p1 + i) % WORD_SIZE != 0 {
+            let a = s1[i];
+            let b = s2[i];
+            if a != b {
+                return (a as i32) - (b as i32);
+            }
+            if a == 0 {
+                return 0;
+            }
+            i += 1;
+        }
+
+        // Process aligned words: compare word-at-a-time
+        while i + WORD_SIZE <= s1.len() && i + WORD_SIZE <= s2.len() {
+            // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= len for both slices
+            let w1 = unsafe { core::ptr::read(s1.as_ptr().add(i) as *const usize) };
+            let w2 = unsafe { core::ptr::read(s2.as_ptr().add(i) as *const usize) };
+
+            if w1 != w2 || has_nul_byte(w1) {
+                break;
+            }
+            i += WORD_SIZE;
+        }
+    }
+
+    // Finish byte-by-byte
     loop {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
