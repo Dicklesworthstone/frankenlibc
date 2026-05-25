@@ -87,6 +87,130 @@ fn artifact_contract_shape_is_valid() {
 }
 
 #[test]
+fn native_loader_phase2_contract_pins_dependency_policy_scope() {
+    let root = workspace_root();
+    let artifact_path = root.join("tests/conformance/native_loader_phase2.v1.json");
+    let artifact = load_json(&artifact_path);
+    assert_eq!(artifact["schema_version"].as_str(), Some("v1"));
+    assert_eq!(artifact["gate"].as_str(), Some("bd-gq1kz7.7"));
+    assert_eq!(
+        artifact["purpose"].as_str(),
+        Some(
+            "Phase-2 contract for native pathname DSO loader beyond self-contained shared objects"
+        )
+    );
+
+    let baseline = artifact["loader_capabilities"]["phase1_baseline"]
+        .as_object()
+        .expect("phase1_baseline must be object");
+    for key in [
+        "self_contained_dso",
+        "no_dt_needed",
+        "basic_dlopen_dlsym_dlclose",
+    ] {
+        assert_eq!(
+            baseline[key].as_str(),
+            Some("supported"),
+            "phase1 baseline {key} must be supported"
+        );
+    }
+
+    let phase2 = artifact["loader_capabilities"]["phase2_scope"]
+        .as_object()
+        .expect("phase2_scope must be object");
+    for key in [
+        "dt_needed_graph",
+        "constructors_destructors",
+        "tls_handling",
+        "relro",
+    ] {
+        assert_eq!(
+            phase2[key]["status"].as_str(),
+            Some("planned"),
+            "phase2 scope {key} must be planned"
+        );
+    }
+    let search_order: Vec<&str> = phase2["dt_needed_graph"]["search_order"]
+        .as_array()
+        .expect("dt_needed search_order must be array")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert_eq!(
+        search_order,
+        vec!["RPATH", "LD_LIBRARY_PATH", "RUNPATH", "default_paths"]
+    );
+
+    let unsupported = artifact["unsupported_cases"]
+        .as_object()
+        .expect("unsupported_cases must be object");
+    for key in ["ifunc", "audit", "namespace", "lazy_binding"] {
+        assert_eq!(
+            unsupported[key]["status"].as_str(),
+            Some("unsupported"),
+            "unsupported case {key} must stay explicit"
+        );
+        assert!(
+            unsupported[key]["fail_mode"]
+                .as_str()
+                .is_some_and(|mode| !mode.is_empty()),
+            "unsupported case {key} must define a fail_mode"
+        );
+    }
+    assert!(
+        artifact["delegation_policy"]["fallback"]
+            .as_str()
+            .is_some_and(|policy| policy.contains("do NOT fall back to host")),
+        "native loader fallback policy must forbid host fallback"
+    );
+
+    let two_dso = load_json(&root.join("tests/conformance/dlfcn_two_dso_dependency.v1.json"));
+    assert_eq!(
+        two_dso["current_status"]["documented_in"].as_str(),
+        Some("tests/conformance/native_loader_phase2.v1.json")
+    );
+    assert_eq!(
+        two_dso["current_status"]["dt_needed_support"].as_bool(),
+        Some(false),
+        "two-DSO fixture must remain an explicit unsupported DT_NEEDED proof until phase2 lands"
+    );
+
+    let support_matrix = load_json(&root.join("support_matrix.json"));
+    let symbols = support_matrix["symbols"]
+        .as_array()
+        .expect("support_matrix.symbols must be array");
+    let dlopen = symbols
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("dlopen"))
+        .expect("support matrix must include dlopen");
+    assert_eq!(dlopen["status"].as_str(), Some("Implemented"));
+    let strict = dlopen["strict_semantics"]
+        .as_str()
+        .expect("dlopen strict_semantics must be string");
+    for phrase in [
+        "Native phase-1 loader",
+        "self-contained pathname ELF64 DSOs",
+        "unsupported pathname libraries return NULL",
+    ] {
+        assert!(
+            strict.contains(phrase),
+            "dlopen strict_semantics must document {phrase:?}"
+        );
+    }
+    for symbol in ["dlsym", "dlclose"] {
+        let row = symbols
+            .iter()
+            .find(|row| row["symbol"].as_str() == Some(symbol))
+            .unwrap_or_else(|| panic!("support matrix must include {symbol}"));
+        assert_eq!(
+            row["status"].as_str(),
+            Some("Implemented"),
+            "{symbol} support matrix status"
+        );
+    }
+}
+
+#[test]
 fn gate_script_passes_and_emits_artifacts() {
     let root = workspace_root();
     let script = root.join("scripts/check_dlfcn_boundary_policy.sh");
