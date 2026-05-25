@@ -169,6 +169,8 @@ if manifest.get("parent_bead") != PARENT:
 inputs = manifest.get("inputs") if isinstance(manifest.get("inputs"), dict) else {}
 runner_rel = string_field(inputs, "standalone_link_run_smoke_runner", "scripts/check_standalone_link_run_smoke.sh")
 runner = root / runner_rel
+freshness_runner_rel = string_field(inputs, "soak_artifact_freshness_preflight", "scripts/check_soak_artifact_freshness.sh")
+freshness_runner = root / freshness_runner_rel
 smoke_manifest_rel = string_field(inputs, "standalone_link_run_smoke_manifest", "tests/conformance/standalone_link_run_smoke.v1.json")
 smoke_manifest = root / smoke_manifest_rel
 
@@ -177,6 +179,8 @@ for input_name, input_path in inputs.items():
         add_error(input_name, "ws8_soak_invalid_manifest", f"input path does not exist: {input_path}")
 if not runner.exists():
     add_error(rel(runner), "ws8_soak_invalid_manifest", "standalone smoke runner is missing")
+if not freshness_runner.exists():
+    add_error(rel(freshness_runner), "ws8_soak_invalid_manifest", "artifact freshness preflight is missing")
 
 contract_duration = int(policy.get("duration_seconds", 86400)) if isinstance(policy.get("duration_seconds", 86400), int) else 86400
 minimum_iterations = int(policy.get("minimum_iterations", 1)) if isinstance(policy.get("minimum_iterations", 1), int) else 1
@@ -211,6 +215,64 @@ for field in [
 ]:
     if field not in required_log_fields:
         add_error(rel(manifest_path), "ws8_soak_invalid_manifest", f"required_log_fields missing {field}")
+
+artifact_freshness_preflight: dict[str, Any] | None = None
+
+
+def run_artifact_freshness_preflight() -> dict[str, Any]:
+    proc = subprocess.run(
+        [str(freshness_runner)],
+        cwd=root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    try:
+        payload = json.loads(proc.stdout)
+    except Exception as exc:
+        payload = {
+            "schema_version": "ws8_soak_artifact_freshness.v1",
+            "gate": "bd-gq1kz7.14",
+            "status": "fail",
+            "soak_ready": False,
+            "failure_signatures": ["artifact_preflight_invalid_json"],
+            "parse_error": str(exc),
+        }
+    if not isinstance(payload, dict):
+        payload = {
+            "schema_version": "ws8_soak_artifact_freshness.v1",
+            "gate": "bd-gq1kz7.14",
+            "status": "fail",
+            "soak_ready": False,
+            "failure_signatures": ["artifact_preflight_invalid_json"],
+        }
+    payload["exit_code"] = proc.returncode
+    if proc.stderr:
+        payload["stderr_excerpt"] = proc.stderr[-4000:]
+    status = "pass" if proc.returncode == 0 and payload.get("status") == "pass" and payload.get("soak_ready") is True else "fail"
+    signatures = [
+        str(item)
+        for item in payload.get("failure_signatures", [])
+        if isinstance(item, str) and item
+    ]
+    failure_signature = signatures[0] if signatures else "none"
+    append_event(
+        event="artifact_freshness_preflight",
+        iteration=0,
+        iteration_run_id=run_id,
+        status=status,
+        proof_status="artifact_freshness_passed" if status == "pass" else "artifact_freshness_failed",
+        failure_signature=failure_signature,
+        artifact_refs=[rel(freshness_runner)],
+    )
+    if status != "pass":
+        add_error(
+            rel(freshness_runner),
+            "ws8_soak_standalone_artifact_not_current",
+            f"artifact freshness preflight failed: {', '.join(signatures) if signatures else 'unknown'}",
+        )
+    return payload
 
 
 def run_iteration(iteration: int, runner_mode: str) -> dict[str, Any]:
@@ -403,6 +465,9 @@ append_event(
     artifact_refs=[rel(manifest_path)],
 )
 
+if not errors and mode == "--run":
+    artifact_freshness_preflight = run_artifact_freshness_preflight()
+
 if not errors and mode in {"--smoke", "--run"}:
     runner_mode = "--validate-only" if mode == "--smoke" else "--run"
     iteration = 0
@@ -464,6 +529,14 @@ if not failure_signatures and iterations:
     failure_signatures = sorted({str(row.get("failure_signature")) for row in iterations if row.get("failure_signature") not in {None, "none"}})
 
 artifact_refs = [rel(manifest_path), rel(report_path), rel(log_path), rel(target_root)]
+if isinstance(artifact_freshness_preflight, dict):
+    artifact_refs.append(rel(freshness_runner))
+    artifact_info = artifact_freshness_preflight.get("artifact")
+    if isinstance(artifact_info, dict) and isinstance(artifact_info.get("path"), str):
+        artifact_refs.append(rel(artifact_info["path"]))
+    report_info = artifact_freshness_preflight.get("report")
+    if isinstance(report_info, dict) and isinstance(report_info.get("path"), str):
+        artifact_refs.append(rel(report_info["path"]))
 for row in iterations:
     artifact_refs.extend(str(item) for item in row.get("artifact_refs", []) if isinstance(item, str))
 artifact_refs = sorted(set(artifact_refs))
@@ -478,6 +551,7 @@ report = {
     "run_id": run_id,
     "generated_at_utc": utc_now(),
     "source_commit": SOURCE_COMMIT,
+    "artifact_freshness_preflight": artifact_freshness_preflight,
     "manifest": rel(manifest_path),
     "duration_seconds_required": duration_seconds,
     "duration_seconds_observed": observed_duration,
