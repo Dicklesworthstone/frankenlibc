@@ -376,6 +376,19 @@ fn dlsym_finds_malloc() {
 }
 
 #[test]
+fn dlsym_main_handle_finds_memcpy() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
+    assert!(!handle.is_null());
+
+    let sym_name = CString::new("memcpy").unwrap();
+    let sym = unsafe { dlsym(handle, sym_name.as_ptr()) };
+    assert!(!sym.is_null(), "dlsym should find 'memcpy' in main handle");
+
+    unsafe { dlclose(handle) };
+}
+
+#[test]
 fn dlclose_idempotent_for_main_handle() {
     let _guard = TEST_GUARD.lock().unwrap();
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };

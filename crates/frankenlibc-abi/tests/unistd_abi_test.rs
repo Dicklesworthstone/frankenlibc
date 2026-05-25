@@ -194,6 +194,21 @@ const GAI_BADFLAGS_NEGATIVE_MODE: c_int = -1;
 const GAI_BADFLAGS_POSITIVE_MODE: c_int = 2;
 const GAI_EAI_ALLDONE: c_int = -103;
 
+#[test]
+fn backtrace_reports_at_least_one_frame() {
+    let mut frames = [std::ptr::null_mut::<c_void>(); 8];
+    let count = unsafe { frankenlibc_abi::unistd_abi::backtrace(frames.as_mut_ptr(), 8) };
+
+    assert!(
+        count > 0,
+        "backtrace should report a host frame or deterministic native fallback frame"
+    );
+    assert!(
+        !frames[0].is_null(),
+        "reported first backtrace frame must be non-null"
+    );
+}
+
 /// Mirror of glibc's `struct gaicb` (netdb.h). The first 4 pointer
 /// fields are documented; glibc reads `__return` (and historically
 /// the 5 `__unused` int slots) when implementing `gai_error`. The

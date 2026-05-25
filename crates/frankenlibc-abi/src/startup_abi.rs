@@ -494,6 +494,53 @@ fn startup_delegate_env_requested() -> bool {
     false
 }
 
+#[cfg(debug_assertions)]
+fn startup_return_to_caller_for_tests() -> bool {
+    const KEY_EQ: &[u8] = b"FRANKENLIBC_STARTUP_RETURN_FOR_TESTS=";
+    const MAX_SCAN: usize = 4096;
+
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return false;
+    }
+
+    for _ in 0..MAX_SCAN {
+        // SAFETY: `envp` is a null-terminated vector of C string pointers.
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            return false;
+        }
+
+        // SAFETY: `entry` points to a NUL-terminated env string.
+        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
+            // SAFETY: KEY_EQ matched exactly; value pointer is in-bounds.
+            let value = unsafe { entry.add(KEY_EQ.len()) };
+            // SAFETY: value is a valid C string tail of entry.
+            return unsafe { cstr_eq_bytes(value, b"1") };
+        }
+
+        // SAFETY: advance to next env pointer slot.
+        envp = unsafe { envp.add(1) };
+    }
+
+    false
+}
+
+#[cfg(not(debug_assertions))]
+fn startup_return_to_caller_for_tests() -> bool {
+    false
+}
+
+fn finish_libc_start_main_success(rc: c_int) -> c_int {
+    if startup_return_to_caller_for_tests() {
+        return rc;
+    }
+
+    // __libc_start_main must NEVER return to _start — the crt0 stub assumes
+    // this call diverges and places a trap instruction after it.
+    frankenlibc_core::syscall::sys_exit_group(rc)
+}
+
 fn use_owned_startup() -> bool {
     // Owned startup is the default (bd-73h55.1).
     // Opt-out via FRANKENLIBC_STARTUP_DELEGATE=1 to delegate to host libc.
@@ -868,7 +915,7 @@ pub unsafe extern "C" fn __libc_start_main(
         let phase0_rc =
             unsafe { startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end) };
         if phase0_rc >= 0 {
-            return phase0_rc;
+            return finish_libc_start_main_success(phase0_rc);
         }
 
         let phase0 = startup_policy_snapshot_for_tests();
@@ -888,7 +935,7 @@ pub unsafe extern "C" fn __libc_start_main(
                 StartupCheckpoint::FallbackHost,
                 phase0.latency_ns,
             );
-            return host_rc;
+            return finish_libc_start_main_success(host_rc);
         }
 
         if startup_failure_allows_host_fallback(phase0.failure_reason) {

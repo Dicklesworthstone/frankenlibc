@@ -44,6 +44,10 @@ const DEFAULT_STACK_SIZE: usize = 2 * 1024 * 1024;
 /// Guard page size: 4 KiB.
 const GUARD_PAGE_SIZE: usize = 4096;
 
+/// Keep child-start arguments away from the initial call frame and x86-64 red
+/// zone so trampoline prologue/spills cannot overwrite them before they are read.
+const THREAD_START_ARGS_GAP: usize = 4096;
+
 /// Thread state: created but trampoline hasn't started yet.
 pub const THREAD_STARTING: u32 = 0;
 
@@ -506,14 +510,14 @@ pub unsafe fn create_thread(
     // Layout from stack_top (growing down):
     //   [stack_top - 8]:  arg to trampoline (= pointer to ThreadStartArgs)
     //   [stack_top - 16]: fn_ptr (= thread_trampoline)
-    //   [stack_top - 16 - size_of::<ThreadStartArgs>()]: ThreadStartArgs data
+    //   [stack_top - 16 - gap - size_of::<ThreadStartArgs>()]: ThreadStartArgs data
 
     let args_size = core::mem::size_of::<ThreadStartArgs>();
     // Align args to 8 bytes.
     let args_aligned_size = (args_size + 7) & !7;
 
     // Calculate positions.
-    let args_addr = stack_top - 16 - args_aligned_size;
+    let args_addr = stack_top - 16 - THREAD_START_ARGS_GAP - args_aligned_size;
     let trampoline_frame = stack_top - 16;
 
     // Write ThreadStartArgs to the child stack.

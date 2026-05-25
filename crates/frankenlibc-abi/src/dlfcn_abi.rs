@@ -164,6 +164,21 @@ fn resolve_exported_symbol(symbol: &[u8]) -> *mut c_void {
         b"free" => {
             (crate::malloc_abi::free as unsafe extern "C" fn(*mut c_void) as usize) as *mut c_void
         }
+        b"memcpy" => {
+            (crate::string_abi::memcpy
+                as unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void
+                as usize) as *mut c_void
+        }
+        b"memmove" => {
+            (crate::string_abi::memmove
+                as unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void
+                as usize) as *mut c_void
+        }
+        b"memset" => {
+            (crate::string_abi::memset
+                as unsafe extern "C" fn(*mut c_void, c_int, usize) -> *mut c_void
+                as usize) as *mut c_void
+        }
         b"printf" => {
             (crate::stdio_abi::printf as unsafe extern "C" fn(*const c_char, ...) -> c_int as usize)
                 as *mut c_void
@@ -175,6 +190,11 @@ fn resolve_exported_symbol(symbol: &[u8]) -> *mut c_void {
         b"strlen" => {
             (crate::string_abi::strlen as unsafe extern "C" fn(*const c_char) -> usize as usize)
                 as *mut c_void
+        }
+        b"strcmp" => {
+            (crate::string_abi::strcmp
+                as unsafe extern "C" fn(*const c_char, *const c_char) -> c_int
+                as usize) as *mut c_void
         }
         _ => std::ptr::null_mut(),
     }

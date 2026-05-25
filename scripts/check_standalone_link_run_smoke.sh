@@ -232,11 +232,12 @@ def standalone_library_candidates():
     candidates = []
     env_path = os.environ.get("FRANKENLIBC_STANDALONE_LIB")
     if env_path:
-        candidates.append(Path(env_path))
+        candidates.append(Path(env_path).resolve())
     cargo_target = os.environ.get("CARGO_TARGET_DIR")
     if cargo_target:
-        candidates.append(Path(cargo_target) / "release" / "libfrankenlibc_replace.so")
-        candidates.append(Path(cargo_target) / "debug" / "libfrankenlibc_replace.so")
+        resolved_target = Path(cargo_target).resolve()
+        candidates.append(resolved_target / "release" / "libfrankenlibc_replace.so")
+        candidates.append(resolved_target / "debug" / "libfrankenlibc_replace.so")
     candidates.append(root / "target" / "release" / "libfrankenlibc_replace.so")
     candidates.append(root / "target" / "debug" / "libfrankenlibc_replace.so")
     return candidates

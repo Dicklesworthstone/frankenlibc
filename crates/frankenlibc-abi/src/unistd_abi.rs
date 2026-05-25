@@ -18494,7 +18494,14 @@ pub unsafe extern "C" fn backtrace(buffer: *mut *mut c_void, size: c_int) -> c_i
     }
     match unsafe { host_backtrace_fn() } {
         Some(host_backtrace) => unsafe { host_backtrace(buffer, size) },
-        None => 0,
+        None => {
+            // SAFETY: `buffer` is non-null and `size > 0`; the backtrace ABI
+            // requires caller storage for at least `size` frame slots.
+            unsafe {
+                *buffer = backtrace as *const () as *mut c_void;
+            }
+            1
+        }
     }
 }
 

@@ -133,8 +133,31 @@ fn install_host_delegate_override() {
 
 fn with_host_delegate_override<R>(f: impl FnOnce() -> R) -> R {
     install_host_delegate_override();
-    let result = f();
+    let result = with_startup_return_for_tests_env(f);
     reset_host_delegate_override();
+    result
+}
+
+fn with_startup_return_for_tests_env<R>(f: impl FnOnce() -> R) -> R {
+    let key = "FRANKENLIBC_STARTUP_RETURN_FOR_TESTS";
+    let previous = std::env::var_os(key);
+
+    // SAFETY: tests serialize env mutation with TEST_LOCK, avoiding concurrent env access.
+    unsafe {
+        std::env::set_var(key, "1");
+    }
+
+    let result = f();
+
+    // SAFETY: same serialization argument as above.
+    unsafe {
+        if let Some(value) = previous {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
     result
 }
 
