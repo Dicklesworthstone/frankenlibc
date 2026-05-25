@@ -99,7 +99,10 @@ fn burndown_summary_has_required_fields() -> TestResult {
         .unwrap_or(0);
 
     assert!(total > 4000, "should have >4000 total symbols");
-    assert!(standalone > 3900, "should have >3900 standalone-capable symbols");
+    assert!(
+        standalone > 3900,
+        "should have >3900 standalone-capable symbols"
+    );
     assert!(standalone <= total, "standalone <= total");
 
     Ok(())

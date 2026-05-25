@@ -56,6 +56,36 @@ fn gate_emits_valid_json() -> TestResult {
         "gate output must have 'summary' field"
     );
 
+    let summary = json.get("summary").ok_or("missing summary")?;
+    let disallowed_count = summary
+        .get("disallowed_glibc_symbols")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let unknown_count = summary
+        .get("unknown_symbols")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    if disallowed_count == 0 {
+        let disallowed = json
+            .get("disallowed")
+            .and_then(Value::as_array)
+            .ok_or("disallowed must be an array")?;
+        assert!(
+            disallowed.is_empty(),
+            "zero disallowed count must emit an empty disallowed array"
+        );
+    }
+    if unknown_count == 0 {
+        let unknown = json
+            .get("unknown")
+            .and_then(Value::as_array)
+            .ok_or("unknown must be an array")?;
+        assert!(
+            unknown.is_empty(),
+            "zero unknown count must emit an empty unknown array"
+        );
+    }
+
     // Must have gate identifier
     assert_eq!(
         json.get("gate").and_then(Value::as_str),

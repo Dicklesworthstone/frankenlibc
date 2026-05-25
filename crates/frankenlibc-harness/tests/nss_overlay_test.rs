@@ -78,9 +78,7 @@ fn nss_overlay_documents_unsupported_backends() -> TestResult {
     assert!(!unsupported.is_empty(), "must list unsupported backends");
 
     // Must have ldap in unsupported list
-    let has_ldap = unsupported
-        .iter()
-        .any(|v| v.as_str() == Some("ldap"));
+    let has_ldap = unsupported.iter().any(|v| v.as_str() == Some("ldap"));
     assert!(has_ldap, "ldap must be listed as unsupported");
 
     Ok(())

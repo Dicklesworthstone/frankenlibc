@@ -111,9 +111,18 @@ main() {
 
     # Emit JSON
     local disallowed_json
-    disallowed_json=$(printf '%s\n' "${disallowed_list[@]}" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    if [[ ${#disallowed_list[@]} -eq 0 ]]; then
+        disallowed_json="[]"
+    else
+        disallowed_json=$(printf '%s\n' "${disallowed_list[@]}" | jq -R . | jq -s .)
+    fi
+
     local unknown_json
-    unknown_json=$(printf '%s\n' "${unknown_list[@]}" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    if [[ ${#unknown_list[@]} -eq 0 ]]; then
+        unknown_json="[]"
+    else
+        unknown_json=$(printf '%s\n' "${unknown_list[@]}" | jq -R . | jq -s .)
+    fi
 
     cat <<EOF
 {
