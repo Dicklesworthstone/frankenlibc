@@ -10,7 +10,8 @@ use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
 use frankenlibc_core::elf::{
-    ElfLoader, LoadedObject, PltBindingPolicy, RelocationResult, SymbolLookup,
+    Elf64ProgramHeader, ElfLoader, LoadedObject, PltBindingPolicy, ProgramType, RelocationResult,
+    SymbolLookup,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -1237,11 +1238,9 @@ pub unsafe extern "C" fn dl_iterate_phdr(
     callback: Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
     data: *mut c_void,
 ) -> c_int {
-    // Standalone mode: no DSOs to enumerate
     #[cfg(feature = "standalone")]
     {
-        let _ = (callback, data);
-        return 0;
+        return unsafe { standalone_dl_iterate_phdr(callback, data) };
     }
     #[cfg(not(feature = "standalone"))]
     {
@@ -1262,6 +1261,203 @@ pub unsafe extern "C" fn dl_iterate_phdr(
         }
         // During early bootstrap before symbols are resolved, return 0 (no entries).
         0
+    }
+}
+
+#[cfg(feature = "standalone")]
+const STANDALONE_DL_ITERATE_MAX_OBJECTS: usize = 256;
+#[cfg(feature = "standalone")]
+const STANDALONE_PAGE_MASK: u64 = !0xfff;
+
+#[cfg(feature = "standalone")]
+#[derive(Clone, Copy)]
+struct StandaloneMapEntry {
+    start: usize,
+    offset: u64,
+}
+
+#[cfg(feature = "standalone")]
+struct StandaloneMapObject {
+    path: String,
+    entries: Vec<StandaloneMapEntry>,
+}
+
+#[cfg(feature = "standalone")]
+struct StandalonePhdrObject {
+    base: usize,
+    name: Vec<u8>,
+    phdrs: Vec<libc::Elf64_Phdr>,
+}
+
+#[cfg(feature = "standalone")]
+unsafe fn standalone_dl_iterate_phdr(
+    callback: Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
+    data: *mut c_void,
+) -> c_int {
+    let Some(callback) = callback else {
+        return 0;
+    };
+
+    for object in standalone_phdr_objects() {
+        let mut info = libc::dl_phdr_info {
+            dlpi_addr: object.base as libc::Elf64_Addr,
+            dlpi_name: object.name.as_ptr().cast::<c_char>(),
+            dlpi_phdr: object.phdrs.as_ptr(),
+            dlpi_phnum: object.phdrs.len() as libc::Elf64_Half,
+            dlpi_adds: 0,
+            dlpi_subs: 0,
+            dlpi_tls_modid: 0,
+            dlpi_tls_data: std::ptr::null_mut(),
+        };
+        let rc = unsafe { callback(&mut info, core::mem::size_of::<libc::dl_phdr_info>(), data) };
+        if rc != 0 {
+            return rc;
+        }
+    }
+
+    0
+}
+
+#[cfg(feature = "standalone")]
+fn standalone_phdr_objects() -> Vec<StandalonePhdrObject> {
+    let Some(map_objects) = standalone_map_objects() else {
+        return Vec::new();
+    };
+    let mut objects = Vec::new();
+
+    for map_object in map_objects
+        .into_iter()
+        .take(STANDALONE_DL_ITERATE_MAX_OBJECTS)
+    {
+        let Ok(bytes) = std::fs::read(&map_object.path) else {
+            continue;
+        };
+        let Ok(loaded) = ElfLoader::new(0).parse(&bytes) else {
+            continue;
+        };
+        let Some(base) = standalone_load_base(&loaded.program_headers, &map_object.entries) else {
+            continue;
+        };
+        let phdrs = loaded
+            .program_headers
+            .iter()
+            .map(libc_phdr_from_clean_room_header)
+            .collect::<Vec<_>>();
+        if phdrs.is_empty() {
+            continue;
+        }
+
+        let mut name = map_object.path.into_bytes();
+        name.push(0);
+        objects.push(StandalonePhdrObject { base, name, phdrs });
+    }
+
+    objects
+}
+
+#[cfg(feature = "standalone")]
+fn standalone_map_objects() -> Option<Vec<StandaloneMapObject>> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    let mut objects = Vec::<StandaloneMapObject>::new();
+
+    for line in maps.lines() {
+        let Some(entry) = frankenlibc_core::proc_maps::parse_maps_line(line) else {
+            continue;
+        };
+        let Some(path) = entry.path else {
+            continue;
+        };
+        if entry.inode == 0
+            || !entry.perms.contains('r')
+            || !path.starts_with('/')
+            || path.ends_with(" (deleted)")
+        {
+            continue;
+        }
+
+        if let Some(existing) = objects.iter_mut().find(|object| object.path == path) {
+            existing.entries.push(StandaloneMapEntry {
+                start: entry.start,
+                offset: entry.offset,
+            });
+            continue;
+        }
+
+        objects.push(StandaloneMapObject {
+            path: path.to_owned(),
+            entries: vec![StandaloneMapEntry {
+                start: entry.start,
+                offset: entry.offset,
+            }],
+        });
+    }
+
+    Some(objects)
+}
+
+#[cfg(feature = "standalone")]
+fn standalone_load_base(
+    phdrs: &[Elf64ProgramHeader],
+    entries: &[StandaloneMapEntry],
+) -> Option<usize> {
+    for entry in entries {
+        for phdr in phdrs.iter().filter(|phdr| phdr.is_load()) {
+            if page_floor(phdr.p_offset) != entry.offset {
+                continue;
+            }
+            let vaddr = usize::try_from(page_floor(phdr.p_vaddr)).ok()?;
+            if let Some(base) = entry.start.checked_sub(vaddr) {
+                return Some(base);
+            }
+        }
+    }
+
+    let min_load_vaddr = phdrs
+        .iter()
+        .filter(|phdr| phdr.is_load())
+        .filter_map(|phdr| usize::try_from(page_floor(phdr.p_vaddr)).ok())
+        .min()?;
+    entries
+        .iter()
+        .find(|entry| entry.offset == 0)
+        .and_then(|entry| entry.start.checked_sub(min_load_vaddr))
+}
+
+#[cfg(feature = "standalone")]
+fn page_floor(value: u64) -> u64 {
+    value & STANDALONE_PAGE_MASK
+}
+
+#[cfg(feature = "standalone")]
+fn libc_phdr_from_clean_room_header(phdr: &Elf64ProgramHeader) -> libc::Elf64_Phdr {
+    libc::Elf64_Phdr {
+        p_type: program_type_to_raw(phdr.p_type),
+        p_flags: phdr.p_flags.0,
+        p_offset: phdr.p_offset as libc::Elf64_Off,
+        p_vaddr: phdr.p_vaddr as libc::Elf64_Addr,
+        p_paddr: phdr.p_paddr as libc::Elf64_Addr,
+        p_filesz: phdr.p_filesz as libc::Elf64_Xword,
+        p_memsz: phdr.p_memsz as libc::Elf64_Xword,
+        p_align: phdr.p_align as libc::Elf64_Xword,
+    }
+}
+
+#[cfg(feature = "standalone")]
+fn program_type_to_raw(program_type: ProgramType) -> u32 {
+    match program_type {
+        ProgramType::Null => 0,
+        ProgramType::Load => 1,
+        ProgramType::Dynamic => 2,
+        ProgramType::Interp => 3,
+        ProgramType::Note => 4,
+        ProgramType::Shlib => 5,
+        ProgramType::Phdr => 6,
+        ProgramType::Tls => 7,
+        ProgramType::GnuEhFrame => 0x6474_e550,
+        ProgramType::GnuStack => 0x6474_e551,
+        ProgramType::GnuRelro => 0x6474_e552,
+        ProgramType::GnuProperty => 0x6474_e553,
+        ProgramType::Unknown(raw) => raw,
     }
 }
 

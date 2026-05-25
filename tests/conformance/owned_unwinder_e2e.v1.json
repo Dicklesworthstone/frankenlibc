@@ -1,7 +1,7 @@
 {
   "schema_version": "owned_unwinder_e2e.v1",
-  "bead_id": "bd-gq1kz7.4",
-  "generated_at_utc": "2026-05-25T13:40:02Z",
+  "bead_id": "bd-b2m2h6",
+  "generated_at_utc": "2026-05-25T17:16:41Z",
   "tests": {
     "source_symbols_defined": "pass",
     "feature_flags_defined": "pass",
@@ -9,6 +9,7 @@
     "conformance_artifacts_present": "pass",
     "conformance_tests_present": "pass",
     "owned_shared_fixture_no_libgcc": "pass",
+    "owned_shared_fixture_pt_gnu_eh_frame": "pass",
     "owned_shared_fixture_throw_catch": "pass"
   },
   "implementation_status": {
@@ -25,9 +26,10 @@
       "x86_64_context_install": "validates landing-pad IP, physical frame/stack cursor, CFA register, and saved RIP before the non-returning jump"
     },
     "owned_throw_catch_fixture": {
-      "library": "/data/tmp/frankenlibc-bd-gq1kz7-4-final/release/libfrankenlibc_abi.so",
+      "library": "/data/tmp/frankenlibc-bd-b2m2h6-release-cargo/release/libfrankenlibc_abi.so",
       "shared_object": "/data/projects/frankenlibc/target/owned_unwinder_e2e/minimal_throw_catch_owned.so",
-      "dependency_policy": "no libgcc_s or libunwind DT_NEEDED entries; _Unwind_RaiseException is unresolved until FrankenLibC is loaded RTLD_GLOBAL"
+      "dependency_policy": "no libgcc_s or libunwind DT_NEEDED entries; _Unwind_RaiseException is unresolved until FrankenLibC is loaded RTLD_GLOBAL",
+      "loaded_object_catalog_policy": "no manual __register_frame call; the owned unwinder must discover the fixture PT_GNU_EH_FRAME through standalone dl_iterate_phdr"
     },
     "requirement_for_default": "Complete L2 standalone-readiness (WS-6) to remove feature flag gating"
   },

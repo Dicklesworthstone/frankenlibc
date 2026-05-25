@@ -146,6 +146,25 @@ fn loaded_eh_frame_catalog_accepts_gnu_header_inside_load_segment() {
 }
 
 #[test]
+fn loaded_eh_frame_catalog_spans_split_text_and_header_loads() {
+    let object_base = 0x1100_0000usize;
+    let ranges = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        object_base,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x2000),
+            phdr(TEST_PT_LOAD, 0x6000, 0x1000),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x6800, 0x80),
+        ],
+    );
+
+    assert_eq!(ranges.len(), 1);
+    let range = ranges[0];
+    assert_eq!(range.load_start, object_base + 0x1000);
+    assert_eq!(range.load_end, object_base + 0x7000);
+    assert_eq!(range.eh_frame_hdr_start, object_base + 0x6800);
+}
+
+#[test]
 fn loaded_eh_frame_catalog_fails_closed_without_gnu_header() {
     let ranges = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
         0x2000_0000,
@@ -190,6 +209,10 @@ fn loaded_eh_frame_catalog_rejects_malformed_ranges() {
 #[test]
 fn live_loaded_eh_frame_catalog_returns_well_formed_ranges() {
     let ranges = owned_loaded_eh_frame_ranges_for_tests();
+    assert!(
+        !ranges.is_empty(),
+        "standalone dl_iterate_phdr must discover at least one loaded PT_GNU_EH_FRAME range"
+    );
     for range in ranges {
         assert!(range.load_start < range.load_end);
         assert!(range.eh_frame_hdr_len > 0);

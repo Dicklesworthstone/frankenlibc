@@ -181,42 +181,22 @@ if default_raise != owned_raise:
         f"_Unwind_RaiseException resolved to {default_raise:#x}, expected FrankenLibC {owned_raise:#x}"
     )
 fixture = ctypes.CDLL(fixture_path, mode=os.RTLD_GLOBAL)
-base = None
-with open("/proc/self/maps", "r", encoding="utf-8") as maps:
-    for line in maps:
-        fields = line.split()
-        if len(fields) >= 6 and fields[5] == fixture_path and fields[2] == "00000000":
-            base = int(fields[0].split("-", 1)[0], 16)
-            break
-if base is None:
-    raise SystemExit(f"could not find load base for {fixture_path}")
 with open(fixture_path, "rb") as elf_file:
     elf = elf_file.read()
 if elf[:4] != b"\x7fELF" or elf[4] != 2 or elf[5] != 1:
     raise SystemExit("owned shared fixture must be ELF64 little-endian")
-section_offset = struct.unpack_from("<Q", elf, 40)[0]
-section_entry_size = struct.unpack_from("<H", elf, 58)[0]
-section_count = struct.unpack_from("<H", elf, 60)[0]
-section_name_index = struct.unpack_from("<H", elf, 62)[0]
-
-def section(index):
-    offset = section_offset + index * section_entry_size
-    return struct.unpack_from("<IIQQQQIIQQ", elf, offset)
-
-names = section(section_name_index)
-name_bytes = elf[names[4] : names[4] + names[5]]
-eh_frame = None
-for index in range(section_count):
-    current = section(index)
-    name_end = name_bytes.find(b"\0", current[0])
-    name = name_bytes[current[0] : name_end].decode("utf-8")
-    if name == ".eh_frame":
-        eh_frame = current
+program_offset = struct.unpack_from("<Q", elf, 32)[0]
+program_entry_size = struct.unpack_from("<H", elf, 54)[0]
+program_count = struct.unpack_from("<H", elf, 56)[0]
+gnu_eh_frame = False
+for index in range(program_count):
+    offset = program_offset + index * program_entry_size
+    p_type = struct.unpack_from("<I", elf, offset)[0]
+    if p_type == 0x6474E550:
+        gnu_eh_frame = True
         break
-if eh_frame is None:
-    raise SystemExit("owned shared fixture has no .eh_frame section")
-franken.__register_frame.argtypes = [ctypes.c_void_p]
-franken.__register_frame(ctypes.c_void_p(base + eh_frame[3]))
+if not gnu_eh_frame:
+    raise SystemExit("owned shared fixture has no PT_GNU_EH_FRAME header")
 entry = fixture.minimal_throw_catch_entry
 entry.argtypes = []
 entry.restype = ctypes.c_int
@@ -233,7 +213,7 @@ SUMMARY_FILE="${REPO_ROOT}/tests/conformance/owned_unwinder_e2e.v1.json"
 cat > "${SUMMARY_FILE}" <<EOF
 {
   "schema_version": "owned_unwinder_e2e.v1",
-  "bead_id": "bd-gq1kz7.4",
+  "bead_id": "bd-b2m2h6",
   "generated_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "tests": {
     "source_symbols_defined": "pass",
@@ -242,6 +222,7 @@ cat > "${SUMMARY_FILE}" <<EOF
     "conformance_artifacts_present": "pass",
     "conformance_tests_present": "pass",
     "owned_shared_fixture_no_libgcc": "pass",
+    "owned_shared_fixture_pt_gnu_eh_frame": "pass",
     "owned_shared_fixture_throw_catch": "pass"
   },
   "implementation_status": {
@@ -260,7 +241,8 @@ cat > "${SUMMARY_FILE}" <<EOF
     "owned_throw_catch_fixture": {
       "library": "${LIB_PATH}",
       "shared_object": "${OWNED_SO}",
-      "dependency_policy": "no libgcc_s or libunwind DT_NEEDED entries; _Unwind_RaiseException is unresolved until FrankenLibC is loaded RTLD_GLOBAL"
+      "dependency_policy": "no libgcc_s or libunwind DT_NEEDED entries; _Unwind_RaiseException is unresolved until FrankenLibC is loaded RTLD_GLOBAL",
+      "loaded_object_catalog_policy": "no manual __register_frame call; the owned unwinder must discover the fixture PT_GNU_EH_FRAME through standalone dl_iterate_phdr"
     },
     "requirement_for_default": "Complete L2 standalone-readiness (WS-6) to remove feature flag gating"
   },

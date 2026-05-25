@@ -786,10 +786,15 @@ fn loaded_eh_frame_ranges_from_phdrs(
         .filter(|phdr| phdr.p_type == PT_GNU_EH_FRAME)
         .filter_map(|phdr| {
             let (eh_frame_hdr_start, eh_frame_hdr_end) = phdr_range(object_base, phdr)?;
-            let (load_start, load_end) = load_ranges
+            let header_is_loaded = load_ranges
                 .iter()
                 .copied()
-                .find(|(start, end)| *start <= eh_frame_hdr_start && eh_frame_hdr_end <= *end)?;
+                .any(|(start, end)| start <= eh_frame_hdr_start && eh_frame_hdr_end <= end);
+            if !header_is_loaded {
+                return None;
+            }
+            let load_start = load_ranges.iter().map(|(start, _)| *start).min()?;
+            let load_end = load_ranges.iter().map(|(_, end)| *end).max()?;
             Some(OwnedLoadedEhFrameRange {
                 object_base,
                 load_start,
