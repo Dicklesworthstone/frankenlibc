@@ -9,7 +9,7 @@
   },
   "expected_status": {
     "current": "expected_fail",
-    "reason": "owned_unwind_abi uses abort-mode stubs, cannot propagate exceptions",
+    "reason": "owned_unwind_abi can perform phase-1 search over registered .eh_frame metadata, but phase-2 context installation is not implemented yet",
     "when_implemented": "pass"
   },
   "validation": {
@@ -25,7 +25,7 @@
     },
     "under_frankenlibc": {
       "command": "LD_PRELOAD=target/release/deps/libfrankenlibc_abi.so ./target/conformance/minimal_throw_catch",
-      "expected_current": "abort or crash (owned unwinder stubs)",
+      "expected_current": "phase-1 metadata/search proof exists; full throw/catch still fails before phase-2 context install",
       "expected_phase2": "PASS: exception caught correctly"
     },
     "standalone": {
@@ -38,6 +38,7 @@
   "acceptance_criteria": [
     "Fixture compiles without host libgcc_s",
     "Native run produces PASS output",
+    "Owned phase-1 search discovers personality/LSDA-backed frames without host unwinder delegation",
     "Under frankenlibc standalone: exception propagates without abort",
     "No _Unwind_* symbols resolved from host"
   ]

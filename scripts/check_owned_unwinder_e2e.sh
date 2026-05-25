@@ -8,6 +8,7 @@
 #
 # The owned unwinder requires the `standalone` + `owned-unwind-stub` feature flags.
 # This test verifies the infrastructure exists and is tested via existing conformance gates.
+# Full propagation still depends on the phase-2 context install lane.
 #
 # Exit 0 = PASS, nonzero = FAIL
 set -uo pipefail
@@ -135,9 +136,9 @@ cat > "${SUMMARY_FILE}" <<EOF
     "source_file": "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
     "feature_flags": ["standalone", "owned-unwind-stub"],
     "behavior": {
-      "_Unwind_Backtrace": "returns URC_END_OF_STACK immediately (abort-mode stub)",
-      "_Unwind_RaiseException": "aborts (panic=abort design)",
-      "_Unwind_Resume": "aborts (panic=abort design)",
+      "_Unwind_Backtrace": "performs bounded frame-pointer walk",
+      "_Unwind_RaiseException": "performs owned phase-1 search and returns fatal phase-2 until context install lands",
+      "_Unwind_Resume": "aborts until phase-2 context install lands",
       "_Unwind_SetGR": "aborts (panic=abort design)",
       "_Unwind_SetIP": "aborts (panic=abort design)"
     },

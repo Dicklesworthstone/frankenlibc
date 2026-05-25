@@ -2,15 +2,26 @@
 
 use frankenlibc_abi::owned_unwind_abi::{
     __deregister_frame, __deregister_frame_info, __register_frame, __register_frame_info,
-    _Unwind_Backtrace, _Unwind_GetIP, OwnedUnwindDecodeError, UnwindContext,
-    owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
-    owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
+    _Unwind_Backtrace, _Unwind_GetDataRelBase, _Unwind_GetIP, _Unwind_GetLanguageSpecificData,
+    _Unwind_GetRegionStart, _Unwind_GetTextRelBase, OwnedPhase1SearchOutcome,
+    OwnedUnwindDecodeError, UnwindContext, owned_decode_sleb128_for_tests,
+    owned_decode_uleb128_for_tests, owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
     owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
+    owned_phase1_search_for_tests, owned_summarize_eh_frame_for_tests,
     owned_validate_cfi_program_for_tests,
 };
 use std::ffi::c_void;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const URC_NO_REASON: i32 = 0;
+const URC_FATAL_PHASE1_ERROR: i32 = 3;
+const URC_HANDLER_FOUND: i32 = 6;
+const URC_INSTALL_CONTEXT: i32 = 7;
+const URC_CONTINUE_UNWIND: i32 = 8;
+const UA_SEARCH_PHASE: i32 = 1;
+const TEST_EXCEPTION_CLASS: u64 = 0x4652_4b4e_432b_2b00;
+static TEST_LSDA: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
 
 unsafe extern "C" fn collect_frame_ip(ctx: *mut UnwindContext, arg: *mut c_void) -> i32 {
     let frames = unsafe { &mut *(arg.cast::<Vec<usize>>()) };
@@ -123,6 +134,134 @@ fn synthetic_eh_frame_fde_lookup_fails_closed_on_bad_cfi() {
 }
 
 #[test]
+fn phase1_search_invokes_personality_with_lsda_context() {
+    let section_addr = 0x500000usize;
+    let pc_begin = 0x502000usize;
+    let pc_range = 0x80usize;
+    let eh_frame = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        handler_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+
+    let fde = owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, pc_begin + 4)
+        .expect("personality FDE should decode")
+        .expect("IP should resolve");
+    assert_eq!(
+        fde.personality,
+        Some(handler_personality as *const () as usize)
+    );
+    assert_eq!(
+        fde.language_specific_data,
+        Some(TEST_LSDA.as_ptr() as usize)
+    );
+
+    let outcome = owned_phase1_search_for_tests(
+        &eh_frame,
+        section_addr,
+        &[pc_begin + 4],
+        TEST_EXCEPTION_CLASS,
+    )
+    .expect("phase1 search should decode");
+    assert_eq!(
+        outcome,
+        OwnedPhase1SearchOutcome::HandlerFound {
+            frame_index: 0,
+            ip: pc_begin + 4,
+            region_start: pc_begin,
+            language_specific_data: TEST_LSDA.as_ptr() as usize,
+        }
+    );
+}
+
+#[test]
+fn phase1_search_distinguishes_no_handler_and_fatal_personality_results() {
+    let section_addr = 0x510000usize;
+    let pc_begin = 0x512000usize;
+    let pc_range = 0x40usize;
+    let no_handler = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        continue_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+    assert_eq!(
+        owned_phase1_search_for_tests(&no_handler, section_addr, &[pc_begin + 1], 0)
+            .expect("no-handler search should decode"),
+        OwnedPhase1SearchOutcome::NoHandler
+    );
+
+    let fatal = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        fatal_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+    assert_eq!(
+        owned_phase1_search_for_tests(&fatal, section_addr, &[pc_begin + 1], 0)
+            .expect("fatal search should decode"),
+        OwnedPhase1SearchOutcome::Fatal {
+            frame_index: 0,
+            code: URC_INSTALL_CONTEXT,
+        }
+    );
+}
+
+#[test]
+fn unsupported_lsda_pointer_encoding_fails_closed() {
+    let section_addr = 0x520000usize;
+    let pc_begin = 0x522000usize;
+    let bad = synthetic_bad_lsda_encoding_eh_frame(
+        section_addr,
+        pc_begin,
+        0x30,
+        handler_personality as *const () as usize,
+    );
+
+    assert_eq!(
+        owned_phase1_search_for_tests(&bad, section_addr, &[pc_begin + 1], TEST_EXCEPTION_CLASS),
+        Err(OwnedUnwindDecodeError::UnsupportedPointerEncoding(0x70))
+    );
+}
+
+#[test]
+fn minimal_throw_catch_fixture_has_phase1_personality_lsda_metadata() {
+    let root = workspace_root();
+    let fixture = root.join("tests/conformance/fixtures/unwind/minimal_throw_catch.cpp");
+    let binary = root.join("target/conformance/minimal_throw_catch");
+    std::fs::create_dir_all(binary.parent().expect("target/conformance parent"))
+        .expect("create target/conformance");
+    let status = Command::new("g++")
+        .current_dir(&root)
+        .arg("-o")
+        .arg(&binary)
+        .arg(&fixture)
+        .arg("-static-libgcc")
+        .arg("-static-libstdc++")
+        .status()
+        .expect("run g++ for minimal_throw_catch fixture");
+    assert!(status.success(), "g++ failed with status {status}");
+
+    let (eh_frame, section_addr) =
+        elf_section(&binary, ".eh_frame").expect("minimal fixture should contain .eh_frame");
+    let summary = owned_summarize_eh_frame_for_tests(&eh_frame, section_addr)
+        .expect("minimal fixture .eh_frame should decode");
+    assert!(summary.fde_count > 0, "minimal fixture should have FDEs");
+    assert!(
+        summary.personality_fde_count > 0,
+        "minimal fixture should include personality-backed FDEs"
+    );
+    assert!(
+        summary.lsda_fde_count > 0,
+        "minimal fixture should include LSDA-backed FDEs"
+    );
+}
+
+#[test]
 fn compiled_test_binary_eh_frame_has_lookupable_fde() {
     let exe = std::env::current_exe().expect("current test binary path");
     let (eh_frame, section_addr) =
@@ -167,11 +306,145 @@ fn synthetic_eh_frame(
     fde_body.extend_from_slice(&((cie_pointer_field - cie_offset) as u32).to_le_bytes());
     fde_body.extend_from_slice(&pc_delta.to_le_bytes());
     fde_body.extend_from_slice(&(pc_range as i32).to_le_bytes());
+    encode_uleb(0, &mut fde_body);
     fde_body.extend_from_slice(cfi);
     bytes.extend_from_slice(&(fde_body.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&fde_body);
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes
+}
+
+fn synthetic_personality_eh_frame(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    personality: usize,
+    lsda: usize,
+) -> Vec<u8> {
+    synthetic_personality_eh_frame_with_lsda_encoding(
+        section_addr,
+        pc_begin,
+        pc_range,
+        personality,
+        lsda,
+        0x00,
+    )
+}
+
+fn synthetic_bad_lsda_encoding_eh_frame(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    personality: usize,
+) -> Vec<u8> {
+    synthetic_personality_eh_frame_with_lsda_encoding(
+        section_addr,
+        pc_begin,
+        pc_range,
+        personality,
+        TEST_LSDA.as_ptr() as usize,
+        0x70,
+    )
+}
+
+fn synthetic_personality_eh_frame_with_lsda_encoding(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    personality: usize,
+    lsda: usize,
+    lsda_encoding: u8,
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let cie_offset = bytes.len();
+    let mut cie_body = Vec::new();
+    cie_body.extend_from_slice(&0u32.to_le_bytes());
+    cie_body.push(1);
+    cie_body.extend_from_slice(b"zPLR\0");
+    encode_uleb(1, &mut cie_body);
+    encode_sleb(-8, &mut cie_body);
+    cie_body.push(16);
+    let augmentation_len_offset = cie_body.len();
+    encode_uleb(0, &mut cie_body);
+    let augmentation_start = cie_body.len();
+    cie_body.push(0x00);
+    cie_body.extend_from_slice(&personality.to_le_bytes());
+    cie_body.push(lsda_encoding);
+    cie_body.push(0x1b);
+    let augmentation_len = cie_body.len() - augmentation_start;
+    cie_body[augmentation_len_offset] = augmentation_len as u8;
+    cie_body.extend_from_slice(&[0x0c, 0x07, 0x08]);
+    bytes.extend_from_slice(&(cie_body.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&cie_body);
+
+    let fde_offset = bytes.len();
+    let cie_pointer_field = fde_offset + 4;
+    let pc_field = fde_offset + 8;
+    let pc_delta = (pc_begin as isize - (section_addr + pc_field) as isize) as i32;
+    let mut fde_body = Vec::new();
+    fde_body.extend_from_slice(&((cie_pointer_field - cie_offset) as u32).to_le_bytes());
+    fde_body.extend_from_slice(&pc_delta.to_le_bytes());
+    fde_body.extend_from_slice(&(pc_range as i32).to_le_bytes());
+    let augmentation_len_offset = fde_body.len();
+    encode_uleb(0, &mut fde_body);
+    let augmentation_start = fde_body.len();
+    if lsda_encoding == 0x00 {
+        fde_body.extend_from_slice(&lsda.to_le_bytes());
+    } else {
+        fde_body.push(0);
+    }
+    let augmentation_len = fde_body.len() - augmentation_start;
+    fde_body[augmentation_len_offset] = augmentation_len as u8;
+    fde_body.extend_from_slice(&[0x0c, 0x07, 0x08]);
+    bytes.extend_from_slice(&(fde_body.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&fde_body);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes
+}
+
+unsafe extern "C" fn handler_personality(
+    version: i32,
+    actions: i32,
+    exception_class: u64,
+    _exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    ctx: *mut UnwindContext,
+) -> i32 {
+    let lsda = unsafe { _Unwind_GetLanguageSpecificData(ctx) };
+    let region_start = unsafe { _Unwind_GetRegionStart(ctx) };
+    let text_rel = unsafe { _Unwind_GetTextRelBase(ctx) };
+    let data_rel = unsafe { _Unwind_GetDataRelBase(ctx) };
+    if version == 1
+        && actions == UA_SEARCH_PHASE
+        && exception_class == TEST_EXCEPTION_CLASS
+        && !lsda.is_null()
+        && region_start != 0
+        && text_rel == 0
+        && data_rel == 0
+    {
+        URC_HANDLER_FOUND
+    } else {
+        URC_FATAL_PHASE1_ERROR
+    }
+}
+
+unsafe extern "C" fn continue_personality(
+    _version: i32,
+    _actions: i32,
+    _exception_class: u64,
+    _exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    _ctx: *mut UnwindContext,
+) -> i32 {
+    URC_CONTINUE_UNWIND
+}
+
+unsafe extern "C" fn fatal_personality(
+    _version: i32,
+    _actions: i32,
+    _exception_class: u64,
+    _exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    _ctx: *mut UnwindContext,
+) -> i32 {
+    URC_INSTALL_CONTEXT
 }
 
 fn encode_uleb(mut value: usize, out: &mut Vec<u8>) {
@@ -198,6 +471,14 @@ fn encode_sleb(mut value: isize, out: &mut Vec<u8>) {
             break;
         }
     }
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf()
 }
 
 fn elf_section(path: &std::path::Path, name: &str) -> Option<(Vec<u8>, usize)> {
