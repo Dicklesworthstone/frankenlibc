@@ -383,7 +383,7 @@ const FFI_PCC_COPY_FLAGS: FfiPccCertificateFlags = FfiPccCertificateFlags {
     skip_pointer_validation: false,
 };
 
-const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 12] = [
+const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 24] = [
     FfiPccCertificate::new(
         "malloc",
         ApiFamily::Allocator,
@@ -468,6 +468,91 @@ const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 12] = [
         usize::MAX,
         FFI_PCC_ALLOCATOR_FLAGS,
     ),
+    // bd-14baix: expand FFI-PCC coverage to reduce python3/heavy runtime overhead
+    FfiPccCertificate::new(
+        "strcmp",
+        ApiFamily::StringMemory,
+        13,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strncmp",
+        ApiFamily::StringMemory,
+        14,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strchr",
+        ApiFamily::StringMemory,
+        15,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strrchr",
+        ApiFamily::StringMemory,
+        16,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strstr",
+        ApiFamily::StringMemory,
+        17,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memchr",
+        ApiFamily::StringMemory,
+        18,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memrchr",
+        ApiFamily::StringMemory,
+        19,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strnlen",
+        ApiFamily::StringMemory,
+        20,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memmove",
+        ApiFamily::StringMemory,
+        21,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memset",
+        ApiFamily::StringMemory,
+        22,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strcpy",
+        ApiFamily::StringMemory,
+        23,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strncpy",
+        ApiFamily::StringMemory,
+        24,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
 ];
 
 #[inline]
@@ -485,6 +570,19 @@ fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
         "memcpy" => 9,
         "snprintf" => 10,
         "vsnprintf" => 11,
+        // bd-14baix: expanded coverage
+        "strcmp" => 12,
+        "strncmp" => 13,
+        "strchr" => 14,
+        "strrchr" => 15,
+        "strstr" => 16,
+        "memchr" => 17,
+        "memrchr" => 18,
+        "strnlen" => 19,
+        "memmove" => 20,
+        "memset" => 21,
+        "strcpy" => 22,
+        "strncpy" => 23,
         _ => FFI_PCC_NO_INDEX,
     }
 }
