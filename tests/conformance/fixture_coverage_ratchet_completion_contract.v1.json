@@ -1,0 +1,77 @@
+{
+  "schema": "fixture_coverage_ratchet_completion_contract.v1",
+  "bead": "bd-8t1chf",
+  "generated_at_utc": "2026-05-25T23:10:00Z",
+  "summary": {
+    "status": "complete",
+    "purpose": "Bind the support-matrix fixture coverage ratchet to module-level promotion deltas, proof classes, and strict/hardened evidence modes."
+  },
+  "artifacts": {
+    "maintenance_generator": "scripts/generate_support_matrix_maintenance.py",
+    "maintenance_tests": "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs",
+    "promotion_triage_checker": "scripts/check_support_matrix_promotion_triage.sh",
+    "completion_contract": "tests/conformance/fixture_coverage_ratchet_completion_contract.v1.json"
+  },
+  "ratchet_contract": {
+    "report_section": "fixture_coverage_ratchet",
+    "required_high_impact_modules": [
+      "math_abi",
+      "glibc_internal_abi",
+      "unistd_abi",
+      "rpc_abi",
+      "stdlib_abi",
+      "wchar_abi",
+      "fortify_abi",
+      "stdio_abi"
+    ],
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "accepted_proof_classes": [
+      "documented_downgrade_required",
+      "documented_no_fixture_rationale",
+      "strict_hardened_conformance_proof"
+    ],
+    "mutation_guard": "fixture_coverage_ratchet_flags_evidence_free_implemented_promotion"
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/generate_support_matrix_maintenance.py --self-test",
+      "result": "pass"
+    },
+    {
+      "command": "rch exec -- cargo fmt --check",
+      "result": "pass"
+    },
+    {
+      "command": "rch exec -- cargo test -p frankenlibc-harness --test support_matrix_maintenance_test fixture_coverage_ratchet -- --nocapture",
+      "result": "pass",
+      "details": "2 passed; 0 failed; remote worker vmi1153651"
+    },
+    {
+      "command": "rch exec -- cargo check --workspace --all-targets",
+      "result": "pass",
+      "details": "remote worker vmi1153651; existing missing-SMT-solver warning only"
+    },
+    {
+      "command": "rch exec -- cargo clippy --workspace --all-targets -- -D warnings",
+      "result": "pass",
+      "details": "remote worker vmi1153651; existing missing-SMT-solver warning only"
+    },
+    {
+      "command": "br --no-db --lock-timeout 120000 dep cycles --json",
+      "result": "pass",
+      "details": "cycles=[]"
+    },
+    {
+      "command": "ubs scripts/generate_support_matrix_maintenance.py crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs crates/frankenlibc-core/src/string/str.rs",
+      "result": "known-noisy-nonzero",
+      "details": "UBS reported 2 critical and warning inventory items from existing test panic/indexing heuristics; cargo fmt/check/clippy/test passed."
+    }
+  ],
+  "notes": [
+    "Agent Mail MCP and HTTP health checks timed out during this session, so file reservations and completion mail were unavailable.",
+    "The string fast-path alignment expressions were mechanically updated to satisfy the workspace clippy gate after the recently pushed perf commit introduced clippy::manual_is_multiple_of findings."
+  ]
+}

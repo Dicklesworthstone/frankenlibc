@@ -24,7 +24,7 @@ pub fn strlen(s: &[u8]) -> usize {
     let mut i = 0;
 
     // Handle unaligned prefix byte-by-byte
-    while i < s.len() && (s.as_ptr() as usize + i) % WORD_SIZE != 0 {
+    while i < s.len() && !(s.as_ptr() as usize + i).is_multiple_of(WORD_SIZE) {
         if s[i] == 0 {
             return i;
         }
@@ -81,7 +81,7 @@ pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
 
     if aligned {
         // Handle unaligned prefix byte-by-byte
-        while i < s1.len() && i < s2.len() && (p1 + i) % WORD_SIZE != 0 {
+        while i < s1.len() && i < s2.len() && !(p1 + i).is_multiple_of(WORD_SIZE) {
             let a = s1[i];
             let b = s2[i];
             if a != b {

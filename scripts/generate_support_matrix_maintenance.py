@@ -31,6 +31,16 @@ HOST_DELEGATION_CENSUS_PATH = (
 PROMOTION_PROOF_MANIFEST_PATH = (
     REPO_ROOT / "tests" / "conformance" / "math_abi_promotion_tranche.v1.json"
 )
+HIGH_IMPACT_RATCHET_MODULES = (
+    "math_abi",
+    "glibc_internal_abi",
+    "unistd_abi",
+    "rpc_abi",
+    "stdlib_abi",
+    "wchar_abi",
+    "fortify_abi",
+    "stdio_abi",
+)
 
 # Patterns indicating actual host libc call expressions.
 # Type/constant references like `libc::timex` or `libc::EINVAL` are not calls.
@@ -310,6 +320,211 @@ def count_statuses_from_map(status_map):
     for status in status_map.values():
         counts[status] = counts.get(status, 0) + 1
     return counts
+
+
+def load_promotion_triage(path: Path | None):
+    """Load optional promotion-triage rows keyed by symbol."""
+    if path is None or not path.is_file():
+        return {}, False
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}, False
+
+    rows = {}
+    for row in data.get("promotions", []):
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol", ""))
+        if symbol:
+            rows[symbol] = row
+    return rows, True
+
+
+def ratchet_proof_class(row, triage_row):
+    """Classify why a promoted symbol is, or is not, acceptable to the fixture ratchet."""
+    strict_pass = conformance_mode_passed(row.get("strict_conformance"))
+    hardened_pass = conformance_mode_passed(row.get("hardened_conformance"))
+    if strict_pass and hardened_pass:
+        return "strict_hardened_conformance_proof"
+
+    category = str((triage_row or {}).get("category", "untriaged"))
+    if category == "downgrade-now":
+        return "documented_downgrade_required"
+    if category == "scanner-false-positive":
+        return "documented_no_fixture_rationale"
+
+    missing = set(row.get("missing_evidence", []))
+    if missing & {"missing_strict_fixture", "missing_hardened_fixture"}:
+        return "missing_fixture_evidence"
+
+    return "fixture_rows_without_passing_conformance"
+
+
+def build_fixture_coverage_ratchet(
+    reclassified_symbols,
+    promotion_triage_by_symbol,
+    promotion_triage_loaded,
+    promotion_proofs,
+    by_module,
+):
+    """Summarize promotion evidence pressure by module, proof class, and mode."""
+    accepted_classes = {
+        "strict_hardened_conformance_proof",
+        "documented_downgrade_required",
+        "documented_no_fixture_rationale",
+    }
+    module_deltas = {
+        module: {
+            "implemented_promotion_delta": 0,
+            "proof_class_counts": {},
+            "mode_deltas": {
+                "strict": {
+                    "fixture_rows": 0,
+                    "passing_conformance_promotions": 0,
+                    "missing_fixture_promotions": 0,
+                    "missing_passing_conformance_promotions": 0,
+                },
+                "hardened": {
+                    "fixture_rows": 0,
+                    "passing_conformance_promotions": 0,
+                    "missing_fixture_promotions": 0,
+                    "missing_passing_conformance_promotions": 0,
+                },
+            },
+            "triage_category_counts": {},
+            "violating_symbols": [],
+        }
+        for module in HIGH_IMPACT_RATCHET_MODULES
+    }
+
+    violations = []
+    for row in reclassified_symbols:
+        if not row.get("promotion_requires_evidence"):
+            continue
+        if row.get("current_status") != "Implemented":
+            continue
+
+        symbol = str(row.get("symbol", ""))
+        triage_row = promotion_triage_by_symbol.get(symbol, {})
+        module = str(triage_row.get("module") or row.get("module") or "unknown")
+        info = module_deltas.setdefault(
+            module,
+            {
+                "implemented_promotion_delta": 0,
+                "proof_class_counts": {},
+                "mode_deltas": {
+                    "strict": {
+                        "fixture_rows": 0,
+                        "passing_conformance_promotions": 0,
+                        "missing_fixture_promotions": 0,
+                        "missing_passing_conformance_promotions": 0,
+                    },
+                    "hardened": {
+                        "fixture_rows": 0,
+                        "passing_conformance_promotions": 0,
+                        "missing_fixture_promotions": 0,
+                        "missing_passing_conformance_promotions": 0,
+                    },
+                },
+                "triage_category_counts": {},
+                "violating_symbols": [],
+            },
+        )
+
+        proof_class = ratchet_proof_class(row, triage_row)
+        triage_category = str(triage_row.get("category", "untriaged"))
+        info["implemented_promotion_delta"] += 1
+        info["proof_class_counts"][proof_class] = (
+            info["proof_class_counts"].get(proof_class, 0) + 1
+        )
+        info["triage_category_counts"][triage_category] = (
+            info["triage_category_counts"].get(triage_category, 0) + 1
+        )
+
+        for mode in ("strict", "hardened"):
+            fixture_count = int(row.get(f"{mode}_fixture_count", 0))
+            mode_info = info["mode_deltas"][mode]
+            mode_info["fixture_rows"] += fixture_count
+            if fixture_count == 0:
+                mode_info["missing_fixture_promotions"] += 1
+            if conformance_mode_passed(row.get(f"{mode}_conformance")):
+                mode_info["passing_conformance_promotions"] += 1
+            else:
+                mode_info["missing_passing_conformance_promotions"] += 1
+
+        if proof_class not in accepted_classes:
+            violation = {
+                "symbol": symbol,
+                "module": module,
+                "proof_class": proof_class,
+                "triage_category": triage_category,
+                "missing_evidence": list(row.get("missing_evidence", [])),
+                "strict_fixture_count": int(row.get("strict_fixture_count", 0)),
+                "hardened_fixture_count": int(row.get("hardened_fixture_count", 0)),
+            }
+            violations.append(violation)
+            if len(info["violating_symbols"]) < 50:
+                info["violating_symbols"].append(symbol)
+
+    proof_manifest_by_module = {}
+    for symbol, proof in sorted(promotion_proofs.items()):
+        module = str(proof.get("module", "unknown"))
+        info = proof_manifest_by_module.setdefault(
+            module,
+            {
+                "strict_hardened_symbol_count": 0,
+                "required_modes": list(proof.get("required_modes", ("strict", "hardened"))),
+                "symbols": [],
+            },
+        )
+        info["strict_hardened_symbol_count"] += 1
+        if len(info["symbols"]) < 50:
+            info["symbols"].append(symbol)
+
+    for module, info in module_deltas.items():
+        info["proof_class_counts"] = dict(sorted(info["proof_class_counts"].items()))
+        info["triage_category_counts"] = dict(sorted(info["triage_category_counts"].items()))
+        if module in by_module:
+            info["current_module_coverage"] = {
+                "total": int(by_module[module]["total"]),
+                "linked": int(by_module[module]["linked"]),
+                "coverage_pct": round(
+                    by_module[module]["linked"] / by_module[module]["total"] * 100,
+                    1,
+                )
+                if by_module[module]["total"]
+                else 0.0,
+            }
+
+    return {
+        "schema_version": "fixture_coverage_ratchet.v1",
+        "bead": "bd-8t1chf",
+        "promotion_triage_manifest_loaded": promotion_triage_loaded,
+        "policy": {
+            "high_impact_modules": list(HIGH_IMPACT_RATCHET_MODULES),
+            "accepted_proof_classes": sorted(accepted_classes),
+            "mode_requirement": "Implemented promotions require strict and hardened passing conformance, or an explicit triage rationale for downgrade/scanner handling",
+        },
+        "summary": {
+            "implemented_promotion_delta": sum(
+                info["implemented_promotion_delta"] for info in module_deltas.values()
+            ),
+            "module_count": len(
+                [
+                    info
+                    for info in module_deltas.values()
+                    if info["implemented_promotion_delta"] > 0
+                ]
+            ),
+            "violation_count": len(violations),
+            "status": "pass" if not violations else "fail",
+        },
+        "module_deltas": dict(sorted(module_deltas.items())),
+        "proof_manifest_by_module": dict(sorted(proof_manifest_by_module.items())),
+        "violations": violations,
+    }
 
 
 
@@ -791,6 +1006,11 @@ def main():
         default=str(PROMOTION_PROOF_MANIFEST_PATH),
         help="Path to bounded promotion proof manifest used to classify non-core host bridge census hits",
     )
+    parser.add_argument(
+        "--promotion-triage-report",
+        default="",
+        help="Optional promotion triage manifest used to classify fixture-ratchet deltas",
+    )
     parser.add_argument("--self-test", action="store_true", help="Run self-test")
     args = parser.parse_args()
 
@@ -802,6 +1022,10 @@ def main():
     conformance_by_symbol = load_conformance_matrix(Path(args.conformance_matrix))
     host_delegation_by_symbol = load_host_delegation_census(Path(args.host_delegation_census))
     promotion_proofs = load_promotion_proofs(Path(args.promotion_proof_manifest))
+    promotion_triage_path = Path(args.promotion_triage_report) if args.promotion_triage_report else None
+    promotion_triage_by_symbol, promotion_triage_loaded = load_promotion_triage(
+        promotion_triage_path
+    )
 
     matrix = load_matrix()
     symbols = matrix.get("symbols", [])
@@ -903,6 +1127,7 @@ def main():
     by_module = {}
     by_status_linked = {}
     symbol_status_map = {}
+    symbol_module_map = {}
     linkage_by_symbol = {}
 
     for i, entry in enumerate(symbols):
@@ -912,6 +1137,7 @@ def main():
         has_fix = linkage_results[i]["has_fixture"]
 
         symbol_status_map[sym] = st
+        symbol_module_map[sym] = str(module)
         linkage_by_symbol[sym] = linkage_results[i]
 
         by_status[st] = by_status.get(st, 0) + 1
@@ -1006,6 +1232,7 @@ def main():
 
             reclassified_symbols.append({
                 "symbol": symbol,
+                "module": symbol_module_map.get(symbol, "unknown"),
                 "previous_status": previous_status,
                 "current_status": current_status,
                 "promotion_requires_evidence": promotion_requires_evidence,
@@ -1021,6 +1248,13 @@ def main():
     reclassification_violations = [
         row for row in reclassified_symbols if not row["conformance_evidence_passed"]
     ]
+    fixture_coverage_ratchet = build_fixture_coverage_ratchet(
+        reclassified_symbols,
+        promotion_triage_by_symbol,
+        promotion_triage_loaded,
+        promotion_proofs,
+        by_module,
+    )
 
     status_count_delta = {}
     for status_name in sorted(set(by_status.keys()) | set(previous_status_counts.keys())):
@@ -1082,6 +1316,10 @@ def main():
             "baseline_symbol_map_loaded": baseline_symbol_map_loaded,
             "promotion_proof_manifest_path": str(Path(args.promotion_proof_manifest)),
             "promotion_proof_symbol_count": len(promotion_proofs),
+            "promotion_triage_manifest_path": str(promotion_triage_path)
+            if promotion_triage_path is not None
+            else None,
+            "promotion_triage_manifest_loaded": promotion_triage_loaded,
             "status_count_delta": status_count_delta,
             "native_coverage_pct_delta": native_delta,
             "reclassified_symbol_count": len(reclassified_symbols),
@@ -1103,7 +1341,16 @@ def main():
                 "total_reclassified": len(reclassified_symbols),
                 "violations": reclassification_violations,
             },
+            "fixture_coverage_ratchet": {
+                "status": fixture_coverage_ratchet["summary"]["status"],
+                "implemented_promotion_delta": fixture_coverage_ratchet["summary"][
+                    "implemented_promotion_delta"
+                ],
+                "violation_count": fixture_coverage_ratchet["summary"]["violation_count"],
+                "promotion_triage_manifest_loaded": promotion_triage_loaded,
+            },
         },
+        "fixture_coverage_ratchet": fixture_coverage_ratchet,
         "status_distribution": {
             st: {
                 "count": by_status.get(st, 0),

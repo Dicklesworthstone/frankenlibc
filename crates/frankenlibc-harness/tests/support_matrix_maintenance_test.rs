@@ -85,6 +85,47 @@ fn generate_maintenance_report_with_proof_manifest(
         .expect("failed to execute maintenance validator")
 }
 
+fn generate_maintenance_report_with_previous_and_triage(
+    output_path: &Path,
+    previous_report_path: &Path,
+    promotion_triage_path: Option<&Path>,
+) -> std::process::Output {
+    let root = repo_root();
+    let mut command = Command::new("python3");
+    command.args([
+        root.join("scripts/generate_support_matrix_maintenance.py")
+            .to_str()
+            .unwrap(),
+        "-o",
+        output_path.to_str().unwrap(),
+        "--previous-report",
+        previous_report_path.to_str().unwrap(),
+    ]);
+    if let Some(path) = promotion_triage_path {
+        command.args(["--promotion-triage-report", path.to_str().unwrap()]);
+    }
+    command
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator")
+}
+
+fn generate_promotion_triage_report() -> std::path::PathBuf {
+    let root = repo_root();
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check_support_matrix_promotion_triage.sh"))
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute promotion triage checker");
+    assert!(
+        output.status.success(),
+        "promotion triage checker failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    root.join("target/conformance/support_matrix_promotion_triage.v1.json")
+}
+
 fn stable_report_sections(report: &serde_json::Value) -> serde_json::Value {
     let mut stable = serde_json::Map::new();
     // These are the current-state sections. We intentionally exclude the
@@ -632,6 +673,189 @@ fn generated_report_accepts_math_abi_errno_bridge_tranche() {
             "{symbol} should keep an auditable proof-manifest warning"
         );
     }
+}
+
+#[test]
+fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
+    let triage_path = generate_promotion_triage_report();
+    let previous_report_path = unique_generated_report_path("fixture_ratchet_selected_previous");
+    let previous = serde_json::json!({
+        "symbol_status_map": {
+            "acos": "WrapsHostLibc",
+            "__adjtimex": "WrapsHostLibc",
+            "__asprintf_chk": "WrapsHostLibc",
+            "__assert": "WrapsHostLibc"
+        },
+        "coverage_dashboard": {
+            "status_counts": {
+                "Implemented": 0,
+                "RawSyscall": 0,
+                "WrapsHostLibc": 4,
+                "GlibcCallThrough": 0,
+                "Stub": 0
+            },
+            "native_coverage_pct": 0.0
+        }
+    });
+    std::fs::write(
+        &previous_report_path,
+        serde_json::to_vec_pretty(&previous).expect("previous report should serialize"),
+    )
+    .expect("failed to write selected previous report");
+
+    let generated_path = unique_generated_report_path("fixture_coverage_ratchet");
+    let output = generate_maintenance_report_with_previous_and_triage(
+        &generated_path,
+        &previous_report_path,
+        Some(&triage_path),
+    );
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&generated_path);
+    let ratchet = &report["fixture_coverage_ratchet"];
+    assert_eq!(
+        ratchet["schema_version"].as_str(),
+        Some("fixture_coverage_ratchet.v1")
+    );
+    assert_eq!(ratchet["bead"].as_str(), Some("bd-8t1chf"));
+    assert_eq!(
+        ratchet["promotion_triage_manifest_loaded"].as_bool(),
+        Some(true)
+    );
+
+    let module_deltas = ratchet["module_deltas"]
+        .as_object()
+        .expect("module_deltas should be an object");
+    for module in [
+        "math_abi",
+        "glibc_internal_abi",
+        "unistd_abi",
+        "rpc_abi",
+        "stdlib_abi",
+        "wchar_abi",
+        "fortify_abi",
+        "stdio_abi",
+    ] {
+        let entry = module_deltas
+            .get(module)
+            .unwrap_or_else(|| panic!("missing ratchet module entry for {module}"));
+        assert!(
+            entry["mode_deltas"]["strict"].is_object(),
+            "{module} missing strict mode delta"
+        );
+        assert!(
+            entry["mode_deltas"]["hardened"].is_object(),
+            "{module} missing hardened mode delta"
+        );
+        assert!(
+            entry["proof_class_counts"].is_object(),
+            "{module} missing proof class counts"
+        );
+    }
+
+    let math_proofs = &ratchet["proof_manifest_by_module"]["math_abi"];
+    assert!(
+        math_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= MATH_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "math_abi pilot proof manifest should expose strict+hardened proven symbols"
+    );
+    assert_eq!(
+        ratchet["module_deltas"]["math_abi"]["proof_class_counts"]
+            ["strict_hardened_conformance_proof"]
+            .as_u64(),
+        Some(1),
+        "selected math_abi promotion should be backed by strict+hardened proof"
+    );
+    assert_eq!(
+        ratchet["module_deltas"]["glibc_internal_abi"]["proof_class_counts"]
+            ["documented_no_fixture_rationale"]
+            .as_u64(),
+        Some(1),
+        "selected glibc_internal_abi promotion should carry scanner rationale"
+    );
+}
+
+#[test]
+fn fixture_coverage_ratchet_flags_evidence_free_implemented_promotion() {
+    let previous_report_path = unique_generated_report_path("fixture_ratchet_previous_report");
+    let previous = serde_json::json!({
+        "symbol_status_map": {
+            "__ctype_b_loc": "WrapsHostLibc"
+        },
+        "coverage_dashboard": {
+            "status_counts": {
+                "Implemented": 0,
+                "RawSyscall": 0,
+                "WrapsHostLibc": 1,
+                "GlibcCallThrough": 0,
+                "Stub": 0
+            },
+            "native_coverage_pct": 0.0
+        }
+    });
+    std::fs::write(
+        &previous_report_path,
+        serde_json::to_vec_pretty(&previous).expect("previous report should serialize"),
+    )
+    .expect("failed to write previous report");
+
+    let generated_path = unique_generated_report_path("fixture_ratchet_mutation");
+    let output = generate_maintenance_report_with_previous_and_triage(
+        &generated_path,
+        &previous_report_path,
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "Maintenance validator should emit ratchet findings rather than crash:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&generated_path);
+    let ratchet_policy = &report["policy_checks"]["fixture_coverage_ratchet"];
+    assert_eq!(ratchet_policy["status"].as_str(), Some("fail"));
+    assert!(
+        ratchet_policy["violation_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 1,
+        "evidence-free promotion should create a ratchet violation"
+    );
+
+    let violations = report["fixture_coverage_ratchet"]["violations"]
+        .as_array()
+        .expect("ratchet violations should be an array");
+    let ctype_violation = violations
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("__ctype_b_loc"))
+        .expect("__ctype_b_loc mutation should be reported as a violation");
+    assert_eq!(
+        ctype_violation["proof_class"].as_str(),
+        Some("missing_fixture_evidence")
+    );
+    let missing: std::collections::BTreeSet<&str> = ctype_violation["missing_evidence"]
+        .as_array()
+        .expect("missing_evidence should be an array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(
+        missing,
+        std::collections::BTreeSet::from([
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing",
+        ])
+    );
 }
 
 #[test]
