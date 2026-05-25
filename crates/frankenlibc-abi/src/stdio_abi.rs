@@ -89,6 +89,7 @@ fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
 }
 
 #[inline]
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 fn native_file_buf_mode(mode: BufMode) -> NativeFileBufMode {
     match mode {
         BufMode::Full => NativeFileBufMode::Full,
@@ -412,27 +413,43 @@ fn unregister_host_stream(stream: *mut c_void) {
 }
 
 #[inline]
+#[allow(clippy::needless_return)]
 fn standard_stream_id(stream: *mut c_void) -> Option<usize> {
     if stream.is_null() {
         return None;
     }
     let addr = stream as usize;
-    if addr == STDIN_SENTINEL
-        || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO)
+
+    // In standalone mode, only match sentinel addresses (no host glibc FILE* comparison).
+    #[cfg(feature = "standalone")]
     {
-        return Some(STDIN_SENTINEL);
+        return match addr {
+            STDIN_SENTINEL => Some(STDIN_SENTINEL),
+            STDOUT_SENTINEL => Some(STDOUT_SENTINEL),
+            STDERR_SENTINEL => Some(STDERR_SENTINEL),
+            _ => None,
+        };
     }
-    if addr == STDOUT_SENTINEL
-        || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO)
+
+    #[cfg(not(feature = "standalone"))]
     {
-        return Some(STDOUT_SENTINEL);
+        if addr == STDIN_SENTINEL
+            || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO)
+        {
+            return Some(STDIN_SENTINEL);
+        }
+        if addr == STDOUT_SENTINEL
+            || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO)
+        {
+            return Some(STDOUT_SENTINEL);
+        }
+        if addr == STDERR_SENTINEL
+            || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO)
+        {
+            return Some(STDERR_SENTINEL);
+        }
+        None
     }
-    if addr == STDERR_SENTINEL
-        || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO)
-    {
-        return Some(STDERR_SENTINEL);
-    }
-    None
 }
 
 #[inline]
@@ -441,24 +458,29 @@ fn canonical_stream_id(stream: *mut c_void) -> usize {
 }
 
 #[inline]
+#[cfg_attr(feature = "standalone", allow(unused_variables))]
 fn sync_native_stdio_buffering(stream: *mut c_void, mode: BufMode, buf: *mut c_char, size: usize) {
-    let Some(fd) = (match standard_stream_id(stream) {
-        Some(STDIN_SENTINEL) => Some(libc::STDIN_FILENO),
-        Some(STDOUT_SENTINEL) => Some(libc::STDOUT_FILENO),
-        Some(STDERR_SENTINEL) => Some(libc::STDERR_FILENO),
-        _ => None,
-    }) else {
-        return;
-    };
-    // SAFETY: buf (if non-null) comes from the caller with `size` bytes of storage.
-    let _ = unsafe {
-        io_internal_abi::configure_native_stdio_stream(
-            fd,
-            native_file_buf_mode(mode),
-            buf.cast(),
-            size,
-        )
-    };
+    // In standalone mode, no host stdio streams to configure.
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(fd) = (match standard_stream_id(stream) {
+            Some(STDIN_SENTINEL) => Some(libc::STDIN_FILENO),
+            Some(STDOUT_SENTINEL) => Some(libc::STDOUT_FILENO),
+            Some(STDERR_SENTINEL) => Some(libc::STDERR_FILENO),
+            _ => None,
+        }) else {
+            return;
+        };
+        // SAFETY: buf (if non-null) comes from the caller with `size` bytes of storage.
+        let _ = unsafe {
+            io_internal_abi::configure_native_stdio_stream(
+                fd,
+                native_file_buf_mode(mode),
+                buf.cast(),
+                size,
+            )
+        };
+    }
 }
 
 #[inline]
@@ -986,22 +1008,28 @@ pub static mut IO_2_1_STDOUT: *mut c_void = STDOUT_SENTINEL as *mut c_void;
 pub static mut IO_2_1_STDERR: *mut c_void = STDERR_SENTINEL as *mut c_void;
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(debug_assertions))]
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 static HOST_STDIO_COPY_RELOCATIONS_SYNCED: AtomicBool = AtomicBool::new(false);
 
 fn ensure_host_libio_exit_safe() {
-    if HOST_LIBIO_EXIT_PATCHED.load(Ordering::Acquire) {
-        return;
-    }
-    if !runtime_policy::is_runtime_ready() {
-        return;
-    }
-    if HOST_LIBIO_EXIT_PATCHED
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
+    // In standalone mode, no host libio to patch.
+    #[cfg(not(feature = "standalone"))]
     {
-        unsafe { io_internal_abi::bootstrap_host_libio_exports() };
+        if HOST_LIBIO_EXIT_PATCHED.load(Ordering::Acquire) {
+            return;
+        }
+        if !runtime_policy::is_runtime_ready() {
+            return;
+        }
+        if HOST_LIBIO_EXIT_PATCHED
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            unsafe { io_internal_abi::bootstrap_host_libio_exports() };
+        }
     }
 }
 
@@ -1025,6 +1053,7 @@ fn active_stdout_stream() -> *mut c_void {
 }
 
 #[cfg(not(debug_assertions))]
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 unsafe fn sync_copy_relocated_stdio_symbol(
     symbol: &CStr,
     owned_cell: *mut *mut c_void,
@@ -1052,54 +1081,67 @@ unsafe fn sync_copy_relocated_stdio_symbol(
 }
 
 /// Publish FrankenLibC-owned stdio globals and mark host stdio delegation ready.
+///
+/// In standalone mode, stdio globals are already set to sentinel values that map
+/// directly to the stream registry entries, so no host delegation is needed.
+#[allow(clippy::needless_return)]
 pub(crate) fn init_host_stdio_streams() {
     if HOST_STDIO_BOOTSTRAPPED.load(Ordering::Acquire) {
         return;
     }
 
-    ensure_host_libio_exit_safe();
+    // In standalone mode, globals are pre-set to sentinels - just mark as ready.
+    #[cfg(feature = "standalone")]
+    {
+        HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
+    }
 
-    #[cfg(not(debug_assertions))]
-    let can_sync_copy_relocations = runtime_policy::is_runtime_ready()
-        && !HOST_STDIO_COPY_RELOCATIONS_SYNCED.load(Ordering::Acquire);
-    let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
-    let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
-    let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
-    if !stdin_ptr.is_null() && !stdout_ptr.is_null() && !stderr_ptr.is_null() {
-        unsafe {
-            stdin = stdin_ptr;
-            stdout = stdout_ptr;
-            stderr = stderr_ptr;
-            #[cfg(debug_assertions)]
-            {
-                IO_2_1_STDIN = stdin_ptr;
-                IO_2_1_STDOUT = stdout_ptr;
-                IO_2_1_STDERR = stderr_ptr;
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                if can_sync_copy_relocations {
-                    sync_copy_relocated_stdio_symbol(
-                        c"stdin",
-                        core::ptr::addr_of_mut!(stdin),
-                        stdin_ptr,
-                    );
-                    sync_copy_relocated_stdio_symbol(
-                        c"stdout",
-                        core::ptr::addr_of_mut!(stdout),
-                        stdout_ptr,
-                    );
-                    sync_copy_relocated_stdio_symbol(
-                        c"stderr",
-                        core::ptr::addr_of_mut!(stderr),
-                        stderr_ptr,
-                    );
-                    HOST_STDIO_COPY_RELOCATIONS_SYNCED.store(true, Ordering::Release);
+    #[cfg(not(feature = "standalone"))]
+    {
+        ensure_host_libio_exit_safe();
+
+        #[cfg(not(debug_assertions))]
+        let can_sync_copy_relocations = runtime_policy::is_runtime_ready()
+            && !HOST_STDIO_COPY_RELOCATIONS_SYNCED.load(Ordering::Acquire);
+        let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
+        let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
+        if !stdin_ptr.is_null() && !stdout_ptr.is_null() && !stderr_ptr.is_null() {
+            unsafe {
+                stdin = stdin_ptr;
+                stdout = stdout_ptr;
+                stderr = stderr_ptr;
+                #[cfg(debug_assertions)]
+                {
+                    IO_2_1_STDIN = stdin_ptr;
+                    IO_2_1_STDOUT = stdout_ptr;
+                    IO_2_1_STDERR = stderr_ptr;
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    if can_sync_copy_relocations {
+                        sync_copy_relocated_stdio_symbol(
+                            c"stdin",
+                            core::ptr::addr_of_mut!(stdin),
+                            stdin_ptr,
+                        );
+                        sync_copy_relocated_stdio_symbol(
+                            c"stdout",
+                            core::ptr::addr_of_mut!(stdout),
+                            stdout_ptr,
+                        );
+                        sync_copy_relocated_stdio_symbol(
+                            c"stderr",
+                            core::ptr::addr_of_mut!(stderr),
+                            stderr_ptr,
+                        );
+                        HOST_STDIO_COPY_RELOCATIONS_SYNCED.store(true, Ordering::Release);
+                    }
                 }
             }
         }
+        HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
     }
-    HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
 }
 
 #[doc(hidden)]
