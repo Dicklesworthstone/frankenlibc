@@ -50,6 +50,32 @@ const DW_EH_PE_INDIRECT: u8 = 0x80;
 const DW_CFA_ADVANCE_LOC: u8 = 0x40;
 const DW_CFA_OFFSET: u8 = 0x80;
 const DW_CFA_RESTORE: u8 = 0xc0;
+const DW_CFA_NOP: u8 = 0x00;
+const DW_CFA_ADVANCE_LOC1: u8 = 0x02;
+const DW_CFA_ADVANCE_LOC2: u8 = 0x03;
+const DW_CFA_ADVANCE_LOC4: u8 = 0x04;
+const DW_CFA_OFFSET_EXTENDED: u8 = 0x05;
+const DW_CFA_RESTORE_EXTENDED: u8 = 0x06;
+const DW_CFA_UNDEFINED: u8 = 0x07;
+const DW_CFA_SAME_VALUE: u8 = 0x08;
+const DW_CFA_REMEMBER_STATE: u8 = 0x0a;
+const DW_CFA_RESTORE_STATE: u8 = 0x0b;
+const DW_CFA_DEF_CFA: u8 = 0x0c;
+const DW_CFA_DEF_CFA_REGISTER: u8 = 0x0d;
+const DW_CFA_DEF_CFA_OFFSET: u8 = 0x0e;
+const DW_CFA_DEF_CFA_EXPRESSION: u8 = 0x0f;
+const DW_CFA_EXPRESSION: u8 = 0x10;
+const DW_CFA_OFFSET_EXTENDED_SF: u8 = 0x11;
+const DW_CFA_DEF_CFA_SF: u8 = 0x12;
+const DW_CFA_DEF_CFA_OFFSET_SF: u8 = 0x13;
+const DW_CFA_VAL_OFFSET: u8 = 0x14;
+const DW_CFA_VAL_OFFSET_SF: u8 = 0x15;
+const DW_CFA_VAL_EXPRESSION: u8 = 0x16;
+const X86_64_DWARF_RBP: usize = 6;
+const X86_64_DWARF_RSP: usize = 7;
+const X86_64_DWARF_RIP: usize = 16;
+const MAX_TRACKED_DWARF_REGISTERS: usize = 32;
+const UNSET_DWARF_REGISTER: usize = usize::MAX;
 
 type UnwindPersonalityFn = unsafe extern "C" fn(
     version: c_int,
@@ -82,17 +108,56 @@ pub struct OwnedFdeRecord {
     pub language_specific_data: Option<usize>,
     pub text_rel_base: usize,
     pub data_rel_base: usize,
+    code_alignment_factor: usize,
+    data_alignment_factor: isize,
+    return_address_register: usize,
+    cie_cfi_start: usize,
+    cie_cfi_end: usize,
+    fde_cfi_start: usize,
+    fde_cfi_end: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct OwnedCieRecord {
     offset: usize,
+    code_alignment_factor: usize,
+    data_alignment_factor: isize,
+    return_address_register: usize,
     has_z_augmentation: bool,
     lsda_encoding: Option<u8>,
     personality: Option<usize>,
     fde_pointer_encoding: u8,
     text_rel_base: usize,
     data_rel_base: usize,
+    cfi_start: usize,
+    cfi_end: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnedCfiRow {
+    pub pc: usize,
+    pub cfa_register: usize,
+    pub cfa_offset: isize,
+    pub return_address_register: usize,
+    pub saved_rip_offset: Option<isize>,
+    pub saved_rbp_offset: Option<isize>,
+    pub saved_rsp_offset: Option<isize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CfiRegisterRule {
+    Undefined,
+    SameValue,
+    Offset(isize),
+    ValOffset(isize),
+}
+
+#[derive(Clone, Copy)]
+struct CfiEvaluationState {
+    pc: usize,
+    cfa_register: usize,
+    cfa_offset: isize,
+    register_rules: [CfiRegisterRule; MAX_TRACKED_DWARF_REGISTERS],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -537,6 +602,18 @@ pub fn owned_find_fde_for_ip_for_tests(
     find_fde_for_ip(eh_frame, section_addr, ip, false)
 }
 
+#[doc(hidden)]
+pub fn owned_evaluate_cfi_row_for_tests(
+    eh_frame: &[u8],
+    section_addr: usize,
+    ip: usize,
+) -> Result<Option<OwnedCfiRow>, OwnedUnwindDecodeError> {
+    let Some(fde) = find_fde_for_ip(eh_frame, section_addr, ip, false)? else {
+        return Ok(None);
+    };
+    evaluate_cfi_row(eh_frame, fde, ip).map(Some)
+}
+
 fn find_fde_for_ip(
     eh_frame: &[u8],
     section_addr: usize,
@@ -919,14 +996,17 @@ fn parse_cie_record(
 
     let (augmentation, after_augmentation) = read_c_string(eh_frame, cursor, record.end)?;
     cursor = after_augmentation;
-    let (_, after_code_alignment) = decode_uleb128(eh_frame, cursor)?;
-    let (_, after_data_alignment) = decode_sleb128(eh_frame, after_code_alignment)?;
+    let (code_alignment_factor, after_code_alignment) = decode_uleb128(eh_frame, cursor)?;
+    let (data_alignment_factor, after_data_alignment) =
+        decode_sleb128(eh_frame, after_code_alignment)?;
     cursor = after_data_alignment;
-    cursor = if version == 1 {
-        read_u8(eh_frame, cursor)?.1
+    let (return_address_register, after_return_address) = if version == 1 {
+        let (register, after_register) = read_u8(eh_frame, cursor)?;
+        (register as usize, after_register)
     } else {
-        decode_uleb128(eh_frame, cursor)?.1
+        decode_uleb128(eh_frame, cursor)?
     };
+    cursor = after_return_address;
 
     let mut fde_pointer_encoding = DW_EH_PE_ABSPTR;
     let mut lsda_encoding = None;
@@ -984,15 +1064,21 @@ fn parse_cie_record(
         ));
     }
 
-    validate_cfi_program(eh_frame, cursor, record.end)?;
+    let cfi_start = cursor;
+    validate_cfi_program(eh_frame, cfi_start, record.end)?;
     Ok(OwnedCieRecord {
         offset: record.offset,
+        code_alignment_factor,
+        data_alignment_factor,
+        return_address_register,
         has_z_augmentation: augmentation.first() == Some(&b'z'),
         lsda_encoding,
         personality,
         fde_pointer_encoding,
         text_rel_base,
         data_rel_base,
+        cfi_start,
+        cfi_end: record.end,
     })
 }
 
@@ -1059,7 +1145,8 @@ fn parse_fde_record(
         }
         cursor = augmentation_end;
     }
-    validate_cfi_program(eh_frame, cursor, record.end)?;
+    let fde_cfi_start = cursor;
+    validate_cfi_program(eh_frame, fde_cfi_start, record.end)?;
     let pc_end = pc_begin
         .checked_add(pc_range)
         .ok_or(OwnedUnwindDecodeError::Overflow)?;
@@ -1071,6 +1158,13 @@ fn parse_fde_record(
         language_specific_data,
         text_rel_base: cie.text_rel_base,
         data_rel_base: cie.data_rel_base,
+        code_alignment_factor: cie.code_alignment_factor,
+        data_alignment_factor: cie.data_alignment_factor,
+        return_address_register: cie.return_address_register,
+        cie_cfi_start: cie.cfi_start,
+        cie_cfi_end: cie.cfi_end,
+        fde_cfi_start,
+        fde_cfi_end: record.end,
     })
 }
 
@@ -1195,6 +1289,324 @@ fn read_encoded_raw(
             }
         }),
         _ => Err(OwnedUnwindDecodeError::UnsupportedPointerEncoding(encoding)),
+    }
+}
+
+fn evaluate_cfi_row(
+    eh_frame: &[u8],
+    fde: OwnedFdeRecord,
+    ip: usize,
+) -> Result<OwnedCfiRow, OwnedUnwindDecodeError> {
+    if ip < fde.pc_begin || ip >= fde.pc_end {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+
+    let mut initial_state = CfiEvaluationState::new(fde.pc_begin);
+    let empty_state = initial_state;
+    apply_cfi_program(
+        eh_frame,
+        fde.cie_cfi_start,
+        fde.cie_cfi_end,
+        &fde,
+        None,
+        &mut initial_state,
+        &empty_state,
+    )?;
+    let mut state = initial_state;
+    apply_cfi_program(
+        eh_frame,
+        fde.fde_cfi_start,
+        fde.fde_cfi_end,
+        &fde,
+        Some(ip),
+        &mut state,
+        &initial_state,
+    )?;
+    if state.cfa_register == UNSET_DWARF_REGISTER {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+
+    Ok(OwnedCfiRow {
+        pc: ip,
+        cfa_register: state.cfa_register,
+        cfa_offset: state.cfa_offset,
+        return_address_register: fde.return_address_register,
+        saved_rip_offset: cfi_rule_offset(state.register_rule(X86_64_DWARF_RIP)),
+        saved_rbp_offset: cfi_rule_offset(state.register_rule(X86_64_DWARF_RBP)),
+        saved_rsp_offset: cfi_rule_offset(state.register_rule(X86_64_DWARF_RSP)),
+    })
+}
+
+fn apply_cfi_program(
+    input: &[u8],
+    mut cursor: usize,
+    end: usize,
+    fde: &OwnedFdeRecord,
+    target_ip: Option<usize>,
+    state: &mut CfiEvaluationState,
+    initial_state: &CfiEvaluationState,
+) -> Result<(), OwnedUnwindDecodeError> {
+    let mut saved_states = Vec::new();
+    while cursor < end {
+        let (opcode, next) = read_u8(input, cursor)?;
+        cursor = next;
+        match opcode & 0xc0 {
+            DW_CFA_ADVANCE_LOC => {
+                let delta = (opcode & 0x3f) as usize;
+                if advance_cfi_location(state, delta, fde.code_alignment_factor, target_ip)? {
+                    return Ok(());
+                }
+                continue;
+            }
+            DW_CFA_OFFSET => {
+                let register = (opcode & 0x3f) as usize;
+                let (offset, after_offset) = decode_uleb128(input, cursor)?;
+                cursor = after_offset;
+                set_register_offset(state, register, offset, fde.data_alignment_factor)?;
+                continue;
+            }
+            DW_CFA_RESTORE => {
+                let register = (opcode & 0x3f) as usize;
+                restore_register_rule(state, initial_state, register);
+                continue;
+            }
+            _ => {}
+        }
+
+        match opcode {
+            DW_CFA_NOP => {}
+            DW_CFA_ADVANCE_LOC1 => {
+                let (delta, next) = read_u8(input, cursor)?;
+                cursor = next;
+                if advance_cfi_location(
+                    state,
+                    delta as usize,
+                    fde.code_alignment_factor,
+                    target_ip,
+                )? {
+                    return Ok(());
+                }
+            }
+            DW_CFA_ADVANCE_LOC2 => {
+                let (delta, next) = read_u16(input, cursor)?;
+                cursor = next;
+                if advance_cfi_location(
+                    state,
+                    delta as usize,
+                    fde.code_alignment_factor,
+                    target_ip,
+                )? {
+                    return Ok(());
+                }
+            }
+            DW_CFA_ADVANCE_LOC4 => {
+                let (delta, next) = read_u32(input, cursor)?;
+                cursor = next;
+                if advance_cfi_location(
+                    state,
+                    delta as usize,
+                    fde.code_alignment_factor,
+                    target_ip,
+                )? {
+                    return Ok(());
+                }
+            }
+            DW_CFA_OFFSET_EXTENDED => {
+                let (register, after_register) = decode_uleb128(input, cursor)?;
+                let (offset, after_offset) = decode_uleb128(input, after_register)?;
+                cursor = after_offset;
+                set_register_offset(state, register, offset, fde.data_alignment_factor)?;
+            }
+            DW_CFA_RESTORE_EXTENDED => {
+                let (register, next) = decode_uleb128(input, cursor)?;
+                cursor = next;
+                restore_register_rule(state, initial_state, register);
+            }
+            DW_CFA_UNDEFINED => {
+                let (register, next) = decode_uleb128(input, cursor)?;
+                cursor = next;
+                set_register_rule(state, register, CfiRegisterRule::Undefined);
+            }
+            DW_CFA_SAME_VALUE => {
+                let (register, next) = decode_uleb128(input, cursor)?;
+                cursor = next;
+                set_register_rule(state, register, CfiRegisterRule::SameValue);
+            }
+            DW_CFA_REMEMBER_STATE => saved_states.push(*state),
+            DW_CFA_RESTORE_STATE => {
+                *state = saved_states
+                    .pop()
+                    .ok_or(OwnedUnwindDecodeError::MalformedRecord)?;
+            }
+            DW_CFA_DEF_CFA => {
+                let (register, after_register) = decode_uleb128(input, cursor)?;
+                let (offset, after_offset) = decode_uleb128(input, after_register)?;
+                cursor = after_offset;
+                state.cfa_register = register;
+                state.cfa_offset = usize_to_isize(offset)?;
+            }
+            DW_CFA_DEF_CFA_REGISTER => {
+                let (register, next) = decode_uleb128(input, cursor)?;
+                cursor = next;
+                state.cfa_register = register;
+            }
+            DW_CFA_DEF_CFA_OFFSET => {
+                let (offset, next) = decode_uleb128(input, cursor)?;
+                cursor = next;
+                state.cfa_offset = usize_to_isize(offset)?;
+            }
+            DW_CFA_DEF_CFA_EXPRESSION | DW_CFA_EXPRESSION | DW_CFA_VAL_EXPRESSION => {
+                return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(opcode));
+            }
+            DW_CFA_OFFSET_EXTENDED_SF => {
+                let (register, after_register) = decode_uleb128(input, cursor)?;
+                let (offset, after_offset) = decode_sleb128(input, after_register)?;
+                cursor = after_offset;
+                set_register_signed_offset(state, register, offset, fde.data_alignment_factor)?;
+            }
+            DW_CFA_DEF_CFA_SF => {
+                let (register, after_register) = decode_uleb128(input, cursor)?;
+                let (offset, after_offset) = decode_sleb128(input, after_register)?;
+                cursor = after_offset;
+                state.cfa_register = register;
+                state.cfa_offset = scale_signed_cfi_offset(offset, fde.data_alignment_factor)?;
+            }
+            DW_CFA_DEF_CFA_OFFSET_SF => {
+                let (offset, next) = decode_sleb128(input, cursor)?;
+                cursor = next;
+                state.cfa_offset = scale_signed_cfi_offset(offset, fde.data_alignment_factor)?;
+            }
+            DW_CFA_VAL_OFFSET => {
+                let (register, after_register) = decode_uleb128(input, cursor)?;
+                let (offset, after_offset) = decode_uleb128(input, after_register)?;
+                cursor = after_offset;
+                let offset = scale_unsigned_cfi_offset(offset, fde.data_alignment_factor)?;
+                set_register_rule(state, register, CfiRegisterRule::ValOffset(offset));
+            }
+            DW_CFA_VAL_OFFSET_SF => {
+                let (register, after_register) = decode_uleb128(input, cursor)?;
+                let (offset, after_offset) = decode_sleb128(input, after_register)?;
+                cursor = after_offset;
+                let offset = scale_signed_cfi_offset(offset, fde.data_alignment_factor)?;
+                set_register_rule(state, register, CfiRegisterRule::ValOffset(offset));
+            }
+            0x2e => {
+                cursor = decode_uleb128(input, cursor)?.1;
+            }
+            other => return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(other)),
+        }
+    }
+    if cursor == end {
+        Ok(())
+    } else {
+        Err(OwnedUnwindDecodeError::Truncated)
+    }
+}
+
+fn advance_cfi_location(
+    state: &mut CfiEvaluationState,
+    delta: usize,
+    code_alignment_factor: usize,
+    target_ip: Option<usize>,
+) -> Result<bool, OwnedUnwindDecodeError> {
+    let scaled = delta
+        .checked_mul(code_alignment_factor)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    let next_pc = state
+        .pc
+        .checked_add(scaled)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    if target_ip.is_some_and(|target| target < next_pc) {
+        return Ok(true);
+    }
+    state.pc = next_pc;
+    Ok(false)
+}
+
+fn set_register_offset(
+    state: &mut CfiEvaluationState,
+    register: usize,
+    offset: usize,
+    data_alignment_factor: isize,
+) -> Result<(), OwnedUnwindDecodeError> {
+    let scaled = scale_unsigned_cfi_offset(offset, data_alignment_factor)?;
+    set_register_rule(state, register, CfiRegisterRule::Offset(scaled));
+    Ok(())
+}
+
+fn set_register_signed_offset(
+    state: &mut CfiEvaluationState,
+    register: usize,
+    offset: isize,
+    data_alignment_factor: isize,
+) -> Result<(), OwnedUnwindDecodeError> {
+    let scaled = scale_signed_cfi_offset(offset, data_alignment_factor)?;
+    set_register_rule(state, register, CfiRegisterRule::Offset(scaled));
+    Ok(())
+}
+
+fn set_register_rule(state: &mut CfiEvaluationState, register: usize, rule: CfiRegisterRule) {
+    if register < MAX_TRACKED_DWARF_REGISTERS {
+        state.register_rules[register] = rule;
+    }
+}
+
+fn restore_register_rule(
+    state: &mut CfiEvaluationState,
+    initial_state: &CfiEvaluationState,
+    register: usize,
+) {
+    if register < MAX_TRACKED_DWARF_REGISTERS {
+        state.register_rules[register] = initial_state.register_rules[register];
+    }
+}
+
+fn scale_unsigned_cfi_offset(
+    offset: usize,
+    data_alignment_factor: isize,
+) -> Result<isize, OwnedUnwindDecodeError> {
+    usize_to_isize(offset)?
+        .checked_mul(data_alignment_factor)
+        .ok_or(OwnedUnwindDecodeError::Overflow)
+}
+
+fn scale_signed_cfi_offset(
+    offset: isize,
+    data_alignment_factor: isize,
+) -> Result<isize, OwnedUnwindDecodeError> {
+    offset
+        .checked_mul(data_alignment_factor)
+        .ok_or(OwnedUnwindDecodeError::Overflow)
+}
+
+fn usize_to_isize(value: usize) -> Result<isize, OwnedUnwindDecodeError> {
+    isize::try_from(value).map_err(|_| OwnedUnwindDecodeError::Overflow)
+}
+
+fn cfi_rule_offset(rule: CfiRegisterRule) -> Option<isize> {
+    match rule {
+        CfiRegisterRule::Offset(offset) => Some(offset),
+        CfiRegisterRule::Undefined | CfiRegisterRule::SameValue | CfiRegisterRule::ValOffset(_) => {
+            None
+        }
+    }
+}
+
+impl CfiEvaluationState {
+    fn new(pc: usize) -> Self {
+        Self {
+            pc,
+            cfa_register: UNSET_DWARF_REGISTER,
+            cfa_offset: 0,
+            register_rules: [CfiRegisterRule::Undefined; MAX_TRACKED_DWARF_REGISTERS],
+        }
+    }
+
+    fn register_rule(&self, register: usize) -> CfiRegisterRule {
+        self.register_rules
+            .get(register)
+            .copied()
+            .unwrap_or(CfiRegisterRule::Undefined)
     }
 }
 

@@ -6,7 +6,7 @@ use frankenlibc_abi::owned_unwind_abi::{
     _Unwind_GetLanguageSpecificData, _Unwind_GetRegionStart, _Unwind_GetTextRelBase, _Unwind_SetGR,
     _Unwind_SetIP, OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedUnwindDecodeError,
     UnwindContext, owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
-    owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
+    owned_evaluate_cfi_row_for_tests, owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
     owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
     owned_phase1_search_for_tests, owned_phase2_cleanup_for_tests,
     owned_summarize_eh_frame_for_tests, owned_validate_cfi_program_for_tests,
@@ -138,6 +138,54 @@ fn synthetic_eh_frame_fde_lookup_fails_closed_on_bad_cfi() {
 }
 
 #[test]
+fn synthetic_x86_64_cfi_row_advances_frame_pointer_cursor() {
+    let section_addr = 0x420000usize;
+    let pc_begin = 0x421000usize;
+    let pc_range = 0x40usize;
+    let common_frame_pointer_cfi = [0x41, 0x86, 0x02, 0x0e, 0x10, 0x43, 0x0d, 0x06];
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &common_frame_pointer_cfi);
+
+    let entry = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin)
+        .expect("entry row should decode")
+        .expect("entry row should resolve");
+    assert_eq!(entry.cfa_register, 7);
+    assert_eq!(entry.cfa_offset, 8);
+    assert_eq!(entry.return_address_register, 16);
+    assert_eq!(entry.saved_rip_offset, Some(-8));
+    assert_eq!(entry.saved_rbp_offset, None);
+
+    let after_push = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin + 1)
+        .expect("post-push row should decode")
+        .expect("post-push row should resolve");
+    assert_eq!(after_push.cfa_register, 7);
+    assert_eq!(after_push.cfa_offset, 16);
+    assert_eq!(after_push.saved_rip_offset, Some(-8));
+    assert_eq!(after_push.saved_rbp_offset, Some(-16));
+
+    let after_frame_pointer =
+        owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin + 4)
+            .expect("frame-pointer row should decode")
+            .expect("frame-pointer row should resolve");
+    assert_eq!(after_frame_pointer.cfa_register, 6);
+    assert_eq!(after_frame_pointer.cfa_offset, 16);
+    assert_eq!(after_frame_pointer.saved_rip_offset, Some(-8));
+    assert_eq!(after_frame_pointer.saved_rbp_offset, Some(-16));
+}
+
+#[test]
+fn synthetic_cfi_expressions_fail_closed_during_row_evaluation() {
+    let section_addr = 0x430000usize;
+    let pc_begin = 0x431000usize;
+    let pc_range = 0x20usize;
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &[0x10, 0x10, 0x01, 0x00]);
+
+    assert_eq!(
+        owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin),
+        Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(0x10))
+    );
+}
+
+#[test]
 fn phase1_search_invokes_personality_with_lsda_context() {
     let section_addr = 0x500000usize;
     let pc_begin = 0x502000usize;
@@ -234,20 +282,23 @@ fn phase2_cleanup_records_install_context_without_transfer() {
     let outcome =
         owned_phase2_cleanup_for_tests(&eh_frame, section_addr, pc_begin + 1, TEST_EXCEPTION_CLASS)
             .expect("phase2 cleanup should decode");
-    match outcome {
-        OwnedPhase2CleanupOutcome::InstallRequested {
-            frame_index,
-            ip,
-            general_register_0,
-            general_register_1,
-        } => {
-            assert_eq!(frame_index, 0);
-            assert_eq!(ip, TEST_LANDING_PAD);
-            assert_ne!(general_register_0, 0);
-            assert_eq!(general_register_1, 0x55aa);
-        }
-        other => panic!("expected install request, got {other:?}"),
-    }
+    assert!(
+        matches!(outcome, OwnedPhase2CleanupOutcome::InstallRequested { .. }),
+        "expected install request, got {outcome:?}"
+    );
+    let OwnedPhase2CleanupOutcome::InstallRequested {
+        frame_index,
+        ip,
+        general_register_0,
+        general_register_1,
+    } = outcome
+    else {
+        return;
+    };
+    assert_eq!(frame_index, 0);
+    assert_eq!(ip, TEST_LANDING_PAD);
+    assert_ne!(general_register_0, 0);
+    assert_eq!(general_register_1, 0x55aa);
 }
 
 #[test]
@@ -349,6 +400,20 @@ fn compiled_test_binary_eh_frame_has_lookupable_fde() {
 
     assert_eq!(found, first);
     assert!(found.pc_end > found.pc_begin);
+
+    let row = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, first.pc_begin)
+        .expect("compiled FDE CFI should evaluate")
+        .expect("first FDE start should produce a row");
+    assert_eq!(row.return_address_register, 16);
+    assert_eq!(row.saved_rip_offset, Some(-8));
+    assert!(
+        matches!(row.cfa_register, 6 | 7),
+        "compiled row should use x86_64 RBP/RSP as CFA register, got {row:?}"
+    );
+    assert!(
+        row.cfa_offset >= core::mem::size_of::<usize>() as isize,
+        "compiled row should carry a caller-frame CFA offset, got {row:?}"
+    );
 }
 
 fn synthetic_eh_frame(
@@ -368,7 +433,7 @@ fn synthetic_eh_frame(
     cie_body.push(16);
     encode_uleb(1, &mut cie_body);
     cie_body.push(0x1b);
-    cie_body.extend_from_slice(&[0x0c, 0x07, 0x08]);
+    cie_body.extend_from_slice(&[0x0c, 0x07, 0x08, 0x90, 0x01]);
     bytes.extend_from_slice(&(cie_body.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&cie_body);
 
