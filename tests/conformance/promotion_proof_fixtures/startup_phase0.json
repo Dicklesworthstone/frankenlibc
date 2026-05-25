@@ -1,0 +1,111 @@
+{
+  "version": "v1",
+  "family": "startup_ops",
+  "captured_at": "2026-05-25T00:00:00Z",
+  "description": "Focused promotion proof fixture slice for bd-m2xl0y.",
+  "cases": [
+    {
+      "name": "startup_phase0_returns_strict",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": {},
+      "expected_output": "PHASE0_COMPLETE",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Phase-0 initialization completes successfully"
+    },
+    {
+      "name": "startup_phase0_returns_hardened",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": {},
+      "expected_output": "PHASE0_COMPLETE",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "startup_phase0_rejects_unterminated_auxv_strict",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": {
+        "auxv": "unterminated_pairs_max_scan",
+        "argc": 1,
+        "argv": "valid_ptr"
+      },
+      "expected_output": "DENY_INVALID_STARTUP_CONTEXT",
+      "expected_errno": 7,
+      "mode": "strict",
+      "note": "Auxv scan without AT_NULL terminator must deterministically deny with E2BIG"
+    },
+    {
+      "name": "startup_phase0_rejects_unterminated_auxv_hardened",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": {
+        "auxv": "unterminated_pairs_max_scan",
+        "argc": 1,
+        "argv": "valid_ptr"
+      },
+      "expected_output": "DENY_INVALID_STARTUP_CONTEXT",
+      "expected_errno": 7,
+      "mode": "hardened",
+      "note": "Hardened mode keeps startup deny policy deterministic for invalid auxv contexts"
+    },
+    {
+      "name": "startup_phase0_rejects_unterminated_argv_strict",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": {
+        "argv": "unterminated_ptrs_max_scan",
+        "argc": 1,
+        "auxv": "terminated_nonsecure"
+      },
+      "expected_output": "DENY_INVALID_STARTUP_CONTEXT",
+      "expected_errno": 7,
+      "mode": "strict",
+      "note": "Argv scan without NULL terminator must deny with E2BIG"
+    },
+    {
+      "name": "startup_phase0_rejects_unterminated_argv_hardened",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": {
+        "argv": "unterminated_ptrs_max_scan",
+        "argc": 1,
+        "auxv": "terminated_nonsecure"
+      },
+      "expected_output": "DENY_INVALID_STARTUP_CONTEXT",
+      "expected_errno": 7,
+      "mode": "hardened"
+    },
+    {
+      "name": "startup_phase0_rejects_unterminated_envp_strict",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": {
+        "argv": "valid_ptr",
+        "envp": "unterminated_ptrs_max_scan",
+        "argc": 1,
+        "auxv": "terminated_nonsecure"
+      },
+      "expected_output": "DENY_INVALID_STARTUP_CONTEXT",
+      "expected_errno": 7,
+      "mode": "strict",
+      "note": "Envp scan without NULL terminator must deny with E2BIG"
+    },
+    {
+      "name": "startup_phase0_rejects_unterminated_envp_hardened",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": {
+        "argv": "valid_ptr",
+        "envp": "unterminated_ptrs_max_scan",
+        "argc": 1,
+        "auxv": "terminated_nonsecure"
+      },
+      "expected_output": "DENY_INVALID_STARTUP_CONTEXT",
+      "expected_errno": 7,
+      "mode": "hardened"
+    }
+  ]
+}
