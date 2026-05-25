@@ -5,9 +5,23 @@
   "current_state": {
     "implementation": "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
     "mode": "abort-mode stubs",
-    "behavior": "All _Unwind_* functions call abort() or return error",
+    "behavior": "Opt-in stubs only: backtrace returns _URC_END_OF_STACK, DeleteException is a no-op, accessor/base routines return zero or null, and propagation/context mutation routines abort.",
     "feature_gate": "standalone,owned-unwind-stub"
   },
+  "current_stub_surface": [
+    "_Unwind_Backtrace",
+    "_Unwind_DeleteException",
+    "_Unwind_GetDataRelBase",
+    "_Unwind_GetIP",
+    "_Unwind_GetIPInfo",
+    "_Unwind_GetLanguageSpecificData",
+    "_Unwind_GetRegionStart",
+    "_Unwind_GetTextRelBase",
+    "_Unwind_RaiseException",
+    "_Unwind_Resume",
+    "_Unwind_SetGR",
+    "_Unwind_SetIP"
+  ],
   "required_entrypoints": {
     "_Unwind_RaiseException": {
       "signature": "fn(exception: *mut _Unwind_Exception) -> _Unwind_Reason_Code",
@@ -33,6 +47,10 @@
       "signature": "fn(context: *mut _Unwind_Context) -> _Unwind_Ptr",
       "purpose": "Get instruction pointer from context"
     },
+    "_Unwind_GetIPInfo": {
+      "signature": "fn(context: *mut _Unwind_Context, ip_before_insn: *mut c_int) -> _Unwind_Ptr",
+      "purpose": "Get instruction pointer and report whether it points before the call-site instruction"
+    },
     "_Unwind_SetIP": {
       "signature": "fn(context: *mut _Unwind_Context, ip: _Unwind_Ptr)",
       "purpose": "Set instruction pointer (for landing pad)"
@@ -44,6 +62,14 @@
     "_Unwind_GetRegionStart": {
       "signature": "fn(context: *mut _Unwind_Context) -> _Unwind_Ptr",
       "purpose": "Get function start address"
+    },
+    "_Unwind_GetDataRelBase": {
+      "signature": "fn(context: *mut _Unwind_Context) -> _Unwind_Word",
+      "purpose": "Get data-relative base for DW_EH_PE_datarel personality and LSDA encodings"
+    },
+    "_Unwind_GetTextRelBase": {
+      "signature": "fn(context: *mut _Unwind_Context) -> _Unwind_Word",
+      "purpose": "Get text-relative base for DW_EH_PE_textrel personality and LSDA encodings"
     },
     "_Unwind_Backtrace": {
       "signature": "fn(callback: _Unwind_Trace_Fn, arg: *mut c_void) -> _Unwind_Reason_Code",
@@ -72,7 +98,7 @@
     "__register_frame_info": "Register FDE with object info",
     "__deregister_frame": "Unregister FDE on dlclose",
     "__deregister_frame_info": "Unregister with object info",
-    "dl_find_object": "Query loaded objects for unwind info"
+    "_dl_find_object": "Query loaded objects for unwind info and feed FDE discovery for dynamically loaded DSOs"
   },
   "failure_modes": {
     "no_personality": "Return _URC_FATAL_PHASE1_ERROR",
@@ -93,7 +119,9 @@
     }
   },
   "acceptance_checklist_for_bd_06jgi2_3": [
+    "Current 12-symbol owned_unwind_abi.rs stub surface reconciled against standalone_owned_unwinder_symbol_surface.v1.json",
     "All _Unwind_* entrypoints implemented (not stubs)",
+    "_Unwind_GetGR provided or compiler/personality fixtures prove no register-read path is required",
     "C++ exception thrown in test binary catches correctly",
     "Stack unwinding visits correct frames",
     "Destructors called during unwinding",
