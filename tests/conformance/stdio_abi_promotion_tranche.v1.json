@@ -1,0 +1,92 @@
+{
+  "schema_version": "stdio_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-stdio-abi-promotion-tranche-v1",
+  "description": "Bounded stdio_abi promotion tranche proving fscanf and __isoc99_wscanf as native scanf-family implementations whose host-delegation census hits are libio registry, stream read, alias, and errno bridge artifacts.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "stdio_abi_source": "crates/frankenlibc-abi/src/stdio_abi.rs",
+    "isoc_abi_source": "crates/frankenlibc-abi/src/isoc_abi.rs",
+    "wchar_abi_source": "crates/frankenlibc-abi/src/wchar_abi.rs",
+    "harness_tests": [
+      "crates/frankenlibc-harness/tests/stdio_libio_wave04_conformance_test.rs::stdio_libio_wave04_executes_via_isolated_harness",
+      "crates/frankenlibc-harness/tests/stdio_libio_wave02_conformance_test.rs::stdio_libio_wave02_executes_via_isolated_harness"
+    ],
+    "fixtures": [
+      "tests/conformance/fixtures/stdio_libio_wave04.json::fscanf_controlled_int_strict",
+      "tests/conformance/fixtures/stdio_libio_wave04.json::fscanf_controlled_int_hardened",
+      "tests/conformance/fixtures/stdio_libio_wave02.json::isoc99_wscanf_empty_format_strict",
+      "tests/conformance/fixtures/stdio_libio_wave02.json::isoc99_wscanf_empty_format_hardened"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-stdio-scanf-libio-registry-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "_IO_list_all",
+      "__errno_location",
+      "bootstrap_host_libio_exports",
+      "bootstrap_host_symbols",
+      "ensure_host_libio_exit_safe",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "read_stream_for_scanf",
+      "registry",
+      "set_abi_errno",
+      "sys_read_fd",
+      "vwscanf",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic",
+      "resolve_host_symbol_raw_literal"
+    ],
+    "rationale": "The fscanf ABI entrypoint reads FrankenLibC-managed streams through the native libio registry and parses with scanf_core. The __isoc99_wscanf entrypoint is a C99 alias into FrankenLibC's native wide scanf path, which narrows the wide format and delegates writes to the shared native scanf value writer. The remaining census symbols are libio registry/bootstrap, raw fd reads, alias reachability, and errno propagation, not host libc scanf semantic delegation."
+  },
+  "symbols": [
+    {
+      "symbol": "__isoc99_wscanf",
+      "module": "stdio_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc99_wscanf -> crates/frankenlibc-abi/src/wchar_abi.rs::vwscanf",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "fscanf",
+      "module": "stdio_abi",
+      "core_path": "crates/frankenlibc-abi/src/stdio_abi.rs::fscanf",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}

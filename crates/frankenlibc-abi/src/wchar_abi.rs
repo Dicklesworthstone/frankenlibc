@@ -3022,6 +3022,15 @@ pub unsafe extern "C" fn vfwprintf(
 // wscanf family — Implemented (native scanf engine + wide conversion)
 // ===========================================================================
 
+unsafe fn wide_scanf_format_cstr(format: *const libc::wchar_t) -> Option<std::ffi::CString> {
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    if fmt_narrow.is_empty() {
+        None
+    } else {
+        Some(std::ffi::CString::new(fmt_narrow).unwrap_or_default())
+    }
+}
+
 /// Native `swscanf`: scan from wide string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn swscanf(
@@ -3032,9 +3041,10 @@ pub unsafe extern "C" fn swscanf(
     if s.is_null() || format.is_null() {
         return libc::EOF;
     }
+    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
+        return 0;
+    };
     let input = unsafe { wide_input_to_narrow(s) };
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
         return libc::EOF;
     };
@@ -3052,9 +3062,10 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> 
     if format.is_null() {
         return libc::EOF;
     }
+    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
+        return 0;
+    };
     let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin_stream_id(), 4096);
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
         return libc::EOF;
     };
@@ -3076,10 +3087,11 @@ pub unsafe extern "C" fn fwscanf(
     if stream.is_null() || format.is_null() {
         return libc::EOF;
     }
+    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
+        return 0;
+    };
     let id = stream as usize;
     let input = super::stdio_abi::read_stream_for_scanf(id, 4096);
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
         return libc::EOF;
     };
@@ -3101,9 +3113,10 @@ pub unsafe extern "C" fn vswscanf(
     if s.is_null() || format.is_null() || ap.is_null() {
         return libc::EOF;
     }
+    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
+        return 0;
+    };
     let input = unsafe { wide_input_to_narrow(s) };
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
         return libc::EOF;
     };
@@ -3121,9 +3134,10 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
     if format.is_null() || ap.is_null() {
         return libc::EOF;
     }
+    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
+        return 0;
+    };
     let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin_stream_id(), 4096);
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
         return libc::EOF;
     };
@@ -3145,10 +3159,11 @@ pub unsafe extern "C" fn vfwscanf(
     if stream.is_null() || format.is_null() || ap.is_null() {
         return libc::EOF;
     }
+    let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
+        return 0;
+    };
     let id = stream as usize;
     let input = super::stdio_abi::read_stream_for_scanf(id, 4096);
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
         return libc::EOF;
     };

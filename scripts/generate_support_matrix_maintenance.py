@@ -36,6 +36,7 @@ PROMOTION_PROOF_MANIFEST_PATHS = (
     REPO_ROOT / "tests" / "conformance" / "dirent_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "grp_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "inet_abi_promotion_tranche.v1.json",
+    REPO_ROOT / "tests" / "conformance" / "stdio_abi_promotion_tranche.v1.json",
 )
 HIGH_IMPACT_RATCHET_MODULES = (
     "math_abi",
@@ -55,6 +56,7 @@ ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS = {
     "native-dirent64-alias-with-errno-bridge",
     "native-group-files-with-errno-bridge",
     "native-interface-index-ioctl-with-errno-bridge",
+    "native-stdio-scanf-libio-registry-with-errno-bridge",
 }
 
 # Patterns indicating actual host libc call expressions.

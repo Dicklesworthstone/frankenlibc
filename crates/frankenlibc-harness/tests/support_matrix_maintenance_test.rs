@@ -240,6 +240,7 @@ const RESOLV_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["getprotobyname", "getprotob
 const DIRENT_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["readdir64"];
 const GRP_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["getgrent"];
 const INET_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["if_indextoname", "if_nametoindex"];
+const STDIO_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__isoc99_wscanf", "fscanf"];
 
 #[test]
 fn maintenance_report_generates_successfully() {
@@ -1092,6 +1093,82 @@ fn inet_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
 }
 
 #[test]
+fn stdio_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/stdio_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("stdio_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-stdio-scanf-libio-registry-with-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "_IO_list_all",
+        "__errno_location",
+        "read_stream_for_scanf",
+        "registry",
+        "sys_read_fd",
+        "vwscanf",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "stdio_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        STDIO_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("stdio_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
 fn generated_report_accepts_math_abi_errno_bridge_tranche() {
     let generated_path = unique_generated_report_path("math_abi_promotion_tranche");
     let output = generate_maintenance_report(&generated_path);
@@ -1358,6 +1435,49 @@ fn generated_report_accepts_inet_abi_interface_index_tranche() {
 }
 
 #[test]
+fn generated_report_accepts_stdio_abi_scanf_libio_tranche() {
+    let generated_path = unique_generated_report_path("stdio_abi_promotion_tranche");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in STDIO_PROMOTION_TRANCHE_SYMBOLS {
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after stdio ABI proof: {rows:?}"
+        );
+        let proof_warning_present = rows.iter().any(|issue| {
+            issue["warnings"].as_array().is_some_and(|warnings| {
+                warnings.iter().any(|warning| {
+                    warning.as_str()
+                        == Some("host delegation census covered by promotion proof manifest")
+                })
+            })
+        });
+        let alias_locator_pending = *symbol == "__isoc99_wscanf"
+            && rows
+                .iter()
+                .any(|issue| issue["issue_class"].as_str() == Some("missing_body"));
+        assert!(
+            proof_warning_present || alias_locator_pending,
+            "{symbol} should keep either a proof-manifest warning or the known alias locator finding"
+        );
+    }
+}
+
+#[test]
 fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
     let triage_path = generate_promotion_triage_report();
     let previous_report_path = unique_generated_report_path("fixture_ratchet_selected_previous");
@@ -1496,6 +1616,14 @@ fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
             >= INET_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
         "inet_abi proof manifest should expose strict+hardened proven symbols"
     );
+    let stdio_proofs = &ratchet["proof_manifest_by_module"]["stdio_abi"];
+    assert!(
+        stdio_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= STDIO_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "stdio_abi proof manifest should expose strict+hardened proven symbols"
+    );
     let malloc_violations = ratchet["module_deltas"]["malloc_abi"]["violating_symbols"]
         .as_array()
         .cloned()
@@ -1533,6 +1661,18 @@ fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
     for symbol in INET_PROMOTION_TRANCHE_SYMBOLS {
         assert!(
             !inet_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let stdio_violations = ratchet["module_deltas"]["stdio_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in STDIO_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !stdio_violations
                 .iter()
                 .any(|violation| violation.as_str() == Some(*symbol)),
             "{symbol} should be proofed instead of counted as missing fixture evidence"
