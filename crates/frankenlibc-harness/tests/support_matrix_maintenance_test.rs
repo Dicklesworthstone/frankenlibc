@@ -399,9 +399,14 @@ const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "putwchar_unlocked",
     "sendfile64",
     "truncate64",
+    "wcsftime_l",
     "wcsnrtombs",
     "wcstoimax",
+    "wcstol_l",
+    "wcstoll_l",
     "wcstombs",
+    "wcstoul_l",
+    "wcstoull_l",
     "wcstoumax",
     "wctomb",
 ];
@@ -420,9 +425,14 @@ const UNISTD_CROSS_MODULE_LOCATOR_PENDING_SYMBOLS: &[&str] = &[
     "putwc",
     "putwc_unlocked",
     "putwchar_unlocked",
+    "wcsftime_l",
     "wcsnrtombs",
     "wcstoimax",
+    "wcstol_l",
+    "wcstoll_l",
     "wcstombs",
+    "wcstoul_l",
+    "wcstoull_l",
     "wcstoumax",
     "wctomb",
 ];
@@ -1938,7 +1948,7 @@ fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
     assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
     assert_eq!(
         manifest["policy"]["classification"].as_str(),
-        Some("native-unistd-stackfail-lfs-wchar-stream-process-getopt-errno-bridge")
+        Some("native-unistd-stackfail-lfs-wchar-stream-locale-process-getopt-errno-bridge")
     );
 
     let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]

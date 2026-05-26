@@ -1208,12 +1208,44 @@ fn mbrtoc16_decodes_ascii() {
 // ── Locale _l conversion variants ───────────────────────────────────────────
 
 #[test]
-fn wcstol_l_null_locale_matches_base() {
-    let input = wstr(b"99");
+fn wcsto_l_null_locale_variants_match_base() {
+    let signed = wstr(b"-123x");
+    let unsigned = wstr(b"255z");
     let mut end: *mut libc::wchar_t = std::ptr::null_mut();
     let loc = std::ptr::null_mut();
-    let v = unsafe { wcstol_l(input.as_ptr() as *const libc::wchar_t, &mut end, 10, loc) };
-    assert_eq!(v, 99);
+
+    let long = unsafe { wcstol_l(signed.as_ptr() as *const libc::wchar_t, &mut end, 10, loc) };
+    assert_eq!(long, -123);
+    assert_eq!(
+        unsafe { end.offset_from(signed.as_ptr() as *mut libc::wchar_t) },
+        4
+    );
+
+    end = std::ptr::null_mut();
+    let long_long =
+        unsafe { wcstoll_l(signed.as_ptr() as *const libc::wchar_t, &mut end, 10, loc) };
+    assert_eq!(long_long, -123);
+    assert_eq!(
+        unsafe { end.offset_from(signed.as_ptr() as *mut libc::wchar_t) },
+        4
+    );
+
+    end = std::ptr::null_mut();
+    let ulong = unsafe { wcstoul_l(unsigned.as_ptr() as *const libc::wchar_t, &mut end, 10, loc) };
+    assert_eq!(ulong, 255);
+    assert_eq!(
+        unsafe { end.offset_from(unsigned.as_ptr() as *mut libc::wchar_t) },
+        3
+    );
+
+    end = std::ptr::null_mut();
+    let ulong_long =
+        unsafe { wcstoull_l(unsigned.as_ptr() as *const libc::wchar_t, &mut end, 10, loc) };
+    assert_eq!(ulong_long, 255);
+    assert_eq!(
+        unsafe { end.offset_from(unsigned.as_ptr() as *mut libc::wchar_t) },
+        3
+    );
 }
 
 #[test]
@@ -1628,6 +1660,52 @@ fn wcsftime_formats_via_native_bridge() {
             out.len(),
             fmt.as_ptr(),
             &tm as *const libc::tm as *const c_void,
+        )
+    };
+    assert_eq!(written, 10);
+    let rendered: Vec<u32> = out[..written].iter().map(|&ch| ch as u32).collect();
+    assert_eq!(
+        rendered,
+        "2026-01-02".bytes().map(u32::from).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn wcsftime_l_null_locale_matches_base() {
+    let mut out = [0_i32; 32];
+    let fmt: [libc::wchar_t; 9] = [
+        b'%' as libc::wchar_t,
+        b'Y' as libc::wchar_t,
+        b'-' as libc::wchar_t,
+        b'%' as libc::wchar_t,
+        b'm' as libc::wchar_t,
+        b'-' as libc::wchar_t,
+        b'%' as libc::wchar_t,
+        b'd' as libc::wchar_t,
+        0,
+    ];
+
+    let tm = libc::tm {
+        tm_sec: 5,
+        tm_min: 4,
+        tm_hour: 3,
+        tm_mday: 2,
+        tm_mon: 0,
+        tm_year: 126,
+        tm_wday: 5,
+        tm_yday: 1,
+        tm_isdst: 0,
+        tm_gmtoff: 0,
+        tm_zone: std::ptr::null(),
+    };
+
+    let written = unsafe {
+        wcsftime_l(
+            out.as_mut_ptr(),
+            out.len(),
+            fmt.as_ptr(),
+            &tm as *const libc::tm as *const c_void,
+            std::ptr::null_mut(),
         )
     };
     assert_eq!(written, 10);
