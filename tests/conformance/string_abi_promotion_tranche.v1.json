@@ -1,0 +1,607 @@
+{
+  "schema_version": "string_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-string-abi-promotion-tranche-v1",
+  "description": "Bounded promotion proof for string_abi numeric conversion aliases, GNU argz/envz helpers, globfree release, and old GNU regex entrypoints whose implementations are native Rust ABI adaptation with expected errno and allocator bridge reachability.",
+  "rationale": "The __strto* rows forward into FrankenLibC stdlib conversion entrypoints, the argz/envz rows rebuild owned buffers through FrankenLibC allocation helpers, globfree releases FrankenLibC-owned glob vectors, and the re_* rows execute the native regex core while optionally allocating legacy register storage. Host-delegation census hits are bootstrap, errno, allocator, or intra-module compatibility helpers, not direct semantic call-through for the promoted string API bodies.",
+  "source_artifacts": [
+    "support_matrix.json",
+    "tests/conformance/fixtures/string_memory_hotpaths_wave05.json",
+    "tests/conformance/fixtures/string_memory_hotpaths_wave06.json",
+    "tests/conformance/fixtures/string_memory_hotpaths_wave07.json",
+    "tests/conformance/fixtures/string_memory_hotpaths_wave08.json",
+    "tests/conformance/fixtures/string_memory_hotpaths_wave10.json",
+    "tests/conformance/fixtures/string_memory_hotpaths_wave12.json",
+    "tests/conformance/host_delegation_census.v1.json",
+    "crates/frankenlibc-abi/src/string_abi.rs",
+    "crates/frankenlibc-abi/src/stdlib_abi.rs",
+    "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave05_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave06_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave07_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave08_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave10_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave12_conformance_test.rs",
+    "crates/frankenlibc_conformance/src/lib.rs"
+  ],
+  "test_evidence": [
+    {
+      "crate": "frankenlibc-harness",
+      "test": "string_memory_hotpaths_wave05_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "string_memory_hotpaths_wave06_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "string_memory_hotpaths_wave07_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "string_memory_hotpaths_wave08_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "string_memory_hotpaths_wave10_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "string_memory_hotpaths_wave12_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    }
+  ],
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "classification": "native-string-conversion-argz-envz-glob-regex-allocator-errno-bridge",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "argz_add",
+      "argz_add_bytes",
+      "argz_delete",
+      "bootstrap_calloc_passthrough",
+      "bootstrap_free_passthrough",
+      "bootstrap_host_symbols",
+      "bootstrap_malloc_passthrough",
+      "calloc",
+      "free",
+      "host_calloc_raw",
+      "host_errno_location_raw",
+      "host_free_raw",
+      "host_malloc_raw",
+      "legacy_regex_write_regs",
+      "load_host_symbol",
+      "malloc",
+      "native_libc_calloc",
+      "native_libc_free",
+      "native_libc_malloc",
+      "raw_free",
+      "re_match_2",
+      "re_search_2",
+      "replace_owned_argz_buffer",
+      "resolve_host_allocator_symbol",
+      "set_abi_errno",
+      "strtod",
+      "strtof",
+      "strtol",
+      "strtol_l",
+      "strtoll",
+      "strtoll_l",
+      "strtoul",
+      "strtoul_l",
+      "strtoull",
+      "strtoull_l",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_allocator_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ]
+  },
+  "symbols": [
+    {
+      "symbol": "__strtod_internal",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtod_internal -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtod",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtod_internal_decimal_tail",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtod_l",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtod_l -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtod",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtod_l_negative_decimal",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtof_internal",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtof_internal -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtof",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtof_internal_decimal_tail",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtof_l",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtof_l -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtof",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtof_l_exponent",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtol_internal",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtol_internal -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtol",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtol_internal_hex_auto_base",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtol_l",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtol_l -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtol_l",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtol_l_negative_decimal_tail",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtold_internal",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtold_internal -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtod",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtold_internal_decimal_tail",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtold_l",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtold_l -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtod",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtold_l_negative_decimal_tail",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtoll_internal",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtoll_internal -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtoll",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtoll_internal_hex_prefix",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtoll_l",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtoll_l -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtoll_l",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtoll_l_min_value",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtoul_internal",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtoul_internal -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtoul",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtoul_internal_octal_auto",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtoul_l",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtoul_l -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtoul_l",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtoul_l_hex_auto",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtoull_internal",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtoull_internal -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtoull",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtoull_internal_u64_max",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__strtoull_l",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::__strtoull_l -> crates/frankenlibc-abi/src/stdlib_abi.rs::strtoull_l",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave05.json::strtoull_l_binary_plus",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "argz_append",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::argz_append -> crates/frankenlibc-abi/src/malloc_abi.rs::malloc",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave07.json::argz_append_two_vectors",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "argz_delete",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::argz_delete",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave07.json::argz_delete_middle_entry",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "argz_insert",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::argz_insert -> crates/frankenlibc-abi/src/malloc_abi.rs::malloc",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave07.json::argz_insert_before_entry",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "argz_replace",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::argz_replace -> crates/frankenlibc-abi/src/malloc_abi.rs::malloc",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave07.json::argz_replace_duplicate_entries",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "envz_remove",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::envz_remove -> crates/frankenlibc-abi/src/string_abi.rs::argz_delete",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave08.json::envz_remove_existing_name",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "envz_strip",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::envz_strip -> crates/frankenlibc-abi/src/string_abi.rs::argz_delete",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave08.json::envz_strip_names_without_values",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "globfree",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::globfree -> crates/frankenlibc-abi/src/malloc_abi.rs::raw_free",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave10.json::globfree_releases_path_vector",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "re_match",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::re_match -> crates/frankenlibc-abi/src/string_abi.rs::re_match_2 -> frankenlibc_core::string::regex",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave12.json::re_match_reports_exact_match_length",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "re_match_2",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::re_match_2 -> frankenlibc_core::string::regex",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave12.json::re_match_2_reports_split_match_length",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "re_search",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::re_search -> crates/frankenlibc-abi/src/string_abi.rs::re_search_2 -> frankenlibc_core::string::regex",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave12.json::re_search_reports_offset",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "re_search_2",
+      "module": "string_abi",
+      "core_path": "crates/frankenlibc-abi/src/string_abi.rs::re_search_2 -> frankenlibc_core::string::regex",
+      "fixture": "tests/conformance/fixtures/string_memory_hotpaths_wave12.json::re_search_2_reports_split_offset",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
