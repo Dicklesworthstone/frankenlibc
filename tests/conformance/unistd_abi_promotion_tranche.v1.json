@@ -1,0 +1,110 @@
+{
+  "schema_version": "unistd_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-unistd-abi-promotion-tranche-v1",
+  "description": "Bounded promotion proof for the remaining unistd_abi prove-now rows that already have strict and hardened fixture evidence.",
+  "rationale": "The promoted rows cover the GNU stack protector abort contract and the LP64 ftruncate64 alias contract. __stack_chk_fail is cataloged in the support matrix under unistd_abi but implemented in fortify_abi; its fixture proof binds the abort behavior while the host-delegation census hits are abort, libio exit-safety, errno, and signal-mask helper artifacts. ftruncate64 aliases FrankenLibC's native ftruncate syscall path; its census hits are errno/bootstrap helpers plus the alias reachability to ftruncate, not a host-glibc semantic call-through.",
+  "source_artifacts": [
+    "support_matrix.json",
+    "tests/conformance/fixtures/unistd_process_filesystem_wave02.json",
+    "tests/conformance/fixtures/unistd_process_filesystem_wave13.json",
+    "tests/conformance/host_delegation_census.v1.json",
+    "crates/frankenlibc-abi/src/fortify_abi.rs",
+    "crates/frankenlibc-abi/src/unistd_abi.rs",
+    "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave02_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave13_conformance_test.rs",
+    "crates/frankenlibc_conformance/src/lib.rs"
+  ],
+  "test_evidence": [
+    {
+      "crate": "frankenlibc-harness",
+      "test": "unistd_process_filesystem_wave02_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "unistd_process_filesystem_wave13_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    }
+  ],
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "classification": "native-unistd-stackfail-lfs-errno-bridge",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "_IO_list_all",
+      "__errno_location",
+      "abort",
+      "bootstrap_host_libio_exports",
+      "bootstrap_host_symbols",
+      "ensure_host_libio_exit_safe",
+      "fflush_managed_only_for_abort",
+      "flush_stream",
+      "ftruncate",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "registry",
+      "set_abi_errno",
+      "sigaddset",
+      "sigemptyset",
+      "sys_write_fd",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic",
+      "resolve_host_symbol_raw_literal"
+    ]
+  },
+  "symbols": [
+    {
+      "symbol": "__stack_chk_fail",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__stack_chk_fail",
+      "fixture": "tests/conformance/fixtures/unistd_process_filesystem_wave02.json::__stack_chk_fail_strict_and_hardened",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "ftruncate64",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::ftruncate64",
+      "fixture": "tests/conformance/fixtures/unistd_process_filesystem_wave13.json::ftruncate64_invalid_fd_strict_and_hardened",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
