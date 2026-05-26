@@ -1305,6 +1305,10 @@ pub fn execute_fixture_case(
         | "__iswctype_l"
         | "__iswdigit_l"
         | "__iswgraph_l" => execute_wchar_locale_encoding_wave02_case(function, inputs, mode),
+        // wchar_abi promotion tranche
+        "mbrtoc16" | "open_wmemstream" | "wcsdup" => {
+            execute_wchar_abi_promotion_tranche_case(function, inputs, mode)
+        }
         // wchar / locale encoding wave-03
         "__iswlower_l" | "__iswprint_l" | "__iswpunct_l" | "__iswspace_l" | "__iswupper_l"
         | "__iswxdigit_l" | "__toascii_l" | "__tolower_l" | "__toupper_l" | "__towctrans_l"
@@ -27601,6 +27605,106 @@ fn wchar_locale_iswgraph_l_actual() -> String {
     }
 }
 
+fn execute_wchar_abi_promotion_tranche_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "wchar ABI promotion fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = wchar_abi_promotion_tranche_actual(function, inputs)?;
+    Ok(non_host_execution(wchar_locale_encoding_wave01_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn wchar_abi_promotion_tranche_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("mbrtoc16", "ascii_x_decodes_to_char16") => Ok(wchar_abi_mbrtoc16_ascii_actual()),
+        ("open_wmemstream", "flushes_two_wide_chars") => {
+            Ok(wchar_abi_open_wmemstream_two_chars_actual())
+        }
+        ("wcsdup", "duplicates_ascii_wide_string") => Ok(wchar_abi_wcsdup_ascii_actual()),
+        _ => Err(format!(
+            "unsupported wchar ABI promotion fixture: function={function}, scenario={scenario}"
+        )),
+    }
+}
+
+fn wchar_abi_mbrtoc16_ascii_actual() -> String {
+    let mut c16: u16 = 0;
+    let input = [b'X' as c_char];
+    // SAFETY: `input` is a one-byte ASCII sequence and `c16` is writable for
+    // the produced char16_t code unit. A null mbstate_t requests default state.
+    let n = unsafe {
+        frankenlibc_abi::wchar_abi::mbrtoc16(&mut c16, input.as_ptr(), 1, std::ptr::null_mut())
+    };
+    format!("MBRTOC16_ASCII_X_N_{n}_C16_{c16}")
+}
+
+fn wchar_abi_open_wmemstream_two_chars_actual() -> String {
+    let mut buf: *mut u32 = std::ptr::null_mut();
+    let mut size = 0usize;
+    // SAFETY: `buf` and `size` are writable output locations for the stream.
+    let stream = unsafe { frankenlibc_abi::wchar_abi::open_wmemstream(&mut buf, &mut size) };
+    if stream.is_null() {
+        return String::from("OPEN_WMEMSTREAM_NULL");
+    }
+
+    // SAFETY: `stream` is a live FrankenLibC stream returned above.
+    let fileno = unsafe { frankenlibc_abi::stdio_abi::fileno(stream) };
+    // SAFETY: writing two BMP code points to a live wide memory stream is valid.
+    let first_put = unsafe { frankenlibc_abi::wchar_abi::fputwc('A' as u32, stream) };
+    let second_put = unsafe { frankenlibc_abi::wchar_abi::fputwc('B' as u32, stream) };
+    // SAFETY: flushing publishes the memory stream buffer and keeps it live.
+    let flush = unsafe { frankenlibc_abi::stdio_abi::fflush(stream) };
+    let observed_size = size;
+    let (first, second, nul) = if buf.is_null() {
+        (u32::MAX, u32::MAX, u32::MAX)
+    } else {
+        // SAFETY: after a successful flush, `buf` points to size+1 wide chars.
+        unsafe { (*buf, *buf.add(1), *buf.add(2)) }
+    };
+    // SAFETY: `stream` is still live and close releases the stream object.
+    let close = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+    if !buf.is_null() {
+        // SAFETY: open_wmemstream allocated the caller buffer through the
+        // FrankenLibC allocator, matching this free.
+        unsafe { frankenlibc_abi::malloc_abi::free(buf.cast::<c_void>()) };
+    }
+
+    format!(
+        "OPEN_WMEMSTREAM_SIZE_{observed_size}_CHARS_{first}_{second}_NUL_{nul}_FPUT_{first_put}_{second_put}_FLUSH_{flush}_CLOSE_{close}_FILENO_{fileno}"
+    )
+}
+
+fn wchar_abi_wcsdup_ascii_actual() -> String {
+    let input = [b'a' as u32, b'b' as u32, b'c' as u32, 0];
+    // SAFETY: `input` is a NUL-terminated stack-owned wide string.
+    let dup = unsafe { frankenlibc_abi::wchar_abi::wcsdup(input.as_ptr()) };
+    if dup.is_null() {
+        return String::from("WCSDUP_NULL");
+    }
+    // SAFETY: successful wcsdup returns a NUL-terminated duplicate.
+    let (len, first, last, nul) = unsafe {
+        let len = frankenlibc_abi::wchar_abi::wcslen(dup);
+        (len, *dup, *dup.add(len.saturating_sub(1)), *dup.add(len))
+    };
+    // SAFETY: wcsdup allocates via FrankenLibC's allocator.
+    unsafe { frankenlibc_abi::malloc_abi::free(dup.cast::<c_void>()) };
+    format!("WCSDUP_LEN_{len}_FIRST_{first}_LAST_{last}_NUL_{nul}")
+}
+
 fn execute_wchar_locale_encoding_wave03_case(
     function: &str,
     inputs: &serde_json::Value,
@@ -31247,6 +31351,48 @@ mod tests {
             include_str!("../../../tests/conformance/fixtures/wchar_locale_encoding_wave02.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("wchar/locale wave02 fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({}) failed to execute: {err}",
+                        case.name, case.mode
+                    )
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {} ({})",
+                case.name, case.mode
+            );
+            assert!(
+                result.host_parity,
+                "fixture case {} ({}) lost host parity: host={} impl={}",
+                case.name, case.mode, result.host_output, result.impl_output
+            );
+        }
+    }
+
+    #[test]
+    fn wchar_abi_promotion_tranche_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw =
+            include_str!("../../../tests/conformance/fixtures/wchar_abi_promotion_tranche.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("wchar ABI promotion tranche fixture should parse");
 
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)

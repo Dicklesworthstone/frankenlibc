@@ -1,0 +1,423 @@
+{
+  "schema_version": "wchar_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-wchar-abi-promotion-tranche-v1",
+  "description": "Bounded promotion proof for wchar_abi C23 wide aliases, char16 conversion, wide memory-stream, and wide-string duplication entrypoints whose implementation is native Rust ABI adaptation with expected libio, codec, errno, and allocator bridge reachability.",
+  "rationale": "The C23 __isoc23_* rows forward into FrankenLibC wide scanf and wide integer conversion implementations. The mbrtoc16 row is a char16 adapter over the native char32/wchar conversion path. The open_wmemstream and wcsdup rows allocate through FrankenLibC allocation and stream registries. Host-delegation census hits are bootstrap, errno, libio-registry, codec, and allocator bridge symbols, not direct semantic call-through for the promoted wchar API bodies.",
+  "source_artifacts": [
+    "support_matrix.json",
+    "tests/conformance/fixtures/wchar_locale_encoding_wave01.json",
+    "tests/conformance/fixtures/wchar_locale_encoding_wave02.json",
+    "tests/conformance/fixtures/wchar_abi_promotion_tranche.json",
+    "tests/conformance/host_delegation_census.v1.json",
+    "crates/frankenlibc-abi/src/isoc_abi.rs",
+    "crates/frankenlibc-abi/src/wchar_abi.rs",
+    "crates/frankenlibc-harness/tests/wchar_locale_encoding_wave01_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/wchar_locale_encoding_wave02_conformance_test.rs",
+    "crates/frankenlibc-harness/tests/wchar_abi_promotion_tranche_conformance_test.rs",
+    "crates/frankenlibc_conformance/src/lib.rs"
+  ],
+  "test_evidence": [
+    {
+      "crate": "frankenlibc-harness",
+      "test": "wchar_locale_encoding_wave01_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "wchar_locale_encoding_wave02_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "wchar_abi_promotion_tranche_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    }
+  ],
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "classification": "native-wchar-isoc-libio-codec-allocator-bridge",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "_IO_list_all",
+      "__errno_location",
+      "bootstrap_free_passthrough",
+      "bootstrap_host_libio_exports",
+      "bootstrap_host_symbols",
+      "bootstrap_malloc_passthrough",
+      "ensure_host_libio_exit_safe",
+      "free",
+      "host_errno_location_raw",
+      "host_free_raw",
+      "host_malloc_raw",
+      "load_host_symbol",
+      "malloc",
+      "mbrtoc32",
+      "mbrtowc",
+      "mbtowc",
+      "native_libc_free",
+      "native_libc_malloc",
+      "raw_alloc",
+      "read_stream_for_scanf",
+      "register_memory_stream_with_native_handle",
+      "registry",
+      "resolve_host_allocator_symbol",
+      "set_abi_errno",
+      "sys_read_fd",
+      "vfwscanf",
+      "vwscanf",
+      "wcstoimax",
+      "wcstol",
+      "wcstoll",
+      "wcstoul",
+      "wcstoull",
+      "wcstoumax",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_allocator_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic",
+      "resolve_host_symbol_raw_literal"
+    ]
+  },
+  "symbols": [
+    {
+      "symbol": "__isoc23_fwscanf",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_fwscanf -> crates/frankenlibc-abi/src/wchar_abi.rs::vfwscanf",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::fwscanf_null_stream_returns_eof_without_file_capture",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_vfwscanf",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_vfwscanf -> crates/frankenlibc-abi/src/wchar_abi.rs::vfwscanf",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::vfwscanf_null_va_list_returns_eof",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_vwscanf",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_vwscanf -> crates/frankenlibc-abi/src/wchar_abi.rs::vwscanf",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::vwscanf_null_va_list_returns_eof",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstoimax",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstoimax -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstoimax",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::wide_intmax_negative_decimal_consumed_prefix",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstol",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstol -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstol",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::wide_long_auto_base_hex_consumed_prefix",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstol_l",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstol_l -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstol",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::wide_long_locale_null_handle_ignored",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstoll",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstoll -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstoll",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::wide_longlong_negative_decimal",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstoll_l",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstoll_l -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstoll",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::wide_longlong_locale_null_handle_ignored",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstoul",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstoul -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstoul",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave01.json::wide_ulong_negative_wraps_to_max",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstoul_l",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstoul_l -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstoul",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave02.json::wide_ulong_locale_null_handle_positive_prefix",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstoull",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstoull -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstoull",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave02.json::wide_ulonglong_auto_base_hex_prefix",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstoull_l",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstoull_l -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstoull",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave02.json::wide_ulonglong_locale_null_handle_decimal",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wcstoumax",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wcstoumax -> crates/frankenlibc-abi/src/wchar_abi.rs::wcstoumax",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave02.json::wide_uintmax_auto_base_octal_prefix",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__isoc23_wscanf",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/isoc_abi.rs::__isoc23_wscanf -> crates/frankenlibc-abi/src/wchar_abi.rs::vwscanf",
+      "fixture": "tests/conformance/fixtures/wchar_locale_encoding_wave02.json::wscanf_null_format_short_buffer_returns_eof",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "mbrtoc16",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::mbrtoc16",
+      "fixture": "tests/conformance/fixtures/wchar_abi_promotion_tranche.json::ascii_x_decodes_to_char16",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "open_wmemstream",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::open_wmemstream",
+      "fixture": "tests/conformance/fixtures/wchar_abi_promotion_tranche.json::flushes_two_wide_chars",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "wcsdup",
+      "module": "wchar_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::wcsdup",
+      "fixture": "tests/conformance/fixtures/wchar_abi_promotion_tranche.json::duplicates_ascii_wide_string",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}

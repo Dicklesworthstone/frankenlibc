@@ -1,0 +1,119 @@
+{
+  "version": "v1",
+  "family": "wchar-abi-promotion-tranche",
+  "captured_at": "2026-05-25T00:00:00Z",
+  "description": "Deterministic strict/hardened fixture evidence for the bd-5tgwug wchar_abi promotion tranche covering char16 conversion, wide memory streams, and wide-string duplication without recording raw pointers, FILE handles, allocator addresses, file paths, stdout bytes, stderr bytes, fd numbers, process ids, or wall-clock timing.",
+  "spec_reference": "C11 uchar.h mbrtoc16 semantics and GNU/POSIX wchar.h open_wmemstream and wcsdup behavior as implemented by FrankenLibC native wchar ABI adapters",
+  "campaign": {
+    "bead": "bd-5tgwug",
+    "campaign_id": "wchar-abi-promotion-tranche",
+    "wave_id": "wchar-abi-promotion-tranche-wave-01",
+    "source_artifact": "target/conformance/support_matrix_maintenance.generated.json",
+    "ambient_state_policy": "forbid_raw_pointer_file_handle_allocator_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "mbrtoc16",
+      "open_wmemstream",
+      "wcsdup"
+    ],
+    "residual_symbols": []
+  },
+  "structured_log_fields": [
+    "symbol",
+    "mode",
+    "expected",
+    "actual",
+    "failure_signature"
+  ],
+  "cases": [
+    {
+      "name": "mbrtoc16_ascii_x_strict",
+      "function": "mbrtoc16",
+      "spec_section": "C11 mbrtoc16 decodes a single-byte ASCII character into one char16_t code unit",
+      "inputs": {
+        "symbol": "mbrtoc16",
+        "scenario": "ascii_x_decodes_to_char16",
+        "oracle_source": "FrankenLibC wchar_abi::mbrtoc16 classified ASCII replay",
+        "expected": "MBRTOC16_ASCII_X_N_1_C16_88",
+        "ambient_state_policy": "forbid_raw_pointer_file_handle_allocator_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=mbrtoc16;mode=strict;expected=MBRTOC16_ASCII_X_N_1_C16_88;actual=MBRTOC16_ASCII_X_N_1_C16_88;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "mbrtoc16_ascii_x_hardened",
+      "function": "mbrtoc16",
+      "spec_section": "C11 mbrtoc16 decodes a single-byte ASCII character into one char16_t code unit",
+      "inputs": {
+        "symbol": "mbrtoc16",
+        "scenario": "ascii_x_decodes_to_char16",
+        "oracle_source": "FrankenLibC wchar_abi::mbrtoc16 classified ASCII replay",
+        "expected": "MBRTOC16_ASCII_X_N_1_C16_88",
+        "ambient_state_policy": "forbid_raw_pointer_file_handle_allocator_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=mbrtoc16;mode=hardened;expected=MBRTOC16_ASCII_X_N_1_C16_88;actual=MBRTOC16_ASCII_X_N_1_C16_88;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "open_wmemstream_two_chars_strict",
+      "function": "open_wmemstream",
+      "spec_section": "GNU open_wmemstream returns a writable wide memory stream whose flush publishes size and NUL-terminated wide contents",
+      "inputs": {
+        "symbol": "open_wmemstream",
+        "scenario": "flushes_two_wide_chars",
+        "oracle_source": "FrankenLibC wchar_abi::open_wmemstream classified memory-stream replay",
+        "expected": "OPEN_WMEMSTREAM_SIZE_2_CHARS_65_66_NUL_0_FPUT_65_66_FLUSH_0_CLOSE_0_FILENO_-1",
+        "ambient_state_policy": "forbid_raw_pointer_file_handle_allocator_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=open_wmemstream;mode=strict;expected=OPEN_WMEMSTREAM_SIZE_2_CHARS_65_66_NUL_0_FPUT_65_66_FLUSH_0_CLOSE_0_FILENO_-1;actual=OPEN_WMEMSTREAM_SIZE_2_CHARS_65_66_NUL_0_FPUT_65_66_FLUSH_0_CLOSE_0_FILENO_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "open_wmemstream_two_chars_hardened",
+      "function": "open_wmemstream",
+      "spec_section": "GNU open_wmemstream returns a writable wide memory stream whose flush publishes size and NUL-terminated wide contents",
+      "inputs": {
+        "symbol": "open_wmemstream",
+        "scenario": "flushes_two_wide_chars",
+        "oracle_source": "FrankenLibC wchar_abi::open_wmemstream classified memory-stream replay",
+        "expected": "OPEN_WMEMSTREAM_SIZE_2_CHARS_65_66_NUL_0_FPUT_65_66_FLUSH_0_CLOSE_0_FILENO_-1",
+        "ambient_state_policy": "forbid_raw_pointer_file_handle_allocator_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=open_wmemstream;mode=hardened;expected=OPEN_WMEMSTREAM_SIZE_2_CHARS_65_66_NUL_0_FPUT_65_66_FLUSH_0_CLOSE_0_FILENO_-1;actual=OPEN_WMEMSTREAM_SIZE_2_CHARS_65_66_NUL_0_FPUT_65_66_FLUSH_0_CLOSE_0_FILENO_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "wcsdup_ascii_abc_strict",
+      "function": "wcsdup",
+      "spec_section": "POSIX wcsdup allocates a NUL-terminated duplicate of the input wide string",
+      "inputs": {
+        "symbol": "wcsdup",
+        "scenario": "duplicates_ascii_wide_string",
+        "oracle_source": "FrankenLibC wchar_abi::wcsdup classified allocator replay",
+        "expected": "WCSDUP_LEN_3_FIRST_97_LAST_99_NUL_0",
+        "ambient_state_policy": "forbid_raw_pointer_file_handle_allocator_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=wcsdup;mode=strict;expected=WCSDUP_LEN_3_FIRST_97_LAST_99_NUL_0;actual=WCSDUP_LEN_3_FIRST_97_LAST_99_NUL_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "wcsdup_ascii_abc_hardened",
+      "function": "wcsdup",
+      "spec_section": "POSIX wcsdup allocates a NUL-terminated duplicate of the input wide string",
+      "inputs": {
+        "symbol": "wcsdup",
+        "scenario": "duplicates_ascii_wide_string",
+        "oracle_source": "FrankenLibC wchar_abi::wcsdup classified allocator replay",
+        "expected": "WCSDUP_LEN_3_FIRST_97_LAST_99_NUL_0",
+        "ambient_state_policy": "forbid_raw_pointer_file_handle_allocator_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=wcsdup;mode=hardened;expected=WCSDUP_LEN_3_FIRST_97_LAST_99_NUL_0;actual=WCSDUP_LEN_3_FIRST_97_LAST_99_NUL_0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}
