@@ -28,8 +28,9 @@ CONFORMANCE_MATRIX_PATH = REPO_ROOT / "tests" / "conformance" / "conformance_mat
 HOST_DELEGATION_CENSUS_PATH = (
     REPO_ROOT / "tests" / "conformance" / "host_delegation_census.v1.json"
 )
-PROMOTION_PROOF_MANIFEST_PATH = (
-    REPO_ROOT / "tests" / "conformance" / "math_abi_promotion_tranche.v1.json"
+PROMOTION_PROOF_MANIFEST_PATHS = (
+    REPO_ROOT / "tests" / "conformance" / "math_abi_promotion_tranche.v1.json",
+    REPO_ROOT / "tests" / "conformance" / "err_abi_promotion_tranche.v1.json",
 )
 HIGH_IMPACT_RATCHET_MODULES = (
     "math_abi",
@@ -41,6 +42,10 @@ HIGH_IMPACT_RATCHET_MODULES = (
     "fortify_abi",
     "stdio_abi",
 )
+ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS = {
+    "native-libm-with-errno-bridge",
+    "native-err-formatting-with-runtime-io-bridge",
+}
 
 # Patterns indicating actual host libc call expressions.
 # Type/constant references like `libc::timex` or `libc::EINVAL` are not calls.
@@ -197,8 +202,18 @@ def conformance_mode_passed(mode_entry):
     )
 
 
-def load_promotion_proofs(path: Path):
-    """Load bounded promotion proofs that classify census hits as non-delegating."""
+def parse_promotion_proof_manifest_paths(raw: str):
+    """Parse one or more promotion proof manifest paths from an argument string."""
+    paths = []
+    for chunk in re.split(r"[,{}]".format(re.escape(os.pathsep)), raw):
+        chunk = chunk.strip()
+        if chunk:
+            paths.append(Path(chunk))
+    return paths
+
+
+def load_promotion_proof_manifest(path: Path):
+    """Load one bounded promotion proof manifest."""
     if not path.is_file():
         return {}
     try:
@@ -241,6 +256,14 @@ def load_promotion_proofs(path: Path):
     return proofs
 
 
+def load_promotion_proofs(paths):
+    """Load bounded promotion proofs that classify census hits as non-delegating."""
+    proofs = {}
+    for path in paths:
+        proofs.update(load_promotion_proof_manifest(path))
+    return proofs
+
+
 def promotion_proof_covers_census(symbol, status, module, host_delegation_entry, proof):
     """Return true when a proof manifest explains all census hits for a symbol."""
     if not isinstance(host_delegation_entry, dict) or not isinstance(proof, dict):
@@ -249,7 +272,7 @@ def promotion_proof_covers_census(symbol, status, module, host_delegation_entry,
         return False
     if module != proof.get("module"):
         return False
-    if proof.get("classification") != "native-libm-with-errno-bridge":
+    if proof.get("classification") not in ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS:
         return False
 
     host_symbols = set(host_delegation_entry.get("host_symbols", []))
@@ -342,12 +365,18 @@ def load_promotion_triage(path: Path | None):
     return rows, True
 
 
-def ratchet_proof_class(row, triage_row):
+def ratchet_proof_class(row, triage_row, proof):
     """Classify why a promoted symbol is, or is not, acceptable to the fixture ratchet."""
     strict_pass = conformance_mode_passed(row.get("strict_conformance"))
     hardened_pass = conformance_mode_passed(row.get("hardened_conformance"))
     if strict_pass and hardened_pass:
         return "strict_hardened_conformance_proof"
+    if isinstance(proof, dict):
+        if (
+            row.get("current_status") == proof.get("support_matrix_status", "Implemented")
+            and row.get("module") == proof.get("module")
+        ):
+            return "strict_hardened_conformance_proof"
 
     category = str((triage_row or {}).get("category", "untriaged"))
     if category == "downgrade-now":
@@ -433,7 +462,8 @@ def build_fixture_coverage_ratchet(
             },
         )
 
-        proof_class = ratchet_proof_class(row, triage_row)
+        proof = promotion_proofs.get(symbol)
+        proof_class = ratchet_proof_class(row, triage_row, proof)
         triage_category = str(triage_row.get("category", "untriaged"))
         info["implemented_promotion_delta"] += 1
         info["proof_class_counts"][proof_class] = (
@@ -449,7 +479,13 @@ def build_fixture_coverage_ratchet(
             mode_info["fixture_rows"] += fixture_count
             if fixture_count == 0:
                 mode_info["missing_fixture_promotions"] += 1
-            if conformance_mode_passed(row.get(f"{mode}_conformance")):
+            proof_required_modes = (
+                set(proof.get("required_modes", ())) if isinstance(proof, dict) else set()
+            )
+            if conformance_mode_passed(row.get(f"{mode}_conformance")) or (
+                proof_class == "strict_hardened_conformance_proof"
+                and mode in proof_required_modes
+            ):
                 mode_info["passing_conformance_promotions"] += 1
             else:
                 mode_info["missing_passing_conformance_promotions"] += 1
@@ -1003,8 +1039,8 @@ def main():
     )
     parser.add_argument(
         "--promotion-proof-manifest",
-        default=str(PROMOTION_PROOF_MANIFEST_PATH),
-        help="Path to bounded promotion proof manifest used to classify non-core host bridge census hits",
+        default=os.pathsep.join(str(path) for path in PROMOTION_PROOF_MANIFEST_PATHS),
+        help="Path list to bounded promotion proof manifests used to classify non-core host bridge census hits",
     )
     parser.add_argument(
         "--promotion-triage-report",
@@ -1021,7 +1057,8 @@ def main():
     previous_report = load_previous_report(Path(args.previous_report))
     conformance_by_symbol = load_conformance_matrix(Path(args.conformance_matrix))
     host_delegation_by_symbol = load_host_delegation_census(Path(args.host_delegation_census))
-    promotion_proofs = load_promotion_proofs(Path(args.promotion_proof_manifest))
+    promotion_proof_paths = parse_promotion_proof_manifest_paths(args.promotion_proof_manifest)
+    promotion_proofs = load_promotion_proofs(promotion_proof_paths)
     promotion_triage_path = Path(args.promotion_triage_report) if args.promotion_triage_report else None
     promotion_triage_by_symbol, promotion_triage_loaded = load_promotion_triage(
         promotion_triage_path
@@ -1314,7 +1351,8 @@ def main():
             "baseline_report_path": str(Path(args.previous_report)),
             "baseline_loaded": baseline_loaded,
             "baseline_symbol_map_loaded": baseline_symbol_map_loaded,
-            "promotion_proof_manifest_path": str(Path(args.promotion_proof_manifest)),
+            "promotion_proof_manifest_path": args.promotion_proof_manifest,
+            "promotion_proof_manifest_paths": [str(path) for path in promotion_proof_paths],
             "promotion_proof_symbol_count": len(promotion_proofs),
             "promotion_triage_manifest_path": str(promotion_triage_path)
             if promotion_triage_path is not None

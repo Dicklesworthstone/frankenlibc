@@ -229,6 +229,10 @@ const HOST_WRAPPED_SYMBOLS: &[&str] = &[
 const MATH_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "acos", "asin", "exp", "fmod", "lgamma", "log", "log10", "pow", "tgamma",
 ];
+const ERR_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "err", "errc", "errx", "verr", "verrc", "verrx", "vwarn", "vwarnc", "vwarnx", "warn", "warnc",
+    "warnx",
+];
 
 #[test]
 fn maintenance_report_generates_successfully() {
@@ -641,6 +645,80 @@ fn math_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
 }
 
 #[test]
+fn err_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/err_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("err_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-err-formatting-with-runtime-io-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "get_progname",
+        "sys_read_fd",
+        "write_err_message",
+        "vformat_and_write",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "err_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        ERR_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("err_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
 fn generated_report_accepts_math_abi_errno_bridge_tranche() {
     let generated_path = unique_generated_report_path("math_abi_promotion_tranche");
     let output = generate_maintenance_report(&generated_path);
@@ -663,6 +741,44 @@ fn generated_report_accepts_math_abi_errno_bridge_tranche() {
             rows.iter()
                 .all(|issue| issue["valid"].as_bool() == Some(true)),
             "{symbol} should not remain invalid after math ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_err_abi_runtime_io_bridge_tranche() {
+    let generated_path = unique_generated_report_path("err_abi_promotion_tranche");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in ERR_PROMOTION_TRANCHE_SYMBOLS {
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after err ABI proof: {rows:?}"
         );
         assert!(
             rows.iter().any(|issue| {
@@ -768,6 +884,14 @@ fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
             .unwrap_or_default()
             >= MATH_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
         "math_abi pilot proof manifest should expose strict+hardened proven symbols"
+    );
+    let err_proofs = &ratchet["proof_manifest_by_module"]["err_abi"];
+    assert!(
+        err_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= ERR_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "err_abi proof manifest should expose strict+hardened proven symbols"
     );
     assert_eq!(
         ratchet["module_deltas"]["math_abi"]["proof_class_counts"]

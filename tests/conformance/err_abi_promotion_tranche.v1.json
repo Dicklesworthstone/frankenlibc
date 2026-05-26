@@ -1,0 +1,266 @@
+{
+  "schema_version": "err_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-err-abi-promotion-tranche-v1",
+  "description": "Bounded err_abi promotion tranche proving owned <err.h> formatting, stderr, errno, and exit behavior whose host-delegation census hits are only runtime support bridges.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "fixture": "tests/conformance/fixtures/err_ops.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/err_abi.rs",
+    "differential_tests": [
+      "crates/frankenlibc-abi/tests/conformance_diff_err_h.rs",
+      "crates/frankenlibc-abi/tests/err_abi_test.rs",
+      "crates/frankenlibc-harness/tests/err_ops_conformance_test.rs"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-err-formatting-with-runtime-io-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "get_progname",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "proc_cmdline_progname",
+      "read",
+      "set_abi_errno",
+      "sys_read_fd",
+      "vformat_and_write",
+      "vformat_and_write_with_code",
+      "write_err_message",
+      "write_err_message_with_code",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The err_abi result path is implemented in Rust: formatting is local, stderr writes use runtime I/O helpers, process name discovery uses procfs/syscall helpers, and errno storage interop is limited to ABI state bridging. No accepted census symbol delegates <err.h> semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "err",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::err",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "errc",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::errc",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "errx",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::errx",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "verr",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::verr",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "verrc",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::verrc",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "verrx",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::verrx",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "vwarn",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::vwarn",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "vwarnc",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::vwarnc",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "vwarnx",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::vwarnx",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "warn",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::warn",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "warnc",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::warnc",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "warnx",
+      "module": "err_abi",
+      "core_path": "crates/frankenlibc-abi/src/err_abi.rs::warnx",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
