@@ -1,11 +1,12 @@
 #![cfg(target_os = "linux")]
+#![feature(c_variadic)]
 
 //! Integration tests for `_FORTIFY_SOURCE` ABI entrypoints (`__*_chk` variants).
 //!
 //! Tests cover safe pass-through paths where buffer sizes are sufficient and
 //! fork-isolated failure paths where checked wrappers abort the child process.
 
-use std::ffi::{CString, c_char, c_int, c_long};
+use std::ffi::{CString, c_char, c_int, c_long, c_void};
 
 // Re-export fortified functions from the ABI crate.
 use frankenlibc_abi::fortify_abi::*;
@@ -315,6 +316,74 @@ fn stpncpy_chk_exact_fill() {
 // ===========================================================================
 
 type WcharT = c_int;
+
+unsafe extern "C" fn call_vsprintf_chk(
+    buf: *mut c_char,
+    buflen: usize,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vsprintf_chk(buf, 0, buflen, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vsnprintf_chk(
+    buf: *mut c_char,
+    maxlen: usize,
+    buflen: usize,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vsnprintf_chk(buf, maxlen, 0, buflen, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vfprintf_chk(
+    stream: *mut c_void,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vfprintf_chk(stream, 0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vprintf_chk(fmt: *const c_char, mut args: ...) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vprintf_chk(0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vdprintf_chk(fd: c_int, fmt: *const c_char, mut args: ...) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vdprintf_chk(fd, 0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vasprintf_chk(
+    strp: *mut *mut c_char,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vasprintf_chk(strp, 0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vfwprintf_chk(
+    stream: *mut c_void,
+    fmt: *const WcharT,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vfwprintf_chk(stream, 0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vwprintf_chk(fmt: *const WcharT, mut args: ...) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vwprintf_chk(0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vsyslog_chk(priority: c_int, fmt: *const c_char, mut args: ...) {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vsyslog_chk(priority, 0, fmt, ap) };
+}
 
 #[test]
 fn wcscpy_chk_safe() {
@@ -899,6 +968,27 @@ fn snprintf_chk_zero_maxlen() {
     assert_eq!(buf[0], 0xFF);
 }
 
+#[test]
+fn vsnprintf_chk_direct_va_list() {
+    let mut buf = [0u8; 64];
+    let fmt = CString::new("via=%d").unwrap();
+    let ret = unsafe { call_vsnprintf_chk(buf.as_mut_ptr().cast(), 64, 64, fmt.as_ptr(), 17i32) };
+    assert_eq!(ret, 6);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "via=17");
+}
+
+#[test]
+fn vsprintf_chk_direct_va_list() {
+    let mut buf = [0u8; 64];
+    let fmt = CString::new("via %s").unwrap();
+    let arg = CString::new("list").unwrap();
+    let ret = unsafe { call_vsprintf_chk(buf.as_mut_ptr().cast(), 64, fmt.as_ptr(), arg.as_ptr()) };
+    assert_eq!(ret, 8);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "via list");
+}
+
 // ===========================================================================
 // __fprintf_chk
 // ===========================================================================
@@ -917,6 +1007,20 @@ fn fprintf_chk_to_devnull() {
     unsafe { libc::fclose(fp) };
 }
 
+#[test]
+fn vfprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let fmt = CString::new("via %d\n").unwrap();
+    let ret = unsafe { call_vfprintf_chk(fp.cast(), fmt.as_ptr(), 7i32) };
+    assert!(ret > 0, "__vfprintf_chk should return positive char count");
+
+    unsafe { libc::fclose(fp) };
+}
+
 // ===========================================================================
 // __printf_chk (writes to stdout, test with redirect)
 // ===========================================================================
@@ -926,6 +1030,13 @@ fn printf_chk_basic() {
     // __printf_chk writes to stdout; in tests just verify it doesn't crash
     let fmt = CString::new("").unwrap(); // empty format = no output
     let ret = unsafe { __printf_chk(0, fmt.as_ptr()) };
+    assert_eq!(ret, 0);
+}
+
+#[test]
+fn vprintf_chk_basic() {
+    let fmt = CString::new("").unwrap();
+    let ret = unsafe { call_vprintf_chk(fmt.as_ptr()) };
     assert_eq!(ret, 0);
 }
 
@@ -941,6 +1052,19 @@ fn dprintf_chk_to_devnull() {
 
     let fmt = CString::new("hello %d").unwrap();
     let ret = unsafe { __dprintf_chk(fd, 0, fmt.as_ptr(), 99i32) };
+    assert!(ret > 0);
+
+    unsafe { libc::close(fd) };
+}
+
+#[test]
+fn vdprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_WRONLY) };
+    assert!(fd >= 0);
+
+    let fmt = CString::new("via %d").unwrap();
+    let ret = unsafe { call_vdprintf_chk(fd, fmt.as_ptr(), 19i32) };
     assert!(ret > 0);
 
     unsafe { libc::close(fd) };
@@ -976,6 +1100,21 @@ fn asprintf_chk_string_format() {
 
     let s = unsafe { std::ffi::CStr::from_ptr(result) };
     assert_eq!(s.to_str().unwrap(), "foo+bar");
+
+    unsafe { libc::free(result.cast()) };
+}
+
+#[test]
+fn vasprintf_chk_direct_va_list() {
+    let mut result: *mut c_char = std::ptr::null_mut();
+    let fmt = CString::new("%s=%d").unwrap();
+    let key = CString::new("answer").unwrap();
+    let ret = unsafe { call_vasprintf_chk(&mut result, fmt.as_ptr(), key.as_ptr(), 42i32) };
+    assert_eq!(ret, 9);
+    assert!(!result.is_null());
+
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert_eq!(s.to_str().unwrap(), "answer=42");
 
     unsafe { libc::free(result.cast()) };
 }
@@ -1144,6 +1283,12 @@ fn syslog_chk_does_not_crash() {
     // Just verify it doesn't crash
 }
 
+#[test]
+fn vsyslog_chk_does_not_crash() {
+    let fmt = CString::new("frankenlibc test vsyslog_chk %d").unwrap();
+    unsafe { call_vsyslog_chk(15, fmt.as_ptr(), 456i32) };
+}
+
 // ===========================================================================
 // __mbsnrtowcs_chk
 // ===========================================================================
@@ -1190,6 +1335,40 @@ fn wcsnrtombs_chk_basic() {
     };
     assert_eq!(n, 3);
     assert_eq!(&dest[..3], b"XYZ");
+}
+
+#[test]
+fn wprintf_chk_empty() {
+    let fmt: [WcharT; 1] = [0];
+    let ret = unsafe { __wprintf_chk(0, fmt.as_ptr()) };
+    assert!(
+        ret == 0 || ret == -1,
+        "__wprintf_chk should either print an empty wide string or report stream orientation failure"
+    );
+}
+
+#[test]
+fn vwprintf_chk_empty() {
+    let fmt: [WcharT; 1] = [0];
+    let ret = unsafe { call_vwprintf_chk(fmt.as_ptr()) };
+    assert!(
+        ret == 0 || ret == -1,
+        "__vwprintf_chk should either print an empty wide string or report stream orientation failure"
+    );
+}
+
+#[test]
+fn vfwprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let fmt: [WcharT; 3] = [b'%' as i32, b'd' as i32, 0];
+    let ret = unsafe { call_vfwprintf_chk(fp.cast(), fmt.as_ptr(), 33i32) };
+    assert!(ret > 0, "__vfwprintf_chk should return positive char count");
+
+    unsafe { libc::fclose(fp) };
 }
 
 // ===========================================================================

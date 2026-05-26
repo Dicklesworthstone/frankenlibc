@@ -2,8 +2,8 @@
   "schema_version": "fortify_abi_promotion_tranche.v1",
   "bead": "bd-5tgwug",
   "trace_id": "bd-5tgwug-fortify-abi-promotion-tranche-v1",
-  "description": "Bounded promotion proof for fortify_abi checked wrappers that already have strict and hardened fixture evidence in the fcq-fortify-bounds waves.",
-  "rationale": "The promoted rows are native _FORTIFY_SOURCE ABI wrappers over FrankenLibC stdio, unistd, wide/multibyte, setjmp, and allocation adapters. Host-delegation census hits are bootstrap, errno, allocator, libio registry, stream transfer, or underlying standard-ABI bridge symbols reached by the wrapper implementations, not unproven direct semantic call-through for the checked-wrapper contracts.",
+  "description": "Bounded promotion proof for fortify_abi checked wrappers that already have strict and hardened fixture or direct ABI test evidence.",
+  "rationale": "The promoted rows are native _FORTIFY_SOURCE ABI wrappers over FrankenLibC stdio, unistd, socket, wide/multibyte, setjmp, syslog, and allocation adapters. Host-delegation census hits are bootstrap, errno, allocator, libio registry, stream transfer, raw syscall fallback, or underlying standard-ABI bridge symbols reached by the wrapper implementations, not unproven direct semantic call-through for the checked-wrapper contracts.",
   "source_artifacts": [
     "support_matrix.json",
     "tests/conformance/fixtures/fortify_checked_wrapper_wave01.json",
@@ -11,6 +11,7 @@
     "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json",
     "tests/conformance/host_delegation_census.v1.json",
     "crates/frankenlibc-abi/src/fortify_abi.rs",
+    "crates/frankenlibc-abi/tests/fortify_abi_test.rs",
     "crates/frankenlibc-harness/tests/fortify_checked_wrapper_wave01_conformance_test.rs",
     "crates/frankenlibc-harness/tests/fortify_checked_wrapper_wave02_conformance_test.rs",
     "crates/frankenlibc-harness/tests/fortify_checked_wrapper_wave03_conformance_test.rs",
@@ -36,6 +37,14 @@
     {
       "crate": "frankenlibc-harness",
       "test": "fortify_checked_wrapper_wave03_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "fortify_abi_test::*_chk",
       "modes": [
         "strict",
         "hardened"
@@ -72,6 +81,7 @@
       "free",
       "getcwd",
       "getdomainname",
+      "getgroups",
       "gethostname",
       "host_errno",
       "host_errno_location_raw",
@@ -96,7 +106,14 @@
       "native_libc_free",
       "native_libc_malloc",
       "printf_result_to_c_int",
+      "poll",
+      "ppoll",
       "refill_stream",
+      "read",
+      "readlink",
+      "readlinkat",
+      "realpath",
+      "reject_efault",
       "registry",
       "registry_contains_stream",
       "resolve_host_allocator_symbol",
@@ -110,12 +127,23 @@
       "sync_host_errno",
       "sys_read_fd",
       "sys_write_fd",
+      "syslog_send",
       "terminate_deferred_transfer",
       "ungetc",
       "vasprintf",
       "vdprintf",
       "vfprintf",
       "vfwprintf",
+      "vprintf",
+      "vsnprintf",
+      "vsyslog",
+      "vwprintf",
+      "wcrtomb",
+      "wcsnrtombs",
+      "wcsrtombs",
+      "wcstombs",
+      "wctomb",
+      "write_all_fd",
       "write_bytes_without_runtime_policy",
       "write_host_errno_if_available"
     ],
@@ -475,6 +503,652 @@
       "module": "fortify_abi",
       "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__mbstowcs_chk",
       "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json::__mbstowcs_chk_converts_ascii",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__fortify_fail",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__fortify_fail",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave01.json::__fortify_fail_aborts",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__getgroups_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__getgroups_chk",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave02.json::__getgroups_chk_classifies_count_query",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__open64_2",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__open64_2",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json::__open64_2_classifies_readonly_fd",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__open_2",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__open_2",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json::__open_2_classifies_missing_path_errno",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__openat64_2",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__openat64_2",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json::__openat64_2_classifies_readonly_fd",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__openat_2",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__openat_2",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json::__openat_2_classifies_bad_dirfd_errno",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__poll_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__poll_chk",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json::__poll_chk_classifies_zero_nfds_safe_default",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__ppoll_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__ppoll_chk",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json::__ppoll_chk_classifies_zero_nfds_safe_default",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__pread64_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__pread64_chk",
+      "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json::__pread64_chk_reads_memfd_offset",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__pread_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__pread_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::pread_chk_safe",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__printf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__printf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::printf_chk_basic",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__read_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__read_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::read_chk_safe",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__readlink_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__readlink_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::readlink_chk_safe",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__readlinkat_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__readlinkat_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::readlinkat_chk_safe",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__realpath_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__realpath_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::realpath_chk_safe",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__recv_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__recv_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::recv_chk_on_socketpair",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__recvfrom_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__recvfrom_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::recvfrom_chk_on_socketpair",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__snprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__snprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vsnprintf_chk_safe,snprintf_chk_truncates,snprintf_chk_zero_maxlen",
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__sprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__sprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::sprintf_chk_safe,sprintf_chk_integer_formats",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__syslog_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__syslog_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::syslog_chk_does_not_crash",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vasprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vasprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vasprintf_chk_direct_va_list",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vdprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vdprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vdprintf_chk_to_devnull",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vfprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vfprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vfprintf_chk_to_devnull",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vfwprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vfwprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vfwprintf_chk_to_devnull",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vprintf_chk_basic",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vsnprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vsnprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vsnprintf_chk_direct_va_list",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vsprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vsprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vsprintf_chk_direct_va_list",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vsyslog_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vsyslog_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vsyslog_chk_does_not_crash",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__vwprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__vwprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::vwprintf_chk_empty",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__wcsnrtombs_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__wcsnrtombs_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::wcsnrtombs_chk_basic",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__wcsrtombs_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__wcsrtombs_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::wcsrtombs_chk_safe",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__wcstombs_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__wcstombs_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::wcstombs_chk_safe",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__wctomb_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__wctomb_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::wctomb_chk_safe",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__wprintf_chk",
+      "module": "fortify_abi",
+      "core_path": "crates/frankenlibc-abi/src/fortify_abi.rs::__wprintf_chk",
+      "fixture": "crates/frankenlibc-abi/tests/fortify_abi_test.rs::wprintf_chk_empty",
       "strict_conformance": {
         "total": 1,
         "passed": 1,
