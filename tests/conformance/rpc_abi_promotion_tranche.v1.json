@@ -3,7 +3,7 @@
   "bead": "bd-5tgwug",
   "trace_id": "bd-5tgwug-rpc-abi-promotion-tranche-v1",
   "description": "Bounded promotion proof for rpc_abi netname and XDR rows that already have deterministic native ABI evidence.",
-  "rationale": "The promoted rows cover native netname formatting and native XDR counted byte, string, wrapped string, and variable-array codecs. Host-delegation census hits are allocator and errno bridge artifacts reached through FrankenLibC malloc/free entrypoints or recursive XDR helper calls, not host RPC semantic delegation.",
+  "rationale": "The promoted rows cover native netname formatting plus native XDR counted byte, string, wrapped string, variable-array, netobj, opaque-auth, pointer/reference, pmap-list, unixcred, netname-string, and record-stream initialization codecs. Host-delegation census hits are allocator and errno bridge artifacts reached through FrankenLibC malloc/calloc/free entrypoints or recursive XDR helper calls, not host RPC semantic delegation.",
   "source_artifacts": [
     "support_matrix.json",
     "tests/conformance/host_delegation_census.v1.json",
@@ -67,6 +67,86 @@
         "strict",
         "hardened"
       ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_netobj_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_opaque_auth_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_pointer_present_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_pointer_null_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_reference_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_reference_depth_limit_refuses_deep_recursive_wire_without_overflow",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_pmaplist_deep_stream_does_not_overflow_stack",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_unixcred_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_netnamestr_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdrrec_create_initializes_handle",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
     }
   ],
   "policy": {
@@ -79,20 +159,29 @@
     "accepted_host_symbols": [
       "<dynamic>",
       "__errno_location",
+      "bootstrap_calloc_passthrough",
       "bootstrap_free_passthrough",
       "bootstrap_host_symbols",
       "bootstrap_malloc_passthrough",
+      "calloc",
       "free",
+      "host_calloc_raw",
       "host_errno_location_raw",
       "host_free_raw",
       "host_malloc_raw",
       "load_host_symbol",
       "malloc",
+      "native_libc_calloc",
       "native_libc_free",
       "native_libc_malloc",
+      "raw_alloc",
+      "raw_free",
       "resolve_host_allocator_symbol",
       "set_abi_errno",
       "write_host_errno_if_available",
+      "xdr_array",
+      "xdr_bytes",
+      "xdr_reference",
       "xdr_string"
     ],
     "accepted_delegation_kinds": [
@@ -212,6 +301,158 @@
       "hardened_conformance": {
         "total": 3,
         "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_netobj",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_netobj",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_netobj_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_opaque_auth",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_opaque_auth",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_opaque_auth_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_pointer",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_pointer",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_pointer_present_roundtrip,xdr_pointer_null_roundtrip,xdr_reference_depth_limit_refuses_deep_recursive_wire_without_overflow",
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_reference",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_reference",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_reference_roundtrip,xdr_reference_depth_limit_refuses_deep_recursive_wire_without_overflow",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_pmaplist",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_pmaplist",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_pmaplist_deep_stream_does_not_overflow_stack",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_unixcred",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_unixcred",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_unixcred_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_netnamestr",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_netnamestr",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_netnamestr_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdrrec_create",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdrrec_create",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdrrec_create_initializes_handle",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
         "failed": 0,
         "errors": 0
       },

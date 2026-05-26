@@ -346,8 +346,16 @@ const RPC_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "user2netname",
     "xdr_array",
     "xdr_bytes",
+    "xdr_netnamestr",
+    "xdr_netobj",
+    "xdr_opaque_auth",
+    "xdr_pmaplist",
+    "xdr_pointer",
+    "xdr_reference",
     "xdr_string",
+    "xdr_unixcred",
     "xdr_wrapstring",
+    "xdrrec_create",
 ];
 const GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__clone"];
 
@@ -1934,11 +1942,17 @@ fn rpc_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
             .collect();
     for helper in [
         "__errno_location",
-        "malloc",
+        "calloc",
         "free",
+        "malloc",
+        "raw_alloc",
+        "raw_free",
         "resolve_host_allocator_symbol",
         "set_abi_errno",
         "write_host_errno_if_available",
+        "xdr_array",
+        "xdr_bytes",
+        "xdr_reference",
         "xdr_string",
     ] {
         assert!(
