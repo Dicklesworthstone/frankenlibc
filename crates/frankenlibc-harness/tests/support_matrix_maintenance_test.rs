@@ -1134,6 +1134,16 @@ fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
             >= RESOLV_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
         "resolv_abi proof manifest should expose strict+hardened proven symbols"
     );
+    let malloc_violations = ratchet["module_deltas"]["malloc_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !malloc_violations
+            .iter()
+            .any(|symbol| symbol.as_str() == Some("malloc_info")),
+        "malloc_info should be downgraded instead of counted as an implemented-promotion violation"
+    );
     assert_eq!(
         ratchet["module_deltas"]["math_abi"]["proof_class_counts"]
             ["strict_hardened_conformance_proof"]

@@ -7905,11 +7905,11 @@
     },
     {
       "symbol": "malloc_info",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "cold",
-      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
-      "hardened_semantics": "Same as strict",
+      "strict_semantics": "FrankenLibC allocator counters formatted through host FILE/libio stream helpers",
+      "hardened_semantics": "Same as strict; stream writes remain host-backed",
       "default_stub": false
     },
     {
