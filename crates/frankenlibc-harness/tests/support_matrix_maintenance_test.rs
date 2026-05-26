@@ -397,8 +397,13 @@ const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "putwc",
     "putwc_unlocked",
     "putwchar_unlocked",
+    "sem_close",
+    "sem_open",
+    "sem_unlink",
     "sendfile64",
+    "syslog",
     "truncate64",
+    "vsyslog",
     "wcsftime_l",
     "wcsnrtombs",
     "wcstoimax",
@@ -1948,7 +1953,9 @@ fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
     assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
     assert_eq!(
         manifest["policy"]["classification"].as_str(),
-        Some("native-unistd-stackfail-lfs-wchar-stream-locale-process-getopt-errno-bridge")
+        Some(
+            "native-unistd-stackfail-lfs-wchar-stream-locale-sem-syslog-process-getopt-errno-bridge"
+        )
     );
 
     let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]

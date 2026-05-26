@@ -5,6 +5,7 @@
 //! - ftw / nftw / nftw64
 //! - setmntent / getmntent / endmntent
 
+#![feature(c_variadic)]
 #![allow(unsafe_code)]
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
@@ -180,11 +181,12 @@ use frankenlibc_abi::unistd_abi::{
     gsignal, isatty, link, logout, logwtmp, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv,
     msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise,
     process_mrelease, process_vm_readv, process_vm_writev, putspent, pututxline, read, readlink,
-    readpassphrase, rename, rmdir, sem_open, sem_unlink, semctl, semop, setfsent, sethostent,
-    setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent, setservent,
-    setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon,
-    strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
-    updwtmpx, usleep, utmpname, wctrans, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    readpassphrase, rename, rmdir, sem_close, sem_open, sem_unlink, semctl, semop, setfsent,
+    sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent,
+    setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
+    strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
+    updwtmpx, usleep, utmpname, vsyslog, wctrans, wordexp as abi_wordexp, wordfree as abi_wordfree,
+    write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -3119,6 +3121,49 @@ fn abi_argp_error_and_failure_null_state_preserve_fixture_noop_contract() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn named_semaphore_open_close_unlink_roundtrip() {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_nanos();
+    let name = CString::new(format!("/frankenlibc_sem_{stamp}_{}", std::process::id()))
+        .expect("generated semaphore name should not contain NUL");
+    let failed = usize::MAX as *mut c_void;
+
+    unsafe {
+        let _ = sem_unlink(name.as_ptr());
+        *__errno_location() = 0;
+    }
+
+    let sem = unsafe {
+        sem_open(
+            name.as_ptr(),
+            libc::O_CREAT | libc::O_EXCL,
+            0o600 as libc::mode_t,
+            2u32,
+        )
+    };
+    assert_ne!(
+        sem,
+        failed,
+        "sem_open create failed errno={}",
+        errno_value()
+    );
+
+    assert_eq!(unsafe { sem_close(sem) }, 0);
+
+    let reopened = unsafe { sem_open(name.as_ptr(), 0) };
+    assert_ne!(
+        reopened,
+        failed,
+        "sem_open existing failed errno={}",
+        errno_value()
+    );
+    assert_eq!(unsafe { sem_close(reopened) }, 0);
+    assert_eq!(unsafe { sem_unlink(name.as_ptr()) }, 0);
+}
+
+#[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn named_semaphore_rejects_tracked_unterminated_name() {
     let name = b"/frankenlibc_sem_unterminated";
@@ -4983,6 +5028,53 @@ unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
     assert!(!raw.is_null());
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw.cast::<u8>(), bytes.len()) };
     raw
+}
+
+unsafe extern "C" fn call_vsyslog(priority: c_int, fmt: *const c_char, mut args: ...) {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { vsyslog(priority, fmt, ap) };
+}
+
+#[test]
+fn syslog_and_vsyslog_write_perror_in_child() -> Result<(), Box<dyn std::error::Error>> {
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("syslog_perror_child_process")
+        .arg("--nocapture")
+        .env("FLC_SYSLOG_PERROR_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("frankenlibc-syslog-proof: direct syslog 17"),
+        "syslog perror output missing from stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("frankenlibc-syslog-proof: variadic syslog 23"),
+        "vsyslog perror output missing from stderr: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn syslog_perror_child_process() {
+    if std::env::var_os("FLC_SYSLOG_PERROR_CHILD").is_none() {
+        return;
+    }
+
+    unsafe {
+        openlog(c"frankenlibc-syslog-proof".as_ptr(), libc::LOG_PERROR, 0);
+        syslog(libc::LOG_ERR, c"direct syslog %d".as_ptr(), 17i32);
+        call_vsyslog(libc::LOG_ERR, c"variadic syslog %d".as_ptr(), 23i32);
+        closelog();
+    }
 }
 
 #[test]

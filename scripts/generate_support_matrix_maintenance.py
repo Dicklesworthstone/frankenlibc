@@ -74,7 +74,7 @@ ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS = {
     "native-wchar-isoc-libio-codec-allocator-bridge",
     "native-string-conversion-argz-envz-glob-regex-allocator-errno-bridge",
     "native-fortify-wrapper-libio-allocator-errno-bridge",
-    "native-unistd-stackfail-lfs-wchar-stream-locale-process-getopt-errno-bridge",
+    "native-unistd-stackfail-lfs-wchar-stream-locale-sem-syslog-process-getopt-errno-bridge",
     "native-rpc-xdr-netname-allocator-errno-bridge",
     "native-glibc-internal-clone-errno-bridge",
 }
