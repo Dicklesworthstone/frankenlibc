@@ -1,0 +1,168 @@
+{
+  "schema_version": "setjmp_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-setjmp-abi-promotion-tranche-v1",
+  "description": "Bounded setjmp_abi promotion tranche proving setjmp-family entrypoints as deterministic phase-1 capture/restore entrypoints whose host-delegation census hits are errno, libio-exit, signal-set helpers, and explicit deferred-transfer termination artifacts.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/setjmp_abi.rs",
+    "semantics_contract": "tests/conformance/setjmp_semantics_contract.v1.json",
+    "abi_unit_tests": [
+      "crates/frankenlibc-abi/src/setjmp_abi.rs::tests::capture_env_records_registry_entry_and_context_metadata",
+      "crates/frankenlibc-abi/src/setjmp_abi.rs::tests::sigsetjmp_capture_tracks_mask_flag",
+      "crates/frankenlibc-abi/src/setjmp_abi.rs::tests::restore_env_normalizes_zero_to_one_and_reports_mask_restore",
+      "crates/frankenlibc-abi/src/setjmp_abi.rs::tests::longjmp_entrypoint_terminates_with_enosys_payload_in_tests",
+      "crates/frankenlibc-abi/src/setjmp_abi.rs::tests::siglongjmp_entrypoint_terminates_with_mask_restore_metadata_in_tests"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-setjmp-phase1-with-errno-bridges",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "_IO_list_all",
+      "__errno_location",
+      "abort",
+      "bootstrap_host_libio_exports",
+      "bootstrap_host_symbols",
+      "capture_entrypoint",
+      "capture_env",
+      "ensure_host_libio_exit_safe",
+      "fflush_managed_only_for_abort",
+      "flush_stream",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "registry",
+      "restore_entrypoint",
+      "restore_env",
+      "set_abi_errno",
+      "sigaddset",
+      "sigemptyset",
+      "sys_write_fd",
+      "terminate_deferred_transfer",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic",
+      "resolve_host_symbol_raw_literal"
+    ],
+    "rationale": "The setjmp-family ABI entrypoints use deterministic phase-1 metadata capture/restore for Rust-callable verification and explicit deferred-transfer termination for longjmp-family paths. The remaining census entries are errno propagation, libio exit-safety bootstrap, signal-mask helpers, raw write for explicit deferred-transfer termination, and scanner aliases to internal capture/restore helpers; none delegate setjmp, longjmp, _setjmp, _longjmp, sigsetjmp, or siglongjmp phase-1 semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "_longjmp",
+      "module": "setjmp_abi",
+      "core_path": "crates/frankenlibc-abi/src/setjmp_abi.rs::_longjmp",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "_setjmp",
+      "module": "setjmp_abi",
+      "core_path": "crates/frankenlibc-abi/src/setjmp_abi.rs::_setjmp",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "longjmp",
+      "module": "setjmp_abi",
+      "core_path": "crates/frankenlibc-abi/src/setjmp_abi.rs::longjmp",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "setjmp",
+      "module": "setjmp_abi",
+      "core_path": "crates/frankenlibc-abi/src/setjmp_abi.rs::setjmp",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "siglongjmp",
+      "module": "setjmp_abi",
+      "core_path": "crates/frankenlibc-abi/src/setjmp_abi.rs::siglongjmp",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "sigsetjmp",
+      "module": "setjmp_abi",
+      "core_path": "crates/frankenlibc-abi/src/setjmp_abi.rs::sigsetjmp",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
