@@ -3,12 +3,47 @@
 //! Integration tests for `<wchar.h>` ABI entrypoints.
 
 use std::ffi::{CStr, c_char, c_int, c_void};
+use std::sync::{Mutex, MutexGuard};
 
 use frankenlibc_abi::glibc_internal_abi::fwide;
 use frankenlibc_abi::io_internal_abi::verify_native_file;
 use frankenlibc_abi::malloc_abi::{free, malloc};
 use frankenlibc_abi::stdlib_abi::{basename, dirname, realpath};
 use frankenlibc_abi::wchar_abi::*;
+
+static STDIO_GLOBAL_STREAM_LOCK: Mutex<()> = Mutex::new(());
+
+struct StdioGlobalStreamGuard {
+    _guard: MutexGuard<'static, ()>,
+    old_stdin: *mut c_void,
+    old_stdout: *mut c_void,
+}
+
+impl StdioGlobalStreamGuard {
+    unsafe fn install(new_stdin: *mut c_void, new_stdout: *mut c_void) -> Self {
+        let guard = STDIO_GLOBAL_STREAM_LOCK.lock().unwrap();
+        let old_stdin = unsafe { frankenlibc_abi::stdio_abi::stdin };
+        let old_stdout = unsafe { frankenlibc_abi::stdio_abi::stdout };
+        unsafe {
+            frankenlibc_abi::stdio_abi::stdin = new_stdin;
+            frankenlibc_abi::stdio_abi::stdout = new_stdout;
+        }
+        Self {
+            _guard: guard,
+            old_stdin,
+            old_stdout,
+        }
+    }
+}
+
+impl Drop for StdioGlobalStreamGuard {
+    fn drop(&mut self) {
+        unsafe {
+            frankenlibc_abi::stdio_abi::stdin = self.old_stdin;
+            frankenlibc_abi::stdio_abi::stdout = self.old_stdout;
+        }
+    }
+}
 
 fn errno_value() -> i32 {
     unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
@@ -1628,6 +1663,63 @@ fn wide_stream_char_roundtrip_and_pushback() {
     assert_eq!(unsafe { fgetwc(stream) }, 'é' as u32);
 
     assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
+}
+
+#[test]
+fn wide_stream_getwc_putwc_aliases_roundtrip() {
+    let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    assert!(!stream.is_null());
+
+    assert_eq!(
+        unsafe { putwc('R' as libc::wchar_t, stream.cast::<libc::FILE>()) },
+        'R' as u32
+    );
+    assert_eq!(unsafe { putwc_unlocked('S' as u32, stream) }, 'S' as u32);
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) },
+        0
+    );
+
+    assert_eq!(unsafe { getwc(stream.cast::<libc::FILE>()) }, 'R' as u32);
+    assert_eq!(
+        unsafe { getwc_unlocked(stream.cast::<libc::FILE>()) },
+        'S' as u32
+    );
+    assert_eq!(
+        unsafe { getwc_unlocked(stream.cast::<libc::FILE>()) },
+        u32::MAX
+    );
+
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
+}
+
+#[test]
+fn wide_stdio_unlocked_aliases_use_redirected_globals() {
+    let in_stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    let out_stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    assert!(!in_stream.is_null());
+    assert!(!out_stream.is_null());
+
+    assert_eq!(unsafe { fputwc('Q' as u32, in_stream) }, 'Q' as u32);
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(in_stream, 0, libc::SEEK_SET) },
+        0
+    );
+
+    {
+        let _stdio = unsafe { StdioGlobalStreamGuard::install(in_stream, out_stream) };
+        assert_eq!(unsafe { getwchar_unlocked() }, 'Q' as u32);
+        assert_eq!(unsafe { putwchar_unlocked('Z' as u32) }, 'Z' as u32);
+    }
+
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(out_stream, 0, libc::SEEK_SET) },
+        0
+    );
+    assert_eq!(unsafe { fgetwc(out_stream) }, 'Z' as u32);
+
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(in_stream) }, 0);
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(out_stream) }, 0);
 }
 
 #[test]

@@ -2,8 +2,8 @@
   "schema_version": "unistd_abi_promotion_tranche.v1",
   "bead": "bd-5tgwug",
   "trace_id": "bd-5tgwug-unistd-abi-promotion-tranche-v1",
-  "description": "Bounded promotion proof for the unistd_abi GNU stack protector row, LFS alias rows, wide/multibyte aliases, getopt, posix_close, and cross-module posix_spawnattr signal accessors that already have strict and hardened ABI evidence.",
-  "rationale": "The promoted rows cover the GNU stack protector abort contract, LP64 LFS alias contracts for ftruncate64, lseek64, mmap64, pread64, pwrite64, sendfile64, and truncate64, wide/multibyte symbols cataloged under unistd_abi but implemented in wchar_abi, the native getopt scanner, posix_close over the native close path, and posix_spawnattr signal-set accessors cataloged under unistd_abi but implemented in process_abi. __stack_chk_fail is cataloged in the support matrix under unistd_abi but implemented in fortify_abi; its fixture proof binds the abort behavior while the host-delegation census hits are abort, libio exit-safety, errno, and signal-mask helper artifacts. The LFS symbols alias FrankenLibC's native syscall, mmap, and I/O paths; their census hits are errno/bootstrap helpers plus alias reachability to the native non-64 entrypoints, not host-glibc semantic call-through. The wide/multibyte and posix_spawnattr symbols have no host-census hits; their ratchet proof binds the cross-module support-matrix catalog rows to direct wchar_abi and process_abi tests. getopt and posix_close census hits are bounded to scanner/native-close helper reachability plus errno/bootstrap helpers.",
+  "description": "Bounded promotion proof for the unistd_abi GNU stack protector row, LFS alias rows, wide/multibyte and wide-stream aliases, getopt, posix_close, and cross-module posix_spawnattr signal accessors that already have strict and hardened ABI evidence.",
+  "rationale": "The promoted rows cover the GNU stack protector abort contract, LP64 LFS alias contracts for ftruncate64, lseek64, mmap64, pread64, pwrite64, sendfile64, and truncate64, wide/multibyte and wide-stream symbols cataloged under unistd_abi but implemented in wchar_abi, the native getopt scanner, posix_close over the native close path, and posix_spawnattr signal-set accessors cataloged under unistd_abi but implemented in process_abi. __stack_chk_fail is cataloged in the support matrix under unistd_abi but implemented in fortify_abi; its fixture proof binds the abort behavior while the host-delegation census hits are abort, libio exit-safety, errno, and signal-mask helper artifacts. The LFS symbols alias FrankenLibC's native syscall, mmap, and I/O paths; their census hits are errno/bootstrap helpers plus alias reachability to the native non-64 entrypoints, not host-glibc semantic call-through. The wide/multibyte, wide-stream, and posix_spawnattr symbols have no host-census hits; their ratchet proof binds the cross-module support-matrix catalog rows to direct wchar_abi and process_abi tests. getopt and posix_close census hits are bounded to scanner/native-close helper reachability plus errno/bootstrap helpers.",
   "source_artifacts": [
     "support_matrix.json",
     "tests/conformance/fixtures/unistd_process_filesystem_wave02.json",
@@ -176,11 +176,27 @@
         "strict",
         "hardened"
       ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::wide_stream_getwc_putwc_aliases_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::wide_stdio_unlocked_aliases_use_redirected_globals",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
     }
   ],
   "policy": {
     "support_matrix_status": "Implemented",
-    "classification": "native-unistd-stackfail-lfs-wchar-process-getopt-errno-bridge",
+    "classification": "native-unistd-stackfail-lfs-wchar-stream-process-getopt-errno-bridge",
     "required_modes": [
       "strict",
       "hardened"
@@ -264,6 +280,63 @@
       "module": "unistd_abi",
       "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::getopt",
       "fixture": "crates/frankenlibc-abi/tests/conformance_diff_getopt.rs::conformance_getopt_basic_short_opts",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "getwc",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::getwc",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wide_stream_getwc_putwc_aliases_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "getwc_unlocked",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::getwc_unlocked",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wide_stream_getwc_putwc_aliases_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "getwchar_unlocked",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::getwchar_unlocked",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wide_stdio_unlocked_aliases_use_redirected_globals",
       "strict_conformance": {
         "total": 1,
         "passed": 1,
@@ -511,6 +584,63 @@
       "module": "unistd_abi",
       "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::pwrite64",
       "fixture": "crates/frankenlibc-abi/tests/stdlib_abi_test.rs::lfs64_aliases_io_roundtrip_and_fd_truncate",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "putwc",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::putwc",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wide_stream_getwc_putwc_aliases_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "putwc_unlocked",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::putwc_unlocked",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wide_stream_getwc_putwc_aliases_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "putwchar_unlocked",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::putwchar_unlocked",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wide_stdio_unlocked_aliases_use_redirected_globals",
       "strict_conformance": {
         "total": 1,
         "passed": 1,

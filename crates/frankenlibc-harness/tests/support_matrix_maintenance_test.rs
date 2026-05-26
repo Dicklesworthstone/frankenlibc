@@ -378,6 +378,9 @@ const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "__stack_chk_fail",
     "ftruncate64",
     "getopt",
+    "getwc",
+    "getwc_unlocked",
+    "getwchar_unlocked",
     "lseek64",
     "mbrlen",
     "mbsnrtowcs",
@@ -391,6 +394,9 @@ const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "posix_spawnattr_setsigmask",
     "pread64",
     "pwrite64",
+    "putwc",
+    "putwc_unlocked",
+    "putwchar_unlocked",
     "sendfile64",
     "truncate64",
     "wcsnrtombs",
@@ -404,10 +410,16 @@ const UNISTD_CROSS_MODULE_LOCATOR_PENDING_SYMBOLS: &[&str] = &[
     "mbsnrtowcs",
     "mbstowcs",
     "mbtowc",
+    "getwc",
+    "getwc_unlocked",
+    "getwchar_unlocked",
     "posix_spawnattr_getsigdefault",
     "posix_spawnattr_getsigmask",
     "posix_spawnattr_setsigdefault",
     "posix_spawnattr_setsigmask",
+    "putwc",
+    "putwc_unlocked",
+    "putwchar_unlocked",
     "wcsnrtombs",
     "wcstoimax",
     "wcstombs",
@@ -1926,7 +1938,7 @@ fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
     assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
     assert_eq!(
         manifest["policy"]["classification"].as_str(),
-        Some("native-unistd-stackfail-lfs-wchar-process-getopt-errno-bridge")
+        Some("native-unistd-stackfail-lfs-wchar-stream-process-getopt-errno-bridge")
     );
 
     let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
