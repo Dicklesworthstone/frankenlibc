@@ -1,0 +1,78 @@
+{
+  "schema_version": "inet_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-inet-abi-promotion-tranche-v1",
+  "description": "Bounded inet_abi promotion tranche proving if_nametoindex and if_indextoname as native interface-index ioctls whose host-delegation census hits are errno bridge artifacts.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/inet_abi.rs",
+    "abi_diff_tests": [
+      "crates/frankenlibc-abi/tests/conformance_diff_net_if.rs::diff_if_nametoindex_loopback",
+      "crates/frankenlibc-abi/tests/conformance_diff_net_if.rs::diff_if_nametoindex_unknown",
+      "crates/frankenlibc-abi/tests/conformance_diff_net_if.rs::diff_if_indextoname_loopback",
+      "crates/frankenlibc-abi/tests/conformance_diff_net_if.rs::diff_if_indextoname_unknown_index"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-interface-index-ioctl-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "set_abi_errno",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The interface index ABI entrypoints use FrankenLibC's native socket/ioctl path for SIOCGIFINDEX and SIOCGIFNAME. The remaining census entries are errno propagation and dynamic errno bootstrap, not delegation of interface-name or interface-index semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "if_indextoname",
+      "module": "inet_abi",
+      "core_path": "crates/frankenlibc-abi/src/inet_abi.rs::if_indextoname",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "if_nametoindex",
+      "module": "inet_abi",
+      "core_path": "crates/frankenlibc-abi/src/inet_abi.rs::if_nametoindex",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
