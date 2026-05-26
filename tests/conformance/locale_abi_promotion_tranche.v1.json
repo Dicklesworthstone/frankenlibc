@@ -1,0 +1,99 @@
+{
+  "schema_version": "locale_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-locale-abi-promotion-tranche-v1",
+  "description": "Bounded locale_abi promotion tranche proving owned XSI catgets message-catalog behavior whose host-delegation census hits are only errno and procfs/syscall support bridges.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "fixture": "tests/conformance/fixtures/locale_catalog_wave01.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/locale_abi.rs",
+    "core_sources": [
+      "crates/frankenlibc-core/src/locale/catgets.rs"
+    ],
+    "harness_tests": [
+      "crates/frankenlibc-harness/tests/locale_catalog_wave01_conformance_test.rs"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-locale-catalog-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "read",
+      "set_abi_errno",
+      "sys_read_fd",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The locale_abi message-catalog result path is owned by the Rust catgets parser and ABI shim. The remaining host-reachable census entries are errno state bridges and procfs/syscall helpers for catalog lookup, not delegation of catopen, catgets, or catclose semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "catclose",
+      "module": "locale_abi",
+      "core_path": "crates/frankenlibc-abi/src/locale_abi.rs::catclose",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "catgets",
+      "module": "locale_abi",
+      "core_path": "crates/frankenlibc-abi/src/locale_abi.rs::catgets",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "catopen",
+      "module": "locale_abi",
+      "core_path": "crates/frankenlibc-abi/src/locale_abi.rs::catopen",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
