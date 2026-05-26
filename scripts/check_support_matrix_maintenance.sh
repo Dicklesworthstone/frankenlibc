@@ -17,6 +17,8 @@ LOG_DIR="$REPO_ROOT/target/conformance"
 CANONICAL_REPORT="${FRANKENLIBC_MAINTENANCE_CANONICAL_REPORT:-$REPO_ROOT/tests/conformance/support_matrix_maintenance_report.v1.json}"
 GENERATED_REPORT="$LOG_DIR/support_matrix_maintenance.generated.json"
 LOG_FILE="$LOG_DIR/support_matrix_maintenance.log.jsonl"
+PROMOTION_TRIAGE_REPORT="${FRANKENLIBC_PROMOTION_TRIAGE_REPORT:-$LOG_DIR/support_matrix_promotion_triage.v1.json}"
+PROMOTION_TRIAGE_BASE_REPORT="$LOG_DIR/support_matrix_maintenance.triage_base.json"
 TRACE_ID="bd-ldj.8-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 TRACE_SYMBOL_EVENTS="${FRANKENLIBC_SYMBOL_GATE_TRACE:-0}"
 
@@ -28,9 +30,20 @@ fi
 echo "=== Support Matrix Maintenance Gate (bd-3g4p) ==="
 mkdir -p "$LOG_DIR"
 
-# 1. Run the maintenance validator
+# 1. Build the promotion triage manifest that scopes fixture-ratchet
+# violations without mutating support_matrix.json classifications.
+echo "--- Generating promotion triage manifest ---"
+FRANKENLIBC_PROMOTION_TRIAGE_OUT_DIR="$LOG_DIR" \
+FRANKENLIBC_PROMOTION_TRIAGE_MAINTENANCE_REPORT="$PROMOTION_TRIAGE_BASE_REPORT" \
+FRANKENLIBC_PROMOTION_TRIAGE_REPORT="$PROMOTION_TRIAGE_REPORT" \
+bash "$SCRIPT_DIR/check_support_matrix_promotion_triage.sh" >/dev/null
+echo "Promotion triage report: $PROMOTION_TRIAGE_REPORT"
+
+# 2. Run the maintenance validator
 echo "--- Generating maintenance report ---"
-python3 "$SCRIPT_DIR/generate_support_matrix_maintenance.py" -o "$GENERATED_REPORT"
+python3 "$SCRIPT_DIR/generate_support_matrix_maintenance.py" \
+    -o "$GENERATED_REPORT" \
+    --promotion-triage-report "$PROMOTION_TRIAGE_REPORT"
 
 if [ ! -f "$GENERATED_REPORT" ]; then
     echo "FAIL: maintenance report not generated"
@@ -42,7 +55,7 @@ if [ ! -f "$CANONICAL_REPORT" ]; then
     exit 1
 fi
 
-# 2. Validate report structure, compare stable sections against the canonical
+# 3. Validate report structure, compare stable sections against the canonical
 # artifact, emit logging, and check thresholds.
 python3 - "$GENERATED_REPORT" "$CANONICAL_REPORT" "$STRICT" "$TRACE_ID" "$LOG_FILE" "$TRACE_SYMBOL_EVENTS" <<'PY'
 import json, sys

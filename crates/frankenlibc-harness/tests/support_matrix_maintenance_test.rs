@@ -175,6 +175,9 @@ fn run_support_matrix_gate_with_canonical(
     } else {
         command.env_remove("FRANKENLIBC_SYMBOL_GATE_TRACE");
     }
+    command.env_remove("FRANKENLIBC_PROMOTION_TRIAGE_OUT_DIR");
+    command.env_remove("FRANKENLIBC_PROMOTION_TRIAGE_MAINTENANCE_REPORT");
+    command.env_remove("FRANKENLIBC_PROMOTION_TRIAGE_REPORT");
     if let Some(path) = canonical_override {
         command.env("FRANKENLIBC_MAINTENANCE_CANONICAL_REPORT", path);
     } else {
@@ -1056,6 +1059,47 @@ fn maintenance_gate_emits_structured_logs_with_required_fields() {
             .iter()
             .any(|event| event["level"].as_str() == Some("trace")),
         "TRACE events must be opt-in only"
+    );
+}
+
+#[test]
+fn maintenance_gate_loads_promotion_triage_manifest() {
+    let _guard = gate_test_lock();
+    let output = run_support_matrix_gate(false);
+    assert!(
+        output.status.code().is_some(),
+        "Gate process terminated without an exit code"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Promotion triage report:"),
+        "gate should announce the generated promotion triage report\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let generated_report = load_json(
+        &repo_root().join("target/conformance/support_matrix_maintenance.generated.json"),
+    );
+    let ratchet = &generated_report["fixture_coverage_ratchet"];
+    assert_eq!(
+        ratchet["promotion_triage_manifest_loaded"].as_bool(),
+        Some(true)
+    );
+    assert!(
+        ratchet["module_deltas"].is_object(),
+        "triage-loaded ratchet should include module-level deltas"
+    );
+    assert!(
+        ratchet["summary"]["implemented_promotion_delta"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "current support-matrix promotion wave should remain visible to the ratchet"
+    );
+    assert_eq!(
+        generated_report["policy_checks"]["fixture_coverage_ratchet"]
+            ["promotion_triage_manifest_loaded"]
+            .as_bool(),
+        Some(true)
     );
 }
 
