@@ -45,6 +45,7 @@ PROMOTION_PROOF_MANIFEST_PATHS = (
     REPO_ROOT / "tests" / "conformance" / "string_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "fortify_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "unistd_abi_promotion_tranche.v1.json",
+    REPO_ROOT / "tests" / "conformance" / "glibc_internal_abi_promotion_tranche.v1.json",
 )
 HIGH_IMPACT_RATCHET_MODULES = (
     "math_abi",
@@ -73,6 +74,7 @@ ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS = {
     "native-string-conversion-argz-envz-glob-regex-allocator-errno-bridge",
     "native-fortify-wrapper-libio-allocator-errno-bridge",
     "native-unistd-stackfail-lfs-errno-bridge",
+    "native-glibc-internal-clone-errno-bridge",
 }
 
 # Patterns indicating actual host libc call expressions.

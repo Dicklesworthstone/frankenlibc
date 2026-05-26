@@ -330,6 +330,7 @@ const FORTIFY_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "__mbstowcs_chk",
 ];
 const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__stack_chk_fail", "ftruncate64"];
+const GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__clone"];
 
 #[test]
 fn maintenance_report_generates_successfully() {
@@ -1881,6 +1882,83 @@ fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
 }
 
 #[test]
+fn glibc_internal_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest =
+        load_json(&root.join("tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("glibc_internal_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-glibc-internal-clone-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "bootstrap_host_symbols",
+        "set_abi_errno",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "glibc_internal_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS
+            .iter()
+            .copied()
+            .collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("glibc_internal_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
 fn generated_report_accepts_math_abi_errno_bridge_tranche() {
     let generated_path = unique_generated_report_path("math_abi_promotion_tranche");
     let output = generate_maintenance_report(&generated_path);
@@ -2508,6 +2586,44 @@ fn generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche() {
 }
 
 #[test]
+fn generated_report_accepts_glibc_internal_abi_clone_errno_tranche() {
+    let generated_path = unique_generated_report_path("glibc_internal_abi_promotion_tranche");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS {
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after glibc_internal ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
 fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
     let triage_path = generate_promotion_triage_report();
     let previous_report_path = unique_generated_report_path("fixture_ratchet_selected_previous");
@@ -2711,6 +2827,14 @@ fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
             >= UNISTD_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
         "unistd_abi proof manifest should expose strict+hardened proven symbols"
     );
+    let glibc_internal_proofs = &ratchet["proof_manifest_by_module"]["glibc_internal_abi"];
+    assert!(
+        glibc_internal_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "glibc_internal_abi proof manifest should expose strict+hardened proven symbols"
+    );
     let malloc_violations = ratchet["module_deltas"]["malloc_abi"]["violating_symbols"]
         .as_array()
         .cloned()
@@ -2852,6 +2976,19 @@ fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
     for symbol in UNISTD_PROMOTION_TRANCHE_SYMBOLS {
         assert!(
             !unistd_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let glibc_internal_violations =
+        ratchet["module_deltas"]["glibc_internal_abi"]["violating_symbols"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+    for symbol in GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !glibc_internal_violations
                 .iter()
                 .any(|violation| violation.as_str() == Some(*symbol)),
             "{symbol} should be proofed instead of counted as missing fixture evidence"

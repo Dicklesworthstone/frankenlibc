@@ -1,0 +1,68 @@
+{
+  "schema_version": "glibc_internal_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-glibc-internal-abi-promotion-tranche-v1",
+  "description": "Bounded promotion proof for the glibc_internal_abi __clone guard row that already has strict and hardened fixture evidence.",
+  "rationale": "__clone is a native FrankenLibC glibc-internal compatibility wrapper. On x86_64 the valid child path uses a direct clone syscall in naked assembly and the fixture-proven invalid null function/stack path returns -1 with EINVAL before spawning a child. The host-delegation census hits are errno bootstrap/projection helpers and alias reachability, not host-glibc clone semantics.",
+  "source_artifacts": [
+    "support_matrix.json",
+    "tests/conformance/fixtures/glibc_internal_compat_wave03.json",
+    "tests/conformance/host_delegation_census.v1.json",
+    "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+    "crates/frankenlibc-harness/tests/glibc_internal_compat_wave03_conformance_test.rs",
+    "crates/frankenlibc_conformance/src/lib.rs"
+  ],
+  "test_evidence": [
+    {
+      "crate": "frankenlibc-harness",
+      "test": "glibc_internal_compat_wave03_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    }
+  ],
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "classification": "native-glibc-internal-clone-errno-bridge",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "set_abi_errno",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ]
+  },
+  "symbols": [
+    {
+      "symbol": "__clone",
+      "module": "glibc_internal_abi",
+      "core_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs::__clone",
+      "fixture": "tests/conformance/fixtures/glibc_internal_compat_wave03.json::clone_null_fn_stack_strict_and_hardened",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
