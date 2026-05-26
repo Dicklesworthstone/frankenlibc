@@ -11067,8 +11067,8 @@
       "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native readdir raw getdents64 path",
+      "hardened_semantics": "Same as strict; native readdir handles pointer and stream validation",
       "default_stub": false
     },
     {

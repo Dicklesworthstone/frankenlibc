@@ -1,0 +1,56 @@
+{
+  "schema_version": "dirent_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-dirent-abi-promotion-tranche-v1",
+  "description": "Bounded dirent_abi promotion tranche proving readdir64 as an LP64 alias to FrankenLibC's native readdir path whose host-delegation census hits are alias and errno bridge artifacts.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/dirent_abi.rs",
+    "abi_diff_test": "crates/frankenlibc-abi/tests/conformance_diff_dirent.rs::diff_readdir64_mixed_directory"
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-dirent64-alias-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "readdir",
+      "set_abi_errno",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The readdir64 ABI entrypoint is a direct LP64 alias to FrankenLibC's native readdir implementation, which owns the getdents64-backed directory stream path. The remaining census entries are alias reachability to that native symbol plus errno propagation and dynamic errno bootstrap, not delegation of directory iteration semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "readdir64",
+      "module": "dirent_abi",
+      "core_path": "crates/frankenlibc-abi/src/dirent_abi.rs::readdir64",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
