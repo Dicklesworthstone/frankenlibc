@@ -378,11 +378,31 @@ const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "__stack_chk_fail",
     "ftruncate64",
     "lseek64",
+    "mbrlen",
+    "mbsnrtowcs",
+    "mbstowcs",
+    "mbtowc",
     "mmap64",
     "pread64",
     "pwrite64",
     "sendfile64",
     "truncate64",
+    "wcsnrtombs",
+    "wcstoimax",
+    "wcstombs",
+    "wcstoumax",
+    "wctomb",
+];
+const UNISTD_WCHAR_ALIAS_PROMOTION_SYMBOLS: &[&str] = &[
+    "mbrlen",
+    "mbsnrtowcs",
+    "mbstowcs",
+    "mbtowc",
+    "wcsnrtombs",
+    "wcstoimax",
+    "wcstombs",
+    "wcstoumax",
+    "wctomb",
 ];
 const RPC_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "host2netname",
@@ -1896,7 +1916,7 @@ fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
     assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
     assert_eq!(
         manifest["policy"]["classification"].as_str(),
-        Some("native-unistd-stackfail-lfs-errno-bridge")
+        Some("native-unistd-stackfail-lfs-wchar-alias-errno-bridge")
     );
 
     let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
@@ -2741,13 +2761,14 @@ fn generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche() {
                 })
             })
         });
-        let stackfail_locator_pending = *symbol == "__stack_chk_fail"
+        let cross_module_locator_pending = (*symbol == "__stack_chk_fail"
+            || UNISTD_WCHAR_ALIAS_PROMOTION_SYMBOLS.contains(symbol))
             && rows
                 .iter()
                 .any(|issue| issue["issue_class"].as_str() == Some("missing_body"));
         assert!(
-            proof_warning_present || stackfail_locator_pending,
-            "{symbol} should keep either a proof-manifest warning or the known stack-fail locator finding"
+            proof_warning_present || cross_module_locator_pending,
+            "{symbol} should keep either a proof-manifest warning or the known cross-module locator finding"
         );
     }
 

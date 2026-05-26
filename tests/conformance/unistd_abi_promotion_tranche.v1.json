@@ -2,8 +2,8 @@
   "schema_version": "unistd_abi_promotion_tranche.v1",
   "bead": "bd-5tgwug",
   "trace_id": "bd-5tgwug-unistd-abi-promotion-tranche-v1",
-  "description": "Bounded promotion proof for the unistd_abi GNU stack protector row and the LFS alias rows that already have strict and hardened ABI evidence.",
-  "rationale": "The promoted rows cover the GNU stack protector abort contract plus LP64 LFS alias contracts for ftruncate64, lseek64, mmap64, pread64, pwrite64, sendfile64, and truncate64. __stack_chk_fail is cataloged in the support matrix under unistd_abi but implemented in fortify_abi; its fixture proof binds the abort behavior while the host-delegation census hits are abort, libio exit-safety, errno, and signal-mask helper artifacts. The LFS symbols alias FrankenLibC's native syscall, mmap, and I/O paths; their census hits are errno/bootstrap helpers plus alias reachability to the native non-64 entrypoints, not host-glibc semantic call-through.",
+  "description": "Bounded promotion proof for the unistd_abi GNU stack protector row, LFS alias rows, and wide/multibyte aliases that already have strict and hardened ABI evidence.",
+  "rationale": "The promoted rows cover the GNU stack protector abort contract, LP64 LFS alias contracts for ftruncate64, lseek64, mmap64, pread64, pwrite64, sendfile64, and truncate64, plus wide/multibyte symbols cataloged under unistd_abi but implemented in wchar_abi. __stack_chk_fail is cataloged in the support matrix under unistd_abi but implemented in fortify_abi; its fixture proof binds the abort behavior while the host-delegation census hits are abort, libio exit-safety, errno, and signal-mask helper artifacts. The LFS symbols alias FrankenLibC's native syscall, mmap, and I/O paths; their census hits are errno/bootstrap helpers plus alias reachability to the native non-64 entrypoints, not host-glibc semantic call-through. The wide/multibyte symbols have no host-census hits; their ratchet proof binds the cross-module support-matrix catalog rows to direct wchar_abi tests.",
   "source_artifacts": [
     "support_matrix.json",
     "tests/conformance/fixtures/unistd_process_filesystem_wave02.json",
@@ -11,9 +11,11 @@
     "tests/conformance/host_delegation_census.v1.json",
     "crates/frankenlibc-abi/src/fortify_abi.rs",
     "crates/frankenlibc-abi/src/unistd_abi.rs",
+    "crates/frankenlibc-abi/src/wchar_abi.rs",
     "crates/frankenlibc-abi/tests/io_abi_test.rs",
     "crates/frankenlibc-abi/tests/mmap_abi_test.rs",
     "crates/frankenlibc-abi/tests/stdlib_abi_test.rs",
+    "crates/frankenlibc-abi/tests/wchar_abi_test.rs",
     "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave02_conformance_test.rs",
     "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave13_conformance_test.rs",
     "crates/frankenlibc_conformance/src/lib.rs"
@@ -66,11 +68,83 @@
         "strict",
         "hardened"
       ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::mbrlen_measures_multibyte",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::mbsnrtowcs_converts_bounded",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::mbstowcs_converts_utf8_to_wide",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::mbtowc_converts_ascii",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::wcsnrtombs_converts_bounded",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::wcstoimax_parses_signed",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::wcstombs_converts_wide_to_utf8",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::wcstoumax_parses_unsigned",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "wchar_abi_test::wctomb_encodes_ascii",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
     }
   ],
   "policy": {
     "support_matrix_status": "Implemented",
-    "classification": "native-unistd-stackfail-lfs-errno-bridge",
+    "classification": "native-unistd-stackfail-lfs-wchar-alias-errno-bridge",
     "required_modes": [
       "strict",
       "hardened"
@@ -167,6 +241,82 @@
       "decision": "proven"
     },
     {
+      "symbol": "mbrlen",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::mbrlen",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::mbrlen_measures_multibyte",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "mbsnrtowcs",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::mbsnrtowcs",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::mbsnrtowcs_converts_bounded",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "mbstowcs",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::mbstowcs",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::mbstowcs_converts_utf8_to_wide",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "mbtowc",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::mbtowc",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::mbtowc_converts_ascii",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
       "symbol": "mmap64",
       "module": "unistd_abi",
       "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::mmap64",
@@ -247,6 +397,101 @@
       "module": "unistd_abi",
       "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::truncate64",
       "fixture": "crates/frankenlibc-abi/tests/stdlib_abi_test.rs::lfs64_aliases_path_stat_and_truncate",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "wcsnrtombs",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::wcsnrtombs",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wcsnrtombs_converts_bounded",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "wcstoimax",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::wcstoimax",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wcstoimax_parses_signed",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "wcstombs",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::wcstombs",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wcstombs_converts_wide_to_utf8",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "wcstoumax",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::wcstoumax",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wcstoumax_parses_unsigned",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "wctomb",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/wchar_abi.rs::wctomb",
+      "fixture": "crates/frankenlibc-abi/tests/wchar_abi_test.rs::wctomb_encodes_ascii",
       "strict_conformance": {
         "total": 1,
         "passed": 1,
