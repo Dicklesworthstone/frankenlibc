@@ -2,8 +2,8 @@
   "schema_version": "rpc_abi_promotion_tranche.v1",
   "bead": "bd-5tgwug",
   "trace_id": "bd-5tgwug-rpc-abi-promotion-tranche-v1",
-  "description": "Bounded promotion proof for rpc_abi netname and XDR rows that already have deterministic native ABI evidence.",
-  "rationale": "The promoted rows cover native netname formatting plus native XDR counted byte, string, wrapped string, variable-array, netobj, opaque-auth, pointer/reference, pmap-list, unixcred, netname-string, and record-stream initialization codecs. Host-delegation census hits are allocator and errno bridge artifacts reached through FrankenLibC malloc/calloc/free entrypoints or recursive XDR helper calls, not host RPC semantic delegation.",
+  "description": "Bounded promotion proof for rpc_abi netname and XDR rows with deterministic native ABI evidence.",
+  "rationale": "The promoted rows cover native netname formatting plus native XDR counted byte, string, wrapped string, variable-array, netobj, opaque-auth, RPC reply/call/auth composites, pointer/reference, pmap-list, remote-call results, unixcred, Secure RPC keyserv composites, netname-string, and record-stream initialization codecs. Host-delegation census hits are allocator and errno bridge artifacts reached through FrankenLibC malloc/calloc/free entrypoints or recursive XDR helper calls, not host RPC semantic delegation.",
   "source_artifacts": [
     "support_matrix.json",
     "tests/conformance/host_delegation_census.v1.json",
@@ -147,6 +147,86 @@
         "strict",
         "hardened"
       ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_accepted_reply_prog_mismatch_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_replymsg_accepted_mismatch_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_callmsg_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_authunix_parms_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_authdes_cred_fullname_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_cryptkeyarg_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_cryptkeyarg2_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_getcredres_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_key_netstarg_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_rmtcallres_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
     }
   ],
   "policy": {
@@ -179,8 +259,11 @@
       "resolve_host_allocator_symbol",
       "set_abi_errno",
       "write_host_errno_if_available",
+      "xdr_accepted_reply",
       "xdr_array",
       "xdr_bytes",
+      "xdr_netnamestr",
+      "xdr_opaque_auth",
       "xdr_reference",
       "xdr_string"
     ],
@@ -444,6 +527,196 @@
       "module": "rpc_abi",
       "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdrrec_create",
       "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdrrec_create_initializes_handle",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_accepted_reply",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_accepted_reply",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_accepted_reply_prog_mismatch_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_replymsg",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_replymsg",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_replymsg_accepted_mismatch_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_callmsg",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_callmsg",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_callmsg_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_authunix_parms",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_authunix_parms",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_authunix_parms_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_authdes_cred",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_authdes_cred",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_authdes_cred_fullname_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_cryptkeyarg",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_cryptkeyarg",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_cryptkeyarg_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_cryptkeyarg2",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_cryptkeyarg2",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_cryptkeyarg2_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_getcredres",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_getcredres",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_getcredres_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_key_netstarg",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_key_netstarg",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_key_netstarg_roundtrip",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_rmtcallres",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_rmtcallres",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_rmtcallres_roundtrip",
       "strict_conformance": {
         "total": 1,
         "passed": 1,

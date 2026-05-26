@@ -1370,7 +1370,251 @@ fn xdr_opaque_auth_roundtrip() {
 }
 
 // ===========================================================================
-// 22. RPC type serializers: xdr_pmap
+// 22. RPC type serializers: reply and call message composites
+// ===========================================================================
+
+#[test]
+fn xdr_accepted_reply_prog_mismatch_roundtrip() {
+    let mut buf = [0u8; 512];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C)]
+    struct OpaqueAuth {
+        oa_flavor: c_int,
+        _pad: c_int,
+        oa_base: *mut c_char,
+        oa_length: c_uint,
+        _pad2: c_uint,
+    }
+
+    #[repr(C)]
+    struct AcceptedReply {
+        ar_verf: OpaqueAuth,
+        ar_stat: c_int,
+        _pad: c_int,
+        ar_u1: c_ulong,
+        ar_u2: c_ulong,
+    }
+
+    let mut reply = AcceptedReply {
+        ar_verf: OpaqueAuth {
+            oa_flavor: 0,
+            _pad: 0,
+            oa_base: std::ptr::null_mut(),
+            oa_length: 0,
+            _pad2: 0,
+        },
+        ar_stat: 2,
+        _pad: 0,
+        ar_u1: 2,
+        ar_u2: 4,
+    };
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_accepted_reply(xdr.as_mut_ptr(), (&mut reply as *mut AcceptedReply).cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = AcceptedReply {
+        ar_verf: OpaqueAuth {
+            oa_flavor: -1,
+            _pad: 0,
+            oa_base: std::ptr::null_mut(),
+            oa_length: 0,
+            _pad2: 0,
+        },
+        ar_stat: 0,
+        _pad: 0,
+        ar_u1: 0,
+        ar_u2: 0,
+    };
+    assert_eq!(
+        unsafe { xdr_accepted_reply(xdr.as_mut_ptr(), (&mut out as *mut AcceptedReply).cast()) },
+        1
+    );
+
+    assert_eq!(out.ar_verf.oa_flavor, 0);
+    assert_eq!(out.ar_verf.oa_length, 0);
+    assert_eq!(out.ar_stat, 2);
+    assert_eq!(out.ar_u1 as u32, 2);
+    assert_eq!(out.ar_u2 as u32, 4);
+}
+
+#[test]
+fn xdr_replymsg_accepted_mismatch_roundtrip() {
+    let mut buf = [0u8; 512];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C, align(8))]
+    struct ReplyMsg {
+        bytes: [u8; 80],
+    }
+
+    let mut msg = ReplyMsg { bytes: [0; 80] };
+    unsafe {
+        *(msg.bytes.as_mut_ptr().add(0) as *mut c_ulong) = 0xAABBCCDD;
+        *(msg.bytes.as_mut_ptr().add(8) as *mut c_int) = 1;
+        *(msg.bytes.as_mut_ptr().add(16) as *mut c_int) = 0;
+        *(msg.bytes.as_mut_ptr().add(24) as *mut c_int) = 0;
+        *(msg.bytes.as_mut_ptr().add(40) as *mut c_uint) = 0;
+        *(msg.bytes.as_mut_ptr().add(48) as *mut c_int) = 2;
+        *(msg.bytes.as_mut_ptr().add(56) as *mut c_ulong) = 2;
+        *(msg.bytes.as_mut_ptr().add(64) as *mut c_ulong) = 4;
+    }
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_replymsg(xdr.as_mut_ptr(), msg.bytes.as_mut_ptr().cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = ReplyMsg { bytes: [0; 80] };
+    assert_eq!(
+        unsafe { xdr_replymsg(xdr.as_mut_ptr(), out.bytes.as_mut_ptr().cast()) },
+        1
+    );
+
+    unsafe {
+        assert_eq!(
+            *(out.bytes.as_ptr().add(0) as *const c_ulong) as u32,
+            0xAABBCCDD
+        );
+        assert_eq!(*(out.bytes.as_ptr().add(8) as *const c_int), 1);
+        assert_eq!(*(out.bytes.as_ptr().add(16) as *const c_int), 0);
+        assert_eq!(*(out.bytes.as_ptr().add(24) as *const c_int), 0);
+        assert_eq!(*(out.bytes.as_ptr().add(40) as *const c_uint), 0);
+        assert_eq!(*(out.bytes.as_ptr().add(48) as *const c_int), 2);
+        assert_eq!(*(out.bytes.as_ptr().add(56) as *const c_ulong) as u32, 2);
+        assert_eq!(*(out.bytes.as_ptr().add(64) as *const c_ulong) as u32, 4);
+    }
+}
+
+#[test]
+fn xdr_callmsg_roundtrip() {
+    let mut buf = [0u8; 512];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C, align(8))]
+    struct CallMsg {
+        bytes: [u8; 104],
+    }
+
+    let mut msg = CallMsg { bytes: [0; 104] };
+    unsafe {
+        *(msg.bytes.as_mut_ptr().add(0) as *mut c_ulong) = 0x01020304;
+        *(msg.bytes.as_mut_ptr().add(24) as *mut c_ulong) = 100000;
+        *(msg.bytes.as_mut_ptr().add(32) as *mut c_ulong) = 2;
+        *(msg.bytes.as_mut_ptr().add(40) as *mut c_ulong) = 3;
+        *(msg.bytes.as_mut_ptr().add(48) as *mut c_int) = 0;
+        *(msg.bytes.as_mut_ptr().add(64) as *mut c_uint) = 0;
+        *(msg.bytes.as_mut_ptr().add(72) as *mut c_int) = 0;
+        *(msg.bytes.as_mut_ptr().add(88) as *mut c_uint) = 0;
+    }
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_callmsg(xdr.as_mut_ptr(), msg.bytes.as_mut_ptr().cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = CallMsg { bytes: [0; 104] };
+    assert_eq!(
+        unsafe { xdr_callmsg(xdr.as_mut_ptr(), out.bytes.as_mut_ptr().cast()) },
+        1
+    );
+
+    unsafe {
+        assert_eq!(
+            *(out.bytes.as_ptr().add(0) as *const c_ulong) as u32,
+            0x01020304
+        );
+        assert_eq!(*(out.bytes.as_ptr().add(8) as *const c_int), 0);
+        assert_eq!(*(out.bytes.as_ptr().add(16) as *const c_ulong) as u32, 2);
+        assert_eq!(
+            *(out.bytes.as_ptr().add(24) as *const c_ulong) as u32,
+            100000
+        );
+        assert_eq!(*(out.bytes.as_ptr().add(32) as *const c_ulong) as u32, 2);
+        assert_eq!(*(out.bytes.as_ptr().add(40) as *const c_ulong) as u32, 3);
+        assert_eq!(*(out.bytes.as_ptr().add(48) as *const c_int), 0);
+        assert_eq!(*(out.bytes.as_ptr().add(64) as *const c_uint), 0);
+        assert_eq!(*(out.bytes.as_ptr().add(72) as *const c_int), 0);
+        assert_eq!(*(out.bytes.as_ptr().add(88) as *const c_uint), 0);
+    }
+}
+
+#[test]
+fn xdr_authunix_parms_roundtrip() {
+    let mut buf = [0u8; 512];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C)]
+    struct AuthUnixParms {
+        aup_time: c_ulong,
+        aup_machname: *mut c_char,
+        aup_uid: u32,
+        aup_gid: u32,
+        aup_len: c_uint,
+        _pad: c_uint,
+        aup_gids: *mut u32,
+    }
+
+    let machname = std::ffi::CString::new("host").unwrap();
+    let mut gids = [10_u32, 20_u32];
+    let mut parms = AuthUnixParms {
+        aup_time: 12345,
+        aup_machname: machname.as_ptr() as *mut c_char,
+        aup_uid: 1000,
+        aup_gid: 100,
+        aup_len: gids.len() as c_uint,
+        _pad: 0,
+        aup_gids: gids.as_mut_ptr(),
+    };
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_authunix_parms(xdr.as_mut_ptr(), (&mut parms as *mut AuthUnixParms).cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = AuthUnixParms {
+        aup_time: 0,
+        aup_machname: std::ptr::null_mut(),
+        aup_uid: 0,
+        aup_gid: 0,
+        aup_len: 0,
+        _pad: 0,
+        aup_gids: std::ptr::null_mut(),
+    };
+    assert_eq!(
+        unsafe { xdr_authunix_parms(xdr.as_mut_ptr(), (&mut out as *mut AuthUnixParms).cast()) },
+        1
+    );
+
+    assert_eq!(out.aup_time as u32, 12345);
+    assert_eq!(out.aup_uid, 1000);
+    assert_eq!(out.aup_gid, 100);
+    assert_eq!(out.aup_len, 2);
+    let decoded_host = unsafe { std::ffi::CStr::from_ptr(out.aup_machname) }
+        .to_str()
+        .unwrap();
+    assert_eq!(decoded_host, "host");
+    let decoded_gids = unsafe { std::slice::from_raw_parts(out.aup_gids, out.aup_len as usize) };
+    assert_eq!(decoded_gids, &[10, 20]);
+
+    unsafe {
+        libc::free(out.aup_machname.cast());
+        libc::free(out.aup_gids.cast());
+    }
+}
+
+// ===========================================================================
+// 23. RPC type serializers: xdr_pmap
 // ===========================================================================
 
 #[test]
@@ -1808,7 +2052,299 @@ fn xdr_cryptkeyres_roundtrip() {
 }
 
 // ===========================================================================
-// 34. XDR record stream encode/decode (functional test with pipe)
+// 34. Secure RPC/keyserv composite serializers
+// ===========================================================================
+
+#[test]
+fn xdr_authdes_cred_fullname_roundtrip() {
+    let mut buf = [0u8; 512];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C)]
+    struct AuthDesCred {
+        namekind: c_int,
+        _pad: c_int,
+        name: *mut c_char,
+        key: [u8; 8],
+        window: [u8; 4],
+    }
+
+    let name = std::ffi::CString::new("unix.1000@host").unwrap();
+    let mut cred = AuthDesCred {
+        namekind: 0,
+        _pad: 0,
+        name: name.as_ptr() as *mut c_char,
+        key: [1, 2, 3, 4, 5, 6, 7, 8],
+        window: [9, 10, 11, 12],
+    };
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_authdes_cred(xdr.as_mut_ptr(), (&mut cred as *mut AuthDesCred).cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = AuthDesCred {
+        namekind: -1,
+        _pad: 0,
+        name: std::ptr::null_mut(),
+        key: [0; 8],
+        window: [0; 4],
+    };
+    assert_eq!(
+        unsafe { xdr_authdes_cred(xdr.as_mut_ptr(), (&mut out as *mut AuthDesCred).cast()) },
+        1
+    );
+
+    assert_eq!(out.namekind, 0);
+    let decoded = unsafe { std::ffi::CStr::from_ptr(out.name) }
+        .to_str()
+        .unwrap();
+    assert_eq!(decoded, "unix.1000@host");
+    assert_eq!(out.key, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(out.window, [9, 10, 11, 12]);
+
+    unsafe { libc::free(out.name.cast()) };
+}
+
+#[test]
+fn xdr_cryptkeyarg_roundtrip() {
+    let mut buf = [0u8; 512];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C)]
+    struct CryptKeyArg {
+        remotename: *mut c_char,
+        deskey: [u8; 8],
+    }
+
+    let name = std::ffi::CString::new("unix.2000@remote").unwrap();
+    let mut arg = CryptKeyArg {
+        remotename: name.as_ptr() as *mut c_char,
+        deskey: [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
+    };
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_cryptkeyarg(xdr.as_mut_ptr(), (&mut arg as *mut CryptKeyArg).cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = CryptKeyArg {
+        remotename: std::ptr::null_mut(),
+        deskey: [0; 8],
+    };
+    assert_eq!(
+        unsafe { xdr_cryptkeyarg(xdr.as_mut_ptr(), (&mut out as *mut CryptKeyArg).cast()) },
+        1
+    );
+
+    let decoded = unsafe { std::ffi::CStr::from_ptr(out.remotename) }
+        .to_str()
+        .unwrap();
+    assert_eq!(decoded, "unix.2000@remote");
+    assert_eq!(out.deskey, [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
+
+    unsafe { libc::free(out.remotename.cast()) };
+}
+
+#[test]
+fn xdr_cryptkeyarg2_roundtrip() {
+    let mut buf = [0u8; 512];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C)]
+    struct CryptKeyArg2 {
+        remotename: *mut c_char,
+        netname: *mut c_char,
+        deskey: [u8; 8],
+    }
+
+    let remote = std::ffi::CString::new("unix.2000@remote").unwrap();
+    let local = std::ffi::CString::new("unix.1000@local").unwrap();
+    let mut arg = CryptKeyArg2 {
+        remotename: remote.as_ptr() as *mut c_char,
+        netname: local.as_ptr() as *mut c_char,
+        deskey: [0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44],
+    };
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_cryptkeyarg2(xdr.as_mut_ptr(), (&mut arg as *mut CryptKeyArg2).cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = CryptKeyArg2 {
+        remotename: std::ptr::null_mut(),
+        netname: std::ptr::null_mut(),
+        deskey: [0; 8],
+    };
+    assert_eq!(
+        unsafe { xdr_cryptkeyarg2(xdr.as_mut_ptr(), (&mut out as *mut CryptKeyArg2).cast()) },
+        1
+    );
+
+    let decoded_remote = unsafe { std::ffi::CStr::from_ptr(out.remotename) }
+        .to_str()
+        .unwrap();
+    let decoded_local = unsafe { std::ffi::CStr::from_ptr(out.netname) }
+        .to_str()
+        .unwrap();
+    assert_eq!(decoded_remote, "unix.2000@remote");
+    assert_eq!(decoded_local, "unix.1000@local");
+    assert_eq!(out.deskey, [0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44]);
+
+    unsafe {
+        libc::free(out.remotename.cast());
+        libc::free(out.netname.cast());
+    }
+}
+
+#[test]
+fn xdr_getcredres_roundtrip() {
+    let mut buf = [0u8; 256];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C)]
+    struct GetCredRes {
+        status: c_int,
+        _pad: c_int,
+        client_name: *mut c_char,
+    }
+
+    let client = std::ffi::CString::new("unix.1000@client").unwrap();
+    let mut res = GetCredRes {
+        status: 0,
+        _pad: 0,
+        client_name: client.as_ptr() as *mut c_char,
+    };
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_getcredres(xdr.as_mut_ptr(), (&mut res as *mut GetCredRes).cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = GetCredRes {
+        status: -1,
+        _pad: 0,
+        client_name: std::ptr::null_mut(),
+    };
+    assert_eq!(
+        unsafe { xdr_getcredres(xdr.as_mut_ptr(), (&mut out as *mut GetCredRes).cast()) },
+        1
+    );
+
+    assert_eq!(out.status, 0);
+    let decoded = unsafe { std::ffi::CStr::from_ptr(out.client_name) }
+        .to_str()
+        .unwrap();
+    assert_eq!(decoded, "unix.1000@client");
+
+    unsafe { libc::free(out.client_name.cast()) };
+}
+
+#[test]
+fn xdr_key_netstarg_roundtrip() {
+    let mut buf = [0u8; 1024];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C)]
+    struct KeyNetstArg {
+        priv_key: [u8; 144],
+        pub_key: [u8; 144],
+        netname: *mut c_char,
+    }
+
+    let netname = std::ffi::CString::new("unix.1000@net").unwrap();
+    let mut arg = KeyNetstArg {
+        priv_key: [0x11; 144],
+        pub_key: [0x22; 144],
+        netname: netname.as_ptr() as *mut c_char,
+    };
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_key_netstarg(xdr.as_mut_ptr(), (&mut arg as *mut KeyNetstArg).cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out = KeyNetstArg {
+        priv_key: [0; 144],
+        pub_key: [0; 144],
+        netname: std::ptr::null_mut(),
+    };
+    assert_eq!(
+        unsafe { xdr_key_netstarg(xdr.as_mut_ptr(), (&mut out as *mut KeyNetstArg).cast()) },
+        1
+    );
+
+    assert_eq!(out.priv_key, [0x11; 144]);
+    assert_eq!(out.pub_key, [0x22; 144]);
+    let decoded = unsafe { std::ffi::CStr::from_ptr(out.netname) }
+        .to_str()
+        .unwrap();
+    assert_eq!(decoded, "unix.1000@net");
+
+    unsafe { libc::free(out.netname.cast()) };
+}
+
+#[test]
+fn xdr_rmtcallres_roundtrip() {
+    let mut buf = [0u8; 256];
+    let mut xdr = XdrHandle::new();
+
+    #[repr(C)]
+    struct RmtCallRes {
+        port_ptr: *mut c_ulong,
+        resultslen: c_ulong,
+        results_ptr: *mut c_char,
+        xdr_results: *mut c_void,
+    }
+
+    let mut port: c_ulong = 111;
+    let mut result: c_int = 42;
+    let mut res = RmtCallRes {
+        port_ptr: &mut port,
+        resultslen: 4,
+        results_ptr: (&mut result as *mut c_int).cast(),
+        xdr_results: xdr_int as *mut c_void,
+    };
+
+    xdr_encode(&mut xdr, &mut buf);
+    assert_eq!(
+        unsafe { xdr_rmtcallres(xdr.as_mut_ptr(), (&mut res as *mut RmtCallRes).cast()) },
+        1
+    );
+
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out_result: c_int = 0;
+    let mut out = RmtCallRes {
+        port_ptr: std::ptr::null_mut(),
+        resultslen: 0,
+        results_ptr: (&mut out_result as *mut c_int).cast(),
+        xdr_results: xdr_int as *mut c_void,
+    };
+    assert_eq!(
+        unsafe { xdr_rmtcallres(xdr.as_mut_ptr(), (&mut out as *mut RmtCallRes).cast()) },
+        1
+    );
+
+    assert!(!out.port_ptr.is_null());
+    assert_eq!(unsafe { *out.port_ptr } as u32, 111);
+    assert_eq!(out.resultslen as u32, 4);
+    assert_eq!(out_result, 42);
+
+    unsafe { libc::free(out.port_ptr.cast()) };
+}
+
+// ===========================================================================
+// 35. XDR record stream encode/decode (functional test with pipe)
 // ===========================================================================
 
 // Callback for xdrrec_create that writes to a pipe fd
