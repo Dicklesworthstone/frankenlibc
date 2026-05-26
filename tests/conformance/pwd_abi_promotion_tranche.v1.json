@@ -1,0 +1,60 @@
+{
+  "schema_version": "pwd_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-pwd-abi-promotion-tranche-v1",
+  "description": "Bounded pwd_abi promotion tranche proving getpwent as native NSS files-backed passwd iteration whose host-delegation census hits are errno bridge artifacts.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/pwd_abi.rs",
+    "abi_unit_tests": [
+      "crates/frankenlibc-abi/tests/pwd_abi_test.rs::strict_mode_pwent_iteration_works",
+      "crates/frankenlibc-abi/tests/pwd_abi_test.rs::hardened_mode_pwent_iteration_works",
+      "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs::passwd_iteration_exhausts_then_returns_null",
+      "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs::passwd_setpwent_rewinds_iteration"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-passwd-files-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "set_abi_errno",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The getpwent ABI entrypoint iterates FrankenLibC's cached /etc/passwd parser state and fills process-local passwd storage. The remaining census entries are errno propagation and dynamic errno bootstrap, not delegation of passwd enumeration semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "getpwent",
+      "module": "pwd_abi",
+      "core_path": "crates/frankenlibc-abi/src/pwd_abi.rs::getpwent",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
