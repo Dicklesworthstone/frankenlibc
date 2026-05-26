@@ -341,6 +341,14 @@ const FORTIFY_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "__mbstowcs_chk",
 ];
 const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__stack_chk_fail", "ftruncate64"];
+const RPC_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "host2netname",
+    "user2netname",
+    "xdr_array",
+    "xdr_bytes",
+    "xdr_string",
+    "xdr_wrapstring",
+];
 const GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__clone"];
 
 #[test]
@@ -1893,6 +1901,82 @@ fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
 }
 
 #[test]
+fn rpc_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/rpc_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("rpc_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-rpc-xdr-netname-allocator-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "malloc",
+        "free",
+        "resolve_host_allocator_symbol",
+        "set_abi_errno",
+        "write_host_errno_if_available",
+        "xdr_string",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "rpc_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        RPC_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("rpc_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
 fn glibc_internal_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
     let root = repo_root();
     let manifest =
@@ -2593,6 +2677,53 @@ fn generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche() {
             .unwrap_or_default()
             >= UNISTD_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
         "unistd_abi proof manifest should expose strict+hardened proven symbols"
+    );
+}
+
+#[test]
+fn generated_report_accepts_rpc_abi_xdr_netname_allocator_errno_tranche() {
+    let generated_path = unique_generated_report_path("rpc_abi_promotion_tranche");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in RPC_PROMOTION_TRANCHE_SYMBOLS {
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after rpc ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+
+    let rpc_proofs = &report["fixture_coverage_ratchet"]["proof_manifest_by_module"]["rpc_abi"];
+    assert!(
+        rpc_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= RPC_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "rpc_abi proof manifest should expose strict+hardened proven symbols"
     );
 }
 

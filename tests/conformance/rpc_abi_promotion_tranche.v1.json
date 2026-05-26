@@ -1,0 +1,221 @@
+{
+  "schema_version": "rpc_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-rpc-abi-promotion-tranche-v1",
+  "description": "Bounded promotion proof for rpc_abi netname and XDR rows that already have deterministic native ABI evidence.",
+  "rationale": "The promoted rows cover native netname formatting and native XDR counted byte, string, wrapped string, and variable-array codecs. Host-delegation census hits are allocator and errno bridge artifacts reached through FrankenLibC malloc/free entrypoints or recursive XDR helper calls, not host RPC semantic delegation.",
+  "source_artifacts": [
+    "support_matrix.json",
+    "tests/conformance/host_delegation_census.v1.json",
+    "crates/frankenlibc-abi/src/rpc_abi.rs",
+    "crates/frankenlibc-abi/tests/rpc_abi_test.rs",
+    "crates/frankenlibc-abi/tests/xdr_abi_test.rs"
+  ],
+  "test_evidence": [
+    {
+      "crate": "frankenlibc-abi",
+      "test": "rpc_abi_test::host2netname_creates_valid_name",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "rpc_abi_test::host2netname_null_defaults",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "rpc_abi_test::user2netname_formats_correctly",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_bytes_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_string_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_wrapstring_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "xdr_abi_test::xdr_array_int_roundtrip",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    }
+  ],
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "classification": "native-rpc-xdr-netname-allocator-errno-bridge",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_free_passthrough",
+      "bootstrap_host_symbols",
+      "bootstrap_malloc_passthrough",
+      "free",
+      "host_errno_location_raw",
+      "host_free_raw",
+      "host_malloc_raw",
+      "load_host_symbol",
+      "malloc",
+      "native_libc_free",
+      "native_libc_malloc",
+      "resolve_host_allocator_symbol",
+      "set_abi_errno",
+      "write_host_errno_if_available",
+      "xdr_string"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_allocator_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ]
+  },
+  "symbols": [
+    {
+      "symbol": "host2netname",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::host2netname",
+      "fixture": "crates/frankenlibc-abi/tests/rpc_abi_test.rs::host2netname_creates_valid_name,host2netname_null_defaults",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "user2netname",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::user2netname",
+      "fixture": "crates/frankenlibc-abi/tests/rpc_abi_test.rs::user2netname_formats_correctly",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_array",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_array",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_array_int_roundtrip,xdr_array_exceeds_maxsize_on_decode,xdr_array_rejects_elsize_zero_with_nonzero_count",
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_bytes",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_bytes",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_bytes_roundtrip,xdr_bytes_exceeds_max_returns_false,xdr_bytes_free_mode,xdr_bytes_rejects_oversized_wire_length_without_oom",
+      "strict_conformance": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_string",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_string",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_string_roundtrip,xdr_string_exceeds_max,xdr_string_empty",
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "xdr_wrapstring",
+      "module": "rpc_abi",
+      "core_path": "crates/frankenlibc-abi/src/rpc_abi.rs::xdr_wrapstring",
+      "fixture": "crates/frankenlibc-abi/tests/xdr_abi_test.rs::xdr_wrapstring_roundtrip,xdr_wrapstring_rejects_oversized_wire_length_without_oom,xdr_string_free_mode_frees_memory",
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}
