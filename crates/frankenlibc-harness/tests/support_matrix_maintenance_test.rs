@@ -250,6 +250,17 @@ const SETJMP_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "siglongjmp",
     "sigsetjmp",
 ];
+const C11THREADS_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "call_once",
+    "cnd_init",
+    "mtx_lock",
+    "mtx_timedlock",
+    "mtx_unlock",
+    "thrd_create",
+    "thrd_detach",
+    "thrd_exit",
+    "thrd_join",
+];
 const STDIO_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__isoc99_wscanf", "fscanf"];
 
 #[test]
@@ -1331,6 +1342,87 @@ fn setjmp_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
 }
 
 #[test]
+fn c11threads_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest =
+        load_json(&root.join("tests/conformance/c11threads_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("c11threads_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-c11threads-pthread-abi-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "pthread_create",
+        "pthread_join",
+        "pthread_detach",
+        "pthread_exit",
+        "pthread_mutex_lock",
+        "pthread_mutex_unlock",
+        "pthread_cond_init",
+        "pthread_once",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "c11threads_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> = C11THREADS_PROMOTION_TRANCHE_SYMBOLS
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("c11threads_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
 fn stdio_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
     let root = repo_root();
     let manifest = load_json(&root.join("tests/conformance/stdio_abi_promotion_tranche.v1.json"));
@@ -1787,6 +1879,44 @@ fn generated_report_accepts_setjmp_abi_phase1_tranche() {
 }
 
 #[test]
+fn generated_report_accepts_c11threads_abi_pthread_bridge_tranche() {
+    let generated_path = unique_generated_report_path("c11threads_abi_promotion_tranche");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in C11THREADS_PROMOTION_TRANCHE_SYMBOLS {
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after c11threads ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
 fn generated_report_accepts_stdio_abi_scanf_libio_tranche() {
     let generated_path = unique_generated_report_path("stdio_abi_promotion_tranche");
     let output = generate_maintenance_report(&generated_path);
@@ -1985,6 +2115,14 @@ fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
             >= SETJMP_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
         "setjmp_abi proof manifest should expose strict+hardened proven symbols"
     );
+    let c11threads_proofs = &ratchet["proof_manifest_by_module"]["c11threads_abi"];
+    assert!(
+        c11threads_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= C11THREADS_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "c11threads_abi proof manifest should expose strict+hardened proven symbols"
+    );
     let stdio_proofs = &ratchet["proof_manifest_by_module"]["stdio_abi"];
     assert!(
         stdio_proofs["strict_hardened_symbol_count"]
@@ -2062,6 +2200,18 @@ fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
     for symbol in SETJMP_PROMOTION_TRANCHE_SYMBOLS {
         assert!(
             !setjmp_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let c11threads_violations = ratchet["module_deltas"]["c11threads_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in C11THREADS_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !c11threads_violations
                 .iter()
                 .any(|violation| violation.as_str() == Some(*symbol)),
             "{symbol} should be proofed instead of counted as missing fixture evidence"

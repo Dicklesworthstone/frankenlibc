@@ -1,0 +1,269 @@
+{
+  "schema_version": "c11threads_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-c11threads-abi-promotion-tranche-v1",
+  "description": "Bounded promotion proof for the C11 <threads.h> entrypoints whose implementation is native Rust C11 adaptation over FrankenLibC pthread ABI bridges.",
+  "rationale": "The c11threads ABI symbols are implemented in Rust as C11 semantics adapters. Host-delegation census hits are expected bridge symbols from the pthread ABI/backend and errno publishing path, not direct C11 call-through bodies. The executable c11threads_ops fixture exercises each promoted symbol in strict and hardened modes, including an isolated helper pthread for thrd_exit so the harness process is not terminated.",
+  "source_artifacts": [
+    "support_matrix.json",
+    "tests/conformance/fixtures/c11threads_ops.json",
+    "tests/conformance/host_delegation_census.v1.json",
+    "crates/frankenlibc-abi/src/c11threads_abi.rs",
+    "crates/frankenlibc-harness/tests/c11threads_ops_conformance_test.rs",
+    "crates/frankenlibc_conformance/src/lib.rs"
+  ],
+  "test_evidence": [
+    {
+      "crate": "frankenlibc-harness",
+      "test": "c11threads_ops_fixture_cases_match_execute_fixture_case",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "c11threads_ops_fixture_cases_match_harness_matrix_execution",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    }
+  ],
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "classification": "native-c11threads-pthread-abi-bridge",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "dispatch_host_thread_create_with_managed_attr",
+      "dlvsym",
+      "dlvsym_next",
+      "ensure_host_dlvsym",
+      "futex_lock_normal",
+      "futex_unlock_normal",
+      "futex_wait_timed",
+      "futex_wait_timed_private",
+      "futex_wait_private",
+      "futex_wake_private",
+      "host_dlvsym",
+      "host_dlvsym_next_raw",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "native_pthread_create",
+      "pthread_cond_init",
+      "pthread_condattr_getclock",
+      "pthread_create",
+      "pthread_detach",
+      "pthread_exit",
+      "pthread_join",
+      "pthread_mutex_lock",
+      "pthread_mutex_timedlock",
+      "pthread_mutex_unlock",
+      "pthread_once",
+      "publish_host_thread_handoff",
+      "read",
+      "resolve_cached_pthread_attr_symbol",
+      "resolve_host_symbol_nocache",
+      "resolve_host_symbol_via_libc_handle",
+      "resolve_host_symbol_with_aliases",
+      "resolve_loaded_libc_symbol_direct",
+      "resolve_main_program_versioned_symbol",
+      "resolved_pthread_attr_destroy_fn",
+      "resolved_pthread_attr_getdetachstate_fn",
+      "resolved_pthread_attr_getstacksize_fn",
+      "resolved_pthread_attr_init_fn",
+      "resolved_pthread_attr_setaffinity_np_fn",
+      "resolved_pthread_attr_setdetachstate_fn",
+      "resolved_pthread_attr_setguardsize_fn",
+      "resolved_pthread_attr_setinheritsched_fn",
+      "resolved_pthread_attr_setschedparam_fn",
+      "resolved_pthread_attr_setschedpolicy_fn",
+      "resolved_pthread_attr_setsigmask_np_fn",
+      "resolved_pthread_attr_setstack_fn",
+      "resolved_pthread_attr_setstacksize_fn",
+      "set_abi_errno",
+      "sys_read_fd",
+      "timed_futex_lock_normal",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "host_dlvsym_helper",
+      "resolve_host_symbol_raw_dynamic",
+      "resolve_host_symbol_raw_literal",
+      "resolved_thread_raw_accessor",
+      "rtld_next_host_dlvsym"
+    ]
+  },
+  "symbols": [
+    {
+      "symbol": "call_once",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture call_once_three_invocations proves exactly-once callback execution over repeated calls."
+    },
+    {
+      "symbol": "cnd_init",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture cnd_init_basic proves condition-variable initialization succeeds."
+    },
+    {
+      "symbol": "mtx_lock",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture mtx_lock_plain proves uncontended lock acquisition on an initialized mutex."
+    },
+    {
+      "symbol": "mtx_timedlock",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture mtx_timedlock_available proves timed locking succeeds immediately when the mutex is available."
+    },
+    {
+      "symbol": "mtx_unlock",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture mtx_unlock_after_lock proves unlock succeeds after a successful lock."
+    },
+    {
+      "symbol": "thrd_create",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture thrd_create_join_result proves creation of a joinable C11 thread and result handoff through thrd_join."
+    },
+    {
+      "symbol": "thrd_detach",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture thrd_detach_joinless_thread proves detaching a freshly-created C11 thread succeeds."
+    },
+    {
+      "symbol": "thrd_exit",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture thrd_exit_child_thread_result runs thrd_exit inside a helper pthread and validates the joined integer result."
+    },
+    {
+      "symbol": "thrd_join",
+      "module": "c11threads_abi",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven",
+      "notes": "Fixture thrd_join_collects_int_result proves thrd_join stores the C11 start routine result."
+    }
+  ]
+}

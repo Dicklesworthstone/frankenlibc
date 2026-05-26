@@ -191,6 +191,7 @@ fn c11threads_ops_covers_representative_c11_thread_surface() -> Result<(), Strin
         "thrd_create",
         "thrd_current",
         "thrd_detach",
+        "thrd_exit",
         "thrd_equal",
         "thrd_join",
         "thrd_sleep",

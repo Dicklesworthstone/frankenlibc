@@ -1150,6 +1150,7 @@ pub fn execute_fixture_case(
         // C11 threads
         "thrd_create" | "thrd_join" => execute_c11_thread_join_case(inputs, mode),
         "thrd_detach" => execute_c11_thread_detach_case(mode),
+        "thrd_exit" => execute_c11_thread_exit_case(inputs, mode),
         "thrd_current" => execute_c11_thread_current_case(mode),
         "thrd_equal" => execute_c11_thread_equal_case(inputs, mode),
         "thrd_sleep" => execute_c11_thread_sleep_case(inputs, mode),
@@ -18824,6 +18825,42 @@ fn execute_c11_thread_detach_case(mode: &str) -> Result<DifferentialExecution, S
     let detach_rc = unsafe { frankenlibc_abi::c11threads_abi::thrd_detach(thread) };
     std::thread::sleep(std::time::Duration::from_millis(5));
     Ok(non_host_execution(format_c11_status(detach_rc)))
+}
+
+extern "C" fn c11_fixture_thrd_exit_entry(arg: *mut c_void) -> *mut c_void {
+    let value = arg as usize as c_int;
+    unsafe { frankenlibc_abi::c11threads_abi::thrd_exit(value) }
+}
+
+fn execute_c11_thread_exit_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let value = parse_i32(inputs, "value").unwrap_or(29);
+    let mut thread: libc::pthread_t = 0;
+    let create_rc = unsafe {
+        frankenlibc_abi::pthread_abi::pthread_create(
+            &mut thread,
+            std::ptr::null(),
+            Some(c11_fixture_thrd_exit_entry),
+            value as usize as *mut c_void,
+        )
+    };
+    if create_rc != 0 {
+        return Ok(non_host_execution(format!("create:{create_rc}")));
+    }
+
+    let mut result: *mut c_void = std::ptr::null_mut();
+    let join_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) };
+    if join_rc != 0 {
+        return Ok(non_host_execution(format!("join:{join_rc}")));
+    }
+
+    Ok(non_host_execution(format!(
+        "exit_result:{}",
+        result as usize as c_int
+    )))
 }
 
 fn execute_c11_thread_current_case(mode: &str) -> Result<DifferentialExecution, String> {

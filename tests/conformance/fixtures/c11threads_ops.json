@@ -40,6 +40,18 @@
       "note": "detaching a newly-created C11 thread succeeds"
     },
     {
+      "name": "thrd_exit_child_thread_result",
+      "function": "thrd_exit",
+      "spec_section": "ISO C11 7.26.5.3",
+      "inputs": {
+        "value": 29
+      },
+      "expected_output": "exit_result:29",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "thrd_exit terminates only the calling thread and publishes its int result through pthread_join"
+    },
+    {
       "name": "thrd_current_nonzero",
       "function": "thrd_current",
       "spec_section": "ISO C11 7.26.5.4",

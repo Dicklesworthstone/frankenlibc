@@ -39,6 +39,7 @@ PROMOTION_PROOF_MANIFEST_PATHS = (
     REPO_ROOT / "tests" / "conformance" / "pwd_gshadow_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "inet_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "setjmp_abi_promotion_tranche.v1.json",
+    REPO_ROOT / "tests" / "conformance" / "c11threads_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "stdio_abi_promotion_tranche.v1.json",
 )
 HIGH_IMPACT_RATCHET_MODULES = (
@@ -62,6 +63,7 @@ ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS = {
     "native-gshadow-files-with-sys-read-errno-bridge",
     "native-interface-index-ioctl-with-errno-bridge",
     "native-setjmp-phase1-with-errno-bridges",
+    "native-c11threads-pthread-abi-bridge",
     "native-stdio-scanf-libio-registry-with-errno-bridge",
 }
 
