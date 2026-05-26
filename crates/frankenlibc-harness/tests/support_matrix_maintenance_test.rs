@@ -377,12 +377,18 @@ const FORTIFY_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
 const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "__stack_chk_fail",
     "ftruncate64",
+    "getopt",
     "lseek64",
     "mbrlen",
     "mbsnrtowcs",
     "mbstowcs",
     "mbtowc",
     "mmap64",
+    "posix_close",
+    "posix_spawnattr_getsigdefault",
+    "posix_spawnattr_getsigmask",
+    "posix_spawnattr_setsigdefault",
+    "posix_spawnattr_setsigmask",
     "pread64",
     "pwrite64",
     "sendfile64",
@@ -393,11 +399,15 @@ const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "wcstoumax",
     "wctomb",
 ];
-const UNISTD_WCHAR_ALIAS_PROMOTION_SYMBOLS: &[&str] = &[
+const UNISTD_CROSS_MODULE_LOCATOR_PENDING_SYMBOLS: &[&str] = &[
     "mbrlen",
     "mbsnrtowcs",
     "mbstowcs",
     "mbtowc",
+    "posix_spawnattr_getsigdefault",
+    "posix_spawnattr_getsigmask",
+    "posix_spawnattr_setsigdefault",
+    "posix_spawnattr_setsigmask",
     "wcsnrtombs",
     "wcstoimax",
     "wcstombs",
@@ -1916,7 +1926,7 @@ fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
     assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
     assert_eq!(
         manifest["policy"]["classification"].as_str(),
-        Some("native-unistd-stackfail-lfs-wchar-alias-errno-bridge")
+        Some("native-unistd-stackfail-lfs-wchar-process-getopt-errno-bridge")
     );
 
     let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
@@ -2762,7 +2772,7 @@ fn generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche() {
             })
         });
         let cross_module_locator_pending = (*symbol == "__stack_chk_fail"
-            || UNISTD_WCHAR_ALIAS_PROMOTION_SYMBOLS.contains(symbol))
+            || UNISTD_CROSS_MODULE_LOCATOR_PENDING_SYMBOLS.contains(symbol))
             && rows
                 .iter()
                 .any(|issue| issue["issue_class"].as_str() == Some("missing_body"));
