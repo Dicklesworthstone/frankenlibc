@@ -26,9 +26,17 @@
       "<dynamic>",
       "__errno_location",
       "bootstrap_host_symbols",
+      "c_log",
+      "clog",
+      "clog10",
+      "clog10f",
+      "clog10l",
+      "clogf",
       "host_errno_location_raw",
+      "hypot",
       "lgamma_r",
       "load_host_symbol",
+      "log",
       "set_abi_errno",
       "set_domain_errno",
       "set_range_errno",
@@ -39,9 +47,63 @@
       "cached_host_errno_symbol",
       "resolve_host_symbol_raw_dynamic"
     ],
-    "rationale": "The math result path is owned by frankenlibc_core::math via the Rust libm crate. The only host-reachable path in this tranche is errno storage interop through __errno_location, which is ABI state bridging rather than delegating the mathematical operation to host libc."
+    "rationale": "The math result path is owned by frankenlibc_core::math via the Rust libm crate or by math_abi complex helpers composed from those primitives. The host-reachable paths in this tranche are errno storage interop through __errno_location plus scanner alias reachability to internal complex-log helpers, not delegation of the mathematical operation to host libc."
   },
   "symbols": [
+    {
+      "symbol": "__clog10",
+      "module": "math_abi",
+      "core_path": "crates/frankenlibc-abi/src/math_abi.rs::__clog10",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__clog10f",
+      "module": "math_abi",
+      "core_path": "crates/frankenlibc-abi/src/math_abi.rs::__clog10f",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__clog10l",
+      "module": "math_abi",
+      "core_path": "crates/frankenlibc-abi/src/math_abi.rs::__clog10l",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
     {
       "symbol": "acos",
       "module": "math_abi",

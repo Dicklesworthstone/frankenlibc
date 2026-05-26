@@ -229,7 +229,18 @@ const HOST_WRAPPED_SYMBOLS: &[&str] = &[
 ];
 
 const MATH_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
-    "acos", "asin", "exp", "fmod", "lgamma", "log", "log10", "pow", "tgamma",
+    "__clog10",
+    "__clog10f",
+    "__clog10l",
+    "acos",
+    "asin",
+    "exp",
+    "fmod",
+    "lgamma",
+    "log",
+    "log10",
+    "pow",
+    "tgamma",
 ];
 const ERR_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "err", "errc", "errx", "verr", "verrc", "verrx", "vwarn", "vwarnc", "vwarnx", "warn", "warnc",
