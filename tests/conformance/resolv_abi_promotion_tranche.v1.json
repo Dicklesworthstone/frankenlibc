@@ -1,0 +1,81 @@
+{
+  "schema_version": "resolv_abi_promotion_tranche.v1",
+  "bead": "bd-5tgwug",
+  "trace_id": "bd-5tgwug-resolv-abi-promotion-tranche-v1",
+  "description": "Bounded resolv_abi promotion tranche proving owned /etc/protocols lookups whose host-delegation census hits are only errno and read syscall support bridges.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "fixture": "tests/conformance/fixtures/resolver_nss_core_wave01.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/resolv_abi.rs",
+    "core_sources": [
+      "crates/frankenlibc-core/src/resolv.rs"
+    ],
+    "harness_tests": [
+      "crates/frankenlibc-harness/tests/resolver_nss_core_wave01_conformance_test.rs"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-protocol-database-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "read",
+      "set_abi_errno",
+      "sys_read_fd",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The getprotobyname/getprotobynumber result path is owned by the Rust /etc/protocols parser in frankenlibc_core::resolv and the ABI shim's thread-local protoent storage. The remaining host-reachable census entries are errno state bridges, dynamic symbol bootstrap, and read/syscall helpers for loading the protocol database, not delegation of protocol lookup semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "getprotobyname",
+      "module": "resolv_abi",
+      "core_path": "crates/frankenlibc-abi/src/resolv_abi.rs::getprotobyname",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "getprotobynumber",
+      "module": "resolv_abi",
+      "core_path": "crates/frankenlibc-abi/src/resolv_abi.rs::getprotobynumber",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}

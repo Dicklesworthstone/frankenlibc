@@ -32,6 +32,7 @@ PROMOTION_PROOF_MANIFEST_PATHS = (
     REPO_ROOT / "tests" / "conformance" / "math_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "err_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "locale_abi_promotion_tranche.v1.json",
+    REPO_ROOT / "tests" / "conformance" / "resolv_abi_promotion_tranche.v1.json",
 )
 HIGH_IMPACT_RATCHET_MODULES = (
     "math_abi",
@@ -47,6 +48,7 @@ ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS = {
     "native-libm-with-errno-bridge",
     "native-err-formatting-with-runtime-io-bridge",
     "native-locale-catalog-with-errno-bridge",
+    "native-protocol-database-with-errno-bridge",
 }
 
 # Patterns indicating actual host libc call expressions.
