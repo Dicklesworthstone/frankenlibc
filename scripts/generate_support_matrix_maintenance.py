@@ -36,6 +36,7 @@ PROMOTION_PROOF_MANIFEST_PATHS = (
     REPO_ROOT / "tests" / "conformance" / "dirent_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "grp_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "pwd_abi_promotion_tranche.v1.json",
+    REPO_ROOT / "tests" / "conformance" / "pwd_gshadow_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "inet_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "stdio_abi_promotion_tranche.v1.json",
 )
@@ -57,6 +58,7 @@ ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS = {
     "native-dirent64-alias-with-errno-bridge",
     "native-group-files-with-errno-bridge",
     "native-passwd-files-with-errno-bridge",
+    "native-gshadow-files-with-sys-read-errno-bridge",
     "native-interface-index-ioctl-with-errno-bridge",
     "native-stdio-scanf-libio-registry-with-errno-bridge",
 }

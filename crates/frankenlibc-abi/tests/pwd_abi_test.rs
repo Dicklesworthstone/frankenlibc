@@ -22,6 +22,7 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 /// Mutex to serialize tests that manipulate the FRANKENLIBC_PASSWD_PATH env var,
 /// since env var manipulation is process-global and not thread-safe.
 static PASSWD_ENV_LOCK: Mutex<()> = Mutex::new(());
+static GSHADOW_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn temp_passwd_path() -> std::path::PathBuf {
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
@@ -29,6 +30,13 @@ fn temp_passwd_path() -> std::path::PathBuf {
         "frankenlibc-pwd-test-{}-{seq}.txt",
         std::process::id()
     ))
+}
+
+fn gshadow_fixture_path() -> std::path::PathBuf {
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    root.pop();
+    root.pop();
+    root.join("tests/conformance/fixtures/gshadow_sample.txt")
 }
 
 fn with_passwd_file(content: &[u8], f: impl FnOnce()) {
@@ -1129,6 +1137,50 @@ struct TestSgrp {
     sg_mem: *mut *mut c_char,
 }
 
+fn assert_gshadow_files_backend_iterates_and_looks_up(mode: &str) {
+    with_mode_and_gshadow_fixture(mode, || {
+        let first = unsafe { frankenlibc_abi::pwd_abi::getsgent() };
+        assert!(!first.is_null(), "{mode}: getsgent should return first row");
+        let first = unsafe { &*(first.cast::<TestSgrp>()) };
+        assert_eq!(
+            unsafe { CStr::from_ptr(first.sg_namp) }.to_bytes(),
+            b"wheel"
+        );
+        let first_member = unsafe { *first.sg_mem };
+        assert_eq!(unsafe { CStr::from_ptr(first_member) }.to_bytes(), b"root");
+
+        let name = CString::new("ops").unwrap();
+        let looked_up = unsafe { frankenlibc_abi::pwd_abi::getsgnam(name.as_ptr()) };
+        assert!(
+            !looked_up.is_null(),
+            "{mode}: getsgnam(ops) should find fixture row"
+        );
+        let looked_up = unsafe { &*(looked_up.cast::<TestSgrp>()) };
+        assert_eq!(
+            unsafe { CStr::from_ptr(looked_up.sg_namp) }.to_bytes(),
+            b"ops"
+        );
+        let admin = unsafe { *looked_up.sg_adm };
+        assert_eq!(unsafe { CStr::from_ptr(admin) }.to_bytes(), b"alice");
+        let member0 = unsafe { *looked_up.sg_mem };
+        let member1 = unsafe { *looked_up.sg_mem.add(1) };
+        let member2 = unsafe { *looked_up.sg_mem.add(2) };
+        assert_eq!(unsafe { CStr::from_ptr(member0) }.to_bytes(), b"bob");
+        assert_eq!(unsafe { CStr::from_ptr(member1) }.to_bytes(), b"carol");
+        assert!(member2.is_null(), "{mode}: member list must terminate");
+    });
+}
+
+#[test]
+fn strict_mode_gshadow_files_backend_iterates_and_looks_up() {
+    assert_gshadow_files_backend_iterates_and_looks_up("strict");
+}
+
+#[test]
+fn hardened_mode_gshadow_files_backend_iterates_and_looks_up() {
+    assert_gshadow_files_backend_iterates_and_looks_up("hardened");
+}
+
 #[test]
 fn sgetsgent_valid_line_returns_static_sgrp() {
     use frankenlibc_abi::pwd_abi::sgetsgent;
@@ -1241,6 +1293,31 @@ fn with_mode_and_passwd(mode: &str, passwd_content: &[u8], f: impl FnOnce()) {
         std::env::remove_var("FRANKENLIBC_PASSWD_PATH");
     }
     let _ = std::fs::remove_file(&path);
+}
+
+fn with_mode_and_gshadow_fixture(mode: &str, f: impl FnOnce()) {
+    let _mode_guard = MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _gshadow_guard = GSHADOW_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = gshadow_fixture_path();
+    assert!(
+        path.exists(),
+        "gshadow fixture missing at {}",
+        path.display()
+    );
+
+    // SAFETY: Serialized by both locks.
+    unsafe {
+        std::env::set_var("FRANKENLIBC_MODE", mode);
+        std::env::set_var("FRANKENLIBC_GSHADOW_PATH", &path);
+        frankenlibc_abi::pwd_abi::setsgent();
+    }
+    f();
+    // SAFETY: Same as above.
+    unsafe {
+        frankenlibc_abi::pwd_abi::endsgent();
+        std::env::remove_var("FRANKENLIBC_GSHADOW_PATH");
+        std::env::remove_var("FRANKENLIBC_MODE");
+    }
 }
 
 #[test]

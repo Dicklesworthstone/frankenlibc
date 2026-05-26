@@ -1104,9 +1104,15 @@ fn with_gshadow_storage<R>(callback: impl FnOnce(&mut GshadowTlsStorage) -> R) -
     }
 }
 
-/// Read /etc/gshadow content. Returns None if file doesn't exist.
+/// Read configured gshadow content. Returns None if the file doesn't exist.
+const GSHADOW_PATH: &str = "/etc/gshadow";
+const GSHADOW_PATH_ENV: &str = "FRANKENLIBC_GSHADOW_PATH";
+
 fn read_gshadow_file() -> Option<Vec<u8>> {
-    std::fs::read("/etc/gshadow").ok()
+    let path = std::env::var_os(GSHADOW_PATH_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(GSHADOW_PATH));
+    std::fs::read(path).ok()
 }
 
 /// Pack a Gshadow entry into a buffer, returning a pointer to the sgrp struct.
