@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 pub const DEFAULT_ELIMINATION_SLOTS: usize = 8;
 
-const DEFAULT_WAIT_BUDGET: Duration = Duration::from_micros(100);
+const DEFAULT_WAIT_BUDGET: Duration = Duration::from_micros(1);
 const SPIN_LIMIT: u64 = 128;
 const ADAPTIVE_WINDOW: u64 = 1_000;
 const ADAPTIVE_DISABLE_WINDOW: u64 = 1_000;
