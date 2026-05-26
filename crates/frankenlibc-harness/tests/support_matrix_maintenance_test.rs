@@ -374,7 +374,16 @@ const FORTIFY_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "__wctomb_chk",
     "__wprintf_chk",
 ];
-const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__stack_chk_fail", "ftruncate64"];
+const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "__stack_chk_fail",
+    "ftruncate64",
+    "lseek64",
+    "mmap64",
+    "pread64",
+    "pwrite64",
+    "sendfile64",
+    "truncate64",
+];
 const RPC_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "host2netname",
     "user2netname",
@@ -1912,9 +1921,15 @@ fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
         "__errno_location",
         "abort",
         "ftruncate",
+        "lseek",
+        "mmap",
+        "pread",
+        "pwrite",
         "registry",
+        "sendfile",
         "sys_write_fd",
         "set_abi_errno",
+        "truncate",
         "write_host_errno_if_available",
     ] {
         assert!(
@@ -2708,27 +2723,33 @@ fn generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche() {
         .as_array()
         .expect("status_validation_issues should be an array");
 
-    let ftruncate64_rows: Vec<&serde_json::Value> = issues
-        .iter()
-        .filter(|issue| issue["symbol"].as_str() == Some("ftruncate64"))
-        .collect();
-    assert!(
-        ftruncate64_rows
+    for symbol in UNISTD_PROMOTION_TRANCHE_SYMBOLS {
+        let rows: Vec<&serde_json::Value> = issues
             .iter()
-            .all(|issue| issue["valid"].as_bool() == Some(true)),
-        "ftruncate64 should not remain invalid after unistd ABI proof: {ftruncate64_rows:?}"
-    );
-    assert!(
-        ftruncate64_rows.iter().any(|issue| {
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after unistd ABI proof: {rows:?}"
+        );
+        let proof_warning_present = rows.iter().any(|issue| {
             issue["warnings"].as_array().is_some_and(|warnings| {
                 warnings.iter().any(|warning| {
                     warning.as_str()
                         == Some("host delegation census covered by promotion proof manifest")
                 })
             })
-        }),
-        "ftruncate64 should keep an auditable proof-manifest warning"
-    );
+        });
+        let stackfail_locator_pending = *symbol == "__stack_chk_fail"
+            && rows
+                .iter()
+                .any(|issue| issue["issue_class"].as_str() == Some("missing_body"));
+        assert!(
+            proof_warning_present || stackfail_locator_pending,
+            "{symbol} should keep either a proof-manifest warning or the known stack-fail locator finding"
+        );
+    }
 
     let unistd_proofs =
         &report["fixture_coverage_ratchet"]["proof_manifest_by_module"]["unistd_abi"];

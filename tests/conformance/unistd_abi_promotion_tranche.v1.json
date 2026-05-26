@@ -2,8 +2,8 @@
   "schema_version": "unistd_abi_promotion_tranche.v1",
   "bead": "bd-5tgwug",
   "trace_id": "bd-5tgwug-unistd-abi-promotion-tranche-v1",
-  "description": "Bounded promotion proof for the remaining unistd_abi prove-now rows that already have strict and hardened fixture evidence.",
-  "rationale": "The promoted rows cover the GNU stack protector abort contract and the LP64 ftruncate64 alias contract. __stack_chk_fail is cataloged in the support matrix under unistd_abi but implemented in fortify_abi; its fixture proof binds the abort behavior while the host-delegation census hits are abort, libio exit-safety, errno, and signal-mask helper artifacts. ftruncate64 aliases FrankenLibC's native ftruncate syscall path; its census hits are errno/bootstrap helpers plus the alias reachability to ftruncate, not a host-glibc semantic call-through.",
+  "description": "Bounded promotion proof for the unistd_abi GNU stack protector row and the LFS alias rows that already have strict and hardened ABI evidence.",
+  "rationale": "The promoted rows cover the GNU stack protector abort contract plus LP64 LFS alias contracts for ftruncate64, lseek64, mmap64, pread64, pwrite64, sendfile64, and truncate64. __stack_chk_fail is cataloged in the support matrix under unistd_abi but implemented in fortify_abi; its fixture proof binds the abort behavior while the host-delegation census hits are abort, libio exit-safety, errno, and signal-mask helper artifacts. The LFS symbols alias FrankenLibC's native syscall, mmap, and I/O paths; their census hits are errno/bootstrap helpers plus alias reachability to the native non-64 entrypoints, not host-glibc semantic call-through.",
   "source_artifacts": [
     "support_matrix.json",
     "tests/conformance/fixtures/unistd_process_filesystem_wave02.json",
@@ -11,6 +11,9 @@
     "tests/conformance/host_delegation_census.v1.json",
     "crates/frankenlibc-abi/src/fortify_abi.rs",
     "crates/frankenlibc-abi/src/unistd_abi.rs",
+    "crates/frankenlibc-abi/tests/io_abi_test.rs",
+    "crates/frankenlibc-abi/tests/mmap_abi_test.rs",
+    "crates/frankenlibc-abi/tests/stdlib_abi_test.rs",
     "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave02_conformance_test.rs",
     "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave13_conformance_test.rs",
     "crates/frankenlibc_conformance/src/lib.rs"
@@ -27,6 +30,38 @@
     {
       "crate": "frankenlibc-harness",
       "test": "unistd_process_filesystem_wave13_executes_via_isolated_harness",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "stdlib_abi_test::lfs64_aliases_io_roundtrip_and_fd_truncate",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "stdlib_abi_test::lfs64_aliases_path_stat_and_truncate",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "mmap_abi_test::mmap64_creates_anon_mapping",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "crate": "frankenlibc-abi",
+      "test": "io_abi_test::sendfile64_between_fds",
       "modes": [
         "strict",
         "hardened"
@@ -53,11 +88,17 @@
       "ftruncate",
       "host_errno_location_raw",
       "load_host_symbol",
+      "lseek",
+      "mmap",
+      "pread",
+      "pwrite",
       "registry",
+      "sendfile",
       "set_abi_errno",
       "sigaddset",
       "sigemptyset",
       "sys_write_fd",
+      "truncate",
       "write_host_errno_if_available"
     ],
     "accepted_delegation_kinds": [
@@ -92,6 +133,120 @@
       "module": "unistd_abi",
       "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::ftruncate64",
       "fixture": "tests/conformance/fixtures/unistd_process_filesystem_wave13.json::ftruncate64_invalid_fd_strict_and_hardened",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "lseek64",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::lseek64",
+      "fixture": "crates/frankenlibc-abi/tests/stdlib_abi_test.rs::lfs64_aliases_io_roundtrip_and_fd_truncate",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "mmap64",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::mmap64",
+      "fixture": "crates/frankenlibc-abi/tests/mmap_abi_test.rs::mmap64_creates_anon_mapping",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "pread64",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::pread64",
+      "fixture": "crates/frankenlibc-abi/tests/stdlib_abi_test.rs::lfs64_aliases_io_roundtrip_and_fd_truncate",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "pwrite64",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::pwrite64",
+      "fixture": "crates/frankenlibc-abi/tests/stdlib_abi_test.rs::lfs64_aliases_io_roundtrip_and_fd_truncate",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "sendfile64",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::sendfile64",
+      "fixture": "crates/frankenlibc-abi/tests/io_abi_test.rs::sendfile64_between_fds",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "truncate64",
+      "module": "unistd_abi",
+      "core_path": "crates/frankenlibc-abi/src/unistd_abi.rs::truncate64",
+      "fixture": "crates/frankenlibc-abi/tests/stdlib_abi_test.rs::lfs64_aliases_path_stat_and_truncate",
       "strict_conformance": {
         "total": 1,
         "passed": 1,

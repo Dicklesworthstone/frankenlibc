@@ -10,7 +10,7 @@ use frankenlibc_abi::io_abi::{
     __dup3, __pipe2, __pread, __pwrite, __readv, __writev, copy_file_range, dup, dup2, dup3, fcntl,
     memfd_create, pipe, pipe2, pread, preadv, pwrite, pwritev, readv, sendfile, splice, writev,
 };
-use frankenlibc_abi::unistd_abi::close;
+use frankenlibc_abi::unistd_abi::{close, sendfile64};
 
 // ---------------------------------------------------------------------------
 // Helper: create a disposable fd
@@ -598,6 +598,27 @@ fn sendfile_between_fds() {
     assert_eq!(offset, content.len() as i64);
 
     // Verify the data was copied
+    unsafe { libc::lseek(out_fd, 0, libc::SEEK_SET) };
+    let mut buf = [0u8; 32];
+    let read_n = unsafe { libc::read(out_fd, buf.as_mut_ptr().cast(), buf.len()) };
+    assert_eq!(read_n, content.len() as isize);
+    assert_eq!(&buf[..content.len()], content);
+
+    unsafe { close(in_fd) };
+    unsafe { close(out_fd) };
+}
+
+#[test]
+fn sendfile64_between_fds() {
+    let content = b"sendfile64 test data here!";
+    let in_fd = temp_memfd(content);
+    let out_fd = temp_memfd(b"");
+
+    let mut offset: i64 = 0;
+    let n = unsafe { sendfile64(out_fd, in_fd, &mut offset, content.len()) };
+    assert_eq!(n, content.len() as isize);
+    assert_eq!(offset, content.len() as i64);
+
     unsafe { libc::lseek(out_fd, 0, libc::SEEK_SET) };
     let mut buf = [0u8; 32];
     let read_n = unsafe { libc::read(out_fd, buf.as_mut_ptr().cast(), buf.len()) };

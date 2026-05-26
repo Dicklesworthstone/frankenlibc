@@ -653,3 +653,22 @@ fn under_mmap64_creates_anon_mapping() {
     assert_ne!(ptr, libc::MAP_FAILED);
     assert_eq!(unsafe { munmap(ptr, len) }, 0);
 }
+
+#[test]
+fn mmap64_creates_anon_mapping() {
+    use frankenlibc_abi::mmap_abi::munmap;
+    use frankenlibc_abi::unistd_abi::mmap64;
+    let len = 4096;
+    let ptr = unsafe {
+        mmap64(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+    assert_eq!(unsafe { munmap(ptr, len) }, 0);
+}
