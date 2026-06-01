@@ -22,7 +22,8 @@
 //!   matter (`%d` vs `%ld` do **not** match — they consume different
 //!   amounts of data from the va_list).
 //! - **Floats**: `f` ≡ `F` ≡ `e` ≡ `E` ≡ `g` ≡ `G` ≡ `a` ≡ `A`.
-//!   Length modifier matters (`%f` vs `%Lf` differ).
+//!   Only uppercase `L` changes the consumed argument type (`long double`);
+//!   printf's lowercase `l` spelling still consumes `double`.
 //! - **`%c`**: argument-promoted to `int`; treated as a distinct
 //!   class from plain `INT` so callers can't quietly swap a `%d`
 //!   for a `%c` even though both are int-shaped.
@@ -83,7 +84,9 @@ impl ConvShape {
         match spec.conversion {
             b'd' | b'i' => Some(Self::SignedInt(len)),
             b'o' | b'u' | b'x' | b'X' => Some(Self::UnsignedInt(len)),
-            b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => Some(Self::Float(len)),
+            b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                Some(Self::Float(float_len_class(spec.length)))
+            }
             b'c' | b'C' => Some(Self::Char(len)),
             b's' | b'S' => Some(Self::String_(len)),
             b'p' => Some(Self::Pointer),
@@ -106,6 +109,14 @@ impl LenClass {
             LengthMod::Z | LengthMod::T => Self::Size,
             LengthMod::BigL => Self::LongDouble,
         }
+    }
+}
+
+fn float_len_class(m: crate::stdio::printf::LengthMod) -> LenClass {
+    use crate::stdio::printf::LengthMod;
+    match m {
+        LengthMod::BigL => LenClass::LongDouble,
+        _ => LenClass::Default,
     }
 }
 
@@ -243,6 +254,10 @@ mod tests {
             shape_list(b"%Lf"),
             vec![ConvShape::Float(LenClass::LongDouble)]
         );
+        assert_eq!(
+            shape_list(b"%lf"),
+            vec![ConvShape::Float(LenClass::Default)]
+        );
     }
 
     #[test]
@@ -333,6 +348,8 @@ mod tests {
         assert!(compatible(b"%f", b"%g"));
         assert!(compatible(b"%e", b"%G"));
         assert!(compatible(b"%a", b"%E"));
+        assert!(compatible(b"%lf", b"%f"));
+        assert!(compatible(b"%lg", b"%e"));
     }
 
     #[test]

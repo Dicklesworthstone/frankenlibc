@@ -7584,6 +7584,14 @@ fn fmtcheck_floats_all_match() {
 }
 
 #[test]
+fn fmtcheck_printf_lower_l_float_matches_default_float() {
+    let user = c"%lf";
+    let default_fmt = c"%f";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, user.as_ptr() as *const c_char);
+}
+
+#[test]
 fn fmtcheck_null_user_returns_default() {
     let default_fmt = c"%d";
     let p = unsafe { fmtcheck(ptr::null(), default_fmt.as_ptr()) };
