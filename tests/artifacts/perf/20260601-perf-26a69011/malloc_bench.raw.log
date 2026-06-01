@@ -1,0 +1,5 @@
+                        time:   [97.827 ns 97.958 ns 98.085 ns]
+                        time:   [458.62 ns 460.86 ns 463.49 ns]
+alloc_burst/1000x64B    time:   [41.950 µs 42.243 µs 42.540 µs]
+bounded_index/raw_usize time:   [1.1521 ns 1.1569 ns 1.1621 ns]
+                        time:   [1.1524 ns 1.1577 ns 1.1637 ns]

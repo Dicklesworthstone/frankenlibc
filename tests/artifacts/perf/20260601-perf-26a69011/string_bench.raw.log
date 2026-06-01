@@ -1,0 +1,972 @@
+  [2m2026-06-01T23:38:22.551447Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSelected worker: vmi1152480 at ubuntu@109.205.181.92 (2 slots remaining after reservation, speed 50.0)[0m
+    [2;3mat[0m rch/src/hook.rs:514 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:22.795567Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mStarting remote compilation pipeline for frankenlibc (hash: eabc2a07ccde81a7)[0m
+    [2;3mat[0m rch/src/hook.rs:5987 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:22.795601Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mPrepared dependency sync manifest for 10 roots[0m
+    [2;3mat[0m rch/src/hook.rs:6009 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:24.494259Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSyncing project to worker vmi1152480...[0m
+    [2;3mat[0m rch/src/hook.rs:6039 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:24.494312Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc -> /data/projects/frankenlibc on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:36.259209Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 11764ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:36.259268Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc -> /data/projects/frankenlibc/crates/frankenlibc on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:38.099030Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1839ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:38.099094Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-abi -> /data/projects/frankenlibc/crates/frankenlibc-abi on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:40.027046Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1927ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:40.027107Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-bench -> /data/projects/frankenlibc/crates/frankenlibc-bench on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:41.928137Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1901ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:41.928200Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-core -> /data/projects/frankenlibc/crates/frankenlibc-core on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:43.829238Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1901ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:43.829314Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-fixture-exec -> /data/projects/frankenlibc/crates/frankenlibc-fixture-exec on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:45.763142Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1933ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:45.763205Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-harness -> /data/projects/frankenlibc/crates/frankenlibc-harness on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:47.772868Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2009ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:47.772929Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-membrane -> /data/projects/frankenlibc/crates/frankenlibc-membrane on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:49.683371Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1910ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:49.683439Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc_conformance -> /data/projects/frankenlibc/crates/frankenlibc_conformance on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:51.629310Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1945ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:51.629362Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/tools/stdio_synth -> /data/projects/frankenlibc/tools/stdio_synth on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:53.447947Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1818ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:38:53.447983Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSync complete: 81874 files, 3068286 bytes in 28947ms[0m
+    [2;3mat[0m rch/src/hook.rs:6202 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:39:25.537732Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mExecuting command remotely: cargo bench -p frankenlibc-bench --bench string_bench -- --sample-size 40 --measurement-time 2 --warm-up-time 1[0m
+    [2;3mat[0m rch/src/hook.rs:6240 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:39:25.537823Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): /data/tmp/cargo-target -> /data/projects/frankenlibc/.rch-target-vmi1152480-job-29869223945699577-1780357104494252973-0[0m
+    [2;3mat[0m rch/src/transfer.rs:712 [2;3mon[0m ThreadId(1)
+
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded autocfg v1.5.0
+  Downloaded block-buffer v0.12.0
+  Downloaded aho-corasick v1.1.4
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded cast v0.3.0
+  Downloaded arrayref v0.3.9
+  Downloaded crossbeam-utils v0.8.21
+  Downloaded clap_derive v4.6.1
+  Downloaded heck v0.5.0
+  Downloaded constant_time_eq v0.4.2
+  Downloaded ciborium-io v0.2.2
+  Downloaded plotters-backend v0.3.7
+  Downloaded itoa v1.0.18
+  Downloaded ciborium-ll v0.2.2
+  Downloaded const-oid v0.10.2
+  Downloaded clap_builder v4.6.0
+  Downloaded colorchoice v1.0.5
+  Downloaded same-file v1.0.6
+  Downloaded clap_lex v1.1.0
+  Downloaded anstyle-query v1.1.5
+  Downloaded plotters-svg v0.3.7
+  Downloaded cfg-if v1.0.4
+  Downloaded crossbeam-epoch v0.9.18
+  Downloaded anstyle-parse v1.0.0
+  Downloaded tinytemplate v1.2.1
+  Downloaded crossbeam-deque v0.8.6
+  Downloaded strsim v0.11.1
+  Downloaded utf8parse v0.2.2
+  Downloaded cpufeatures v0.3.0
+  Downloaded page_size v0.6.0
+  Downloaded crypto-common v0.2.1
+  Downloaded anstyle v1.0.14
+  Downloaded either v1.15.0
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded hybrid-array v0.4.10
+  Downloaded oorandom v11.1.5
+  Downloaded shlex v1.3.0
+  Downloaded walkdir v2.5.0
+  Downloaded zmij v1.0.21
+  Downloaded alloca v0.4.0
+  Downloaded anes v0.1.6
+  Downloaded anstream v1.0.0
+  Downloaded criterion-plot v0.8.2
+  Downloaded quote v1.0.45
+  Downloaded md-5 v0.11.0
+  Downloaded sha2 v0.11.0
+  Downloaded arrayvec v0.7.6
+  Downloaded ciborium v0.2.2
+  Downloaded clap v4.6.1
+  Downloaded digest v0.11.2
+  Downloaded num-traits v0.2.19
+  Downloaded half v2.7.1
+  Downloaded proc-macro2 v1.0.106
+  Downloaded cc v1.2.60
+  Downloaded unicode-ident v1.0.24
+  Downloaded rayon-core v1.13.0
+  Downloaded serde_core v1.0.228
+  Downloaded serde_derive v1.0.228
+  Downloaded blake3 v1.8.4
+  Downloaded memchr v2.8.0
+  Downloaded serde v1.0.228
+  Downloaded itertools v0.13.0
+  Downloaded zerocopy-derive v0.8.48
+  Downloaded typenum v1.20.0
+  Downloaded criterion v0.8.2
+  Downloaded libm v0.2.16
+  Downloaded plotters v0.3.7
+  Downloaded rayon v1.12.0
+  Downloaded serde_json v1.0.149
+  Downloaded regex v1.12.3
+  Downloaded zerocopy v0.8.48
+  Downloaded syn v2.0.117
+  Downloaded regex-syntax v0.8.10
+  Downloaded regex-automata v0.4.14
+  Downloaded libc v0.2.185
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling zmij v1.0.21
+   Compiling typenum v1.20.0
+   Compiling serde_json v1.0.149
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v1.3.0
+   Compiling serde_core v1.0.228
+   Compiling cfg-if v1.0.4
+   Compiling const-oid v0.10.2
+   Compiling cpufeatures v0.3.0
+   Compiling utf8parse v0.2.2
+   Compiling cc v1.2.60
+   Compiling anstyle-parse v1.0.0
+   Compiling anstyle-query v1.1.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling serde v1.0.228
+   Compiling anstyle v1.0.14
+   Compiling clap_lex v1.1.0
+   Compiling anstream v1.0.0
+   Compiling crossbeam-utils v0.8.21
+   Compiling heck v0.5.0
+   Compiling strsim v0.11.1
+   Compiling syn v2.0.117
+   Compiling hybrid-array v0.4.10
+   Compiling clap_builder v4.6.0
+   Compiling zerocopy v0.8.48
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.0
+   Compiling crypto-common v0.2.1
+   Compiling block-buffer v0.12.0
+   Compiling digest v0.11.2
+   Compiling sha2 v0.11.0
+   Compiling blake3 v1.8.4
+   Compiling autocfg v1.5.0
+   Compiling crossbeam-epoch v0.9.18
+   Compiling num-traits v0.2.19
+   Compiling frankenlibc-membrane v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-membrane)
+   Compiling libm v0.2.16
+   Compiling constant_time_eq v0.4.2
+   Compiling arrayvec v0.7.6
+   Compiling either v1.15.0
+   Compiling rayon-core v1.13.0
+   Compiling arrayref v0.3.9
+   Compiling libc v0.2.185
+   Compiling crossbeam-deque v0.8.6
+   Compiling alloca v0.4.0
+   Compiling plotters-backend v0.3.7
+   Compiling regex-syntax v0.8.10
+   Compiling ciborium-io v0.2.2
+   Compiling plotters-svg v0.3.7
+   Compiling itertools v0.13.0
+   Compiling md-5 v0.11.0
+   Compiling cast v0.3.0
+   Compiling same-file v1.0.6
+   Compiling page_size v0.6.0
+   Compiling regex-automata v0.4.14
+   Compiling walkdir v2.5.0
+   Compiling plotters v0.3.7
+   Compiling rayon v1.12.0
+   Compiling anes v0.1.6
+   Compiling serde_derive v1.0.228
+   Compiling clap_derive v4.6.1
+   Compiling zerocopy-derive v0.8.48
+   Compiling oorandom v11.1.5
+   Compiling criterion-plot v0.8.2
+   Compiling clap v4.6.1
+   Compiling regex v1.12.3
+   Compiling stdio-synth v0.1.0 (/data/projects/frankenlibc/tools/stdio_synth)
+   Compiling tinytemplate v1.2.1
+   Compiling frankenlibc-core v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-core)
+warning: frankenlibc-core@0.1.0: No SMT solver found for /data/projects/frankenlibc/.rch-target-vmi1152480-job-29869223945699577-1780357104494252973-0/release/build/frankenlibc-core-823606ad944c1a0a/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+   Compiling half v2.7.1
+   Compiling ciborium-ll v0.2.2
+   Compiling ciborium v0.2.2
+   Compiling criterion v0.8.2
+   Compiling frankenlibc-bench v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-bench)
+    Finished `bench` profile [optimized] target(s) in 49.48s
+     Running benches/string_bench.rs (.rch-target-vmi1152480-job-29869223945699577-1780357104494252973-0/release/deps/string_bench-0ab8dd0b2bb29ae3)
+Gnuplot not found, using plotters backend
+Benchmarking memcpy/raw/16
+Benchmarking memcpy/raw/16: Warming up for 1.0000 s
+Benchmarking memcpy/raw/16: Collecting 40 samples in estimated 2.0000 s (886M iterations)
+Benchmarking memcpy/raw/16: Analyzing
+memcpy/raw/16           time:   [2.1813 ns 2.2683 ns 2.3649 ns]
+                        thrpt:  [6.3009 GiB/s 6.5694 GiB/s 6.8312 GiB/s]
+STRING_BENCH mode=raw bench=memcpy_16 samples=69 p50_ns_op=2.367 p95_ns_op=6.250 p99_ns_op=30.000 mean_ns_op=4.073 throughput_ops_s=438799111.642
+Benchmarking memcpy/raw/64
+Benchmarking memcpy/raw/64: Warming up for 1.0000 s
+Benchmarking memcpy/raw/64: Collecting 40 samples in estimated 2.0000 s (784M iterations)
+Benchmarking memcpy/raw/64: Analyzing
+memcpy/raw/64           time:   [2.5568 ns 2.5620 ns 2.5672 ns]
+                        thrpt:  [23.217 GiB/s 23.265 GiB/s 23.312 GiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  1 (2.50%) low mild
+  2 (5.00%) high mild
+STRING_BENCH mode=raw bench=memcpy_64 samples=69 p50_ns_op=2.567 p95_ns_op=8.750 p99_ns_op=30.000 mean_ns_op=4.224 throughput_ops_s=391116514.528
+Benchmarking memcpy/raw/256
+Benchmarking memcpy/raw/256: Warming up for 1.0000 s
+Benchmarking memcpy/raw/256: Collecting 40 samples in estimated 2.0000 s (636M iterations)
+Benchmarking memcpy/raw/256: Analyzing
+memcpy/raw/256          time:   [3.0760 ns 3.1346 ns 3.1960 ns]
+                        thrpt:  [74.598 GiB/s 76.060 GiB/s 77.510 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  2 (5.00%) high mild
+STRING_BENCH mode=raw bench=memcpy_256 samples=69 p50_ns_op=3.076 p95_ns_op=8.965 p99_ns_op=30.000 mean_ns_op=4.377 throughput_ops_s=318972630.331
+Benchmarking memcpy/raw/1024
+Benchmarking memcpy/raw/1024: Warming up for 1.0000 s
+Benchmarking memcpy/raw/1024: Collecting 40 samples in estimated 2.0000 s (168M iterations)
+Benchmarking memcpy/raw/1024: Analyzing
+memcpy/raw/1024         time:   [11.293 ns 11.405 ns 11.516 ns]
+                        thrpt:  [82.811 GiB/s 83.622 GiB/s 84.445 GiB/s]
+STRING_BENCH mode=raw bench=memcpy_1024 samples=67 p50_ns_op=11.372 p95_ns_op=20.000 p99_ns_op=40.000 mean_ns_op=13.150 throughput_ops_s=86031172.645
+Benchmarking memcpy/raw/4096
+Benchmarking memcpy/raw/4096: Warming up for 1.0000 s
+Benchmarking memcpy/raw/4096: Collecting 40 samples in estimated 2.0000 s (63M iterations)
+Benchmarking memcpy/raw/4096: Analyzing
+memcpy/raw/4096         time:   [30.014 ns 31.446 ns 33.391 ns]
+                        thrpt:  [114.24 GiB/s 121.31 GiB/s 127.10 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=memcpy_4096 samples=65 p50_ns_op=31.556 p95_ns_op=43.105 p99_ns_op=65.000 mean_ns_op=34.300 throughput_ops_s=31803762.815
+Benchmarking memcpy/raw/65536
+Benchmarking memcpy/raw/65536: Warming up for 1.0000 s
+Benchmarking memcpy/raw/65536: Collecting 40 samples in estimated 2.0003 s (2.2M iterations)
+Benchmarking memcpy/raw/65536: Analyzing
+memcpy/raw/65536        time:   [859.75 ns 870.43 ns 882.69 ns]
+                        thrpt:  [69.147 GiB/s 70.120 GiB/s 70.992 GiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  1 (2.50%) low mild
+  1 (2.50%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=memcpy_65536 samples=61 p50_ns_op=866.592 p95_ns_op=997.055 p99_ns_op=1141.451 mean_ns_op=879.388 throughput_ops_s=1128471.260
+
+Benchmarking strlen/raw/16
+Benchmarking strlen/raw/16: Warming up for 1.0000 s
+Benchmarking strlen/raw/16: Collecting 40 samples in estimated 2.0000 s (672M iterations)
+Benchmarking strlen/raw/16: Analyzing
+strlen/raw/16           time:   [2.9660 ns 3.0798 ns 3.1989 ns]
+                        thrpt:  [4.6583 GiB/s 4.8384 GiB/s 5.0240 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  1 (2.50%) low severe
+  1 (2.50%) low mild
+STRING_BENCH mode=raw bench=strlen_16 samples=69 p50_ns_op=3.283 p95_ns_op=8.750 p99_ns_op=25.000 mean_ns_op=5.117 throughput_ops_s=326675630.482
+Benchmarking strlen/raw/64
+Benchmarking strlen/raw/64: Warming up for 1.0000 s
+Benchmarking strlen/raw/64: Collecting 40 samples in estimated 2.0000 s (264M iterations)
+Benchmarking strlen/raw/64: Analyzing
+strlen/raw/64           time:   [6.8026 ns 6.9744 ns 7.1809 ns]
+                        thrpt:  [8.3005 GiB/s 8.5462 GiB/s 8.7621 GiB/s]
+STRING_BENCH mode=raw bench=strlen_64 samples=67 p50_ns_op=7.333 p95_ns_op=13.750 p99_ns_op=50.000 mean_ns_op=11.670 throughput_ops_s=138678596.614
+Benchmarking strlen/raw/256
+Benchmarking strlen/raw/256: Warming up for 1.0000 s
+Benchmarking strlen/raw/256: Collecting 40 samples in estimated 2.0000 s (64M iterations)
+Benchmarking strlen/raw/256: Analyzing
+strlen/raw/256          time:   [26.725 ns 27.348 ns 27.930 ns]
+                        thrpt:  [8.5364 GiB/s 8.7181 GiB/s 8.9213 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) low mild
+STRING_BENCH mode=raw bench=strlen_256 samples=65 p50_ns_op=30.096 p95_ns_op=37.500 p99_ns_op=90.000 mean_ns_op=32.320 throughput_ops_s=34574805.674
+Benchmarking strlen/raw/1024
+Benchmarking strlen/raw/1024: Warming up for 1.0000 s
+Benchmarking strlen/raw/1024: Collecting 40 samples in estimated 2.0001 s (17M iterations)
+Benchmarking strlen/raw/1024: Analyzing
+strlen/raw/1024         time:   [97.039 ns 102.14 ns 106.97 ns]
+                        thrpt:  [8.9153 GiB/s 9.3366 GiB/s 9.8277 GiB/s]
+STRING_BENCH mode=raw bench=strlen_1024 samples=64 p50_ns_op=113.087 p95_ns_op=125.025 p99_ns_op=152.750 mean_ns_op=110.569 throughput_ops_s=9106875.838
+Benchmarking strlen/raw/4096
+Benchmarking strlen/raw/4096: Warming up for 1.0000 s
+Benchmarking strlen/raw/4096: Collecting 40 samples in estimated 2.0002 s (4.6M iterations)
+Benchmarking strlen/raw/4096: Analyzing
+strlen/raw/4096         time:   [418.73 ns 426.98 ns 435.65 ns]
+                        thrpt:  [8.7563 GiB/s 8.9342 GiB/s 9.1102 GiB/s]
+Found 4 outliers among 40 measurements (10.00%)
+  2 (5.00%) low severe
+  2 (5.00%) low mild
+STRING_BENCH mode=raw bench=strlen_4096 samples=62 p50_ns_op=432.681 p95_ns_op=456.402 p99_ns_op=490.000 mean_ns_op=430.095 throughput_ops_s=2314339.530
+
+Benchmarking memcmp/raw/16
+Benchmarking memcmp/raw/16: Warming up for 1.0000 s
+Benchmarking memcmp/raw/16: Collecting 40 samples in estimated 2.0000 s (337M iterations)
+Benchmarking memcmp/raw/16: Analyzing
+memcmp/raw/16           time:   [9.6290 ns 10.421 ns 11.164 ns]
+                        thrpt:  [1.3348 GiB/s 1.4299 GiB/s 1.5475 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=memcmp_16 samples=68 p50_ns_op=8.469 p95_ns_op=17.500 p99_ns_op=45.000 mean_ns_op=11.169 throughput_ops_s=119475626.187
+Benchmarking memcmp/raw/64
+Benchmarking memcmp/raw/64: Warming up for 1.0000 s
+Benchmarking memcmp/raw/64: Collecting 40 samples in estimated 2.0000 s (55M iterations)
+Benchmarking memcmp/raw/64: Analyzing
+memcmp/raw/64           time:   [29.201 ns 32.542 ns 35.840 ns]
+                        thrpt:  [1.6631 GiB/s 1.8316 GiB/s 2.0412 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  1 (2.50%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=memcmp_64 samples=65 p50_ns_op=30.651 p95_ns_op=72.039 p99_ns_op=117.689 mean_ns_op=36.411 throughput_ops_s=29084414.536
+Benchmarking memcmp/raw/256
+Benchmarking memcmp/raw/256: Warming up for 1.0000 s
+Benchmarking memcmp/raw/256: Collecting 40 samples in estimated 2.0001 s (19M iterations)
+Benchmarking memcmp/raw/256: Analyzing
+memcmp/raw/256          time:   [109.79 ns 112.56 ns 114.84 ns]
+                        thrpt:  [2.0761 GiB/s 2.1182 GiB/s 2.1716 GiB/s]
+STRING_BENCH mode=raw bench=memcmp_256 samples=64 p50_ns_op=111.197 p95_ns_op=182.439 p99_ns_op=270.000 mean_ns_op=120.377 throughput_ops_s=9153377.556
+Benchmarking memcmp/raw/1024
+Benchmarking memcmp/raw/1024: Warming up for 1.0000 s
+Benchmarking memcmp/raw/1024: Collecting 40 samples in estimated 2.0003 s (4.9M iterations)
+Benchmarking memcmp/raw/1024: Analyzing
+memcmp/raw/1024         time:   [345.19 ns 357.45 ns 371.89 ns]
+                        thrpt:  [2.5644 GiB/s 2.6680 GiB/s 2.7628 GiB/s]
+STRING_BENCH mode=raw bench=memcmp_1024 samples=62 p50_ns_op=393.596 p95_ns_op=465.750 p99_ns_op=571.000 mean_ns_op=441.893 throughput_ops_s=2613107.678
+Benchmarking memcmp/raw/4096
+Benchmarking memcmp/raw/4096: Warming up for 1.0000 s
+Benchmarking memcmp/raw/4096: Collecting 40 samples in estimated 2.0007 s (1.5M iterations)
+Benchmarking memcmp/raw/4096: Analyzing
+memcmp/raw/4096         time:   [1.2504 µs 1.2788 µs 1.3071 µs]
+                        thrpt:  [2.9184 GiB/s 2.9830 GiB/s 3.0507 GiB/s]
+STRING_BENCH mode=raw bench=memcmp_4096 samples=60 p50_ns_op=1255.280 p95_ns_op=1402.548 p99_ns_op=1422.329 mean_ns_op=1244.848 throughput_ops_s=782309.795
+
+Benchmarking strcmp/raw/16
+Benchmarking strcmp/raw/16: Warming up for 1.0000 s
+Benchmarking strcmp/raw/16: Collecting 40 samples in estimated 2.0000 s (624M iterations)
+Benchmarking strcmp/raw/16: Analyzing
+strcmp/raw/16           time:   [3.5738 ns 3.6676 ns 3.7284 ns]
+                        thrpt:  [3.9967 GiB/s 4.0630 GiB/s 4.1696 GiB/s]
+STRING_BENCH mode=raw bench=strcmp_16 samples=69 p50_ns_op=3.747 p95_ns_op=12.500 p99_ns_op=35.000 mean_ns_op=7.606 throughput_ops_s=296090757.820
+Benchmarking strcmp/raw/64
+Benchmarking strcmp/raw/64: Warming up for 1.0000 s
+Benchmarking strcmp/raw/64: Collecting 40 samples in estimated 2.0000 s (302M iterations)
+Benchmarking strcmp/raw/64: Analyzing
+strcmp/raw/64           time:   [7.4233 ns 7.6351 ns 7.7994 ns]
+                        thrpt:  [7.6422 GiB/s 7.8066 GiB/s 8.0294 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) low mild
+STRING_BENCH mode=raw bench=strcmp_64 samples=68 p50_ns_op=7.920 p95_ns_op=15.266 p99_ns_op=60.000 mean_ns_op=11.095 throughput_ops_s=140889581.605
+Benchmarking strcmp/raw/256
+Benchmarking strcmp/raw/256: Warming up for 1.0000 s
+Benchmarking strcmp/raw/256: Collecting 40 samples in estimated 2.0000 s (72M iterations)
+Benchmarking strcmp/raw/256: Analyzing
+strcmp/raw/256          time:   [24.872 ns 25.952 ns 27.082 ns]
+                        thrpt:  [8.8037 GiB/s 9.1869 GiB/s 9.5859 GiB/s]
+Found 4 outliers among 40 measurements (10.00%)
+  4 (10.00%) low mild
+STRING_BENCH mode=raw bench=strcmp_256 samples=66 p50_ns_op=28.436 p95_ns_op=30.013 p99_ns_op=80.000 mean_ns_op=32.200 throughput_ops_s=36741698.250
+Benchmarking strcmp/raw/1024
+Benchmarking strcmp/raw/1024: Warming up for 1.0000 s
+Benchmarking strcmp/raw/1024: Collecting 40 samples in estimated 2.0001 s (23M iterations)
+Benchmarking strcmp/raw/1024: Analyzing
+strcmp/raw/1024         time:   [88.871 ns 96.323 ns 104.18 ns]
+                        thrpt:  [9.1544 GiB/s 9.9008 GiB/s 10.731 GiB/s]
+Found 4 outliers among 40 measurements (10.00%)
+  4 (10.00%) high mild
+STRING_BENCH mode=raw bench=strcmp_1024 samples=64 p50_ns_op=94.815 p95_ns_op=131.190 p99_ns_op=160.000 mean_ns_op=104.840 throughput_ops_s=10983247.159
+Benchmarking strcmp/raw/4096
+Benchmarking strcmp/raw/4096: Warming up for 1.0000 s
+Benchmarking strcmp/raw/4096: Collecting 40 samples in estimated 2.0002 s (5.9M iterations)
+Benchmarking strcmp/raw/4096: Analyzing
+strcmp/raw/4096         time:   [335.26 ns 361.89 ns 387.82 ns]
+                        thrpt:  [9.8363 GiB/s 10.541 GiB/s 11.378 GiB/s]
+STRING_BENCH mode=raw bench=strcmp_4096 samples=62 p50_ns_op=351.846 p95_ns_op=483.729 p99_ns_op=518.487 mean_ns_op=358.787 throughput_ops_s=2873176.830
+
+Benchmarking strchr_absent/raw/16
+Benchmarking strchr_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strchr_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (320M iterations)
+Benchmarking strchr_absent/raw/16: Analyzing
+strchr_absent/raw/16    time:   [6.4881 ns 6.8528 ns 7.2014 ns]
+                        thrpt:  [2.0692 GiB/s 2.1745 GiB/s 2.2967 GiB/s]
+STRING_BENCH mode=raw bench=strchr_absent_16 samples=68 p50_ns_op=5.836 p95_ns_op=10.000 p99_ns_op=45.000 mean_ns_op=7.627 throughput_ops_s=153697570.791
+Benchmarking strchr_absent/raw/64
+Benchmarking strchr_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strchr_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (78M iterations)
+Benchmarking strchr_absent/raw/64: Analyzing
+strchr_absent/raw/64    time:   [24.981 ns 26.271 ns 27.665 ns]
+                        thrpt:  [2.1545 GiB/s 2.2688 GiB/s 2.3860 GiB/s]
+STRING_BENCH mode=raw bench=strchr_absent_64 samples=66 p50_ns_op=25.664 p95_ns_op=35.199 p99_ns_op=100.500 mean_ns_op=29.065 throughput_ops_s=38655025.829
+Benchmarking strchr_absent/raw/256
+Benchmarking strchr_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strchr_absent/raw/256: Collecting 40 samples in estimated 2.0000 s (15M iterations)
+Benchmarking strchr_absent/raw/256: Analyzing
+strchr_absent/raw/256   time:   [119.59 ns 127.13 ns 134.18 ns]
+                        thrpt:  [1.7768 GiB/s 1.8753 GiB/s 1.9937 GiB/s]
+STRING_BENCH mode=raw bench=strchr_absent_256 samples=63 p50_ns_op=129.157 p95_ns_op=190.264 p99_ns_op=2597.656 mean_ns_op=210.759 throughput_ops_s=7740701.914
+Benchmarking strchr_absent/raw/1024
+Benchmarking strchr_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strchr_absent/raw/1024: Collecting 40 samples in estimated 2.0001 s (4.0M iterations)
+Benchmarking strchr_absent/raw/1024: Analyzing
+strchr_absent/raw/1024  time:   [398.53 ns 418.39 ns 441.41 ns]
+                        thrpt:  [2.1605 GiB/s 2.2794 GiB/s 2.3930 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strchr_absent_1024 samples=61 p50_ns_op=469.813 p95_ns_op=552.761 p99_ns_op=567.018 mean_ns_op=453.219 throughput_ops_s=2188857.491
+Benchmarking strchr_absent/raw/4096
+Benchmarking strchr_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strchr_absent/raw/4096: Collecting 40 samples in estimated 2.0007 s (1.4M iterations)
+Benchmarking strchr_absent/raw/4096: Analyzing
+strchr_absent/raw/4096  time:   [1.4903 µs 1.5371 µs 1.5872 µs]
+                        thrpt:  [2.4034 GiB/s 2.4817 GiB/s 2.5596 GiB/s]
+STRING_BENCH mode=raw bench=strchr_absent_4096 samples=60 p50_ns_op=1495.950 p95_ns_op=1939.660 p99_ns_op=1950.639 mean_ns_op=1535.974 throughput_ops_s=665551.571
+
+Benchmarking strstr_absent/raw/16
+Benchmarking strstr_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strstr_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (159M iterations)
+Benchmarking strstr_absent/raw/16: Analyzing
+strstr_absent/raw/16    time:   [10.397 ns 11.225 ns 12.069 ns]
+                        thrpt:  [1.2347 GiB/s 1.3276 GiB/s 1.4332 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strstr_absent_16 samples=67 p50_ns_op=12.109 p95_ns_op=19.674 p99_ns_op=40.000 mean_ns_op=13.956 throughput_ops_s=84763923.770
+Benchmarking strstr_absent/raw/64
+Benchmarking strstr_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strstr_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (64M iterations)
+Benchmarking strstr_absent/raw/64: Analyzing
+strstr_absent/raw/64    time:   [29.482 ns 33.657 ns 37.133 ns]
+                        thrpt:  [1.6052 GiB/s 1.7710 GiB/s 2.0217 GiB/s]
+Found 6 outliers among 40 measurements (15.00%)
+  6 (15.00%) high mild
+STRING_BENCH mode=raw bench=strstr_absent_64 samples=65 p50_ns_op=32.469 p95_ns_op=44.682 p99_ns_op=75.000 mean_ns_op=33.839 throughput_ops_s=31884295.911
+Benchmarking strstr_absent/raw/256
+Benchmarking strstr_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strstr_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (16M iterations)
+Benchmarking strstr_absent/raw/256: Analyzing
+strstr_absent/raw/256   time:   [133.30 ns 140.18 ns 147.65 ns]
+                        thrpt:  [1.6147 GiB/s 1.7008 GiB/s 1.7886 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strstr_absent_256 samples=63 p50_ns_op=140.097 p95_ns_op=213.267 p99_ns_op=300.000 mean_ns_op=264.423 throughput_ops_s=7431540.339
+Benchmarking strstr_absent/raw/1024
+Benchmarking strstr_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strstr_absent/raw/1024: Collecting 40 samples in estimated 2.0001 s (3.4M iterations)
+Benchmarking strstr_absent/raw/1024: Analyzing
+strstr_absent/raw/1024  time:   [433.35 ns 465.47 ns 505.14 ns]
+                        thrpt:  [1.8879 GiB/s 2.0489 GiB/s 2.2007 GiB/s]
+STRING_BENCH mode=raw bench=strstr_absent_1024 samples=61 p50_ns_op=499.006 p95_ns_op=727.322 p99_ns_op=746.835 mean_ns_op=510.210 throughput_ops_s=1914601.738
+Benchmarking strstr_absent/raw/4096
+Benchmarking strstr_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strstr_absent/raw/4096: Collecting 40 samples in estimated 2.0008 s (1.2M iterations)
+Benchmarking strstr_absent/raw/4096: Analyzing
+strstr_absent/raw/4096  time:   [1.7338 µs 1.8482 µs 1.9745 µs]
+                        thrpt:  [1.9320 GiB/s 2.0640 GiB/s 2.2001 GiB/s]
+STRING_BENCH mode=raw bench=strstr_absent_4096 samples=60 p50_ns_op=1762.201 p95_ns_op=2589.000 p99_ns_op=2922.176 mean_ns_op=1921.521 throughput_ops_s=570407.053
+
+Benchmarking strnstr_bounded_absent/raw/16
+Benchmarking strnstr_bounded_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strnstr_bounded_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (201M iterations)
+Benchmarking strnstr_bounded_absent/raw/16: Analyzing
+strnstr_bounded_absent/raw/16
+                        time:   [9.4453 ns 10.051 ns 10.794 ns]
+                        thrpt:  [1.3805 GiB/s 1.4826 GiB/s 1.5776 GiB/s]
+STRING_BENCH mode=raw bench=strnstr_bounded_absent_16 samples=67 p50_ns_op=10.055 p95_ns_op=13.127 p99_ns_op=35.000 mean_ns_op=11.161 throughput_ops_s=98621887.523
+Benchmarking strnstr_bounded_absent/raw/64
+Benchmarking strnstr_bounded_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strnstr_bounded_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (71M iterations)
+Benchmarking strnstr_bounded_absent/raw/64: Analyzing
+strnstr_bounded_absent/raw/64
+                        time:   [26.304 ns 27.169 ns 28.103 ns]
+                        thrpt:  [2.1209 GiB/s 2.1938 GiB/s 2.2660 GiB/s]
+STRING_BENCH mode=raw bench=strnstr_bounded_absent_64 samples=66 p50_ns_op=26.199 p95_ns_op=32.312 p99_ns_op=50.000 mean_ns_op=27.036 throughput_ops_s=36246370.922
+Benchmarking strnstr_bounded_absent/raw/256
+Benchmarking strnstr_bounded_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strnstr_bounded_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (16M iterations)
+Benchmarking strnstr_bounded_absent/raw/256: Analyzing
+strnstr_bounded_absent/raw/256
+                        time:   [125.73 ns 129.03 ns 133.74 ns]
+                        thrpt:  [1.7826 GiB/s 1.8478 GiB/s 1.8963 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  2 (5.00%) high mild
+STRING_BENCH mode=raw bench=strnstr_bounded_absent_256 samples=63 p50_ns_op=135.971 p95_ns_op=199.125 p99_ns_op=215.500 mean_ns_op=150.824 throughput_ops_s=7640366.877
+Benchmarking strnstr_bounded_absent/raw/1024
+Benchmarking strnstr_bounded_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strnstr_bounded_absent/raw/1024: Collecting 40 samples in estimated 2.0003 s (4.4M iterations)
+Benchmarking strnstr_bounded_absent/raw/1024: Analyzing
+strnstr_bounded_absent/raw/1024
+                        time:   [423.91 ns 440.10 ns 454.64 ns]
+                        thrpt:  [2.0976 GiB/s 2.1670 GiB/s 2.2497 GiB/s]
+STRING_BENCH mode=raw bench=strnstr_bounded_absent_1024 samples=62 p50_ns_op=420.518 p95_ns_op=484.814 p99_ns_op=514.670 mean_ns_op=405.322 throughput_ops_s=2260287.245
+Benchmarking strnstr_bounded_absent/raw/4096
+Benchmarking strnstr_bounded_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strnstr_bounded_absent/raw/4096: Collecting 40 samples in estimated 2.0009 s (1.1M iterations)
+Benchmarking strnstr_bounded_absent/raw/4096: Analyzing
+strnstr_bounded_absent/raw/4096
+                        time:   [1.7100 µs 1.7882 µs 1.8810 µs]
+                        thrpt:  [2.0281 GiB/s 2.1332 GiB/s 2.2308 GiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  2 (5.00%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strnstr_bounded_absent_4096 samples=60 p50_ns_op=1721.929 p95_ns_op=2360.316 p99_ns_op=2694.142 mean_ns_op=1803.225 throughput_ops_s=558765.984
+
+Benchmarking strcasestr_absent/raw/16
+Benchmarking strcasestr_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strcasestr_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (124M iterations)
+Benchmarking strcasestr_absent/raw/16: Analyzing
+strcasestr_absent/raw/16
+                        time:   [16.328 ns 17.328 ns 18.354 ns]
+                        thrpt:  [831.38 MiB/s 880.60 MiB/s 934.52 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strcasestr_absent_16 samples=66 p50_ns_op=16.445 p95_ns_op=24.426 p99_ns_op=86.546 mean_ns_op=19.679 throughput_ops_s=59918376.710
+Benchmarking strcasestr_absent/raw/64
+Benchmarking strcasestr_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strcasestr_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (35M iterations)
+Benchmarking strcasestr_absent/raw/64: Analyzing
+strcasestr_absent/raw/64
+                        time:   [51.624 ns 54.209 ns 56.795 ns]
+                        thrpt:  [1.0495 GiB/s 1.0995 GiB/s 1.1546 GiB/s]
+STRING_BENCH mode=raw bench=strcasestr_absent_64 samples=65 p50_ns_op=56.899 p95_ns_op=68.798 p99_ns_op=100.000 mean_ns_op=58.227 throughput_ops_s=18069940.624
+Benchmarking strcasestr_absent/raw/256
+Benchmarking strcasestr_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strcasestr_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (9.5M iterations)
+Benchmarking strcasestr_absent/raw/256: Analyzing
+strcasestr_absent/raw/256
+                        time:   [180.65 ns 185.63 ns 192.30 ns]
+                        thrpt:  [1.2398 GiB/s 1.2844 GiB/s 1.3198 GiB/s]
+Found 5 outliers among 40 measurements (12.50%)
+  5 (12.50%) high mild
+STRING_BENCH mode=raw bench=strcasestr_absent_256 samples=63 p50_ns_op=204.688 p95_ns_op=265.831 p99_ns_op=311.000 mean_ns_op=211.409 throughput_ops_s=5000291.896
+Benchmarking strcasestr_absent/raw/1024
+Benchmarking strcasestr_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strcasestr_absent/raw/1024: Collecting 40 samples in estimated 2.0003 s (2.5M iterations)
+Benchmarking strcasestr_absent/raw/1024: Analyzing
+strcasestr_absent/raw/1024
+                        time:   [704.33 ns 721.67 ns 737.36 ns]
+                        thrpt:  [1.2934 GiB/s 1.3215 GiB/s 1.3540 GiB/s]
+STRING_BENCH mode=raw bench=strcasestr_absent_1024 samples=61 p50_ns_op=787.227 p95_ns_op=1095.773 p99_ns_op=1242.000 mean_ns_op=828.090 throughput_ops_s=1318398.090
+Benchmarking strcasestr_absent/raw/4096
+Benchmarking strcasestr_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strcasestr_absent/raw/4096: Collecting 40 samples in estimated 2.0015 s (610k iterations)
+Benchmarking strcasestr_absent/raw/4096: Analyzing
+strcasestr_absent/raw/4096
+                        time:   [2.5533 µs 2.6094 µs 2.6738 µs]
+                        thrpt:  [1.4267 GiB/s 1.4619 GiB/s 1.4940 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strcasestr_absent_4096 samples=59 p50_ns_op=2680.353 p95_ns_op=3165.446 p99_ns_op=3174.000 mean_ns_op=2781.409 throughput_ops_s=342504.638
+
+Benchmarking strrchr_absent/raw/16
+Benchmarking strrchr_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strrchr_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (264M iterations)
+Benchmarking strrchr_absent/raw/16: Analyzing
+strrchr_absent/raw/16   time:   [7.8007 ns 8.2221 ns 8.8048 ns]
+                        thrpt:  [1.6924 GiB/s 1.8123 GiB/s 1.9102 GiB/s]
+STRING_BENCH mode=raw bench=strrchr_absent_16 samples=67 p50_ns_op=8.781 p95_ns_op=13.750 p99_ns_op=60.000 mean_ns_op=10.939 throughput_ops_s=120099614.996
+Benchmarking strrchr_absent/raw/64
+Benchmarking strrchr_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strrchr_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (59M iterations)
+Benchmarking strrchr_absent/raw/64: Analyzing
+strrchr_absent/raw/64   time:   [31.589 ns 32.554 ns 33.495 ns]
+                        thrpt:  [1.7795 GiB/s 1.8310 GiB/s 1.8869 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  2 (5.00%) high mild
+STRING_BENCH mode=raw bench=strrchr_absent_64 samples=65 p50_ns_op=32.222 p95_ns_op=40.768 p99_ns_op=60.500 mean_ns_op=32.688 throughput_ops_s=30154892.847
+Benchmarking strrchr_absent/raw/256
+Benchmarking strrchr_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strrchr_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (13M iterations)
+Benchmarking strrchr_absent/raw/256: Analyzing
+strrchr_absent/raw/256  time:   [207.56 ns 219.61 ns 231.10 ns]
+                        thrpt:  [1.0317 GiB/s 1.0857 GiB/s 1.1487 GiB/s]
+STRING_BENCH mode=raw bench=strrchr_absent_256 samples=63 p50_ns_op=161.287 p95_ns_op=271.323 p99_ns_op=292.205 mean_ns_op=178.460 throughput_ops_s=5284690.344
+Benchmarking strrchr_absent/raw/1024
+Benchmarking strrchr_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strrchr_absent/raw/1024: Collecting 40 samples in estimated 2.0004 s (2.2M iterations)
+Benchmarking strrchr_absent/raw/1024: Analyzing
+strrchr_absent/raw/1024 time:   [803.96 ns 899.97 ns 989.60 ns]
+                        thrpt:  [986.83 MiB/s 1.0597 GiB/s 1.1862 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strrchr_absent_1024 samples=61 p50_ns_op=593.746 p95_ns_op=1566.243 p99_ns_op=1620.842 mean_ns_op=777.785 throughput_ops_s=1114774.082
+Benchmarking strrchr_absent/raw/4096
+Benchmarking strrchr_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strrchr_absent/raw/4096: Collecting 40 samples in estimated 2.0007 s (657k iterations)
+Benchmarking strrchr_absent/raw/4096: Analyzing
+strrchr_absent/raw/4096 time:   [3.1409 µs 3.3630 µs 3.5824 µs]
+                        thrpt:  [1.0649 GiB/s 1.1343 GiB/s 1.2145 GiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  2 (5.00%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strrchr_absent_4096 samples=59 p50_ns_op=2538.598 p95_ns_op=5231.294 p99_ns_op=6472.150 mean_ns_op=2925.565 throughput_ops_s=308738.469
+
+Benchmarking strcspn_absent/raw/16
+Benchmarking strcspn_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strcspn_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (79M iterations)
+Benchmarking strcspn_absent/raw/16: Analyzing
+strcspn_absent/raw/16   time:   [22.037 ns 24.338 ns 26.585 ns]
+                        thrpt:  [573.97 MiB/s 626.96 MiB/s 692.43 MiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  2 (5.00%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strcspn_absent_16 samples=66 p50_ns_op=20.413 p95_ns_op=45.000 p99_ns_op=75.819 mean_ns_op=24.459 throughput_ops_s=39621395.760
+Benchmarking strcspn_absent/raw/64
+Benchmarking strcspn_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strcspn_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (28M iterations)
+Benchmarking strcspn_absent/raw/64: Analyzing
+strcspn_absent/raw/64   time:   [68.236 ns 77.120 ns 85.890 ns]
+                        thrpt:  [710.62 MiB/s 791.44 MiB/s 894.47 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strcspn_absent_64 samples=64 p50_ns_op=61.274 p95_ns_op=144.419 p99_ns_op=236.214 mean_ns_op=76.033 throughput_ops_s=13372649.967
+Benchmarking strcspn_absent/raw/256
+Benchmarking strcspn_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strcspn_absent/raw/256: Collecting 40 samples in estimated 2.0000 s (4.9M iterations)
+Benchmarking strcspn_absent/raw/256: Analyzing
+strcspn_absent/raw/256  time:   [319.83 ns 358.36 ns 395.53 ns]
+                        thrpt:  [617.26 MiB/s 681.26 MiB/s 763.35 MiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  1 (2.50%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strcspn_absent_256 samples=62 p50_ns_op=309.003 p95_ns_op=794.321 p99_ns_op=1549.539 mean_ns_op=393.532 throughput_ops_s=2607725.896
+Benchmarking strcspn_absent/raw/1024
+Benchmarking strcspn_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strcspn_absent/raw/1024: Collecting 40 samples in estimated 2.0001 s (1.8M iterations)
+Benchmarking strcspn_absent/raw/1024: Analyzing
+strcspn_absent/raw/1024 time:   [1.0090 µs 1.0779 µs 1.1497 µs]
+                        thrpt:  [849.40 MiB/s 906.02 MiB/s 967.82 MiB/s]
+Found 9 outliers among 40 measurements (22.50%)
+  3 (7.50%) low severe
+  4 (10.00%) high mild
+  2 (5.00%) high severe
+STRING_BENCH mode=raw bench=strcspn_absent_1024 samples=60 p50_ns_op=1071.500 p95_ns_op=1636.764 p99_ns_op=2095.586 mean_ns_op=1131.650 throughput_ops_s=914201.940
+Benchmarking strcspn_absent/raw/4096
+Benchmarking strcspn_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strcspn_absent/raw/4096: Collecting 40 samples in estimated 2.0013 s (581k iterations)
+Benchmarking strcspn_absent/raw/4096: Analyzing
+strcspn_absent/raw/4096 time:   [3.2344 µs 3.4751 µs 3.7306 µs]
+                        thrpt:  [1.0226 GiB/s 1.0977 GiB/s 1.1794 GiB/s]
+STRING_BENCH mode=raw bench=strcspn_absent_4096 samples=59 p50_ns_op=3938.500 p95_ns_op=4788.253 p99_ns_op=7238.990 mean_ns_op=3814.126 throughput_ops_s=287717.985
+
+Benchmarking strpbrk_absent/raw/16
+Benchmarking strpbrk_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strpbrk_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (111M iterations)
+Benchmarking strpbrk_absent/raw/16: Analyzing
+strpbrk_absent/raw/16   time:   [15.704 ns 16.612 ns 17.680 ns]
+                        thrpt:  [863.06 MiB/s 918.54 MiB/s 971.66 MiB/s]
+STRING_BENCH mode=raw bench=strpbrk_absent_16 samples=66 p50_ns_op=17.880 p95_ns_op=27.293 p99_ns_op=45.491 mean_ns_op=19.425 throughput_ops_s=57098917.018
+Benchmarking strpbrk_absent/raw/64
+Benchmarking strpbrk_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strpbrk_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (39M iterations)
+Benchmarking strpbrk_absent/raw/64: Analyzing
+strpbrk_absent/raw/64   time:   [48.112 ns 51.472 ns 54.911 ns]
+                        thrpt:  [1.0855 GiB/s 1.1580 GiB/s 1.2389 GiB/s]
+STRING_BENCH mode=raw bench=strpbrk_absent_64 samples=65 p50_ns_op=52.015 p95_ns_op=70.702 p99_ns_op=90.000 mean_ns_op=56.521 throughput_ops_s=19510630.667
+Benchmarking strpbrk_absent/raw/256
+Benchmarking strpbrk_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strpbrk_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (7.5M iterations)
+Benchmarking strpbrk_absent/raw/256: Analyzing
+strpbrk_absent/raw/256  time:   [204.10 ns 215.68 ns 227.71 ns]
+                        thrpt:  [1.0470 GiB/s 1.1054 GiB/s 1.1681 GiB/s]
+STRING_BENCH mode=raw bench=strpbrk_absent_256 samples=62 p50_ns_op=215.771 p95_ns_op=287.538 p99_ns_op=372.411 mean_ns_op=233.093 throughput_ops_s=4317224.711
+Benchmarking strpbrk_absent/raw/1024
+Benchmarking strpbrk_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strpbrk_absent/raw/1024: Collecting 40 samples in estimated 2.0007 s (1.9M iterations)
+Benchmarking strpbrk_absent/raw/1024: Analyzing
+strpbrk_absent/raw/1024 time:   [811.68 ns 880.79 ns 944.11 ns]
+                        thrpt:  [1.0101 GiB/s 1.0827 GiB/s 1.1749 GiB/s]
+STRING_BENCH mode=raw bench=strpbrk_absent_1024 samples=60 p50_ns_op=1007.091 p95_ns_op=1102.670 p99_ns_op=1127.903 mean_ns_op=948.844 throughput_ops_s=1077282.593
+Benchmarking strpbrk_absent/raw/4096
+Benchmarking strpbrk_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strpbrk_absent/raw/4096: Collecting 40 samples in estimated 2.0012 s (734k iterations)
+Benchmarking strpbrk_absent/raw/4096: Analyzing
+strpbrk_absent/raw/4096 time:   [2.4966 µs 2.7485 µs 3.0019 µs]
+                        thrpt:  [1.2708 GiB/s 1.3879 GiB/s 1.5280 GiB/s]
+STRING_BENCH mode=raw bench=strpbrk_absent_4096 samples=59 p50_ns_op=2595.269 p95_ns_op=3750.591 p99_ns_op=3977.053 mean_ns_op=2656.351 throughput_ops_s=361210.136
+
+Benchmarking strspn_full/raw/16
+Benchmarking strspn_full/raw/16: Warming up for 1.0000 s
+Benchmarking strspn_full/raw/16: Collecting 40 samples in estimated 2.0000 s (133M iterations)
+Benchmarking strspn_full/raw/16: Analyzing
+strspn_full/raw/16      time:   [14.130 ns 15.048 ns 16.031 ns]
+                        thrpt:  [951.83 MiB/s 1014.0 MiB/s 1.0546 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strspn_full_16 samples=67 p50_ns_op=13.225 p95_ns_op=21.233 p99_ns_op=25.563 mean_ns_op=14.707 throughput_ops_s=65478242.436
+Benchmarking strspn_full/raw/64
+Benchmarking strspn_full/raw/64: Warming up for 1.0000 s
+Benchmarking strspn_full/raw/64: Collecting 40 samples in estimated 2.0000 s (33M iterations)
+Benchmarking strspn_full/raw/64: Analyzing
+strspn_full/raw/64      time:   [48.510 ns 55.466 ns 61.222 ns]
+                        thrpt:  [996.94 MiB/s 1.0746 GiB/s 1.2287 GiB/s]
+STRING_BENCH mode=raw bench=strspn_full_64 samples=64 p50_ns_op=47.124 p95_ns_op=72.266 p99_ns_op=75.000 mean_ns_op=50.820 throughput_ops_s=18122770.725
+Benchmarking strspn_full/raw/256
+Benchmarking strspn_full/raw/256: Warming up for 1.0000 s
+Benchmarking strspn_full/raw/256: Collecting 40 samples in estimated 2.0001 s (9.0M iterations)
+Benchmarking strspn_full/raw/256: Analyzing
+strspn_full/raw/256     time:   [237.33 ns 242.38 ns 246.21 ns]
+                        thrpt:  [991.58 MiB/s 1007.3 MiB/s 1.0046 GiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  3 (7.50%) low mild
+STRING_BENCH mode=raw bench=strspn_full_256 samples=63 p50_ns_op=238.826 p95_ns_op=280.902 p99_ns_op=287.836 mean_ns_op=224.530 throughput_ops_s=4340442.604
+Benchmarking strspn_full/raw/1024
+Benchmarking strspn_full/raw/1024: Warming up for 1.0000 s
+Benchmarking strspn_full/raw/1024: Collecting 40 samples in estimated 2.0003 s (1.9M iterations)
+Benchmarking strspn_full/raw/1024: Analyzing
+strspn_full/raw/1024    time:   [1.0510 µs 1.0538 µs 1.0572 µs]
+                        thrpt:  [923.68 MiB/s 926.70 MiB/s 929.16 MiB/s]
+STRING_BENCH mode=raw bench=strspn_full_1024 samples=60 p50_ns_op=1051.711 p95_ns_op=1077.366 p99_ns_op=1081.152 mean_ns_op=947.281 throughput_ops_s=950834.524
+Benchmarking strspn_full/raw/4096
+Benchmarking strspn_full/raw/4096: Warming up for 1.0000 s
+Benchmarking strspn_full/raw/4096: Collecting 40 samples in estimated 2.0007 s (742k iterations)
+Benchmarking strspn_full/raw/4096: Analyzing
+strspn_full/raw/4096    time:   [2.2857 µs 2.5433 µs 2.8309 µs]
+                        thrpt:  [1.3475 GiB/s 1.4999 GiB/s 1.6689 GiB/s]
+STRING_BENCH mode=raw bench=strspn_full_4096 samples=59 p50_ns_op=2568.636 p95_ns_op=4059.381 p99_ns_op=4279.607 mean_ns_op=2764.775 throughput_ops_s=376554.214
+
+Benchmarking strsep_absent/raw/16
+Benchmarking strsep_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strsep_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (162M iterations)
+Benchmarking strsep_absent/raw/16: Analyzing
+strsep_absent/raw/16    time:   [12.402 ns 12.918 ns 13.505 ns]
+                        thrpt:  [1.1033 GiB/s 1.1535 GiB/s 1.2015 GiB/s]
+STRING_BENCH mode=raw bench=strsep_absent_16 samples=67 p50_ns_op=13.684 p95_ns_op=25.000 p99_ns_op=45.000 mean_ns_op=15.821 throughput_ops_s=79131778.971
+Benchmarking strsep_absent/raw/64
+Benchmarking strsep_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strsep_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (47M iterations)
+Benchmarking strsep_absent/raw/64: Analyzing
+strsep_absent/raw/64    time:   [39.476 ns 41.482 ns 43.421 ns]
+                        thrpt:  [1.3727 GiB/s 1.4369 GiB/s 1.5099 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strsep_absent_64 samples=65 p50_ns_op=43.484 p95_ns_op=65.238 p99_ns_op=128.329 mean_ns_op=48.498 throughput_ops_s=23841341.788
+Benchmarking strsep_absent/raw/256
+Benchmarking strsep_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strsep_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (9.0M iterations)
+Benchmarking strsep_absent/raw/256: Analyzing
+strsep_absent/raw/256   time:   [195.64 ns 208.21 ns 221.02 ns]
+                        thrpt:  [1.0787 GiB/s 1.1451 GiB/s 1.2186 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  2 (5.00%) high mild
+STRING_BENCH mode=raw bench=strsep_absent_256 samples=63 p50_ns_op=192.141 p95_ns_op=261.783 p99_ns_op=264.004 mean_ns_op=201.918 throughput_ops_s=4685503.296
+Benchmarking strsep_absent/raw/1024
+Benchmarking strsep_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strsep_absent/raw/1024: Collecting 40 samples in estimated 2.0006 s (1.8M iterations)
+Benchmarking strsep_absent/raw/1024: Analyzing
+strsep_absent/raw/1024  time:   [961.41 ns 1.0639 µs 1.1522 µs]
+                        thrpt:  [847.57 MiB/s 917.93 MiB/s 1015.8 MiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strsep_absent_1024 samples=60 p50_ns_op=887.712 p95_ns_op=1562.897 p99_ns_op=2369.595 mean_ns_op=959.641 throughput_ops_s=939751.647
+Benchmarking strsep_absent/raw/4096
+Benchmarking strsep_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strsep_absent/raw/4096: Collecting 40 samples in estimated 2.0023 s (470k iterations)
+Benchmarking strsep_absent/raw/4096: Analyzing
+strsep_absent/raw/4096  time:   [3.6923 µs 4.0517 µs 4.3840 µs]
+                        thrpt:  [891.03 MiB/s 964.10 MiB/s 1.0332 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strsep_absent_4096 samples=58 p50_ns_op=3224.684 p95_ns_op=6896.628 p99_ns_op=7671.131 mean_ns_op=3662.201 throughput_ops_s=243594.214
+
+Benchmarking strchrnul_absent/raw/16
+Benchmarking strchrnul_absent/raw/16: Warming up for 1.0000 s
+Benchmarking strchrnul_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (242M iterations)
+Benchmarking strchrnul_absent/raw/16: Analyzing
+strchrnul_absent/raw/16 time:   [7.0817 ns 7.6018 ns 8.1767 ns]
+                        thrpt:  [1.8224 GiB/s 1.9602 GiB/s 2.1042 GiB/s]
+Found 2 outliers among 40 measurements (5.00%)
+  1 (2.50%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strchrnul_absent_16 samples=67 p50_ns_op=7.214 p95_ns_op=15.833 p99_ns_op=35.000 mean_ns_op=9.021 throughput_ops_s=126429432.980
+Benchmarking strchrnul_absent/raw/64
+Benchmarking strchrnul_absent/raw/64: Warming up for 1.0000 s
+Benchmarking strchrnul_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (74M iterations)
+Benchmarking strchrnul_absent/raw/64: Analyzing
+strchrnul_absent/raw/64 time:   [28.941 ns 30.912 ns 32.577 ns]
+                        thrpt:  [1.8297 GiB/s 1.9282 GiB/s 2.0595 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=strchrnul_absent_64 samples=66 p50_ns_op=30.306 p95_ns_op=43.498 p99_ns_op=90.000 mean_ns_op=32.683 throughput_ops_s=35064134.453
+Benchmarking strchrnul_absent/raw/256
+Benchmarking strchrnul_absent/raw/256: Warming up for 1.0000 s
+Benchmarking strchrnul_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (17M iterations)
+Benchmarking strchrnul_absent/raw/256: Analyzing
+strchrnul_absent/raw/256
+                        time:   [118.54 ns 124.64 ns 131.58 ns]
+                        thrpt:  [1.8120 GiB/s 1.9128 GiB/s 2.0113 GiB/s]
+STRING_BENCH mode=raw bench=strchrnul_absent_256 samples=64 p50_ns_op=135.878 p95_ns_op=205.500 p99_ns_op=350.748 mean_ns_op=209.112 throughput_ops_s=8115719.518
+Benchmarking strchrnul_absent/raw/1024
+Benchmarking strchrnul_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking strchrnul_absent/raw/1024: Collecting 40 samples in estimated 2.0001 s (4.6M iterations)
+Benchmarking strchrnul_absent/raw/1024: Analyzing
+strchrnul_absent/raw/1024
+                        time:   [394.70 ns 418.20 ns 439.51 ns]
+                        thrpt:  [2.1699 GiB/s 2.2804 GiB/s 2.4162 GiB/s]
+Found 3 outliers among 40 measurements (7.50%)
+  2 (5.00%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=strchrnul_absent_1024 samples=62 p50_ns_op=387.197 p95_ns_op=494.271 p99_ns_op=534.859 mean_ns_op=393.965 throughput_ops_s=2375918.196
+Benchmarking strchrnul_absent/raw/4096
+Benchmarking strchrnul_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking strchrnul_absent/raw/4096: Collecting 40 samples in estimated 2.0006 s (1.1M iterations)
+Benchmarking strchrnul_absent/raw/4096: Analyzing
+strchrnul_absent/raw/4096
+                        time:   [1.4683 µs 1.5074 µs 1.5526 µs]
+                        thrpt:  [2.4569 GiB/s 2.5306 GiB/s 2.5980 GiB/s]
+Found 4 outliers among 40 measurements (10.00%)
+  1 (2.50%) low mild
+  3 (7.50%) high mild
+STRING_BENCH mode=raw bench=strchrnul_absent_4096 samples=60 p50_ns_op=1562.223 p95_ns_op=1924.903 p99_ns_op=2010.343 mean_ns_op=1629.056 throughput_ops_s=608996.316
+
+Benchmarking wcsrchr_absent/raw/16
+Benchmarking wcsrchr_absent/raw/16: Warming up for 1.0000 s
+Benchmarking wcsrchr_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (233M iterations)
+Benchmarking wcsrchr_absent/raw/16: Analyzing
+wcsrchr_absent/raw/16   time:   [8.6231 ns 9.0206 ns 9.4159 ns]
+                        thrpt:  [6.3302 GiB/s 6.6076 GiB/s 6.9122 GiB/s]
+Found 4 outliers among 40 measurements (10.00%)
+  3 (7.50%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=wcsrchr_absent_16 samples=67 p50_ns_op=9.026 p95_ns_op=17.500 p99_ns_op=60.000 mean_ns_op=11.503 throughput_ops_s=112889517.311
+Benchmarking wcsrchr_absent/raw/64
+Benchmarking wcsrchr_absent/raw/64: Warming up for 1.0000 s
+Benchmarking wcsrchr_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (53M iterations)
+Benchmarking wcsrchr_absent/raw/64: Analyzing
+wcsrchr_absent/raw/64   time:   [31.878 ns 33.252 ns 34.784 ns]
+                        thrpt:  [6.8542 GiB/s 7.1701 GiB/s 7.4791 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=wcsrchr_absent_64 samples=65 p50_ns_op=34.584 p95_ns_op=55.095 p99_ns_op=110.000 mean_ns_op=38.024 throughput_ops_s=28781810.041
+Benchmarking wcsrchr_absent/raw/256
+Benchmarking wcsrchr_absent/raw/256: Warming up for 1.0000 s
+Benchmarking wcsrchr_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (12M iterations)
+Benchmarking wcsrchr_absent/raw/256: Analyzing
+wcsrchr_absent/raw/256  time:   [175.18 ns 178.58 ns 182.33 ns]
+                        thrpt:  [5.2305 GiB/s 5.3404 GiB/s 5.4440 GiB/s]
+STRING_BENCH mode=raw bench=wcsrchr_absent_256 samples=63 p50_ns_op=175.331 p95_ns_op=199.780 p99_ns_op=202.932 mean_ns_op=170.358 throughput_ops_s=5653678.579
+Benchmarking wcsrchr_absent/raw/1024
+Benchmarking wcsrchr_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking wcsrchr_absent/raw/1024: Collecting 40 samples in estimated 2.0003 s (4.0M iterations)
+Benchmarking wcsrchr_absent/raw/1024: Analyzing
+wcsrchr_absent/raw/1024 time:   [513.15 ns 547.66 ns 581.03 ns]
+                        thrpt:  [6.5655 GiB/s 6.9654 GiB/s 7.4339 GiB/s]
+Found 4 outliers among 40 measurements (10.00%)
+  3 (7.50%) high mild
+  1 (2.50%) high severe
+STRING_BENCH mode=raw bench=wcsrchr_absent_1024 samples=61 p50_ns_op=532.718 p95_ns_op=658.376 p99_ns_op=670.195 mean_ns_op=537.927 throughput_ops_s=1903312.745
+Benchmarking wcsrchr_absent/raw/4096
+Benchmarking wcsrchr_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking wcsrchr_absent/raw/4096: Collecting 40 samples in estimated 2.0003 s (987k iterations)
+Benchmarking wcsrchr_absent/raw/4096: Analyzing
+wcsrchr_absent/raw/4096 time:   [2.1240 µs 2.2483 µs 2.3949 µs]
+                        thrpt:  [6.3714 GiB/s 6.7868 GiB/s 7.1841 GiB/s]
+Found 16 outliers among 40 measurements (40.00%)
+  4 (10.00%) low severe
+  4 (10.00%) low mild
+  2 (5.00%) high mild
+  6 (15.00%) high severe
+STRING_BENCH mode=raw bench=wcsrchr_absent_4096 samples=59 p50_ns_op=2212.279 p95_ns_op=3078.615 p99_ns_op=3486.851 mean_ns_op=2339.460 throughput_ops_s=458459.173
+
+Benchmarking wcsstr_absent/raw/16
+Benchmarking wcsstr_absent/raw/16: Warming up for 1.0000 s
+Benchmarking wcsstr_absent/raw/16: Collecting 40 samples in estimated 2.0000 s (180M iterations)
+Benchmarking wcsstr_absent/raw/16: Analyzing
+wcsstr_absent/raw/16    time:   [8.7487 ns 9.5203 ns 10.265 ns]
+                        thrpt:  [5.8068 GiB/s 6.2608 GiB/s 6.8130 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=wcsstr_absent_16 samples=67 p50_ns_op=9.383 p95_ns_op=22.796 p99_ns_op=95.729 mean_ns_op=13.789 throughput_ops_s=98010216.192
+Benchmarking wcsstr_absent/raw/64
+Benchmarking wcsstr_absent/raw/64: Warming up for 1.0000 s
+Benchmarking wcsstr_absent/raw/64: Collecting 40 samples in estimated 2.0000 s (65M iterations)
+Benchmarking wcsstr_absent/raw/64: Analyzing
+wcsstr_absent/raw/64    time:   [29.349 ns 33.008 ns 36.854 ns]
+                        thrpt:  [6.4692 GiB/s 7.2230 GiB/s 8.1235 GiB/s]
+STRING_BENCH mode=raw bench=wcsstr_absent_64 samples=65 p50_ns_op=29.099 p95_ns_op=48.950 p99_ns_op=90.500 mean_ns_op=33.499 throughput_ops_s=31392104.849
+Benchmarking wcsstr_absent/raw/256
+Benchmarking wcsstr_absent/raw/256: Warming up for 1.0000 s
+Benchmarking wcsstr_absent/raw/256: Collecting 40 samples in estimated 2.0001 s (13M iterations)
+Benchmarking wcsstr_absent/raw/256: Analyzing
+wcsstr_absent/raw/256   time:   [157.96 ns 168.53 ns 178.79 ns]
+                        thrpt:  [5.3340 GiB/s 5.6588 GiB/s 6.0374 GiB/s]
+STRING_BENCH mode=raw bench=wcsstr_absent_256 samples=63 p50_ns_op=164.357 p95_ns_op=202.788 p99_ns_op=210.000 mean_ns_op=164.168 throughput_ops_s=6128751.378
+Benchmarking wcsstr_absent/raw/1024
+Benchmarking wcsstr_absent/raw/1024: Warming up for 1.0000 s
+Benchmarking wcsstr_absent/raw/1024: Collecting 40 samples in estimated 2.0005 s (2.7M iterations)
+Benchmarking wcsstr_absent/raw/1024: Analyzing
+wcsstr_absent/raw/1024  time:   [752.13 ns 754.79 ns 758.17 ns]
+                        thrpt:  [5.0314 GiB/s 5.0540 GiB/s 5.0719 GiB/s]
+Found 1 outliers among 40 measurements (2.50%)
+  1 (2.50%) high mild
+STRING_BENCH mode=raw bench=wcsstr_absent_1024 samples=61 p50_ns_op=755.368 p95_ns_op=776.962 p99_ns_op=784.009 mean_ns_op=659.968 throughput_ops_s=1330797.807
+Benchmarking wcsstr_absent/raw/4096
+Benchmarking wcsstr_absent/raw/4096: Warming up for 1.0000 s
+Benchmarking wcsstr_absent/raw/4096: Collecting 40 samples in estimated 2.0003 s (754k iterations)
+Benchmarking wcsstr_absent/raw/4096: Analyzing
+wcsstr_absent/raw/4096  time:   [2.9465 µs 2.9632 µs 2.9750 µs]
+                        thrpt:  [5.1290 GiB/s 5.1494 GiB/s 5.1786 GiB/s]
+Found 9 outliers among 40 measurements (22.50%)
+  8 (20.00%) low severe
+  1 (2.50%) low mild
+STRING_BENCH mode=raw bench=wcsstr_absent_4096 samples=59 p50_ns_op=2966.673 p95_ns_op=3057.477 p99_ns_op=3069.013 mean_ns_op=2682.931 throughput_ops_s=355695.279
+
+  [2m2026-06-01T23:46:24.231373Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mRemote command finished: exit=0 in 418693ms[0m
+    [2;3mat[0m rch/src/hook.rs:6364 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:46:24.231687Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mRetrieving build artifacts...[0m
+    [2;3mat[0m rch/src/hook.rs:6413 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:46:24.231713Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRetrieving artifacts from /data/projects/frankenlibc on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:2072 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:46:26.197185Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mArtifacts retrieved in 1965ms (1 files, 1678 bytes)[0m
+    [2;3mat[0m rch/src/transfer.rs:2111 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:46:26.197208Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mArtifacts retrieved: 1 files, 1678 bytes in 1965ms[0m
+    [2;3mat[0m rch/src/hook.rs:6446 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:46:26.197289Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRetrieving artifacts from /data/projects/frankenlibc/.rch-target-vmi1152480-job-29869223945699577-1780357104494252973-0 on vmi1152480[0m
+    [2;3mat[0m rch/src/transfer.rs:2072 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:46:28.960824Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mArtifacts retrieved in 2763ms (2059 files, 33386 bytes)[0m
+    [2;3mat[0m rch/src/transfer.rs:2111 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:46:28.960849Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mCustom CARGO_TARGET_DIR artifacts retrieved: 2059 files, 33386 bytes in 2763ms[0m
+    [2;3mat[0m rch/src/hook.rs:6570 [2;3mon[0m ThreadId(1)
+
+[RCH] remote vmi1152480 (486.4s)
