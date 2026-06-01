@@ -411,6 +411,54 @@ mod tests {
         a.cmp(b)
     }
 
+    /// Recursively verify the LLRB structural invariants and return the
+    /// black-height of `node` (counting the black null sentinel as 1).
+    fn black_height(node: Option<&Node<i32>>) -> usize {
+        match node {
+            None => 1,
+            Some(n) => {
+                // Invariant 3: RED links lean left — a RED right child is forbidden.
+                assert!(
+                    !matches!(n.right.as_deref(), Some(r) if r.color == Color::Red),
+                    "right-leaning red link at key {}",
+                    n.key
+                );
+                // Invariant 4: no two RED links in a row.
+                if n.color == Color::Red {
+                    assert!(
+                        !matches!(n.left.as_deref(), Some(l) if l.color == Color::Red),
+                        "two consecutive red links at key {}",
+                        n.key
+                    );
+                }
+                let lh = black_height(n.left.as_deref());
+                let rh = black_height(n.right.as_deref());
+                // Invariant 5: perfect black balance.
+                assert_eq!(
+                    lh, rh,
+                    "black-height mismatch at key {}: left={lh} right={rh}",
+                    n.key
+                );
+                lh + usize::from(n.color == Color::Black)
+            }
+        }
+    }
+
+    /// Assert every LLRB invariant plus in-order sortedness.
+    fn assert_llrb_invariants(t: &RbTree<i32>) {
+        if let Some(r) = t.root.as_deref() {
+            // Invariant 2: the root is BLACK.
+            assert_eq!(r.color, Color::Black, "root must be black");
+        }
+        black_height(t.root.as_deref());
+        let mut seen: Vec<i32> = Vec::new();
+        t.walk(RbWalkOrder::InOrder, |k, _| seen.push(*k));
+        let mut sorted = seen.clone();
+        sorted.sort_unstable();
+        assert_eq!(seen, sorted, "in-order traversal is not sorted");
+        assert_eq!(seen.len(), t.len(), "node count disagrees with len()");
+    }
+
     #[test]
     fn empty_tree_basics() {
         let t: RbTree<i32> = RbTree::new();
@@ -558,5 +606,65 @@ mod tests {
         let mut count = 0;
         t.destroy_with(|_| count += 1);
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn insert_only_preserves_llrb_invariants() {
+        let mut t = RbTree::new();
+        for k in 0i32..512 {
+            t.insert(k, &cmp_i32);
+            assert_llrb_invariants(&t);
+        }
+    }
+
+    #[test]
+    fn ascending_delete_preserves_llrb_invariants() {
+        let mut t = RbTree::new();
+        for k in 0i32..256 {
+            t.insert(k, &cmp_i32);
+        }
+        assert_llrb_invariants(&t);
+        for k in 0i32..256 {
+            assert_eq!(t.delete(&k, &cmp_i32), Some(k));
+            assert_llrb_invariants(&t);
+        }
+        assert!(t.is_empty());
+    }
+
+    #[test]
+    fn descending_delete_preserves_llrb_invariants() {
+        let mut t = RbTree::new();
+        for k in 0i32..256 {
+            t.insert(k, &cmp_i32);
+        }
+        for k in (0i32..256).rev() {
+            assert_eq!(t.delete(&k, &cmp_i32), Some(k));
+            assert_llrb_invariants(&t);
+        }
+        assert!(t.is_empty());
+    }
+
+    #[test]
+    fn randomized_delete_preserves_llrb_invariants() {
+        let mut t = RbTree::new();
+        let n = 400i32;
+        for k in 0..n {
+            t.insert(k, &cmp_i32);
+        }
+        assert_llrb_invariants(&t);
+        // Deterministic xorshift removal order; check invariants after each.
+        let mut state = 0x1234_5678_9abc_def0u64;
+        let mut remaining: Vec<i32> = (0..n).collect();
+        while !remaining.is_empty() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let idx = (state % remaining.len() as u64) as usize;
+            let k = remaining.swap_remove(idx);
+            assert_eq!(t.delete(&k, &cmp_i32), Some(k));
+            assert_eq!(t.len(), remaining.len());
+            assert_llrb_invariants(&t);
+        }
+        assert!(t.is_empty());
     }
 }
