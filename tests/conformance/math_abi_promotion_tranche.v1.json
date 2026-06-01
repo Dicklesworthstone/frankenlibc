@@ -265,6 +265,270 @@
         "errors": 0
       },
       "decision": "proven"
+    },
+    {
+      "symbol": "acosh",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::acosh",
+      "strict_conformance": { "total": 2, "passed": 2, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 2, "passed": 2, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "atanh",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::atanh",
+      "strict_conformance": { "total": 2, "passed": 2, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 2, "passed": 2, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "cosh",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::cosh",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "sinh",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::sinh",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "exp2",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::exp2",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "expm1",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::expm1",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "log1p",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::log1p",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "log2",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::log2",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "logb",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::logb",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "ldexp",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::ldexp",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "scalbn",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::scalbn",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "scalbln",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::scalbln",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "remainder",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::remainder",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "remquo",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::remquo",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "hypot",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::hypot",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "lgamma_r",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::lgamma_r",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "y0",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::y0",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "y1",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::y1",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "yn",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::yn",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "expf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::expf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "logf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::logf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "logf64",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::logf64",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "logl",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::logl",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "sqrtf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::sqrtf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "sqrt",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::sqrt",
+      "strict_conformance": { "total": 2, "passed": 2, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 2, "passed": 2, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "fmodf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::fmodf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "hypotf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::hypotf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "ldexpf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::ldexpf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "scalbnf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::scalbnf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "remainderf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::remainderf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "remquof",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::remquof",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "lgammaf_r",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::lgammaf_r",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
+    },
+    {
+      "symbol": "tgammaf",
+      "module": "math_abi",
+      "core_path": "frankenlibc_core::math::tgammaf",
+      "strict_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "hardened_conformance": { "total": 1, "passed": 1, "failed": 0, "errors": 0 },
+      "decision": "proven"
     }
   ]
 }
