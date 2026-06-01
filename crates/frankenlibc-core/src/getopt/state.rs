@@ -121,9 +121,23 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
         return StepOutcome::Done;
     }
 
+    if let Some(nc) = state.nextchar {
+        let valid_nextchar = nc.argv_idx == state.optind
+            && nc.byte_offset > 0
+            && argv.get(nc.argv_idx).is_some_and(|current| {
+                current.first() == Some(&b'-') && nc.byte_offset < current.len()
+            });
+        if !valid_nextchar {
+            state.nextchar = None;
+        }
+    }
+
     // If not in the middle of bundled short opts, look at the current arg.
     if state.nextchar.is_none() {
-        let current = argv[state.optind];
+        let Some(current) = argv.get(state.optind) else {
+            state.nextchar = None;
+            return StepOutcome::Done;
+        };
         if current.first() != Some(&b'-') || current.len() < 2 {
             // Not an option (no leading '-', or just "-" alone).
             return StepOutcome::Done;
@@ -141,9 +155,17 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
         });
     }
 
-    let nc = state.nextchar.unwrap();
-    let current = argv[nc.argv_idx];
-    let option = current[nc.byte_offset];
+    let Some(nc) = state.nextchar else {
+        return StepOutcome::Done;
+    };
+    let Some(current) = argv.get(nc.argv_idx) else {
+        state.nextchar = None;
+        return StepOutcome::Done;
+    };
+    let Some(&option) = current.get(nc.byte_offset) else {
+        state.nextchar = None;
+        return StepOutcome::Done;
+    };
 
     // Advance scan position by one byte.
     let after_pos = nc.byte_offset + 1;
@@ -399,5 +421,65 @@ mod tests {
             step_short(&argv, b":a:", &mut state),
             StepOutcome::diagnostic(b':' as i32, GetoptDiagnostic::MissingArgument(b'a'))
         );
+    }
+
+    #[test]
+    fn stale_nextchar_past_current_arg_restarts_at_optind() {
+        let argv: Vec<&[u8]> = vec![b"prog", b"-b"];
+        let mut state = GetoptState {
+            optind: 1,
+            nextchar: Some(ArgRef {
+                argv_idx: 1,
+                byte_offset: 2,
+            }),
+            optopt: 0,
+            optarg: None,
+        };
+
+        assert_eq!(
+            step_short(&argv, b"b", &mut state),
+            StepOutcome::found(b'b' as i32)
+        );
+        assert_eq!(state.optind, 2);
+        assert_eq!(state.nextchar, None);
+    }
+
+    #[test]
+    fn stale_nextchar_from_previous_optind_is_cleared() {
+        let argv: Vec<&[u8]> = vec![b"prog", b"file", b"-a"];
+        let mut state = GetoptState {
+            optind: 2,
+            nextchar: Some(ArgRef {
+                argv_idx: 1,
+                byte_offset: 1,
+            }),
+            optopt: 0,
+            optarg: None,
+        };
+
+        assert_eq!(
+            step_short(&argv, b"a", &mut state),
+            StepOutcome::found(b'a' as i32)
+        );
+        assert_eq!(state.optind, 3);
+        assert_eq!(state.nextchar, None);
+    }
+
+    #[test]
+    fn stale_nextchar_on_operand_is_cleared_without_panic() {
+        let argv: Vec<&[u8]> = vec![b"prog", b"file"];
+        let mut state = GetoptState {
+            optind: 1,
+            nextchar: Some(ArgRef {
+                argv_idx: 1,
+                byte_offset: 1,
+            }),
+            optopt: 0,
+            optarg: None,
+        };
+
+        assert_eq!(step_short(&argv, b"a", &mut state), StepOutcome::Done);
+        assert_eq!(state.optind, 1);
+        assert_eq!(state.nextchar, None);
     }
 }
