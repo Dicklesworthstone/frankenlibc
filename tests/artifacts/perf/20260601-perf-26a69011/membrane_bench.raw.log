@@ -1,0 +1,50 @@
+MEMBRANE_BENCH mode=strict bench=stage_page_oracle_foreign_nonempty samples=79 p50_ns_op=2.745 p95_ns_op=5.000 p99_ns_op=30.000 mean_ns_op=4.609 throughput_ops_s=366512397.454
+Benchmarking membrane/stage_fingerprint_verify/strict
+Benchmarking membrane/stage_fingerprint_verify/strict: Warming up for 1.0000 s
+Benchmarking membrane/stage_fingerprint_verify/strict: Collecting 50 samples in estimated 3.0000 s (235M iterations)
+Benchmarking membrane/stage_fingerprint_verify/strict: Analyzing
+membrane/stage_fingerprint_verify/strict
+                        time:   [12.611 ns 12.802 ns 12.986 ns]
+MEMBRANE_BENCH mode=strict bench=stage_fingerprint_verify samples=77 p50_ns_op=13.003 p95_ns_op=33.994 p99_ns_op=90.000 mean_ns_op=16.884 throughput_ops_s=78436944.088
+Benchmarking membrane/stage_canary_verify/strict
+Benchmarking membrane/stage_canary_verify/strict: Warming up for 1.0000 s
+Benchmarking membrane/stage_canary_verify/strict: Collecting 50 samples in estimated 3.0000 s (5.5B iterations)
+Benchmarking membrane/stage_canary_verify/strict: Analyzing
+membrane/stage_canary_verify/strict
+                        time:   [374.37 ps 384.63 ps 394.56 ps]
+MEMBRANE_BENCH mode=strict bench=stage_canary_verify samples=81 p50_ns_op=0.426 p95_ns_op=5.000 p99_ns_op=20.000 mean_ns_op=1.449 throughput_ops_s=2333723660.445
+Benchmarking membrane/stage_bounds_check/strict
+Benchmarking membrane/stage_bounds_check/strict: Warming up for 1.0000 s
+Benchmarking membrane/stage_bounds_check/strict: Collecting 50 samples in estimated 3.0000 s (5.0B iterations)
+Benchmarking membrane/stage_bounds_check/strict: Analyzing
+membrane/stage_bounds_check/strict
+                        time:   [471.91 ps 488.64 ps 507.27 ps]
+MEMBRANE_BENCH mode=strict bench=stage_bounds_check samples=81 p50_ns_op=0.501 p95_ns_op=1.875 p99_ns_op=20.000 mean_ns_op=1.317 throughput_ops_s=1902896405.105
+Benchmarking membrane/validate_null/strict
+Benchmarking membrane/validate_null/strict: Warming up for 1.0000 s
+Benchmarking membrane/validate_null/strict: Collecting 50 samples in estimated 3.0024 s (1.6M iterations)
+Benchmarking membrane/validate_null/strict: Analyzing
+membrane/validate_null/strict
+                        time:   [2.0813 µs 2.1311 µs 2.1740 µs]
+MEMBRANE_BENCH mode=strict bench=validate_null samples=69 p50_ns_op=2100.297 p95_ns_op=2868.379 p99_ns_op=3195.234 mean_ns_op=2153.857 throughput_ops_s=487831.751
+Benchmarking membrane/validate_foreign/strict
+Benchmarking membrane/validate_foreign/strict: Warming up for 1.0000 s
+Benchmarking membrane/validate_foreign/strict: Collecting 50 samples in estimated 3.0008 s (2.5M iterations)
+Benchmarking membrane/validate_foreign/strict: Analyzing
+membrane/validate_foreign/strict
+                        time:   [1.3082 µs 1.3346 µs 1.3590 µs]
+MEMBRANE_BENCH mode=strict bench=validate_foreign samples=70 p50_ns_op=1272.374 p95_ns_op=1436.644 p99_ns_op=1530.932 mean_ns_op=1231.302 throughput_ops_s=779120.102
+Benchmarking membrane/validate_foreign_nonempty_oracle/strict
+Benchmarking membrane/validate_foreign_nonempty_oracle/strict: Warming up for 1.0000 s
+Benchmarking membrane/validate_foreign_nonempty_oracle/strict: Collecting 50 samples in estimated 3.0009 s (2.5M iterations)
+Benchmarking membrane/validate_foreign_nonempty_oracle/strict: Analyzing
+membrane/validate_foreign_nonempty_oracle/strict
+                        time:   [1.2936 µs 1.3329 µs 1.3636 µs]
+MEMBRANE_BENCH mode=strict bench=validate_foreign_nonempty_oracle samples=70 p50_ns_op=1209.955 p95_ns_op=1443.746 p99_ns_op=1661.054 mean_ns_op=1173.173 throughput_ops_s=787697.562
+Benchmarking membrane/validate_known/strict
+Benchmarking membrane/validate_known/strict: Warming up for 1.0000 s
+Benchmarking membrane/validate_known/strict: Collecting 50 samples in estimated 3.0016 s (1.5M iterations)
+Benchmarking membrane/validate_known/strict: Analyzing
+membrane/validate_known/strict
+                        time:   [2.0761 µs 2.0950 µs 2.1132 µs]
+MEMBRANE_BENCH mode=strict bench=validate_known samples=69 p50_ns_op=2094.402 p95_ns_op=2945.000 p99_ns_op=3468.854 mean_ns_op=2222.857 throughput_ops_s=483495.083

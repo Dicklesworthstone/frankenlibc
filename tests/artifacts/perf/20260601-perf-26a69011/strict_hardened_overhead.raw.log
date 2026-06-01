@@ -1,0 +1,279 @@
+  [2m2026-06-01T23:21:51.858530Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSelected worker: vmi1153651 at ubuntu@38.242.134.66 (6 slots remaining after reservation, speed 50.0)[0m
+    [2;3mat[0m rch/src/hook.rs:514 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:21:52.100293Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mStarting remote compilation pipeline for frankenlibc (hash: eabc2a07ccde81a7)[0m
+    [2;3mat[0m rch/src/hook.rs:5987 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:21:52.100344Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mPrepared dependency sync manifest for 10 roots[0m
+    [2;3mat[0m rch/src/hook.rs:6009 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:21:54.089638Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSyncing project to worker vmi1153651...[0m
+    [2;3mat[0m rch/src/hook.rs:6039 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:21:54.089683Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc -> /data/projects/frankenlibc on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:09.893779Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 15804ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:09.893847Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc -> /data/projects/frankenlibc/crates/frankenlibc on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:11.968746Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2074ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:11.968822Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-abi -> /data/projects/frankenlibc/crates/frankenlibc-abi on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:14.714132Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2745ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:14.714189Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-bench -> /data/projects/frankenlibc/crates/frankenlibc-bench on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:16.724932Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2010ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:16.724999Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-core -> /data/projects/frankenlibc/crates/frankenlibc-core on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:18.763390Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2038ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:18.763463Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-fixture-exec -> /data/projects/frankenlibc/crates/frankenlibc-fixture-exec on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:20.921052Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2157ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:20.921114Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-harness -> /data/projects/frankenlibc/crates/frankenlibc-harness on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:23.070813Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2149ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:23.070896Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-membrane -> /data/projects/frankenlibc/crates/frankenlibc-membrane on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:25.030088Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1959ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:25.030162Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc_conformance -> /data/projects/frankenlibc/crates/frankenlibc_conformance on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:27.065386Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2035ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:27.065463Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/tools/stdio_synth -> /data/projects/frankenlibc/tools/stdio_synth on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:29.053575Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1988ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:22:29.053613Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSync complete: 81873 files, 3067382 bytes in 34959ms[0m
+    [2;3mat[0m rch/src/hook.rs:6202 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:23:05.336606Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mExecuting command remotely: cargo bench -p frankenlibc-bench --bench strict_hardened_overhead_harness[0m
+    [2;3mat[0m rch/src/hook.rs:6240 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:23:05.336642Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): /data/tmp/cargo-target -> /data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0[0m
+    [2;3mat[0m rch/src/transfer.rs:712 [2;3mon[0m ThreadId(1)
+
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded alloca v0.4.0
+  Downloaded anstyle-query v1.1.5
+  Downloaded arrayref v0.3.9
+  Downloaded clap_lex v1.1.0
+  Downloaded cast v0.3.0
+  Downloaded ciborium-io v0.2.2
+  Downloaded autocfg v1.5.0
+  Downloaded cpufeatures v0.3.0
+  Downloaded ciborium-ll v0.2.2
+  Downloaded block-buffer v0.12.0
+  Downloaded cfg-if v1.0.4
+  Downloaded colorchoice v1.0.5
+  Downloaded page_size v0.6.0
+  Downloaded criterion-plot v0.8.2
+  Downloaded crypto-common v0.2.1
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded plotters-svg v0.3.7
+  Downloaded same-file v1.0.6
+  Downloaded strsim v0.11.1
+  Downloaded anstyle v1.0.14
+  Downloaded arrayvec v0.7.6
+  Downloaded utf8parse v0.2.2
+  Downloaded heck v0.5.0
+  Downloaded plotters-backend v0.3.7
+  Downloaded constant_time_eq v0.4.2
+  Downloaded crossbeam-deque v0.8.6
+  Downloaded anstream v1.0.0
+  Downloaded anstyle-parse v1.0.0
+  Downloaded itoa v1.0.18
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded md-5 v0.11.0
+  Downloaded oorandom v11.1.5
+  Downloaded quote v1.0.45
+  Downloaded shlex v1.3.0
+  Downloaded tinytemplate v1.2.1
+  Downloaded walkdir v2.5.0
+  Downloaded anes v0.1.6
+  Downloaded crossbeam-epoch v0.9.18
+  Downloaded digest v0.11.2
+  Downloaded ciborium v0.2.2
+  Downloaded const-oid v0.10.2
+  Downloaded zmij v1.0.21
+  Downloaded either v1.15.0
+  Downloaded hybrid-array v0.4.10
+  Downloaded clap v4.6.1
+  Downloaded clap_derive v4.6.1
+  Downloaded crossbeam-utils v0.8.21
+  Downloaded proc-macro2 v1.0.106
+  Downloaded serde_derive v1.0.228
+  Downloaded sha2 v0.11.0
+  Downloaded unicode-ident v1.0.24
+  Downloaded half v2.7.1
+  Downloaded num-traits v0.2.19
+  Downloaded rayon-core v1.13.0
+  Downloaded serde_core v1.0.228
+  Downloaded cc v1.2.60
+  Downloaded memchr v2.8.0
+  Downloaded serde v1.0.228
+  Downloaded zerocopy-derive v0.8.48
+  Downloaded criterion v0.8.2
+  Downloaded typenum v1.20.0
+  Downloaded itertools v0.13.0
+  Downloaded serde_json v1.0.149
+  Downloaded libm v0.2.16
+  Downloaded plotters v0.3.7
+  Downloaded regex v1.12.3
+  Downloaded aho-corasick v1.1.4
+  Downloaded rayon v1.12.0
+  Downloaded clap_builder v4.6.0
+  Downloaded blake3 v1.8.4
+  Downloaded zerocopy v0.8.48
+  Downloaded syn v2.0.117
+  Downloaded regex-syntax v0.8.10
+  Downloaded regex-automata v0.4.14
+  Downloaded libc v0.2.185
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling zmij v1.0.21
+   Compiling typenum v1.20.0
+   Compiling serde_json v1.0.149
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling serde_core v1.0.228
+   Compiling cfg-if v1.0.4
+   Compiling const-oid v0.10.2
+   Compiling cc v1.2.60
+   Compiling cpufeatures v0.3.0
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling serde v1.0.228
+   Compiling colorchoice v1.0.5
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle v1.0.14
+   Compiling hybrid-array v0.4.10
+   Compiling heck v0.5.0
+   Compiling clap_lex v1.1.0
+   Compiling anstream v1.0.0
+   Compiling strsim v0.11.1
+   Compiling crossbeam-utils v0.8.21
+   Compiling block-buffer v0.12.0
+   Compiling crypto-common v0.2.1
+   Compiling clap_builder v4.6.0
+   Compiling syn v2.0.117
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling zerocopy v0.8.48
+   Compiling digest v0.11.2
+   Compiling sha2 v0.11.0
+   Compiling blake3 v1.8.4
+   Compiling autocfg v1.5.0
+   Compiling arrayref v0.3.9
+   Compiling arrayvec v0.7.6
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-epoch v0.9.18
+   Compiling constant_time_eq v0.4.2
+   Compiling libc v0.2.185
+   Compiling either v1.15.0
+   Compiling rayon-core v1.13.0
+   Compiling frankenlibc-membrane v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-membrane)
+   Compiling libm v0.2.16
+   Compiling crossbeam-deque v0.8.6
+   Compiling alloca v0.4.0
+   Compiling ciborium-io v0.2.2
+   Compiling plotters-backend v0.3.7
+   Compiling regex-syntax v0.8.10
+   Compiling plotters-svg v0.3.7
+   Compiling itertools v0.13.0
+   Compiling md-5 v0.11.0
+   Compiling cast v0.3.0
+   Compiling same-file v1.0.6
+   Compiling plotters v0.3.7
+   Compiling rayon v1.12.0
+   Compiling regex-automata v0.4.14
+   Compiling page_size v0.6.0
+   Compiling walkdir v2.5.0
+   Compiling oorandom v11.1.5
+   Compiling anes v0.1.6
+   Compiling serde_derive v1.0.228
+   Compiling clap_derive v4.6.1
+   Compiling zerocopy-derive v0.8.48
+   Compiling clap v4.6.1
+   Compiling criterion-plot v0.8.2
+   Compiling regex v1.12.3
+   Compiling stdio-synth v0.1.0 (/data/projects/frankenlibc/tools/stdio_synth)
+   Compiling tinytemplate v1.2.1
+   Compiling frankenlibc-core v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-core)
+warning: frankenlibc-core@0.1.0: No SMT solver found for /data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/release/build/frankenlibc-core-823606ad944c1a0a/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+   Compiling half v2.7.1
+   Compiling ciborium-ll v0.2.2
+   Compiling ciborium v0.2.2
+   Compiling criterion v0.8.2
+   Compiling frankenlibc-bench v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-bench)
+    Finished `bench` profile [optimized] target(s) in 1m 02s
+     Running benches/strict_hardened_overhead_harness.rs (.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/release/deps/strict_hardened_overhead_harness-424ff5e9136c1878)
+STRICT_HARDENED_OVERHEAD_HARNESS lane=smoke worker=vmi1153651 cpu="AMD EPYC Processor (with IBPB)" records=14 artifacts=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=strict family=string_memory symbol=memcpy samples=8 p50_ns=146.000 p95_ns=179.000 p99_ns=179.000 mean_ns=147.500 throughput_ops_s=6779661.017 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=strict family=allocator symbol=malloc/free samples=8 p50_ns=136.000 p95_ns=142.000 p99_ns=142.000 mean_ns=134.625 throughput_ops_s=7428040.854 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=strict family=stdio_buffer symbol=fwrite samples=8 p50_ns=128.000 p95_ns=148.000 p99_ns=148.000 mean_ns=133.000 throughput_ops_s=7518796.992 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=strict family=pthread_sync symbol=pthread_mutex_lock samples=8 p50_ns=155.000 p95_ns=826.000 p99_ns=826.000 mean_ns=241.250 throughput_ops_s=4145077.720 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=strict family=ctype symbol=isalpha samples=8 p50_ns=138.000 p95_ns=223.000 p99_ns=223.000 mean_ns=146.625 throughput_ops_s=6820119.352 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=strict family=math_fenv symbol=sin samples=8 p50_ns=163.000 p95_ns=409.000 p99_ns=409.000 mean_ns=193.375 throughput_ops_s=5171299.289 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=strict family=runtime_math symbol=RuntimeMathKernel::decide samples=8 p50_ns=114.000 p95_ns=150.000 p99_ns=150.000 mean_ns=121.625 throughput_ops_s=8221993.834 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=hardened family=string_memory symbol=memcpy samples=8 p50_ns=138.000 p95_ns=270.000 p99_ns=270.000 mean_ns=156.750 throughput_ops_s=6379585.327 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=hardened family=allocator symbol=malloc/free samples=8 p50_ns=136.000 p95_ns=140.000 p99_ns=140.000 mean_ns=129.500 throughput_ops_s=7722007.722 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=hardened family=stdio_buffer symbol=fwrite samples=8 p50_ns=120.000 p95_ns=122.000 p99_ns=122.000 mean_ns=119.250 throughput_ops_s=8385744.235 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=hardened family=pthread_sync symbol=pthread_mutex_lock samples=8 p50_ns=148.000 p95_ns=156.000 p99_ns=156.000 mean_ns=146.375 throughput_ops_s=6831767.720 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=hardened family=ctype symbol=isalpha samples=8 p50_ns=127.000 p95_ns=133.000 p99_ns=133.000 mean_ns=127.375 throughput_ops_s=7850834.151 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=hardened family=math_fenv symbol=sin samples=8 p50_ns=192.000 p95_ns=396.000 p99_ns=396.000 mean_ns=224.750 throughput_ops_s=4449388.209 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+STRICT_HARDENED_OVERHEAD_RECORD lane=smoke mode=hardened family=runtime_math symbol=RuntimeMathKernel::decide samples=8 p50_ns=152.000 p95_ns=2679.000 p99_ns=2679.000 mean_ns=461.750 throughput_ops_s=2165674.066 decisions=1024 artifact_refs=/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.json,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead.v1.jsonl,/data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0/conformance/bd-wpr1n/smoke/strict_hardened_membrane_overhead_summary.dat
+  [2m2026-06-01T23:24:10.430871Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mRemote command finished: exit=0 in 65094ms[0m
+    [2;3mat[0m rch/src/hook.rs:6364 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:24:10.432140Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mRetrieving build artifacts...[0m
+    [2;3mat[0m rch/src/hook.rs:6413 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:24:10.432172Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRetrieving artifacts from /data/projects/frankenlibc on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:2072 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:24:12.467471Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mArtifacts retrieved in 2035ms (1 files, 1648 bytes)[0m
+    [2;3mat[0m rch/src/transfer.rs:2111 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:24:12.467494Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mArtifacts retrieved: 1 files, 1648 bytes in 2035ms[0m
+    [2;3mat[0m rch/src/hook.rs:6446 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:24:12.467620Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRetrieving artifacts from /data/projects/frankenlibc/.rch-target-vmi1153651-job-29869223945699494-1780356114089632155-0 on vmi1153651[0m
+    [2;3mat[0m rch/src/transfer.rs:2072 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:24:14.490504Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mArtifacts retrieved in 2022ms (4 files, 454 bytes)[0m
+    [2;3mat[0m rch/src/transfer.rs:2111 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-01T23:24:14.490528Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mCustom CARGO_TARGET_DIR artifacts retrieved: 4 files, 454 bytes in 2022ms[0m
+    [2;3mat[0m rch/src/hook.rs:6570 [2;3mon[0m ThreadId(1)
+
+[RCH] remote vmi1153651 (142.6s)

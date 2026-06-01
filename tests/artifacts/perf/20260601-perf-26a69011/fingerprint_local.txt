@@ -1,0 +1,5 @@
+captured_at_utc=2026-06-01T23:21:39Z
+git_sha=26a690118f664e7d519ef6a3906f71a5fbc7ddfc
+kernel=6.17.0-29-generic
+rustc=rustc 1.97.0-nightly (52b6e2c20 2026-04-27)
+nproc_local=64

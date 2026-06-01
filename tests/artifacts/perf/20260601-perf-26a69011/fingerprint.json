@@ -1,0 +1,21 @@
+{
+  "run_id": "20260601-perf-26a69011",
+  "captured_at_utc": "2026-06-01T23:26:07Z",
+  "git_sha": "63400a2bd451ddacdab7c23a005a145d7ad52c96",
+  "campaign": "membrane strict/hardened overhead + validation-pipeline + allocator + string kernels",
+  "build": {
+    "profile": "bench (inherits release: opt-level=3, lto=true→thin, codegen-units=1) ; release-perf available (debug=line-tables-only, strip=false)",
+    "toolchain": "rustc 1.97.0-nightly (52b6e2c20 2026-04-27)",
+    "edition": "2024 (nightly)"
+  },
+  "execution": {
+    "runner": "rch remote workers (Contabo VPS fleet); each rch job isolated to one worker + per-job target dir",
+    "worker_observed_smoke": "vmi1153651",
+    "cpu_model_worker": "AMD EPYC Processor (with IBPB)",
+    "isolation_note": "shared multi-tenant VPS: ns-scale microbench tails are noise-prone (noisy-neighbor); RANKING and median deltas are robust, absolute p95/p99 tails are conservative/inflated",
+    "orchestrator_host": "local 64-core, kernel 6.17.0-29-generic, perf_event_paranoid=4 (perf/samply unavailable without sysctl; not used — measurement via rch-resident criterion + custom ns/op harness)"
+  },
+  "metrics_reported": ["p50_ns_op","p95_ns_op","p99_ns_op","mean_ns_op","throughput_ops_s","cv_pct"],
+  "lanes": {"smoke":"8 samples x 128 inner-iters","full":"64 samples x 1024 inner-iters (baseline lane, >=20 samples)"},
+  "budget_contract_readme": {"strict_membrane_overhead_ns_per_call": 20, "hardened_membrane_overhead_ns_per_call": 200}
+}
