@@ -16,7 +16,7 @@
 use crate::arena::{AllocationArena, ArenaSlot, FreeResult};
 use crate::bloom::PointerBloomFilter;
 use crate::check_oracle::CheckStage;
-use crate::config::safety_level;
+use crate::config::{SafetyLevel, safety_level};
 use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::galois::PointerAbstraction;
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};
@@ -674,16 +674,17 @@ impl ValidationPipeline {
     /// @separation-frame: `F` (caller-owned heap and non-membrane regions remain untouched).
     /// @separation-alias: `validate_pointer`.
     pub fn validate(&self, addr: usize) -> ValidationOutcome {
-        if !self.validation_logging_enabled() && !self.runtime_math.validation_feedback_enabled() {
+        if !self.validation_logging_enabled() {
+            let mode = safety_level();
             if addr == 0 {
-                return self.validate_null_without_trace_feedback();
+                return self.validate_null_without_trace(mode);
             }
-            if let Some(outcome) = self.try_validate_cached_without_trace_feedback(addr) {
+            if let Some(outcome) = self.try_validate_cached_without_trace(addr, mode) {
                 return outcome;
             }
             if self.page_oracle.is_empty()
                 && let Some(outcome) =
-                    self.try_validate_empty_oracle_foreign_without_trace_feedback(addr)
+                    self.try_validate_empty_oracle_foreign_without_trace(addr, mode)
             {
                 return outcome;
             }
@@ -701,19 +702,21 @@ impl ValidationPipeline {
     }
 
     #[inline]
-    fn validate_null_without_trace_feedback(&self) -> ValidationOutcome {
+    fn validate_null_without_trace(&self, mode: SafetyLevel) -> ValidationOutcome {
         let metrics = global_metrics();
         MembraneMetrics::inc(&metrics.validations);
-        if safety_level().validation_enabled() {
-            ValidationOutcome::Null
-        } else {
-            ValidationOutcome::Bypassed
+        if !mode.validation_enabled() {
+            return ValidationOutcome::Bypassed;
         }
+        ValidationOutcome::Null
     }
 
     #[inline]
-    fn try_validate_cached_without_trace_feedback(&self, addr: usize) -> Option<ValidationOutcome> {
-        let mode = safety_level();
+    fn try_validate_cached_without_trace(
+        &self,
+        addr: usize,
+        mode: SafetyLevel,
+    ) -> Option<ValidationOutcome> {
         if !mode.validation_enabled() {
             let metrics = global_metrics();
             MembraneMetrics::inc(&metrics.validations);
@@ -734,11 +737,11 @@ impl ValidationPipeline {
     }
 
     #[inline]
-    fn try_validate_empty_oracle_foreign_without_trace_feedback(
+    fn try_validate_empty_oracle_foreign_without_trace(
         &self,
         addr: usize,
+        mode: SafetyLevel,
     ) -> Option<ValidationOutcome> {
-        let mode = safety_level();
         if !mode.validation_enabled() {
             let metrics = global_metrics();
             MembraneMetrics::inc(&metrics.validations);
@@ -2326,6 +2329,48 @@ mod tests {
 
         let result = pipeline.free(ptr);
         assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn default_null_fast_path_matches_logged_pipeline_null() {
+        let pipeline = ValidationPipeline::new();
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(false);
+        let fast = pipeline.validate(0);
+        assert!(matches!(fast, ValidationOutcome::Null));
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(true);
+        let logged = pipeline.validate(0);
+        assert_eq!(fast, logged);
+        assert!(!pipeline.export_validation_log_jsonl().is_empty());
+        assert_eq!(
+            pipeline.collector.diagnostics().active_threads,
+            0,
+            "null validation must not pin the epoch collector"
+        );
+        pipeline.set_validation_logging_enabled(false);
+    }
+
+    #[test]
+    fn default_empty_oracle_foreign_fast_path_matches_logged_pipeline_foreign() {
+        let pipeline = ValidationPipeline::new();
+        let addr = 0xDEAD_BEEF_0000usize;
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(false);
+        let fast = pipeline.validate(addr);
+        assert!(matches!(fast, ValidationOutcome::Foreign(_)));
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(true);
+        let logged = pipeline.validate(addr);
+        assert_eq!(fast, logged);
+        assert!(!pipeline.export_validation_log_jsonl().is_empty());
+        pipeline.set_validation_logging_enabled(false);
     }
 
     #[test]
