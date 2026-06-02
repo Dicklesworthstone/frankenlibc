@@ -34,21 +34,33 @@ pub struct NetgroupTriple {
 pub fn parse_netgroup_triples(content: &[u8], group: &[u8]) -> Vec<NetgroupTriple> {
     let mut result = Vec::new();
     for line in content.split(|&b| b == b'\n') {
-        let line = strip_inline_comment(line);
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|f| !f.is_empty());
-        let Some(name) = fields.next() else {
+        let Some((name_start, name_end)) = first_token_bounds(line) else {
             continue;
         };
+        let name = &line[name_start..name_end];
         if !eq_ignore_ascii_case(name, group) {
             continue;
         }
-        // Re-scan from after the name to extract paren-bounded triples.
-        let rest_start = name.as_ptr() as usize - line.as_ptr() as usize + name.len();
-        extract_triples_into(&line[rest_start..], &mut result);
+        let rest = strip_inline_comment(&line[name_end..]);
+        extract_triples_into(rest, &mut result);
     }
     result
+}
+
+fn first_token_bounds(line: &[u8]) -> Option<(usize, usize)> {
+    let mut start = 0usize;
+    while start < line.len() && matches!(line[start], b' ' | b'\t') {
+        start += 1;
+    }
+    if start == line.len() || line[start] == b'#' {
+        return None;
+    }
+
+    let mut end = start;
+    while end < line.len() && !matches!(line[end], b' ' | b'\t' | b'#') {
+        end += 1;
+    }
+    Some((start, end))
 }
 
 fn extract_triples_into(bytes: &[u8], out: &mut Vec<NetgroupTriple>) {
@@ -177,6 +189,20 @@ mod tests {
         let content = b"x (h,u,d) # this is a comment\n";
         let r = parse_netgroup_triples(content, b"x");
         assert_eq!(r, vec![t(b"h", b"u", b"d")]);
+    }
+
+    #[test]
+    fn parse_inline_comment_hides_later_triples() {
+        let content = b"x (h,u,d) # (bad,bad,bad)\n";
+        let r = parse_netgroup_triples(content, b"x");
+        assert_eq!(r, vec![t(b"h", b"u", b"d")]);
+    }
+
+    #[test]
+    fn parse_group_name_comment_has_no_triple_tail() {
+        let content = b"x#comment (bad,bad,bad)\n";
+        let r = parse_netgroup_triples(content, b"x");
+        assert!(r.is_empty());
     }
 
     #[test]
