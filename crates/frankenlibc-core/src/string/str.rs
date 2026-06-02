@@ -5,8 +5,11 @@
 //! NUL-terminated C strings. In this safe Rust model, strings are `&[u8]` slices
 //! where a NUL byte (`0x00`) marks the logical end of the string.
 
+use std::simd::{Simd, cmp::SimdPartialEq};
+
 const LO_MAGIC: usize = usize::from_ne_bytes([0x01; size_of::<usize>()]);
 const HI_MAGIC: usize = usize::from_ne_bytes([0x80; size_of::<usize>()]);
+const SIMD_LANES: usize = 32;
 
 #[inline(always)]
 fn has_nul_byte(word: usize) -> bool {
@@ -21,6 +24,18 @@ fn repeated_byte(byte: u8) -> usize {
 #[inline(always)]
 fn has_byte(word: usize, byte: u8) -> bool {
     has_nul_byte(word ^ repeated_byte(byte))
+}
+
+#[inline(always)]
+fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    let nul = lanes.simd_eq(Simd::splat(0));
+    if byte == 0 {
+        nul.any()
+    } else {
+        nul.any() || lanes.simd_eq(Simd::splat(byte)).any()
+    }
 }
 
 #[inline]
@@ -306,6 +321,14 @@ fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
             return i;
         }
         i += 1;
+    }
+
+    while i + SIMD_LANES <= s.len() {
+        let chunk = &s[i..i + SIMD_LANES];
+        if has_byte_or_nul_simd_32(chunk, needle) {
+            break;
+        }
+        i += SIMD_LANES;
     }
 
     while i + WORD_SIZE <= s.len() {
@@ -1034,6 +1057,24 @@ mod tests {
     #[test]
     fn test_strchrnul_not_found_returns_terminator() {
         assert_eq!(strchrnul(b"hello\0", b'z'), 5);
+    }
+
+    #[test]
+    fn test_strchr_simd_panel_resolves_needle_before_later_nul() {
+        let mut s = vec![b'A'; 96];
+        s[39] = b'Z';
+        s[70] = 0;
+        assert_eq!(strchr(&s, b'Z'), Some(39));
+        assert_eq!(strchrnul(&s, b'Z'), 39);
+    }
+
+    #[test]
+    fn test_strchr_simd_panel_stops_at_nul_before_later_needle() {
+        let mut s = vec![b'A'; 96];
+        s[35] = 0;
+        s[39] = b'Z';
+        assert_eq!(strchr(&s, b'Z'), None);
+        assert_eq!(strchrnul(&s, b'Z'), 35);
     }
 
     #[test]
