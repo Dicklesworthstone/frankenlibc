@@ -38,6 +38,14 @@ fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
     }
 }
 
+#[inline(always)]
+fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    Simd::<u8, SIMD_LANES>::from_slice(chunk)
+        .simd_eq(Simd::splat(byte))
+        .any()
+}
+
 #[inline]
 fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
     let mut table = [false; 256];
@@ -406,6 +414,21 @@ fn find_last_byte_before(s: &[u8], mut end: usize, needle: u8) -> Option<usize> 
         if s[end] == needle {
             return Some(end);
         }
+    }
+
+    while end >= SIMD_LANES {
+        let start = end - SIMD_LANES;
+        let chunk = &s[start..end];
+        if has_byte_simd_32(chunk, needle) {
+            let mut i = end;
+            while i > start {
+                i -= 1;
+                if s[i] == needle {
+                    return Some(i);
+                }
+            }
+        }
+        end = start;
     }
 
     while end >= WORD_SIZE {
@@ -1097,6 +1120,27 @@ mod tests {
         s.push(b'z');
 
         assert_eq!(strrchr(&s, b'z'), Some(63));
+    }
+
+    #[test]
+    fn test_strrchr_simd_panel_resolves_last_match_before_terminator() {
+        let mut s = vec![b'a'; 128];
+        s[17] = b'z';
+        s[96] = b'z';
+        s[111] = 0;
+        s[120] = b'z';
+
+        assert_eq!(strrchr(&s, b'z'), Some(96));
+    }
+
+    #[test]
+    fn test_strrchr_simd_panel_ignores_match_after_terminator() {
+        let mut s = vec![b'a'; 128];
+        s[17] = b'z';
+        s[63] = 0;
+        s[95] = b'z';
+
+        assert_eq!(strrchr(&s, b'z'), Some(17));
     }
 
     #[test]
