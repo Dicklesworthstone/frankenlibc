@@ -15,8 +15,8 @@ pub const DEFAULT_ELIMINATION_SLOTS: usize = 8;
 
 const DEFAULT_WAIT_BUDGET: Duration = Duration::from_micros(1);
 const SPIN_LIMIT: u64 = 128;
-const ADAPTIVE_WINDOW: u64 = 1_000;
-const ADAPTIVE_DISABLE_WINDOW: u64 = 1_000;
+const ADAPTIVE_WINDOW: u64 = 64;
+const ADAPTIVE_DISABLE_WINDOW: u64 = 4_096;
 const SUCCESS_THRESHOLD_PPM: u64 = 100_000;
 const SUMMARY_INTERVAL: u64 = 5_000;
 
