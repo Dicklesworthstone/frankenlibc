@@ -1,5 +1,7 @@
 //! Sorting and searching functions.
 
+const QSORT_INSERTION_CUTOFF: usize = 16;
+
 /// Generic qsort implementation.
 /// `base`: the entire array as bytes.
 /// `width`: size of each element in bytes.
@@ -28,6 +30,11 @@ where
     let len = buffer.len();
     let count = len / width;
     if count < 2 {
+        return;
+    }
+
+    if count <= QSORT_INSERTION_CUTOFF {
+        insertion_sort(buffer, width, compare);
         return;
     }
 
@@ -371,6 +378,18 @@ mod sort_variant_tests {
         qsort(&mut reversed_buf, 4, cmp_u32_le);
 
         assert_eq!(unflatten_u32(&original_buf), unflatten_u32(&reversed_buf));
+    }
+
+    #[test]
+    fn qsort_small_partition_cutoff_preserves_sorted_multiset() {
+        let values = [11, 7, 3, 7, 0, 19, 2, 2, 5, 13, 17, 1, 11, 23, 5, 29];
+        let mut expected = values.to_vec();
+        expected.sort_unstable();
+
+        let mut buf = flatten_u32(&values);
+        qsort(&mut buf, 4, cmp_u32_le);
+
+        assert_eq!(unflatten_u32(&buf), expected);
     }
 
     #[test]
