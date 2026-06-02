@@ -148,6 +148,15 @@ impl RcuMetadataCell {
         value
     }
 
+    fn synchronize_after_write(&self, tid: u32) {
+        // The benchmark worker is registered for later read operations, but it
+        // holds no RCU snapshot after publishing a write. Leaving the reader
+        // table before the grace-period wait prevents a self-wait on `tid`.
+        let _ = rcu_unregister_thread(tid);
+        synchronize_rcu();
+        let _ = rcu_register_thread(tid);
+    }
+
     fn write(&self, tid: u32, operation: MetadataOperation, cursor: usize) {
         loop {
             // In QSBR, a thread waiting on the serialized writer mutex must keep
@@ -163,7 +172,7 @@ impl RcuMetadataCell {
                     let old_ptr = unsafe { self.rcu.update(next_ptr) };
                     drop(guard);
                     if !old_ptr.is_null() {
-                        synchronize_rcu();
+                        self.synchronize_after_write(tid);
                         // SAFETY: `synchronize_rcu()` has completed, so no
                         // reader can still hold `old_ptr`.
                         unsafe {
@@ -182,7 +191,7 @@ impl RcuMetadataCell {
                     let old_ptr = unsafe { self.rcu.update(next_ptr) };
                     drop(guard);
                     if !old_ptr.is_null() {
-                        synchronize_rcu();
+                        self.synchronize_after_write(tid);
                         // SAFETY: `synchronize_rcu()` has completed, so no
                         // reader can still hold `old_ptr`.
                         unsafe {
