@@ -581,12 +581,7 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
         0 => return strlen(s),
         1 => {
             let rejected = reject[0];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 || byte == rejected {
-                    return i;
-                }
-            }
-            return s.len();
+            return find_byte_or_nul(s, rejected);
         }
         2 => {
             let r0 = reject[0];
@@ -633,13 +628,9 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
         0 => return None,
         1 => {
             let accepted = accept[0];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 {
-                    return None;
-                }
-                if byte == accepted {
-                    return Some(i);
-                }
+            let index = find_byte_or_nul(s, accepted);
+            if index < s.len() && s[index] == accepted {
+                return Some(index);
             }
             return None;
         }
