@@ -58,8 +58,26 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
 
     let a = &a[..count];
     let b = &b[..count];
-    let mut a_chunks = a.chunks_exact(8);
-    let mut b_chunks = b.chunks_exact(8);
+
+    // Fast path: scan 32-byte panels for a full-equality match. `a` and `b`
+    // share `count`, so both iterators yield the same number of panels and an
+    // identical-length remainder. A panel that is byte-for-byte equal is skipped
+    // wholesale; the first panel that differs falls through to `compare_bytes`,
+    // which resolves the exact first-difference sign — every earlier panel was
+    // equal, so the global first difference lies inside this panel.
+    let mut a_simd = a.chunks_exact(SIMD_LANES);
+    let mut b_simd = b.chunks_exact(SIMD_LANES);
+    for (a_chunk, b_chunk) in a_simd.by_ref().zip(b_simd.by_ref()) {
+        if !eq_simd_32(a_chunk, b_chunk) {
+            return compare_bytes(a_chunk, b_chunk);
+        }
+    }
+
+    // Tail: the sub-32B remainder, scanned 8 bytes at a time then byte-wise.
+    let a = a_simd.remainder();
+    let b = b_simd.remainder();
+    let mut a_chunks = a.chunks_exact(WORD);
+    let mut b_chunks = b.chunks_exact(WORD);
 
     for (a_chunk, b_chunk) in a_chunks.by_ref().zip(b_chunks.by_ref()) {
         if u64_from_chunk(a_chunk) != u64_from_chunk(b_chunk) {
@@ -68,6 +86,17 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     }
 
     compare_bytes(a_chunks.remainder(), b_chunks.remainder())
+}
+
+/// True iff the two 32-byte panels are byte-for-byte equal. Safe portable SIMD
+/// equality probe; both inputs must be exactly [`SIMD_LANES`] bytes long.
+#[inline(always)]
+fn eq_simd_32(a: &[u8], b: &[u8]) -> bool {
+    debug_assert_eq!(a.len(), SIMD_LANES);
+    debug_assert_eq!(b.len(), SIMD_LANES);
+    Simd::<u8, SIMD_LANES>::from_slice(a)
+        .simd_eq(Simd::<u8, SIMD_LANES>::from_slice(b))
+        .all()
 }
 
 #[inline]
@@ -536,6 +565,22 @@ mod tests {
             let lr = memcmp(&left, &right, n);
             let rl = memcmp(&right, &left, n);
             prop_assert_eq!(lr, rl.reverse());
+        }
+
+        /// Isomorphism guard for the 32-byte SIMD-panel scan: the result must
+        /// match std's lexicographic (unsigned byte) ordering over the compared
+        /// prefix for every input, including those spanning multiple panels and
+        /// differing at any byte offset. Inputs run to 200 bytes so the SIMD
+        /// panel loop, the 8-byte tail, and the byte tail are all exercised.
+        #[test]
+        fn prop_memcmp_matches_std_lexicographic(
+            left in proptest::collection::vec(any::<u8>(), 0..200),
+            right in proptest::collection::vec(any::<u8>(), 0..200),
+            n in 0usize..256
+        ) {
+            let count = n.min(left.len()).min(right.len());
+            let expected = left[..count].cmp(&right[..count]);
+            prop_assert_eq!(memcmp(&left, &right, n), expected);
         }
 
         #[test]
