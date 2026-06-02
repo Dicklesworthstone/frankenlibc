@@ -6,6 +6,7 @@
 //! library functions. No `unsafe` code is permitted at the crate level.
 
 #![deny(unsafe_code)]
+#![feature(portable_simd)]
 
 #[cfg(feature = "owned-tls-cache")]
 use std::hash::{BuildHasherDefault, Hasher};

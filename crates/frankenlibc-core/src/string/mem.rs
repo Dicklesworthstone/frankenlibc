@@ -3,6 +3,8 @@
 //! These are safe Rust implementations operating on byte slices.
 //! They correspond to the `<string.h>` memory functions in POSIX/C.
 
+use std::simd::{Simd, cmp::SimdPartialEq};
+
 /// Copies `n` bytes from `src` to `dest`.
 ///
 /// Equivalent to C `memcpy`. The source and destination slices must not overlap;
@@ -77,6 +79,7 @@ fn u64_from_chunk(chunk: &[u8]) -> u64 {
 
 /// SWAR word size (8 bytes), matching the `chunks_exact(8)` scans in this module.
 const WORD: usize = size_of::<u64>();
+const SIMD_LANES: usize = 32;
 
 const LO_U64: u64 = u64::from_ne_bytes([0x01; WORD]);
 const HI_U64: u64 = u64::from_ne_bytes([0x80; WORD]);
@@ -92,6 +95,14 @@ fn zero_byte_u64(word: u64) -> bool {
 #[inline(always)]
 fn has_byte_u64(word: u64, byte: u8) -> bool {
     zero_byte_u64(word ^ u64::from_ne_bytes([byte; WORD]))
+}
+
+#[inline(always)]
+fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    Simd::<u8, SIMD_LANES>::from_slice(chunk)
+        .simd_eq(Simd::splat(byte))
+        .any()
 }
 
 #[inline]
@@ -119,8 +130,21 @@ fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
+    let mut simd_chunks = hs.chunks_exact(SIMD_LANES);
+    let mut simd_base = 0usize;
+
+    for chunk in simd_chunks.by_ref() {
+        if has_byte_simd_32(chunk, needle)
+            && let Some(j) = chunk.iter().position(|&b| b == needle)
+        {
+            return Some(simd_base + j);
+        }
+        simd_base += SIMD_LANES;
+    }
+
+    let hs = simd_chunks.remainder();
     let mut chunks = hs.chunks_exact(WORD);
-    let mut base = 0usize;
+    let mut base = simd_base;
 
     for chunk in chunks.by_ref() {
         if has_byte_u64(u64_from_chunk(chunk), needle) {
@@ -150,9 +174,20 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
-    let mut chunks = hs.rchunks_exact(WORD);
-    // `rchunks_exact` walks from the back; the first chunk ends at `count`.
+    let mut simd_chunks = hs.rchunks_exact(SIMD_LANES);
     let mut end = count;
+
+    for chunk in simd_chunks.by_ref() {
+        if has_byte_simd_32(chunk, needle)
+            && let Some(j) = chunk.iter().rposition(|&b| b == needle)
+        {
+            return Some(end - SIMD_LANES + j);
+        }
+        end -= SIMD_LANES;
+    }
+
+    let hs = simd_chunks.remainder();
+    let mut chunks = hs.rchunks_exact(WORD);
 
     for chunk in chunks.by_ref() {
         if has_byte_u64(u64_from_chunk(chunk), needle) {
@@ -365,6 +400,22 @@ mod tests {
     #[test]
     fn test_memrchr_not_found() {
         assert_eq!(memrchr(b"hello", b'z', 5), None);
+    }
+
+    #[test]
+    fn test_memchr_simd_chunk_resolves_first_match() {
+        let mut haystack = vec![b'A'; 96];
+        haystack[39] = b'Z';
+        haystack[72] = b'Z';
+        assert_eq!(memchr(&haystack, b'Z', haystack.len()), Some(39));
+    }
+
+    #[test]
+    fn test_memrchr_simd_chunk_resolves_last_match() {
+        let mut haystack = vec![b'A'; 96];
+        haystack[23] = b'Z';
+        haystack[65] = b'Z';
+        assert_eq!(memrchr(&haystack, b'Z', haystack.len()), Some(65));
     }
 
     #[test]
