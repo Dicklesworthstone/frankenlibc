@@ -13,6 +13,16 @@ fn has_nul_byte(word: usize) -> bool {
     word.wrapping_sub(LO_MAGIC) & !word & HI_MAGIC != 0
 }
 
+#[inline(always)]
+fn repeated_byte(byte: u8) -> usize {
+    usize::from_ne_bytes([byte; size_of::<usize>()])
+}
+
+#[inline(always)]
+fn has_byte(word: usize, byte: u8) -> bool {
+    has_nul_byte(word ^ repeated_byte(byte))
+}
+
 #[inline]
 fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
     let mut table = [false; 256];
@@ -267,27 +277,54 @@ pub fn strncat(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 /// or `None` if not found before the NUL terminator. If `c` is `0`, returns
 /// the index of the NUL terminator.
 pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
-    for (i, &byte) in s.iter().enumerate() {
-        if byte == c {
-            return Some(i);
-        }
-        if byte == 0 {
-            return None;
-        }
+    let index = find_byte_or_nul(s, c);
+    if c == 0 {
+        return Some(index);
     }
-
-    if c == 0 { Some(s.len()) } else { None }
+    if index < s.len() && s[index] == c {
+        Some(index)
+    } else {
+        None
+    }
 }
 
 /// Locates `c` in `s`, returning either the match index or the terminating NUL index.
 ///
 /// Equivalent to GNU C `strchrnul`.
 pub fn strchrnul(s: &[u8], c: u8) -> usize {
-    for (i, &byte) in s.iter().enumerate() {
-        if byte == c || byte == 0 {
+    find_byte_or_nul(s, c)
+}
+
+#[allow(unsafe_code)]
+fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
+    const WORD_SIZE: usize = size_of::<usize>();
+
+    let mut i = 0;
+    while i < s.len() && !(s.as_ptr() as usize + i).is_multiple_of(WORD_SIZE) {
+        let byte = s[i];
+        if byte == needle || byte == 0 {
             return i;
         }
+        i += 1;
     }
+
+    while i + WORD_SIZE <= s.len() {
+        // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= s.len().
+        let word = unsafe { core::ptr::read(s.as_ptr().add(i) as *const usize) };
+        if has_nul_byte(word) || has_byte(word, needle) {
+            break;
+        }
+        i += WORD_SIZE;
+    }
+
+    while i < s.len() {
+        let byte = s[i];
+        if byte == needle || byte == 0 {
+            return i;
+        }
+        i += 1;
+    }
+
     s.len()
 }
 
