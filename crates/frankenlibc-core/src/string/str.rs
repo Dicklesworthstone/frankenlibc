@@ -334,25 +334,47 @@ fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
 /// or `None` if not found.
 pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
     if c == 0 {
-        for (i, &byte) in s.iter().enumerate() {
-            if byte == 0 {
-                return Some(i);
+        return Some(strlen(s));
+    }
+
+    find_last_byte_before(s, strlen(s), c)
+}
+
+#[allow(unsafe_code)]
+fn find_last_byte_before(s: &[u8], mut end: usize, needle: u8) -> Option<usize> {
+    const WORD_SIZE: usize = size_of::<usize>();
+
+    while end > 0 && !(s.as_ptr() as usize + end).is_multiple_of(WORD_SIZE) {
+        end -= 1;
+        if s[end] == needle {
+            return Some(end);
+        }
+    }
+
+    while end >= WORD_SIZE {
+        let start = end - WORD_SIZE;
+        // SAFETY: start is aligned to WORD_SIZE, and end <= s.len().
+        let word = unsafe { core::ptr::read(s.as_ptr().add(start) as *const usize) };
+        if has_byte(word, needle) {
+            let mut i = end;
+            while i > start {
+                i -= 1;
+                if s[i] == needle {
+                    return Some(i);
+                }
             }
         }
-        return Some(s.len());
+        end = start;
     }
 
-    let mut last = None;
-    for (i, &byte) in s.iter().enumerate() {
-        if byte == 0 {
-            return last;
-        }
-        if byte == c {
-            last = Some(i);
+    while end > 0 {
+        end -= 1;
+        if s[end] == needle {
+            return Some(end);
         }
     }
 
-    last
+    None
 }
 
 /// Finds the first occurrence of the NUL-terminated substring `needle` in
@@ -990,6 +1012,17 @@ mod tests {
     fn test_strrchr_stops_at_terminator() {
         assert_eq!(strrchr(b"abca\0a", b'a'), Some(3));
         assert_eq!(strrchr(b"abca\0z", b'z'), None);
+    }
+
+    #[test]
+    fn test_strrchr_reverse_bulk_scan_preserves_last_before_terminator() {
+        let mut s = vec![b'a'; 96];
+        s[5] = b'z';
+        s[63] = b'z';
+        s.push(0);
+        s.push(b'z');
+
+        assert_eq!(strrchr(&s, b'z'), Some(63));
     }
 
     #[test]
