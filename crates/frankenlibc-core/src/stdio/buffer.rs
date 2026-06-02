@@ -254,6 +254,15 @@ impl StreamBuffer {
     }
 
     fn write_line(&mut self, data: &[u8]) -> WriteResult {
+        if self.write_len == 0 && data.last().copied() == Some(b'\n') {
+            return WriteResult {
+                buffered: 0,
+                flush_needed: true,
+                flush_data: data.to_vec(),
+                flushed_from_buffer: 0,
+            };
+        }
+
         // Find the last newline in the data.
         let last_nl = data.iter().rposition(|&b| b == b'\n');
 
@@ -356,6 +365,17 @@ mod tests {
         assert!(result.flush_needed);
         assert_eq!(&result.flush_data, b"hello\n");
         assert_eq!(buf.pending_write_data(), b"world");
+    }
+
+    #[test]
+    fn test_line_buffer_trailing_newline_empty_pending_flushes_directly() {
+        let mut buf = StreamBuffer::new(BufMode::Line, 64);
+        let result = buf.write(b"metric=value status=ok\n");
+        assert!(result.flush_needed);
+        assert_eq!(result.buffered, 0);
+        assert_eq!(result.flushed_from_buffer, 0);
+        assert_eq!(&result.flush_data, b"metric=value status=ok\n");
+        assert!(buf.pending_write_data().is_empty());
     }
 
     #[test]
