@@ -203,13 +203,46 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
     }
 
     let mut last = None;
-    for (i, &ch) in s.iter().enumerate() {
+    let mut i = 0;
+    while i + 4 <= s.len() {
+        let chunk = &s[i..i + 4];
+
+        if chunk[0] == 0 {
+            return last;
+        }
+        if chunk[0] == c {
+            last = Some(i);
+        }
+        if chunk[1] == 0 {
+            return last;
+        }
+        if chunk[1] == c {
+            last = Some(i + 1);
+        }
+        if chunk[2] == 0 {
+            return last;
+        }
+        if chunk[2] == c {
+            last = Some(i + 2);
+        }
+        if chunk[3] == 0 {
+            return last;
+        }
+        if chunk[3] == c {
+            last = Some(i + 3);
+        }
+        i += 4;
+    }
+
+    while i < s.len() {
+        let ch = s[i];
         if ch == 0 {
             return last;
         }
         if ch == c {
             last = Some(i);
         }
+        i += 1;
     }
 
     last
@@ -693,6 +726,21 @@ mod tests {
     fn test_wcsrchr_stops_at_terminator() {
         let s = [b'A' as u32, b'B' as u32, 0, b'B' as u32];
         assert_eq!(wcsrchr(&s, b'B' as u32), Some(1));
+    }
+
+    #[test]
+    fn test_wcsrchr_chunk_scan_preserves_last_before_terminator() {
+        let s = [
+            b'A' as u32,
+            b'B' as u32,
+            b'A' as u32,
+            b'C' as u32,
+            b'B' as u32,
+            0,
+            b'B' as u32,
+        ];
+        assert_eq!(wcsrchr(&s, b'B' as u32), Some(4));
+        assert_eq!(wcsrchr(&s, b'C' as u32), Some(3));
     }
 
     #[test]
