@@ -512,7 +512,7 @@ impl MallocState {
 
     /// Drains allocator lifecycle log records.
     pub fn drain_lifecycle_logs(&mut self) -> Vec<AllocatorLogRecord> {
-        std::mem::take(&mut self.lifecycle_logs)
+        self.lifecycle_logs.drain(..).collect()
     }
 
     #[cfg(test)]
@@ -590,6 +590,55 @@ mod tests {
         state.free(ptr, size, |p| test_free(p, 64));
         assert_eq!(state.active_count(), 0);
         assert_eq!(state.total_allocated(), 0);
+    }
+
+    #[test]
+    fn drain_lifecycle_logs_preserves_records_and_retains_buffer() {
+        let mut state = MallocState::new();
+        let size = 64;
+        let mut next_ptr = 0x2000_0000usize;
+
+        for _ in 0..700 {
+            let ptr = state
+                .malloc(size, |class_size| {
+                    next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                    Some(next_ptr)
+                })
+                .unwrap();
+            state.free(ptr, size, |_| {});
+        }
+
+        let expected_records = state.lifecycle_logs().to_vec();
+        assert!(expected_records.len() > 2048);
+        let capacity_before = state.lifecycle_logs.capacity();
+        let last_decision_id = expected_records
+            .last()
+            .expect("expected lifecycle records before drain")
+            .decision_id;
+
+        let drained = state.drain_lifecycle_logs();
+
+        assert_eq!(drained, expected_records);
+        assert!(state.lifecycle_logs().is_empty());
+        assert_eq!(state.lifecycle_logs.capacity(), capacity_before);
+
+        let ptr = state
+            .malloc(size, |class_size| {
+                next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                Some(next_ptr)
+            })
+            .unwrap();
+        state.free(ptr, size, |_| {});
+
+        let after_drain_records = state.lifecycle_logs();
+        assert_eq!(after_drain_records.len(), 3);
+        assert_eq!(
+            after_drain_records[0].decision_id,
+            last_decision_id.wrapping_add(1)
+        );
+        assert_eq!(after_drain_records[0].event, "size_class_certificate");
+        assert_eq!(after_drain_records[1].details, "path=thread_cache");
+        assert_eq!(after_drain_records[2].details, "path=thread_cache");
     }
 
     #[test]
