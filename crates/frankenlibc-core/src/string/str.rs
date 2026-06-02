@@ -73,6 +73,14 @@ pub fn strlen(s: &[u8]) -> usize {
         i += 1;
     }
 
+    while i + SIMD_LANES <= s.len() {
+        let chunk = &s[i..i + SIMD_LANES];
+        if has_byte_simd_32(chunk, 0) {
+            break;
+        }
+        i += SIMD_LANES;
+    }
+
     // Process aligned words
     while i + WORD_SIZE <= s.len() {
         // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= s.len()
@@ -944,6 +952,22 @@ mod tests {
         assert_eq!(strlen(b"hello\0"), 5);
         assert_eq!(strlen(b"\0"), 0);
         assert_eq!(strlen(b"abc"), 3); // no NUL found
+    }
+
+    #[test]
+    fn test_strlen_simd_panel_finds_nul_before_hidden_bytes() {
+        let mut s = vec![b'a'; 96];
+        s[45] = 0;
+        s[70] = 0;
+
+        assert_eq!(strlen(&s), 45);
+    }
+
+    #[test]
+    fn test_strlen_simd_panel_without_terminator_returns_len() {
+        let s = vec![b'a'; 96];
+
+        assert_eq!(strlen(&s), 96);
     }
 
     #[test]
