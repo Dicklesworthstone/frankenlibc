@@ -201,3 +201,4 @@ tmp.*.ec
 
 # Beads compliance audit dir (managed by /beads-compliance-and-completion-verification skill)
 /beads_compliance_audit/
+.claude/settings.local.json
