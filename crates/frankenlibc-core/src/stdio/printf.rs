@@ -11,6 +11,7 @@
 //! specifier is `width + precision + 64` bytes (sign + prefix + digits).
 
 use crate::{ArtifactHashMap, artifact_hash_map};
+use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -317,7 +318,7 @@ mod generated_printf_tables {
 use generated_printf_tables::PRINTF_TABLE;
 
 /// A parsed printf format specifier.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct FormatSpec {
     pub flags: FormatFlags,
     pub width: Width,
@@ -561,7 +562,7 @@ pub enum FormatArg {
 // ---------------------------------------------------------------------------
 
 /// A segment of a parsed format string.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum FormatSegment<'a> {
     /// Literal bytes to emit verbatim.
     Literal(&'a [u8]),
@@ -569,6 +570,97 @@ pub enum FormatSegment<'a> {
     Percent,
     /// A conversion specifier requiring an argument.
     Spec(FormatSpec),
+}
+
+/// Parsed printf segments with a no-heap fast path for one-segment formats.
+#[derive(Debug, Clone)]
+pub struct FormatSegments<'a> {
+    first: Option<FormatSegment<'a>>,
+    heap: Option<Vec<FormatSegment<'a>>>,
+}
+
+impl<'a> FormatSegments<'a> {
+    pub fn new() -> Self {
+        Self {
+            first: None,
+            heap: None,
+        }
+    }
+
+    pub fn as_slice(&self) -> &[FormatSegment<'a>] {
+        match &self.heap {
+            Some(heap) => heap.as_slice(),
+            None => self.first.as_slice(),
+        }
+    }
+
+    pub fn push(&mut self, segment: FormatSegment<'a>) {
+        if let Some(heap) = &mut self.heap {
+            heap.push(segment);
+            return;
+        }
+
+        if self.first.is_none() {
+            self.first = Some(segment);
+            return;
+        }
+
+        let mut heap = Vec::with_capacity(8);
+        heap.push(self.first.take().expect("first segment present"));
+        heap.push(segment);
+        self.heap = Some(heap);
+    }
+}
+
+impl<'a> Default for FormatSegments<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'a> Deref for FormatSegments<'a> {
+    type Target = [FormatSegment<'a>];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+pub enum FormatSegmentsIntoIter<'a> {
+    One(std::option::IntoIter<FormatSegment<'a>>),
+    Heap(std::vec::IntoIter<FormatSegment<'a>>),
+}
+
+impl<'a> Iterator for FormatSegmentsIntoIter<'a> {
+    type Item = FormatSegment<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::One(iter) => iter.next(),
+            Self::Heap(iter) => iter.next(),
+        }
+    }
+}
+
+impl<'a> IntoIterator for FormatSegments<'a> {
+    type Item = FormatSegment<'a>;
+    type IntoIter = FormatSegmentsIntoIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self.heap {
+            Some(heap) => FormatSegmentsIntoIter::Heap(heap.into_iter()),
+            None => FormatSegmentsIntoIter::One(self.first.into_iter()),
+        }
+    }
+}
+
+impl<'segments, 'a> IntoIterator for &'segments FormatSegments<'a> {
+    type Item = &'segments FormatSegment<'a>;
+    type IntoIter = std::slice::Iter<'segments, FormatSegment<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_slice().iter()
+    }
 }
 
 /// Whether a format string uses implicit, explicit, or mixed argument numbering.
@@ -850,8 +942,8 @@ fn printf_route(conversion: u8) -> Option<PrintfRoute> {
 ///
 /// Yields `FormatSegment::Literal` for literal runs and `FormatSegment::Spec`
 /// for each `%`-directive. `%%` yields `FormatSegment::Percent`.
-pub fn parse_format_string(fmt: &[u8]) -> Vec<FormatSegment<'_>> {
-    let mut segments = Vec::new();
+pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
+    let mut segments = FormatSegments::new();
     let mut pos = 0;
     let len = fmt.len();
 
