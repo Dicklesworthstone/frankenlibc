@@ -10,8 +10,11 @@
 //!
 //! Output:
 //! - Machine-readable `RUNTIME_MATH_KERNEL_BENCH ... p50_ns_op=...` lines for perf gating.
+//! - `runtime_math_decide_resample_free` is the direct decision-timing row for
+//!   budget attribution; `strict_hardened_overhead_harness` remains the
+//!   cadence-inclusive cross-mode/family ranking harness.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -29,7 +32,12 @@ use frankenlibc_membrane::runtime_math::sos_barrier::{
     evaluate_fragmentation_barrier, evaluate_provenance_barrier, evaluate_quarantine_barrier,
     evaluate_size_class_barrier,
 };
-use frankenlibc_membrane::{ApiFamily, RuntimeContext, SafetyLevel, ValidationProfile};
+use frankenlibc_membrane::{
+    ApiFamily, RuntimeContext, RuntimeMathKernel, SafetyLevel, ValidationProfile,
+};
+
+const DECIDE_RESAMPLE_CADENCE: u64 = 512;
+const DECIDE_RESAMPLE_FREE_WARMUP: u64 = 16;
 
 #[derive(Default)]
 struct BenchStats {
@@ -157,6 +165,30 @@ fn maybe_pin_thread() {
     }
 }
 
+fn runtime_decide_context(iter_idx: u64) -> RuntimeContext {
+    RuntimeContext {
+        family: ApiFamily::PointerValidation,
+        addr_hint: 0x1234_0000usize.wrapping_add((iter_idx as usize).wrapping_mul(17)),
+        requested_bytes: 0,
+        is_write: false,
+        contention_hint: 0,
+        bloom_negative: false,
+    }
+}
+
+fn warm_runtime_decide_kernel(kernel: &RuntimeMathKernel, mode: SafetyLevel) -> u64 {
+    for iter_idx in 0..DECIDE_RESAMPLE_FREE_WARMUP {
+        black_box(kernel.decide(mode, runtime_decide_context(iter_idx)));
+    }
+    DECIDE_RESAMPLE_FREE_WARMUP + 1
+}
+
+fn record_decision_bits(accumulator: &mut usize, iter_idx: u64, decision_requires_full: bool) {
+    let full_bit = usize::from(decision_requires_full);
+    *accumulator ^= full_bit << (iter_idx as usize & 7);
+    *accumulator = accumulator.wrapping_add(full_bit);
+}
+
 fn bench_runtime_math_kernels(c: &mut Criterion) {
     maybe_pin_thread();
     print_env_metadata_once();
@@ -170,6 +202,103 @@ fn bench_runtime_math_kernels(c: &mut Criterion) {
 
     // Fixed context for barrier tests.
     let ctx = RuntimeContext::pointer_validation(0x1234_5678, false);
+
+    // --- RuntimeMathKernel::decide (steady resample-free decision path) ---
+    {
+        let kernel = RuntimeMathKernel::new_for_mode(mode);
+        let next_sequence = Cell::new(warm_runtime_decide_kernel(&kernel, mode));
+        let stats = RefCell::new(BenchStats::default());
+        let mut group = c.benchmark_group("runtime_math_kernels");
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(
+            BenchmarkId::new("runtime_math_decide_resample_free", mode_label),
+            |b| {
+                b.iter_custom(|iters| {
+                    if iters == 0 {
+                        return Duration::from_nanos(1);
+                    }
+
+                    let mut next = next_sequence.get();
+                    let mut measured_iters = 0u64;
+                    let mut total = Duration::ZERO;
+                    let mut accumulator = 0usize;
+
+                    while measured_iters < iters {
+                        if next.is_multiple_of(DECIDE_RESAMPLE_CADENCE) {
+                            black_box(kernel.decide(mode, runtime_decide_context(next)));
+                            next += 1;
+                            continue;
+                        }
+
+                        let until_resample =
+                            DECIDE_RESAMPLE_CADENCE - (next % DECIDE_RESAMPLE_CADENCE);
+                        let chunk = (iters - measured_iters).min(until_resample);
+                        let start = Instant::now();
+                        for _ in 0..chunk {
+                            let decision = kernel.decide(mode, runtime_decide_context(next));
+                            record_decision_bits(
+                                &mut accumulator,
+                                next,
+                                decision.requires_full_validation(),
+                            );
+                            next += 1;
+                        }
+                        total += start.elapsed().max(Duration::from_nanos(1));
+                        measured_iters += chunk;
+                    }
+
+                    next_sequence.set(next);
+                    black_box(accumulator);
+                    stats.borrow_mut().record(measured_iters, total);
+                    total
+                });
+            },
+        );
+        group.finish();
+        stats
+            .borrow()
+            .report(mode_label, "runtime_math_decide_resample_free");
+    }
+
+    // --- RuntimeMathKernel::decide (cadence-inclusive contrast row) ---
+    {
+        let kernel = RuntimeMathKernel::new_for_mode(mode);
+        let next_sequence = Cell::new(warm_runtime_decide_kernel(&kernel, mode));
+        let stats = RefCell::new(BenchStats::default());
+        let mut group = c.benchmark_group("runtime_math_kernels");
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(
+            BenchmarkId::new("runtime_math_decide_cadence_inclusive", mode_label),
+            |b| {
+                b.iter_custom(|iters| {
+                    if iters == 0 {
+                        return Duration::from_nanos(1);
+                    }
+
+                    let first_sequence = next_sequence.get();
+                    let mut accumulator = 0usize;
+                    let start = Instant::now();
+                    for next_sequence in first_sequence..first_sequence.saturating_add(iters) {
+                        let decision = kernel.decide(mode, runtime_decide_context(next_sequence));
+                        record_decision_bits(
+                            &mut accumulator,
+                            next_sequence,
+                            decision.requires_full_validation(),
+                        );
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    next_sequence.set(first_sequence.saturating_add(iters));
+                    black_box(accumulator);
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        group.finish();
+        stats
+            .borrow()
+            .report(mode_label, "runtime_math_decide_cadence_inclusive");
+    }
 
     // --- risk::upper_bound_ppm (steady-state path) ---
     {

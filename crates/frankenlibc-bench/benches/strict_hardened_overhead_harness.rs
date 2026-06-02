@@ -16,6 +16,11 @@ use frankenlibc_membrane::runtime_math::{
     ApiFamily, RuntimeContext, RuntimeDecisionTelemetrySnapshot, RuntimeMathKernel,
 };
 
+// This harness intentionally measures cadence-inclusive representative
+// workloads for cross-mode/family ranking. Use `runtime_math_kernels_bench`
+// `runtime_math_decide_resample_free` for Criterion-resolved runtime decision
+// timing and strict fast-path budget attribution.
+
 fn main() {
     let lane = selected_lane();
     let out_dir = output_dir(lane);
