@@ -682,10 +682,7 @@ impl ValidationPipeline {
             if let Some(outcome) = self.try_validate_cached_without_trace(addr, mode) {
                 return outcome;
             }
-            if self.page_oracle.is_empty()
-                && let Some(outcome) =
-                    self.try_validate_empty_oracle_foreign_without_trace(addr, mode)
-            {
+            if let Some(outcome) = self.try_validate_foreign_without_trace(addr, mode) {
                 return outcome;
             }
         }
@@ -737,7 +734,7 @@ impl ValidationPipeline {
     }
 
     #[inline]
-    fn try_validate_empty_oracle_foreign_without_trace(
+    fn try_validate_foreign_without_trace(
         &self,
         addr: usize,
         mode: SafetyLevel,
@@ -749,6 +746,10 @@ impl ValidationPipeline {
         }
 
         if self.bloom.might_contain(addr) {
+            return None;
+        }
+
+        if self.page_oracle.query(addr) {
             return None;
         }
 
@@ -2371,6 +2372,34 @@ mod tests {
         assert_eq!(fast, logged);
         assert!(!pipeline.export_validation_log_jsonl().is_empty());
         pipeline.set_validation_logging_enabled(false);
+    }
+
+    #[test]
+    fn default_nonempty_oracle_foreign_fast_path_matches_logged_pipeline_foreign() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(256).expect("alloc");
+        let addr = 0xDEAD_BEEF_0000usize;
+
+        assert!(
+            !pipeline.page_oracle.query(addr),
+            "test address must remain outside the owned page oracle"
+        );
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(false);
+        let fast = pipeline.validate(addr);
+        assert!(matches!(fast, ValidationOutcome::Foreign(_)));
+        assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+        pipeline.clear_validation_logs();
+        pipeline.set_validation_logging_enabled(true);
+        let logged = pipeline.validate(addr);
+        assert_eq!(fast, logged);
+        assert!(!pipeline.export_validation_log_jsonl().is_empty());
+        pipeline.set_validation_logging_enabled(false);
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
     }
 
     #[test]
