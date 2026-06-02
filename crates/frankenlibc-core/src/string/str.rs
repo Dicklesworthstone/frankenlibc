@@ -46,6 +46,21 @@ fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
         .any()
 }
 
+#[inline(always)]
+fn has_ascii_folded_byte_or_nul_simd_32(chunk: &[u8], folded: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    if !folded.is_ascii_lowercase() {
+        return has_byte_or_nul_simd_32(chunk, folded);
+    }
+
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    lanes.simd_eq(Simd::splat(0)).any()
+        || lanes.simd_eq(Simd::splat(folded)).any()
+        || lanes
+            .simd_eq(Simd::splat(folded.to_ascii_uppercase()))
+            .any()
+}
+
 #[inline]
 fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
     let mut table = [false; 256];
@@ -362,6 +377,35 @@ fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
             return i;
         }
         i += 1;
+    }
+
+    s.len()
+}
+
+fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
+    if !folded.is_ascii_lowercase() {
+        return find_byte_or_nul(s, folded);
+    }
+
+    let upper = folded.to_ascii_uppercase();
+    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
+    let mut base = 0usize;
+
+    for chunk in simd_chunks.by_ref() {
+        if has_ascii_folded_byte_or_nul_simd_32(chunk, folded) {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || byte == folded || byte == upper {
+                    return base + j;
+                }
+            }
+        }
+        base += SIMD_LANES;
+    }
+
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || byte == folded || byte == upper {
+            return base + j;
+        }
     }
 
     s.len()
@@ -777,13 +821,17 @@ pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     let needle = &needle[..n_len];
     let first = needle[0].to_ascii_lowercase();
 
-    for i in 0..haystack.len() {
+    let mut start = 0usize;
+    while start < haystack.len() {
+        let offset = find_ascii_folded_byte_or_nul(&haystack[start..], first);
+        if offset == haystack.len() - start {
+            return None;
+        }
+
+        let i = start + offset;
         let byte = haystack[i];
         if byte == 0 {
             return None;
-        }
-        if byte.to_ascii_lowercase() != first {
-            continue;
         }
         if i + n_len > haystack.len() {
             return None;
@@ -803,6 +851,8 @@ pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if matched {
             return Some(i);
         }
+
+        start = i + 1;
     }
 
     None
@@ -1417,6 +1467,41 @@ mod tests {
     #[test]
     fn test_strcasestr_unterminated_haystack_short_candidate() {
         assert_eq!(strcasestr(b"aB", b"bc\0"), None);
+    }
+
+    #[test]
+    fn test_strcasestr_simd_panel_stops_at_nul_before_folded_candidate() {
+        let mut haystack = [b'A'; 64];
+        haystack[7] = 0;
+        haystack[20] = b'Z';
+        haystack[21] = b'Q';
+        assert_eq!(strcasestr(&haystack, b"zq\0"), None);
+    }
+
+    #[test]
+    fn test_strcasestr_simd_panel_resolves_folded_candidate_before_nul() {
+        let mut haystack = [b'A'; 64];
+        haystack[12] = b'Z';
+        haystack[13] = b'Q';
+        haystack[20] = 0;
+        assert_eq!(strcasestr(&haystack, b"zq\0"), Some(12));
+    }
+
+    #[test]
+    fn test_strcasestr_simd_panel_preserves_first_full_match() {
+        let mut haystack = [b'A'; 64];
+        haystack[5] = b'Z';
+        haystack[6] = b'X';
+        haystack[24] = b'z';
+        haystack[25] = b'Q';
+        haystack[40] = 0;
+        assert_eq!(strcasestr(&haystack, b"zq\0"), Some(24));
+    }
+
+    #[test]
+    fn test_strcasestr_simd_panel_non_ascii_first_byte_is_exact() {
+        assert_eq!(strcasestr(&[0xC0, b'q', 0], &[0xC0, b'Q', 0]), Some(0));
+        assert_eq!(strcasestr(&[0xE0, b'q', 0], &[0xC0, b'q', 0]), None);
     }
 
     #[test]
