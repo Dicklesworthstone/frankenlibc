@@ -328,6 +328,40 @@ fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
     s.len()
 }
 
+#[allow(unsafe_code)]
+fn find_non_byte_or_nul(s: &[u8], accepted: u8) -> usize {
+    const WORD_SIZE: usize = size_of::<usize>();
+
+    let repeated = repeated_byte(accepted);
+    let mut i = 0;
+    while i < s.len() && !(s.as_ptr() as usize + i).is_multiple_of(WORD_SIZE) {
+        let byte = s[i];
+        if byte == 0 || byte != accepted {
+            return i;
+        }
+        i += 1;
+    }
+
+    while i + WORD_SIZE <= s.len() {
+        // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= s.len().
+        let word = unsafe { core::ptr::read(s.as_ptr().add(i) as *const usize) };
+        if word != repeated {
+            break;
+        }
+        i += WORD_SIZE;
+    }
+
+    while i < s.len() {
+        let byte = s[i];
+        if byte == 0 || byte != accepted {
+            return i;
+        }
+        i += 1;
+    }
+
+    s.len()
+}
+
 /// Locates the last occurrence of `c` in the NUL-terminated string `s`.
 ///
 /// Equivalent to C `strrchr`. Returns the index of the last byte equal to `c`,
@@ -528,12 +562,7 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
         0 => return 0,
         1 => {
             let accepted = accept[0];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 || byte != accepted {
-                    return i;
-                }
-            }
-            return s.len();
+            return find_non_byte_or_nul(s, accepted);
         }
         2 => {
             let a0 = accept[0];
