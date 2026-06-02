@@ -75,6 +75,25 @@ fn u64_from_chunk(chunk: &[u8]) -> u64 {
     u64::from_ne_bytes(bytes)
 }
 
+/// SWAR word size (8 bytes), matching the `chunks_exact(8)` scans in this module.
+const WORD: usize = size_of::<u64>();
+
+const LO_U64: u64 = u64::from_ne_bytes([0x01; WORD]);
+const HI_U64: u64 = u64::from_ne_bytes([0x80; WORD]);
+
+/// Mycroft's zero-in-word test: true iff any byte of `word` is `0x00`.
+#[inline(always)]
+fn zero_byte_u64(word: u64) -> bool {
+    word.wrapping_sub(LO_U64) & !word & HI_U64 != 0
+}
+
+/// True iff any byte of `word` equals `byte`. XOR-folds `byte` to zero, then
+/// reuses the zero-byte test. Exact (no false positives), endianness-agnostic.
+#[inline(always)]
+fn has_byte_u64(word: u64, byte: u8) -> bool {
+    zero_byte_u64(word ^ u64::from_ne_bytes([byte; WORD]))
+}
+
 #[inline]
 fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     for (&av, &bv) in a.iter().zip(b.iter()) {
@@ -93,18 +112,60 @@ fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 ///
 /// Equivalent to C `memchr`. Returns the index of the first occurrence,
 /// or `None` if not found.
+///
+/// Scans 8 bytes per step with a word-parallel SWAR probe (`has_byte_u64`),
+/// then resolves the exact index within the first matching word low-to-high.
+/// Behaviour is identical to a byte-at-a-time `position` scan.
 pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
-    haystack[..count].iter().position(|&b| b == needle)
+    let hs = &haystack[..count];
+    let mut chunks = hs.chunks_exact(WORD);
+    let mut base = 0usize;
+
+    for chunk in chunks.by_ref() {
+        if has_byte_u64(u64_from_chunk(chunk), needle) {
+            // The SWAR probe is exact, so this lookup always resolves.
+            if let Some(j) = chunk.iter().position(|&b| b == needle) {
+                return Some(base + j);
+            }
+        }
+        base += WORD;
+    }
+
+    chunks
+        .remainder()
+        .iter()
+        .position(|&b| b == needle)
+        .map(|j| base + j)
 }
 
 /// Scans the first `n` bytes of `haystack` for the last occurrence of `needle`.
 ///
 /// Equivalent to C `memrchr`. Returns the index of the last occurrence,
 /// or `None` if not found.
+///
+/// Reverse counterpart of [`memchr`]: scans 8 bytes per step from the end with
+/// the SWAR probe, resolving the exact index within the last matching word
+/// high-to-low. Behaviour is identical to a byte-at-a-time `rposition` scan.
 pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
-    haystack[..count].iter().rposition(|&b| b == needle)
+    let hs = &haystack[..count];
+    let mut chunks = hs.rchunks_exact(WORD);
+    // `rchunks_exact` walks from the back; the first chunk ends at `count`.
+    let mut end = count;
+
+    for chunk in chunks.by_ref() {
+        if has_byte_u64(u64_from_chunk(chunk), needle) {
+            // The SWAR probe is exact, so this lookup always resolves.
+            if let Some(j) = chunk.iter().rposition(|&b| b == needle) {
+                return Some(end - WORD + j);
+            }
+        }
+        end -= WORD;
+    }
+
+    // `rchunks_exact` leaves its remainder at the front (indices `0..rem_len`).
+    chunks.remainder().iter().rposition(|&b| b == needle)
 }
 
 /// Searches `haystack` (first `n` bytes) for the byte sequence `needle` (of length `needle_len`).
@@ -439,6 +500,31 @@ mod tests {
             prop_assert_eq!(set, expected);
             prop_assert!(buf.iter().take(expected).all(|b| *b == value));
             prop_assert_eq!(&buf[expected..], &original[expected..]);
+        }
+
+        // Isomorphism: the SWAR scan must return the exact index a byte-at-a-time
+        // `position` scan would. `0..200` spans the chunk size (8) and unaligned
+        // remainders; `n` ranges past the length to exercise the clamp.
+        #[test]
+        fn prop_memchr_matches_scalar_position(
+            haystack in proptest::collection::vec(any::<u8>(), 0..200),
+            needle in any::<u8>(),
+            n in 0usize..256
+        ) {
+            let count = n.min(haystack.len());
+            let expected = haystack[..count].iter().position(|&b| b == needle);
+            prop_assert_eq!(memchr(&haystack, needle, n), expected);
+        }
+
+        #[test]
+        fn prop_memrchr_matches_scalar_rposition(
+            haystack in proptest::collection::vec(any::<u8>(), 0..200),
+            needle in any::<u8>(),
+            n in 0usize..256
+        ) {
+            let count = n.min(haystack.len());
+            let expected = haystack[..count].iter().rposition(|&b| b == needle);
+            prop_assert_eq!(memrchr(&haystack, needle, n), expected);
         }
     }
 
