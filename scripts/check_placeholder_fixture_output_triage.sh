@@ -58,10 +58,21 @@ def read_text(rel_path: str) -> str:
 
 
 def git_head() -> str:
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    except subprocess.CalledProcessError:
-        return "unknown"
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or "<empty stderr>"
+        raise SystemExit(f"FAIL[source_commit_unavailable]: git rev-parse HEAD failed: {stderr}")
+    commit = result.stdout.strip()
+    if not commit:
+        raise SystemExit("FAIL[source_commit_empty]: git rev-parse HEAD returned empty output")
+    return commit
 
 
 def now_utc() -> str:
@@ -73,7 +84,7 @@ def finish(outcome: str, signature: str, message: str, **summary):
         "schema_version": "placeholder_fixture_output_triage.report.v1",
         "bead": EXPECTED_BEAD,
         "trace_id": f"placeholder-fixture-output-triage-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{id(summary)}",
-        "source_commit": git_head(),
+        "source_commit": source_commit,
         "mode": mode,
         "outcome": outcome,
         "failure_signature": signature,
@@ -87,6 +98,7 @@ def finish(outcome: str, signature: str, message: str, **summary):
         "timestamp": now_utc(),
         "event": "placeholder_fixture_output_triage_validated" if outcome == "pass" else "placeholder_fixture_output_triage_failed",
         "bead": EXPECTED_BEAD,
+        "source_commit": source_commit,
         "outcome": outcome,
         "failure_signature": signature,
         "contract": str(contract_path),
@@ -115,6 +127,8 @@ def count_expected_tokens(fixture_path: pathlib.Path, allowed: set[str]) -> dict
             counts[expected] += 1
     return counts
 
+
+source_commit = git_head()
 
 if mode != "validate-only":
     fail("unknown_mode", f"only --validate-only is supported; got {mode}")

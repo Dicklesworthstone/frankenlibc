@@ -81,6 +81,21 @@ fn output_text(output: &Output) -> String {
     )
 }
 
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(output_text(&output)).into());
+    }
+    let head = String::from_utf8(output.stdout)?.trim().to_owned();
+    if head.is_empty() {
+        return Err(io::Error::other("git rev-parse HEAD returned empty output").into());
+    }
+    Ok(head)
+}
+
 fn required_string_set(value: &Value, field: &str) -> TestResult<BTreeSet<String>> {
     Ok(value[field]
         .as_array()
@@ -180,6 +195,7 @@ fn manifest_binds_placeholder_triage_sources() -> TestResult {
 fn checker_emits_pass_report_and_jsonl() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_out_dir(&root, "pass")?;
+    let expected_commit = git_head(&root)?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
 
@@ -189,6 +205,11 @@ fn checker_emits_pass_report_and_jsonl() -> TestResult {
         Some("placeholder_fixture_output_triage.report.v1")
     );
     assert_eq!(report["bead"].as_str(), Some("bd-0agsk.14"));
+    assert_eq!(
+        report["source_commit"].as_str(),
+        Some(expected_commit.as_str())
+    );
+    assert_ne!(report["source_commit"].as_str(), Some("unknown"));
     assert_eq!(report["mode"].as_str(), Some("validate-only"));
     assert_eq!(report["outcome"].as_str(), Some("pass"));
     assert_eq!(report["failure_signature"].as_str(), Some("none"));
@@ -217,6 +238,11 @@ fn checker_emits_pass_report_and_jsonl() -> TestResult {
         rows[0]["event"].as_str(),
         Some("placeholder_fixture_output_triage_validated")
     );
+    assert_eq!(
+        rows[0]["source_commit"].as_str(),
+        Some(expected_commit.as_str())
+    );
+    assert_ne!(rows[0]["source_commit"].as_str(), Some("unknown"));
     assert_eq!(rows[0]["outcome"].as_str(), Some("pass"));
     assert_eq!(rows[0]["failure_signature"].as_str(), Some("none"));
     assert_eq!(rows[0]["summary"]["real_blocker_count"].as_u64(), Some(0));
