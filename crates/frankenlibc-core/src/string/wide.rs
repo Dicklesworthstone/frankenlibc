@@ -3,6 +3,51 @@
 //! Corresponds to `<wchar.h>` functions. These operate on `u32` slices
 //! representing `wchar_t` strings (NUL-terminated with `0u32`).
 
+use std::simd::{Simd, cmp::SimdPartialEq};
+
+/// Number of `u32` wide characters processed per safe-SIMD panel (256-bit).
+const WIDE_SIMD_LANES: usize = 8;
+
+/// Returns `true` if `chunk` (exactly [`WIDE_SIMD_LANES`] elements) contains the
+/// wide character `needle` or a terminating NUL. Used as a cheap panel filter
+/// before exact left-to-right scalar resolution on candidate panels.
+#[inline(always)]
+fn has_wide_or_nul_simd(chunk: &[u32], needle: u32) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_SIMD_LANES);
+    let lanes = Simd::<u32, WIDE_SIMD_LANES>::from_slice(chunk);
+    lanes.simd_eq(Simd::splat(0)).any() || lanes.simd_eq(Simd::splat(needle)).any()
+}
+
+/// Returns the index of the first element of `s` equal to `needle` or `0`
+/// (whichever comes first, left to right), or `s.len()` if neither is present.
+///
+/// `needle` must be non-zero so the two splat targets are distinct; callers in
+/// this module only invoke it with a non-NUL first needle character.
+fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
+    debug_assert_ne!(needle, 0);
+    let mut chunks = s.chunks_exact(WIDE_SIMD_LANES);
+    let mut base = 0usize;
+
+    for chunk in chunks.by_ref() {
+        if has_wide_or_nul_simd(chunk, needle) {
+            for (j, &ch) in chunk.iter().enumerate() {
+                if ch == needle || ch == 0 {
+                    return base + j;
+                }
+            }
+        }
+        base += WIDE_SIMD_LANES;
+    }
+
+    for (j, &ch) in chunks.remainder().iter().enumerate() {
+        if ch == needle || ch == 0 {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
 /// Returns the length of a NUL-terminated wide string (not counting the NUL).
 ///
 /// Equivalent to C `wcslen`. Scans `s` for the first `0u32` element.
@@ -314,14 +359,20 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     let needle = &needle[..needle_len];
     let first = needle[0];
 
-    for i in 0..haystack.len() {
+    let mut start = 0usize;
+    while start < haystack.len() {
+        let offset = find_wide_or_nul(&haystack[start..], first);
+        if offset == haystack.len() - start {
+            // Unterminated remainder with no first-char candidate and no NUL.
+            return None;
+        }
+
+        let i = start + offset;
         let ch = haystack[i];
         if ch == 0 {
             return None;
         }
-        if ch != first {
-            continue;
-        }
+        // ch == first
         if i + needle_len > haystack.len() {
             return None;
         }
@@ -340,6 +391,8 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
         if matched {
             return Some(i);
         }
+
+        start = i + 1;
     }
 
     None
@@ -825,6 +878,47 @@ mod tests {
         assert_eq!(wcsrchr(&s, 0), Some(3));
     }
 
+    fn scalar_wcsstr_reference(haystack: &[u32], needle: &[u32]) -> Option<usize> {
+        let needle_len = wcslen(needle);
+
+        if needle_len == 0 {
+            return Some(0);
+        }
+
+        let needle = &needle[..needle_len];
+        let first = needle[0];
+
+        for i in 0..haystack.len() {
+            let ch = haystack[i];
+            if ch == 0 {
+                return None;
+            }
+            if ch != first {
+                continue;
+            }
+            if i + needle_len > haystack.len() {
+                return None;
+            }
+
+            let mut matched = true;
+            for j in 1..needle_len {
+                let candidate = haystack[i + j];
+                if candidate == 0 {
+                    return None;
+                }
+                if candidate != needle[j] {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched {
+                return Some(i);
+            }
+        }
+
+        None
+    }
+
     #[test]
     fn test_wcsstr_basic() {
         let haystack = [b'A' as u32, b'B' as u32, b'C' as u32, b'D' as u32, 0];
@@ -857,6 +951,128 @@ mod tests {
         let haystack = [b'A' as u32, b'B' as u32];
         let needle = [b'B' as u32, b'C' as u32, 0];
         assert_eq!(wcsstr(&haystack, &needle), None);
+    }
+
+    #[test]
+    fn test_wcsstr_simd_panel_stops_at_nul_before_first_char_candidate() {
+        // NUL appears before any later first-character candidate: search ends.
+        let mut haystack = [b'A' as u32; 64];
+        haystack[7] = 0;
+        haystack[20] = b'Z' as u32;
+        haystack[21] = b'Q' as u32;
+        let needle = [b'Z' as u32, b'Q' as u32, 0];
+        assert_eq!(wcsstr(&haystack, &needle), None);
+    }
+
+    #[test]
+    fn test_wcsstr_simd_panel_resolves_candidate_before_nul() {
+        // First-char candidate resolves to a full match before the NUL.
+        let mut haystack = [b'A' as u32; 64];
+        haystack[12] = b'Z' as u32;
+        haystack[13] = b'Q' as u32;
+        haystack[20] = 0;
+        let needle = [b'Z' as u32, b'Q' as u32, 0];
+        assert_eq!(wcsstr(&haystack, &needle), Some(12));
+    }
+
+    #[test]
+    fn test_wcsstr_simd_failed_candidate_before_nul_blocks_later_match() {
+        let haystack = [b'Z' as u32, b'A' as u32, 0, b'Z' as u32, b'Q' as u32, 0];
+        let needle = [b'Z' as u32, b'Q' as u32, 0];
+        assert_eq!(wcsstr(&haystack, &needle), None);
+    }
+
+    #[test]
+    fn test_wcsstr_simd_panel_preserves_first_full_match() {
+        // A failed first-char candidate (5) must not shadow the later real match (24).
+        let mut haystack = [b'A' as u32; 64];
+        haystack[5] = b'Z' as u32;
+        haystack[6] = b'X' as u32;
+        haystack[24] = b'Z' as u32;
+        haystack[25] = b'Q' as u32;
+        haystack[40] = 0;
+        let needle = [b'Z' as u32, b'Q' as u32, 0];
+        assert_eq!(wcsstr(&haystack, &needle), Some(24));
+    }
+
+    #[test]
+    fn test_wcsstr_simd_panel_match_spans_panel_boundary() {
+        // Candidate first char in one panel, match completing across the boundary.
+        let mut haystack = [b'A' as u32; 64];
+        haystack[7] = b'Z' as u32;
+        haystack[8] = b'Q' as u32;
+        haystack[9] = b'R' as u32;
+        haystack[40] = 0;
+        let needle = [b'Z' as u32, b'Q' as u32, b'R' as u32, 0];
+        assert_eq!(wcsstr(&haystack, &needle), Some(7));
+    }
+
+    #[test]
+    fn test_wcsstr_simd_tail_lengths_match_unterminated_scalar() {
+        let needle = [b'Z' as u32, b'Q' as u32, 0];
+        for len in 0..=15 {
+            let mut haystack = vec![b'A' as u32; len];
+            if len >= 2 {
+                haystack[len - 2] = b'Z' as u32;
+                haystack[len - 1] = b'Q' as u32;
+            } else if len == 1 {
+                haystack[0] = b'Z' as u32;
+            }
+
+            assert_eq!(
+                wcsstr(&haystack, &needle),
+                scalar_wcsstr_reference(&haystack, &needle),
+                "tail len {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_wcsstr_simd_high_wide_chars() {
+        // Non-ASCII wide code points exercised through the u32 SIMD lanes.
+        let mut haystack = [0x1_0000u32; 40];
+        haystack[30] = 0x1_F600;
+        haystack[31] = 0x1_F601;
+        haystack[35] = 0;
+        let needle = [0x1_F600u32, 0x1_F601, 0];
+        assert_eq!(wcsstr(&haystack, &needle), Some(30));
+    }
+
+    #[test]
+    fn test_wcsstr_needle_internal_nul_matches_prefix() {
+        let haystack = [b'A' as u32, b'Z' as u32, b'Q' as u32, 0];
+        let needle = [b'Z' as u32, 0, b'Q' as u32];
+        assert_eq!(wcsstr(&haystack, &needle), Some(1));
+    }
+
+    #[test]
+    fn test_wcsstr_simd_matches_scalar_oracle_for_panel_positions() {
+        let needle = [b'Z' as u32, b'Q' as u32, 0];
+
+        for len in 0..=17 {
+            for nul_pos in 0..=len {
+                for cand_pos in 0..len {
+                    let mut haystack = vec![b'A' as u32; len];
+                    haystack[cand_pos] = b'Z' as u32;
+                    if cand_pos + 1 < len {
+                        haystack[cand_pos + 1] = if cand_pos % 2 == 0 {
+                            b'Q' as u32
+                        } else {
+                            b'X' as u32
+                        };
+                    }
+                    if nul_pos < len {
+                        haystack[nul_pos] = 0;
+                    }
+
+                    assert_eq!(
+                        wcsstr(&haystack, &needle),
+                        scalar_wcsstr_reference(&haystack, &needle),
+                        "len={len} nul_pos={nul_pos} cand_pos={cand_pos}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
