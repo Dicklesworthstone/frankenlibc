@@ -186,7 +186,12 @@ impl OptimalDesignController {
             }
         }
 
-        let base_logdet = logdet_spd(&self.fisher);
+        let fisher_cholesky = cholesky_spd(&self.fisher);
+        let base_logdet = if fisher_cholesky.is_none() {
+            logdet_spd(&self.fisher)
+        } else {
+            0.0
+        };
         let mut candidates: Vec<(Probe, f64, u64)> = Vec::with_capacity(Probe::COUNT);
         for probe in Probe::ALL {
             if (mask & probe.bit()) != 0 {
@@ -201,9 +206,15 @@ impl OptimalDesignController {
                 continue;
             }
             let cost_ns = probe_cost_ns(probe);
-            let mut trial = self.fisher;
-            rank_one_update(&mut trial, probe_features(probe), 0.25 + 2.5 * risk);
-            let gain = (logdet_spd(&trial) - base_logdet).max(0.0);
+            let features = probe_features(probe);
+            let update_weight = 0.25 + 2.5 * risk;
+            let gain = if let Some(cholesky) = &fisher_cholesky {
+                rank_one_logdet_gain_from_cholesky(cholesky, features, update_weight)
+            } else {
+                let mut trial = self.fisher;
+                rank_one_update(&mut trial, features, update_weight);
+                (logdet_spd(&trial) - base_logdet).max(0.0)
+            };
             let score = gain / (cost_ns as f64 + 1.0);
             candidates.push((probe, score, cost_ns));
         }
@@ -284,7 +295,9 @@ fn rank_one_update(matrix: &mut [[f64; LATENT_DIM]; LATENT_DIM], v: [f64; LATENT
     }
 }
 
-fn logdet_spd(matrix: &[[f64; LATENT_DIM]; LATENT_DIM]) -> f64 {
+fn cholesky_spd(
+    matrix: &[[f64; LATENT_DIM]; LATENT_DIM],
+) -> Option<[[f64; LATENT_DIM]; LATENT_DIM]> {
     let mut l = [[0.0; LATENT_DIM]; LATENT_DIM];
     for i in 0..LATENT_DIM {
         for j in 0..=i {
@@ -296,7 +309,7 @@ fn logdet_spd(matrix: &[[f64; LATENT_DIM]; LATENT_DIM]) -> f64 {
             }
             if i == j {
                 if sum <= 1e-12 {
-                    return -1e9;
+                    return None;
                 }
                 l[i][j] = sum.sqrt();
             } else {
@@ -304,11 +317,42 @@ fn logdet_spd(matrix: &[[f64; LATENT_DIM]; LATENT_DIM]) -> f64 {
             }
         }
     }
+    Some(l)
+}
+
+fn logdet_spd(matrix: &[[f64; LATENT_DIM]; LATENT_DIM]) -> f64 {
+    let Some(l) = cholesky_spd(matrix) else {
+        return -1e9;
+    };
+    logdet_from_cholesky(&l)
+}
+
+fn logdet_from_cholesky(l: &[[f64; LATENT_DIM]; LATENT_DIM]) -> f64 {
     let mut logdet = 0.0;
     for (i, row) in l.iter().enumerate() {
         logdet += 2.0 * row[i].ln();
     }
     logdet
+}
+
+fn rank_one_logdet_gain_from_cholesky(
+    l: &[[f64; LATENT_DIM]; LATENT_DIM],
+    v: [f64; LATENT_DIM],
+    w: f64,
+) -> f64 {
+    let mut y = [0.0; LATENT_DIM];
+    for i in 0..LATENT_DIM {
+        let mut sum = v[i];
+        let mut k = 0;
+        while k < i {
+            sum -= l[i][k] * y[k];
+            k += 1;
+        }
+        y[i] = sum / l[i][i].max(1e-12);
+    }
+
+    let qform = y.iter().map(|value| value * value).sum::<f64>();
+    (1.0 + w * qform).ln().max(0.0)
 }
 
 pub fn probe_cost_ns(probe: Probe) -> u64 {
@@ -555,6 +599,36 @@ mod tests {
             assert!(
                 greedy_gain >= partial_gain,
                 "adding more probes should not decrease total gain"
+            );
+        }
+    }
+
+    #[test]
+    fn rank_one_logdet_gain_matches_full_update() {
+        let mut ctrl = OptimalDesignController::new();
+        for _ in 0..32 {
+            for probe in Probe::ALL.iter().take(6) {
+                ctrl.record_probe(*probe, false);
+            }
+        }
+
+        let cholesky = cholesky_spd(&ctrl.fisher);
+        assert!(cholesky.is_some(), "fisher matrix must be SPD");
+        let Some(cholesky) = cholesky else {
+            return;
+        };
+        let base_logdet = logdet_spd(&ctrl.fisher);
+        let weight = 0.25 + 2.5 * 0.15;
+
+        for probe in Probe::ALL {
+            let features = probe_features(probe);
+            let fast_gain = rank_one_logdet_gain_from_cholesky(&cholesky, features, weight);
+            let mut trial = ctrl.fisher;
+            rank_one_update(&mut trial, features, weight);
+            let slow_gain = (logdet_spd(&trial) - base_logdet).max(0.0);
+            assert!(
+                (fast_gain - slow_gain).abs() <= 1e-10,
+                "gain mismatch for {probe:?}: fast={fast_gain} slow={slow_gain}"
             );
         }
     }
