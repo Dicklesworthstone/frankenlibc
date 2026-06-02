@@ -783,6 +783,19 @@ pub fn strndup_bytes(s: &[u8], n: usize) -> Vec<u8> {
 /// Returns the delimiter index, or `None` if no delimiter is found before the terminator.
 pub fn strsep(s: &mut [u8], delim: &[u8]) -> Option<usize> {
     let delim_len = strlen(delim);
+    if delim_len == 0 {
+        return None;
+    }
+    if delim_len == 1 {
+        let delimiter = delim[0];
+        let index = find_byte_or_nul(s, delimiter);
+        if index < s.len() && s[index] == delimiter {
+            s[index] = 0;
+            return Some(index);
+        }
+        return None;
+    }
+
     let delim_set = &delim[..delim_len];
 
     for (i, byte) in s.iter_mut().enumerate() {
@@ -1310,6 +1323,20 @@ mod tests {
         let mut s = *b"hello\0";
         let result = strsep(&mut s, b",\0");
         assert_eq!(result, None); // entire string is token
+    }
+
+    #[test]
+    fn test_strsep_single_byte_delimiter_bulk_scan_mutates_only_match() {
+        let mut s = vec![b'a'; 96];
+        s[53] = b':';
+        s[95] = 0;
+
+        let result = strsep(&mut s, b":\0");
+
+        assert_eq!(result, Some(53));
+        assert_eq!(s[53], 0);
+        assert_eq!(s[52], b'a');
+        assert_eq!(s[54], b'a');
     }
 
     #[test]
