@@ -204,34 +204,86 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
 
     let mut last = None;
     let mut i = 0;
-    while i + 4 <= s.len() {
-        let chunk = &s[i..i + 4];
+    while i + 8 <= s.len() {
+        let ch0 = s[i];
+        let ch1 = s[i + 1];
+        let ch2 = s[i + 2];
+        let ch3 = s[i + 3];
+        let ch4 = s[i + 4];
+        let ch5 = s[i + 5];
+        let ch6 = s[i + 6];
+        let ch7 = s[i + 7];
 
-        if chunk[0] == 0 {
+        if ch0 != 0
+            && ch0 != c
+            && ch1 != 0
+            && ch1 != c
+            && ch2 != 0
+            && ch2 != c
+            && ch3 != 0
+            && ch3 != c
+            && ch4 != 0
+            && ch4 != c
+            && ch5 != 0
+            && ch5 != c
+            && ch6 != 0
+            && ch6 != c
+            && ch7 != 0
+            && ch7 != c
+        {
+            i += 8;
+            continue;
+        }
+
+        if ch0 == 0 {
             return last;
         }
-        if chunk[0] == c {
+        if ch0 == c {
             last = Some(i);
         }
-        if chunk[1] == 0 {
+        if ch1 == 0 {
             return last;
         }
-        if chunk[1] == c {
+        if ch1 == c {
             last = Some(i + 1);
         }
-        if chunk[2] == 0 {
+        if ch2 == 0 {
             return last;
         }
-        if chunk[2] == c {
+        if ch2 == c {
             last = Some(i + 2);
         }
-        if chunk[3] == 0 {
+        if ch3 == 0 {
             return last;
         }
-        if chunk[3] == c {
+        if ch3 == c {
             last = Some(i + 3);
         }
-        i += 4;
+        if ch4 == 0 {
+            return last;
+        }
+        if ch4 == c {
+            last = Some(i + 4);
+        }
+        if ch5 == 0 {
+            return last;
+        }
+        if ch5 == c {
+            last = Some(i + 5);
+        }
+        if ch6 == 0 {
+            return last;
+        }
+        if ch6 == c {
+            last = Some(i + 6);
+        }
+        if ch7 == 0 {
+            return last;
+        }
+        if ch7 == c {
+            last = Some(i + 7);
+        }
+        i += 8;
     }
 
     while i < s.len() {
@@ -741,6 +793,28 @@ mod tests {
         ];
         assert_eq!(wcsrchr(&s, b'B' as u32), Some(4));
         assert_eq!(wcsrchr(&s, b'C' as u32), Some(3));
+    }
+
+    #[test]
+    fn test_wcsrchr_skipped_chunks_resolve_candidate_order() {
+        let s = [
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'B' as u32,
+            b'C' as u32,
+            b'B' as u32,
+            0,
+            b'B' as u32,
+        ];
+        assert_eq!(wcsrchr(&s, b'B' as u32), Some(10));
+        assert_eq!(wcsrchr(&s, b'C' as u32), Some(9));
+        assert_eq!(wcsrchr(&s, b'D' as u32), None);
     }
 
     #[test]
