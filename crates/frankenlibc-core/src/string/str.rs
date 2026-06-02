@@ -47,6 +47,33 @@ fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
 }
 
 #[inline(always)]
+fn byte_is_any4(byte: u8, b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
+    byte == b0 || byte == b1 || byte == b2 || byte == b3
+}
+
+#[inline(always)]
+fn has_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    lanes.simd_eq(Simd::splat(0)).any()
+        || lanes.simd_eq(Simd::splat(b0)).any()
+        || lanes.simd_eq(Simd::splat(b1)).any()
+        || lanes.simd_eq(Simd::splat(b2)).any()
+        || lanes.simd_eq(Simd::splat(b3)).any()
+}
+
+#[inline(always)]
+fn has_non_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    let member = lanes.simd_eq(Simd::splat(b0))
+        | lanes.simd_eq(Simd::splat(b1))
+        | lanes.simd_eq(Simd::splat(b2))
+        | lanes.simd_eq(Simd::splat(b3));
+    lanes.simd_eq(Simd::splat(0)).any() || !member.all()
+}
+
+#[inline(always)]
 fn has_ascii_folded_byte_or_nul_simd_32(chunk: &[u8], folded: u8) -> bool {
     debug_assert_eq!(chunk.len(), SIMD_LANES);
     if !folded.is_ascii_lowercase() {
@@ -411,6 +438,54 @@ fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
     s.len()
 }
 
+fn find_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
+    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
+    let mut base = 0usize;
+
+    for chunk in simd_chunks.by_ref() {
+        if has_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
+                    return base + j;
+                }
+            }
+        }
+        base += SIMD_LANES;
+    }
+
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
+fn find_non_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
+    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
+    let mut base = 0usize;
+
+    for chunk in simd_chunks.by_ref() {
+        if has_non_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || !byte_is_any4(byte, b0, b1, b2, b3) {
+                    return base + j;
+                }
+            }
+        }
+        base += SIMD_LANES;
+    }
+
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || !byte_is_any4(byte, b0, b1, b2, b3) {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
 #[allow(unsafe_code)]
 fn find_non_byte_or_nul(s: &[u8], accepted: u8) -> usize {
     const WORD_SIZE: usize = size_of::<usize>();
@@ -683,6 +758,7 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
             }
             return s.len();
         }
+        4 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[3]),
         _ => {}
     }
 
@@ -731,6 +807,7 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
             }
             return s.len();
         }
+        4 => return find_any_of4_or_nul(s, reject[0], reject[1], reject[2], reject[3]),
         _ => {}
     }
 
@@ -785,6 +862,13 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
                 if byte == a0 || byte == a1 || byte == a2 {
                     return Some(i);
                 }
+            }
+            return None;
+        }
+        4 => {
+            let index = find_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[3]);
+            if index < s.len() && s[index] != 0 {
+                return Some(index);
             }
             return None;
         }
@@ -1239,6 +1323,24 @@ mod tests {
     }
 
     #[test]
+    fn test_strspn_four_accept_set_simd_stops_on_nonmember() {
+        let mut s = vec![b'A'; 96];
+        s[37] = b'E';
+        s[64] = 0;
+
+        assert_eq!(strspn(&s, b"ABCD\0"), 37);
+    }
+
+    #[test]
+    fn test_strspn_four_accept_set_simd_stops_at_nul_before_nonmember() {
+        let mut s = vec![b'A'; 96];
+        s[31] = 0;
+        s[63] = b'E';
+
+        assert_eq!(strspn(&s, b"ABCD\0"), 31);
+    }
+
+    #[test]
     fn test_strspn_stops_at_terminator() {
         assert_eq!(strspn(b"abc\0Z", b"abcZ\0"), 3);
     }
@@ -1271,6 +1373,24 @@ mod tests {
     }
 
     #[test]
+    fn test_strcspn_four_reject_set_simd_stops_on_reject() {
+        let mut s = vec![b'A'; 96];
+        s[45] = b'X';
+        s[70] = 0;
+
+        assert_eq!(strcspn(&s, b"WXYZ\0"), 45);
+    }
+
+    #[test]
+    fn test_strcspn_four_reject_set_simd_stops_at_nul_before_reject() {
+        let mut s = vec![b'A'; 96];
+        s[29] = 0;
+        s[70] = b'X';
+
+        assert_eq!(strcspn(&s, b"WXYZ\0"), 29);
+    }
+
+    #[test]
     fn test_strcspn_stops_at_terminator() {
         assert_eq!(strcspn(b"abc\0Z", b"Z\0"), 3);
     }
@@ -1299,6 +1419,25 @@ mod tests {
     fn test_strpbrk_small_accept_sets() {
         assert_eq!(strpbrk(b"abcYdef\0", b"XY\0"), Some(3));
         assert_eq!(strpbrk(b"abcZdef\0", b"XYZ\0"), Some(3));
+    }
+
+    #[test]
+    fn test_strpbrk_four_accept_set_simd_finds_first_match() {
+        let mut s = vec![b'A'; 96];
+        s[34] = b'Y';
+        s[52] = b'W';
+        s[80] = 0;
+
+        assert_eq!(strpbrk(&s, b"WXYZ\0"), Some(34));
+    }
+
+    #[test]
+    fn test_strpbrk_four_accept_set_simd_stops_at_nul_before_match() {
+        let mut s = vec![b'A'; 96];
+        s[30] = 0;
+        s[52] = b'Y';
+
+        assert_eq!(strpbrk(&s, b"WXYZ\0"), None);
     }
 
     #[test]
