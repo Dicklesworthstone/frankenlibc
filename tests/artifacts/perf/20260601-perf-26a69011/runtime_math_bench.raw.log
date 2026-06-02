@@ -1,0 +1,297 @@
+  [2m2026-06-02T00:02:25.200084Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSelected worker: vmi1149989 at ubuntu@212.90.121.76 (2 slots remaining after reservation, speed 50.0)[0m
+    [2;3mat[0m rch/src/hook.rs:514 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:25.453132Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mStarting remote compilation pipeline for frankenlibc (hash: eabc2a07ccde81a7)[0m
+    [2;3mat[0m rch/src/hook.rs:5987 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:25.453164Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mPrepared dependency sync manifest for 10 roots[0m
+    [2;3mat[0m rch/src/hook.rs:6009 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:27.111380Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSyncing project to worker vmi1149989...[0m
+    [2;3mat[0m rch/src/hook.rs:6039 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:27.111435Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc -> /data/projects/frankenlibc on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:38.887032Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 11775ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:38.887090Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc -> /data/projects/frankenlibc/crates/frankenlibc on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:40.713665Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1826ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:40.713728Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-abi -> /data/projects/frankenlibc/crates/frankenlibc-abi on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:42.625315Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1911ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:42.625378Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-bench -> /data/projects/frankenlibc/crates/frankenlibc-bench on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:44.487332Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1861ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:44.487407Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-core -> /data/projects/frankenlibc/crates/frankenlibc-core on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:46.296493Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1809ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:46.296570Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-fixture-exec -> /data/projects/frankenlibc/crates/frankenlibc-fixture-exec on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:48.178980Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1882ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:48.179046Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-harness -> /data/projects/frankenlibc/crates/frankenlibc-harness on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:50.209399Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2030ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:50.209497Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-membrane -> /data/projects/frankenlibc/crates/frankenlibc-membrane on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:52.091477Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1881ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:52.091553Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc_conformance -> /data/projects/frankenlibc/crates/frankenlibc_conformance on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:53.979259Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1887ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:53.979323Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/tools/stdio_synth -> /data/projects/frankenlibc/tools/stdio_synth on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:1400 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:55.801268Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1821ms[0m
+    [2;3mat[0m rch/src/transfer.rs:1469 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:02:55.801305Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSync complete: 81874 files, 3068522 bytes in 28683ms[0m
+    [2;3mat[0m rch/src/hook.rs:6202 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:03:26.477810Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mExecuting command remotely: cargo bench -p frankenlibc-bench --bench runtime_math_bench -- --sample-size 50 --measurement-time 3 --warm-up-time 1[0m
+    [2;3mat[0m rch/src/hook.rs:6240 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:03:26.477851Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): /data/tmp/cargo-target -> /data/projects/frankenlibc/.rch-target-vmi1149989-job-29869223945699732-1780358547111373713-0[0m
+    [2;3mat[0m rch/src/transfer.rs:712 [2;3mon[0m ThreadId(1)
+
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded anstream v1.0.0
+  Downloaded anstyle v1.0.14
+  Downloaded anstyle-query v1.1.5
+  Downloaded anes v0.1.6
+  Downloaded arrayref v0.3.9
+  Downloaded anstyle-parse v1.0.0
+  Downloaded alloca v0.4.0
+  Downloaded ciborium-ll v0.2.2
+  Downloaded crypto-common v0.2.1
+  Downloaded plotters-svg v0.3.7
+  Downloaded ciborium-io v0.2.2
+  Downloaded utf8parse v0.2.2
+  Downloaded strsim v0.11.1
+  Downloaded page_size v0.6.0
+  Downloaded plotters-backend v0.3.7
+  Downloaded clap_lex v1.1.0
+  Downloaded block-buffer v0.12.0
+  Downloaded same-file v1.0.6
+  Downloaded heck v0.5.0
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded itoa v1.0.18
+  Downloaded cpufeatures v0.3.0
+  Downloaded cast v0.3.0
+  Downloaded colorchoice v1.0.5
+  Downloaded arrayvec v0.7.6
+  Downloaded cfg-if v1.0.4
+  Downloaded either v1.15.0
+  Downloaded oorandom v11.1.5
+  Downloaded criterion-plot v0.8.2
+  Downloaded crossbeam-deque v0.8.6
+  Downloaded digest v0.11.2
+  Downloaded quote v1.0.45
+  Downloaded tinytemplate v1.2.1
+  Downloaded constant_time_eq v0.4.2
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded walkdir v2.5.0
+  Downloaded zmij v1.0.21
+  Downloaded autocfg v1.5.0
+  Downloaded md-5 v0.11.0
+  Downloaded shlex v1.3.0
+  Downloaded ciborium v0.2.2
+  Downloaded crossbeam-epoch v0.9.18
+  Downloaded crossbeam-utils v0.8.21
+  Downloaded sha2 v0.11.0
+  Downloaded clap_derive v4.6.1
+  Downloaded hybrid-array v0.4.10
+  Downloaded aho-corasick v1.1.4
+  Downloaded clap v4.6.1
+  Downloaded unicode-ident v1.0.24
+  Downloaded num-traits v0.2.19
+  Downloaded proc-macro2 v1.0.106
+  Downloaded serde_core v1.0.228
+  Downloaded serde_derive v1.0.228
+  Downloaded const-oid v0.10.2
+  Downloaded half v2.7.1
+  Downloaded rayon-core v1.13.0
+  Downloaded serde v1.0.228
+  Downloaded zerocopy-derive v0.8.48
+  Downloaded memchr v2.8.0
+  Downloaded cc v1.2.60
+  Downloaded typenum v1.20.0
+  Downloaded criterion v0.8.2
+  Downloaded itertools v0.13.0
+  Downloaded plotters v0.3.7
+  Downloaded regex v1.12.3
+  Downloaded serde_json v1.0.149
+  Downloaded clap_builder v4.6.0
+  Downloaded libm v0.2.16
+  Downloaded rayon v1.12.0
+  Downloaded blake3 v1.8.4
+  Downloaded zerocopy v0.8.48
+  Downloaded syn v2.0.117
+  Downloaded regex-syntax v0.8.10
+  Downloaded regex-automata v0.4.14
+  Downloaded libc v0.2.185
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling zmij v1.0.21
+   Compiling typenum v1.20.0
+   Compiling serde_json v1.0.149
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling serde_core v1.0.228
+   Compiling cfg-if v1.0.4
+   Compiling const-oid v0.10.2
+   Compiling cpufeatures v0.3.0
+   Compiling cc v1.2.60
+   Compiling utf8parse v0.2.2
+   Compiling anstyle v1.0.14
+   Compiling anstyle-query v1.1.5
+   Compiling serde v1.0.228
+   Compiling anstyle-parse v1.0.0
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstream v1.0.0
+   Compiling crossbeam-utils v0.8.21
+   Compiling strsim v0.11.1
+   Compiling heck v0.5.0
+   Compiling clap_lex v1.1.0
+   Compiling hybrid-array v0.4.10
+   Compiling syn v2.0.117
+   Compiling clap_builder v4.6.0
+   Compiling zerocopy v0.8.48
+   Compiling memchr v2.8.0
+   Compiling crypto-common v0.2.1
+   Compiling block-buffer v0.12.0
+   Compiling itoa v1.0.18
+   Compiling blake3 v1.8.4
+   Compiling digest v0.11.2
+   Compiling sha2 v0.11.0
+   Compiling autocfg v1.5.0
+   Compiling arrayvec v0.7.6
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-epoch v0.9.18
+   Compiling either v1.15.0
+   Compiling constant_time_eq v0.4.2
+   Compiling libc v0.2.185
+   Compiling libm v0.2.16
+   Compiling rayon-core v1.13.0
+   Compiling frankenlibc-membrane v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-membrane)
+   Compiling arrayref v0.3.9
+   Compiling crossbeam-deque v0.8.6
+   Compiling alloca v0.4.0
+   Compiling regex-syntax v0.8.10
+   Compiling ciborium-io v0.2.2
+   Compiling plotters-backend v0.3.7
+   Compiling plotters-svg v0.3.7
+   Compiling itertools v0.13.0
+   Compiling md-5 v0.11.0
+   Compiling same-file v1.0.6
+   Compiling serde_derive v1.0.228
+   Compiling clap_derive v4.6.1
+   Compiling zerocopy-derive v0.8.48
+   Compiling regex-automata v0.4.14
+   Compiling cast v0.3.0
+   Compiling page_size v0.6.0
+   Compiling plotters v0.3.7
+   Compiling walkdir v2.5.0
+   Compiling rayon v1.12.0
+   Compiling oorandom v11.1.5
+   Compiling anes v0.1.6
+   Compiling clap v4.6.1
+   Compiling criterion-plot v0.8.2
+   Compiling regex v1.12.3
+   Compiling stdio-synth v0.1.0 (/data/projects/frankenlibc/tools/stdio_synth)
+   Compiling tinytemplate v1.2.1
+   Compiling frankenlibc-core v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-core)
+warning: frankenlibc-core@0.1.0: No SMT solver found for /data/projects/frankenlibc/.rch-target-vmi1149989-job-29869223945699732-1780358547111373713-0/release/build/frankenlibc-core-823606ad944c1a0a/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+   Compiling half v2.7.1
+   Compiling ciborium-ll v0.2.2
+   Compiling ciborium v0.2.2
+   Compiling criterion v0.8.2
+   Compiling frankenlibc-bench v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-bench)
+    Finished `bench` profile [optimized] target(s) in 41.57s
+     Running benches/runtime_math_bench.rs (.rch-target-vmi1149989-job-29869223945699732-1780358547111373713-0/release/deps/runtime_math_bench-97add8ca33914fb5)
+RUNTIME_MATH_BENCH_META frankenlibc_mode_env=<unset>
+RUNTIME_MATH_BENCH_META rustflags=<unset>
+RUNTIME_MATH_BENCH_META cpu_model=: AMD EPYC Processor (with IBPB)
+Gnuplot not found, using plotters backend
+Benchmarking runtime_math/decide/strict
+Benchmarking runtime_math/decide/strict: Warming up for 1.0000 s
+Benchmarking runtime_math/decide/strict: Collecting 50 samples in estimated 3.0000 s (28M iterations)
+Benchmarking runtime_math/decide/strict: Analyzing
+runtime_math/decide/strict
+                        time:   [100.30 ns 102.15 ns 104.17 ns]
+                        thrpt:  [9.5996 Melem/s 9.7898 Melem/s 9.9698 Melem/s]
+Found 3 outliers among 50 measurements (6.00%)
+  3 (6.00%) high mild
+
+RUNTIME_MATH_BENCH mode=strict bench=decide samples=74 p50_ns_op=98.903 p95_ns_op=118.277 p99_ns_op=124.680 mean_ns_op=100.834 throughput_ops_s=9696684.989
+Benchmarking runtime_math/observe_fast/strict
+Benchmarking runtime_math/observe_fast/strict: Warming up for 1.0000 s
+Benchmarking runtime_math/observe_fast/strict: Collecting 50 samples in estimated 3.0022 s (1.5M iterations)
+Benchmarking runtime_math/observe_fast/strict: Analyzing
+runtime_math/observe_fast/strict
+                        time:   [1.8777 µs 1.9315 µs 1.9858 µs]
+                        thrpt:  [503.57 Kelem/s 517.74 Kelem/s 532.55 Kelem/s]
+
+RUNTIME_MATH_BENCH mode=strict bench=observe_fast samples=69 p50_ns_op=1952.989 p95_ns_op=2252.328 p99_ns_op=2304.531 mean_ns_op=1955.089 throughput_ops_s=515818.450
+Benchmarking runtime_math/decide_observe/strict
+Benchmarking runtime_math/decide_observe/strict: Warming up for 1.0000 s
+Benchmarking runtime_math/decide_observe/strict: Collecting 50 samples in estimated 3.0011 s (3.1M iterations)
+Benchmarking runtime_math/decide_observe/strict: Analyzing
+runtime_math/decide_observe/strict
+                        time:   [1.0491 µs 1.0811 µs 1.1084 µs]
+                        thrpt:  [902.17 Kelem/s 924.96 Kelem/s 953.23 Kelem/s]
+
+RUNTIME_MATH_BENCH mode=strict bench=decide_observe samples=71 p50_ns_op=981.829 p95_ns_op=1182.312 p99_ns_op=1247.043 mean_ns_op=971.079 throughput_ops_s=984185.362
+  [2m2026-06-02T00:04:25.410380Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mRemote command finished: exit=0 in 58932ms[0m
+    [2;3mat[0m rch/src/hook.rs:6364 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:04:25.410694Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mRetrieving build artifacts...[0m
+    [2;3mat[0m rch/src/hook.rs:6413 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:04:25.410723Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRetrieving artifacts from /data/projects/frankenlibc on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:2072 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:04:27.305535Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mArtifacts retrieved in 1894ms (1 files, 1678 bytes)[0m
+    [2;3mat[0m rch/src/transfer.rs:2111 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:04:27.305553Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mArtifacts retrieved: 1 files, 1678 bytes in 1894ms[0m
+    [2;3mat[0m rch/src/hook.rs:6446 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:04:27.305635Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRetrieving artifacts from /data/projects/frankenlibc/.rch-target-vmi1149989-job-29869223945699732-1780358547111373713-0 on vmi1149989[0m
+    [2;3mat[0m rch/src/transfer.rs:2072 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:04:29.387667Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mArtifacts retrieved in 2082ms (77 files, 1628 bytes)[0m
+    [2;3mat[0m rch/src/transfer.rs:2111 [2;3mon[0m ThreadId(1)
+
+  [2m2026-06-02T00:04:29.387688Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mCustom CARGO_TARGET_DIR artifacts retrieved: 77 files, 1628 bytes in 2082ms[0m
+    [2;3mat[0m rch/src/hook.rs:6570 [2;3mon[0m ThreadId(1)
+
+[RCH] remote vmi1149989 (124.2s)
