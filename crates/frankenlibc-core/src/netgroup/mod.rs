@@ -63,10 +63,10 @@ fn extract_triples_into(bytes: &[u8], out: &mut Vec<NetgroupTriple>) {
             return;
         };
         let inner = &bytes[i + 1..i + close_offset];
-        let parts: Vec<&[u8]> = inner.split(|&b| b == b',').collect();
-        let host = parts.first().copied().unwrap_or(&[]);
-        let user = parts.get(1).copied().unwrap_or(&[]);
-        let domain = parts.get(2).copied().unwrap_or(&[]);
+        let mut parts = inner.split(|&b| b == b',');
+        let host = parts.next().unwrap_or(&[]);
+        let user = parts.next().unwrap_or(&[]);
+        let domain = parts.next().unwrap_or(&[]);
         out.push(NetgroupTriple {
             host: trim_ascii(host).to_vec(),
             user: trim_ascii(user).to_vec(),
