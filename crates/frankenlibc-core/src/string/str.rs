@@ -13,6 +13,15 @@ fn has_nul_byte(word: usize) -> bool {
     word.wrapping_sub(LO_MAGIC) & !word & HI_MAGIC != 0
 }
 
+#[inline]
+fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
+    let mut table = [false; 256];
+    for &byte in bytes {
+        table[byte as usize] = true;
+    }
+    table
+}
+
 /// Returns the length of a NUL-terminated byte string (not counting the NUL).
 ///
 /// Equivalent to C `strlen`. Scans `s` for the first `0x00` byte and returns
@@ -492,9 +501,10 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
     }
 
     let accept_set = &accept[..accept_len];
+    let accept_table = byte_membership_table(accept_set);
 
     for (i, &byte) in s.iter().enumerate() {
-        if byte == 0 || !accept_set.contains(&byte) {
+        if byte == 0 || !accept_table[byte as usize] {
             return i;
         }
     }
@@ -544,9 +554,10 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
     }
 
     let reject_set = &reject[..reject_len];
+    let reject_table = byte_membership_table(reject_set);
 
     for (i, &byte) in s.iter().enumerate() {
-        if byte == 0 || reject_set.contains(&byte) {
+        if byte == 0 || reject_table[byte as usize] {
             return i;
         }
     }
@@ -604,12 +615,13 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
     }
 
     let accept_set = &accept[..accept_len];
+    let accept_table = byte_membership_table(accept_set);
 
     for (i, &byte) in s.iter().enumerate() {
         if byte == 0 {
             return None;
         }
-        if accept_set.contains(&byte) {
+        if accept_table[byte as usize] {
             return Some(i);
         }
     }
