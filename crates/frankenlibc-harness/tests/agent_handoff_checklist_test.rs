@@ -96,6 +96,21 @@ fn output_text(output: &Output) -> String {
     )
 }
 
+fn git_head(root: &Path) -> TestResult<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(output_text(&output)).into());
+    }
+    let head = String::from_utf8(output.stdout)?.trim().to_owned();
+    if head.is_empty() {
+        return Err(io::Error::other("git rev-parse HEAD returned empty output").into());
+    }
+    Ok(head)
+}
+
 fn string_set(value: &Value, field: &str) -> TestResult<BTreeSet<String>> {
     Ok(value[field]
         .as_array()
@@ -264,8 +279,19 @@ fn checker_emits_pass_report_and_structured_log_rows() -> TestResult {
 
     let rows = read_jsonl(&out_dir.join("agent_handoff_checklist.log.jsonl"))?;
     assert_eq!(rows.len(), 9);
+    let expected_commit = git_head(&root)?;
     for row in &rows {
         assert_log_row_shape(row);
+        assert_eq!(
+            row["source_commit"].as_str(),
+            Some(expected_commit.as_str()),
+            "log row must bind the real source commit, not a placeholder: {row}"
+        );
+        assert_ne!(
+            row["source_commit"].as_str(),
+            Some("source-commit-placeholder"),
+            "log row leaked placeholder source_commit: {row}"
+        );
     }
     let branch_rows = rows
         .iter()

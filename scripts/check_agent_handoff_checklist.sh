@@ -302,6 +302,7 @@ record(
 )
 
 transcript_errors = []
+commit = source_commit()
 for transcript in transcripts:
     if not isinstance(transcript, dict):
         transcript_errors.append("transcript row is not object")
@@ -309,7 +310,7 @@ for transcript in transcripts:
     scenario = transcript.get("scenario_id", "<missing>")
     if transcript.get("branch_id") not in branches_by_id:
         transcript_errors.append(f"{scenario}: branch_id is unknown")
-    row_errors = validate_log_payload(transcript_to_log_row(artifact, transcript, "source-commit-placeholder"))
+    row_errors = validate_log_payload(transcript_to_log_row(artifact, transcript, commit))
     transcript_errors.extend(f"{scenario}: {error}" for error in row_errors)
     commands = transcript.get("commands")
     if not isinstance(commands, list) or len(commands) < 3:
@@ -365,7 +366,6 @@ record(
     "closure_contract must say unrelated changes were not reverted",
 )
 
-commit = source_commit()
 log_rows = []
 for branch_id in REQUIRED_BRANCHES:
     if branch_id in branches_by_id:
