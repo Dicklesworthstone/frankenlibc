@@ -53,10 +53,31 @@ pub fn memset(dest: &mut [u8], value: u8, n: usize) -> usize {
 /// Only compares `min(n, a.len(), b.len())` bytes.
 pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let count = n.min(a.len()).min(b.len());
-    let mut i = 0usize;
-    while i < count {
-        let av = a[i];
-        let bv = b[i];
+
+    let a = &a[..count];
+    let b = &b[..count];
+    let mut a_chunks = a.chunks_exact(8);
+    let mut b_chunks = b.chunks_exact(8);
+
+    for (a_chunk, b_chunk) in a_chunks.by_ref().zip(b_chunks.by_ref()) {
+        if u64_from_chunk(a_chunk) != u64_from_chunk(b_chunk) {
+            return compare_bytes(a_chunk, b_chunk);
+        }
+    }
+
+    compare_bytes(a_chunks.remainder(), b_chunks.remainder())
+}
+
+#[inline]
+fn u64_from_chunk(chunk: &[u8]) -> u64 {
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(chunk);
+    u64::from_ne_bytes(bytes)
+}
+
+#[inline]
+fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
+    for (&av, &bv) in a.iter().zip(b.iter()) {
         if av != bv {
             return if av < bv {
                 core::cmp::Ordering::Less
@@ -64,7 +85,6 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
                 core::cmp::Ordering::Greater
             };
         }
-        i += 1;
     }
     core::cmp::Ordering::Equal
 }
@@ -250,6 +270,18 @@ mod tests {
         );
         assert_eq!(
             memcmp(b"abcdXfgh", b"abcdEfgh", 8),
+            core::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn test_memcmp_preserves_first_difference_inside_bulk_chunk() {
+        assert_eq!(
+            memcmp(b"abZdefgh", b"acAdefgh", 8),
+            core::cmp::Ordering::Less
+        );
+        assert_eq!(
+            memcmp(b"abcdefgh\xfftail", b"abcdefgh\x00tail", 13),
             core::cmp::Ordering::Greater
         );
     }
