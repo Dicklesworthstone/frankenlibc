@@ -66,6 +66,7 @@ mod generated_size_class_certificate {
 // ---------------------------------------------------------------------------
 
 /// Maximum number of variables per barrier certificate.
+#[cfg(test)]
 const MAX_VARS: usize = 4;
 /// Fragmentation certificate dimensionality.
 const FRAGMENTATION_CERT_DIM: usize = generated_fragmentation_certificate::FRAGMENTATION_CERT_DIM;
@@ -662,6 +663,7 @@ const INVARIANT_A_MONOMIALS: usize = 20;
 /// These are the non-zero monomials from the DSOS relaxation of
 /// the quarantine depth safety envelope. Sparse representation
 /// keeps evaluation cost at ~20 multiply-adds instead of 35.
+#[cfg(test)]
 static INVARIANT_A_EXPONENTS: [[u8; MAX_VARS]; INVARIANT_A_MONOMIALS] = [
     // Constant + linear terms
     [0, 0, 0, 0], // 1
@@ -790,36 +792,84 @@ pub fn evaluate_quarantine_barrier(
     lambda_latency: i64,
 ) -> i64 {
     // Normalize to fixed-point.
-    let d = normalize_fixed(depth as i64, NORM_DEPTH);
-    let c = normalize_fixed(contention as i64, NORM_CONTENTION);
-    let a = normalize_fixed(adverse_ppm as i64, NORM_ADVERSE);
-    let l = normalize_fixed(lambda_latency, NORM_LATENCY);
+    let d = i128::from(normalize_fixed(depth as i64, NORM_DEPTH));
+    let c = i128::from(normalize_fixed(contention as i64, NORM_CONTENTION));
+    let a = i128::from(normalize_fixed(adverse_ppm as i64, NORM_ADVERSE));
+    let l = i128::from(normalize_fixed(lambda_latency, NORM_LATENCY));
 
-    let vars = [d, c, a, l];
-    let mut result: i128 = 0;
+    let d2 = d.saturating_mul(d);
+    let d3 = d2.saturating_mul(d);
+    let c2 = c.saturating_mul(c);
+    let a2 = a.saturating_mul(a);
+    let a3 = a2.saturating_mul(a);
+    let l2 = l.saturating_mul(l);
 
-    for (k, (exponents, &coeff)) in INVARIANT_A_EXPONENTS
-        .iter()
-        .zip(INVARIANT_A_COEFFICIENTS.iter())
-        .enumerate()
-    {
-        if coeff == 0 {
-            continue;
-        }
-        let mono = eval_monomial(&vars, &exponents[..MAX_VARS]);
-        // coeff is in milli-units, mono is in FIXED_SCALE^(degree).
-        let degree = exponents[..MAX_VARS].iter().map(|&e| e as u32).sum::<u32>();
-        let scale = fixed_power(FIXED_SCALE, degree);
-        let _ = k; // used for iteration only
-        if scale != 0 {
-            result = result.saturating_add(i128::from(coeff).saturating_mul(mono) / scale);
-        }
-    }
+    let scale1 = i128::from(FIXED_SCALE);
+    let scale2 = scale1.saturating_mul(scale1);
+    let scale3 = scale2.saturating_mul(scale1);
 
-    result.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+    let [
+        c0,
+        c1,
+        c2_coeff,
+        c3,
+        c4,
+        c5,
+        c6,
+        c7,
+        c8,
+        c9,
+        c10,
+        c11,
+        c12,
+        c13,
+        c14,
+        c15,
+        c16,
+        c17,
+        c18,
+        c19,
+    ] = INVARIANT_A_COEFFICIENTS;
+
+    let mut result = i128::from(c0);
+    result = result.saturating_add(scaled_poly_term(c1, d, scale1));
+    result = result.saturating_add(scaled_poly_term(c2_coeff, c, scale1));
+    result = result.saturating_add(scaled_poly_term(c3, a, scale1));
+    result = result.saturating_add(scaled_poly_term(c4, l, scale1));
+    result = result.saturating_add(scaled_poly_term(c5, d2, scale2));
+    result = result.saturating_add(scaled_poly_term(c6, c2, scale2));
+    result = result.saturating_add(scaled_poly_term(c7, a2, scale2));
+    result = result.saturating_add(scaled_poly_term(c8, d.saturating_mul(c), scale2));
+    result = result.saturating_add(scaled_poly_term(c9, d.saturating_mul(a), scale2));
+    result = result.saturating_add(scaled_poly_term(c10, d.saturating_mul(l), scale2));
+    result = result.saturating_add(scaled_poly_term(c11, c.saturating_mul(a), scale2));
+    result = result.saturating_add(scaled_poly_term(c12, a.saturating_mul(l), scale2));
+    result = result.saturating_add(scaled_poly_term(c13, d.saturating_mul(a2), scale3));
+    result = result.saturating_add(scaled_poly_term(c14, d2.saturating_mul(c), scale3));
+    result = result.saturating_add(scaled_poly_term(c15, c.saturating_mul(l2), scale3));
+    result = result.saturating_add(scaled_poly_term(
+        c16,
+        d.saturating_mul(c).saturating_mul(a),
+        scale3,
+    ));
+    result = result.saturating_add(scaled_poly_term(
+        c17,
+        d.saturating_mul(c).saturating_mul(l),
+        scale3,
+    ));
+    result = result.saturating_add(scaled_poly_term(c18, a3, scale3));
+    result = result.saturating_add(scaled_poly_term(c19, d3, scale3));
+
+    result.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+}
+
+#[inline]
+fn scaled_poly_term(coeff: i64, monomial: i128, scale: i128) -> i128 {
+    i128::from(coeff).saturating_mul(monomial) / scale
 }
 
 /// Evaluate a monomial x₁^e₁ * x₂^e₂ * ... in fixed-point.
+#[cfg(test)]
 #[inline]
 fn eval_monomial(vars: &[i64], exponents: &[u8]) -> i128 {
     let mut product: i128 = 1;
@@ -832,6 +882,7 @@ fn eval_monomial(vars: &[i64], exponents: &[u8]) -> i128 {
 }
 
 /// Compute base^exp for small non-negative exponents.
+#[cfg(test)]
 #[inline]
 const fn fixed_power(base: i64, exp: u32) -> i128 {
     let mut result = 1i128;
@@ -1229,6 +1280,33 @@ mod tests {
             write!(&mut out, "{byte:02x}").expect("writing digest to String must succeed");
         }
         out
+    }
+
+    fn evaluate_quarantine_barrier_interpreted(
+        depth: u32,
+        contention: u32,
+        adverse_ppm: u32,
+        lambda_latency: i64,
+    ) -> i64 {
+        let vars = [
+            normalize_fixed(depth as i64, NORM_DEPTH),
+            normalize_fixed(contention as i64, NORM_CONTENTION),
+            normalize_fixed(adverse_ppm as i64, NORM_ADVERSE),
+            normalize_fixed(lambda_latency, NORM_LATENCY),
+        ];
+        let mut result: i128 = 0;
+
+        for (exponents, &coeff) in INVARIANT_A_EXPONENTS
+            .iter()
+            .zip(INVARIANT_A_COEFFICIENTS.iter())
+        {
+            let mono = eval_monomial(&vars, &exponents[..MAX_VARS]);
+            let degree = exponents[..MAX_VARS].iter().map(|&e| e as u32).sum::<u32>();
+            let scale = fixed_power(FIXED_SCALE, degree);
+            result = result.saturating_add(i128::from(coeff).saturating_mul(mono) / scale);
+        }
+
+        result.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
     }
 
     fn determinant(mut matrix: Vec<Vec<f64>>) -> f64 {
@@ -1986,6 +2064,34 @@ mod tests {
         // At 100% adverse rate, no depth configuration should be safe.
         let val = evaluate_quarantine_barrier(65536, 0, 1_000_000, 0);
         assert!(val < 0, "Expected violation at 100% adverse, got {val}");
+    }
+
+    #[test]
+    fn quarantine_explicit_polynomial_matches_interpreted_certificate() {
+        let cases = [
+            (64, 0, 0, 0),
+            (64, 100, 500_000, 50),
+            (256, 10, 100_000, 0),
+            (4_096, 4, 1_000, 0),
+            (4_096, 500, 10_000, -50),
+            (16_384, 10, 100_000, 0),
+            (65_536, 0, 1_000_000, 0),
+            (1_000_000, 10_000, 1_000_000, i64::MAX / 2),
+            (0, 1, 1_000, i64::MIN / 2),
+        ];
+
+        for &(depth, contention, adverse_ppm, lambda_latency) in &cases {
+            assert_eq!(
+                evaluate_quarantine_barrier(depth, contention, adverse_ppm, lambda_latency),
+                evaluate_quarantine_barrier_interpreted(
+                    depth,
+                    contention,
+                    adverse_ppm,
+                    lambda_latency
+                ),
+                "explicit polynomial diverged for depth={depth} contention={contention} adverse_ppm={adverse_ppm} lambda_latency={lambda_latency}"
+            );
+        }
     }
 
     // ---- Controller State Machine Tests ----
