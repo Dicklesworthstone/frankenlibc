@@ -277,98 +277,34 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
     }
 
     let mut last = None;
-    let mut i = 0;
-    while i + 8 <= s.len() {
-        let ch0 = s[i];
-        let ch1 = s[i + 1];
-        let ch2 = s[i + 2];
-        let ch3 = s[i + 3];
-        let ch4 = s[i + 4];
-        let ch5 = s[i + 5];
-        let ch6 = s[i + 6];
-        let ch7 = s[i + 7];
+    let mut chunks = s.chunks_exact(WIDE_SIMD_LANES);
+    let mut base = 0usize;
 
-        if ch0 != 0
-            && ch0 != c
-            && ch1 != 0
-            && ch1 != c
-            && ch2 != 0
-            && ch2 != c
-            && ch3 != 0
-            && ch3 != c
-            && ch4 != 0
-            && ch4 != c
-            && ch5 != 0
-            && ch5 != c
-            && ch6 != 0
-            && ch6 != c
-            && ch7 != 0
-            && ch7 != c
-        {
-            i += 8;
+    for chunk in chunks.by_ref() {
+        if !has_wide_or_nul_simd(chunk, c) {
+            base += WIDE_SIMD_LANES;
             continue;
         }
 
-        if ch0 == 0 {
-            return last;
+        for (j, &ch) in chunk.iter().enumerate() {
+            if ch == 0 {
+                return last;
+            }
+            if ch == c {
+                last = Some(base + j);
+            }
         }
-        if ch0 == c {
-            last = Some(i);
-        }
-        if ch1 == 0 {
-            return last;
-        }
-        if ch1 == c {
-            last = Some(i + 1);
-        }
-        if ch2 == 0 {
-            return last;
-        }
-        if ch2 == c {
-            last = Some(i + 2);
-        }
-        if ch3 == 0 {
-            return last;
-        }
-        if ch3 == c {
-            last = Some(i + 3);
-        }
-        if ch4 == 0 {
-            return last;
-        }
-        if ch4 == c {
-            last = Some(i + 4);
-        }
-        if ch5 == 0 {
-            return last;
-        }
-        if ch5 == c {
-            last = Some(i + 5);
-        }
-        if ch6 == 0 {
-            return last;
-        }
-        if ch6 == c {
-            last = Some(i + 6);
-        }
-        if ch7 == 0 {
-            return last;
-        }
-        if ch7 == c {
-            last = Some(i + 7);
-        }
-        i += 8;
+
+        base += WIDE_SIMD_LANES;
     }
 
-    while i < s.len() {
-        let ch = s[i];
+    for (j, &ch) in chunks.remainder().iter().enumerate() {
         if ch == 0 {
             return last;
         }
         if ch == c {
-            last = Some(i);
+            last = Some(base + j);
         }
-        i += 1;
     }
 
     last
@@ -469,13 +405,11 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     let b_all = &s2[..count];
     let mut a_chunks = a_all.chunks_exact(WIDE_SIMD_LANES);
     let mut b_chunks = b_all.chunks_exact(WIDE_SIMD_LANES);
-    let mut base = 0usize;
 
     for (a_chunk, b_chunk) in a_chunks.by_ref().zip(b_chunks.by_ref()) {
         let av = Simd::<u32, WIDE_SIMD_LANES>::from_slice(a_chunk);
         let bv = Simd::<u32, WIDE_SIMD_LANES>::from_slice(b_chunk);
         if av.simd_eq(bv).all() {
-            base += WIDE_SIMD_LANES;
             continue;
         }
         // Mismatch present in this panel; resolve the first differing index.
@@ -785,12 +719,7 @@ pub fn wmemrchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     }
 
     // Remainder occupies the front `[0, end)` of the slice.
-    for j in (0..end).rev() {
-        if scan[j] == c {
-            return Some(j);
-        }
-    }
-    None
+    (0..end).rev().find(|&j| scan[j] == c)
 }
 
 /// Simple ASCII-range case folding for wide characters.
@@ -982,6 +911,26 @@ mod tests {
         assert_eq!(wcsrchr(&s, b'B' as u32), Some(10));
         assert_eq!(wcsrchr(&s, b'C' as u32), Some(9));
         assert_eq!(wcsrchr(&s, b'D' as u32), None);
+    }
+
+    #[test]
+    fn test_wcsrchr_panel_stops_at_nul_before_later_match() {
+        let s = [
+            b'A' as u32,
+            b'A' as u32,
+            b'B' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            b'A' as u32,
+            0,
+            b'B' as u32,
+            b'B' as u32,
+        ];
+        assert_eq!(wcsrchr(&s, b'B' as u32), Some(2));
+        assert_eq!(wcsrchr(&s, b'C' as u32), None);
     }
 
     #[test]
