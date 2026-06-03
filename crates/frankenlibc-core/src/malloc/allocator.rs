@@ -15,6 +15,10 @@ use std::sync::Arc;
 const TRACE_ID_PREFIX: &str = "core::malloc::";
 const TRACE_ID_SEPARATOR: &str = "::";
 const LOWER_HEX: &[u8; 16] = b"0123456789abcdef";
+const HOT_CERT_64_REQUEST_SIZE: usize = 64;
+const HOT_CERT_64_CLASS_SIZE: usize = 64;
+const HOT_CERT_64_VALUE: i64 = 150_000;
+const HOT_CERT_64_DETAILS: &str = "requested_size=64;mapped_class_size=64;cert_value=150000";
 
 /// Allocator lifecycle log level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,9 +288,7 @@ impl MallocState {
             } else {
                 "certificate_violation"
             },
-            format!(
-                "requested_size={size};mapped_class_size={class_size};cert_value={size_class_cert_value}"
-            ),
+            size_class_certificate_details(size, class_size, size_class_cert_value),
         );
 
         // Try thread cache first
@@ -536,6 +538,23 @@ fn lifecycle_trace_id(symbol: &str, decision_id: u64) -> String {
     trace_id.push_str(TRACE_ID_SEPARATOR);
     push_fixed_lower_hex_u64(&mut trace_id, decision_id);
     trace_id
+}
+
+fn size_class_certificate_details(
+    size: usize,
+    class_size: usize,
+    cert_value: i64,
+) -> Cow<'static, str> {
+    if size == HOT_CERT_64_REQUEST_SIZE
+        && class_size == HOT_CERT_64_CLASS_SIZE
+        && cert_value == HOT_CERT_64_VALUE
+    {
+        Cow::Owned(HOT_CERT_64_DETAILS.to_owned())
+    } else {
+        Cow::Owned(format!(
+            "requested_size={size};mapped_class_size={class_size};cert_value={cert_value}"
+        ))
+    }
 }
 
 fn push_fixed_lower_hex_u64(out: &mut String, value: u64) {
