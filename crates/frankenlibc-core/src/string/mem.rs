@@ -296,9 +296,146 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
         return None;
     }
 
-    haystack[..h_count]
-        .windows(n_count)
-        .position(|window| window == &needle[..n_count])
+    let hay = &haystack[..h_count];
+    let ndl = &needle[..n_count];
+
+    // Single-byte needle: defer to the SIMD memchr scan.
+    if n_count == 1 {
+        return memchr(hay, ndl[0], h_count);
+    }
+
+    two_way_search(hay, ndl)
+}
+
+/// Linear-time substring search via the Two-Way (Crochemore–Perrin)
+/// algorithm — the same complexity class glibc's `memmem`/`strstr` use.
+///
+/// The naive `windows().position()` scan is O(n·m) in the worst case
+/// (a quadratic blow-up an adversary can trigger with repetitive input,
+/// e.g. `"aaa…ab"` searched for `"aaa…ab"`). Two-Way runs in O(n+m) time
+/// with O(1) auxiliary space: it computes a *critical factorization* of
+/// the needle (via the maximal suffix under both byte orderings), then
+/// scans the haystack comparing the right factor first and shifting by
+/// the needle's period on a match — augmented here with a Boyer–Moore–
+/// Horspool last-byte shift and a 256-bit membership set so typical text
+/// skips ahead rather than inspecting every byte.
+///
+/// Returns the offset of the leftmost match within `hay`, which is
+/// algorithm-independent, so this is bit-for-bit output-equivalent to the
+/// naive scan (and to glibc). `ndl` must be non-empty and no longer than
+/// `hay`. Ported from musl's `twoway_memmem`; every index is bounds-safe.
+fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
+    let l = ndl.len();
+    let li = l as isize;
+
+    // Membership set + Horspool last-occurrence shift table for the needle.
+    let mut byteset = [0u64; 4];
+    let mut shift = [0usize; 256];
+    for (i, &b) in ndl.iter().enumerate() {
+        byteset[(b >> 6) as usize] |= 1u64 << (b & 63);
+        shift[b as usize] = i + 1;
+    }
+    let in_needle = |b: u8| byteset[(b >> 6) as usize] & (1u64 << (b & 63)) != 0;
+
+    // Maximal suffix under "<=" (max_suffix) and under ">=" (max_suffix_rev);
+    // the later critical position together with the global period `p`.
+    let max_suffix = |reverse: bool| -> (isize, isize) {
+        let mut ip: isize = -1;
+        let mut jp: isize = 0;
+        let mut k: isize = 1;
+        let mut p: isize = 1;
+        while jp + k < li {
+            let a = ndl[(ip + k) as usize];
+            let b = ndl[(jp + k) as usize];
+            let take = if reverse { a < b } else { a > b };
+            if a == b {
+                if k == p {
+                    jp += p;
+                    k = 1;
+                } else {
+                    k += 1;
+                }
+            } else if take {
+                jp += k;
+                k = 1;
+                p = jp - ip;
+            } else {
+                ip = jp;
+                jp += 1;
+                k = 1;
+                p = 1;
+            }
+        }
+        (ip, p)
+    };
+
+    let (ms_le, p0) = max_suffix(false);
+    let (ms_ge, p_ge) = max_suffix(true);
+    let (mut ms, mut p) = if ms_ge > ms_le {
+        (ms_ge, p_ge)
+    } else {
+        (ms_le, p0)
+    };
+
+    // Is the needle periodic with period `p`? Compare the head ndl[0..ms+1]
+    // against ndl[p..]. `.get()` keeps this panic-free; if the (in-practice
+    // unreachable) bound is exceeded we conservatively treat it as the
+    // general, non-periodic case, which Two-Way handles correctly.
+    let suffix = (ms + 1) as usize;
+    let periodic = (0..suffix).all(|i| ndl.get(p as usize + i) == Some(&ndl[i]));
+    let mem0: isize = if periodic {
+        li - p
+    } else {
+        p = core::cmp::max(ms, li - ms - 1) + 1;
+        0
+    };
+
+    let mut mem: isize = 0;
+    let mut pos: usize = 0;
+    loop {
+        if pos + l > hay.len() {
+            return None;
+        }
+
+        // Boyer–Moore–Horspool: examine the window's last byte first. If it
+        // is absent from the needle, skip a whole needle length; otherwise
+        // shift so that byte aligns with its last needle occurrence.
+        let last = hay[pos + l - 1];
+        if !in_needle(last) {
+            pos += l;
+            mem = 0;
+            continue;
+        }
+        let skip = l - shift[last as usize];
+        if skip != 0 {
+            pos += if (skip as isize) < mem { mem as usize } else { skip };
+            mem = 0;
+            continue;
+        }
+
+        // Right factor: compare from the critical position rightward.
+        let mut k = (ms + 1) as usize;
+        while k < l && ndl[k] == hay[pos + k] {
+            k += 1;
+        }
+        if k < l {
+            // ms may be -1 (critical position 0), so advance in signed space.
+            pos += (k as isize - ms) as usize;
+            mem = 0;
+            continue;
+        }
+
+        // Left factor: compare the head down to the remembered prefix.
+        let mut j = ms + 1;
+        while j > mem && ndl[(j - 1) as usize] == hay[pos + (j - 1) as usize] {
+            j -= 1;
+        }
+        if j <= mem {
+            return Some(pos);
+        }
+        pos += p as usize;
+        mem = mem0;
+    }
 }
 
 /// Copies `n` bytes from `src` to `dest` and returns the index one past the
@@ -727,5 +864,205 @@ mod tests {
     fn glibc_memrchr_finds_last_occurrence() {
         // memrchr("hello", 'l', 5) = offset 3 (last 'l')
         assert_eq!(memrchr(b"hello", b'l', 5), Some(3));
+    }
+
+    // -- Two-Way memmem isomorphism vs the naive reference --------------------
+
+    /// Reference O(n·m) scan — the leftmost match an algorithm-independent
+    /// `memmem` must reproduce. Used as the differential oracle.
+    fn naive_memmem(hay: &[u8], ndl: &[u8]) -> Option<usize> {
+        if ndl.is_empty() {
+            return Some(0);
+        }
+        if ndl.len() > hay.len() {
+            return None;
+        }
+        hay.windows(ndl.len()).position(|w| w == ndl)
+    }
+
+    fn check_isomorphic(hay: &[u8], ndl: &[u8]) {
+        let got = memmem(hay, hay.len(), ndl, ndl.len());
+        let want = naive_memmem(hay, ndl);
+        assert_eq!(
+            got, want,
+            "memmem divergence\n hay={hay:?}\n ndl={ndl:?}\n two_way={got:?} naive={want:?}"
+        );
+    }
+
+    #[test]
+    fn memmem_matches_naive_on_adversarial_corpus() {
+        // Repetitive / periodic inputs are exactly where naive goes quadratic
+        // and where Two-Way's critical-factorization shifts must stay correct.
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"aaaaaaaaab", b"aaaab"),
+            (b"aaaaaaaaaa", b"aaaab"),
+            (b"abababababab", b"ababab"),
+            (b"abababababab", b"ababa"),
+            (b"abcabcabcabcabc", b"abcabcd"),
+            (b"mississippi", b"issi"),
+            (b"mississippi", b"ssippi"),
+            (b"the quick brown fox", b"quick"),
+            (b"the quick brown fox", b"fox"),
+            (b"the quick brown fox", b"the"),
+            (b"aaa", b"aa"),
+            (b"ba", b"aa"),
+            (b"xy", b"xy"),
+            (b"", b"a"),
+            (b"a", b""),
+            (b"abc", b"abcd"),
+            (b"\x00\x00\x01\x00\x00", b"\x01\x00\x00"),
+        ];
+        for (hay, ndl) in cases {
+            check_isomorphic(hay, ndl);
+        }
+    }
+
+    #[test]
+    fn memmem_matches_naive_on_dense_periodic_alphabet() {
+        // Small alphabet → many partial matches → maximal Two-Way stress.
+        for period in 1..=6usize {
+            let mut hay = Vec::new();
+            for i in 0..400 {
+                hay.push(b'a' + (i % period) as u8);
+            }
+            for nlen in 1..=24usize {
+                let ndl = &hay[3..(3 + nlen).min(hay.len())];
+                check_isomorphic(&hay, ndl);
+                // A needle that almost-but-not-quite matches the period.
+                let mut bad = ndl.to_vec();
+                if let Some(last) = bad.last_mut() {
+                    *last = b'z';
+                }
+                check_isomorphic(&hay, &bad);
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(property_proptest_config(2048))]
+
+        /// Over random small-alphabet haystacks/needles, Two-Way must return
+        /// the exact same leftmost offset as the naive reference.
+        #[test]
+        fn prop_memmem_matches_naive(
+            hay in proptest::collection::vec(0u8..4, 0..64),
+            ndl in proptest::collection::vec(0u8..4, 0..12),
+        ) {
+            let got = memmem(&hay, hay.len(), &ndl, ndl.len());
+            let want = naive_memmem(&hay, &ndl);
+            prop_assert_eq!(got, want);
+        }
+
+        /// Needles that genuinely occur must be located (and at the leftmost
+        /// position), exercising the matched-and-shift paths.
+        #[test]
+        fn prop_memmem_finds_embedded_needle(
+            prefix in proptest::collection::vec(0u8..3, 0..40),
+            ndl in proptest::collection::vec(0u8..3, 1..10),
+            suffix in proptest::collection::vec(0u8..3, 0..40),
+        ) {
+            let mut hay = prefix.clone();
+            hay.extend_from_slice(&ndl);
+            hay.extend_from_slice(&suffix);
+            let got = memmem(&hay, hay.len(), &ndl, ndl.len());
+            let want = naive_memmem(&hay, &ndl);
+            prop_assert_eq!(got, want);
+            prop_assert!(got.is_some());
+        }
+    }
+
+    /// Golden SHA-256 over a deterministic (haystack, needle) result corpus.
+    /// Locks the externally observable output so any future change to the
+    /// search internals that perturbs a returned offset is caught.
+    #[test]
+    fn memmem_golden_output_sha256() {
+        use std::fmt::Write as _;
+
+        // Deterministic LCG corpus across several alphabets and lengths.
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as u32
+        };
+
+        let mut transcript = String::new();
+        for alphabet in [2u32, 4, 16, 256] {
+            for _ in 0..256 {
+                let hlen = (next() % 96) as usize;
+                let nlen = (next() % 12) as usize;
+                let hay: Vec<u8> = (0..hlen).map(|_| (next() % alphabet) as u8).collect();
+                let ndl: Vec<u8> = (0..nlen).map(|_| (next() % alphabet) as u8).collect();
+                let got = memmem(&hay, hay.len(), &ndl, ndl.len());
+                // Cross-check the oracle inline so the golden value can only
+                // ever encode correct answers.
+                assert_eq!(got, naive_memmem(&hay, &ndl));
+                let _ = write!(transcript, "{got:?};");
+            }
+        }
+
+        // FNV-1a digest (no extra deps) over the transcript — stable across
+        // platforms, pinned to the correct-by-construction result stream.
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in transcript.as_bytes() {
+            hash ^= u64::from(*b);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        assert_eq!(
+            hash, GOLDEN_MEMMEM_FNV1A,
+            "memmem golden transcript changed: {hash:#018x}"
+        );
+    }
+
+    // Pinned after first green run; recomputed deterministically above.
+    const GOLDEN_MEMMEM_FNV1A: u64 = 0xbfed_48b0_dbd8_cc1e;
+
+    /// Before/after wall-clock proof for the Two-Way swing. Ignored by
+    /// default (it is a benchmark, not a unit test); run explicitly with
+    /// `cargo test -p frankenlibc-core --lib string::mem::tests::memmem_perf \
+    ///  -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "perf benchmark; run with --ignored --nocapture"]
+    fn memmem_perf_two_way_vs_naive() {
+        use std::time::Instant;
+
+        fn time<F: FnMut() -> Option<usize>>(iters: u32, mut f: F) -> f64 {
+            // warm up
+            for _ in 0..3 {
+                std::hint::black_box(f());
+            }
+            let t = Instant::now();
+            for _ in 0..iters {
+                std::hint::black_box(f());
+            }
+            t.elapsed().as_secs_f64() / iters as f64 * 1e9 // ns/call
+        }
+
+        // --- Adversarial: O(n·m) trap. Needle's trailing 'b' forces naive to
+        //     rescan the full needle at every haystack offset. ---
+        let hay = vec![b'a'; 50_000];
+        let mut ndl = vec![b'a'; 2_000];
+        ndl.push(b'b'); // absent → worst case
+        let naive_adv = time(20, || naive_memmem(&hay, &ndl));
+        let tw_adv = time(20, || memmem(&hay, hay.len(), &ndl, ndl.len()));
+
+        // --- Typical: 64 KiB pseudo-text, 16-byte needle near the end. ---
+        let mut text = vec![0u8; 65_536];
+        let mut s: u64 = 0x1234_5678;
+        for b in text.iter_mut() {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *b = b' ' + ((s >> 40) as u8 % 95);
+        }
+        let hay = text;
+        let ndl_typ = hay[65_500..65_516].to_vec();
+        let naive_typ = time(2_000, || naive_memmem(&hay, &ndl_typ));
+        let tw_typ = time(2_000, || memmem(&hay, hay.len(), &ndl_typ, ndl_typ.len()));
+
+        eprintln!("memmem adversarial: naive={naive_adv:.0}ns two_way={tw_adv:.0}ns score={:.1}x", naive_adv / tw_adv);
+        eprintln!("memmem typical:     naive={naive_typ:.0}ns two_way={tw_typ:.0}ns score={:.2}x", naive_typ / tw_typ);
+
+        // The complexity-class win must be enormous on the adversarial case
+        // and must not regress the typical case.
+        assert!(naive_adv / tw_adv >= 2.0, "adversarial Score must clear 2.0");
+        assert!(tw_typ <= naive_typ * 1.5, "typical case must not regress materially");
     }
 }
