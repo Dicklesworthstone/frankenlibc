@@ -17,6 +17,9 @@ const WIDE_FIND_LONG_SIMD_LANES: usize = 64;
 /// Number of `u32` wide characters compared per `wmemcmp` equality panel.
 const WIDE_COMPARE_SIMD_LANES: usize = 16;
 
+/// Number of `u32` wide characters compared per unrolled `wmemcmp` step.
+const WIDE_COMPARE_UNROLL_LANES: usize = WIDE_COMPARE_SIMD_LANES * 2;
+
 /// Number of `u32` wide characters searched per forward `wmemchr` panel.
 const WIDE_MEMCHR_SIMD_LANES: usize = 16;
 
@@ -40,6 +43,19 @@ fn has_wide_or_nul_long_simd(chunk: &[u32], needle: u32) -> bool {
     debug_assert_eq!(chunk.len(), WIDE_FIND_LONG_SIMD_LANES);
     let lanes = Simd::<u32, WIDE_FIND_LONG_SIMD_LANES>::from_slice(chunk);
     (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
+}
+
+#[inline(always)]
+fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
+    debug_assert_eq!(a_chunk.len(), b_chunk.len());
+    for (a, b) in a_chunk.iter().zip(b_chunk.iter()) {
+        let a = *a as i32;
+        let b = *b as i32;
+        if a != b {
+            return Some(if a < b { -1 } else { 1 });
+        }
+    }
+    None
 }
 
 /// Returns the index of the first element of `s` equal to `needle` or `0`
@@ -461,8 +477,35 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     let count = n.min(s1.len()).min(s2.len());
     let a_all = &s1[..count];
     let b_all = &s2[..count];
-    let mut a_chunks = a_all.chunks_exact(WIDE_COMPARE_SIMD_LANES);
-    let mut b_chunks = b_all.chunks_exact(WIDE_COMPARE_SIMD_LANES);
+
+    let mut a_pairs = a_all.chunks_exact(WIDE_COMPARE_UNROLL_LANES);
+    let mut b_pairs = b_all.chunks_exact(WIDE_COMPARE_UNROLL_LANES);
+
+    for (a_pair, b_pair) in a_pairs.by_ref().zip(b_pairs.by_ref()) {
+        let (a_first, a_second) = a_pair.split_at(WIDE_COMPARE_SIMD_LANES);
+        let (b_first, b_second) = b_pair.split_at(WIDE_COMPARE_SIMD_LANES);
+
+        let av_first = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a_first);
+        let bv_first = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b_first);
+        let av_second = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a_second);
+        let bv_second = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b_second);
+
+        let first_equal = av_first.simd_eq(bv_first).all();
+        let second_equal = av_second.simd_eq(bv_second).all();
+        if first_equal && second_equal {
+            continue;
+        }
+
+        if !first_equal && let Some(ordering) = resolve_wmemcmp_panel(a_first, b_first) {
+            return ordering;
+        }
+        if let Some(ordering) = resolve_wmemcmp_panel(a_second, b_second) {
+            return ordering;
+        }
+    }
+
+    let mut a_chunks = a_pairs.remainder().chunks_exact(WIDE_COMPARE_SIMD_LANES);
+    let mut b_chunks = b_pairs.remainder().chunks_exact(WIDE_COMPARE_SIMD_LANES);
 
     for (a_chunk, b_chunk) in a_chunks.by_ref().zip(b_chunks.by_ref()) {
         let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a_chunk);
@@ -471,12 +514,8 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
             continue;
         }
         // Mismatch present in this panel; resolve the first differing index.
-        for (a, b) in a_chunk.iter().zip(b_chunk.iter()) {
-            let a = *a as i32;
-            let b = *b as i32;
-            if a != b {
-                return if a < b { -1 } else { 1 };
-            }
+        if let Some(ordering) = resolve_wmemcmp_panel(a_chunk, b_chunk) {
+            return ordering;
         }
     }
 
