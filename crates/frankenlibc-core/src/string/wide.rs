@@ -243,20 +243,23 @@ pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 ///
 /// Equivalent to C `wcschr`. Returns the index of the character, or `None` if not found.
 /// The terminating NUL character is considered part of the string.
+///
+/// Reuses the SIMD [`find_wide_or_nul`] panel scan: it locates the first
+/// occurrence of `c` or a terminating NUL, whichever comes first. If that
+/// position holds `c`, the scan reached `c` before any NUL; otherwise the
+/// string ended first and `c` is absent. The `c == 0` case matches the
+/// terminator via the SIMD [`wcslen`] scan. Behaviour is identical to a scalar
+/// "return at first `c`, stop at NUL" loop.
 pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
-    for (i, &ch) in s.iter().enumerate() {
-        if ch == c {
-            return Some(i);
-        }
-        if ch == 0 {
-            // NUL matched c?
-            if c == 0 {
-                return Some(i);
-            }
-            return None;
-        }
+    if c == 0 {
+        // wcschr(s, 0) returns the index of the terminating NUL, or None if the
+        // slice has no NUL. `wcslen` returns `s.len()` when no NUL is present.
+        let len = wcslen(s);
+        return (len < s.len()).then_some(len);
     }
-    None
+
+    let pos = find_wide_or_nul(s, c);
+    (pos < s.len() && s[pos] == c).then_some(pos)
 }
 
 /// Locates the last occurrence of wide character `c` in string `s`.
@@ -1387,6 +1390,27 @@ mod tests {
         fn prop_wcslen_matches_first_nul_or_slice_len(data in proptest::collection::vec(any::<u32>(), 0..200)) {
             let expected = data.iter().position(|&ch| ch == 0).unwrap_or(data.len());
             prop_assert_eq!(wcslen(&data), expected);
+        }
+
+        // Isomorphism guard for the SIMD wcschr (reuses find_wide_or_nul/wcslen).
+        // Pins it to the scalar "return at first c, stop at NUL" oracle over inputs
+        // that span multiple panels + boundary + remainder. Needle is drawn from a
+        // tiny alphabet (incl. 0 and absent values) so present/absent/NUL-first/
+        // c==0 cases all occur.
+        #[test]
+        fn prop_wcschr_matches_scalar_oracle(
+            data in proptest::collection::vec(0u32..4, 0..200),
+            c in 0u32..5
+        ) {
+            let expected = {
+                let mut found = None;
+                for (i, &ch) in data.iter().enumerate() {
+                    if ch == c { found = Some(i); break; }
+                    if ch == 0 { found = if c == 0 { Some(i) } else { None }; break; }
+                }
+                found
+            };
+            prop_assert_eq!(wcschr(&data, c), expected);
         }
 
         #[test]

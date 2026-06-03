@@ -28,7 +28,7 @@ pub use wchar::{
     mbstowcs, mbtowc, towlower as wc_tolower, towupper as wc_toupper, wcstombs, wctomb, wcwidth,
 };
 pub use wide::{
-    wcpcpy, wcpncpy, wcscasecmp, wcscat, wcscmp, wcscpy, wcscspn, wcsdup_len, wcslen, wcsncasecmp,
-    wcsncat, wcsncmp, wcsncpy, wcsnlen, wcspbrk, wcsrchr, wcsspn, wcsstr, wcstok, wcswidth,
-    wmemchr, wmemcmp, wmemcpy, wmemmove, wmemrchr, wmemset,
+    wcpcpy, wcpncpy, wcscasecmp, wcscat, wcschr, wcscmp, wcscpy, wcscspn, wcsdup_len, wcslen,
+    wcsncasecmp, wcsncat, wcsncmp, wcsncpy, wcsnlen, wcspbrk, wcsrchr, wcsspn, wcsstr, wcstok,
+    wcswidth, wmemchr, wmemcmp, wmemcpy, wmemmove, wmemrchr, wmemset,
 };
