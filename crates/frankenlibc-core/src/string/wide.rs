@@ -760,9 +760,37 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 /// Locates the last occurrence of `c` in the first `n` wide characters of `s`.
 ///
 /// Equivalent to GNU `wmemrchr`. Searches backwards.
+///
+/// Scans `WIDE_SIMD_LANES` elements per step from the end with a portable-SIMD
+/// equality probe, then resolves the last matching index within the first
+/// (rear-most) candidate panel right-to-left. Behaviour is identical to a
+/// scalar `(0..n.min(s.len())).rev().find(|&i| s[i] == c)` reverse scan.
 pub fn wmemrchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     let count = n.min(s.len());
-    (0..count).rev().find(|&i| s[i] == c)
+    let scan = &s[..count];
+    let target = Simd::<u32, WIDE_SIMD_LANES>::splat(c);
+    let mut end = count;
+
+    for chunk in scan.rchunks_exact(WIDE_SIMD_LANES) {
+        let start = end - WIDE_SIMD_LANES;
+        let lanes = Simd::<u32, WIDE_SIMD_LANES>::from_slice(chunk);
+        if lanes.simd_eq(target).any() {
+            for j in (0..WIDE_SIMD_LANES).rev() {
+                if chunk[j] == c {
+                    return Some(start + j);
+                }
+            }
+        }
+        end = start;
+    }
+
+    // Remainder occupies the front `[0, end)` of the slice.
+    for j in (0..end).rev() {
+        if scan[j] == c {
+            return Some(j);
+        }
+    }
+    None
 }
 
 /// Simple ASCII-range case folding for wide characters.
@@ -1454,6 +1482,26 @@ mod tests {
     }
 
     #[test]
+    fn test_wmemrchr_simd_panel_boundary_and_remainder() {
+        // 20 elements: two full rear panels + a 4-element front remainder.
+        let mut s: Vec<u32> = vec![1u32; 20];
+        // Last occurrence must win across panels and remainder.
+        s[2] = 9; // remainder region
+        s[10] = 9; // middle panel
+        s[18] = 9; // rear panel
+        assert_eq!(wmemrchr(&s, 9, 20), Some(18));
+        // Bound below the last match: only earlier matches visible.
+        assert_eq!(wmemrchr(&s, 9, 18), Some(10));
+        assert_eq!(wmemrchr(&s, 9, 11), Some(10));
+        assert_eq!(wmemrchr(&s, 9, 10), Some(2));
+        // Absent over a full scan and a sub-panel scan.
+        assert_eq!(wmemrchr(&s, 7, 20), None);
+        assert_eq!(wmemrchr(&s, 7, 4), None);
+        // Match only in the remainder.
+        assert_eq!(wmemrchr(&s, 9, 4), Some(2));
+    }
+
+    #[test]
     fn test_wmemrchr_first_only() {
         let s = [7u32, 1, 2, 3];
         assert_eq!(wmemrchr(&s, 7, 4), Some(0));
@@ -1558,6 +1606,17 @@ mod tests {
                 }
             }
             prop_assert_eq!(wmemcmp(&s1, &s2, n), expected);
+        }
+
+        #[test]
+        fn prop_wmemrchr_matches_slice_rposition(
+            haystack in proptest::collection::vec(any::<u32>(), 0..80),
+            needle in any::<u32>(),
+            n in 0usize..96
+        ) {
+            let limit = n.min(haystack.len());
+            let expected = (0..limit).rev().find(|&i| haystack[i] == needle);
+            prop_assert_eq!(wmemrchr(&haystack, needle, n), expected);
         }
     }
 
