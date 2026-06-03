@@ -203,7 +203,30 @@ pub fn wcslen(s: &[u32]) -> usize {
 /// Equivalent to C `wcsnlen`.
 pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
     let limit = maxlen.min(s.len());
-    s.iter().take(limit).position(|&c| c == 0).unwrap_or(limit)
+    let scan = &s[..limit];
+    // SIMD NUL scan over the bounded prefix (same panels as wcslen): probe
+    // WIDE_NUL_SIMD_LANES elements at a time, resolving the exact index within
+    // the first panel that contains a NUL. Identical to the scalar
+    // `position(NUL).unwrap_or(limit)` scan.
+    let mut chunks = scan.chunks_exact(WIDE_NUL_SIMD_LANES);
+    let mut base = 0usize;
+    for chunk in chunks.by_ref() {
+        let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
+        if lanes.simd_eq(Simd::splat(0)).any() {
+            for (j, &ch) in chunk.iter().enumerate() {
+                if ch == 0 {
+                    return base + j;
+                }
+            }
+        }
+        base += WIDE_NUL_SIMD_LANES;
+    }
+    for (j, &ch) in chunks.remainder().iter().enumerate() {
+        if ch == 0 {
+            return base + j;
+        }
+    }
+    limit
 }
 
 /// Computes the display width of up to `n` wide characters.

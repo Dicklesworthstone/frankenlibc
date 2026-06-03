@@ -596,7 +596,7 @@ mod string_properties {
 mod wide_properties {
     use super::*;
     use frankenlibc_core::string::wide::{
-        wcscasecmp, wcscmp, wcscspn, wcsncasecmp, wcsncmp, wcspbrk, wcsspn,
+        wcscasecmp, wcscmp, wcscspn, wcsncasecmp, wcsncmp, wcsnlen, wcspbrk, wcsspn,
     };
 
     // Scalar references for the span/break family (the pre-SIMD bodies).
@@ -783,6 +783,18 @@ mod wide_properties {
             prop_assert_eq!(wcsspn(&s, &set), ref_wcsspn(&s, &set));
             prop_assert_eq!(wcscspn(&s, &set), ref_wcscspn(&s, &set));
             prop_assert_eq!(wcspbrk(&s, &set), ref_wcspbrk(&s, &set));
+        }
+
+        /// SIMD wcsnlen is isomorphic to the scalar reference for arbitrary
+        /// content (in-band NUL) and maxlen straddling the panel boundary.
+        #[test]
+        fn prop_wcsnlen_matches_scalar_reference(
+            s in proptest::collection::vec(0u32..=3, 0..200),
+            maxlen in 0usize..220
+        ) {
+            let limit = maxlen.min(s.len());
+            let expected = s.iter().take(limit).position(|&c| c == 0).unwrap_or(limit);
+            prop_assert_eq!(wcsnlen(&s, maxlen), expected);
         }
 
         /// Same, over the full u32 alphabet (high/sign-bit code units, larger set).
