@@ -334,7 +334,48 @@ mod string_properties {
 
 mod wide_properties {
     use super::*;
-    use frankenlibc_core::string::wide::{wcscmp, wcsncmp};
+    use frankenlibc_core::string::wide::{wcscasecmp, wcscmp, wcsncasecmp, wcsncmp};
+
+    fn ascii_lower(c: u32) -> u32 {
+        if (0x41..=0x5A).contains(&c) { c + 0x20 } else { c }
+    }
+
+    // Reference: exact scalar wcsncasecmp the SIMD version replaced.
+    fn ref_wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
+        let mut i = 0;
+        while i < n {
+            let a = if i < s1.len() { s1[i] } else { 0 };
+            let b = if i < s2.len() { s2[i] } else { 0 };
+            let la = ascii_lower(a);
+            let lb = ascii_lower(b);
+            if la != lb {
+                return if (la as i32) < (lb as i32) { -1 } else { 1 };
+            }
+            if a == 0 {
+                return 0;
+            }
+            i += 1;
+        }
+        0
+    }
+
+    // Reference: exact scalar wcscasecmp the SIMD version replaced.
+    fn ref_wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
+        let mut i = 0;
+        loop {
+            let a = if i < s1.len() { s1[i] } else { 0 };
+            let b = if i < s2.len() { s2[i] } else { 0 };
+            let la = ascii_lower(a);
+            let lb = ascii_lower(b);
+            if la != lb {
+                return if (la as i32) < (lb as i32) { -1 } else { 1 };
+            }
+            if a == 0 {
+                return 0;
+            }
+            i += 1;
+        }
+    }
 
     // Reference: exact scalar wcsncmp the SIMD version replaced.
     fn ref_wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
@@ -393,6 +434,38 @@ mod wide_properties {
             b.push(0);
             prop_assert_eq!(wcscmp(&a, &b).signum(), ref_wcscmp(&a, &b).signum());
         }
+
+        /// SIMD wcsncasecmp is isomorphic to the scalar fold reference. Inputs
+        /// are biased to the ASCII letter range so case-folding is exercised.
+        #[test]
+        fn prop_wcsncasecmp_matches_scalar_reference(
+            a in proptest::collection::vec(0x40u32..=0x60, 0..200),
+            b in proptest::collection::vec(0x40u32..=0x60, 0..200),
+            n in 0usize..256
+        ) {
+            prop_assert_eq!(wcsncasecmp(&a, &b, n), ref_wcsncasecmp(&a, &b, n));
+        }
+
+        /// wcsncasecmp also matches over the full u32 alphabet (high/sign units).
+        #[test]
+        fn prop_wcsncasecmp_matches_scalar_reference_full(
+            a in proptest::collection::vec(any::<u32>(), 0..200),
+            b in proptest::collection::vec(any::<u32>(), 0..200),
+            n in 0usize..256
+        ) {
+            prop_assert_eq!(wcsncasecmp(&a, &b, n), ref_wcsncasecmp(&a, &b, n));
+        }
+
+        /// SIMD wcscasecmp is isomorphic to the scalar fold reference.
+        #[test]
+        fn prop_wcscasecmp_matches_scalar_reference(
+            mut a in proptest::collection::vec(0x41u32..=0x60, 0..200),
+            mut b in proptest::collection::vec(0x41u32..=0x60, 0..200)
+        ) {
+            a.push(0);
+            b.push(0);
+            prop_assert_eq!(wcscasecmp(&a, &b).signum(), ref_wcscasecmp(&a, &b).signum());
+        }
     }
 
     /// Golden sha256 over a deterministic wcscmp/wcsncmp corpus spanning the
@@ -439,6 +512,64 @@ mod wide_properties {
         assert_eq!(
             digest, "c9f07f2b950cfc3a76e1b892b776b965698268ae0a8f8b63d66cf1acedf526ca",
             "wide-compare golden corpus hash drifted"
+        );
+    }
+
+    /// Golden sha256 over a deterministic wcscasecmp/wcsncasecmp corpus. Inputs
+    /// are drawn from the ASCII letter band (mixed case) plus injected NULs so
+    /// the in-vector fold path and panel/tail boundary are exercised; pins exact
+    /// behavior against drift.
+    #[test]
+    fn golden_wide_casecmp_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            // Map into 0x40..=0x60 (covers '@', A-Z, [\]^_, '`') to straddle the
+            // fold range edges, with occasional NUL.
+            let r = (state >> 40) as u32 % 34;
+            if r == 0 { 0 } else { 0x40 + r }
+        };
+
+        let lengths = [0usize, 1, 7, 15, 16, 17, 31, 32, 33, 47, 48, 100];
+        let mut hasher = Sha256::new();
+        for &la in &lengths {
+            for &lb in &lengths {
+                let mut a: Vec<u32> = (0..la).map(|_| next()).collect();
+                let mut b: Vec<u32> = (0..lb).map(|_| next()).collect();
+                // Half the pairs share a case-flipped prefix (fold-equal, raw-differ).
+                if (la + lb) % 2 == 0 {
+                    let shared = la.min(lb);
+                    for k in 0..shared {
+                        let c = a[k];
+                        b[k] = if (0x41..=0x5A).contains(&c) {
+                            c + 0x20
+                        } else if (0x61..=0x7A).contains(&c) {
+                            c - 0x20
+                        } else {
+                            c
+                        };
+                    }
+                }
+                a.push(0);
+                b.push(0);
+                hasher.update((wcscasecmp(&a, &b).signum() as i8 as u8).to_le_bytes());
+                for n in [0usize, 1, 16, 31, 32, 33, 48, 128] {
+                    hasher.update((wcsncasecmp(&a, &b, n).signum() as i8 as u8).to_le_bytes());
+                }
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "75fbf1a3e290bac6bc2fbf467588f831ca473e9aee3859c8c28216d2150b640d",
+            "wide-casecmp golden corpus hash drifted"
         );
     }
 }

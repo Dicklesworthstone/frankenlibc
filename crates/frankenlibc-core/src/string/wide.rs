@@ -3,7 +3,7 @@
 //! Corresponds to `<wchar.h>` functions. These operate on `u32` slices
 //! representing `wchar_t` strings (NUL-terminated with `0u32`).
 
-use std::simd::{Simd, cmp::SimdPartialEq};
+use std::simd::{Simd, Select, cmp::SimdPartialEq, cmp::SimdPartialOrd};
 
 /// Number of `u32` wide characters processed per NUL-only scan panel.
 const WIDE_NUL_SIMD_LANES: usize = 16;
@@ -62,6 +62,35 @@ fn equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
     let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a);
     let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b);
     av.simd_eq(bv).all() && !av.simd_eq(Simd::splat(0)).any()
+}
+
+/// Branchless ASCII A-Z -> a-z fold of a `u32` panel, exactly matching
+/// [`simple_towlower`] (only code units in `0x41..=0x5A` are shifted by `0x20`;
+/// everything else, including NUL, is unchanged).
+#[inline(always)]
+fn fold_ascii_upper_wide(
+    v: Simd<u32, WIDE_COMPARE_SIMD_LANES>,
+) -> Simd<u32, WIDE_COMPARE_SIMD_LANES> {
+    let is_upper = v.simd_ge(Simd::splat(0x41)) & v.simd_le(Simd::splat(0x5A));
+    is_upper.select(v + Simd::splat(0x20), v)
+}
+
+/// Returns `true` iff the two panels are equal after ASCII case-folding AND
+/// contain no terminating NUL. The equal-prefix fast path for case-insensitive
+/// wide compares: a `false` result means a folded divergence or a NUL is
+/// present, so the scalar tail resolves the exact index. NUL (`0`) is below the
+/// fold range, so fold-equality implies `a` and `b` share NUL positions —
+/// checking `a` suffices.
+#[inline(always)]
+fn fold_equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
+    debug_assert_eq!(a.len(), WIDE_COMPARE_SIMD_LANES);
+    debug_assert_eq!(b.len(), WIDE_COMPARE_SIMD_LANES);
+    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a);
+    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b);
+    fold_ascii_upper_wide(av)
+        .simd_eq(fold_ascii_upper_wide(bv))
+        .all()
+        && !av.simd_eq(Simd::splat(0)).any()
 }
 
 #[inline(always)]
@@ -823,7 +852,21 @@ pub fn wcpncpy(dest: &mut [u32], src: &[u32], n: usize) -> usize {
 /// Equivalent to GNU `wcscasecmp`. Uses simple ASCII case-folding
 /// (towlower) for comparison.
 pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
+    // SIMD fast path: stride panels that are equal after ASCII case-folding and
+    // NUL-free, bounded by the shorter slice. The first panel that diverges
+    // (post-fold) or holds a NUL drops to the scalar tail for exact resolution.
+    let bounded = s1.len().min(s2.len());
     let mut i = 0;
+    while i + WIDE_COMPARE_SIMD_LANES <= bounded {
+        if !fold_equal_and_no_nul_wide(
+            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
+            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
+        ) {
+            break;
+        }
+        i += WIDE_COMPARE_SIMD_LANES;
+    }
+
     loop {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
@@ -845,7 +888,21 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
 ///
 /// Equivalent to GNU `wcsncasecmp`. Compares at most `n` wide characters.
 pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
+    // SIMD fold-equal fast path over the n-bounded prefix present in both
+    // slices; the scalar tail resolves the exact divergence/NUL index and
+    // out-of-range (logical NUL) elements, identical to the scalar scan.
+    let bounded = n.min(s1.len()).min(s2.len());
     let mut i = 0;
+    while i + WIDE_COMPARE_SIMD_LANES <= bounded {
+        if !fold_equal_and_no_nul_wide(
+            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
+            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
+        ) {
+            break;
+        }
+        i += WIDE_COMPARE_SIMD_LANES;
+    }
+
     while i < n {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };

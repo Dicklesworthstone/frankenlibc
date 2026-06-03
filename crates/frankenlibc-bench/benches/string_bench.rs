@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::string::{
     memchr, memcmp, memcpy, strcasestr, strchr, strchrnul, strcmp, strcspn, strlen, strncmp,
-    strnstr, strpbrk, strrchr, strsep, strspn, strstr, wcschr, wcscmp, wcslen, wcsncmp, wcsrchr,
-    wcsstr, wmemchr, wmemcmp, wmemrchr,
+    strnstr, strpbrk, strrchr, strsep, strspn, strstr, wcscasecmp, wcschr, wcscmp, wcslen,
+    wcsncasecmp, wcsncmp, wcsrchr, wcsstr, wmemchr, wmemcmp, wmemrchr,
 };
 
 #[derive(Default)]
@@ -873,6 +873,83 @@ fn bench_wcsncmp_equal(c: &mut Criterion) {
     group.finish();
 }
 
+// Inline scalar reference (the pre-SIMD wcsncasecmp body) for an in-run
+// before/after ratio against the SIMD implementation.
+fn scalar_ref_wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
+    #[inline]
+    fn lower(c: u32) -> u32 {
+        if (0x41..=0x5A).contains(&c) { c + 0x20 } else { c }
+    }
+    let mut i = 0;
+    while i < n {
+        let a = if i < s1.len() { s1[i] } else { 0 };
+        let b = if i < s2.len() { s2[i] } else { 0 };
+        let la = lower(a);
+        let lb = lower(b);
+        if la != lb {
+            return if (la as i32) < (lb as i32) { -1 } else { 1 };
+        }
+        if a == 0 {
+            return 0;
+        }
+        i += 1;
+    }
+    0
+}
+
+fn bench_wcsncasecmp_equal(c: &mut Criterion) {
+    let sizes: &[usize] = &[16, 64, 256, 1024, 4096];
+    let mode = mode_label();
+    let mut group = c.benchmark_group("wcsncasecmp_equal");
+
+    for &size in sizes {
+        // Case-flipped equal strings: fold-equal, raw-differ (the realistic
+        // case-insensitive-compare workload). 'A' vs 'a'.
+        let mut left = vec![0x41u32; size];
+        let mut right = vec![0x61u32; size];
+        left.push(0);
+        right.push(0);
+        let n = size;
+        group.throughput(Throughput::Bytes((size * std::mem::size_of::<u32>()) as u64));
+
+        for _ in 0..10_000 {
+            black_box(wcsncasecmp(&left, &right, n));
+            black_box(wcscasecmp(&left, &right));
+        }
+
+        // SIMD impl.
+        let simd_stats = RefCell::new(BenchStats::default());
+        group.bench_with_input(BenchmarkId::new(format!("{mode}/simd"), size), &size, |b, _| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(wcsncasecmp(&left, &right, n));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                simd_stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        simd_stats.borrow().report(mode, &format!("wcsncasecmp_simd_{size}"));
+
+        // Scalar reference (pre-SIMD baseline).
+        let scalar_stats = RefCell::new(BenchStats::default());
+        group.bench_with_input(BenchmarkId::new(format!("{mode}/scalar"), size), &size, |b, _| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(scalar_ref_wcsncasecmp(&left, &right, n));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                scalar_stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        scalar_stats.borrow().report(mode, &format!("wcsncasecmp_scalar_{size}"));
+    }
+    group.finish();
+}
+
 fn bench_wmemrchr_absent(c: &mut Criterion) {
     let sizes: &[usize] = &[16, 64, 256, 1024, 4096];
     let mode = mode_label();
@@ -976,6 +1053,6 @@ criterion_group!(
         .warm_up_time(Duration::from_millis(1))
         .measurement_time(Duration::from_secs(2))
         .sample_size(100);
-    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strncmp, bench_strchr_absent, bench_strstr_absent, bench_strnstr_bounded_absent, bench_strcasestr_absent, bench_strrchr_absent, bench_strcspn_absent, bench_strcspn_general_absent, bench_strpbrk_absent, bench_strpbrk_general_absent, bench_strspn_full, bench_strspn_general_full, bench_strsep_absent, bench_strchrnul_absent, bench_wcsrchr_absent, bench_wcsstr_absent, bench_wcslen, bench_wcschr_absent, bench_wmemchr_absent, bench_wmemrchr_absent, bench_wmemcmp_equal, bench_wcsncmp_equal, bench_memchr_absent
+    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strncmp, bench_strchr_absent, bench_strstr_absent, bench_strnstr_bounded_absent, bench_strcasestr_absent, bench_strrchr_absent, bench_strcspn_absent, bench_strcspn_general_absent, bench_strpbrk_absent, bench_strpbrk_general_absent, bench_strspn_full, bench_strspn_general_full, bench_strsep_absent, bench_strchrnul_absent, bench_wcsrchr_absent, bench_wcsstr_absent, bench_wcslen, bench_wcschr_absent, bench_wmemchr_absent, bench_wmemrchr_absent, bench_wmemcmp_equal, bench_wcsncmp_equal, bench_wcsncasecmp_equal, bench_memchr_absent
 );
 criterion_main!(benches);
