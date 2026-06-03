@@ -161,6 +161,36 @@ mod string_properties {
             prop_assert_eq!(strcasecmp(&a, &b), reference(&a, &b));
         }
 
+        /// SIMD memccpy is isomorphic to the scalar byte-copy reference for both
+        /// the return value AND the destination buffer contents (the bytes past
+        /// the stop point must be left untouched, exactly as the scalar loop).
+        #[test]
+        fn prop_memccpy_matches_scalar_reference(
+            src in proptest::collection::vec(any::<u8>(), 0..200),
+            c in any::<u8>(),
+            n in 0usize..256,
+            dlen in 0usize..200
+        ) {
+            fn reference(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
+                let count = n.min(dest.len()).min(src.len());
+                for i in 0..count {
+                    dest[i] = src[i];
+                    if src[i] == c {
+                        return Some(i + 1);
+                    }
+                }
+                None
+            }
+            // Two destinations seeded identically with a non-zero filler so an
+            // accidental over-copy or short-copy is detectable.
+            let mut d_simd = vec![0xABu8; dlen];
+            let mut d_ref = d_simd.clone();
+            let r_simd = memccpy(&mut d_simd, &src, c, n);
+            let r_ref = reference(&mut d_ref, &src, c, n);
+            prop_assert_eq!(r_simd, r_ref);
+            prop_assert_eq!(d_simd, d_ref);
+        }
+
         /// memcpy preserves exact content: memcpy(dst, src, n); memcmp(dst, src, n) == 0
         #[test]
         fn prop_memcpy_then_memcmp_is_zero(
@@ -435,6 +465,50 @@ mod string_properties {
         assert_eq!(
             digest, "23ff1bb367d74ce77644397fa6f7f2160759f5991d6fb383e89ad5bb6d0b4e5e",
             "memcmp golden corpus hash drifted"
+        );
+    }
+
+    /// Golden sha256 over a deterministic memccpy corpus, hashing both the
+    /// return value and the resulting destination buffer across stop-byte
+    /// present/absent cases and panel/tail boundaries. Pins exact behavior.
+    #[test]
+    fn golden_memccpy_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut state: u64 = 0xC2B2_AE3D_27D4_EB4F;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+
+        let lengths = [0usize, 1, 15, 16, 17, 31, 32, 33, 48, 100];
+        let mut hasher = Sha256::new();
+        for &sl in &lengths {
+            // Build src; sprinkle the stop byte 0x2A at a few positions for some
+            // lengths so both "found" and "absent" paths are exercised.
+            let mut src: Vec<u8> = (0..sl).map(|_| next()).collect();
+            if sl > 8 && sl % 3 == 0 {
+                src[sl / 2] = 0x2A;
+            }
+            for &dl in &lengths {
+                for &n in &[0usize, 1, 16, 33, 64, 200] {
+                    let mut dest = vec![0xABu8; dl];
+                    let r = memccpy(&mut dest, &src, 0x2A, n);
+                    hasher.update((r.map(|x| x as i64).unwrap_or(-1)).to_le_bytes());
+                    hasher.update(&dest);
+                }
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "fa101cf6182fe1d9b8ec10010b688039fe447be40c0dcb6e71b2729af087ac22",
+            "memccpy golden corpus hash drifted"
         );
     }
 }

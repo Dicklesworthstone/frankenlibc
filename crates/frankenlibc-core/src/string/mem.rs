@@ -492,13 +492,21 @@ pub fn mempcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 /// or `None` if `c` was not found within `n` bytes.
 pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
     let count = n.min(dest.len()).min(src.len());
-    for i in 0..count {
-        dest[i] = src[i];
-        if src[i] == c {
-            return Some(i + 1);
+    // Locate `c` with the SIMD memchr scan, then copy the resulting prefix in
+    // one bulk move (lowered to the memcpy intrinsic) instead of a byte loop.
+    // Behaviour is identical: if `c` occurs at index `p < count`, bytes
+    // `0..=p` are copied and `Some(p + 1)` returned; otherwise all `count`
+    // bytes are copied and `None` returned.
+    match memchr(&src[..count], c, count) {
+        Some(p) => {
+            dest[..=p].copy_from_slice(&src[..=p]);
+            Some(p + 1)
+        }
+        None => {
+            dest[..count].copy_from_slice(&src[..count]);
+            None
         }
     }
-    None
 }
 
 /// Sets `n` bytes of `dest` to zero, guaranteed not to be optimized away.
