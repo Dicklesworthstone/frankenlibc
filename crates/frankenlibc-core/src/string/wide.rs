@@ -5,8 +5,8 @@
 
 use std::simd::{Simd, cmp::SimdPartialEq};
 
-/// Number of `u32` wide characters processed per safe-SIMD panel (256-bit).
-const WIDE_SIMD_LANES: usize = 8;
+/// Number of `u32` wide characters processed per NUL-only scan panel.
+const WIDE_NUL_SIMD_LANES: usize = 16;
 
 /// Number of `u32` wide characters processed per char-or-NUL candidate panel.
 const WIDE_FIND_SIMD_LANES: usize = 16;
@@ -65,15 +65,15 @@ fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
 /// Equivalent to C `wcslen`. Scans `s` for the first `0u32` element.
 /// If no NUL is found, returns the full slice length.
 ///
-/// Scans `WIDE_SIMD_LANES` elements per step with a portable-SIMD NUL probe,
+/// Scans `WIDE_NUL_SIMD_LANES` elements per step with a portable-SIMD NUL probe,
 /// then resolves the exact index within the first matching panel left-to-right.
 /// Behaviour is identical to a scalar `position(|&c| c == 0)` scan.
 pub fn wcslen(s: &[u32]) -> usize {
-    let mut chunks = s.chunks_exact(WIDE_SIMD_LANES);
+    let mut chunks = s.chunks_exact(WIDE_NUL_SIMD_LANES);
     let mut base = 0usize;
 
     for chunk in chunks.by_ref() {
-        let lanes = Simd::<u32, WIDE_SIMD_LANES>::from_slice(chunk);
+        let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
         if lanes.simd_eq(Simd::splat(0)).any() {
             // The SIMD probe is exact, so this lookup always resolves.
             for (j, &ch) in chunk.iter().enumerate() {
@@ -82,7 +82,7 @@ pub fn wcslen(s: &[u32]) -> usize {
                 }
             }
         }
-        base += WIDE_SIMD_LANES;
+        base += WIDE_NUL_SIMD_LANES;
     }
 
     for (j, &ch) in chunks.remainder().iter().enumerate() {
