@@ -56,6 +56,15 @@ fn has_nul_simd_64(chunk: &[u8]) -> bool {
 }
 
 #[inline(always)]
+fn equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
+    debug_assert_eq!(left.len(), SIMD_LANES);
+    debug_assert_eq!(right.len(), SIMD_LANES);
+    let left_lanes = Simd::<u8, SIMD_LANES>::from_slice(left);
+    let right_lanes = Simd::<u8, SIMD_LANES>::from_slice(right);
+    left_lanes.simd_eq(right_lanes).all() && !left_lanes.simd_eq(Simd::splat(0)).any()
+}
+
+#[inline(always)]
 fn byte_is_any4(byte: u8, b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
     byte == b0 || byte == b1 || byte == b2 || byte == b3
 }
@@ -193,7 +202,16 @@ pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
             }
             i += 1;
         }
+    }
 
+    while i + SIMD_LANES <= s1.len() && i + SIMD_LANES <= s2.len() {
+        if !equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
+            break;
+        }
+        i += SIMD_LANES;
+    }
+
+    if aligned {
         // Process aligned words: compare word-at-a-time
         while i + WORD_SIZE <= s1.len() && i + WORD_SIZE <= s2.len() {
             // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= len for both slices
@@ -1069,6 +1087,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
+    use sha2::{Digest, Sha256};
 
     fn property_proptest_config(default_cases: u32) -> ProptestConfig {
         let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
@@ -1088,6 +1107,16 @@ mod tests {
         bytes.retain(|byte| *byte != 0);
         bytes.push(0);
         bytes
+    }
+
+    fn hex_lower(bytes: &[u8]) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for &byte in bytes {
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        out
     }
 
     #[test]
@@ -1141,6 +1170,48 @@ mod tests {
     fn test_strcmp_prefix() {
         assert!(strcmp(b"ab\0", b"abc\0") < 0);
         assert!(strcmp(b"abc\0", b"ab\0") > 0);
+    }
+
+    #[test]
+    fn test_strcmp_golden_transcript_sha256() {
+        let mut equal_left = vec![b'Q'; 256];
+        let mut equal_right = vec![b'Q'; 256];
+        equal_left.push(0);
+        equal_right.push(0);
+
+        let mut late_left = vec![b'a'; 96];
+        let mut late_right = vec![b'a'; 96];
+        late_left[70] = b'b';
+        late_right[70] = b'c';
+        late_left.push(0);
+        late_right.push(0);
+
+        let mut hidden_left = vec![b'x'; 80];
+        let mut hidden_right = vec![b'x'; 80];
+        hidden_left[40] = 0;
+        hidden_right[40] = 0;
+        hidden_left[60] = b'a';
+        hidden_right[60] = b'z';
+
+        let cases: &[(&[u8], &[u8])] = &[
+            (&equal_left, &equal_right),
+            (&late_left, &late_right),
+            (&hidden_left, &hidden_right),
+            (b"ab\0", b"abc\0"),
+            (&[0xff, 0], &[0x01, 0]),
+        ];
+
+        let mut transcript = String::new();
+        for (left, right) in cases {
+            transcript.push_str(&strcmp(left, right).to_string());
+            transcript.push('\n');
+        }
+
+        let digest = Sha256::digest(transcript.as_bytes());
+        assert_eq!(
+            hex_lower(&digest),
+            "bf3a44bce53a40a47eb334b89238d840573096846b050b62096ace20e43ff977"
+        );
     }
 
     #[test]
