@@ -5,7 +5,7 @@
 //! NUL-terminated C strings. In this safe Rust model, strings are `&[u8]` slices
 //! where a NUL byte (`0x00`) marks the logical end of the string.
 
-use std::simd::{Simd, cmp::SimdOrd, cmp::SimdPartialEq};
+use std::simd::{Simd, Select, cmp::SimdOrd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
 
 const LO_MAGIC: usize = usize::from_ne_bytes([0x01; size_of::<usize>()]);
 const HI_MAGIC: usize = usize::from_ne_bytes([0x80; size_of::<usize>()]);
@@ -87,6 +87,33 @@ fn equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
     let left_lanes = Simd::<u8, SIMD_LANES>::from_slice(left);
     let right_lanes = Simd::<u8, SIMD_LANES>::from_slice(right);
     left_lanes.simd_eq(right_lanes).all() && !left_lanes.simd_eq(Simd::splat(0)).any()
+}
+
+/// Branchless ASCII A-Z -> a-z fold of a 32-byte panel, exactly matching
+/// `u8::to_ascii_lowercase` (only bytes in `b'A'..=b'Z'` are shifted by `0x20`;
+/// everything else, including NUL, is unchanged).
+#[inline(always)]
+fn fold_ascii_upper_simd_32(v: Simd<u8, SIMD_LANES>) -> Simd<u8, SIMD_LANES> {
+    let is_upper = v.simd_ge(Simd::splat(b'A')) & v.simd_le(Simd::splat(b'Z'));
+    is_upper.select(v + Simd::splat(0x20), v)
+}
+
+/// Returns `true` iff the two 32-byte panels are equal after ASCII case-folding
+/// AND contain no terminating NUL. The equal-prefix fast path for
+/// case-insensitive byte compares: a `false` result means a folded divergence
+/// or a NUL is present, so the scalar tail resolves the exact index. NUL (`0`)
+/// is below the fold range, so fold-equality implies shared NUL positions —
+/// checking `left` suffices.
+#[inline(always)]
+fn fold_equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
+    debug_assert_eq!(left.len(), SIMD_LANES);
+    debug_assert_eq!(right.len(), SIMD_LANES);
+    let left_lanes = Simd::<u8, SIMD_LANES>::from_slice(left);
+    let right_lanes = Simd::<u8, SIMD_LANES>::from_slice(right);
+    fold_ascii_upper_simd_32(left_lanes)
+        .simd_eq(fold_ascii_upper_simd_32(right_lanes))
+        .all()
+        && !left_lanes.simd_eq(Simd::splat(0)).any()
 }
 
 #[inline(always)]
@@ -788,7 +815,18 @@ pub fn strnstr(haystack: &[u8], needle: &[u8], n: usize) -> Option<usize> {
 /// Equivalent to POSIX `strcasecmp`. Compares byte-by-byte after converting
 /// ASCII letters to lowercase.
 pub fn strcasecmp(s1: &[u8], s2: &[u8]) -> i32 {
+    // SIMD fast path: stride 32-byte panels equal after ASCII case-folding and
+    // NUL-free, bounded by the shorter slice. The first panel that diverges
+    // (post-fold) or holds a NUL drops to the scalar tail for exact resolution.
+    let bounded = s1.len().min(s2.len());
     let mut i = 0;
+    while i + SIMD_LANES <= bounded {
+        if !fold_equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
+            break;
+        }
+        i += SIMD_LANES;
+    }
+
     loop {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
@@ -809,7 +847,19 @@ pub fn strcasecmp(s1: &[u8], s2: &[u8]) -> i32 {
 ///
 /// Equivalent to POSIX `strncasecmp`.
 pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
-    for i in 0..n {
+    // SIMD fold-equal fast path over the n-bounded prefix present in both
+    // slices; the scalar tail resolves the exact divergence/NUL index and
+    // out-of-range (logical NUL) bytes, identical to the scalar scan.
+    let bounded = n.min(s1.len()).min(s2.len());
+    let mut i = 0;
+    while i + SIMD_LANES <= bounded {
+        if !fold_equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
+            break;
+        }
+        i += SIMD_LANES;
+    }
+
+    while i < n {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
         let la = a.to_ascii_lowercase();
@@ -821,6 +871,7 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
         if a == 0 {
             return 0;
         }
+        i += 1;
     }
     0
 }

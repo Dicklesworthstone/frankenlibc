@@ -108,6 +108,59 @@ mod string_properties {
             prop_assert_eq!(strncmp(&a, &b, n), reference(&a, &b, n));
         }
 
+        /// SIMD strncasecmp is isomorphic to the scalar fold reference for
+        /// arbitrary bytes (NUL allowed mid-buffer, full 0..=255 alphabet) and n.
+        #[test]
+        fn prop_strncasecmp_matches_scalar_reference(
+            a in proptest::collection::vec(any::<u8>(), 0..200),
+            b in proptest::collection::vec(any::<u8>(), 0..200),
+            n in 0usize..256
+        ) {
+            fn reference(s1: &[u8], s2: &[u8], n: usize) -> i32 {
+                for i in 0..n {
+                    let x = if i < s1.len() { s1[i] } else { 0 };
+                    let y = if i < s2.len() { s2[i] } else { 0 };
+                    let lx = x.to_ascii_lowercase();
+                    let ly = y.to_ascii_lowercase();
+                    if lx != ly {
+                        return (lx as i32) - (ly as i32);
+                    }
+                    if x == 0 {
+                        return 0;
+                    }
+                }
+                0
+            }
+            prop_assert_eq!(strncasecmp(&a, &b, n), reference(&a, &b, n));
+        }
+
+        /// SIMD strcasecmp is isomorphic to the scalar fold reference.
+        #[test]
+        fn prop_strcasecmp_matches_scalar_reference(
+            mut a in proptest::collection::vec(1u8..=255, 0..200),
+            mut b in proptest::collection::vec(1u8..=255, 0..200)
+        ) {
+            a.push(0);
+            b.push(0);
+            fn reference(s1: &[u8], s2: &[u8]) -> i32 {
+                let mut i = 0;
+                loop {
+                    let x = if i < s1.len() { s1[i] } else { 0 };
+                    let y = if i < s2.len() { s2[i] } else { 0 };
+                    let lx = x.to_ascii_lowercase();
+                    let ly = y.to_ascii_lowercase();
+                    if lx != ly {
+                        return (lx as i32) - (ly as i32);
+                    }
+                    if x == 0 {
+                        return 0;
+                    }
+                    i += 1;
+                }
+            }
+            prop_assert_eq!(strcasecmp(&a, &b), reference(&a, &b));
+        }
+
         /// memcpy preserves exact content: memcpy(dst, src, n); memcmp(dst, src, n) == 0
         #[test]
         fn prop_memcpy_then_memcmp_is_zero(
@@ -272,6 +325,64 @@ mod string_properties {
         assert_eq!(
             digest, "99a3358be31072baca18340daceec13300282aa57b2a1b7406d6817396edb326",
             "strncmp golden corpus hash drifted"
+        );
+    }
+
+    /// Golden sha256 over a deterministic strcasecmp/strncasecmp corpus drawn
+    /// from the ASCII letter band (mixed case) plus injected NULs, with half the
+    /// pairs sharing a case-flipped prefix, so the in-vector fold path and the
+    /// 32-byte panel/tail boundary are exercised. Pins exact behavior.
+    #[test]
+    fn golden_strcasecmp_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+        use frankenlibc_core::string::str::{strcasecmp, strncasecmp};
+
+        let mut state: u64 = 0x84A4_5C9E_1B7D_2F03;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            // Map into 0x40..=0x60 ('@', A-Z, [\]^_, '`') to straddle fold edges,
+            // with occasional NUL.
+            let r = (state >> 40) as u8 % 34;
+            if r == 0 { 0 } else { 0x40 + r }
+        };
+
+        let lengths = [0usize, 1, 7, 15, 16, 17, 31, 32, 33, 47, 64, 65, 100];
+        let mut hasher = Sha256::new();
+        for &la in &lengths {
+            for &lb in &lengths {
+                let mut a: Vec<u8> = (0..la).map(|_| next()).collect();
+                let mut b: Vec<u8> = (0..lb).map(|_| next()).collect();
+                if (la + lb) % 2 == 0 {
+                    let shared = la.min(lb);
+                    for k in 0..shared {
+                        let c = a[k];
+                        b[k] = if c.is_ascii_uppercase() {
+                            c.to_ascii_lowercase()
+                        } else if c.is_ascii_lowercase() {
+                            c.to_ascii_uppercase()
+                        } else {
+                            c
+                        };
+                    }
+                }
+                a.push(0);
+                b.push(0);
+                hasher.update([strcasecmp(&a, &b).clamp(-1, 1) as i8 as u8]);
+                for n in [0usize, 1, 16, 31, 32, 33, 64, 128] {
+                    hasher.update([strncasecmp(&a, &b, n).clamp(-1, 1) as i8 as u8]);
+                }
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "a530194ccf71c311a33c76a479c1db79832ab66ced74b16c338273157c7cd842",
+            "strcasecmp golden corpus hash drifted"
         );
     }
 
