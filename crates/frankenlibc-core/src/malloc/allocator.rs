@@ -549,7 +549,7 @@ fn size_class_certificate_details(
         && class_size == HOT_CERT_64_CLASS_SIZE
         && cert_value == HOT_CERT_64_VALUE
     {
-        Cow::Owned(HOT_CERT_64_DETAILS.to_owned())
+        Cow::Borrowed(HOT_CERT_64_DETAILS)
     } else {
         Cow::Owned(format!(
             "requested_size={size};mapped_class_size={class_size};cert_value={cert_value}"
@@ -752,7 +752,10 @@ mod tests {
                 .details
                 .starts_with("requested_size=64;mapped_class_size=64;cert_value=")
         );
-        assert!(matches!(&records[0].details, Cow::Owned(_)));
+        assert!(matches!(
+            &records[0].details,
+            Cow::Borrowed(HOT_CERT_64_DETAILS)
+        ));
 
         assert_eq!(records[1].symbol, "malloc");
         assert_eq!(records[1].event, "alloc");
