@@ -220,14 +220,15 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
         return String::from("0");
     }
 
-    // Pick format based on the decimal exponent of |value|. log10 of
-    // a non-zero finite f64 is finite, but the floor cast can land off
-    // by one near exact powers of 10 due to f64 rounding (e.g.
-    // log10(1000.0) might compute to 2.9999...). Cross-check by
-    // re-formatting once and see what string we get.
+    // Pick format based on the decimal exponent the value rounds to.
+    // The C/glibc %g switch keys off X = the exponent a `%e` conversion
+    // would emit — i.e. the exponent AFTER rounding to `ndigit`
+    // significant digits, not floor(log10) of the raw value. Boundary
+    // values whose rounding carries into a new power of ten must follow
+    // their rounded magnitude: 9.9999e-5 rounds to 1e-4 (X = -4, fixed,
+    // "0.0001"), 999999.9 rounds to 1e6 (X = 6, scientific, "1e+06").
     let abs = value.abs();
-    let exp = abs.log10().floor() as i32;
-    let exp = correct_exp_via_check(abs, exp);
+    let exp = rounded_decimal_exp(abs, ndigit);
 
     if exp < -4 || exp >= ndigit as i32 {
         format_scientific(value, ndigit)
@@ -236,19 +237,19 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     }
 }
 
-/// Verify and possibly correct the floor(log10) value: if 10^exp would
-/// be larger than abs, decrement; if 10^(exp+1) would be ≤ abs,
-/// increment. This handles f64 rounding quirks at exact powers of 10.
-fn correct_exp_via_check(abs: f64, exp: i32) -> i32 {
-    let lo = 10f64.powi(exp);
-    if abs < lo {
-        return exp - 1;
+/// Decimal exponent X of `abs` after rounding to `ndigit` significant
+/// digits — exactly what a `%e` conversion would print. Computed by
+/// formatting once in scientific notation (which performs the same
+/// round-half-to-even at the boundary) and parsing the exponent field.
+/// This sidesteps both the floor(log10) off-by-one near exact powers of
+/// ten and the rounding-carry that shifts the exponent of the rounded
+/// value relative to the raw one.
+fn rounded_decimal_exp(abs: f64, ndigit: usize) -> i32 {
+    let sci = format!("{:.prec$e}", abs, prec = ndigit.saturating_sub(1));
+    match sci.find('e') {
+        Some(pos) => sci[pos + 1..].parse::<i32>().unwrap_or(0),
+        None => 0,
     }
-    let hi = 10f64.powi(exp + 1);
-    if abs >= hi {
-        return exp + 1;
-    }
-    exp
 }
 
 fn format_fixed(value: f64, ndigit: usize, exp: i32) -> String {
@@ -436,6 +437,19 @@ mod tests {
             (1e-10, 1, b"1e-10"),
             (1.5e20, 1, b"2e+20"),
             (1.5e20, 2, b"1.5e+20"),
+            // Rounding-carries-the-exponent cases: the %e-vs-%f switch
+            // must key off the exponent AFTER rounding to `ndigit`
+            // significant digits, not floor(log10) of the raw value.
+            // glibc 2.38 / Linux-x86_64 (cross-checked with printf %g):
+            (9.9999e-5, 1, b"0.0001"), // raw exp -5 → rounds to 1e-4 → fixed
+            (9.9999e-5, 2, b"0.0001"), // rounds to 1.0e-4 → fixed
+            (9.6e-5, 1, b"0.0001"),    // rounds up across the -4 boundary
+            (9.5e-5, 1, b"0.0001"),    // ties-to-even up to 1e-4
+            (999999.9, 6, b"1e+06"),   // raw exp 5 → rounds to 1e6 → sci
+            (999999.5, 6, b"1e+06"),   // ties up to 1e6 → sci
+            (99999.9, 5, b"1e+05"),    // raw exp 4 → rounds to 1e5 → sci
+            (999999.0, 6, b"999999"),  // no carry: stays fixed
+            (0.00012345, 2, b"0.00012"),
         ];
         for &(value, ndigit, expected) in cases {
             let mut buf = [0u8; 64];

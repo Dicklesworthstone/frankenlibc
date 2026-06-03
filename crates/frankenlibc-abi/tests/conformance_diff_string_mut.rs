@@ -1259,6 +1259,14 @@ const STRFROM_DOUBLE_CASES: &[(f64, &[u8])] = &[
     (1e-10, b"%.6e"),
     (1e10, b"%.2g"),
     (123.456, b"%.2g"),
+    // %g exponent-switch boundaries: rounding to the precision must
+    // carry the exponent before choosing %e vs %f (regression for the
+    // gcvt/render_pct_g rounded-exponent fix).
+    (9.9999e-5, b"%.1g"),
+    (9.6e-5, b"%.1g"),
+    (999999.9, b"%.6g"),
+    (99999.9, b"%.5g"),
+    (0.00012345, b"%.2g"),
     (f64::INFINITY, b"%.2E"),
     (f64::NEG_INFINITY, b"%.2F"),
     (f64::NAN, b"%.2G"),
