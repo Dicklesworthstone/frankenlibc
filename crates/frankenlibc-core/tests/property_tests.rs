@@ -274,6 +274,58 @@ mod string_properties {
             "strncmp golden corpus hash drifted"
         );
     }
+
+    /// Golden sha256 over a deterministic memcmp corpus. Pins the exact
+    /// sign-normalized output stream across equal/different long prefixes and n
+    /// values straddling the 32-byte panel and 128-byte folded-block paths.
+    #[test]
+    fn golden_memcmp_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut state: u64 = 0xD1B5_4A32_D192_ED03;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+
+        let lengths = [
+            0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 200,
+        ];
+        let mut hasher = Sha256::new();
+        for &la in &lengths {
+            for &lb in &lengths {
+                let a: Vec<u8> = (0..la).map(|_| next()).collect();
+                let mut b: Vec<u8> = (0..lb).map(|_| next()).collect();
+                if (la + lb) % 2 == 0 {
+                    let shared = la.min(lb);
+                    for k in 0..shared {
+                        b[k] = a[k];
+                    }
+                }
+
+                for n in [0usize, 1, 8, 31, 32, 33, 64, 127, 128, 129, 256] {
+                    let r = match memcmp(&a, &b, n) {
+                        core::cmp::Ordering::Less => -1i8,
+                        core::cmp::Ordering::Equal => 0,
+                        core::cmp::Ordering::Greater => 1,
+                    };
+                    hasher.update([r as u8]);
+                }
+            }
+        }
+
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "23ff1bb367d74ce77644397fa6f7f2160759f5991d6fb383e89ad5bb6d0b4e5e",
+            "memcmp golden corpus hash drifted"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

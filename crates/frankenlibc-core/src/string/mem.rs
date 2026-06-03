@@ -59,12 +59,29 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let a = &a[..count];
     let b = &b[..count];
 
-    // Fast path: scan 32-byte panels for a full-equality match. `a` and `b`
+    // Fast path: fold four 32-byte panels into one equality probe. Blocks that
+    // are byte-for-byte equal are skipped wholesale; the first block with any
+    // difference is then resolved in panel order and finally byte order, so the
+    // global first-difference sign is preserved exactly.
+    let mut a_blocks = a.chunks_exact(SIMD_FOLD_BYTES);
+    let mut b_blocks = b.chunks_exact(SIMD_FOLD_BYTES);
+    for (a_block, b_block) in a_blocks.by_ref().zip(b_blocks.by_ref()) {
+        if ne_simd_folded_128(a_block, b_block) {
+            let mut a_panels = a_block.chunks_exact(SIMD_LANES);
+            let mut b_panels = b_block.chunks_exact(SIMD_LANES);
+            for (a_chunk, b_chunk) in a_panels.by_ref().zip(b_panels.by_ref()) {
+                if !eq_simd_32(a_chunk, b_chunk) {
+                    return compare_bytes(a_chunk, b_chunk);
+                }
+            }
+        }
+    }
+
+    // Remainder: scan 32-byte panels for a full-equality match. `a` and `b`
     // share `count`, so both iterators yield the same number of panels and an
-    // identical-length remainder. A panel that is byte-for-byte equal is skipped
-    // wholesale; the first panel that differs falls through to `compare_bytes`,
-    // which resolves the exact first-difference sign — every earlier panel was
-    // equal, so the global first difference lies inside this panel.
+    // identical-length remainder.
+    let a = a_blocks.remainder();
+    let b = b_blocks.remainder();
     let mut a_simd = a.chunks_exact(SIMD_LANES);
     let mut b_simd = b.chunks_exact(SIMD_LANES);
     for (a_chunk, b_chunk) in a_simd.by_ref().zip(b_simd.by_ref()) {
@@ -97,6 +114,24 @@ fn eq_simd_32(a: &[u8], b: &[u8]) -> bool {
     Simd::<u8, SIMD_LANES>::from_slice(a)
         .simd_eq(Simd::<u8, SIMD_LANES>::from_slice(b))
         .all()
+}
+
+/// True iff any byte differs across a 128-byte block. This amortizes the mask
+/// reduction across four SIMD panels while leaving first-difference ordering to
+/// the caller's panel/byte resolver.
+#[inline(always)]
+fn ne_simd_folded_128(a: &[u8], b: &[u8]) -> bool {
+    debug_assert_eq!(a.len(), SIMD_FOLD_BYTES);
+    debug_assert_eq!(b.len(), SIMD_FOLD_BYTES);
+    let a0 = Simd::<u8, SIMD_LANES>::from_slice(&a[..SIMD_LANES]);
+    let b0 = Simd::<u8, SIMD_LANES>::from_slice(&b[..SIMD_LANES]);
+    let a1 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES..SIMD_LANES * 2]);
+    let b1 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES..SIMD_LANES * 2]);
+    let a2 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES * 2..SIMD_LANES * 3]);
+    let b2 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES * 2..SIMD_LANES * 3]);
+    let a3 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
+    let b3 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
+    (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
 }
 
 #[inline]
