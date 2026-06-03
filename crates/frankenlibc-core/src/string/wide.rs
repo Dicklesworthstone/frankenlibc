@@ -9,7 +9,7 @@ use std::simd::{Simd, cmp::SimdPartialEq};
 const WIDE_NUL_SIMD_LANES: usize = 16;
 
 /// Number of `u32` wide characters processed per char-or-NUL candidate panel.
-const WIDE_FIND_SIMD_LANES: usize = 16;
+const WIDE_FIND_SIMD_LANES: usize = 32;
 
 /// Number of `u32` wide characters compared per `wmemcmp` equality panel.
 const WIDE_COMPARE_SIMD_LANES: usize = 16;
