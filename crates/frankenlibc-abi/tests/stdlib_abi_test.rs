@@ -89,6 +89,7 @@ fn stdlib_env_lock() -> std::sync::MutexGuard<'static, ()> {
 static MQ_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
 static GETOPT_TEST_GUARD: Mutex<()> = Mutex::new(());
 static SCHED_AFFINITY_TEST_GUARD: Mutex<()> = Mutex::new(());
+static TIMER_TEST_GUARD: Mutex<()> = Mutex::new(());
 
 const FSCONFIG_SET_FLAG_CMD: libc::c_uint = 0;
 
@@ -146,6 +147,12 @@ fn open_test_timer() -> Option<*mut libc::c_void> {
         "timer_create failed unexpectedly with errno={err}"
     );
     None
+}
+
+fn timer_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    TIMER_TEST_GUARD
+        .lock()
+        .expect("timer test guard lock should succeed")
 }
 
 #[test]
@@ -1864,6 +1871,7 @@ fn sched_rr_get_interval_nonexistent_pid_null_output_sets_esrch_like_host() {
 
 #[test]
 fn timer_settime_gettime_getoverrun_and_delete_roundtrip() {
+    let _guard = timer_test_guard();
     let Some(timer_id) = open_test_timer() else {
         return;
     };
@@ -1910,6 +1918,7 @@ fn timer_settime_gettime_getoverrun_and_delete_roundtrip() {
 
 #[test]
 fn timer_settime_valid_timer_null_new_value_sets_einval_like_host() {
+    let _guard = timer_test_guard();
     let Some(host_timer_id) = open_test_timer() else {
         return;
     };
@@ -1940,6 +1949,7 @@ fn timer_settime_valid_timer_null_new_value_sets_einval_like_host() {
 
 #[test]
 fn timer_gettime_valid_timer_null_output_sets_efault() {
+    let _guard = timer_test_guard();
     let Some(timer_id) = open_test_timer() else {
         return;
     };
@@ -1957,6 +1967,7 @@ fn timer_gettime_valid_timer_null_output_sets_efault() {
 
 #[test]
 fn timer_gettime_deleted_timer_handle_sets_einval() {
+    let _guard = timer_test_guard();
     let Some(timer_id) = open_test_timer() else {
         return;
     };
@@ -1976,6 +1987,7 @@ fn timer_gettime_deleted_timer_handle_sets_einval() {
 
 #[test]
 fn timer_gettime_null_timer_handle_sets_einval_like_host() {
+    let _guard = timer_test_guard();
     unsafe {
         *libc::__errno_location() = 0;
     }
@@ -2000,6 +2012,7 @@ fn timer_gettime_null_timer_handle_sets_einval_like_host() {
 
 #[test]
 fn timer_delete_null_timer_handle_sets_einval_like_host() {
+    let _guard = timer_test_guard();
     unsafe {
         *libc::__errno_location() = 0;
     }
@@ -2024,6 +2037,7 @@ fn timer_delete_null_timer_handle_sets_einval_like_host() {
 
 #[test]
 fn timer_delete_deleted_timer_handle_sets_einval_like_host() {
+    let _guard = timer_test_guard();
     let Some(host_timer_id) = open_test_timer() else {
         return;
     };
@@ -2054,6 +2068,7 @@ fn timer_delete_deleted_timer_handle_sets_einval_like_host() {
 
 #[test]
 fn timer_getoverrun_deleted_timer_handle_sets_einval_like_host() {
+    let _guard = timer_test_guard();
     let Some(host_timer_id) = open_test_timer() else {
         return;
     };
@@ -2084,6 +2099,7 @@ fn timer_getoverrun_deleted_timer_handle_sets_einval_like_host() {
 
 #[test]
 fn timer_invalid_inputs_match_kernel_syscalls() {
+    let _guard = timer_test_guard();
     let invalid_timer = (-1_isize) as *mut libc::c_void;
     let mut observed_curr: libc::itimerspec = unsafe { std::mem::zeroed() };
     let new_value = libc::itimerspec {
@@ -4534,6 +4550,48 @@ fn cvt_huge_precision_is_bounded_before_formatting() {
         -1
     );
     assert_eq!(fcvt_buf[3], 0);
+}
+
+/// glibc embeds the sign in the digit buffer for non-finite `ecvt`/`fcvt`
+/// inputs ("-inf"/"-nan") and reports `*sign = 0` — even for `-nan`. Pinned
+/// against host glibc 2.38 on Linux/x86_64. The pre-fix implementation
+/// returned "inf" with `*sign = 1` for `-inf` and dropped the `-nan` sign.
+#[test]
+fn ecvt_fcvt_nonfinite_match_glibc_sign_convention() {
+    let _guard = ecvt_fcvt_lock();
+    let cases: &[(f64, &str)] = &[
+        (f64::NAN, "nan"),
+        (-f64::NAN, "-nan"),
+        (f64::INFINITY, "inf"),
+        (f64::NEG_INFINITY, "-inf"),
+    ];
+    for &(value, expected) in cases {
+        let mut decpt: libc::c_int = -7;
+        let mut sign: libc::c_int = -7;
+        let e = unsafe { ecvt(value, 6, &mut decpt, &mut sign) };
+        let s = unsafe { std::ffi::CStr::from_ptr(e) };
+        assert_eq!(s.to_str().unwrap(), expected, "ecvt({value})");
+        assert_eq!(sign, 0, "ecvt({value}) sign");
+        assert_eq!(decpt, 0, "ecvt({value}) decpt");
+
+        let mut decpt: libc::c_int = -7;
+        let mut sign: libc::c_int = -7;
+        let f = unsafe { fcvt(value, 6, &mut decpt, &mut sign) };
+        let s = unsafe { std::ffi::CStr::from_ptr(f) };
+        assert_eq!(s.to_str().unwrap(), expected, "fcvt({value})");
+        assert_eq!(sign, 0, "fcvt({value}) sign");
+        assert_eq!(decpt, 0, "fcvt({value}) decpt");
+
+        // Reentrant variants share the same convention.
+        let mut decpt: libc::c_int = -7;
+        let mut sign: libc::c_int = -7;
+        let mut buf = [0 as libc::c_char; 16];
+        let rc = unsafe { ecvt_r(value, 6, &mut decpt, &mut sign, buf.as_mut_ptr(), 16) };
+        assert_eq!(rc, 0, "ecvt_r({value}) rc");
+        let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+        assert_eq!(s.to_str().unwrap(), expected, "ecvt_r({value})");
+        assert_eq!(sign, 0, "ecvt_r({value}) sign");
+    }
 }
 
 #[test]

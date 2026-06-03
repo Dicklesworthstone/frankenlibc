@@ -3307,11 +3307,21 @@ pub unsafe extern "C" fn abort() -> ! {
     // attempt to flush our managed streams, and even then, we use try_lock.
     let _ = unsafe { crate::stdio_abi::fflush_managed_only_for_abort() };
 
-    // Build a sigset containing only SIGABRT and unblock it in this thread so
-    // a held SIGABRT cannot suppress delivery of the impending raise.
+    // Build a sigset containing only SIGABRT without entering signal_abi:
+    // abort may run in a forked child while another vanished thread held
+    // runtime-policy locks.
     let mut unblock_set: libc::sigset_t = unsafe { core::mem::zeroed() };
-    let _ = unsafe { crate::signal_abi::sigemptyset(&mut unblock_set) };
-    let _ = unsafe { crate::signal_abi::sigaddset(&mut unblock_set, libc::SIGABRT) };
+    let sig_idx = (libc::SIGABRT - 1) as usize;
+    let bits_per_word = core::mem::size_of::<libc::c_ulong>() * 8;
+    let sig_word = sig_idx / bits_per_word;
+    let sig_bit = sig_idx % bits_per_word;
+    let word_count = core::mem::size_of::<libc::sigset_t>() / core::mem::size_of::<libc::c_ulong>();
+    if sig_word < word_count {
+        unsafe {
+            let words = (&mut unblock_set as *mut libc::sigset_t).cast::<libc::c_ulong>();
+            *words.add(sig_word) = 1 << sig_bit;
+        }
+    }
     let _ = unsafe {
         raw_syscall::sys_rt_sigprocmask(
             libc::SIG_UNBLOCK,
@@ -4883,8 +4893,10 @@ pub unsafe extern "C" fn ecvt_r(
     }
     // Use signbit semantics: -0.0 returns sign=1 too, matching glibc.
     // Previous impl used `value < 0.0` which is false for -0.0.
+    // Non-finite values (NaN/inf) carry their sign INSIDE the digit buffer
+    // ("-inf"/"-nan") and report sign=0, so only finite negatives set sign=1.
     unsafe {
-        *sign = if value.is_sign_negative() && !value.is_nan() {
+        *sign = if value.is_sign_negative() && value.is_finite() {
             1
         } else {
             0
@@ -4919,9 +4931,11 @@ pub unsafe extern "C" fn fcvt_r(
     if effective_buflen == 0 {
         return libc::EINVAL;
     }
-    // signbit semantics again — -0.0 must report sign=1.
+    // signbit semantics again — -0.0 must report sign=1. Non-finite values
+    // (NaN/inf) carry their sign in the buffer ("-inf"/"-nan") and report
+    // sign=0, so only finite negatives set sign=1.
     unsafe {
-        *sign = if value.is_sign_negative() && !value.is_nan() {
+        *sign = if value.is_sign_negative() && value.is_finite() {
             1
         } else {
             0

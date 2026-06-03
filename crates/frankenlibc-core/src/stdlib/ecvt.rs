@@ -5,6 +5,21 @@
 
 const MAX_LEGACY_CVT_DIGITS: usize = 512;
 
+/// Render the digit string glibc emits for a non-finite `ecvt`/`fcvt` input.
+///
+/// glibc embeds the sign character directly in the returned buffer for NaN
+/// and infinity (e.g. `"-inf"`, `"-nan"`) and leaves the out-param `*sign`
+/// set to 0 — unlike finite values, where the sign is reported via `*sign`
+/// and stripped from the digits. Mirroring that, the returned tuple here
+/// always carries `is_negative = false` for non-finite inputs so the ABI
+/// layer reports `sign = 0`. The sign bit is read directly (not via
+/// `is_sign_negative() && !is_nan()`) so `-nan` keeps its leading `-`.
+fn nonfinite_cvt(value: f64) -> (Vec<u8>, i32, bool) {
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    let body = if value.is_nan() { "nan" } else { "inf" };
+    (format!("{sign}{body}").into_bytes(), 0, false)
+}
+
 /// `ecvt` — convert double to string in scientific notation form.
 ///
 /// Returns `(digits, decimal_point_position, is_negative)`.
@@ -17,11 +32,8 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
     let negative = value.is_sign_negative() && !value.is_nan();
     let abs_val = value.abs();
 
-    if value.is_nan() {
-        return (b"nan".to_vec(), 0, false);
-    }
-    if value.is_infinite() {
-        return (b"inf".to_vec(), 0, negative);
+    if !value.is_finite() {
+        return nonfinite_cvt(value);
     }
 
     let ndigit = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
@@ -107,11 +119,8 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
     let negative = value.is_sign_negative() && !value.is_nan();
     let abs_val = value.abs();
 
-    if value.is_nan() {
-        return (b"nan".to_vec(), 0, false);
-    }
-    if value.is_infinite() {
-        return (b"inf".to_vec(), 0, negative);
+    if !value.is_finite() {
+        return nonfinite_cvt(value);
     }
 
     let ndigit = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
@@ -409,6 +418,35 @@ mod tests {
             assert_eq!(digits, expected_digits, "fcvt({value}, {ndigit}) digits");
             assert_eq!(decpt, expected_decpt, "fcvt({value}, {ndigit}) decpt");
             assert_eq!(neg, expected_neg, "fcvt({value}, {ndigit}) sign");
+        }
+    }
+
+    /// Pinned reference values for non-finite `ecvt`/`fcvt` inputs against
+    /// host glibc 2.38 on Linux/x86_64. glibc embeds the sign in the returned
+    /// digit buffer ("-inf"/"-nan") and reports `*sign = 0` for every
+    /// NaN/infinity — including `-nan`. Each row is
+    /// `(value, expected_digits)`; decpt is always 0 and the returned
+    /// `is_negative` flag is always false (so the ABI emits sign=0).
+    #[test]
+    fn ecvt_fcvt_nonfinite_match_glibc() {
+        let cases: &[(f64, &[u8])] = &[
+            (f64::NAN, b"nan"),
+            (-f64::NAN, b"-nan"),
+            (f64::INFINITY, b"inf"),
+            (f64::NEG_INFINITY, b"-inf"),
+        ];
+        for &(value, expected) in cases {
+            for ndigit in [0, 1, 6, 17] {
+                let (e_digits, e_decpt, e_neg) = ecvt(value, ndigit);
+                assert_eq!(e_digits, expected, "ecvt({value}, {ndigit}) digits");
+                assert_eq!(e_decpt, 0, "ecvt({value}, {ndigit}) decpt");
+                assert!(!e_neg, "ecvt({value}, {ndigit}) reports sign=0");
+
+                let (f_digits, f_decpt, f_neg) = fcvt(value, ndigit);
+                assert_eq!(f_digits, expected, "fcvt({value}, {ndigit}) digits");
+                assert_eq!(f_decpt, 0, "fcvt({value}, {ndigit}) decpt");
+                assert!(!f_neg, "fcvt({value}, {ndigit}) reports sign=0");
+            }
         }
     }
 
