@@ -29,6 +29,7 @@ pub struct FormatFlags {
     pub space_sign: bool,   // ' '
     pub alt_form: bool,     // '#'
     pub zero_pad: bool,     // '0'
+    pub group: bool,        // '\'' (POSIX thousands grouping)
 }
 
 /// Width specification.
@@ -799,6 +800,11 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
             b' ' => flags.space_sign = true,
             b'#' => flags.alt_form = true,
             b'0' => flags.zero_pad = true,
+            // POSIX thousands-grouping flag. The active locale is the C
+            // locale (empty `grouping`/`thousands_sep`), so glibc emits no
+            // separators and the flag is a no-op — but it must be accepted
+            // and consumed, not treated as the conversion specifier.
+            b'\'' => flags.group = true,
             _ => break,
         }
         pos += 1;
@@ -1683,6 +1689,28 @@ mod tests {
         assert_eq!(spec.width, Width::None);
         assert_eq!(spec.precision, Precision::None);
         assert_eq!(spec.value_position, None);
+    }
+
+    #[test]
+    fn test_grouping_flag_parsed_and_c_locale_noop() {
+        // POSIX `'` flag must be consumed as a flag, not mistaken for the
+        // conversion specifier. glibc in the C locale accepts it and emits no
+        // separators (empty `grouping`), so output equals the un-flagged form.
+        let (spec, consumed) = parse_format_spec(b"'d").unwrap();
+        assert_eq!(consumed, 2);
+        assert_eq!(spec.conversion, b'd');
+        assert!(spec.flags.group);
+
+        let mut buf = Vec::new();
+        format_signed(1_000_000, &spec, &mut buf);
+        assert_eq!(&buf, b"1000000");
+
+        // Combines with other flags and width: glibc `%'+8d` of 1234 -> "   +1234".
+        let (spec, _) = parse_format_spec(b"'+8d").unwrap();
+        assert!(spec.flags.group && spec.flags.force_sign);
+        let mut buf = Vec::new();
+        format_signed(1234, &spec, &mut buf);
+        assert_eq!(&buf, b"   +1234");
     }
 
     #[test]
