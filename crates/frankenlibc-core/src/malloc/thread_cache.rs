@@ -86,6 +86,11 @@ impl ThreadCache {
         let Ok(index) = size_class_index(raw_size_class_index, "ThreadCache::alloc") else {
             return None;
         };
+        self.alloc_index(index)
+    }
+
+    /// Attempts to allocate from a pre-validated size class.
+    pub(crate) fn alloc_index(&mut self, index: SizeClassIndex) -> Option<usize> {
         let result = self.magazine_mut(index).pop();
         if result.is_some() {
             self.total_cached -= 1;
@@ -101,6 +106,11 @@ impl ThreadCache {
         let Ok(index) = size_class_index(raw_size_class_index, "ThreadCache::dealloc") else {
             return false;
         };
+        self.dealloc_index(index, ptr)
+    }
+
+    /// Returns an object to a pre-validated size class.
+    pub(crate) fn dealloc_index(&mut self, index: SizeClassIndex, ptr: usize) -> bool {
         let cached = self.magazine_mut(index).push(ptr);
         if cached {
             self.total_cached += 1;

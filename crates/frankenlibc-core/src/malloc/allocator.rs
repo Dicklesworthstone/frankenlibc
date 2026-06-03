@@ -290,7 +290,7 @@ impl MallocState {
         );
 
         // Try thread cache first
-        if let Some(ptr) = self.thread_cache.alloc(bin_usize) {
+        if let Some(ptr) = self.thread_cache.alloc_index(bin) {
             self.thread_cache_hits += 1;
             self.track_allocation(size);
             self.record_lifecycle(
@@ -438,7 +438,7 @@ impl MallocState {
             }
         }
 
-        if self.thread_cache.dealloc(bin_usize, ptr) {
+        if self.thread_cache.dealloc_index(bin, ptr) {
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "free",
@@ -556,6 +556,7 @@ mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
     use std::collections::HashMap;
+    use std::fmt::Write as _;
     use std::sync::{Barrier, Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
@@ -749,6 +750,60 @@ mod tests {
             &records[2].details,
             Cow::Borrowed("path=thread_cache")
         ));
+    }
+
+    #[test]
+    fn hot_cycle_lifecycle_record_sha256_is_stable() {
+        let mut state = MallocState::new();
+        let size = 64;
+        let mut next_ptr = 0x3000_0000usize;
+
+        let ptr = state
+            .malloc(size, |class_size| {
+                next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                Some(next_ptr)
+            })
+            .unwrap();
+        state.free(ptr, size, |_| {});
+        let _ = state.drain_lifecycle_logs();
+
+        let reused_ptr = state
+            .malloc(size, |class_size| {
+                next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                Some(next_ptr)
+            })
+            .unwrap();
+        state.free(reused_ptr, size, |_| {});
+
+        let mut golden = String::new();
+        for record in state.lifecycle_logs() {
+            writeln!(
+                &mut golden,
+                "{},{},{},{:?},{:?},{:?},{},{},{},{},{},{},{},{},{},{}",
+                record.decision_id,
+                record.trace_id,
+                record.symbol,
+                record.event,
+                record.ptr,
+                record.size,
+                record.bin.map_or(NUM_SIZE_CLASSES, |bin| bin),
+                record.outcome,
+                record.details,
+                record.active_count,
+                record.total_allocated,
+                record.thread_cache_hits,
+                record.thread_cache_misses,
+                record.central_bin_hits,
+                record.spills_to_central,
+                record.cache_hit_rate_permille
+            )
+            .expect("writing lifecycle golden row to String must succeed");
+        }
+
+        assert_eq!(
+            hex_lower(&Sha256::digest(golden.as_bytes())),
+            "01df8806e2bfd0fda041e153ec61ec4737ad2d3cb1ce22050a2e35bab1688455"
+        );
     }
 
     #[test]
