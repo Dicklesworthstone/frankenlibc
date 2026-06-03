@@ -270,7 +270,7 @@ impl MallocState {
         let class_size = size_class::size_for_index(bin);
         let class_membership_valid = class_size >= size && class_size > 0;
         let size_class_cert_value =
-            evaluate_size_class_barrier(size, class_size, class_membership_valid);
+            size_class_certificate_value(size, class_size, class_membership_valid);
 
         self.record_lifecycle(
             if size_class_cert_value >= 0 {
@@ -561,6 +561,22 @@ fn size_class_certificate_details(
     }
 }
 
+#[inline]
+fn size_class_certificate_value(
+    size: usize,
+    class_size: usize,
+    class_membership_valid: bool,
+) -> i64 {
+    if size == HOT_CERT_64_REQUEST_SIZE
+        && class_size == HOT_CERT_64_CLASS_SIZE
+        && class_membership_valid
+    {
+        HOT_CERT_64_VALUE
+    } else {
+        evaluate_size_class_barrier(size, class_size, class_membership_valid)
+    }
+}
+
 fn push_fixed_lower_hex_u64(out: &mut String, value: u64) {
     for shift in (0..16).rev().map(|n| n * 4) {
         let digit = ((value >> shift) & 0x0f) as usize;
@@ -776,6 +792,26 @@ mod tests {
             &records[2].details,
             Cow::Borrowed("path=thread_cache")
         ));
+    }
+
+    #[test]
+    fn hot_size_class_certificate_value_matches_sos_barrier() {
+        assert_eq!(
+            evaluate_size_class_barrier(HOT_CERT_64_REQUEST_SIZE, HOT_CERT_64_CLASS_SIZE, true),
+            HOT_CERT_64_VALUE
+        );
+        assert_eq!(
+            size_class_certificate_value(HOT_CERT_64_REQUEST_SIZE, HOT_CERT_64_CLASS_SIZE, true),
+            HOT_CERT_64_VALUE
+        );
+        assert_eq!(
+            size_class_certificate_value(65, 128, true),
+            evaluate_size_class_barrier(65, 128, true)
+        );
+        assert_eq!(
+            size_class_certificate_value(HOT_CERT_64_REQUEST_SIZE, HOT_CERT_64_CLASS_SIZE, false),
+            evaluate_size_class_barrier(HOT_CERT_64_REQUEST_SIZE, HOT_CERT_64_CLASS_SIZE, false)
+        );
     }
 
     #[test]
