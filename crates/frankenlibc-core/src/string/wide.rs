@@ -11,6 +11,9 @@ const WIDE_NUL_SIMD_LANES: usize = 16;
 /// Number of `u32` wide characters processed per char-or-NUL candidate panel.
 const WIDE_FIND_SIMD_LANES: usize = 32;
 
+/// Number of `u32` wide characters processed per long char-or-NUL candidate panel.
+const WIDE_FIND_LONG_SIMD_LANES: usize = 64;
+
 /// Number of `u32` wide characters compared per `wmemcmp` equality panel.
 const WIDE_COMPARE_SIMD_LANES: usize = 16;
 
@@ -27,6 +30,15 @@ const WIDE_REVERSE_SIMD_LANES: usize = 16;
 fn has_wide_or_nul_simd(chunk: &[u32], needle: u32) -> bool {
     debug_assert_eq!(chunk.len(), WIDE_FIND_SIMD_LANES);
     let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(chunk);
+    (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
+}
+
+/// Returns `true` if `chunk` (exactly [`WIDE_FIND_LONG_SIMD_LANES`] elements)
+/// contains the wide character `needle` or a terminating NUL.
+#[inline(always)]
+fn has_wide_or_nul_long_simd(chunk: &[u32], needle: u32) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_FIND_LONG_SIMD_LANES);
+    let lanes = Simd::<u32, WIDE_FIND_LONG_SIMD_LANES>::from_slice(chunk);
     (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
 }
 
@@ -289,6 +301,40 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
     }
 
     let mut last = None;
+    if s.len() >= WIDE_FIND_LONG_SIMD_LANES {
+        let mut chunks = s.chunks_exact(WIDE_FIND_LONG_SIMD_LANES);
+        let mut base = 0usize;
+
+        for chunk in chunks.by_ref() {
+            if !has_wide_or_nul_long_simd(chunk, c) {
+                base += WIDE_FIND_LONG_SIMD_LANES;
+                continue;
+            }
+
+            for (j, &ch) in chunk.iter().enumerate() {
+                if ch == 0 {
+                    return last;
+                }
+                if ch == c {
+                    last = Some(base + j);
+                }
+            }
+
+            base += WIDE_FIND_LONG_SIMD_LANES;
+        }
+
+        for (j, &ch) in chunks.remainder().iter().enumerate() {
+            if ch == 0 {
+                return last;
+            }
+            if ch == c {
+                last = Some(base + j);
+            }
+        }
+
+        return last;
+    }
+
     let mut chunks = s.chunks_exact(WIDE_FIND_SIMD_LANES);
     let mut base = 0usize;
 
