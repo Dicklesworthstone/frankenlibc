@@ -8,6 +8,9 @@ use std::simd::{Simd, cmp::SimdPartialEq};
 /// Number of `u32` wide characters processed per safe-SIMD panel (256-bit).
 const WIDE_SIMD_LANES: usize = 8;
 
+/// Number of `u32` wide characters compared per `wmemcmp` equality panel.
+const WIDE_COMPARE_SIMD_LANES: usize = 16;
+
 /// Returns `true` if `chunk` (exactly [`WIDE_SIMD_LANES`] elements) contains the
 /// wide character `needle` or a terminating NUL. Used as a cheap panel filter
 /// before exact left-to-right scalar resolution on candidate panels.
@@ -395,7 +398,7 @@ pub fn wmemset(dest: &mut [u32], c: u32, n: usize) -> usize {
 /// Equivalent to C `wmemcmp`.
 /// Performs signed comparison (treating `u32` as `i32`) to match Linux `wchar_t`.
 ///
-/// Scans `WIDE_SIMD_LANES` elements per step with a portable-SIMD equality
+/// Scans `WIDE_COMPARE_SIMD_LANES` elements per step with a portable-SIMD equality
 /// probe, then resolves the first differing index within the first mismatching
 /// panel left-to-right. Behaviour is identical to the scalar element-by-element
 /// signed comparison over the first `n.min(s1.len()).min(s2.len())` elements.
@@ -403,12 +406,12 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     let count = n.min(s1.len()).min(s2.len());
     let a_all = &s1[..count];
     let b_all = &s2[..count];
-    let mut a_chunks = a_all.chunks_exact(WIDE_SIMD_LANES);
-    let mut b_chunks = b_all.chunks_exact(WIDE_SIMD_LANES);
+    let mut a_chunks = a_all.chunks_exact(WIDE_COMPARE_SIMD_LANES);
+    let mut b_chunks = b_all.chunks_exact(WIDE_COMPARE_SIMD_LANES);
 
     for (a_chunk, b_chunk) in a_chunks.by_ref().zip(b_chunks.by_ref()) {
-        let av = Simd::<u32, WIDE_SIMD_LANES>::from_slice(a_chunk);
-        let bv = Simd::<u32, WIDE_SIMD_LANES>::from_slice(b_chunk);
+        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a_chunk);
+        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b_chunk);
         if av.simd_eq(bv).all() {
             continue;
         }
