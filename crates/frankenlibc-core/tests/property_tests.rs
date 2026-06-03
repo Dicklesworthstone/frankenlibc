@@ -83,6 +83,31 @@ mod string_properties {
             prop_assert_eq!(full.signum(), bounded.signum());
         }
 
+        /// SIMD strncmp is isomorphic to the scalar byte-by-byte reference for
+        /// arbitrary inputs (NUL bytes allowed mid-buffer) and arbitrary n.
+        #[test]
+        fn prop_strncmp_matches_scalar_reference(
+            a in proptest::collection::vec(any::<u8>(), 0..200),
+            b in proptest::collection::vec(any::<u8>(), 0..200),
+            n in 0usize..256
+        ) {
+            // Reference: the exact scalar algorithm strncmp replaced.
+            fn reference(s1: &[u8], s2: &[u8], n: usize) -> i32 {
+                for i in 0..n {
+                    let x = if i < s1.len() { s1[i] } else { 0 };
+                    let y = if i < s2.len() { s2[i] } else { 0 };
+                    if x != y {
+                        return (x as i32) - (y as i32);
+                    }
+                    if x == 0 {
+                        return 0;
+                    }
+                }
+                0
+            }
+            prop_assert_eq!(strncmp(&a, &b, n), reference(&a, &b, n));
+        }
+
         /// memcpy preserves exact content: memcpy(dst, src, n); memcmp(dst, src, n) == 0
         #[test]
         fn prop_memcpy_then_memcmp_is_zero(
@@ -199,6 +224,55 @@ mod string_properties {
             prop_assert!(span <= strlen(&data));
             prop_assert!(cspan <= strlen(&data));
         }
+    }
+
+    /// Golden sha256 over a deterministic strncmp corpus. Pins the exact output
+    /// (sign-normalized to -1/0/1, matching C semantics) so any future refactor
+    /// that changes behavior is caught. The corpus spans short/long, equal/diff
+    /// prefixes, mid-buffer NUL, and n values straddling the 32-byte SIMD panel.
+    #[test]
+    fn golden_strncmp_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        // Deterministic LCG so the corpus is fixed without external rng.
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+
+        let lengths = [0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 200];
+        let mut hasher = Sha256::new();
+        for &la in &lengths {
+            for &lb in &lengths {
+                let mut a: Vec<u8> = (0..la).map(|_| next()).collect();
+                let mut b: Vec<u8> = (0..lb).map(|_| next()).collect();
+                // Force a shared prefix on half the pairs to exercise long equal runs.
+                if (la + lb) % 2 == 0 {
+                    let shared = la.min(lb);
+                    for k in 0..shared {
+                        b[k] = a[k];
+                    }
+                }
+                a.push(0);
+                b.push(0);
+                for n in [0usize, 1, 16, 31, 32, 33, 64, 128, 256] {
+                    let r = strncmp(&a, &b, n).signum() as i8;
+                    hasher.update([r as u8]);
+                }
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "99a3358be31072baca18340daceec13300282aa57b2a1b7406d6817396edb326",
+            "strncmp golden corpus hash drifted"
+        );
     }
 }
 

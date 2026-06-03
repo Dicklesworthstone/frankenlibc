@@ -279,7 +279,26 @@ pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
 ///
 /// Equivalent to C `strncmp`. Like [`strcmp`], but stops after `n` bytes.
 pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
-    for i in 0..n {
+    // Bytes we may inspect from both slices: bounded by `n` and the shorter
+    // buffer. Vectorized panels only run over indices present in both slices;
+    // out-of-range indices are resolved as logical NUL by the scalar tail,
+    // exactly as the byte-by-byte reference does.
+    let bounded = n.min(s1.len()).min(s2.len());
+    let mut i = 0;
+
+    // SIMD fast path: stride 32-byte panels that are byte-for-byte equal and
+    // NUL-free. `equal_and_no_nul_simd_32` returns `false` on the first panel
+    // that differs OR contains a NUL, so the scalar loop below resolves the
+    // exact divergence/terminator index — identical result to the reference.
+    while i + SIMD_LANES <= bounded {
+        if !equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
+            break;
+        }
+        i += SIMD_LANES;
+    }
+
+    // Resolve the remaining bytes (and the panel that broke) exactly.
+    while i < n {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
 
@@ -289,6 +308,7 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
         if a == 0 {
             return 0;
         }
+        i += 1;
     }
     0
 }
