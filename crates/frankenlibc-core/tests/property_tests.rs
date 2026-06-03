@@ -329,6 +329,121 @@ mod string_properties {
 }
 
 // ---------------------------------------------------------------------------
+// Wide-string compare properties (wide.rs)
+// ---------------------------------------------------------------------------
+
+mod wide_properties {
+    use super::*;
+    use frankenlibc_core::string::wide::{wcscmp, wcsncmp};
+
+    // Reference: exact scalar wcsncmp the SIMD version replaced.
+    fn ref_wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
+        let mut i = 0;
+        while i < n {
+            let a = if i < s1.len() { s1[i] } else { 0 };
+            let b = if i < s2.len() { s2[i] } else { 0 };
+            if a != b {
+                return if (a as i32) < (b as i32) { -1 } else { 1 };
+            }
+            if a == 0 {
+                return 0;
+            }
+            i += 1;
+        }
+        0
+    }
+
+    // Reference: exact scalar wcscmp the SIMD version replaced.
+    fn ref_wcscmp(s1: &[u32], s2: &[u32]) -> i32 {
+        let mut i = 0;
+        loop {
+            let a = if i < s1.len() { s1[i] } else { 0 };
+            let b = if i < s2.len() { s2[i] } else { 0 };
+            if a != b {
+                return if (a as i32) < (b as i32) { -1 } else { 1 };
+            }
+            if a == 0 {
+                return 0;
+            }
+            i += 1;
+        }
+    }
+
+    proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
+        /// SIMD wcsncmp is isomorphic to the scalar reference for arbitrary
+        /// wide inputs (NUL allowed mid-buffer, high/sign-bit code units) and n.
+        #[test]
+        fn prop_wcsncmp_matches_scalar_reference(
+            a in proptest::collection::vec(any::<u32>(), 0..200),
+            b in proptest::collection::vec(any::<u32>(), 0..200),
+            n in 0usize..256
+        ) {
+            prop_assert_eq!(wcsncmp(&a, &b, n), ref_wcsncmp(&a, &b, n));
+        }
+
+        /// SIMD wcscmp is isomorphic to the scalar reference.
+        #[test]
+        fn prop_wcscmp_matches_scalar_reference(
+            mut a in proptest::collection::vec(1u32..=0x10_FFFF, 0..200),
+            mut b in proptest::collection::vec(1u32..=0x10_FFFF, 0..200)
+        ) {
+            a.push(0);
+            b.push(0);
+            prop_assert_eq!(wcscmp(&a, &b).signum(), ref_wcscmp(&a, &b).signum());
+        }
+    }
+
+    /// Golden sha256 over a deterministic wcscmp/wcsncmp corpus spanning the
+    /// 16-element SIMD panel boundary, mid-buffer NUL, high/sign-bit code units,
+    /// equal-prefix runs, and assorted n. Pins exact behavior against drift.
+    #[test]
+    fn golden_wide_compare_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut state: u64 = 0xD1B5_4A32_D192_ED03;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            // Mix in some high/sign-bit code units to exercise signed compare.
+            (state >> 32) as u32
+        };
+
+        let lengths = [0usize, 1, 7, 15, 16, 17, 31, 32, 33, 47, 48, 100];
+        let mut hasher = Sha256::new();
+        for &la in &lengths {
+            for &lb in &lengths {
+                let mut a: Vec<u32> = (0..la).map(|_| next()).collect();
+                let mut b: Vec<u32> = (0..lb).map(|_| next()).collect();
+                if (la + lb) % 2 == 0 {
+                    let shared = la.min(lb);
+                    for k in 0..shared {
+                        b[k] = a[k];
+                    }
+                }
+                a.push(0);
+                b.push(0);
+                hasher.update((wcscmp(&a, &b).signum() as i8 as u8).to_le_bytes());
+                for n in [0usize, 1, 16, 31, 32, 33, 48, 128] {
+                    hasher.update((wcsncmp(&a, &b, n).signum() as i8 as u8).to_le_bytes());
+                }
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "c9f07f2b950cfc3a76e1b892b776b965698268ae0a8f8b63d66cf1acedf526ca",
+            "wide-compare golden corpus hash drifted"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Math properties
 // ---------------------------------------------------------------------------
 

@@ -49,6 +49,21 @@ fn has_wide_or_nul_long_simd(chunk: &[u32], needle: u32) -> bool {
     (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
 }
 
+/// Returns `true` iff the two [`WIDE_COMPARE_SIMD_LANES`]-element panels are
+/// element-for-element equal AND contain no terminating NUL. Used as the
+/// equal-prefix fast path for NUL-terminated wide compares: a `false` result
+/// means either a divergence or a NUL is present in the panel, so the scalar
+/// tail must resolve the exact index. Because the panels are equal when this
+/// returns `true`, checking `a` for NUL also covers `b`.
+#[inline(always)]
+fn equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
+    debug_assert_eq!(a.len(), WIDE_COMPARE_SIMD_LANES);
+    debug_assert_eq!(b.len(), WIDE_COMPARE_SIMD_LANES);
+    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a);
+    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b);
+    av.simd_eq(bv).all() && !av.simd_eq(Simd::splat(0)).any()
+}
+
 #[inline(always)]
 fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
     debug_assert_eq!(a_chunk.len(), b_chunk.len());
@@ -267,7 +282,22 @@ pub fn wcscat(dest: &mut [u32], src: &[u32]) -> usize {
 /// Returns a negative value if `s1 < s2`, zero if equal, positive if `s1 > s2`.
 /// Performs signed comparison (treating `u32` as `i32`) to match Linux `wchar_t`.
 pub fn wcscmp(s1: &[u32], s2: &[u32]) -> i32 {
+    // SIMD fast path: stride WIDE_COMPARE_SIMD_LANES-element panels that are
+    // element-for-element equal and NUL-free, bounded by the shorter slice.
+    // The first panel that diverges OR holds a NUL drops to the scalar tail,
+    // which resolves the exact index — identical result to the scalar scan.
+    let bounded = s1.len().min(s2.len());
     let mut i = 0;
+    while i + WIDE_COMPARE_SIMD_LANES <= bounded {
+        if !equal_and_no_nul_wide(
+            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
+            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
+        ) {
+            break;
+        }
+        i += WIDE_COMPARE_SIMD_LANES;
+    }
+
     loop {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
@@ -291,7 +321,21 @@ pub fn wcscmp(s1: &[u32], s2: &[u32]) -> i32 {
 ///
 /// Equivalent to C `wcsncmp`.
 pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
+    // SIMD fast path over equal, NUL-free panels within the n-bounded prefix
+    // present in both slices; the scalar tail resolves the exact divergence/NUL
+    // index and out-of-range (logical NUL) bytes, identical to the scalar scan.
+    let bounded = n.min(s1.len()).min(s2.len());
     let mut i = 0;
+    while i + WIDE_COMPARE_SIMD_LANES <= bounded {
+        if !equal_and_no_nul_wide(
+            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
+            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
+        ) {
+            break;
+        }
+        i += WIDE_COMPARE_SIMD_LANES;
+    }
+
     while i < n {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
