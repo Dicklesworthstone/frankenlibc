@@ -527,12 +527,32 @@ pub fn bzero(dest: &mut [u8], n: usize) {
 /// Equivalent to legacy BSD `bcmp`.
 pub fn bcmp(a: &[u8], b: &[u8], n: usize) -> i32 {
     let count = n.min(a.len()).min(b.len());
-    let mut i = 0usize;
-    while i < count {
-        if a[i] != b[i] {
+    let a = &a[..count];
+    let b = &b[..count];
+
+    // Equality-only SIMD scan: fold 128-byte blocks, then 32-byte panels, then
+    // the byte tail. Unlike memcmp, bcmp never reports ordering, so the first
+    // differing block can return `1` immediately without resolving which byte.
+    let mut a_blocks = a.chunks_exact(SIMD_FOLD_BYTES);
+    let mut b_blocks = b.chunks_exact(SIMD_FOLD_BYTES);
+    for (a_block, b_block) in a_blocks.by_ref().zip(b_blocks.by_ref()) {
+        if ne_simd_folded_128(a_block, b_block) {
             return 1;
         }
-        i += 1;
+    }
+
+    let mut a_panels = a_blocks.remainder().chunks_exact(SIMD_LANES);
+    let mut b_panels = b_blocks.remainder().chunks_exact(SIMD_LANES);
+    for (a_chunk, b_chunk) in a_panels.by_ref().zip(b_panels.by_ref()) {
+        if !eq_simd_32(a_chunk, b_chunk) {
+            return 1;
+        }
+    }
+
+    for (x, y) in a_panels.remainder().iter().zip(b_panels.remainder().iter()) {
+        if x != y {
+            return 1;
+        }
     }
     0
 }

@@ -191,6 +191,34 @@ mod string_properties {
             prop_assert_eq!(d_simd, d_ref);
         }
 
+        /// SIMD bcmp is isomorphic to the scalar byte-equality reference for both
+        /// equal and differing inputs (forced shared prefixes exercise the
+        /// equal-block fast path and the exact mismatch boundary).
+        #[test]
+        fn prop_bcmp_matches_scalar_reference(
+            a in proptest::collection::vec(any::<u8>(), 0..300),
+            b in proptest::collection::vec(any::<u8>(), 0..300),
+            n in 0usize..320,
+            share in 0usize..300
+        ) {
+            fn reference(a: &[u8], b: &[u8], n: usize) -> i32 {
+                let count = n.min(a.len()).min(b.len());
+                for i in 0..count {
+                    if a[i] != b[i] {
+                        return 1;
+                    }
+                }
+                0
+            }
+            // Build a variant of b that shares a prefix with a, to stress the
+            // equal-block fast path and varied mismatch positions.
+            let mut b2 = b.clone();
+            let shared = share.min(a.len()).min(b2.len());
+            b2[..shared].copy_from_slice(&a[..shared]);
+            prop_assert_eq!(bcmp(&a, &b, n), reference(&a, &b, n));
+            prop_assert_eq!(bcmp(&a, &b2, n), reference(&a, &b2, n));
+        }
+
         /// memcpy preserves exact content: memcpy(dst, src, n); memcmp(dst, src, n) == 0
         #[test]
         fn prop_memcpy_then_memcmp_is_zero(
@@ -509,6 +537,54 @@ mod string_properties {
         assert_eq!(
             digest, "fa101cf6182fe1d9b8ec10010b688039fe447be40c0dcb6e71b2729af087ac22",
             "memccpy golden corpus hash drifted"
+        );
+    }
+
+    /// Golden sha256 over a deterministic bcmp corpus: equal buffers and buffers
+    /// differing at varied positions (straddling the 128/32-byte block and panel
+    /// boundaries), across varied n. Pins exact 0/1 behavior against drift.
+    #[test]
+    fn golden_bcmp_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut state: u64 = 0x1F83_D9AB_FB41_BD6B;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+
+        let lengths = [0usize, 1, 31, 32, 33, 63, 64, 127, 128, 129, 200];
+        let mut hasher = Sha256::new();
+        for &la in &lengths {
+            for &lb in &lengths {
+                let a: Vec<u8> = (0..la).map(|_| next()).collect();
+                let shared = la.min(lb);
+                let mut b = vec![0u8; lb];
+                b[..shared].copy_from_slice(&a[..shared]);
+                for k in shared..lb {
+                    b[k] = next();
+                }
+                for &flip in &[0usize, 31, 32, 63, 64, 127, 128] {
+                    let mut bf = b.clone();
+                    if flip < bf.len() {
+                        bf[flip] ^= 0xFF;
+                    }
+                    for &n in &[0usize, 32, 64, 128, 256] {
+                        hasher.update([bcmp(&a, &bf, n) as u8]);
+                    }
+                }
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "354ad19b3e71860360b4a5ed9ad790c7b70632d408d6384bf7f3bdd8d45a81da",
+            "bcmp golden corpus hash drifted"
         );
     }
 }
