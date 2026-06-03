@@ -52,8 +52,34 @@ fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
 ///
 /// Equivalent to C `wcslen`. Scans `s` for the first `0u32` element.
 /// If no NUL is found, returns the full slice length.
+///
+/// Scans `WIDE_SIMD_LANES` elements per step with a portable-SIMD NUL probe,
+/// then resolves the exact index within the first matching panel left-to-right.
+/// Behaviour is identical to a scalar `position(|&c| c == 0)` scan.
 pub fn wcslen(s: &[u32]) -> usize {
-    s.iter().position(|&c| c == 0).unwrap_or(s.len())
+    let mut chunks = s.chunks_exact(WIDE_SIMD_LANES);
+    let mut base = 0usize;
+
+    for chunk in chunks.by_ref() {
+        let lanes = Simd::<u32, WIDE_SIMD_LANES>::from_slice(chunk);
+        if lanes.simd_eq(Simd::splat(0)).any() {
+            // The SIMD probe is exact, so this lookup always resolves.
+            for (j, &ch) in chunk.iter().enumerate() {
+                if ch == 0 {
+                    return base + j;
+                }
+            }
+        }
+        base += WIDE_SIMD_LANES;
+    }
+
+    for (j, &ch) in chunks.remainder().iter().enumerate() {
+        if ch == 0 {
+            return base + j;
+        }
+    }
+
+    s.len()
 }
 
 /// Returns the length of a wide string, bounded by `maxlen`.
@@ -1353,8 +1379,12 @@ mod tests {
     proptest! {
         #![proptest_config(property_proptest_config(256))]
 
+        // Isomorphism guard for the WIDE_SIMD_LANES NUL-panel scan: the result
+        // must match the scalar `position`/slice-length oracle for every input.
+        // Inputs run to 200 elements so the SIMD panel loop, the panel boundary,
+        // and the scalar remainder are all exercised.
         #[test]
-        fn prop_wcslen_matches_first_nul_or_slice_len(data in proptest::collection::vec(any::<u32>(), 0..64)) {
+        fn prop_wcslen_matches_first_nul_or_slice_len(data in proptest::collection::vec(any::<u32>(), 0..200)) {
             let expected = data.iter().position(|&ch| ch == 0).unwrap_or(data.len());
             prop_assert_eq!(wcslen(&data), expected);
         }
