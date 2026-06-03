@@ -704,6 +704,39 @@ pub fn wcsdup_len(s: &[u32]) -> usize {
     wcslen(s)
 }
 
+/// Returns the per-lane membership mask of a [`WIDE_COMPARE_SIMD_LANES`]-element
+/// panel against a non-empty `set` (lane is `true` iff it equals some element).
+#[inline(always)]
+fn wide_panel_membership(
+    lanes: Simd<u32, WIDE_COMPARE_SIMD_LANES>,
+    set: &[u32],
+) -> std::simd::Mask<i32, WIDE_COMPARE_SIMD_LANES> {
+    debug_assert!(!set.is_empty());
+    let mut member = lanes.simd_eq(Simd::splat(set[0]));
+    for &c in &set[1..] {
+        member |= lanes.simd_eq(Simd::splat(c));
+    }
+    member
+}
+
+/// `true` iff every lane of the panel is in `set` AND no lane is NUL — the
+/// fast-advance condition for [`wcsspn`].
+#[inline(always)]
+fn wide_panel_all_members_no_nul(chunk: &[u32], set: &[u32]) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_COMPARE_SIMD_LANES);
+    let lanes = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(chunk);
+    !lanes.simd_eq(Simd::splat(0)).any() && wide_panel_membership(lanes, set).all()
+}
+
+/// `true` iff no lane of the panel is in `set` AND no lane is NUL — the
+/// fast-advance condition for [`wcscspn`] and [`wcspbrk`].
+#[inline(always)]
+fn wide_panel_no_members_no_nul(chunk: &[u32], set: &[u32]) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_COMPARE_SIMD_LANES);
+    let lanes = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(chunk);
+    !lanes.simd_eq(Simd::splat(0)).any() && !wide_panel_membership(lanes, set).any()
+}
+
 /// Returns the length of the initial segment of `s` consisting entirely of
 /// wide characters in `accept`.
 ///
@@ -711,14 +744,29 @@ pub fn wcsdup_len(s: &[u32]) -> usize {
 pub fn wcsspn(s: &[u32], accept: &[u32]) -> usize {
     let accept_len = wcslen(accept);
     let accept_set = &accept[..accept_len];
+    // Empty accept set: the first character (if any) is a non-member, so the
+    // initial accepted segment is empty — matches the scalar scan exactly.
+    if accept_set.is_empty() {
+        return 0;
+    }
 
-    for (i, &ch) in s.iter().enumerate() {
-        if ch == 0 {
+    // SIMD fast path: stride panels whose lanes are all members and NUL-free.
+    // The first panel that breaks either condition drops to the scalar tail,
+    // which resolves the exact stop index identically to the scalar scan.
+    let mut i = 0;
+    while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+        if !wide_panel_all_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], accept_set) {
+            break;
+        }
+        i += WIDE_COMPARE_SIMD_LANES;
+    }
+
+    while i < s.len() {
+        let ch = s[i];
+        if ch == 0 || !accept_set.contains(&ch) {
             return i;
         }
-        if !accept_set.contains(&ch) {
-            return i;
-        }
+        i += 1;
     }
     s.len()
 }
@@ -730,14 +778,27 @@ pub fn wcsspn(s: &[u32], accept: &[u32]) -> usize {
 pub fn wcscspn(s: &[u32], reject: &[u32]) -> usize {
     let reject_len = wcslen(reject);
     let reject_set = &reject[..reject_len];
+    // Empty reject set: nothing stops the scan except NUL, so the result is the
+    // index of the first NUL (or s.len()) — exactly `wcslen(s)`.
+    if reject_set.is_empty() {
+        return wcslen(s);
+    }
 
-    for (i, &ch) in s.iter().enumerate() {
-        if ch == 0 {
+    // SIMD fast path: stride panels with no rejected lanes and NUL-free.
+    let mut i = 0;
+    while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+        if !wide_panel_no_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], reject_set) {
+            break;
+        }
+        i += WIDE_COMPARE_SIMD_LANES;
+    }
+
+    while i < s.len() {
+        let ch = s[i];
+        if ch == 0 || reject_set.contains(&ch) {
             return i;
         }
-        if reject_set.contains(&ch) {
-            return i;
-        }
+        i += 1;
     }
     s.len()
 }
@@ -748,14 +809,29 @@ pub fn wcscspn(s: &[u32], reject: &[u32]) -> usize {
 pub fn wcspbrk(s: &[u32], accept: &[u32]) -> Option<usize> {
     let accept_len = wcslen(accept);
     let accept_set = &accept[..accept_len];
+    // Empty accept set: no character can match, so there is never a hit.
+    if accept_set.is_empty() {
+        return None;
+    }
 
-    for (i, &ch) in s.iter().enumerate() {
+    // SIMD fast path: stride panels with no accepted lanes and NUL-free.
+    let mut i = 0;
+    while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+        if !wide_panel_no_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], accept_set) {
+            break;
+        }
+        i += WIDE_COMPARE_SIMD_LANES;
+    }
+
+    while i < s.len() {
+        let ch = s[i];
         if ch == 0 {
             return None;
         }
         if accept_set.contains(&ch) {
             return Some(i);
         }
+        i += 1;
     }
     None
 }

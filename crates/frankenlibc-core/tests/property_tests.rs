@@ -445,7 +445,48 @@ mod string_properties {
 
 mod wide_properties {
     use super::*;
-    use frankenlibc_core::string::wide::{wcscasecmp, wcscmp, wcsncasecmp, wcsncmp};
+    use frankenlibc_core::string::wide::{
+        wcscasecmp, wcscmp, wcscspn, wcsncasecmp, wcsncmp, wcspbrk, wcsspn,
+    };
+
+    // Scalar references for the span/break family (the pre-SIMD bodies).
+    fn ref_wcsspn(s: &[u32], accept: &[u32]) -> usize {
+        let alen = s_wcslen(accept);
+        let set = &accept[..alen];
+        for (i, &ch) in s.iter().enumerate() {
+            if ch == 0 || !set.contains(&ch) {
+                return i;
+            }
+        }
+        s.len()
+    }
+    fn ref_wcscspn(s: &[u32], reject: &[u32]) -> usize {
+        let rlen = s_wcslen(reject);
+        let set = &reject[..rlen];
+        for (i, &ch) in s.iter().enumerate() {
+            if ch == 0 || set.contains(&ch) {
+                return i;
+            }
+        }
+        s.len()
+    }
+    fn ref_wcspbrk(s: &[u32], accept: &[u32]) -> Option<usize> {
+        let alen = s_wcslen(accept);
+        let set = &accept[..alen];
+        for (i, &ch) in s.iter().enumerate() {
+            if ch == 0 {
+                return None;
+            }
+            if set.contains(&ch) {
+                return Some(i);
+            }
+        }
+        None
+    }
+    // Local wcslen mirror (first-NUL-or-len) so the references are self-contained.
+    fn s_wcslen(s: &[u32]) -> usize {
+        s.iter().position(|&c| c == 0).unwrap_or(s.len())
+    }
 
     fn ascii_lower(c: u32) -> u32 {
         if (0x41..=0x5A).contains(&c) { c + 0x20 } else { c }
@@ -577,6 +618,33 @@ mod wide_properties {
             b.push(0);
             prop_assert_eq!(wcscasecmp(&a, &b).signum(), ref_wcscasecmp(&a, &b).signum());
         }
+
+        /// SIMD wcsspn/wcscspn/wcspbrk are isomorphic to their scalar references.
+        /// `s` and the set are drawn from a small alphabet so membership hits and
+        /// the panel/tail boundary are exercised; NUL (0) appears in-band.
+        #[test]
+        fn prop_wcs_span_family_matches_scalar_reference(
+            s in proptest::collection::vec(0u32..=6, 0..200),
+            set_raw in proptest::collection::vec(1u32..=6, 0..6)
+        ) {
+            // NUL-terminate the set (it is a C wide string).
+            let mut set = set_raw.clone();
+            set.push(0);
+            prop_assert_eq!(wcsspn(&s, &set), ref_wcsspn(&s, &set));
+            prop_assert_eq!(wcscspn(&s, &set), ref_wcscspn(&s, &set));
+            prop_assert_eq!(wcspbrk(&s, &set), ref_wcspbrk(&s, &set));
+        }
+
+        /// Same, over the full u32 alphabet (high/sign-bit code units, larger set).
+        #[test]
+        fn prop_wcs_span_family_matches_scalar_reference_full(
+            s in proptest::collection::vec(any::<u32>(), 0..200),
+            set in proptest::collection::vec(any::<u32>(), 0..12)
+        ) {
+            prop_assert_eq!(wcsspn(&s, &set), ref_wcsspn(&s, &set));
+            prop_assert_eq!(wcscspn(&s, &set), ref_wcscspn(&s, &set));
+            prop_assert_eq!(wcspbrk(&s, &set), ref_wcspbrk(&s, &set));
+        }
     }
 
     /// Golden sha256 over a deterministic wcscmp/wcsncmp corpus spanning the
@@ -681,6 +749,48 @@ mod wide_properties {
         assert_eq!(
             digest, "75fbf1a3e290bac6bc2fbf467588f831ca473e9aee3859c8c28216d2150b640d",
             "wide-casecmp golden corpus hash drifted"
+        );
+    }
+
+    /// Golden sha256 over a deterministic wcsspn/wcscspn/wcspbrk corpus drawn
+    /// from a small alphabet (with in-band NUL) and varied set sizes, so the
+    /// membership panel path and panel/tail boundary are exercised. Pins exact
+    /// behavior against drift.
+    #[test]
+    fn golden_wide_span_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut state: u64 = 0x6A09_E667_F3BC_C908;
+        let mut next = |modulus: u32| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 40) as u32 % modulus
+        };
+
+        let s_lengths = [0usize, 1, 15, 16, 17, 31, 32, 33, 48, 100];
+        let set_lengths = [0usize, 1, 2, 4, 7];
+        let mut hasher = Sha256::new();
+        for &sl in &s_lengths {
+            for &setl in &set_lengths {
+                // Alphabet 0..=6 so NUL (0) appears in-band and membership hits.
+                let s: Vec<u32> = (0..sl).map(|_| next(7)).collect();
+                let mut set: Vec<u32> = (0..setl).map(|_| 1 + next(6)).collect();
+                set.push(0); // NUL-terminated C wide string
+                hasher.update((wcsspn(&s, &set) as u64).to_le_bytes());
+                hasher.update((wcscspn(&s, &set) as u64).to_le_bytes());
+                let pb = wcspbrk(&s, &set).map(|x| x as i64).unwrap_or(-1);
+                hasher.update(pb.to_le_bytes());
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "18274545e059d566e428a084131dd111835adb458d3030c46bff7b09501c6f96",
+            "wide-span golden corpus hash drifted"
         );
     }
 }
