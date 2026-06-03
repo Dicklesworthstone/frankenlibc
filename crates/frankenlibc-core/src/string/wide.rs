@@ -14,6 +14,10 @@ const WIDE_FIND_SIMD_LANES: usize = 32;
 /// Number of `u32` wide characters processed per long char-or-NUL candidate panel.
 const WIDE_FIND_LONG_SIMD_LANES: usize = 64;
 
+/// Minimum input length for the long char-or-NUL scan. Keep shorter searches on
+/// the narrower panel to avoid overpaying for single-panel probes.
+const WIDE_FIND_LONG_MIN_LEN: usize = WIDE_FIND_LONG_SIMD_LANES * 4;
+
 /// Number of `u32` wide characters compared per `wmemcmp` equality panel.
 const WIDE_COMPARE_SIMD_LANES: usize = 16;
 
@@ -86,6 +90,34 @@ fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
     }
 
     s.len()
+}
+
+fn find_wide_or_nul_long(s: &[u32], needle: u32) -> usize {
+    debug_assert_ne!(needle, 0);
+    if s.len() >= WIDE_FIND_LONG_MIN_LEN {
+        let mut chunks = s.chunks_exact(WIDE_FIND_LONG_SIMD_LANES);
+        let mut base = 0usize;
+
+        for chunk in chunks.by_ref() {
+            if has_wide_or_nul_long_simd(chunk, needle) {
+                for (j, &ch) in chunk.iter().enumerate() {
+                    if ch == needle || ch == 0 {
+                        return base + j;
+                    }
+                }
+            }
+            base += WIDE_FIND_LONG_SIMD_LANES;
+        }
+
+        let tail = find_wide_or_nul(chunks.remainder(), needle);
+        if tail < chunks.remainder().len() {
+            return base + tail;
+        }
+
+        return s.len();
+    }
+
+    find_wide_or_nul(s, needle)
 }
 
 /// Returns the length of a NUL-terminated wide string (not counting the NUL).
@@ -298,7 +330,7 @@ pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
         return (len < s.len()).then_some(len);
     }
 
-    let pos = find_wide_or_nul(s, c);
+    let pos = find_wide_or_nul_long(s, c);
     (pos < s.len() && s[pos] == c).then_some(pos)
 }
 
@@ -957,6 +989,20 @@ mod tests {
         assert_eq!(wcschr(&s, b'B' as u32), Some(1));
         assert_eq!(wcschr(&s, b'D' as u32), None);
         assert_eq!(wcschr(&s, 0), Some(3));
+    }
+
+    #[test]
+    fn test_wcschr_long_panel_preserves_first_needle_or_nul() {
+        let mut s = vec![b'A' as u32; WIDE_FIND_LONG_MIN_LEN + 80];
+        s[WIDE_FIND_LONG_SIMD_LANES + 5] = b'Z' as u32;
+        s[WIDE_FIND_LONG_SIMD_LANES * 2 + 7] = b'Z' as u32;
+        s[WIDE_FIND_LONG_MIN_LEN + 16] = 0;
+        assert_eq!(wcschr(&s, b'Z' as u32), Some(WIDE_FIND_LONG_SIMD_LANES + 5));
+
+        let mut nul_first = vec![b'A' as u32; WIDE_FIND_LONG_MIN_LEN + 80];
+        nul_first[WIDE_FIND_LONG_SIMD_LANES + 9] = 0;
+        nul_first[WIDE_FIND_LONG_SIMD_LANES * 2 + 7] = b'Z' as u32;
+        assert_eq!(wcschr(&nul_first, b'Z' as u32), None);
     }
 
     #[test]
