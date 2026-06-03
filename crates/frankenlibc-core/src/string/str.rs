@@ -661,13 +661,24 @@ pub fn strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     let needle = &needle[..n_len];
     let first = needle[0];
 
-    for i in 0..haystack.len() {
+    // Jump to each first-byte candidate with the SIMD-accelerated
+    // `find_byte_or_nul` scan instead of testing every byte in scalar code,
+    // mirroring the proven idiom in `strcasestr`. `find_byte_or_nul` returns
+    // the index (relative to the slice) of the first byte equal to `first`
+    // OR the terminating NUL, whichever comes first, so the NUL check below
+    // preserves the original C-string termination semantics exactly.
+    let mut start = 0usize;
+    while start < haystack.len() {
+        let offset = find_byte_or_nul(&haystack[start..], first);
+        if offset == haystack.len() - start {
+            // Neither the first byte nor a NUL occurs in the remaining slice.
+            return None;
+        }
+
+        let i = start + offset;
         let byte = haystack[i];
         if byte == 0 {
             return None;
-        }
-        if byte != first {
-            continue;
         }
         if i + n_len > haystack.len() {
             return None;
@@ -687,6 +698,8 @@ pub fn strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if matched {
             return Some(i);
         }
+
+        start = i + 1;
     }
 
     None
