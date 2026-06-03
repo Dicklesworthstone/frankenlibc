@@ -473,9 +473,38 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 /// Locates the first occurrence of `c` in the first `n` wide characters of `s`.
 ///
 /// Equivalent to C `wmemchr`.
+///
+/// Scans `WIDE_SIMD_LANES` elements per step with a portable-SIMD equality
+/// probe, then resolves the exact index within the first matching panel
+/// left-to-right. Behaviour is identical to a scalar
+/// `position(|&x| x == c)` scan over the first `n.min(s.len())` elements.
 pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     let count = n.min(s.len());
-    s[..count].iter().position(|&x| x == c)
+    let scan = &s[..count];
+    let mut chunks = scan.chunks_exact(WIDE_SIMD_LANES);
+    let mut base = 0usize;
+    let target = Simd::<u32, WIDE_SIMD_LANES>::splat(c);
+
+    for chunk in chunks.by_ref() {
+        let lanes = Simd::<u32, WIDE_SIMD_LANES>::from_slice(chunk);
+        if lanes.simd_eq(target).any() {
+            // The SIMD probe is exact, so this lookup always resolves.
+            for (j, &x) in chunk.iter().enumerate() {
+                if x == c {
+                    return Some(base + j);
+                }
+            }
+        }
+        base += WIDE_SIMD_LANES;
+    }
+
+    for (j, &x) in chunks.remainder().iter().enumerate() {
+        if x == c {
+            return Some(base + j);
+        }
+    }
+
+    None
 }
 
 /// Appends at most `n` wide characters from `src` to `dest`, plus a NUL terminator.
@@ -1459,6 +1488,23 @@ mod tests {
             let expected = haystack[..limit].iter().position(|&ch| ch == needle);
             prop_assert_eq!(wmemchr(&haystack, needle, n), expected);
         }
+    }
+
+    #[test]
+    fn test_wmemchr_simd_panel_boundary_and_remainder() {
+        // Exercise the SIMD panel loop (multiples of WIDE_SIMD_LANES), the
+        // panel boundary, and the scalar remainder, against the scalar oracle.
+        let s: Vec<u32> = (0..20u32).map(|i| 100 + i).collect();
+        for &c in &[100u32, 107, 108, 115, 119, 50] {
+            let n = s.len();
+            let expected = s[..n].iter().position(|&x| x == c);
+            assert_eq!(wmemchr(&s, c, n), expected, "c={c}");
+        }
+        // n shorter than a full panel.
+        assert_eq!(wmemchr(&s, 102, 4), Some(2));
+        assert_eq!(wmemchr(&s, 107, 4), None);
+        // n bounded below the slice length must not see later matches.
+        assert_eq!(wmemchr(&s, 115, 10), None);
     }
 
     #[test]
