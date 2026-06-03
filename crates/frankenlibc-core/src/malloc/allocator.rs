@@ -12,6 +12,10 @@ use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier
 use std::borrow::Cow;
 use std::sync::Arc;
 
+const TRACE_ID_PREFIX: &str = "core::malloc::";
+const TRACE_ID_SEPARATOR: &str = "::";
+const LOWER_HEX: &[u8; 16] = b"0123456789abcdef";
+
 /// Allocator lifecycle log level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllocatorLogLevel {
@@ -148,7 +152,7 @@ impl MallocState {
         details: impl Into<Cow<'static, str>>,
     ) {
         let decision_id = self.next_log_decision_id();
-        let trace_id = format!("core::malloc::{}::{:016x}", symbol, decision_id);
+        let trace_id = lifecycle_trace_id(symbol, decision_id);
         self.lifecycle_logs.push(AllocatorLogRecord {
             decision_id,
             trace_id,
@@ -524,6 +528,23 @@ impl MallocState {
     }
 }
 
+fn lifecycle_trace_id(symbol: &str, decision_id: u64) -> String {
+    let mut trace_id =
+        String::with_capacity(TRACE_ID_PREFIX.len() + symbol.len() + TRACE_ID_SEPARATOR.len() + 16);
+    trace_id.push_str(TRACE_ID_PREFIX);
+    trace_id.push_str(symbol);
+    trace_id.push_str(TRACE_ID_SEPARATOR);
+    push_fixed_lower_hex_u64(&mut trace_id, decision_id);
+    trace_id
+}
+
+fn push_fixed_lower_hex_u64(out: &mut String, value: u64) {
+    for shift in (0..16).rev().map(|n| n * 4) {
+        let digit = ((value >> shift) & 0x0f) as usize;
+        out.push(char::from(LOWER_HEX[digit]));
+    }
+}
+
 impl Default for MallocState {
     fn default() -> Self {
         Self::new()
@@ -533,10 +554,21 @@ impl Default for MallocState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     use std::collections::HashMap;
     use std::sync::{Barrier, Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
+
+    fn hex_lower(bytes: &[u8]) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for &byte in bytes {
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        out
+    }
 
     fn test_alloc_registry() -> &'static Mutex<HashMap<usize, Box<[u8]>>> {
         static REGISTRY: OnceLock<Mutex<HashMap<usize, Box<[u8]>>>> = OnceLock::new();
@@ -591,6 +623,33 @@ mod tests {
         state.free(ptr, size, |p| test_free(p, 64));
         assert_eq!(state.active_count(), 0);
         assert_eq!(state.total_allocated(), 0);
+    }
+
+    #[test]
+    fn lifecycle_trace_id_matches_legacy_format() {
+        let cases = [
+            ("malloc", 0),
+            ("free", 1),
+            ("size_class_certificate", 0x1234_abcd),
+            ("realloc", u64::MAX),
+        ];
+        let mut canonical = String::new();
+
+        for (symbol, decision_id) in cases {
+            let trace_id = lifecycle_trace_id(symbol, decision_id);
+            assert_eq!(
+                trace_id,
+                format!("core::malloc::{symbol}::{decision_id:016x}")
+            );
+            canonical.push_str(&trace_id);
+            canonical.push('\n');
+        }
+
+        let digest = Sha256::digest(canonical.as_bytes());
+        assert_eq!(
+            hex_lower(&digest),
+            "02366cecb133cea5d2253b23cf59720027771ef3bf9e56219364c9df719d36d4"
+        );
     }
 
     #[test]
