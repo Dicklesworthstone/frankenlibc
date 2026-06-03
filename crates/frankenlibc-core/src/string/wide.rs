@@ -14,6 +14,9 @@ const WIDE_FIND_SIMD_LANES: usize = 16;
 /// Number of `u32` wide characters compared per `wmemcmp` equality panel.
 const WIDE_COMPARE_SIMD_LANES: usize = 16;
 
+/// Number of `u32` wide characters searched per forward `wmemchr` panel.
+const WIDE_MEMCHR_SIMD_LANES: usize = 16;
+
 /// Number of `u32` wide characters searched per reverse `wmemrchr` panel.
 const WIDE_REVERSE_SIMD_LANES: usize = 16;
 
@@ -445,19 +448,19 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 ///
 /// Equivalent to C `wmemchr`.
 ///
-/// Scans `WIDE_SIMD_LANES` elements per step with a portable-SIMD equality
+/// Scans `WIDE_MEMCHR_SIMD_LANES` elements per step with a portable-SIMD equality
 /// probe, then resolves the exact index within the first matching panel
 /// left-to-right. Behaviour is identical to a scalar
 /// `position(|&x| x == c)` scan over the first `n.min(s.len())` elements.
 pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     let count = n.min(s.len());
     let scan = &s[..count];
-    let mut chunks = scan.chunks_exact(WIDE_SIMD_LANES);
+    let mut chunks = scan.chunks_exact(WIDE_MEMCHR_SIMD_LANES);
     let mut base = 0usize;
-    let target = Simd::<u32, WIDE_SIMD_LANES>::splat(c);
+    let target = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::splat(c);
 
     for chunk in chunks.by_ref() {
-        let lanes = Simd::<u32, WIDE_SIMD_LANES>::from_slice(chunk);
+        let lanes = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(chunk);
         if lanes.simd_eq(target).any() {
             // The SIMD probe is exact, so this lookup always resolves.
             for (j, &x) in chunk.iter().enumerate() {
@@ -466,7 +469,7 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
                 }
             }
         }
-        base += WIDE_SIMD_LANES;
+        base += WIDE_MEMCHR_SIMD_LANES;
     }
 
     for (j, &x) in chunks.remainder().iter().enumerate() {
