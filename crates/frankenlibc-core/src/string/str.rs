@@ -727,13 +727,17 @@ pub fn strnstr(haystack: &[u8], needle: &[u8], n: usize) -> Option<usize> {
     let needle = &needle[..n_len];
     let first = needle[0];
 
-    for i in 0..limit {
+    let mut start = 0usize;
+    while start < limit {
+        let offset = find_byte_or_nul(&haystack[start..limit], first);
+        if offset == limit - start {
+            return None;
+        }
+
+        let i = start + offset;
         let byte = haystack[i];
         if byte == 0 {
             return None;
-        }
-        if byte != first {
-            continue;
         }
         if i + n_len > limit {
             return None;
@@ -753,6 +757,7 @@ pub fn strnstr(haystack: &[u8], needle: &[u8], n: usize) -> Option<usize> {
         if matched {
             return Some(i);
         }
+        start = i + 1;
     }
 
     None
@@ -1708,6 +1713,46 @@ mod tests {
         assert_eq!(strnstr(b"aaaa\0", b"aaa\0", 3), Some(0));
         // n=2 truncates region to "aa"; needle doesn't fit.
         assert_eq!(strnstr(b"aaaa\0", b"aaa\0", 2), None);
+    }
+
+    #[test]
+    fn test_strnstr_candidate_jump_stops_at_nul_before_later_candidate() {
+        let mut haystack = [b'A'; 96];
+        haystack[40] = 0;
+        haystack[64] = b'Z';
+        haystack[65] = b'Q';
+
+        assert_eq!(strnstr(&haystack, b"ZQ\0", haystack.len()), None);
+    }
+
+    #[test]
+    fn test_strnstr_candidate_jump_matches_before_later_nul() {
+        let mut haystack = [b'A'; 96];
+        haystack[33] = b'Z';
+        haystack[34] = b'Q';
+        haystack[80] = 0;
+
+        assert_eq!(strnstr(&haystack, b"ZQ\0", haystack.len()), Some(33));
+    }
+
+    #[test]
+    fn test_strnstr_candidate_jump_resumes_after_false_candidate() {
+        let mut haystack = [b'A'; 128];
+        haystack[32] = b'Z';
+        haystack[33] = b'X';
+        haystack[70] = b'Z';
+        haystack[71] = b'Q';
+
+        assert_eq!(strnstr(&haystack, b"ZQ\0", 96), Some(70));
+    }
+
+    #[test]
+    fn test_strnstr_candidate_jump_rejects_candidate_beyond_bound() {
+        let mut haystack = [b'A'; 96];
+        haystack[62] = b'Z';
+        haystack[63] = b'Q';
+
+        assert_eq!(strnstr(&haystack, b"ZQ\0", 63), None);
     }
 
     #[test]
