@@ -15,7 +15,7 @@ const WIDE_SIMD_LANES: usize = 8;
 fn has_wide_or_nul_simd(chunk: &[u32], needle: u32) -> bool {
     debug_assert_eq!(chunk.len(), WIDE_SIMD_LANES);
     let lanes = Simd::<u32, WIDE_SIMD_LANES>::from_slice(chunk);
-    lanes.simd_eq(Simd::splat(0)).any() || lanes.simd_eq(Simd::splat(needle)).any()
+    (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
 }
 
 /// Returns the index of the first element of `s` equal to `needle` or `0`
