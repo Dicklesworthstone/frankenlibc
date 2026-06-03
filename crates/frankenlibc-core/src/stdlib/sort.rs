@@ -1,6 +1,7 @@
 //! Sorting and searching functions.
 
 const QSORT_INSERTION_CUTOFF: usize = 16;
+const INSERTION_STACK_SCRATCH: usize = 64;
 
 /// Generic qsort implementation.
 /// `base`: the entire array as bytes.
@@ -132,6 +133,17 @@ fn insertion_sort<F>(buffer: &mut [u8], width: usize, compare: &F)
 where
     F: Fn(&[u8], &[u8]) -> i32,
 {
+    if width <= INSERTION_STACK_SCRATCH {
+        insertion_sort_block_move(buffer, width, compare);
+        return;
+    }
+    insertion_sort_adjacent_swaps(buffer, width, compare);
+}
+
+fn insertion_sort_adjacent_swaps<F>(buffer: &mut [u8], width: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
     let count = buffer.len() / width;
     for i in 1..count {
         let mut j = i;
@@ -146,6 +158,37 @@ where
             swap_chunks(buffer, j - 1, j, width);
             j -= 1;
         }
+    }
+}
+
+fn insertion_sort_block_move<F>(buffer: &mut [u8], width: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width <= INSERTION_STACK_SCRATCH);
+    let count = buffer.len() / width;
+    let mut scratch = [0u8; INSERTION_STACK_SCRATCH];
+    for i in 1..count {
+        let item_start = i * width;
+        let item_end = item_start + width;
+        let mut insert = i;
+        while insert > 0 {
+            let prev_start = (insert - 1) * width;
+            let prev_end = insert * width;
+            if compare(&buffer[prev_start..prev_end], &buffer[item_start..item_end]) <= 0 {
+                break;
+            }
+            insert -= 1;
+        }
+
+        if insert == i {
+            continue;
+        }
+
+        scratch[..width].copy_from_slice(&buffer[item_start..item_end]);
+        let dest_start = insert * width;
+        buffer.copy_within(dest_start..item_start, dest_start + width);
+        buffer[dest_start..dest_start + width].copy_from_slice(&scratch[..width]);
     }
 }
 
@@ -390,6 +433,29 @@ mod sort_variant_tests {
         qsort(&mut buf, 4, cmp_u32_le);
 
         assert_eq!(unflatten_u32(&buf), expected);
+    }
+
+    #[test]
+    fn qsort_small_partition_block_move_preserves_equal_order() {
+        let values = [(3_u32, 0_u32), (1, 1), (3, 2), (2, 3), (1, 4), (2, 5)];
+        let mut buf = Vec::with_capacity(values.len() * 8);
+        for &(key, position) in &values {
+            buf.extend_from_slice(&key.to_le_bytes());
+            buf.extend_from_slice(&position.to_le_bytes());
+        }
+
+        qsort(&mut buf, 8, |a, b| cmp_u32_le(&a[..4], &b[..4]));
+        let sorted: Vec<(u32, u32)> = buf
+            .chunks_exact(8)
+            .map(|chunk| {
+                (
+                    u32::from_le_bytes(chunk[..4].try_into().unwrap()),
+                    u32::from_le_bytes(chunk[4..].try_into().unwrap()),
+                )
+            })
+            .collect();
+
+        assert_eq!(sorted, [(1, 1), (1, 4), (2, 3), (2, 5), (3, 0), (3, 2)]);
     }
 
     #[test]
