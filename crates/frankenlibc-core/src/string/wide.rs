@@ -458,11 +458,39 @@ pub fn wmemset(dest: &mut [u32], c: u32, n: usize) -> usize {
 ///
 /// Equivalent to C `wmemcmp`.
 /// Performs signed comparison (treating `u32` as `i32`) to match Linux `wchar_t`.
+///
+/// Scans `WIDE_SIMD_LANES` elements per step with a portable-SIMD equality
+/// probe, then resolves the first differing index within the first mismatching
+/// panel left-to-right. Behaviour is identical to the scalar element-by-element
+/// signed comparison over the first `n.min(s1.len()).min(s2.len())` elements.
 pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     let count = n.min(s1.len()).min(s2.len());
-    for i in 0..count {
-        let a = s1[i] as i32;
-        let b = s2[i] as i32;
+    let a_all = &s1[..count];
+    let b_all = &s2[..count];
+    let mut a_chunks = a_all.chunks_exact(WIDE_SIMD_LANES);
+    let mut b_chunks = b_all.chunks_exact(WIDE_SIMD_LANES);
+    let mut base = 0usize;
+
+    for (a_chunk, b_chunk) in a_chunks.by_ref().zip(b_chunks.by_ref()) {
+        let av = Simd::<u32, WIDE_SIMD_LANES>::from_slice(a_chunk);
+        let bv = Simd::<u32, WIDE_SIMD_LANES>::from_slice(b_chunk);
+        if av.simd_eq(bv).all() {
+            base += WIDE_SIMD_LANES;
+            continue;
+        }
+        // Mismatch present in this panel; resolve the first differing index.
+        for (a, b) in a_chunk.iter().zip(b_chunk.iter()) {
+            let a = *a as i32;
+            let b = *b as i32;
+            if a != b {
+                return if a < b { -1 } else { 1 };
+            }
+        }
+    }
+
+    for (a, b) in a_chunks.remainder().iter().zip(b_chunks.remainder().iter()) {
+        let a = *a as i32;
+        let b = *b as i32;
         if a != b {
             return if a < b { -1 } else { 1 };
         }
@@ -1166,6 +1194,29 @@ mod tests {
     }
 
     #[test]
+    fn test_wmemcmp_simd_panel_boundary_and_signedness() {
+        // Equal across multiple full SIMD panels.
+        let a: Vec<u32> = (0..20u32).collect();
+        assert_eq!(wmemcmp(&a, &a, 20), 0);
+        // Mismatch in the first panel, in a later panel, and in the remainder.
+        for diff_at in [0usize, 3, 8, 15, 17, 19] {
+            let mut b = a.clone();
+            b[diff_at] = a[diff_at] + 1;
+            assert_eq!(wmemcmp(&a, &b, 20), -1, "diff_at={diff_at}");
+            assert_eq!(wmemcmp(&b, &a, 20), 1, "diff_at={diff_at}");
+        }
+        // Signed comparison: high bit set (>= 0x8000_0000) is negative as i32.
+        let neg = [0x8000_0000u32];
+        let pos = [0x0000_0001u32];
+        assert_eq!(wmemcmp(&neg, &pos, 1), -1);
+        assert_eq!(wmemcmp(&pos, &neg, 1), 1);
+        // Bound: a mismatch beyond n must not be seen.
+        let mut c = a.clone();
+        c[10] = 999;
+        assert_eq!(wmemcmp(&a, &c, 8), 0);
+    }
+
+    #[test]
     fn test_wmemchr_basic() {
         let haystack = [1u32, 2, 3, 4];
         assert_eq!(wmemchr(&haystack, 3, 4), Some(2));
@@ -1487,6 +1538,26 @@ mod tests {
             let limit = n.min(haystack.len());
             let expected = haystack[..limit].iter().position(|&ch| ch == needle);
             prop_assert_eq!(wmemchr(&haystack, needle, n), expected);
+        }
+
+        #[test]
+        fn prop_wmemcmp_matches_scalar_oracle(
+            s1 in proptest::collection::vec(any::<u32>(), 0..80),
+            s2 in proptest::collection::vec(any::<u32>(), 0..80),
+            n in 0usize..96
+        ) {
+            // Scalar oracle: signed element-by-element compare over the common bound.
+            let count = n.min(s1.len()).min(s2.len());
+            let mut expected = 0i32;
+            for i in 0..count {
+                let a = s1[i] as i32;
+                let b = s2[i] as i32;
+                if a != b {
+                    expected = if a < b { -1 } else { 1 };
+                    break;
+                }
+            }
+            prop_assert_eq!(wmemcmp(&s1, &s2, n), expected);
         }
     }
 
