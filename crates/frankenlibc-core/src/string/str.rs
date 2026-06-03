@@ -10,6 +10,7 @@ use std::simd::{Simd, cmp::SimdPartialEq};
 const LO_MAGIC: usize = usize::from_ne_bytes([0x01; size_of::<usize>()]);
 const HI_MAGIC: usize = usize::from_ne_bytes([0x80; size_of::<usize>()]);
 const SIMD_LANES: usize = 32;
+const STRLEN_SIMD_LANES: usize = 64;
 
 #[inline(always)]
 fn has_nul_byte(word: usize) -> bool {
@@ -43,6 +44,14 @@ fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
     debug_assert_eq!(chunk.len(), SIMD_LANES);
     Simd::<u8, SIMD_LANES>::from_slice(chunk)
         .simd_eq(Simd::splat(byte))
+        .any()
+}
+
+#[inline(always)]
+fn has_nul_simd_64(chunk: &[u8]) -> bool {
+    debug_assert_eq!(chunk.len(), STRLEN_SIMD_LANES);
+    Simd::<u8, STRLEN_SIMD_LANES>::from_slice(chunk)
+        .simd_eq(Simd::splat(0))
         .any()
 }
 
@@ -115,12 +124,12 @@ pub fn strlen(s: &[u8]) -> usize {
         i += 1;
     }
 
-    while i + SIMD_LANES <= s.len() {
-        let chunk = &s[i..i + SIMD_LANES];
-        if has_byte_simd_32(chunk, 0) {
+    while i + STRLEN_SIMD_LANES <= s.len() {
+        let chunk = &s[i..i + STRLEN_SIMD_LANES];
+        if has_nul_simd_64(chunk) {
             break;
         }
-        i += SIMD_LANES;
+        i += STRLEN_SIMD_LANES;
     }
 
     // Process aligned words
@@ -1102,6 +1111,15 @@ mod tests {
         let s = vec![b'a'; 96];
 
         assert_eq!(strlen(&s), 96);
+    }
+
+    #[test]
+    fn test_strlen_wide_simd_panel_finds_nul_after_first_panel() {
+        let mut s = vec![b'a'; 160];
+        s[95] = 0;
+        s[130] = 0;
+
+        assert_eq!(strlen(&s), 95);
     }
 
     #[test]
