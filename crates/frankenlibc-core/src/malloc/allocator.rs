@@ -9,6 +9,7 @@ use super::large::{LargeAllocation, LargeAllocator};
 use super::size_class::{self, NUM_SIZE_CLASSES, SizeClassIndex};
 use super::thread_cache::ThreadCache;
 use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Allocator lifecycle log level.
@@ -43,7 +44,7 @@ pub struct AllocatorLogRecord {
     /// Machine-readable outcome label.
     pub outcome: &'static str,
     /// Free-form details for debugging.
-    pub details: String,
+    pub details: Cow<'static, str>,
     /// Snapshot: currently active allocation count.
     pub active_count: usize,
     /// Snapshot: currently allocated user bytes.
@@ -144,7 +145,7 @@ impl MallocState {
         size: Option<usize>,
         bin: Option<usize>,
         outcome: &'static str,
-        details: impl Into<String>,
+        details: impl Into<Cow<'static, str>>,
     ) {
         let decision_id = self.next_log_decision_id();
         let trace_id = format!("core::malloc::{}::{:016x}", symbol, decision_id);
@@ -639,6 +640,56 @@ mod tests {
         assert_eq!(after_drain_records[0].event, "size_class_certificate");
         assert_eq!(after_drain_records[1].details, "path=thread_cache");
         assert_eq!(after_drain_records[2].details, "path=thread_cache");
+    }
+
+    #[test]
+    fn hot_cycle_static_lifecycle_details_are_borrowed() {
+        let mut state = MallocState::new();
+        let size = 64;
+        let mut next_ptr = 0x3000_0000usize;
+
+        let ptr = state
+            .malloc(size, |class_size| {
+                next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                Some(next_ptr)
+            })
+            .unwrap();
+        state.free(ptr, size, |_| {});
+        let _ = state.drain_lifecycle_logs();
+
+        let reused_ptr = state
+            .malloc(size, |class_size| {
+                next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                Some(next_ptr)
+            })
+            .unwrap();
+        state.free(reused_ptr, size, |_| {});
+
+        let records = state.lifecycle_logs();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].event, "size_class_certificate");
+        assert!(
+            records[0]
+                .details
+                .starts_with("requested_size=64;mapped_class_size=64;cert_value=")
+        );
+        assert!(matches!(&records[0].details, Cow::Owned(_)));
+
+        assert_eq!(records[1].symbol, "malloc");
+        assert_eq!(records[1].event, "alloc");
+        assert_eq!(records[1].details, "path=thread_cache");
+        assert!(matches!(
+            &records[1].details,
+            Cow::Borrowed("path=thread_cache")
+        ));
+
+        assert_eq!(records[2].symbol, "free");
+        assert_eq!(records[2].event, "free");
+        assert_eq!(records[2].details, "path=thread_cache");
+        assert!(matches!(
+            &records[2].details,
+            Cow::Borrowed("path=thread_cache")
+        ));
     }
 
     #[test]
