@@ -5,12 +5,14 @@
 //! NUL-terminated C strings. In this safe Rust model, strings are `&[u8]` slices
 //! where a NUL byte (`0x00`) marks the logical end of the string.
 
-use std::simd::{Simd, cmp::SimdPartialEq};
+use std::simd::{Simd, cmp::SimdOrd, cmp::SimdPartialEq};
 
 const LO_MAGIC: usize = usize::from_ne_bytes([0x01; size_of::<usize>()]);
 const HI_MAGIC: usize = usize::from_ne_bytes([0x80; size_of::<usize>()]);
 const SIMD_LANES: usize = 32;
 const STRLEN_SIMD_LANES: usize = 64;
+/// Bytes scanned per folded strlen iteration: four `STRLEN_SIMD_LANES` panels.
+const STRLEN_BLOCK: usize = STRLEN_SIMD_LANES * 4;
 
 #[inline(always)]
 fn has_nul_byte(word: usize) -> bool {
@@ -53,6 +55,29 @@ fn has_nul_simd_64(chunk: &[u8]) -> bool {
     Simd::<u8, STRLEN_SIMD_LANES>::from_slice(chunk)
         .simd_eq(Simd::splat(0))
         .any()
+}
+
+/// Returns `true` if any byte in a `STRLEN_BLOCK`-wide chunk is NUL.
+///
+/// Folds four `STRLEN_SIMD_LANES` panels with unsigned `simd_min` before a
+/// single zero-compare reduction. Because `min(a, b) == 0` iff either lane is
+/// `0`, the folded vector has a zero lane exactly when one of the four panels
+/// does — so this is equivalent to OR-ing four per-panel NUL checks, but pays
+/// one horizontal reduction per 256 bytes instead of one per 64. The caller's
+/// word/byte tail scan then resolves the exact NUL index, so detection width
+/// never changes the returned length.
+#[inline(always)]
+fn block_has_nul_256(chunk: &[u8]) -> bool {
+    debug_assert_eq!(chunk.len(), STRLEN_BLOCK);
+    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[0..STRLEN_SIMD_LANES]);
+    let v1 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
+    );
+    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 3..STRLEN_BLOCK]);
+    let folded = v0.simd_min(v1).simd_min(v2.simd_min(v3));
+    folded.simd_eq(Simd::splat(0)).any()
 }
 
 #[inline(always)]
@@ -131,6 +156,16 @@ pub fn strlen(s: &[u8]) -> usize {
             return i;
         }
         i += 1;
+    }
+
+    // Fold four panels per iteration so the expensive horizontal NUL reduction
+    // runs once per 256 bytes instead of once per 64 over NUL-free spans.
+    while i + STRLEN_BLOCK <= s.len() {
+        let chunk = &s[i..i + STRLEN_BLOCK];
+        if block_has_nul_256(chunk) {
+            break;
+        }
+        i += STRLEN_BLOCK;
     }
 
     while i + STRLEN_SIMD_LANES <= s.len() {
