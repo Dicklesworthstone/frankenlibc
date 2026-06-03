@@ -1731,8 +1731,8 @@ pub unsafe extern "C" fn wctomb(s: *mut u8, wc: u32) -> c_int {
     if s.is_null() {
         return 0; // stateless encoding
     }
-    // MB_CUR_MAX for UTF-8 is 4
-    let buf = unsafe { std::slice::from_raw_parts_mut(s, 4) };
+    // MB_CUR_MAX for UTF-8 is 6 (glibc's RFC 2279 form).
+    let buf = unsafe { std::slice::from_raw_parts_mut(s, 6) };
     match wchar_core::wctomb(wc, buf) {
         Some(n) => n as c_int,
         None => {
@@ -1804,7 +1804,7 @@ pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> us
         // Count mode
         let mut count = 0usize;
         for &wc in &src_slice[..wlen] {
-            let mut tmp = [0u8; 4];
+            let mut tmp = [0u8; 6];
             match wchar_core::wctomb(wc, &mut tmp) {
                 Some(len) => count += len,
                 None => return usize::MAX,
@@ -1996,7 +1996,7 @@ pub unsafe extern "C" fn wcrtomb(
     wc: libc::wchar_t,
     _ps: *mut std::ffi::c_void,
 ) -> usize {
-    let mut tmp = [0u8; 4];
+    let mut tmp = [0u8; 6];
 
     // Stateless UTF-8 locale: resetting state is equivalent to encoding NUL.
     if s.is_null() {
@@ -2057,6 +2057,10 @@ pub unsafe extern "C" fn mbrtowc(
         3
     } else if first & 0xF8 == 0xF0 {
         4
+    } else if first & 0xFC == 0xF8 {
+        5
+    } else if first & 0xFE == 0xFC {
+        6
     } else {
         // SAFETY: setting thread-local errno through libc ABI helper.
         unsafe { set_abi_errno(libc::EILSEQ) };
@@ -2209,7 +2213,7 @@ pub unsafe extern "C" fn wcsrtombs(
     if dst.is_null() {
         let mut bytes = 0usize;
         for &wc in &src_slice[..src_len] {
-            let mut tmp = [0u8; 4];
+            let mut tmp = [0u8; 6];
             match wchar_core::wctomb(wc, &mut tmp) {
                 Some(n) => bytes += n,
                 None => {
@@ -2228,7 +2232,7 @@ pub unsafe extern "C" fn wcsrtombs(
     let mut idx = 0usize;
     while idx < src_len {
         let wc = src_slice[idx];
-        let mut tmp = [0u8; 4];
+        let mut tmp = [0u8; 6];
         let n = match wchar_core::wctomb(wc, &mut tmp) {
             Some(v) => v,
             None => {
@@ -2685,7 +2689,7 @@ pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
         return WEOF_VALUE;
     }
 
-    let mut bytes = [0u8; 4];
+    let mut bytes = [0u8; 6];
     bytes[0] = first as u8;
     let expected = if bytes[0] < 0x80 {
         1
@@ -2695,6 +2699,10 @@ pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
         3
     } else if bytes[0] & 0xF8 == 0xF0 {
         4
+    } else if bytes[0] & 0xFC == 0xF8 {
+        5
+    } else if bytes[0] & 0xFE == 0xFC {
+        6
     } else {
         // SAFETY: thread-local errno update.
         unsafe { set_abi_errno(libc::EILSEQ) };
@@ -2735,7 +2743,7 @@ pub unsafe extern "C" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
         return WEOF_VALUE;
     }
 
-    let mut bytes = [0u8; 4];
+    let mut bytes = [0u8; 6];
     let Some(encoded_len) = wchar_core::wctomb(wc, &mut bytes) else {
         // SAFETY: thread-local errno update.
         unsafe { set_abi_errno(libc::EILSEQ) };
@@ -2757,7 +2765,7 @@ pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 
         return WEOF_VALUE;
     }
 
-    let mut bytes = [0u8; 4];
+    let mut bytes = [0u8; 6];
     let Some(encoded_len) = wchar_core::wctomb(wc, &mut bytes) else {
         // SAFETY: thread-local errno update.
         unsafe { set_abi_errno(libc::EILSEQ) };
@@ -3337,9 +3345,9 @@ pub unsafe extern "C" fn wcsftime(
     // SAFETY: bounded by measured format length.
     let fmt_slice = unsafe { std::slice::from_raw_parts(format as *const u32, fmt_len) };
 
-    let mut fmt_mb = Vec::with_capacity(fmt_len.saturating_mul(4).saturating_add(1));
+    let mut fmt_mb = Vec::with_capacity(fmt_len.saturating_mul(6).saturating_add(1));
     for &wc in fmt_slice {
-        let mut tmp = [0u8; 4];
+        let mut tmp = [0u8; 6];
         let Some(n) = wchar_core::wctomb(wc, &mut tmp) else {
             // SAFETY: thread-local errno update.
             unsafe { set_abi_errno(libc::EILSEQ) };
@@ -3350,7 +3358,7 @@ pub unsafe extern "C" fn wcsftime(
     fmt_mb.push(0);
 
     // Conservative UTF-8 output budget before converting back to wide chars.
-    let mut out_mb = vec![0u8; maxsize.saturating_mul(4).max(1)];
+    let mut out_mb = vec![0u8; maxsize.saturating_mul(6).max(1)];
     // SAFETY: buffers are valid; time_abi::strftime enforces byte-capacity + NUL semantics.
     let out_len = unsafe {
         super::time_abi::strftime(
@@ -4090,7 +4098,7 @@ pub unsafe extern "C" fn wcsnrtombs(
     let mut s = unsafe { *src };
     let mut written = 0usize;
     let mut wchars_consumed = 0usize;
-    let mut buf = [0u8; 4]; // MB_CUR_MAX for UTF-8
+    let mut buf = [0u8; 6]; // MB_CUR_MAX for UTF-8 (RFC 2279 form)
     let source_bound = known_remaining(s as usize).map(bytes_to_wchars);
     let max_wchars = source_bound.map(|bound| bound.min(nwc)).unwrap_or(nwc);
 

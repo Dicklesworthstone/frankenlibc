@@ -85,14 +85,23 @@ pub fn mbtowc(src: &[u8]) -> Option<(u32, usize)> {
     if b0 < 0x80 {
         return Some((b0 as u32, 1));
     }
+    // glibc's UTF-8 gconv module decodes the historical RFC 2279 form:
+    // sequences of 1-6 bytes encoding code points through U+7FFFFFFF.
+    // Lead bytes 0xFE and 0xFF are always invalid. We match that exactly
+    // (verified against host glibc C.UTF-8/en_US.UTF-8), including the
+    // acceptance of 4-byte sequences above U+10FFFF and 5/6-byte forms.
     let (expected_len, mut wc) = if b0 & 0xE0 == 0xC0 {
         (2, (b0 & 0x1F) as u32)
     } else if b0 & 0xF0 == 0xE0 {
         (3, (b0 & 0x0F) as u32)
     } else if b0 & 0xF8 == 0xF0 {
         (4, (b0 & 0x07) as u32)
+    } else if b0 & 0xFC == 0xF8 {
+        (5, (b0 & 0x03) as u32)
+    } else if b0 & 0xFE == 0xFC {
+        (6, (b0 & 0x01) as u32)
     } else {
-        return None; // invalid lead byte
+        return None; // invalid lead byte (continuation, 0xFE, or 0xFF)
     };
     if src.len() < expected_len {
         return None; // incomplete sequence
@@ -103,14 +112,21 @@ pub fn mbtowc(src: &[u8]) -> Option<(u32, usize)> {
         }
         wc = (wc << 6) | (b & 0x3F) as u32;
     }
-    // Reject overlong encodings and surrogates
-    match expected_len {
-        2 if wc < 0x80 => return None,
-        3 if wc < 0x800 => return None,
-        4 if wc < 0x10000 => return None,
-        _ => {}
+    // Reject overlong encodings: each length has a minimum code point.
+    let min = match expected_len {
+        2 => 0x80,
+        3 => 0x800,
+        4 => 0x1_0000,
+        5 => 0x20_0000,
+        6 => 0x400_0000,
+        _ => unreachable!(),
+    };
+    if wc < min {
+        return None;
     }
-    if (0xD800..=0xDFFF).contains(&wc) || wc > 0x10FFFF {
+    // Reject UTF-16 surrogate code points; glibc rejects them in UTF-8.
+    // No U+10FFFF cap: glibc accepts up to U+7FFFFFFF (the 6-byte max).
+    if (0xD800..=0xDFFF).contains(&wc) {
         return None;
     }
     Some((wc, expected_len))
@@ -121,7 +137,10 @@ pub fn mbtowc(src: &[u8]) -> Option<(u32, usize)> {
 /// Returns the number of bytes written, or `None` if the character is invalid
 /// or `dest` is too small.
 pub fn wctomb(wc: u32, dest: &mut [u8]) -> Option<usize> {
-    if (0xD800..=0xDFFF).contains(&wc) || wc > 0x10FFFF {
+    // glibc's UTF-8 gconv encoder mirrors the RFC 2279 decoder: it emits
+    // 1-6 byte sequences for code points through U+7FFFFFFF and rejects
+    // surrogates. Verified against host glibc wctomb (MB_CUR_MAX == 6).
+    if (0xD800..=0xDFFF).contains(&wc) || wc > 0x7FFF_FFFF {
         return None;
     }
     if wc < 0x80 {
@@ -137,7 +156,7 @@ pub fn wctomb(wc: u32, dest: &mut [u8]) -> Option<usize> {
         dest[0] = 0xC0 | (wc >> 6) as u8;
         dest[1] = 0x80 | (wc & 0x3F) as u8;
         Some(2)
-    } else if wc < 0x10000 {
+    } else if wc < 0x1_0000 {
         if dest.len() < 3 {
             return None;
         }
@@ -145,7 +164,7 @@ pub fn wctomb(wc: u32, dest: &mut [u8]) -> Option<usize> {
         dest[1] = 0x80 | ((wc >> 6) & 0x3F) as u8;
         dest[2] = 0x80 | (wc & 0x3F) as u8;
         Some(3)
-    } else {
+    } else if wc < 0x20_0000 {
         if dest.len() < 4 {
             return None;
         }
@@ -154,6 +173,27 @@ pub fn wctomb(wc: u32, dest: &mut [u8]) -> Option<usize> {
         dest[2] = 0x80 | ((wc >> 6) & 0x3F) as u8;
         dest[3] = 0x80 | (wc & 0x3F) as u8;
         Some(4)
+    } else if wc < 0x400_0000 {
+        if dest.len() < 5 {
+            return None;
+        }
+        dest[0] = 0xF8 | (wc >> 24) as u8;
+        dest[1] = 0x80 | ((wc >> 18) & 0x3F) as u8;
+        dest[2] = 0x80 | ((wc >> 12) & 0x3F) as u8;
+        dest[3] = 0x80 | ((wc >> 6) & 0x3F) as u8;
+        dest[4] = 0x80 | (wc & 0x3F) as u8;
+        Some(5)
+    } else {
+        if dest.len() < 6 {
+            return None;
+        }
+        dest[0] = 0xFC | (wc >> 30) as u8;
+        dest[1] = 0x80 | ((wc >> 24) & 0x3F) as u8;
+        dest[2] = 0x80 | ((wc >> 18) & 0x3F) as u8;
+        dest[3] = 0x80 | ((wc >> 12) & 0x3F) as u8;
+        dest[4] = 0x80 | ((wc >> 6) & 0x3F) as u8;
+        dest[5] = 0x80 | (wc & 0x3F) as u8;
+        Some(6)
     }
 }
 
