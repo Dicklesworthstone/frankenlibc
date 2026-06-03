@@ -416,27 +416,31 @@ impl MallocState {
         self.total_allocated = self.total_allocated.saturating_sub(size);
         self.active_count = self.active_count.saturating_sub(1);
 
-        match self.elimination.try_offer(bin_usize, ptr) {
-            OfferOutcome::Matched(meta) => {
-                self.record_lifecycle(
-                    AllocatorLogLevel::Trace,
-                    "free",
-                    "free",
-                    Some(ptr),
-                    Some(size),
-                    Some(bin_usize),
-                    "success",
-                    format!(
-                        "path=elimination;slot={};wait_cycles={};partner_thread={}",
-                        meta.slot_index.unwrap_or(usize::MAX),
-                        meta.wait_cycles,
-                        meta.partner_thread.unwrap_or(0)
-                    ),
-                );
-                return;
-            }
-            OfferOutcome::Fallback { value, .. } => {
-                ptr = value;
+        // A single-owned elimination array cannot have a waiting consumer; once
+        // another handle exists, preserve the existing elimination-first order.
+        if Arc::strong_count(&self.elimination) > 1 {
+            match self.elimination.try_offer(bin_usize, ptr) {
+                OfferOutcome::Matched(meta) => {
+                    self.record_lifecycle(
+                        AllocatorLogLevel::Trace,
+                        "free",
+                        "free",
+                        Some(ptr),
+                        Some(size),
+                        Some(bin_usize),
+                        "success",
+                        format!(
+                            "path=elimination;slot={};wait_cycles={};partner_thread={}",
+                            meta.slot_index.unwrap_or(usize::MAX),
+                            meta.wait_cycles,
+                            meta.partner_thread.unwrap_or(0)
+                        ),
+                    );
+                    return;
+                }
+                OfferOutcome::Fallback { value, .. } => {
+                    ptr = value;
+                }
             }
         }
 
