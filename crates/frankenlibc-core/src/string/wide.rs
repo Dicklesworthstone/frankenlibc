@@ -67,6 +67,15 @@ fn equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
     av.simd_eq(bv).all() && !av.simd_eq(Simd::splat(0)).any()
 }
 
+#[inline(always)]
+fn equal_and_no_nul_wide_unrolled(a: &[u32], b: &[u32]) -> bool {
+    debug_assert_eq!(a.len(), WIDE_COMPARE_UNROLL_LANES);
+    debug_assert_eq!(b.len(), WIDE_COMPARE_UNROLL_LANES);
+    let av = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(a);
+    let bv = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(b);
+    av.simd_eq(bv).all() && !av.simd_eq(Simd::splat(0)).any()
+}
+
 /// Branchless ASCII A-Z -> a-z fold of a `u32` panel, exactly matching
 /// [`simple_towlower`] (only code units in `0x41..=0x5A` are shifted by `0x20`;
 /// everything else, including NUL, is unchanged).
@@ -381,6 +390,15 @@ pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     // index and out-of-range (logical NUL) bytes, identical to the scalar scan.
     let bounded = n.min(s1.len()).min(s2.len());
     let mut i = 0;
+    while i + WIDE_COMPARE_UNROLL_LANES <= bounded {
+        if !equal_and_no_nul_wide_unrolled(
+            &s1[i..i + WIDE_COMPARE_UNROLL_LANES],
+            &s2[i..i + WIDE_COMPARE_UNROLL_LANES],
+        ) {
+            break;
+        }
+        i += WIDE_COMPARE_UNROLL_LANES;
+    }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
         if !equal_and_no_nul_wide(
             &s1[i..i + WIDE_COMPARE_SIMD_LANES],
