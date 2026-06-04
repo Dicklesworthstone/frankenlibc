@@ -280,6 +280,29 @@ fn strip_groups(mut ast: &Ast) -> &Ast {
     ast
 }
 
+/// The maximal run of leading literal bytes a match must consume at its start:
+/// for `Concat`, consecutive `Literal` items from the front (each unwrapped of
+/// groups); for a bare `Literal`, that one byte; otherwise empty. Because these
+/// bytes are the first thing every match consumes, a match can only begin where
+/// this exact byte sequence occurs — letting the search jump there with a SIMD
+/// substring scan (`memmem`) instead of probing each position.
+fn leading_literal_prefix(ast: &Ast) -> Vec<u8> {
+    match strip_groups(ast) {
+        Ast::Literal(byte) => vec![*byte],
+        Ast::Concat(items) => {
+            let mut out = Vec::new();
+            for item in items {
+                match strip_groups(item) {
+                    Ast::Literal(byte) => out.push(*byte),
+                    _ => break,
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn analyze_ast(ast: &Ast) -> AstAnalysis {
     match ast {
         Ast::Literal(byte) => AstAnalysis::linear(false, FirstByteSet::singleton(*byte)),
@@ -492,6 +515,13 @@ pub struct CompiledRegex {
     /// match — avoiding the per-start thread/Vec setup — turning the worst case
     /// (no match, rare first byte) from O(n^2) toward O(n). `None` = no skip.
     prefilter: Option<FirstByteSet>,
+    /// Leading literal byte sequence (>= 2 bytes) every match must consume at
+    /// its start, when one applies (non-nullable, case-sensitive). `Some` lets
+    /// the search jump straight to occurrences via SIMD `memmem` — far stronger
+    /// than the single-byte `prefilter` when the first byte is common but the
+    /// full literal is rare (e.g. `error:` in prose). Mutually exclusive with
+    /// `prefilter` (set only when this is `None`).
+    literal_prefix: Option<Vec<u8>>,
 }
 
 impl CompiledRegex {
@@ -1138,6 +1168,7 @@ struct PikeVm<'a> {
     num_slots: usize,
     eflags: i32,
     prefilter: Option<FirstByteSet>,
+    literal_prefix: Option<&'a [u8]>,
 }
 
 /// Thread state in Pike VM
@@ -1154,6 +1185,7 @@ impl<'a> PikeVm<'a> {
         num_slots: usize,
         eflags: i32,
         prefilter: Option<FirstByteSet>,
+        literal_prefix: Option<&'a [u8]>,
     ) -> Self {
         Self {
             nfa,
@@ -1161,6 +1193,7 @@ impl<'a> PikeVm<'a> {
             num_slots,
             eflags,
             prefilter,
+            literal_prefix,
         }
     }
 
@@ -1182,6 +1215,28 @@ impl<'a> PikeVm<'a> {
         let notbol = self.eflags & REG_NOTBOL != 0;
         let noteol = self.eflags & REG_NOTEOL != 0;
         let input_len = self.input.len();
+
+        // Literal-prefix fast path: a match can only begin where the leading
+        // literal occurs, so jump straight to each occurrence with SIMD memmem
+        // instead of probing every start. Leftmost preserved (memmem scans L->R).
+        if let Some(lit) = self.literal_prefix {
+            let mut from = 0;
+            while from + lit.len() <= input_len {
+                let Some(off) =
+                    crate::string::mem::memmem(&self.input[from..], input_len - from, lit, lit.len())
+                else {
+                    return None;
+                };
+                let start = from + off;
+                let mut slots = vec![-1i32; self.num_slots];
+                slots[0] = start as i32;
+                if let Some(matched_slots) = self.run_from(start, &slots, notbol, noteol) {
+                    return Some(matched_slots);
+                }
+                from = start + 1;
+            }
+            return None;
+        }
 
         // Try each start position (leftmost wins). The prefilter skips starts
         // whose byte cannot begin a match, avoiding the per-start slot/thread
@@ -1454,6 +1509,7 @@ struct BacktrackVm<'a> {
     newline: bool,
     eflags: i32,
     prefilter: Option<FirstByteSet>,
+    literal_prefix: Option<&'a [u8]>,
 }
 
 impl<'a> BacktrackVm<'a> {
@@ -1468,6 +1524,7 @@ impl<'a> BacktrackVm<'a> {
         newline: bool,
         eflags: i32,
         prefilter: Option<FirstByteSet>,
+        literal_prefix: Option<&'a [u8]>,
     ) -> Self {
         Self {
             ast,
@@ -1477,10 +1534,46 @@ impl<'a> BacktrackVm<'a> {
             newline,
             eflags,
             prefilter,
+            literal_prefix,
         }
     }
 
+    /// Longest match anchored at exactly `start`, or `None`.
+    fn try_start(&self, start: usize) -> Option<Vec<i32>> {
+        let mut slots = vec![-1i32; self.num_slots];
+        slots[0] = start as i32;
+        let mut best: Option<BacktrackState> = None;
+        for state in self.match_ast(self.ast, start, slots, 0) {
+            if best.as_ref().is_none_or(|current| state.pos > current.pos) {
+                best = Some(state);
+            }
+        }
+        best.map(|mut state| {
+            state.slots[1] = state.pos as i32;
+            state.slots
+        })
+    }
+
     fn execute(&self) -> Option<Vec<i32>> {
+        // Literal-prefix fast path: jump to each occurrence via SIMD memmem.
+        if let Some(lit) = self.literal_prefix {
+            let input_len = self.input.len();
+            let mut from = 0;
+            while from + lit.len() <= input_len {
+                let Some(off) =
+                    crate::string::mem::memmem(&self.input[from..], input_len - from, lit, lit.len())
+                else {
+                    return None;
+                };
+                let start = from + off;
+                if let Some(slots) = self.try_start(start) {
+                    return Some(slots);
+                }
+                from = start + 1;
+            }
+            return None;
+        }
+
         for start in 0..=self.input.len() {
             // Prefilter: skip starts whose byte cannot begin a match, avoiding
             // the full backtracking attempt below (the O(n*m)-per-start cost).
@@ -1489,19 +1582,8 @@ impl<'a> BacktrackVm<'a> {
                     continue;
                 }
             }
-            let mut slots = vec![-1i32; self.num_slots];
-            slots[0] = start as i32;
-
-            let mut best: Option<BacktrackState> = None;
-            for state in self.match_ast(self.ast, start, slots, 0) {
-                if best.as_ref().is_none_or(|current| state.pos > current.pos) {
-                    best = Some(state);
-                }
-            }
-
-            if let Some(mut state) = best {
-                state.slots[1] = state.pos as i32;
-                return Some(state.slots);
+            if let Some(slots) = self.try_start(start) {
+                return Some(slots);
             }
         }
         None
@@ -1806,14 +1888,23 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
     // computed case-sensitively from the AST. Anchors are handled for free: a
     // leading `^` is nullable so the concat prefix still yields the next literal
     // byte, and a non-line-start candidate simply fails the anchor in the VM.
-    let prefilter = if icase {
-        None
+    // A >= 2-byte leading literal lets the search jump via SIMD memmem; it
+    // supersedes the single-byte set, so the two are mutually exclusive.
+    let (literal_prefix, prefilter) = if icase {
+        (None, None)
     } else {
         let analysis = analyze_ast(&ast);
-        if !analysis.nullable && !analysis.first_bytes.any && analysis.first_bytes.count() > 0 {
-            Some(analysis.first_bytes)
+        if analysis.nullable {
+            (None, None)
         } else {
-            None
+            let lit = leading_literal_prefix(&ast);
+            if lit.len() >= 2 {
+                (Some(lit), None)
+            } else if !analysis.first_bytes.any && analysis.first_bytes.count() > 0 {
+                (None, Some(analysis.first_bytes))
+            } else {
+                (None, None)
+            }
         }
     };
 
@@ -1828,6 +1919,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         newline,
         complexity_certificate,
         prefilter,
+        literal_prefix,
     }))
 }
 
@@ -1933,11 +2025,19 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
             compiled.newline,
             eflags,
             compiled.prefilter,
+            compiled.literal_prefix.as_deref(),
         );
         return vm.execute();
     }
 
-    let vm = PikeVm::new(&compiled.nfa, input, num_slots, eflags, compiled.prefilter);
+    let vm = PikeVm::new(
+        &compiled.nfa,
+        input,
+        num_slots,
+        eflags,
+        compiled.prefilter,
+        compiled.literal_prefix.as_deref(),
+    );
 
     vm.execute()
 }

@@ -1352,6 +1352,19 @@ fn bench_regex_search(c: &mut Criterion) {
         b.iter(|| black_box(regex_match_bounds_bytes(&compiled, black_box(&haystack), 0)));
     });
     group.finish();
+
+    // Common first byte, rare multi-byte literal: the haystack is all 'e', so a
+    // single-byte prefilter cannot skip anything (every position is a candidate)
+    // and probes the VM ~n times; the literal-prefix memmem jump finds no
+    // "error" and returns after one scan.
+    let hay_e = vec![b'e'; 4096];
+    let compiled_e = regex_compile(b"error[0-9]+", REG_EXTENDED).expect("compile");
+    let mut g2 = c.benchmark_group("regex_search_common_first_byte");
+    g2.throughput(Throughput::Bytes(hay_e.len() as u64));
+    g2.bench_function(BenchmarkId::new(mode, 4096), |b| {
+        b.iter(|| black_box(regex_match_bounds_bytes(&compiled_e, black_box(&hay_e), 0)));
+    });
+    g2.finish();
 }
 
 fn bench_memmem(c: &mut Criterion) {
