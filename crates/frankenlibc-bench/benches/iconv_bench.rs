@@ -45,5 +45,23 @@ fn bench_iconv(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_iconv);
+// UTF-8 -> KOI8-R: a single-byte legacy codepage whose low half is ASCII. The
+// probe-cached fast path enables ASCII bulk-copy here too (previously this pair
+// used the per-char scalar loop, since only UTF-8/ASCII/Latin-1 were fast).
+fn bench_iconv_utf8_to_koi8r(c: &mut Criterion) {
+    let ascii: Vec<u8> = (0..1024).map(|i| 0x20 + (i % 0x5F) as u8).collect();
+    let mut group = c.benchmark_group("iconv_utf8_to_koi8r");
+    group.throughput(Throughput::Bytes(ascii.len() as u64));
+    let mut dest = vec![0u8; ascii.len() * 2 + 8];
+    group.bench_with_input(BenchmarkId::from_parameter("ascii_1k"), &ascii[..], |b, input| {
+        let mut cd = iconv_open(b"KOI8-R", b"UTF-8").expect("codec");
+        b.iter(|| {
+            let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
+            black_box(r.is_ok());
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(benches, bench_iconv, bench_iconv_utf8_to_koi8r);
 criterion_main!(benches);

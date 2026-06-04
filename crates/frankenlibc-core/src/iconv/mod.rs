@@ -1203,6 +1203,11 @@ pub struct IconvDescriptor {
     to: Encoding,
     emit_bom: bool,
     dispatch: IconvDispatchMetadata,
+    /// Cached at open time: true when every byte `0x00..=0x7F` decodes (under
+    /// `from`) and re-encodes (under `to`) as the identical single byte, so the
+    /// iconv loop can SIMD-bulk-copy ASCII runs. Probed, not hardcoded — see
+    /// [`pair_is_ascii_identity`].
+    fast_ascii: bool,
 }
 
 impl IconvDescriptor {
@@ -8381,14 +8386,31 @@ fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
-/// True for encodings where every byte `0x00..=0x7F` both decodes to the
-/// codepoint of the same value and re-encodes back to that same single byte —
-/// i.e. the ASCII range is a 1:1 byte-identity passthrough. Verified against
-/// the decode_char/encode_char arms: UTF-8 (b<0x80 -> char b -> 1 byte),
-/// US-ASCII, and Latin-1 (cp<=0xFF -> byte cp, so cp<0x80 is identity). All
-/// other codecs (UTF-16/32, KOI8, CP125x, ...) are excluded.
-fn ascii_transparent(enc: Encoding) -> bool {
-    matches!(enc, Encoding::Utf8 | Encoding::Ascii | Encoding::Latin1)
+/// Probe whether the conversion `from -> to` is an ASCII byte-identity over
+/// `0x00..=0x7F`: every such byte must decode (under `from`) to the codepoint of
+/// the same value as a single byte AND re-encode (under `to`) back to that same
+/// single byte. When true, the iconv loop can bulk-copy ASCII runs verbatim.
+///
+/// This is computed once per descriptor (in `iconv_open_detailed`) by actually
+/// exercising `decode_char`/`encode_char`, so it is correct for ANY codec —
+/// UTF-8/ASCII/Latin-1 and the many single-byte codepages (KOI8, CP125x, ...)
+/// whose low half is ASCII — without a hand-maintained allow-list, and it
+/// automatically excludes multibyte codecs (UTF-16/32) where a single byte is
+/// incomplete. Parity-safe by construction: the fast path is enabled only when
+/// the identity is proven.
+fn pair_is_ascii_identity(from: Encoding, to: Encoding) -> bool {
+    let mut buf = [0u8; 8];
+    for b in 0u8..0x80 {
+        match decode_char(from, &[b]) {
+            Ok((ch, 1)) if ch == char::from(b) => {}
+            _ => return false,
+        }
+        match encode_char(to, char::from(b), &mut buf) {
+            Ok(1) if buf[0] == b => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// Length of the leading run of ASCII bytes (`< 0x80`) in `s`, found with a
@@ -8818,6 +8840,7 @@ pub fn iconv_open_detailed(
             to,
             emit_bom: matches!(to, Encoding::Utf32),
             dispatch,
+            fast_ascii: pair_is_ascii_identity(from, to),
         },
         dispatch,
     ))
@@ -8907,7 +8930,7 @@ pub fn iconv(
     // of a per-byte decode_char/encode_char round trip. Non-ASCII bytes, errors,
     // and E2BIG all fall through to the unchanged scalar loop, so the result is
     // byte-for-byte identical.
-    let fast_ascii = ascii_transparent(cd.from) && ascii_transparent(cd.to);
+    let fast_ascii = cd.fast_ascii;
 
     while in_pos < input.len() {
         if fast_ascii {
@@ -9055,7 +9078,26 @@ mod tests {
 
     #[test]
     fn iconv_ascii_fast_path_isomorphic_to_scalar() {
-        let names: &[&[u8]] = &[b"UTF-8", b"US-ASCII", b"ISO-8859-1"];
+        // Include single-byte legacy codepages (KOI8-R, CP1251) whose low half is
+        // ASCII: the probe-cached fast path now applies to them too, so the
+        // reference must still match across these pairs and their non-ASCII bytes.
+        let names: &[&[u8]] = &[
+            b"UTF-8",
+            b"US-ASCII",
+            b"ISO-8859-1",
+            b"KOI8-R",
+            b"CP1251",
+        ];
+
+        // The probe must ENABLE the fast path for single-byte codepages whose
+        // low half is ASCII (both directions, incl. codepage<->codepage)...
+        assert!(iconv_open(b"KOI8-R", b"UTF-8").unwrap().fast_ascii);
+        assert!(iconv_open(b"UTF-8", b"CP1251").unwrap().fast_ascii);
+        assert!(iconv_open(b"CP1251", b"KOI8-R").unwrap().fast_ascii);
+        // ...and DISABLE it for multibyte codecs, where one byte is incomplete /
+        // one ASCII char is >1 byte.
+        assert!(!iconv_open(b"UTF-16LE", b"UTF-8").unwrap().fast_ascii);
+        assert!(!iconv_open(b"UTF-8", b"UTF-16LE").unwrap().fast_ascii);
 
         // Corpus: ASCII of every length around the 32-lane boundary, ASCII with
         // a high byte planted at each offset, NUL-laden ASCII, valid multibyte
