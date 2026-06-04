@@ -177,14 +177,14 @@ fn checker_validates_existing_l1_gate_artifacts() -> TestResult {
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["source_bead"].as_str(), Some("bd-gtf.4"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-gtf.4.1"));
-    assert_eq!(report["summary"]["current_level"].as_str(), Some("L0"));
+    assert_eq!(report["summary"]["current_level"].as_str(), Some("L1"));
     assert_eq!(
         report["summary"]["current_release_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         report["summary"]["objective_gate_status"].as_str(),
-        Some("blocked")
+        Some("pass")
     );
     assert_eq!(
         report["summary"]["objective_obligation_count"].as_u64(),
@@ -192,21 +192,18 @@ fn checker_validates_existing_l1_gate_artifacts() -> TestResult {
     );
     assert_eq!(
         report["summary"]["objective_outcomes"]["pass"].as_u64(),
-        Some(6)
+        Some(8)
     );
-    assert_eq!(
-        report["summary"]["objective_outcomes"]["blocked"].as_u64(),
-        Some(2)
-    );
+    assert!(report["summary"]["objective_outcomes"]["blocked"].is_null());
     assert_eq!(
         report["summary"]["l1_crt_proof_row_count"].as_u64(),
         Some(11)
     );
     assert_eq!(
         report["summary"]["l1_crt_blocked_row_count"].as_u64(),
-        Some(6)
+        Some(0)
     );
-    assert_eq!(report["source_log_row_count"].as_u64(), Some(37));
+    assert_eq!(report["source_log_row_count"].as_u64(), Some(38));
 
     Ok(())
 }
@@ -264,7 +261,7 @@ fn checker_emits_report_and_jsonl_with_source_gate_rows() -> TestResult {
     }
 
     let source_records = log_records(&out_dir.join("replacement_levels_l1_gate.source.log.jsonl"))?;
-    assert_eq!(source_records.len(), 37);
+    assert_eq!(source_records.len(), 38);
     assert!(
         source_records
             .iter()
@@ -321,7 +318,7 @@ fn checker_rejects_wrong_current_level_expectation() -> TestResult {
     let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "wrong_current_level")?;
     let mut manifest = load_json(&contract_path(&root))?;
-    manifest["required_source_contract"]["current_level"] = json!("L1");
+    manifest["required_source_contract"]["current_level"] = json!("L0");
     let mutated = out_dir.join("contract_wrong_current_level.json");
     write_json(&mutated, &manifest)?;
 

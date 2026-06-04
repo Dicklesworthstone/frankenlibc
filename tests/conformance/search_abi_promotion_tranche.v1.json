@@ -1,0 +1,78 @@
+{
+  "schema_version": "search_abi_promotion_tranche.v1",
+  "bead": "bd-ldj.4",
+  "trace_id": "bd-ldj.4-search-abi-promotion-tranche-v1",
+  "description": "Bounded search_abi promotion tranche proving native hsearch table behavior whose host-delegation census hits are only errno and dynamic-symbol bootstrap bridges.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "fixture": "tests/conformance/fixtures/search_ops.json",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/search_abi.rs",
+    "core_sources": [
+      "crates/frankenlibc-core/src/search/hash.rs",
+      "crates/frankenlibc-core/src/search/mod.rs"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-search-hash-table-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "set_abi_errno",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The hsearch and hsearch_r result paths are owned by search_abi and frankenlibc_core search tables. The remaining host-reachable census entries are errno state bridges and dynamic-symbol bootstrap helpers, not delegation of hash-table semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "hsearch",
+      "module": "search_abi",
+      "core_path": "crates/frankenlibc-abi/src/search_abi.rs::hsearch",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "hsearch_r",
+      "module": "search_abi",
+      "core_path": "crates/frankenlibc-abi/src/search_abi.rs::hsearch_r",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}

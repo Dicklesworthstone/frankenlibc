@@ -222,7 +222,7 @@ fn contract_binds_fourth_conformance_backlog_closeout() -> TestResult {
         field(coverage, "symbol_fixture_coverage", "coverage_expectations")?
             ["target_covered_symbols"]
             .as_u64(),
-        Some(848)
+        Some(855)
     );
     assert_eq!(
         field(

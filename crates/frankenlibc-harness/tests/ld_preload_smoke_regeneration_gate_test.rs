@@ -105,11 +105,24 @@ fn fake_cases(canonical: &Value) -> Vec<Value> {
         let skips = canonical["modes"][mode]["skips"]
             .as_u64()
             .expect("canonical skips") as usize;
-        let (signature_guard_failures, perf_failures) = match mode {
-            "strict" => (4, 4),
-            "hardened" => (8, 4),
-            _ => unreachable!("mode list is fixed"),
-        };
+        let signature_guard_failures = canonical["modes"][mode]["signature_guard_failures"]
+            .as_u64()
+            .expect("canonical signature_guard_failures")
+            as usize;
+        let perf_failures = canonical["modes"][mode]["perf_failures"]
+            .as_u64()
+            .expect("canonical perf_failures") as usize;
+        let strict_parity_failures = canonical["modes"][mode]["strict_parity_failures"]
+            .as_u64()
+            .expect("canonical strict_parity_failures") as usize;
+        let valgrind_failures = canonical["modes"][mode]["valgrind_failures"]
+            .as_u64()
+            .expect("canonical valgrind_failures") as usize;
+        assert_eq!(
+            strict_parity_failures + valgrind_failures,
+            0,
+            "synthetic smoke fixture only models signature-guard and perf failures"
+        );
         assert_eq!(
             fails,
             signature_guard_failures + perf_failures,
@@ -169,10 +182,10 @@ fn fake_report(canonical: &Value) -> Value {
                 "passes": canonical["modes"]["strict"]["passes"],
                 "fails": canonical["modes"]["strict"]["fails"],
                 "skips": canonical["modes"]["strict"]["skips"],
-                "signature_guard_failures": 4,
-                "strict_parity_failures": 0,
-                "perf_failures": 4,
-                "valgrind_failures": 0,
+                "signature_guard_failures": canonical["modes"]["strict"]["signature_guard_failures"],
+                "strict_parity_failures": canonical["modes"]["strict"]["strict_parity_failures"],
+                "perf_failures": canonical["modes"]["strict"]["perf_failures"],
+                "valgrind_failures": canonical["modes"]["strict"]["valgrind_failures"],
                 "failure_signature_counts": {}
             },
             "hardened": {
@@ -180,10 +193,10 @@ fn fake_report(canonical: &Value) -> Value {
                 "passes": canonical["modes"]["hardened"]["passes"],
                 "fails": canonical["modes"]["hardened"]["fails"],
                 "skips": canonical["modes"]["hardened"]["skips"],
-                "signature_guard_failures": 8,
-                "strict_parity_failures": 0,
-                "perf_failures": 4,
-                "valgrind_failures": 0,
+                "signature_guard_failures": canonical["modes"]["hardened"]["signature_guard_failures"],
+                "strict_parity_failures": canonical["modes"]["hardened"]["strict_parity_failures"],
+                "perf_failures": canonical["modes"]["hardened"]["perf_failures"],
+                "valgrind_failures": canonical["modes"]["hardened"]["valgrind_failures"],
                 "failure_signature_counts": {}
             }
         },
@@ -447,8 +460,11 @@ fn validate_only_rejects_stale_mode_failure_counters() -> TestResult {
     let root = workspace_root();
     let canonical = load_json(&root.join(CANONICAL_SUMMARY_PATH));
     let mut report_value = fake_report(&canonical);
-    report_value["modes"]["strict"]["signature_guard_failures"] = json!(0);
-    report_value["modes"]["strict"]["perf_failures"] = json!(0);
+    let strict_signature_guard_failures = canonical["modes"]["strict"]["signature_guard_failures"]
+        .as_u64()
+        .expect("canonical strict signature guard failures");
+    report_value["modes"]["strict"]["signature_guard_failures"] =
+        json!(strict_signature_guard_failures + 1);
 
     let temp = unique_temp_dir("ld-preload-smoke-regeneration-mode-counters");
     let report = temp.join("abi_compat_report.json");
@@ -552,7 +568,11 @@ fn validate_only_rejects_hand_edited_canonical_mode_failure_counters() -> TestRe
     let trace = temp.join("trace.jsonl");
     let edited_canonical = temp.join("ld_preload_smoke_summary.v1.json");
     let mut mutated = canonical.clone();
-    mutated["modes"]["strict"]["signature_guard_failures"] = json!(0);
+    let strict_signature_guard_failures = canonical["modes"]["strict"]["signature_guard_failures"]
+        .as_u64()
+        .expect("canonical strict signature guard failures");
+    mutated["modes"]["strict"]["signature_guard_failures"] =
+        json!(strict_signature_guard_failures + 1);
     write_json(&report, &report_value);
     std::fs::write(&trace, fake_trace(&report_value)).expect("write trace");
     write_json(&edited_canonical, &mutated);

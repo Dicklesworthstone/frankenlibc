@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-06-03T21:42:23Z",
+  "generated_at": "2026-06-04T12:59:02Z",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -11,35 +11,37 @@
     "fixture_linked": 1164,
     "fixture_unlinked": 2955,
     "fixture_coverage_pct": 28.3,
-    "total_warnings": 11
+    "total_warnings": 20
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 2384,
+      "Implemented": 2391,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1321,
+      "WrapsHostLibc": 1314,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 57.9,
+      "Implemented": 58.0,
       "RawSyscall": 10.1,
-      "WrapsHostLibc": 32.1,
+      "WrapsHostLibc": 31.9,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 67.9
+    "native_coverage_pct": 68.1
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
     "baseline_loaded": true,
     "baseline_symbol_map_loaded": true,
-    "promotion_proof_manifest_path": "/data/projects/frankenlibc/tests/conformance/math_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/err_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/locale_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/resolv_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/dirent_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/grp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_gshadow_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/inet_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/setjmp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/c11threads_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/stdio_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/wchar_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/string_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/fortify_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/unistd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json",
+    "promotion_proof_manifest_path": "/data/projects/frankenlibc/tests/conformance/math_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/err_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/locale_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/iconv_locale_bootstrap_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/search_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/resolv_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/dirent_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/grp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_gshadow_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/inet_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/setjmp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/c11threads_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/stdio_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/wchar_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/string_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/fortify_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/unistd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json",
     "promotion_proof_manifest_paths": [
       "/data/projects/frankenlibc/tests/conformance/math_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/err_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/locale_abi_promotion_tranche.v1.json",
+      "/data/projects/frankenlibc/tests/conformance/iconv_locale_bootstrap_promotion_tranche.v1.json",
+      "/data/projects/frankenlibc/tests/conformance/search_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/resolv_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/dirent_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/grp_abi_promotion_tranche.v1.json",
@@ -56,7 +58,7 @@
       "/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"
     ],
-    "promotion_proof_symbol_count": 245,
+    "promotion_proof_symbol_count": 251,
     "promotion_triage_manifest_path": "target/conformance/support_matrix_promotion_triage.v1.json",
     "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
@@ -66,7 +68,7 @@
       "Stub": 0,
       "WrapsHostLibc": 0
     },
-    "native_coverage_pct_delta": 0.03,
+    "native_coverage_pct_delta": -0.0,
     "reclassified_symbol_count": 0,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
@@ -267,9 +269,9 @@
         "triage_category_counts": {},
         "violating_symbols": [],
         "current_module_coverage": {
-          "total": 154,
-          "linked": 16,
-          "coverage_pct": 10.4
+          "total": 148,
+          "linked": 14,
+          "coverage_pct": 9.5
         }
       },
       "unistd_abi": {
@@ -452,6 +454,18 @@
           "getgrent"
         ]
       },
+      "iconv_abi": {
+        "strict_hardened_symbol_count": 3,
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "symbols": [
+          "iconv",
+          "iconv_close",
+          "iconv_open"
+        ]
+      },
       "inet_abi": {
         "strict_hardened_symbol_count": 2,
         "required_modes": [
@@ -464,7 +478,7 @@
         ]
       },
       "locale_abi": {
-        "strict_hardened_symbol_count": 3,
+        "strict_hardened_symbol_count": 4,
         "required_modes": [
           "strict",
           "hardened"
@@ -472,7 +486,8 @@
         "symbols": [
           "catclose",
           "catgets",
-          "catopen"
+          "catopen",
+          "newlocale"
         ]
       },
       "math_abi": {
@@ -583,6 +598,17 @@
           "xdr_unixcred",
           "xdr_wrapstring",
           "xdrrec_create"
+        ]
+      },
+      "search_abi": {
+        "strict_hardened_symbol_count": 2,
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "symbols": [
+          "hsearch",
+          "hsearch_r"
         ]
       },
       "setjmp_abi": {
@@ -724,16 +750,16 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 2384,
-      "fixture_linked": 686
+      "count": 2391,
+      "fixture_linked": 693
     },
     "RawSyscall": {
       "count": 414,
       "fixture_linked": 160
     },
     "WrapsHostLibc": {
-      "count": 1321,
-      "fixture_linked": 318
+      "count": 1314,
+      "fixture_linked": 311
     }
   },
   "module_coverage": {
@@ -873,9 +899,9 @@
       "coverage_pct": 0.0
     },
     "search_abi": {
-      "total": 2,
-      "linked": 2,
-      "coverage_pct": 100.0
+      "total": 8,
+      "linked": 4,
+      "coverage_pct": 50.0
     },
     "setjmp_abi": {
       "total": 8,
@@ -908,9 +934,9 @@
       "coverage_pct": 89.7
     },
     "stdlib_abi": {
-      "total": 154,
-      "linked": 16,
-      "coverage_pct": 10.4
+      "total": 148,
+      "linked": 14,
+      "coverage_pct": 9.5
     },
     "string_abi": {
       "total": 146,
@@ -2083,9 +2109,9 @@
     "catanhf64x": "WrapsHostLibc",
     "catanhl": "WrapsHostLibc",
     "catanl": "WrapsHostLibc",
-    "catclose": "WrapsHostLibc",
-    "catgets": "WrapsHostLibc",
-    "catopen": "WrapsHostLibc",
+    "catclose": "Implemented",
+    "catgets": "Implemented",
+    "catopen": "Implemented",
     "cbc_crypt": "Implemented",
     "cbrt": "Implemented",
     "cbrtf": "Implemented",
@@ -3123,9 +3149,9 @@
     "hypotf64": "WrapsHostLibc",
     "hypotf64x": "WrapsHostLibc",
     "hypotl": "WrapsHostLibc",
-    "iconv": "WrapsHostLibc",
-    "iconv_close": "WrapsHostLibc",
-    "iconv_open": "WrapsHostLibc",
+    "iconv": "Implemented",
+    "iconv_close": "Implemented",
+    "iconv_open": "Implemented",
     "if_freenameindex": "WrapsHostLibc",
     "if_indextoname": "WrapsHostLibc",
     "if_nameindex": "WrapsHostLibc",
@@ -3603,7 +3629,7 @@
     "nearbyintl": "Implemented",
     "netname2host": "Implemented",
     "netname2user": "Implemented",
-    "newlocale": "WrapsHostLibc",
+    "newlocale": "Implemented",
     "nextafter": "Implemented",
     "nextafterf": "Implemented",
     "nextafterf128": "Implemented",
@@ -5166,6 +5192,45 @@
       "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
+      "symbol": "catclose",
+      "status": "Implemented",
+      "module": "locale_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "catgets",
+      "status": "Implemented",
+      "module": "locale_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "catopen",
+      "status": "Implemented",
+      "module": "locale_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "chroot",
       "status": "RawSyscall",
       "module": "process_abi",
@@ -5374,82 +5439,69 @@
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
     },
     {
-      "symbol": "hcreate",
-      "status": "Implemented",
-      "module": "stdlib_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": [],
-      "issue_class": "missing_body",
-      "scanner_bucket": "scanner_unknown",
-      "actionable_next_step": "add a source locator pattern or update the support-matrix row"
-    },
-    {
-      "symbol": "hcreate_r",
-      "status": "WrapsHostLibc",
-      "module": "stdlib_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": [],
-      "issue_class": "missing_body",
-      "scanner_bucket": "scanner_unknown",
-      "actionable_next_step": "add a source locator pattern or update the support-matrix row"
-    },
-    {
-      "symbol": "hdestroy",
-      "status": "Implemented",
-      "module": "stdlib_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": [],
-      "issue_class": "missing_body",
-      "scanner_bucket": "scanner_unknown",
-      "actionable_next_step": "add a source locator pattern or update the support-matrix row"
-    },
-    {
-      "symbol": "hdestroy_r",
-      "status": "Implemented",
-      "module": "stdlib_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": [],
-      "issue_class": "missing_body",
-      "scanner_bucket": "scanner_unknown",
-      "actionable_next_step": "add a source locator pattern or update the support-matrix row"
-    },
-    {
       "symbol": "hsearch",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
       ],
-      "warnings": [],
-      "issue_class": "missing_body",
-      "scanner_bucket": "scanner_unknown",
-      "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "hsearch_r",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
       ],
-      "warnings": [],
-      "issue_class": "missing_body",
-      "scanner_bucket": "scanner_unknown",
-      "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "iconv",
+      "status": "Implemented",
+      "module": "iconv_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "iconv_close",
+      "status": "Implemented",
+      "module": "iconv_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "iconv_open",
+      "status": "Implemented",
+      "module": "iconv_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "iswalnum",
@@ -5736,6 +5788,19 @@
       "issue_class": "missing_body",
       "scanner_bucket": "scanner_unknown",
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+    },
+    {
+      "symbol": "newlocale",
+      "status": "Implemented",
+      "module": "locale_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "open_by_handle_at",

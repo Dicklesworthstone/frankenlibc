@@ -2015,22 +2015,22 @@
     {
       "symbol": "catclose",
       "header": "<nl_types.h>",
-      "status": "WrapsHostLibc",
-      "notes": "Message catalog stub",
+      "status": "Implemented",
+      "notes": "Rust message catalog registry close path",
       "module": "locale_abi"
     },
     {
       "symbol": "catgets",
       "header": "<nl_types.h>",
-      "status": "WrapsHostLibc",
-      "notes": "Message catalog stub (returns default string)",
+      "status": "Implemented",
+      "notes": "Rust message catalog lookup with default-string fallback",
       "module": "locale_abi"
     },
     {
       "symbol": "catopen",
       "header": "<nl_types.h>",
-      "status": "WrapsHostLibc",
-      "notes": "Message catalog stub (returns -1/ENOSYS)",
+      "status": "Implemented",
+      "notes": "Rust message catalog open and parser path",
       "module": "locale_abi"
     },
     {
@@ -6406,7 +6406,7 @@
     {
       "symbol": "hcreate",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "coldpath",
       "strict_semantics": "POSIX hash table creation with djb2 hashing and linear probing",
       "hardened_semantics": "Hash table creation with capacity validation",
@@ -6415,7 +6415,7 @@
     {
       "symbol": "hcreate_r",
       "status": "WrapsHostLibc",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Reentrant hash table creation; uses caller-provided htab struct",
       "hardened_semantics": "Reentrant hash create with htab pointer validation",
@@ -6424,7 +6424,7 @@
     {
       "symbol": "hdestroy",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "coldpath",
       "strict_semantics": "POSIX hash table destruction; frees all slots",
       "hardened_semantics": "Hash table teardown with memory cleanup",
@@ -6433,7 +6433,7 @@
     {
       "symbol": "hdestroy_r",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Reentrant hash table destruction",
       "hardened_semantics": "Reentrant hash destroy with null check",
@@ -6451,7 +6451,7 @@
     {
       "symbol": "hsearch",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "POSIX hash table search/insert with FIND/ENTER actions",
       "hardened_semantics": "Hash search with key pointer validation",
@@ -6460,7 +6460,7 @@
     {
       "symbol": "hsearch_r",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Reentrant hash table search/insert",
       "hardened_semantics": "Reentrant hash search with pointer validation",
@@ -6514,7 +6514,7 @@
     },
     {
       "symbol": "iconv",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
@@ -6523,7 +6523,7 @@
     },
     {
       "symbol": "iconv_close",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
@@ -6532,7 +6532,7 @@
     },
     {
       "symbol": "iconv_open",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
@@ -8717,9 +8717,12 @@
     },
     {
       "symbol": "newlocale",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "locale_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "C/POSIX locale handle creation with POSIX errno semantics for invalid category masks",
+      "hardened_semantics": "C/POSIX locale handle creation with hardened fallback to C locale for unsupported names",
+      "default_stub": false
     },
     {
       "symbol": "nextafter",
@@ -33168,22 +33171,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2384,
+    "implemented": 2391,
     "raw_syscall": 414,
-    "wraps_host_libc": 1321,
+    "wraps_host_libc": 1314,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 2384,
+  "implemented": 2391,
   "raw_syscall": 414,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 2384,
+    "implemented": 2391,
     "raw_syscall": 414,
     "glibc_call_through": 0,
     "stub": 0,
-    "wraps_host_libc": 1321
+    "wraps_host_libc": 1314
   },
-  "wraps_host_libc": 1321
+  "wraps_host_libc": 1314
 }

@@ -253,10 +253,10 @@ fn contract_binds_fixture_coverage_prioritizer_sources() -> TestResult {
         "completion_contract",
     )?;
     assert_eq!(summary["campaign_count"].as_u64(), Some(8));
-    assert_eq!(summary["deferred_module_count"].as_u64(), Some(14));
+    assert_eq!(summary["deferred_module_count"].as_u64(), Some(15));
     assert_eq!(
         summary["selected_target_uncovered_symbols"].as_u64(),
-        Some(1735)
+        Some(1737)
     );
     assert_eq!(summary["total_first_wave_fixture_count"].as_u64(), Some(88));
     Ok(())

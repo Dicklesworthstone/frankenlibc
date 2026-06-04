@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-8sho",
-  "generated_at": "2026-05-21T08:05:09Z",
+  "generated_at": "2026-06-03T21:45:00Z",
   "sources": {
     "readme": "README.md",
     "feature_parity": "FEATURE_PARITY.md",
@@ -9,12 +9,12 @@
     "reality_report": "tests/conformance/reality_report.v1.json"
   },
   "reality_snapshot": {
-    "generated_at_utc": "2026-05-23T12:39:21Z",
+    "generated_at_utc": "2026-06-03T21:45:00Z",
     "total_exported": 4119,
     "counts": {
-      "implemented": 2383,
+      "implemented": 2391,
       "raw_syscall": 414,
-      "wraps_host_libc": 1322,
+      "wraps_host_libc": 1314,
       "glibc_call_through": 0,
       "stub": 0
     }
@@ -156,25 +156,25 @@
     {
       "id": "iconv",
       "status": "IMPLEMENTED_PARTIAL",
-      "implemented_scope": "Phase-1 codec core and fixtures exist, but `iconv_open`/`iconv`/`iconv_close` remain host-backed in the support taxonomy.",
+      "implemented_scope": "Phase-1 codec core and fixtures exist, and `iconv_open`/`iconv`/`iconv_close` are native bootstrap implementations in the support taxonomy.",
       "deferred_scope": "Full native `iconvdata` breadth and deterministic table-generation closure remain open.",
       "support_expectations": {
         "required_symbols": [
           {
             "symbol": "iconv_open",
-            "status": "WrapsHostLibc"
+            "status": "Implemented"
           },
           {
             "symbol": "iconv",
-            "status": "WrapsHostLibc"
+            "status": "Implemented"
           },
           {
             "symbol": "iconv_close",
-            "status": "WrapsHostLibc"
+            "status": "Implemented"
           }
         ]
       },
-      "doc_line": "- `iconv`: `IMPLEMENTED_PARTIAL` \u2014 phase-1 codec core and fixtures exist, but `iconv_open`/`iconv`/`iconv_close` remain host-backed in the support taxonomy; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full native `iconvdata` breadth and deterministic table-generation closure."
+      "doc_line": "- `iconv`: `IMPLEMENTED_PARTIAL` \u2014 phase-1 codec core and fixtures exist, and `iconv_open`/`iconv`/`iconv_close` are native bootstrap implementations in the support taxonomy; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full native `iconvdata` breadth and deterministic table-generation closure."
     }
   ],
   "contradictions": [],

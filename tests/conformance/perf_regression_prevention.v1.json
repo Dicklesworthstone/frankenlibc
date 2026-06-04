@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1qfc",
-  "generated_at": "2026-06-02T08:01:16Z",
+  "generated_at": "2026-06-04T13:29:54Z",
   "summary": {
     "total_suites_in_spec": 5,
     "suites_with_bench_files": 5,
@@ -10,7 +10,7 @@
     "baseline_slot_fill_pct": 100.0,
     "hotpath_symbol_coverage_pct": 59.9,
     "total_hotpath_symbols": 152,
-    "extra_bench_files_beyond_spec": 10,
+    "extra_bench_files_beyond_spec": 12,
     "total_issues": 0,
     "total_warnings": 0
   },
@@ -113,6 +113,7 @@
       "c11threads_abi",
       "ctype_abi",
       "resolv_abi",
+      "search_abi",
       "stdio_abi",
       "stdlib_abi",
       "time_abi",
@@ -146,10 +147,12 @@
     "condvar",
     "elimination",
     "glibc_baseline",
+    "iconv",
     "metadata_read",
     "mutex",
     "resolv_parsers",
     "runtime_math_kernels",
-    "stdio"
+    "stdio",
+    "wchar"
   ]
 }

@@ -5,13 +5,13 @@
 //! The dashboard manifest (`tests/conformance/l1_dry_run_readiness_dashboard.v1.json`)
 //! lists human-readable sentences such as:
 //!
-//!     "replacement_levels.current_level == L1"
+//!     "replacement_levels.current_level == L2"
 //!
-//! describing the future end-state when the dashboard fully passes and a
-//! human signs off promotion. Until that day, every live artifact must
-//! NEGATE each cited constraint — current_level must not currently equal
-//! L1, release_tag_policy.current_release_level must not currently equal
-//! L1. The previous test only substring-checked for keywords; this test
+//! describing higher replacement states that this L1 dashboard must not
+//! claim implicitly. Every live artifact must NEGATE each cited constraint:
+//! current_level must not currently equal L2, and release_tag_policy
+//! current_release_level must not currently equal L2. The previous test
+//! only substring-checked for keywords; this test
 //! parses each sentence into (artifact_key, dotted_path, op, expected),
 //! resolves the path against the cited inputs[artifact_key] artifact,
 //! and asserts the live value does NOT satisfy the cited equality
@@ -65,8 +65,8 @@ enum ConstraintOp {
     Ne,
 }
 
-/// Parse a sentence like `replacement_levels.current_level == L1` or
-/// `release_tag_policy.current_release_level != L1`. Returns the parts
+/// Parse a sentence like `replacement_levels.current_level == L2` or
+/// `release_tag_policy.current_release_level != L2`. Returns the parts
 /// the test will resolve in the dashboard inputs map.
 fn parse_constraint(s: &str) -> Result<ParsedConstraint<'_>, Box<dyn Error>> {
     let (lhs, op, rhs) = if let Some((l, r)) = s.split_once(" == ") {
@@ -139,12 +139,11 @@ fn every_must_remain_unset_sentence_parses_into_artifact_field_op_expected() -> 
 
 #[test]
 fn every_must_remain_unset_eq_constraint_is_currently_false_in_live_artifact() -> TestResult {
-    // The dashboard cites `<artifact>.<field> == L1` as the post-promotion
-    // end-state. While the dashboard is in blocked state (current_level=L0,
-    // auto_promotion_allowed=false), every live artifact MUST currently
-    // FAIL the equality — i.e. current_level != L1, current_release_level
-    // != L1. If the live value already equals the cited target, the
-    // dashboard's "must remain unset" guarantee has been silently broken.
+    // The dashboard cites `<artifact>.<field> == L2` as the higher-level
+    // end-state this L1 dashboard cannot claim. Every live artifact MUST
+    // currently FAIL the equality. If the live value already equals the
+    // cited target, the dashboard's "must remain unset" guarantee has been
+    // silently broken.
     let dashboard = load_json(&dashboard_path())?;
     let inputs = dashboard["inputs"]
         .as_object()

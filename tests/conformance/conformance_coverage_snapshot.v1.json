@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-06-03T22:39:36Z",
+  "generated_at": "2026-06-04T13:47:50Z",
   "summary": {
     "total_symbols": 4119,
     "symbols_with_fixtures": 1164,
@@ -147,9 +147,9 @@
       "pct": 0
     },
     "search_abi": {
-      "total": 2,
-      "covered": 2,
-      "pct": 100
+      "total": 8,
+      "covered": 4,
+      "pct": 50
     },
     "setjmp_abi": {
       "total": 8,
@@ -182,9 +182,9 @@
       "pct": 90
     },
     "stdlib_abi": {
-      "total": 154,
-      "covered": 16,
-      "pct": 10
+      "total": 148,
+      "covered": 14,
+      "pct": 9
     },
     "string_abi": {
       "total": 146,

@@ -354,7 +354,7 @@
         "hardened_only": 65,
         "strict_hardened_pair": 67,
         "effective_hardened": 132,
-        "support_symbol_count": 815,
+        "support_symbol_count": 816,
         "stress_repair_scenarios": 2
       },
       "missing_hardened_families": [

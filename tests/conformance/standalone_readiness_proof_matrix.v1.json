@@ -49,7 +49,7 @@
     "failure_signature"
   ],
   "claim_policy": {
-    "current_level_must_remain": "L0",
+    "current_level_must_remain": "L1",
     "l2_current_claim_status": "blocked",
     "l3_current_claim_status": "blocked",
     "symbol_counts_are_insufficient": true,
@@ -427,7 +427,7 @@
       "name": "Partial standalone replacement",
       "allowed_claim_when": "A declared standalone subset has direct-link evidence, no unapproved host-glibc dependency, current versioned-symbol proof, real-program subset smoke, and budgeted strict/hardened behavior.",
       "current_claim_status": "blocked",
-      "blocked_reason": "Current replacement_levels.json keeps current_level and release_tag_policy.current_release_level at L0; L2 host-dependency, direct-link, and standalone subset evidence is not complete."
+      "blocked_reason": "Current replacement_levels.json keeps current_level and release_tag_policy.current_release_level at L1; L2 host-dependency, direct-link, and standalone subset evidence is not complete."
     },
     {
       "level": "L3",

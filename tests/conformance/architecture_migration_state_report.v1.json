@@ -80,14 +80,14 @@
   "support_matrix_summary": {
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 2384,
+      "Implemented": 2391,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1321,
+      "WrapsHostLibc": 1314,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
-    "native_surface_pct": 67.9,
-    "host_callthrough_surface_pct": 32.1,
+    "native_surface_pct": 68.1,
+    "host_callthrough_surface_pct": 31.9,
     "taxonomy_source": "support_matrix.json"
   },
   "claim_summary": {
@@ -359,9 +359,9 @@
       ],
       "total_symbols": 214,
       "status_counts": {
-        "Implemented": 153,
+        "Implemented": 160,
         "RawSyscall": 0,
-        "WrapsHostLibc": 61,
+        "WrapsHostLibc": 54,
         "GlibcCallThrough": 0,
         "Stub": 0
       },
@@ -408,11 +408,11 @@
         "err_abi",
         "stdlib_abi"
       ],
-      "total_symbols": 967,
+      "total_symbols": 961,
       "status_counts": {
-        "Implemented": 529,
+        "Implemented": 524,
         "RawSyscall": 294,
-        "WrapsHostLibc": 144,
+        "WrapsHostLibc": 143,
         "GlibcCallThrough": 0,
         "Stub": 0
       },
@@ -431,11 +431,11 @@
         "isoc_abi",
         "search_abi"
       ],
-      "total_symbols": 582,
+      "total_symbols": 588,
       "status_counts": {
-        "Implemented": 342,
+        "Implemented": 347,
         "RawSyscall": 22,
-        "WrapsHostLibc": 218,
+        "WrapsHostLibc": 219,
         "GlibcCallThrough": 0,
         "Stub": 0
       },
@@ -523,9 +523,9 @@
     "module_family_count": 9,
     "glossary_term_count": 4,
     "total_symbols": 4119,
-    "implemented": 2384,
+    "implemented": 2391,
     "raw_syscall": 414,
-    "host_backed_status_count": 1321,
+    "host_backed_status_count": 1314,
     "stub_count": 0
   }
 }

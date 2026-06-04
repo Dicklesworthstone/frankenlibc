@@ -244,7 +244,11 @@ l1_summary = l1_crt.get("summary", {}) if isinstance(l1_crt.get("summary"), dict
 require(len(l1_crt.get("proof_rows", [])) == required.get("l1_crt_proof_row_count"), "L1 CRT proof row count mismatch")
 require(l1_summary.get("satisfied_row_count") == required.get("l1_crt_satisfied_row_count"), "L1 CRT satisfied row count mismatch")
 require(l1_summary.get("blocked_row_count") == required.get("l1_crt_blocked_row_count"), "L1 CRT blocked row count mismatch")
-require(l1_summary.get("current_gate_status") == "blocked", "L1 CRT current_gate_status must remain blocked")
+expected_l1_crt_status = required.get("l1_crt_current_gate_status", "blocked")
+require(
+    l1_summary.get("current_gate_status") == expected_l1_crt_status,
+    f"L1 CRT current_gate_status must be {expected_l1_crt_status}",
+)
 
 source_checker = source_artifacts.get("source_checker")
 if isinstance(source_checker, str) and source_checker:

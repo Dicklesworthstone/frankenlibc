@@ -25,7 +25,7 @@
     "bead": "bd-bp8fl.8.1",
     "family_count": 7,
     "required_family_count": 6,
-    "actual_bench_target_count": 15,
+    "actual_bench_target_count": 17,
     "inventory_row_count": 670,
     "covered_inventory_row_count": 36,
     "missing_inventory_row_count": 634,

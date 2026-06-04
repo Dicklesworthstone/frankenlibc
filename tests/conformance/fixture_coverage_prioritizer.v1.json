@@ -3,14 +3,16 @@
   "campaigns": [
     {
       "campaign_id": "fcq-unistd-process-filesystem",
-      "current_coverage_pct": 28.28,
+      "current_coverage_pct": 28.2,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 30.03,
+      "expected_coverage_after_first_wave_pct": 29.94,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
+        "fanotify_init",
+        "fanotify_mark",
         "fts_open",
         "fts_read",
         "fts_set",
@@ -20,9 +22,7 @@
         "futex_wait",
         "futex_waitv",
         "futex_wake",
-        "gai_cancel",
-        "gai_error",
-        "gai_suspend"
+        "gai_cancel"
       ],
       "module": "unistd_abi",
       "next_step": "Add strict/hardened fixtures for process, stat-family, and exit-path symbols before broad syscall tail work.",
@@ -47,8 +47,8 @@
       "structured_log_fields": "required_log_fields",
       "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
       "target_covered": 194,
-      "target_total": 686,
-      "target_uncovered": 492,
+      "target_total": 688,
+      "target_uncovered": 494,
       "title": "unistd/process/filesystem syscall fixture wave",
       "workload_domains": [
         "shell_coreutils",
@@ -442,17 +442,17 @@
   "deferred_modules": [
     {
       "coverage_state": "weak",
-      "current_coverage_pct": 12.9,
+      "current_coverage_pct": 11.36,
       "deferral_reason": "Lower workload and parity risk than the first-wave campaigns, but still tracked to prevent silent loss of stdlib conversion, random, exit, and environment fixture coverage.",
       "module": "stdlib_abi",
       "next_step": "Create a follow-up stdlib fixture campaign after current process, stdio, string, pthread, malloc, resolver, loader, and math waves have generated closure evidence.",
       "status_breakdown": {
-        "Implemented": 93,
-        "WrapsHostLibc": 61
+        "Implemented": 88,
+        "WrapsHostLibc": 60
       },
-      "target_covered": 12,
-      "target_total": 93,
-      "target_uncovered": 81
+      "target_covered": 10,
+      "target_total": 88,
+      "target_uncovered": 78
     },
     {
       "coverage_state": "weak",
@@ -469,21 +469,6 @@
     },
     {
       "coverage_state": "weak",
-      "current_coverage_pct": 3.57,
-      "deferral_reason": "Low-level I/O is partially represented by unistd, process, poll, socket, and stdio campaigns; a separate wave should avoid duplicate syscall fixture coverage.",
-      "module": "io_abi",
-      "next_step": "Derive an io_abi campaign from syscall coverage deltas after the unistd and poll waves land.",
-      "status_breakdown": {
-        "Implemented": 3,
-        "RawSyscall": 25,
-        "WrapsHostLibc": 1
-      },
-      "target_covered": 1,
-      "target_total": 28,
-      "target_uncovered": 27
-    },
-    {
-      "coverage_state": "weak",
       "current_coverage_pct": 47.06,
       "deferral_reason": "Internal I/O coverage is related to stdio and low-level I/O waves but needs a narrower oracle plan before it should displace user-facing campaigns.",
       "module": "io_internal_abi",
@@ -495,6 +480,21 @@
       "target_covered": 24,
       "target_total": 51,
       "target_uncovered": 27
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 3.85,
+      "deferral_reason": "Low-level I/O is partially represented by unistd, process, poll, socket, and stdio campaigns; a separate wave should avoid duplicate syscall fixture coverage.",
+      "module": "io_abi",
+      "next_step": "Derive an io_abi campaign from syscall coverage deltas after the unistd and poll waves land.",
+      "status_breakdown": {
+        "Implemented": 3,
+        "RawSyscall": 23,
+        "WrapsHostLibc": 1
+      },
+      "target_covered": 1,
+      "target_total": 26,
+      "target_uncovered": 25
     },
     {
       "coverage_state": "weak",
@@ -566,6 +566,20 @@
     },
     {
       "coverage_state": "weak",
+      "current_coverage_pct": 57.14,
+      "deferral_reason": "Not selected for the first fixture campaign because its workload or parity risk is lower than the ranked first-wave families, but uncovered symbols remain tracked.",
+      "module": "search_abi",
+      "next_step": "Create a follow-up fixture campaign after the first-wave queue has produced direct and isolated execution evidence.",
+      "status_breakdown": {
+        "Implemented": 7,
+        "WrapsHostLibc": 1
+      },
+      "target_covered": 4,
+      "target_total": 7,
+      "target_uncovered": 3
+    },
+    {
+      "coverage_state": "weak",
       "current_coverage_pct": 71.43,
       "deferral_reason": "Directory operations have partial coverage and should be tied to filesystem state fixtures from the unistd/process wave.",
       "module": "dirent_abi",
@@ -577,6 +591,20 @@
       },
       "target_covered": 5,
       "target_total": 7,
+      "target_uncovered": 2
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 50.0,
+      "deferral_reason": "Setjmp semantics belong with signal and cancellation boundary tests and should not be decoupled from async-control evidence.",
+      "module": "setjmp_abi",
+      "next_step": "Add setjmp fixtures in the signal and async-cancellation boundary fixture pack.",
+      "status_breakdown": {
+        "Implemented": 4,
+        "WrapsHostLibc": 4
+      },
+      "target_covered": 2,
+      "target_total": 4,
       "target_uncovered": 2
     },
     {
@@ -618,20 +646,6 @@
       "target_covered": 0,
       "target_total": 1,
       "target_uncovered": 1
-    },
-    {
-      "coverage_state": "weak",
-      "current_coverage_pct": 66.67,
-      "deferral_reason": "Setjmp semantics belong with signal and cancellation boundary tests and should not be decoupled from async-control evidence.",
-      "module": "setjmp_abi",
-      "next_step": "Add setjmp fixtures in the signal and async-cancellation boundary fixture pack.",
-      "status_breakdown": {
-        "Implemented": 3,
-        "WrapsHostLibc": 4
-      },
-      "target_covered": 2,
-      "target_total": 3,
-      "target_uncovered": 1
     }
   ],
   "fully_covered_workload_domain_sources": [
@@ -652,8 +666,8 @@
       "coverage_state": "covered",
       "current_coverage_pct": 100.0,
       "module": "locale_abi",
-      "target_covered": 12,
-      "target_total": 12,
+      "target_covered": 16,
+      "target_total": 16,
       "target_uncovered": 0,
       "workload_domains": [
         "locale_iconv",
@@ -772,7 +786,7 @@
       ]
     }
   ],
-  "generated_at_utc": "2026-06-02T23:13:05Z",
+  "generated_at_utc": "2026-06-03T21:45:00Z",
   "inputs": {
     "abi_symbol_universe": "tests/conformance/symbol_universe_normalization.v1.json",
     "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
@@ -844,7 +858,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 1949,
+    "all_uncovered_target_symbols": 1950,
     "campaign_count": 8,
     "covered_modules": [
       "fortify_abi",
@@ -856,8 +870,8 @@
       "unistd_abi",
       "wchar_abi"
     ],
-    "deferred_module_count": 14,
-    "deferred_target_uncovered_symbols": 214,
+    "deferred_module_count": 15,
+    "deferred_target_uncovered_symbols": 213,
     "highest_priority_campaign": "fcq-unistd-process-filesystem",
     "lowest_priority_campaign": "fcq-rpc-legacy-network",
     "required_workload_domains_covered": [
@@ -873,7 +887,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 1735,
+    "selected_target_uncovered_symbols": 1737,
     "total_first_wave_fixture_count": 88
   }
 }

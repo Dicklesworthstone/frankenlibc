@@ -32,6 +32,8 @@ PROMOTION_PROOF_MANIFEST_PATHS = (
     REPO_ROOT / "tests" / "conformance" / "math_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "err_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "locale_abi_promotion_tranche.v1.json",
+    REPO_ROOT / "tests" / "conformance" / "iconv_locale_bootstrap_promotion_tranche.v1.json",
+    REPO_ROOT / "tests" / "conformance" / "search_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "resolv_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "dirent_abi_promotion_tranche.v1.json",
     REPO_ROOT / "tests" / "conformance" / "grp_abi_promotion_tranche.v1.json",
@@ -62,6 +64,8 @@ ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS = {
     "native-libm-with-errno-bridge",
     "native-err-formatting-with-runtime-io-bridge",
     "native-locale-catalog-with-errno-bridge",
+    "native-iconv-locale-bootstrap-with-errno-bridge",
+    "native-search-hash-table-with-errno-bridge",
     "native-protocol-database-with-errno-bridge",
     "native-dirent64-alias-with-errno-bridge",
     "native-group-files-with-errno-bridge",
@@ -750,9 +754,16 @@ def validate_status(
     if symbol in DATA_SYMBOLS:
         return True, [], []
 
+    proof_available = (
+        isinstance(promotion_proof, dict)
+        and status == promotion_proof.get("support_matrix_status", "Implemented")
+        and module == promotion_proof.get("module")
+        and promotion_proof.get("classification") in ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS
+    )
     body = extract_function_body(source, symbol)
     if body is None:
-        return True, [f"function body not found (may use alternate pattern)"], []
+        warnings = [PROMOTION_PROOF_WARNING] if proof_available else []
+        return True, [f"function body not found (may use alternate pattern)"], warnings
 
     findings = []
     warnings = []
@@ -766,7 +777,7 @@ def validate_status(
     census_detected_host_delegation = (
         isinstance(host_delegation_entry, dict) and not proof_covers_census
     )
-    if proof_covers_census:
+    if proof_covers_census or proof_available:
         warnings.append(PROMOTION_PROOF_WARNING)
     host_resolve_aliases = module_analysis.get("host_resolve_aliases", set())
     host_helper_functions = module_analysis.get("host_helper_functions", set())

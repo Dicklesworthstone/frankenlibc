@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-06-02T21:43:21Z",
+  "generated_at": "2026-06-04T15:48:32Z",
   "report_hash": "214df0ee1d41f77d",
   "summary": {
     "total_symbols": 4119,
     "symbols_with_fixtures": 1164,
     "symbols_without_fixtures": 2955,
     "fixture_coverage_pct": 28.3,
-    "implemented_coverage_pct": 28.8,
+    "implemented_coverage_pct": 29.0,
     "total_fixture_files": 127,
     "total_cases": 2787,
     "total_format_issues": 0,
     "symbols_with_edge_cases": 692,
     "symbols_with_errno_checks": 1161,
-    "total_quality_issues": 2404,
-    "uncovered_action_count": 1951
+    "total_quality_issues": 2405,
+    "uncovered_action_count": 1952
   },
   "fixture_file_analyses": [
     {
@@ -12076,8 +12076,8 @@
     },
     {
       "symbol": "__sigsetjmp",
-      "status": "WrapsHostLibc",
-      "module": "glibc_internal_abi",
+      "status": "Implemented",
+      "module": "setjmp_abi",
       "perf_class": "",
       "has_fixtures": false,
       "case_count": 0,
@@ -12085,7 +12085,9 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": []
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
     },
     {
       "symbol": "__sigsuspend",
@@ -19585,7 +19587,7 @@
     },
     {
       "symbol": "catclose",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -19605,7 +19607,7 @@
     },
     {
       "symbol": "catgets",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -19625,7 +19627,7 @@
     },
     {
       "symbol": "catopen",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -27548,7 +27550,7 @@
     {
       "symbol": "fanotify_init",
       "status": "RawSyscall",
-      "module": "io_abi",
+      "module": "unistd_abi",
       "perf_class": "",
       "has_fixtures": false,
       "case_count": 0,
@@ -27561,7 +27563,7 @@
     {
       "symbol": "fanotify_mark",
       "status": "RawSyscall",
-      "module": "io_abi",
+      "module": "unistd_abi",
       "perf_class": "",
       "has_fixtures": false,
       "case_count": 0,
@@ -36027,7 +36029,7 @@
     {
       "symbol": "hcreate",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
@@ -36042,7 +36044,7 @@
     {
       "symbol": "hcreate_r",
       "status": "WrapsHostLibc",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
@@ -36055,7 +36057,7 @@
     {
       "symbol": "hdestroy",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
@@ -36070,7 +36072,7 @@
     {
       "symbol": "hdestroy_r",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
@@ -36113,7 +36115,7 @@
     {
       "symbol": "hsearch",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
       "case_count": 2,
@@ -36132,7 +36134,7 @@
     {
       "symbol": "hsearch_r",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
       "case_count": 1,
@@ -36308,7 +36310,7 @@
     },
     {
       "symbol": "iconv",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -36329,7 +36331,7 @@
     },
     {
       "symbol": "iconv_close",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -36349,7 +36351,7 @@
     },
     {
       "symbol": "iconv_open",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -43522,7 +43524,7 @@
     },
     {
       "symbol": "newlocale",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -68081,6 +68083,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "__sigsetjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "__sigtimedwait",
       "status": "RawSyscall",
       "module": "glibc_internal_abi",
@@ -70463,14 +70472,14 @@
     {
       "symbol": "fanotify_init",
       "status": "RawSyscall",
-      "module": "io_abi",
+      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
     {
       "symbol": "fanotify_mark",
       "status": "RawSyscall",
-      "module": "io_abi",
+      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -72528,21 +72537,21 @@
     {
       "symbol": "hcreate",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
     {
       "symbol": "hdestroy",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
     {
       "symbol": "hdestroy_r",
       "status": "Implemented",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

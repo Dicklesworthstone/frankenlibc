@@ -164,11 +164,11 @@ fn witness_binds_generated_coverage_state() -> TestResult {
     let symbols = field(&witness, "symbol_counts", "witness")?;
     assert_eq!(
         field(symbols, "target_covered_symbols", "symbol_counts")?.as_u64(),
-        Some(848)
+        Some(855)
     );
     assert_eq!(
         field(symbols, "target_uncovered_symbols", "symbol_counts")?.as_u64(),
-        Some(1949)
+        Some(1950)
     );
     Ok(())
 }

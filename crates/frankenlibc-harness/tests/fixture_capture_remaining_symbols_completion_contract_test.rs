@@ -383,7 +383,7 @@ fn checker_accepts_remaining_symbols_contract() -> TestResult {
         summary
             .get("uncovered_action_count")
             .and_then(Value::as_u64),
-        Some(1951)
+        Some(1952)
     );
     assert_eq!(
         summary.get("total_cases").and_then(Value::as_u64),
@@ -447,7 +447,7 @@ fn checker_generates_per_symbol_probe() -> TestResult {
         summary
             .get("uncovered_action_count")
             .and_then(Value::as_u64),
-        Some(1951)
+        Some(1952)
     );
 
     Ok(())

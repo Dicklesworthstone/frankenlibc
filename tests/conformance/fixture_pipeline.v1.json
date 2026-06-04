@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-06-04T01:52:30Z",
+  "generated_at": "2026-06-04T20:05:04Z",
   "summary": {
     "total_fixture_files": 127,
     "total_fixture_cases": 2792,
     "unique_symbols_in_fixtures": 1182,
-    "implemented_symbols": 2798,
-    "symbols_with_fixtures": 846,
-    "symbols_at_threshold": 5,
-    "symbols_below_threshold": 2793,
+    "implemented_symbols": 2805,
+    "symbols_with_fixtures": 853,
+    "symbols_at_threshold": 6,
+    "symbols_below_threshold": 2799,
     "symbols_with_zero_fixtures": 1952,
-    "coverage_pct": 30.2,
+    "coverage_pct": 30.4,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
     "min_cases_threshold": 10,
@@ -100,6 +100,15 @@
       "threshold_pct": 0.0
     },
     {
+      "module": "iconv_abi",
+      "total_symbols": 3,
+      "covered_symbols": 3,
+      "at_threshold": 1,
+      "total_cases": 18,
+      "coverage_pct": 100.0,
+      "threshold_pct": 33.3
+    },
+    {
       "module": "inet_abi",
       "total_symbols": 9,
       "covered_symbols": 5,
@@ -137,10 +146,10 @@
     },
     {
       "module": "locale_abi",
-      "total_symbols": 12,
-      "covered_symbols": 12,
+      "total_symbols": 16,
+      "covered_symbols": 16,
       "at_threshold": 0,
-      "total_cases": 28,
+      "total_cases": 36,
       "coverage_pct": 100.0,
       "threshold_pct": 0.0
     },
@@ -245,11 +254,11 @@
     },
     {
       "module": "search_abi",
-      "total_symbols": 2,
-      "covered_symbols": 2,
+      "total_symbols": 7,
+      "covered_symbols": 4,
       "at_threshold": 0,
-      "total_cases": 2,
-      "coverage_pct": 100.0,
+      "total_cases": 5,
+      "coverage_pct": 57.1,
       "threshold_pct": 0.0
     },
     {
@@ -299,11 +308,11 @@
     },
     {
       "module": "stdlib_abi",
-      "total_symbols": 93,
-      "covered_symbols": 12,
+      "total_symbols": 88,
+      "covered_symbols": 10,
       "at_threshold": 0,
-      "total_cases": 30,
-      "coverage_pct": 12.9,
+      "total_cases": 27,
+      "coverage_pct": 11.4,
       "threshold_pct": 0.0
     },
     {
@@ -5818,6 +5827,30 @@
       "gap": 10
     },
     {
+      "symbol": "catclose",
+      "module": "locale_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "catgets",
+      "module": "locale_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "catopen",
+      "module": "locale_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "cbc_crypt",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -11323,7 +11356,7 @@
     },
     {
       "symbol": "hcreate",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -11331,7 +11364,7 @@
     },
     {
       "symbol": "hdestroy",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -11339,7 +11372,7 @@
     },
     {
       "symbol": "hdestroy_r",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -11355,7 +11388,7 @@
     },
     {
       "symbol": "hsearch",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "status": "Implemented",
       "fixture_cases": 2,
       "meets_threshold": false,
@@ -11363,7 +11396,7 @@
     },
     {
       "symbol": "hsearch_r",
-      "module": "stdlib_abi",
+      "module": "search_abi",
       "status": "Implemented",
       "fixture_cases": 1,
       "meets_threshold": false,
@@ -11388,6 +11421,30 @@
     {
       "symbol": "htons",
       "module": "inet_abi",
+      "status": "Implemented",
+      "fixture_cases": 3,
+      "meets_threshold": false,
+      "gap": 7
+    },
+    {
+      "symbol": "iconv",
+      "module": "iconv_abi",
+      "status": "Implemented",
+      "fixture_cases": 13,
+      "meets_threshold": true,
+      "gap": 0
+    },
+    {
+      "symbol": "iconv_close",
+      "module": "iconv_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "iconv_open",
+      "module": "iconv_abi",
       "status": "Implemented",
       "fixture_cases": 3,
       "meets_threshold": false,
@@ -14192,6 +14249,14 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "newlocale",
+      "module": "locale_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "nextafter",

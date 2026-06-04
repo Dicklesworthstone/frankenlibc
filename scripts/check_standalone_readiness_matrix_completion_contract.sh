@@ -418,8 +418,11 @@ claim_policy = matrix.get("claim_policy", {})
 for key, expected in matrix_contract.get("claim_policy_must_block", {}).items():
     if claim_policy.get(key) != expected:
         err(f"claim_policy.{key} must remain {expected!r}")
-if levels.get("current_level") != matrix_contract.get("replacement_levels_current_level"):
-    err("replacement_levels current_level must remain L0")
+expected_current_level = matrix_contract.get("replacement_levels_current_level")
+if expected_current_level not in {"L0", "L1"}:
+    err("replacement_levels current_level contract must remain below L2")
+elif levels.get("current_level") != expected_current_level:
+    err("replacement_levels current_level does not match readiness completion contract")
 
 run_source_gate()
 source_report = load_json(READINESS_REPORT, "source readiness report")

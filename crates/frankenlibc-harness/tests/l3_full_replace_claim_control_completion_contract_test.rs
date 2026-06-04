@@ -35,7 +35,7 @@ const EXPECTED_CLAIM_LOG_FIELDS: &[&str] = &[
 const EXPECTED_PASS_TELEMETRY_EVENTS: &[&str] = &[
     "l3_full_replace_completion_contract_validated",
     "l3_full_replace_summary",
-    "release_claim_current_l0_replayed",
+    "release_claim_current_l1_replayed",
     "release_claim_l3_overclaim_blocked",
     "release_dossier_policy_bound",
     "standalone_l3_blockers_preserved",
@@ -578,7 +578,7 @@ fn checker_emits_report_and_jsonl() -> TestResult {
 }
 
 #[test]
-fn checker_replays_current_l0_and_blocks_l3_overclaim() -> TestResult {
+fn checker_replays_current_l1_and_blocks_l3_overclaim() -> TestResult {
     let root = workspace_root()?;
     let out_dir = run_passing_checker(&root, "claim-replay")?;
     let current_report = read_json(
@@ -598,7 +598,7 @@ fn checker_replays_current_l0_and_blocks_l3_overclaim() -> TestResult {
     assert_eq!(current_report["status"].as_str(), Some("pass"));
     assert!(
         !current_log.is_empty(),
-        "current L0 claim log should emit rows"
+        "current L1 claim log should emit rows"
     );
     for row in &current_log {
         assert_eq!(row["actual_decision"].as_str(), Some("claim_allowed"));
@@ -646,11 +646,11 @@ fn checker_preserves_l3_roadmap_and_standalone_blockers() -> TestResult {
     assert_eq!(readiness_report["obligation_count"].as_u64(), Some(12));
     assert_eq!(
         report["summary"]["replacement_current_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         report["summary"]["replacement_current_release_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         report["summary"]["replacement_l3_status"].as_str(),

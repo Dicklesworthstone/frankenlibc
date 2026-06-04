@@ -18,6 +18,7 @@ mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 python3 - "${ROOT}" "${MANIFEST}" "${OUT_DIR}" "${REPORT}" "${LOG}" "${TARGET_DIR}" "${SOURCE_COMMIT}" <<'PY'
 import json
+import os
 import socket
 import sys
 import time
@@ -157,13 +158,20 @@ def bool_env(value):
 
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
 def write_jsonl(path, records):
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = "".join(json.dumps(record, sort_keys=True) + "\n" for record in records)
-    path.write_text(payload, encoding="utf-8")
+    atomic_write_text(path, payload)
+
+
+def atomic_write_text(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def source_commit_ok(required):
@@ -180,7 +188,7 @@ def validate_execution_policy(manifest):
     if policy.get("real_network_allowed") is not False:
         fail(FAILURES["real_network"], "execution_policy.real_network_allowed must be false")
     envvar = policy.get("real_network_envvar_override", "")
-    if isinstance(envvar, str) and envvar and bool_env(__import__("os").environ.get(envvar, "")):
+    if isinstance(envvar, str) and envvar and bool_env(os.environ.get(envvar, "")):
         fail(
             FAILURES["real_network"],
             f"{envvar} is set; hermetic lab refuses real-network observation",
@@ -684,7 +692,7 @@ def create_fake_root(scenario, declared_files):
     for relative_path in sorted(declared_files):
         destination = fake_root / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(fake_file_content(relative_path, scenario), encoding="utf-8")
+        atomic_write_text(destination, fake_file_content(relative_path, scenario))
     needed_refs = []
     for relative_path in scenario.get("fake_root_files_needed", []):
         destination = fake_root / relative_path
@@ -706,9 +714,9 @@ def create_rows(scenarios, declared_files):
                 sock, endpoint = bind_loopback_dns(scenario_id)
                 sockets.append(sock)
                 resolv_conf = fake_root / "etc/resolv.conf"
-                resolv_conf.write_text(
+                atomic_write_text(
+                    resolv_conf,
                     f"nameserver {endpoint.rsplit(':', 1)[0]}\noptions timeout:1 attempts:1\nsearch a.example b.example\n",
-                    encoding="utf-8",
                 )
 
             model = scenario_model(scenario, fake_root)
@@ -771,7 +779,7 @@ def collect_skip_conditions(manifest):
         condition = str(item.get("condition", ""))
         if skip_id == "real-network-probe-disabled-by-default":
             envvar = manifest.get("execution_policy", {}).get("real_network_envvar_override", "")
-            if not envvar or not bool_env(__import__("os").environ.get(envvar, "")):
+            if not envvar or not bool_env(os.environ.get(envvar, "")):
                 skip_conditions.append({
                     "skip_id": skip_id,
                     "status": item.get("expected_status", "skipped"),

@@ -141,7 +141,7 @@
       "readiness_matrix_gate_status": "pass",
       "standalone_artifact_validate_only_status": "pass",
       "standalone_artifact_validate_only_claim_status": "schema_validated",
-      "current_level_must_remain": "L0",
+      "current_level_must_remain": "L1",
       "l2_current_claim_status": "blocked",
       "l3_current_claim_status": "blocked",
       "l2_replacement_level_status": "planned",

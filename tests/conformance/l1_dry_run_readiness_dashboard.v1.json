@@ -13,7 +13,7 @@
     "promotion_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "purpose": "Joins every L1 dry-run input — replacement_levels, standalone artifact forge, CRT/TLS/atexit direct-link proofs, real-program smoke, dlfcn replace-boundary sentinel + L1 burndown, perf baselines + waiver audit, runtime evidence replay — into a single dashboard with pass/blocker rows. The dashboard never promotes current_level automatically; it surfaces the next blocker set with exact artifact refs and source_commit, and fails closed on stale, missing, or contradictory inputs.",
+  "purpose": "Joins every L1 dry-run input — replacement_levels, standalone artifact forge, CRT/TLS/atexit direct-link proofs, real-program smoke, dlfcn replace-boundary sentinel + L1 burndown, perf baselines + waiver audit, runtime evidence replay — into a single dashboard with pass/blocker rows. The dashboard never promotes current_level automatically; it surfaces the current L1 evidence state with exact artifact refs and source_commit, and fails closed on stale, missing, or contradictory inputs.",
   "subject": {
     "replacement_levels_artifact": "tests/conformance/replacement_levels.json",
     "promotion_target": "L1"
@@ -63,7 +63,7 @@
   "policy": {
     "default_decision": "report_blockers_no_auto_promotion",
     "auto_promotion_allowed": false,
-    "current_level_at_audit_time": "L0",
+    "current_level_at_audit_time": "L1",
     "promotion_target": "L1",
     "rejected_evidence_kinds": [
       "missing_input_artifact",
@@ -74,8 +74,8 @@
       "row_lacks_evidence_ref"
     ],
     "must_remain_unset_until_all_rows_pass": [
-      "replacement_levels.current_level == L1",
-      "replacement_levels.release_tag_policy.current_release_level == L1"
+      "replacement_levels.current_level == L2",
+      "replacement_levels.release_tag_policy.current_release_level == L2"
     ]
   },
   "rows": [
@@ -228,7 +228,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_projection_field_count",
-      "expected_value": 19,
+      "expected_value": 20,
       "rationale": "L1 dashboard consumers must see the number of standalone forge report fields projected by host probes."
     },
     {
@@ -260,7 +260,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.decision",
-      "expected_value": "snapshot_only_claims_remain_blocked",
+      "expected_value": "snapshot_only_artifact_current_no_l2_promotion",
       "rationale": "The committed blocker value snapshot is report-only evidence and must never promote replacement claims."
     },
     {
@@ -300,125 +300,96 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_blocker_snapshot_blocking_reason_count",
-      "expected_value": 10,
-      "rationale": "Dashboard readers must see the exact current forge blocker reason count, not only a generic claim_blocked state."
+      "expected_value": 0,
+      "rationale": "Dashboard readers must see that the current forge blocker reason snapshot is cleared."
     },
     {
       "row_id": "standalone-host-probe-snapshot-needed-library-count",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_blocker_snapshot_needed_library_count",
-      "expected_value": 2,
-      "rationale": "Dashboard readers must see the current direct NEEDED host library count."
+      "expected_value": 0,
+      "rationale": "Dashboard readers must see that the current direct NEEDED host library snapshot is cleared."
     },
     {
       "row_id": "standalone-host-probe-snapshot-needed-library-values",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.needed_libraries",
-      "expected_value": [
-        "ld-linux-x86-64.so.2",
-        "libgcc_s.so.1"
-      ],
-      "rationale": "Dashboard readers must see the representative direct NEEDED host library values."
+      "expected_value": [],
+      "rationale": "Dashboard readers must see that no direct NEEDED host library values remain in the snapshot."
     },
     {
       "row_id": "standalone-host-probe-snapshot-host-resolved-library-count",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_blocker_snapshot_host_resolved_library_count",
-      "expected_value": 3,
-      "rationale": "Dashboard readers must see the current host-resolved runtime library count."
+      "expected_value": 0,
+      "rationale": "Dashboard readers must see that the current host-resolved runtime library snapshot is cleared."
     },
     {
       "row_id": "standalone-host-probe-snapshot-host-resolved-library-values",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.host_resolved_libraries",
-      "expected_value": [
-        "/lib64/ld-linux-x86-64.so.2",
-        "libc.so.6",
-        "libgcc_s.so.1"
-      ],
-      "rationale": "Dashboard readers must see the representative ldd-resolved host runtime libraries."
+      "expected_value": [],
+      "rationale": "Dashboard readers must see that no ldd-resolved host runtime libraries remain in the snapshot."
     },
     {
       "row_id": "standalone-host-probe-snapshot-undefined-unwind-symbol-values",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_unwind_symbols",
-      "expected_value": [
-        "_Unwind_Backtrace@GCC_3.3",
-        "_Unwind_DeleteException@GCC_3.0",
-        "_Unwind_GetDataRelBase@GCC_3.0",
-        "_Unwind_GetIP@GCC_3.0",
-        "_Unwind_GetIPInfo@GCC_4.2.0",
-        "_Unwind_GetLanguageSpecificData@GCC_3.0",
-        "_Unwind_GetRegionStart@GCC_3.0",
-        "_Unwind_GetTextRelBase@GCC_3.0",
-        "_Unwind_RaiseException@GCC_3.0",
-        "_Unwind_Resume@GCC_3.0",
-        "_Unwind_SetGR@GCC_3.0",
-        "_Unwind_SetIP@GCC_3.0"
-      ],
-      "rationale": "Dashboard readers must see the exact twelve-symbol unwind blocker set."
+      "expected_value": [],
+      "rationale": "Dashboard readers must see that no unwind symbol blockers remain in the snapshot."
     },
     {
       "row_id": "standalone-host-probe-snapshot-undefined-glibc-symbol-values",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_glibc_symbols",
-      "expected_value": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "rationale": "Dashboard readers must see the exact current GLIBC-versioned symbol blocker."
+      "expected_value": [],
+      "rationale": "Dashboard readers must see that no GLIBC-versioned symbol blockers remain in the snapshot."
     },
     {
       "row_id": "standalone-host-probe-snapshot-undefined-tls-symbol-values",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_tls_symbols",
-      "expected_value": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "rationale": "Dashboard readers must see the exact current TLS symbol blocker."
+      "expected_value": [],
+      "rationale": "Dashboard readers must see that no TLS symbol blockers remain in the snapshot."
     },
     {
       "row_id": "standalone-host-probe-snapshot-undefined-symbol-count",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_blocker_snapshot_undefined_symbol_count",
-      "expected_value": 14,
-      "rationale": "Dashboard readers must see the total current unwind, GLIBC, and TLS undefined-symbol blocker count."
+      "expected_value": 0,
+      "rationale": "Dashboard readers must see that no unwind, GLIBC, or TLS undefined-symbol blockers remain in the snapshot."
     },
     {
       "row_id": "standalone-host-probe-snapshot-host-version-requirement-count",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_blocker_snapshot_host_version_requirement_count",
-      "expected_value": 4,
-      "rationale": "Dashboard readers must see the current host-provided ELF version requirement count."
+      "expected_value": 0,
+      "rationale": "Dashboard readers must see that no host-provided ELF version requirements remain in the snapshot."
     },
     {
       "row_id": "standalone-host-probe-snapshot-host-version-requirement-values",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "current_forge_blocker_projection.current_forge_blocker_value_snapshot.host_version_requirements",
-      "expected_value": [
-        "ld-linux-x86-64.so.2:GLIBC_2.3",
-        "libgcc_s.so.1:GCC_3.0",
-        "libgcc_s.so.1:GCC_3.3",
-        "libgcc_s.so.1:GCC_4.2.0"
-      ],
-      "rationale": "Dashboard readers must see the current host-provided GLIBC/GCC version requirements."
+      "expected_value": [],
+      "rationale": "Dashboard readers must see that no host-provided GLIBC/GCC version requirements remain in the snapshot."
     },
     {
       "row_id": "standalone-host-probe-snapshot-version-need-provider-count",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
       "field": "summary.forge_blocker_snapshot_version_need_provider_count",
-      "expected_value": 2,
-      "rationale": "Dashboard readers must see how many host providers currently own version needs."
+      "expected_value": 0,
+      "rationale": "Dashboard readers must see that no host providers currently own version needs in the snapshot."
     },
     {
       "row_id": "standalone-artifact-report-needed-libraries-diagnostic",
@@ -448,7 +419,7 @@
       "row_id": "standalone-artifact-report-host-direct-needed-libraries-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.17",
+      "field": "required_report_fields.25",
       "expected_value": "artifact_state.dependency_breakdown.host_direct_needed_libraries",
       "rationale": "L1 dashboard consumers must distinguish direct DT_NEEDED host libraries from transitive loader resolution."
     },
@@ -456,7 +427,7 @@
       "row_id": "standalone-artifact-report-host-resolved-libraries-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.18",
+      "field": "required_report_fields.26",
       "expected_value": "artifact_state.dependency_breakdown.host_resolved_libraries",
       "rationale": "L1 dashboard consumers must distinguish ldd-resolved host libraries from direct DT_NEEDED entries."
     },
@@ -464,7 +435,7 @@
       "row_id": "standalone-artifact-report-sampled-symbols-present-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.19",
+      "field": "required_report_fields.29",
       "expected_value": "artifact_state.sampled_symbols_present",
       "rationale": "L1 dashboard consumers must see whether the forge observed every required sampled replacement symbol."
     },
@@ -472,7 +443,7 @@
       "row_id": "standalone-artifact-report-symbol-samples-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.20",
+      "field": "required_report_fields.30",
       "expected_value": "artifact_state.symbol_samples",
       "rationale": "L1 dashboard consumers must see the per-symbol sampled export map behind sampled_symbols_present."
     },
@@ -480,7 +451,7 @@
       "row_id": "standalone-artifact-report-claim-status-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.21",
+      "field": "required_report_fields.31",
       "expected_value": "claim_status",
       "rationale": "L1 dashboard consumers must see the top-level forge claim status before replacement claims can advance."
     },
@@ -488,7 +459,7 @@
       "row_id": "standalone-artifact-report-source-commit-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.22",
+      "field": "required_report_fields.32",
       "expected_value": "source_commit",
       "rationale": "L1 dashboard consumers must see the source commit attached to standalone forge evidence."
     },
@@ -496,7 +467,7 @@
       "row_id": "standalone-artifact-report-status-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.23",
+      "field": "required_report_fields.33",
       "expected_value": "artifact_state.status",
       "rationale": "L1 dashboard consumers must see whether the inspected artifact is current, stale, missing, or otherwise blocked."
     },
@@ -504,7 +475,7 @@
       "row_id": "standalone-artifact-report-failure-signature-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.24",
+      "field": "required_report_fields.34",
       "expected_value": "artifact_state.failure_signature",
       "rationale": "L1 dashboard consumers must see the exact forge failure signature behind claim-blocked evidence."
     },
@@ -512,7 +483,7 @@
       "row_id": "standalone-artifact-report-host-glibc-dependency-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.25",
+      "field": "required_report_fields.35",
       "expected_value": "artifact_state.host_glibc_dependency",
       "rationale": "L1 dashboard consumers must see the aggregate host-glibc dependency status beside detailed dependency lists."
     },
@@ -520,7 +491,7 @@
       "row_id": "standalone-artifact-report-path-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.26",
+      "field": "required_report_fields.39",
       "expected_value": "artifact_state.path",
       "rationale": "L1 dashboard consumers must see the concrete replacement artifact path used for forge evidence."
     },
@@ -528,7 +499,7 @@
       "row_id": "standalone-artifact-report-sha256-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.27",
+      "field": "required_report_fields.40",
       "expected_value": "artifact_state.sha256",
       "rationale": "L1 dashboard consumers must see the replacement artifact hash used for identity checks."
     },
@@ -536,7 +507,7 @@
       "row_id": "standalone-artifact-report-mtime-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.28",
+      "field": "required_report_fields.41",
       "expected_value": "artifact_state.mtime",
       "rationale": "L1 dashboard consumers must see the artifact mtime used for freshness checks."
     },
@@ -544,7 +515,7 @@
       "row_id": "standalone-artifact-report-rustc-version-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.29",
+      "field": "required_report_fields.42",
       "expected_value": "build_provenance.rustc_version",
       "rationale": "L1 dashboard consumers must see the rustc version used to produce standalone forge evidence."
     },
@@ -552,7 +523,7 @@
       "row_id": "standalone-artifact-report-cargo-profile-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.30",
+      "field": "required_report_fields.43",
       "expected_value": "build_provenance.cargo_profile",
       "rationale": "L1 dashboard consumers must see the Cargo profile used to produce standalone forge evidence."
     },
@@ -560,7 +531,7 @@
       "row_id": "standalone-artifact-report-target-triple-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.31",
+      "field": "required_report_fields.44",
       "expected_value": "build_provenance.target_triple",
       "rationale": "L1 dashboard consumers must see the target triple behind standalone blocker evidence."
     },
@@ -568,7 +539,7 @@
       "row_id": "standalone-artifact-report-cargo-target-dir-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.32",
+      "field": "required_report_fields.45",
       "expected_value": "build_provenance.cargo_target_dir",
       "rationale": "L1 dashboard consumers must see the effective Cargo target directory behind standalone blocker evidence."
     },
@@ -576,7 +547,7 @@
       "row_id": "standalone-artifact-report-build-command-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.33",
+      "field": "required_report_fields.46",
       "expected_value": "build_provenance.build_command",
       "rationale": "L1 dashboard consumers must see the build argv used for standalone forge evidence."
     },
@@ -584,7 +555,7 @@
       "row_id": "standalone-artifact-report-sanitized-env-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.34",
+      "field": "required_report_fields.47",
       "expected_value": "build_provenance.sanitized_env",
       "rationale": "L1 dashboard consumers must see sanitized Rust/RCH environment provenance without exposing raw sensitive values."
     },
@@ -592,7 +563,7 @@
       "row_id": "standalone-artifact-report-linker-path-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.35",
+      "field": "required_report_fields.48",
       "expected_value": "build_provenance.linker.path",
       "rationale": "L1 dashboard consumers must see the discovered linker path for standalone forge evidence."
     },
@@ -600,7 +571,7 @@
       "row_id": "standalone-artifact-report-linker-version-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.36",
+      "field": "required_report_fields.49",
       "expected_value": "build_provenance.linker.version",
       "rationale": "L1 dashboard consumers must see the discovered linker version for standalone forge evidence."
     },
@@ -608,7 +579,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-baseline-source-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.37",
+      "field": "required_report_fields.50",
       "expected_value": "blocker_delta.baseline_source",
       "rationale": "L1 dashboard consumers must see which committed blocker snapshot the live forge report was compared against."
     },
@@ -616,7 +587,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-classification-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.38",
+      "field": "required_report_fields.51",
       "expected_value": "blocker_delta.delta_classification",
       "rationale": "L1 dashboard consumers must see whether live forge blocker deltas are unchanged, regressions, improvements, or refresh-needed changes."
     },
@@ -624,7 +595,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-added-host-libraries-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.39",
+      "field": "required_report_fields.52",
       "expected_value": "blocker_delta.added_host_needed_libraries",
       "rationale": "L1 dashboard consumers must see new host runtime libraries as fail-closed blocker regressions."
     },
@@ -632,7 +603,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-added-undefined-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.40",
+      "field": "required_report_fields.55",
       "expected_value": "blocker_delta.added_undefined_symbols",
       "rationale": "L1 dashboard consumers must see new unresolved symbols as fail-closed blocker regressions."
     },
@@ -640,7 +611,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-added-version-requirements-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.41",
+      "field": "required_report_fields.56",
       "expected_value": "blocker_delta.added_version_requirements",
       "rationale": "L1 dashboard consumers must see new ELF version needs as fail-closed blocker regressions."
     },
@@ -648,7 +619,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-removed-host-libraries-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.42",
+      "field": "required_report_fields.57",
       "expected_value": "blocker_delta.removed_host_needed_libraries",
       "rationale": "L1 dashboard consumers must see removed host libraries so snapshot refresh work is explicit."
     },
@@ -656,7 +627,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-removed-undefined-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.43",
+      "field": "required_report_fields.60",
       "expected_value": "blocker_delta.removed_undefined_symbols",
       "rationale": "L1 dashboard consumers must see removed unresolved symbols so snapshot refresh work is explicit."
     },
@@ -664,7 +635,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-removed-version-requirements-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.44",
+      "field": "required_report_fields.61",
       "expected_value": "blocker_delta.removed_version_requirements",
       "rationale": "L1 dashboard consumers must see removed ELF version needs so snapshot refresh work is explicit."
     },
@@ -672,7 +643,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-refresh-required-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.45",
+      "field": "required_report_fields.62",
       "expected_value": "blocker_delta.refresh_required",
       "rationale": "L1 dashboard consumers must see when blocker deltas require a committed snapshot refresh."
     },
@@ -680,7 +651,7 @@
       "row_id": "standalone-artifact-report-blocker-delta-refresh-note-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.46",
+      "field": "required_report_fields.63",
       "expected_value": "blocker_delta.refresh_note_present",
       "rationale": "L1 dashboard consumers must see whether a blocker-delta improvement run included an explicit refresh note."
     },
@@ -696,7 +667,7 @@
       "row_id": "standalone-artifact-report-unwind-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.4",
+      "field": "required_report_fields.5",
       "expected_value": "artifact_state.dependency_breakdown.undefined_unwind_symbols",
       "rationale": "L1 dashboard consumers must see undefined unwind symbols as a first-class forge blocker."
     },
@@ -704,7 +675,7 @@
       "row_id": "standalone-artifact-report-glibc-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.5",
+      "field": "required_report_fields.6",
       "expected_value": "artifact_state.dependency_breakdown.undefined_glibc_symbols",
       "rationale": "L1 dashboard consumers must see undefined GLIBC-versioned symbols as a first-class forge blocker."
     },
@@ -712,7 +683,7 @@
       "row_id": "standalone-artifact-report-tls-symbols-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.6",
+      "field": "required_report_fields.7",
       "expected_value": "artifact_state.dependency_breakdown.undefined_tls_symbols",
       "rationale": "L1 dashboard consumers must see TLS runtime symbols as a first-class forge blocker."
     },
@@ -720,7 +691,7 @@
       "row_id": "standalone-artifact-report-loader-needed-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.9",
+      "field": "required_report_fields.11",
       "expected_value": "artifact_state.dependency_breakdown.loader_needed",
       "rationale": "L1 dashboard consumers must see host loader dependency status before replacement claims can advance."
     },
@@ -728,7 +699,7 @@
       "row_id": "standalone-artifact-report-blocking-reasons-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.10",
+      "field": "required_report_fields.17",
       "expected_value": "artifact_state.dependency_breakdown.blocking_reasons",
       "rationale": "L1 dashboard consumers must see aggregate forge blocking reasons, not only a generic claim_blocked result."
     },
@@ -736,7 +707,7 @@
       "row_id": "standalone-artifact-report-top-level-blocking-reasons-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.11",
+      "field": "required_report_fields.18",
       "expected_value": "blocking_reasons",
       "rationale": "L1 dashboard consumers must see top-level forge blocking reasons directly, not only through the nested dependency breakdown."
     },
@@ -744,7 +715,7 @@
       "row_id": "standalone-artifact-report-blocker-catalog-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.12",
+      "field": "required_report_fields.19",
       "expected_value": "artifact_state.dependency_breakdown.blocker_catalog",
       "rationale": "L1 dashboard consumers must see blocker owner surfaces, severity, evidence fields, and next actions alongside raw forge reasons."
     },
@@ -752,7 +723,7 @@
       "row_id": "standalone-artifact-report-version-needs-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.7",
+      "field": "required_report_fields.8",
       "expected_value": "artifact_state.dependency_breakdown.version_needs",
       "rationale": "L1 dashboard consumers must see provider-grouped ELF version needs, not only library names."
     },
@@ -760,7 +731,7 @@
       "row_id": "standalone-artifact-report-host-version-requirements-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.8",
+      "field": "required_report_fields.9",
       "expected_value": "artifact_state.dependency_breakdown.host_version_requirements",
       "rationale": "L1 dashboard consumers must see host-provided GCC/GLIBC version requirements as promotion blockers."
     },
@@ -768,7 +739,7 @@
       "row_id": "standalone-artifact-report-tool-exit-code-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.13",
+      "field": "required_report_fields.21",
       "expected_value": "tool_evidence.*.exit_code",
       "rationale": "L1 dashboard consumers must see per-probe inspection exit codes instead of only aggregate claim_blocked state."
     },
@@ -776,7 +747,7 @@
       "row_id": "standalone-artifact-report-tool-timeout-flag-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.14",
+      "field": "required_report_fields.22",
       "expected_value": "tool_evidence.*.timed_out",
       "rationale": "L1 dashboard consumers must distinguish failed inspection tools from timed-out inspection tools."
     },
@@ -784,7 +755,7 @@
       "row_id": "standalone-artifact-report-tool-timeout-budget-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.15",
+      "field": "required_report_fields.23",
       "expected_value": "tool_evidence.*.timeout_secs",
       "rationale": "L1 dashboard consumers must see the effective timeout budget used by each standalone forge inspection probe."
     },
@@ -792,7 +763,7 @@
       "row_id": "standalone-artifact-report-tool-path-diagnostic",
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_replacement_artifact.v1.json",
-      "field": "required_report_fields.16",
+      "field": "required_report_fields.24",
       "expected_value": "tool_evidence.*.path",
       "rationale": "L1 dashboard consumers must see the evidence artifact path for each standalone forge inspection probe."
     },
@@ -845,12 +816,15 @@
       "rationale": "The dashboard must make clear that LD_PRELOAD smoke cannot substitute for standalone direct-link evidence."
     },
     {
-      "row_id": "standalone-link-run-smoke-current-level-still-l0",
+      "row_id": "standalone-link-run-smoke-current-levels-allowed-before-l2",
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
-      "field": "current_claim_policy.current_level_must_remain",
-      "expected_value": "L0",
-      "rationale": "Standalone link-run smoke must keep the current replacement level at L0."
+      "field": "current_claim_policy.current_levels_allowed_without_standalone_claim",
+      "expected_value": [
+        "L0",
+        "L1"
+      ],
+      "rationale": "Standalone link-run smoke may support current interpose levels but must not claim L2."
     },
     {
       "row_id": "standalone-link-run-smoke-evidence-starts-at-l2",
@@ -2361,7 +2335,7 @@
       "row_kind": "perf",
       "evidence_artifact": "tests/conformance/perf_waiver_audit.v1.json",
       "field": "expected_active_waivers.0.expires_at",
-      "expected_value": "2026-05-18",
+      "expected_value": "2026-08-31",
       "rationale": "The dashboard must expose active waiver expiry so stale waiver risk is visible."
     },
     {
@@ -2713,7 +2687,7 @@
       "row_kind": "claim_control",
       "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
       "field": "ground_truth.Implemented",
-      "expected_value": 3705,
+      "expected_value": 2391,
       "rationale": "The dashboard must expose the implemented-symbol count that underpins README and feature-parity claims."
     },
     {
@@ -2793,7 +2767,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "run_id",
-      "expected_value": "20260404T011731Z",
+      "expected_value": "SnowyMill-ldfix-20260603T034530Z",
       "rationale": "Dashboard consumers must see the checked LD_PRELOAD smoke run id behind the summary."
     },
     {
@@ -2801,7 +2775,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "lib_path",
-      "expected_value": "target/release/libfrankenlibc_abi.so",
+      "expected_value": "/data/tmp/cargo-target-ldfix/release/libfrankenlibc_abi.so",
       "rationale": "Dashboard consumers must see which library artifact the checked smoke summary covers."
     },
     {
@@ -2833,7 +2807,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "summary.passes",
-      "expected_value": 58,
+      "expected_value": 60,
       "rationale": "Dashboard consumers must see the LD_PRELOAD smoke pass count."
     },
     {
@@ -2841,7 +2815,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "summary.skips",
-      "expected_value": 6,
+      "expected_value": 4,
       "rationale": "Dashboard consumers must see optional-binary smoke skips instead of treating the run as full coverage."
     },
     {
@@ -2881,7 +2855,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "modes.strict.passes",
-      "expected_value": 29,
+      "expected_value": 30,
       "rationale": "Dashboard consumers must see the strict-mode smoke pass count."
     },
     {
@@ -2889,7 +2863,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "modes.strict.skips",
-      "expected_value": 3,
+      "expected_value": 2,
       "rationale": "Dashboard consumers must see the strict-mode optional-binary skip count."
     },
     {
@@ -2905,7 +2879,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "modes.hardened.passes",
-      "expected_value": 29,
+      "expected_value": 30,
       "rationale": "Dashboard consumers must see the hardened-mode smoke pass count."
     },
     {
@@ -2913,7 +2887,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "modes.hardened.skips",
-      "expected_value": 3,
+      "expected_value": 2,
       "rationale": "Dashboard consumers must see the hardened-mode optional-binary skip count."
     },
     {
@@ -2921,7 +2895,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "optional_skip_binaries.0",
-      "expected_value": "sqlite3",
+      "expected_value": "nginx",
       "rationale": "Dashboard consumers must see the optional binary set responsible for the skip count."
     },
     {
@@ -4161,7 +4135,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "field": "summary.thread_local_macro_count",
-      "expected_value": 89,
+      "expected_value": 86,
       "rationale": "Dashboard consumers must see the source TLS macro inventory size behind the blocker."
     },
     {
@@ -4169,7 +4143,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "field": "summary.thread_local_source_file_count",
-      "expected_value": 29,
+      "expected_value": 28,
       "rationale": "Dashboard consumers must see how many source files contribute TLS macro inventory."
     },
     {
@@ -4177,7 +4151,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "field": "summary.abi_thread_local_macro_count",
-      "expected_value": 81,
+      "expected_value": 77,
       "rationale": "Dashboard consumers must see that most TLS macro pressure is in ABI modules."
     },
     {
@@ -4241,7 +4215,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "field": "source_surface_scan.total_thread_local_macro_count",
-      "expected_value": 89,
+      "expected_value": 86,
       "rationale": "Dashboard consumers must see the source scan total that must be refreshed with blocker movement."
     },
     {
@@ -4257,7 +4231,7 @@
       "row_kind": "forge",
       "evidence_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "field": "source_surface_scan.thread_local_inventory.0.thread_local_macro_count",
-      "expected_value": 25,
+      "expected_value": 24,
       "rationale": "Dashboard consumers must see the first source-surface macro count."
     },
     {
@@ -4433,7 +4407,7 @@
       "row_kind": "perf",
       "evidence_artifact": "tests/conformance/perf_budget_policy.json",
       "field": "active_waivers.0.expires_at",
-      "expected_value": "2026-05-18",
+      "expected_value": "2026-08-31",
       "rationale": "Dashboard consumers must see the expiry for the active string/malloc perf waiver."
     },
     {
@@ -4501,12 +4475,12 @@
       "rationale": "L1 promotion gate must remain wired to its fail-closed default."
     },
     {
-      "row_id": "l1-promotion-gate-current-level-l0",
+      "row_id": "l1-promotion-gate-current-level-l1",
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
       "field": "policy.current_level_at_audit_time",
-      "expected_value": "L0",
-      "rationale": "Dashboard consumers must see that the promotion audit starts from L0."
+      "expected_value": "L1",
+      "rationale": "Dashboard consumers must see that the promotion audit now records the current L1 claim level."
     },
     {
       "row_id": "l1-promotion-gate-max-target-l1",
@@ -4569,8 +4543,8 @@
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
       "field": "policy.rejected_evidence_kinds.4",
-      "expected_value": "current_level_drifted_above_l0_without_gate_pass",
-      "rationale": "The dashboard must expose current-level drift above L0 as rejected evidence."
+      "expected_value": "current_level_mismatch_or_regression_without_gate_pass",
+      "rationale": "The dashboard must expose current-level mismatch or regression as rejected evidence."
     },
     {
       "row_id": "l1-promotion-gate-reject-claim-reconciliation",
@@ -4629,12 +4603,12 @@
       "rationale": "The dashboard must expose the waiver-audit field that pins fail-closed perf waiver policy."
     },
     {
-      "row_id": "l1-promotion-gate-req-replacement-blocker-kind",
+      "row_id": "l1-promotion-gate-req-objective-gate-pass",
       "row_kind": "gate_meta",
       "evidence_artifact": "tests/conformance/l1_promotion_gate.v1.json",
-      "field": "evidence_requirements_for_l1.6.expected_kind",
-      "expected_value": "non_empty_array",
-      "rationale": "The dashboard must expose that L1 blockers remain expected until promotion happens."
+      "field": "evidence_requirements_for_l1.6.expected_value",
+      "expected_value": "pass",
+      "rationale": "The dashboard must expose that the L1 objective gate must remain passing."
     },
     {
       "row_id": "l1-promotion-gate-input-replacement-levels",
@@ -4749,27 +4723,27 @@
       "rationale": "Dashboard consumers must see stale promotion-gate source drift as the explicit stale_source_commit rejection kind."
     },
     {
-      "row_id": "current-level-still-l0",
+      "row_id": "current-level-is-l1",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "current_level",
-      "expected_value": "L0",
-      "rationale": "Until every other row passes, current_level must remain L0; the dashboard never promotes automatically."
+      "expected_value": "L1",
+      "rationale": "The dashboard must expose the current L1 replacement claim without promoting beyond it automatically."
     },
     {
-      "row_id": "replacement-level-release-tag-still-l0",
+      "row_id": "replacement-level-release-tag-is-l1",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "release_tag_policy.current_release_level",
-      "expected_value": "L0",
-      "rationale": "The dashboard must expose that release tagging still claims L0 until promotion is explicitly approved."
+      "expected_value": "L1",
+      "rationale": "The dashboard must expose that release tagging now matches the current L1 claim."
     },
     {
       "row_id": "replacement-level-release-tag-example",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "release_tag_policy.current_release_tag_example",
-      "expected_value": "v0.1.0-L0",
+      "expected_value": "v0.1.0-L1",
       "rationale": "Dashboard consumers must see the release-tag suffix that still represents the current replacement level."
     },
     {
@@ -4785,64 +4759,64 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "current_assessment.callthrough_pct",
-      "expected_value": 0,
-      "rationale": "The dashboard must expose that zero call-through percentage alone does not authorize L1 promotion."
+      "expected_value": 32,
+      "rationale": "The dashboard must expose the explicit host-backed L1 interpose percentage."
     },
     {
       "row_id": "replacement-level-l1-status",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.status",
-      "expected_value": "in_progress",
-      "rationale": "Dashboard consumers must see that L1 remains in progress rather than achieved."
+      "expected_value": "achieved",
+      "rationale": "Dashboard consumers must see that L1 is achieved."
     },
     {
       "row_id": "replacement-level-l1-objective-gate-status",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.status",
-      "expected_value": "blocked",
-      "rationale": "The dashboard must expose the L1 objective gate blocked state."
+      "expected_value": "pass",
+      "rationale": "The dashboard must expose the L1 objective gate pass state."
     },
     {
       "row_id": "replacement-level-l1-promotion-outcome",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.6.outcome",
-      "expected_value": "blocked",
-      "rationale": "Promotion claim-control must remain visibly blocked until current_level and release tag move together."
+      "expected_value": "pass",
+      "rationale": "Promotion claim-control must remain visibly passing while current_level and release tag move together."
     },
     {
       "row_id": "replacement-level-l1-promotion-actual-current-level",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.6.actual.current_level",
-      "expected_value": "L0",
-      "rationale": "Dashboard consumers must see the actual current_level that blocks the promotion-control obligation."
+      "expected_value": "L1",
+      "rationale": "Dashboard consumers must see the actual current_level that satisfies the promotion-control obligation."
     },
     {
       "row_id": "replacement-level-l1-crt-tls-outcome",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.7.outcome",
-      "expected_value": "blocked",
-      "rationale": "The dashboard must expose that CRT/startup/TLS proof matrix obligations still block L1."
+      "expected_value": "pass",
+      "rationale": "The dashboard must expose that CRT/startup/TLS proof matrix obligations now pass for L1."
     },
     {
       "row_id": "replacement-level-l1-crt-tls-blocked-row-count",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.7.actual.blocked_row_count",
-      "expected_value": 6,
-      "rationale": "Dashboard consumers must see the exact remaining CRT/startup/TLS blocker count."
+      "expected_value": 0,
+      "rationale": "Dashboard consumers must see that no CRT/startup/TLS blocker rows remain."
     },
     {
-      "row_id": "replacement-level-l1-first-blocker",
+      "row_id": "replacement-level-l1-blockers-cleared",
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
-      "field": "levels.1.blockers.0",
-      "expected_value": "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate.",
-      "rationale": "The dashboard must expose the primary L1 blocker as a concrete row."
+      "field": "levels.1.blockers",
+      "expected_value": [],
+      "rationale": "The dashboard must expose that the L1 blocker list is cleared."
     },
     {
       "row_id": "replacement-level-l0-to-l1-crt-requirement",
@@ -4857,8 +4831,8 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.status_reason",
-      "expected_value": "The evidence bundle is green, but FrankenLibC still claims L0 until current_level and release_tag_policy.current_release_level are promoted together under explicit claim-control.",
-      "rationale": "The dashboard must expose the exact reason the L1 objective gate remains blocked."
+      "expected_value": "The declared L1 interpose level remains the current taxonomy level, and the current L1 objective-gate evidence bundle is passing with checked curated preload smoke green in strict and hardened modes.",
+      "rationale": "The dashboard must expose the exact reason the L1 objective gate passes."
     },
     {
       "row_id": "replacement-level-l1-report-path",
@@ -4921,7 +4895,7 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.1.expected.max_callthrough_pct",
-      "expected_value": 30,
+      "expected_value": 35,
       "rationale": "The dashboard must expose the L1 call-through percentage ceiling."
     },
     {
@@ -4929,7 +4903,7 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.1.actual.callthrough_pct",
-      "expected_value": 0,
+      "expected_value": 32,
       "rationale": "The dashboard must expose that call-through percentage already satisfies the L1 bound."
     },
     {
@@ -4945,7 +4919,7 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.2.actual.implemented_pct",
-      "expected_value": 90,
+      "expected_value": 57,
       "rationale": "The dashboard must expose that implemented percentage already satisfies the L1 floor."
     },
     {
@@ -5013,8 +4987,8 @@
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.6.actual",
       "expected_value": {
-        "current_level": "L0",
-        "release_tag_policy.current_release_level": "L0"
+        "current_level": "L1",
+        "release_tag_policy.current_release_level": "L1"
       },
       "rationale": "The dashboard must expose the complete actual level/release-tag contract that still blocks promotion."
     },
@@ -5031,8 +5005,8 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.obligations.7.actual.current_gate_status",
-      "expected_value": "blocked",
-      "rationale": "The dashboard must expose the actual CRT/startup/TLS gate status that blocks L1."
+      "expected_value": "pass",
+      "rationale": "The dashboard must expose the actual CRT/startup/TLS gate status that satisfies L1."
     },
     {
       "row_id": "replacement-level-l1-evidence-bundle-first-artifact",

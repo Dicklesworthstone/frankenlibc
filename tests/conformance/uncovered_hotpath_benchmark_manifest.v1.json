@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-b92jd.2.2",
-  "generated_at_utc": "2026-05-05T06:58:23Z",
-  "source_commit": "4c86d023",
+  "generated_at_utc": "2026-06-04T13:30:01Z",
+  "source_commit": "d99ff6ee",
   "purpose": "Fail-closed manifest for strict hot-path symbols not covered by the current benchmark suite map.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -13,12 +13,12 @@
     "perf_baseline": "scripts/perf_baseline.json"
   },
   "input_digests": {
-    "benchmark_coverage_inventory": "0c1f49075a5ff22423a1b03fb3ade4e26fd4596a784473c0523ed11b422fcdb6",
+    "benchmark_coverage_inventory": "4ac06a108401ef970f3097b6094ef25efdd7491f65947454b6b9a30b236d00e5",
     "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
     "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
-    "perf_budget_policy": "df4e8f522d1faa4283660c6cb9a532080f44a05106a6005dc47f681a9e790c7c",
-    "perf_regression_prevention": "c941128bf757843f6fbc7eb396f5d3162f58cae6a259426d39b8039097c4a219",
-    "support_matrix": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d"
+    "perf_budget_policy": "e9b761308bc3265c8e475a66e14174a5b592232e361654db48df919278a9e0e2",
+    "perf_regression_prevention": "209afe5dbd30f5c939971650d0a17933d98d2cb0c147280612e627aadc6ff091",
+    "support_matrix": "c42b23db90394bf94a852670f5b18b04e925338671850ed47486c2e434b7e4c3"
   },
   "required_row_fields": [
     "row_id",
@@ -61,11 +61,12 @@
     "total_strict_hotpath_symbols": 152,
     "current_uncovered_symbol_count": 61,
     "current_covered_symbol_count": 91,
-    "module_count": 7,
+    "module_count": 8,
     "modules": [
       "c11threads_abi",
       "ctype_abi",
       "resolv_abi",
+      "search_abi",
       "stdio_abi",
       "stdlib_abi",
       "time_abi",
@@ -127,6 +128,19 @@
       "next_action": "Use the hermetic NSS/resolver lab before timing resolver paths; real network/DNS is not an acceptable benchmark dependency."
     },
     {
+      "module": "search_abi",
+      "api_family": "search",
+      "symbol_count": 2,
+      "benchmark_file": "crates/frankenlibc-bench/benches/search_bench.rs",
+      "suite_id": "search",
+      "plan_kind": "new_benchmark_family",
+      "coverage_blockers": [
+        "missing_benchmark_target_and_spec_suite"
+      ],
+      "unsafe_benchmark_blockers": [],
+      "next_action": "Create hash/tree search hot-path benchmarks with deterministic table contents and lookup actions."
+    },
+    {
       "module": "stdio_abi",
       "api_family": "stdio",
       "symbol_count": 11,
@@ -142,7 +156,7 @@
     {
       "module": "stdlib_abi",
       "api_family": "stdlib",
-      "symbol_count": 6,
+      "symbol_count": 4,
       "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
       "suite_id": "stdlib",
       "plan_kind": "new_benchmark_family",
@@ -186,9 +200,9 @@
       "row_id": "c11threads_abi:mtx_lock",
       "symbol": "mtx_lock",
       "module": "c11threads_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "pthread",
@@ -280,9 +294,9 @@
       "row_id": "c11threads_abi:mtx_unlock",
       "symbol": "mtx_unlock",
       "module": "c11threads_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "pthread",
@@ -1170,25 +1184,25 @@
       "failure_signature": "uncovered_hotpath_benchmark:resolv_abi:__h_errno_location"
     },
     {
-      "row_id": "stdio_abi:feof_unlocked",
-      "symbol": "feof_unlocked",
-      "module": "stdio_abi",
+      "row_id": "search_abi:hsearch",
+      "symbol": "hsearch",
+      "module": "search_abi",
       "status": "Implemented",
       "perf_class": "strict_hotpath",
       "support_matrix_status": "Implemented",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
-        "api_family": "stdio",
-        "suite_id": "stdio",
-        "benchmark_id": "stdio.feof_unlocked",
-        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
-        "plan_kind": "extend_existing_benchmark_family",
-        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+        "api_family": "search",
+        "suite_id": "search",
+        "benchmark_id": "search.hsearch",
+        "benchmark_file": "crates/frankenlibc-bench/benches/search_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create hash/tree search hot-path benchmarks with deterministic table contents and lookup actions."
       },
       "coverage_gap": {
         "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
         "current_coverage_state": "uncovered",
-        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
@@ -1214,28 +1228,28 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:feof_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:search_abi:hsearch"
     },
     {
-      "row_id": "stdio_abi:ferror_unlocked",
-      "symbol": "ferror_unlocked",
-      "module": "stdio_abi",
+      "row_id": "search_abi:hsearch_r",
+      "symbol": "hsearch_r",
+      "module": "search_abi",
       "status": "Implemented",
       "perf_class": "strict_hotpath",
       "support_matrix_status": "Implemented",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
-        "api_family": "stdio",
-        "suite_id": "stdio",
-        "benchmark_id": "stdio.ferror_unlocked",
-        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
-        "plan_kind": "extend_existing_benchmark_family",
-        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
+        "api_family": "search",
+        "suite_id": "search",
+        "benchmark_id": "search.hsearch_r",
+        "benchmark_file": "crates/frankenlibc-bench/benches/search_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "next_action": "Create hash/tree search hot-path benchmarks with deterministic table contents and lookup actions."
       },
       "coverage_gap": {
         "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
         "current_coverage_state": "uncovered",
-        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
+        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
@@ -1261,20 +1275,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:ferror_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:search_abi:hsearch_r"
     },
     {
-      "row_id": "stdio_abi:fflush_unlocked",
-      "symbol": "fflush_unlocked",
+      "row_id": "stdio_abi:feof_unlocked",
+      "symbol": "feof_unlocked",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.fflush_unlocked",
+        "benchmark_id": "stdio.feof_unlocked",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1308,20 +1322,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fflush_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:feof_unlocked"
     },
     {
-      "row_id": "stdio_abi:fgets_unlocked",
-      "symbol": "fgets_unlocked",
+      "row_id": "stdio_abi:ferror_unlocked",
+      "symbol": "ferror_unlocked",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.fgets_unlocked",
+        "benchmark_id": "stdio.ferror_unlocked",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1355,20 +1369,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fgets_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:ferror_unlocked"
     },
     {
-      "row_id": "stdio_abi:fputs_unlocked",
-      "symbol": "fputs_unlocked",
+      "row_id": "stdio_abi:fflush_unlocked",
+      "symbol": "fflush_unlocked",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.fputs_unlocked",
+        "benchmark_id": "stdio.fflush_unlocked",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1402,20 +1416,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fputs_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fflush_unlocked"
     },
     {
-      "row_id": "stdio_abi:fread_unlocked",
-      "symbol": "fread_unlocked",
+      "row_id": "stdio_abi:fgets_unlocked",
+      "symbol": "fgets_unlocked",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.fread_unlocked",
+        "benchmark_id": "stdio.fgets_unlocked",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1449,20 +1463,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fread_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fgets_unlocked"
     },
     {
-      "row_id": "stdio_abi:fwrite_unlocked",
-      "symbol": "fwrite_unlocked",
+      "row_id": "stdio_abi:fputs_unlocked",
+      "symbol": "fputs_unlocked",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.fwrite_unlocked",
+        "benchmark_id": "stdio.fputs_unlocked",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1496,20 +1510,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fwrite_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fputs_unlocked"
     },
     {
-      "row_id": "stdio_abi:getc",
-      "symbol": "getc",
+      "row_id": "stdio_abi:fread_unlocked",
+      "symbol": "fread_unlocked",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.getc",
+        "benchmark_id": "stdio.fread_unlocked",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1543,20 +1557,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:getc"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fread_unlocked"
     },
     {
-      "row_id": "stdio_abi:getchar_unlocked",
-      "symbol": "getchar_unlocked",
+      "row_id": "stdio_abi:fwrite_unlocked",
+      "symbol": "fwrite_unlocked",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.getchar_unlocked",
+        "benchmark_id": "stdio.fwrite_unlocked",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1590,20 +1604,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:getchar_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:fwrite_unlocked"
     },
     {
-      "row_id": "stdio_abi:putc",
-      "symbol": "putc",
+      "row_id": "stdio_abi:getc",
+      "symbol": "getc",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.putc",
+        "benchmark_id": "stdio.getc",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1637,20 +1651,20 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:putc"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:getc"
     },
     {
-      "row_id": "stdio_abi:putchar_unlocked",
-      "symbol": "putchar_unlocked",
+      "row_id": "stdio_abi:getchar_unlocked",
+      "symbol": "getchar_unlocked",
       "module": "stdio_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "stdio",
         "suite_id": "stdio",
-        "benchmark_id": "stdio.putchar_unlocked",
+        "benchmark_id": "stdio.getchar_unlocked",
         "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
         "plan_kind": "extend_existing_benchmark_family",
         "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
@@ -1684,28 +1698,28 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:putchar_unlocked"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:getchar_unlocked"
     },
     {
-      "row_id": "stdlib_abi:hsearch",
-      "symbol": "hsearch",
-      "module": "stdlib_abi",
-      "status": "Implemented",
+      "row_id": "stdio_abi:putc",
+      "symbol": "putc",
+      "module": "stdio_abi",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
-        "api_family": "stdlib",
-        "suite_id": "stdlib",
-        "benchmark_id": "stdlib.hsearch",
-        "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
-        "plan_kind": "new_benchmark_family",
-        "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.putc",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
       },
       "coverage_gap": {
         "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
         "current_coverage_state": "uncovered",
-        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
@@ -1731,28 +1745,28 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdlib_abi:hsearch"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:putc"
     },
     {
-      "row_id": "stdlib_abi:hsearch_r",
-      "symbol": "hsearch_r",
-      "module": "stdlib_abi",
-      "status": "Implemented",
+      "row_id": "stdio_abi:putchar_unlocked",
+      "symbol": "putchar_unlocked",
+      "module": "stdio_abi",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
-        "api_family": "stdlib",
-        "suite_id": "stdlib",
-        "benchmark_id": "stdlib.hsearch_r",
-        "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
-        "plan_kind": "new_benchmark_family",
-        "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
+        "api_family": "stdio",
+        "suite_id": "stdio",
+        "benchmark_id": "stdio.putchar_unlocked",
+        "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+        "plan_kind": "extend_existing_benchmark_family",
+        "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
       },
       "coverage_gap": {
         "current_coverage_source": "tests/conformance/perf_regression_prevention.v1.json",
         "current_coverage_state": "uncovered",
-        "current_coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "current_coverage_blocker": "missing_stdio_perf_baseline_spec_suite",
         "current_covered_modules": {
           "string_abi": "string",
           "malloc_abi": "malloc",
@@ -1778,7 +1792,7 @@
         "tests/conformance/perf_baseline_spec.json",
         "scripts/perf_baseline.json"
       ],
-      "failure_signature": "uncovered_hotpath_benchmark:stdlib_abi:hsearch_r"
+      "failure_signature": "uncovered_hotpath_benchmark:stdio_abi:putchar_unlocked"
     },
     {
       "row_id": "stdlib_abi:lfind",
@@ -1972,9 +1986,9 @@
       "row_id": "time_abi:timespec_get",
       "symbol": "timespec_get",
       "module": "time_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "time",
@@ -2066,9 +2080,9 @@
       "row_id": "wchar_abi:mbrtowc",
       "symbol": "mbrtowc",
       "module": "wchar_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "wchar",
@@ -2113,9 +2127,9 @@
       "row_id": "wchar_abi:mbsrtowcs",
       "symbol": "mbsrtowcs",
       "module": "wchar_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "wchar",
@@ -2160,9 +2174,9 @@
       "row_id": "wchar_abi:wcrtomb",
       "symbol": "wcrtomb",
       "module": "wchar_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "wchar",
@@ -2630,9 +2644,9 @@
       "row_id": "wchar_abi:wcsrtombs",
       "symbol": "wcsrtombs",
       "module": "wchar_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "wchar",
@@ -2724,9 +2738,9 @@
       "row_id": "wchar_abi:wcswidth",
       "symbol": "wcswidth",
       "module": "wchar_abi",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "perf_class": "strict_hotpath",
-      "support_matrix_status": "Implemented",
+      "support_matrix_status": "WrapsHostLibc",
       "support_matrix_perf_class": "strict_hotpath",
       "benchmark_assignment": {
         "api_family": "wchar",
@@ -3071,5 +3085,5 @@
     "target_report": "target/conformance/uncovered_hotpath_benchmark_manifest.report.json",
     "target_log": "target/conformance/uncovered_hotpath_benchmark_manifest.log.jsonl"
   },
-  "artifact_hash": "bc4a28fdc378b1afdc85cb93787559ac8a12d77a1f4509224c99da81db0377c2"
+  "artifact_hash": "83e23dfc7a984bff41f72481947e3fb287359aeddad94b5449a88e9baee88a8a"
 }

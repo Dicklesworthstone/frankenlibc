@@ -1,6 +1,6 @@
 //! Integration test: L1 replacement-level promotion gate (bd-b92jd.1.3).
 //!
-//! Refuses to advance current_level past L0 unless every evidence
+//! Keeps the L1 replacement-level claim valid only while every evidence
 //! requirement in `tests/conformance/l1_promotion_gate.v1.json` is
 //! currently met by its cited artifact. Each requirement is a
 //! (artifact, field, expected_value | expected_kind) triple; the gate
@@ -126,7 +126,7 @@ const REJECTED_EVIDENCE_KINDS: &[&str] = &[
     "schema_drift",
     "source_commit_zero_or_blank",
     "stale_source_commit",
-    "current_level_drifted_above_l0_without_gate_pass",
+    "current_level_mismatch_or_regression_without_gate_pass",
     "claim_reconciliation_status_not_pass",
 ];
 
@@ -281,7 +281,7 @@ fn gate_artifact_is_well_formed() -> TestResult {
     )?;
     ensure_eq(
         policy["current_level_at_audit_time"].as_str(),
-        Some("L0"),
+        Some("L1"),
         "policy.current_level_at_audit_time",
     )?;
     ensure_eq(
@@ -362,13 +362,17 @@ fn stale_source_commit_policy_blocks_l1_promotion() -> TestResult {
 }
 
 #[test]
-fn current_level_remains_l0_until_gate_passes() -> TestResult {
+fn current_level_matches_l1_after_gate_passes() -> TestResult {
+    let gate = load_json(&gate_path())?;
     let levels = load_json(&workspace_root().join("tests/conformance/replacement_levels.json"))?;
     let current = as_str(&levels["current_level"], "current_level")?;
     ensure_eq(
         current,
-        "L0",
-        "current_level must remain L0 until L1 promotion gate passes — drift detected",
+        as_str(
+            &gate["policy"]["current_level_at_audit_time"],
+            "policy.current_level_at_audit_time",
+        )?,
+        "current_level must match the L1 promotion gate audit level",
     )
 }
 

@@ -151,22 +151,22 @@
   },
   "coverage_expectations": {
     "symbol_fixture_coverage": {
-      "target_total_symbols": 2797,
-      "target_covered_symbols": 848,
-      "target_uncovered_symbols": 1949,
-      "target_coverage_pct": 30.32
+      "target_total_symbols": 2805,
+      "target_covered_symbols": 855,
+      "target_uncovered_symbols": 1950,
+      "target_coverage_pct": 30.48
     },
     "per_symbol_fixture_tests": {
       "total_symbols": 4119,
       "symbols_with_fixtures": 1164,
       "total_cases": 2787,
-      "uncovered_action_count": 1951,
+      "uncovered_action_count": 1952,
       "total_format_issues": 0
     },
     "fixture_coverage_prioritizer": {
       "campaign_count": 8,
-      "selected_target_uncovered_symbols": 1735,
-      "all_uncovered_target_symbols": 1949,
+      "selected_target_uncovered_symbols": 1737,
+      "all_uncovered_target_symbols": 1950,
       "total_first_wave_fixture_count": 88,
       "required_covered_modules": [
         "fortify_abi",
@@ -258,10 +258,10 @@
     "current_campaign_first_wave": [
       {
         "campaign_id": "fcq-unistd-process-filesystem",
-        "first_wave_symbols": ["fts_open", "fts_read", "fts_set", "ftw64", "futex", "futex_requeue", "futex_wait", "futex_waitv", "futex_wake", "gai_cancel", "gai_error", "gai_suspend"],
-        "current_coverage_pct": 28.28,
+        "first_wave_symbols": ["fanotify_init", "fanotify_mark", "fts_open", "fts_read", "fts_set", "ftw64", "futex", "futex_requeue", "futex_wait", "futex_waitv", "futex_wake", "gai_cancel"],
+        "current_coverage_pct": 28.2,
         "target_covered": 194,
-        "target_uncovered": 492
+        "target_uncovered": 494
       },
       {
         "campaign_id": "fcq-stdio-libio",

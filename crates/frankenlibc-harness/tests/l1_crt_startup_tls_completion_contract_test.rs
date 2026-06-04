@@ -432,10 +432,10 @@ fn checker_replays_replacement_level_gate_and_preserves_l1_blockers() -> TestRes
     )?;
 
     assert_eq!(replacement_report["status"].as_str(), Some("pass"));
-    assert_eq!(replacement_report["current_level"].as_str(), Some("L0"));
+    assert_eq!(replacement_report["current_level"].as_str(), Some("L1"));
     assert_eq!(
         replacement_report["objective_gate_status"].as_str(),
-        Some("blocked")
+        Some("pass")
     );
     assert_eq!(
         replacement_report["l1_crt_startup_tls_proof_matrix"]["current_gate_status"].as_str(),
@@ -450,11 +450,11 @@ fn checker_replays_replacement_level_gate_and_preserves_l1_blockers() -> TestRes
     );
     assert_eq!(
         report["summary"]["replacement_current_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         report["summary"]["replacement_objective_gate_status"].as_str(),
-        Some("blocked")
+        Some("pass")
     );
 
     let l1_rows: Vec<_> = replacement_log

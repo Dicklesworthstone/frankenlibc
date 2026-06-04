@@ -18,9 +18,9 @@
     "generated_at_utc": "2026-06-03T21:45:00Z",
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 2384,
+      "Implemented": 2391,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1321,
+      "WrapsHostLibc": 1314,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
@@ -49,23 +49,23 @@
         "path": "README.md",
         "required_text": [
           "4,119 exported symbols",
-          "2,384 `Implemented` + 414 `RawSyscall` = 2,798 / 4,119 (67.9% native coverage)",
+          "2,391 `Implemented` + 414 `RawSyscall` = 2,805 / 4,119 (68.1% native coverage)",
           "Total currently classified exports: **4119**.",
-          "| `Implemented` | 2384 | 58% | Native ABI-backed Rust-owned behavior |",
+          "| `Implemented` | 2391 | 58% | Native ABI-backed Rust-owned behavior |",
           "| `RawSyscall` | 414 | 10% | ABI path delegates directly to Linux syscalls |",
-          "| `WrapsHostLibc` | 1321 | 32% | Native wrapper that still calls host libc symbols internally |",
-          "Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0."
+          "| `WrapsHostLibc` | 1314 | 32% | Native wrapper that still calls host libc symbols internally |",
+          "Reality snapshot: total_exported=4119, implemented=2391, raw_syscall=414, wraps_host_libc=1314, glibc_call_through=0, stub=0."
         ]
       },
       {
         "id": "feature_parity",
         "path": "FEATURE_PARITY.md",
         "required_text": [
-          "Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0.",
+          "Reality snapshot: total_exported=4119, implemented=2391, raw_syscall=414, wraps_host_libc=1314, glibc_call_through=0, stub=0.",
           "Current exported ABI surface is **4119 symbols**, classified as:",
-          "- `Implemented`: 2384",
+          "- `Implemented`: 2391",
           "- `RawSyscall`: 414",
-          "- `WrapsHostLibc`: 1321",
+          "- `WrapsHostLibc`: 1314",
           "- `GlibcCallThrough`: 0",
           "- `Stub`: 0"
         ]
@@ -79,9 +79,9 @@
         "path": "support_matrix.json",
         "required_text": [
           "\"total_exported\": 4119",
-          "\"implemented\": 2384",
+          "\"implemented\": 2391",
           "\"raw_syscall\": 414",
-          "\"wraps_host_libc\": 1321",
+          "\"wraps_host_libc\": 1314",
           "\"symbols\": [",
           "\"status\": \"Implemented\"",
           "\"status\": \"RawSyscall\""
@@ -92,9 +92,9 @@
         "path": "tests/conformance/reality_report.v1.json",
         "required_text": [
           "\"total_exported\": 4119",
-          "\"implemented\": 2384",
+          "\"implemented\": 2391",
           "\"raw_syscall\": 414",
-          "\"wraps_host_libc\": 1321",
+          "\"wraps_host_libc\": 1314",
           "\"glibc_call_through\": 0",
           "\"stub\": 0"
         ]
@@ -105,7 +105,7 @@
         "required_text": [
           "4,119 exported symbols",
           "Total currently classified exports: **4119**.",
-          "Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0."
+          "Reality snapshot: total_exported=4119, implemented=2391, raw_syscall=414, wraps_host_libc=1314, glibc_call_through=0, stub=0."
         ]
       },
       {
@@ -113,9 +113,9 @@
         "path": "FEATURE_PARITY.md",
         "required_text": [
           "Current exported ABI surface is **4119 symbols**, classified as:",
-          "- `Implemented`: 2384",
+          "- `Implemented`: 2391",
           "- `RawSyscall`: 414",
-          "- `WrapsHostLibc`: 1321",
+          "- `WrapsHostLibc`: 1314",
           "- `GlibcCallThrough`: 0"
         ]
       },

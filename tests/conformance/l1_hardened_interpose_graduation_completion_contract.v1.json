@@ -29,7 +29,7 @@
           "\"level\": \"L1\"",
           "\"name\": \"Hardened Interpose\"",
           "\"objective_gate\"",
-          "\"status\": \"blocked\"",
+          "\"status\": \"pass\"",
           "\"required_log_fields\"",
           "replacement_levels_l1_gate.report.json",
           "replacement_levels_l1_gate.log.jsonl",
@@ -112,18 +112,18 @@
     }
   },
   "required_source_contract": {
-    "current_level": "L0",
-    "current_release_level": "L0",
-    "l1_objective_status": "blocked",
+    "current_level": "L1",
+    "current_release_level": "L1",
+    "l1_objective_status": "pass",
     "objective_obligation_count": 8,
     "objective_outcomes": {
-      "pass": 6,
-      "blocked": 2
+      "pass": 8
     },
     "l1_crt_proof_row_count": 11,
-    "l1_crt_satisfied_row_count": 5,
-    "l1_crt_blocked_row_count": 6,
-    "script_check_count": 7,
+    "l1_crt_satisfied_row_count": 11,
+    "l1_crt_blocked_row_count": 0,
+    "l1_crt_current_gate_status": "pass",
+    "script_check_count": 8,
     "script_failure_count": 0,
     "required_log_fields": [
       "trace_id",

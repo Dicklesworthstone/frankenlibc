@@ -66,7 +66,7 @@
     "required_matrix_contract": {
       "schema_version": "v1",
       "bead": "bd-bp8fl.6.6",
-      "replacement_levels_current_level": "L0",
+      "replacement_levels_current_level": "L1",
       "minimum_proof_row_count": 14,
       "minimum_obligation_count": 12,
       "minimum_negative_claim_test_count": 12,
@@ -138,7 +138,7 @@
         "summary_counts"
       ],
       "claim_policy_must_block": {
-        "current_level_must_remain": "L0",
+        "current_level_must_remain": "L1",
         "l2_current_claim_status": "blocked",
         "l3_current_claim_status": "blocked",
         "symbol_counts_are_insufficient": true,

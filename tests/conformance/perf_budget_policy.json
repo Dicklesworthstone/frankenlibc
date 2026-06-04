@@ -344,14 +344,16 @@
       "malloc_abi": 11,
       "pthread_abi": 20,
       "resolv_abi": 1,
+      "search_abi": 2,
       "stdio_abi": 11,
-      "stdlib_abi": 6,
+      "stdlib_abi": 4,
       "string_abi": 59,
       "time_abi": 1,
       "wchar_abi": 22
     },
     "strict_hotpath_by_status": {
-      "Implemented": 152
+      "Implemented": 112,
+      "WrapsHostLibc": 40
     },
     "benchmark_coverage": {
       "internal_benches": [
@@ -409,7 +411,7 @@
       {
         "symbol": "aligned_alloc",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "argz_count",
@@ -444,12 +446,12 @@
       {
         "symbol": "calloc",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "cfree",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "consttime_bcmp",
@@ -474,61 +476,61 @@
       {
         "symbol": "feof_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "ferror_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "fflush_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "fgets_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "fputs_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "fread_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "free",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "fwrite_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "getc",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "getchar_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "hsearch",
-        "module": "stdlib_abi",
+        "module": "search_abi",
         "status": "Implemented"
       },
       {
         "symbol": "hsearch_r",
-        "module": "stdlib_abi",
+        "module": "search_abi",
         "status": "Implemented"
       },
       {
@@ -594,7 +596,7 @@
       {
         "symbol": "malloc",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "malloc_usable_size",
@@ -604,17 +606,17 @@
       {
         "symbol": "mbrtowc",
         "module": "wchar_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "mbsrtowcs",
         "module": "wchar_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "memalign",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "memccpy",
@@ -669,7 +671,7 @@
       {
         "symbol": "mtx_lock",
         "module": "c11threads_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "mtx_trylock",
@@ -679,12 +681,12 @@
       {
         "symbol": "mtx_unlock",
         "module": "c11threads_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "posix_memalign",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_cond_broadcast",
@@ -699,7 +701,7 @@
       {
         "symbol": "pthread_cond_init",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_cond_signal",
@@ -714,12 +716,12 @@
       {
         "symbol": "pthread_create",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_detach",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_equal",
@@ -729,7 +731,7 @@
       {
         "symbol": "pthread_join",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_mutex_destroy",
@@ -744,7 +746,7 @@
       {
         "symbol": "pthread_mutex_lock",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_mutex_trylock",
@@ -754,7 +756,7 @@
       {
         "symbol": "pthread_mutex_unlock",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_rwlock_destroy",
@@ -769,17 +771,17 @@
       {
         "symbol": "pthread_rwlock_rdlock",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_rwlock_unlock",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_rwlock_wrlock",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_self",
@@ -789,22 +791,22 @@
       {
         "symbol": "putc",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "putchar_unlocked",
         "module": "stdio_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pvalloc",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "realloc",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "rindex",
@@ -869,7 +871,7 @@
       {
         "symbol": "strdup",
         "module": "string_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "strerrordesc_np",
@@ -934,7 +936,7 @@
       {
         "symbol": "strndup",
         "module": "string_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "strnlen",
@@ -1019,7 +1021,7 @@
       {
         "symbol": "timespec_get",
         "module": "time_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "tolower",
@@ -1044,12 +1046,12 @@
       {
         "symbol": "valloc",
         "module": "malloc_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "wcrtomb",
         "module": "wchar_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "wcscat",
@@ -1099,7 +1101,7 @@
       {
         "symbol": "wcsrtombs",
         "module": "wchar_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "wcsstr",
@@ -1109,7 +1111,7 @@
       {
         "symbol": "wcswidth",
         "module": "wchar_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "wctob",

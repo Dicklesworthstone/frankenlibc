@@ -265,7 +265,7 @@ fn checker_passes_and_emits_structured_report() -> TestResult {
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["bead"].as_str(), Some("bd-bp8fl.4.3.1"));
     assert_eq!(report["summary"]["family_count"].as_u64(), Some(40));
-    assert_eq!(report["summary"]["fail_count"].as_u64(), Some(36));
+    assert_eq!(report["summary"]["fail_count"].as_u64(), Some(37));
     assert_eq!(
         report["summary"]["claim_gate_decision"].as_str(),
         Some("blocked")

@@ -541,7 +541,7 @@ fn checker_replays_standalone_readiness_gate_and_preserves_l2_blockers() -> Test
     );
     assert_eq!(
         report["summary"]["replacement_current_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(
         report["summary"]["replacement_l2_status"].as_str(),

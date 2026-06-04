@@ -92,6 +92,15 @@ MODULE_PLANS: dict[str, dict[str, object]] = {
         "unsafe_to_benchmark_reason": "real_dns_network_io_disallowed",
         "next_action": "Use the hermetic NSS/resolver lab before timing resolver paths; real network/DNS is not an acceptable benchmark dependency.",
     },
+    "search_abi": {
+        "api_family": "search",
+        "suite_id": "search",
+        "benchmark_file": "crates/frankenlibc-bench/benches/search_bench.rs",
+        "plan_kind": "new_benchmark_family",
+        "coverage_blocker": "missing_benchmark_target_and_spec_suite",
+        "unsafe_to_benchmark_reason": None,
+        "next_action": "Create hash/tree search hot-path benchmarks with deterministic table contents and lookup actions.",
+    },
     "stdio_abi": {
         "api_family": "stdio",
         "suite_id": "stdio",

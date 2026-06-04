@@ -202,14 +202,19 @@ checks["standalone_artifact_input"] = "pass" if standalone_artifact_input_ok els
 
 level_by_id = {entry.get("level"): entry for entry in levels.get("levels", [])}
 claim_policy = matrix.get("claim_policy", {})
+current_level = levels.get("current_level")
+current_release_level = levels.get("release_tag_policy", {}).get("current_release_level")
+expected_current_level = claim_policy.get("current_level_must_remain")
 current_level_ok = (
-    levels.get("current_level") == "L0"
-    and levels.get("release_tag_policy", {}).get("current_release_level") == "L0"
-    and claim_policy.get("current_level_must_remain") == "L0"
+    expected_current_level in {"L0", "L1"}
+    and current_level == expected_current_level
+    and current_release_level == expected_current_level
 )
 checks["current_level_guard"] = "pass" if current_level_ok else "fail"
 if not current_level_ok:
-    errors.append("current_level and current release level must remain L0 while standalone evidence is blocked")
+    errors.append(
+        "current_level and current release level must remain below L2 while standalone evidence is blocked"
+    )
 
 readiness_levels = matrix.get("readiness_levels", [])
 readiness_ids = {entry.get("level") for entry in readiness_levels}

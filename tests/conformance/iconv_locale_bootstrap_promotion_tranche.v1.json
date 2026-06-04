@@ -1,0 +1,118 @@
+{
+  "schema_version": "iconv_locale_bootstrap_promotion_tranche.v1",
+  "bead": "bd-ldj.4",
+  "trace_id": "bd-ldj.4-iconv-locale-bootstrap-promotion-tranche-v1",
+  "description": "Bounded iconv/locale bootstrap promotion tranche proving native iconv and C-locale newlocale behavior whose host-delegation census hits are only errno and dynamic-symbol bootstrap bridges.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "iconv_fixture": "tests/conformance/fixtures/iconv_phase1.json",
+    "locale_fixture": "tests/conformance/fixtures/locale_ops.json",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_iconv": "crates/frankenlibc-abi/src/iconv_abi.rs",
+    "abi_locale": "crates/frankenlibc-abi/src/locale_abi.rs",
+    "core_iconv": "crates/frankenlibc-core/src/iconv/mod.rs",
+    "harness_tests": [
+      "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+      "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+      "crates/frankenlibc-harness/tests/iconv_locale_family_completion_contract_test.rs"
+    ]
+  },
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-iconv-locale-bootstrap-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "set_abi_errno",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "The iconv result path is owned by frankenlibc_core::iconv and the ABI descriptor registry, while newlocale is owned by the C/POSIX locale ABI shim. The remaining host-reachable census entries are errno state bridges and dynamic-symbol bootstrap helpers, not delegation of iconv, iconv_close, iconv_open, or newlocale semantics to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "iconv",
+      "module": "iconv_abi",
+      "core_path": "crates/frankenlibc-abi/src/iconv_abi.rs::iconv",
+      "strict_conformance": {
+        "total": 10,
+        "passed": 10,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "iconv_close",
+      "module": "iconv_abi",
+      "core_path": "crates/frankenlibc-abi/src/iconv_abi.rs::iconv_close",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "iconv_open",
+      "module": "iconv_abi",
+      "core_path": "crates/frankenlibc-abi/src/iconv_abi.rs::iconv_open",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "newlocale",
+      "module": "locale_abi",
+      "core_path": "crates/frankenlibc-abi/src/locale_abi.rs::newlocale",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ]
+}

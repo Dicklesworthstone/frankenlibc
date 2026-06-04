@@ -301,8 +301,24 @@ def expect_le(actual: int, maximum: int, context: str, code: str) -> None:
         err(f"{code}: {context} expected <= {maximum!r}, got {actual!r}")
 
 
-def run_command(command: list[str], *, marker: str, label: str) -> None:
-    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+def run_command(
+    command: list[str],
+    *,
+    marker: str,
+    label: str,
+    env_overrides: dict[str, str] | None = None,
+) -> None:
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
     output_path = GATE_DIR / f"{label}.out"
     output_path.write_text(result.stdout + result.stderr, encoding="utf-8")
     source_gate_results[label] = {
@@ -510,8 +526,24 @@ def validate_bindings(manifest: dict[str, Any]) -> int:
 def replay_source_gates(required: dict[str, Any]) -> None:
     markers = as_object(required.get("required_source_gate_markers"), "completion_contract.required_source_gate_markers")
     run_command(["bash", "scripts/check_symbol_fixture_coverage.sh"], marker=str(markers.get("symbol_fixture_coverage_gate", "")), label="symbol_fixture_coverage_gate")
-    run_command(["bash", "scripts/check_fixture_capture_pipeline_completion_contract.sh"], marker=str(markers.get("fixture_capture_pipeline_completion_gate", "")), label="fixture_capture_pipeline_completion_gate")
-    run_command(["bash", "scripts/check_golden_fixture_protocol_completion_contract.sh"], marker=str(markers.get("golden_fixture_protocol_completion_gate", "")), label="golden_fixture_protocol_completion_gate")
+    pipeline_out = GATE_DIR / "fixture_capture_pipeline_completion"
+    run_command(
+        ["bash", "scripts/check_fixture_capture_pipeline_completion_contract.sh"],
+        marker=str(markers.get("fixture_capture_pipeline_completion_gate", "")),
+        label="fixture_capture_pipeline_completion_gate",
+        env_overrides={
+            "FRANKENLIBC_FIXTURE_CAPTURE_COMPLETION_OUT_DIR": str(pipeline_out),
+        },
+    )
+    golden_out = GATE_DIR / "golden_fixture_protocol_completion"
+    run_command(
+        ["bash", "scripts/check_golden_fixture_protocol_completion_contract.sh"],
+        marker=str(markers.get("golden_fixture_protocol_completion_gate", "")),
+        label="golden_fixture_protocol_completion_gate",
+        env_overrides={
+            "FRANKENLIBC_GOLDEN_FIXTURE_COMPLETION_OUT_DIR": str(golden_out),
+        },
+    )
     emit("fixture_remaining_symbol_source_gates_replayed", gate_count=3)
 
 

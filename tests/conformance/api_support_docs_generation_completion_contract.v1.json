@@ -21,9 +21,9 @@
     "generated_at_utc": "2026-06-03T21:45:00Z",
     "total_exported": 4119,
     "counts": {
-      "implemented": 2384,
+      "implemented": 2391,
       "raw_syscall": 414,
-      "wraps_host_libc": 1321,
+      "wraps_host_libc": 1314,
       "glibc_call_through": 0,
       "stub": 0
     }
@@ -61,7 +61,7 @@
         "required_text": [
           "Current source of truth: `support_matrix.json` plus `tests/conformance/replacement_levels.json`.",
           "Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).",
-          "Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0.",
+          "Reality snapshot: total_exported=4119, implemented=2391, raw_syscall=414, wraps_host_libc=1314, glibc_call_through=0, stub=0.",
           "support_matrix.json",
           "is not a full standalone libc replacement."
         ]
@@ -71,7 +71,7 @@
         "path": "FEATURE_PARITY.md",
         "required_text": [
           "Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).",
-          "Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0.",
+          "Reality snapshot: total_exported=4119, implemented=2391, raw_syscall=414, wraps_host_libc=1314, glibc_call_through=0, stub=0.",
           "Current exported ABI surface is **4119 symbols**, classified as:",
           "not a full replacement profile",
           "support_matrix.json"

@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.3",
-  "generated_at_utc": "2026-06-03T23:52:27Z",
-  "source_commit": "2d4f9abd",
+  "generated_at_utc": "2026-06-04T20:00:02Z",
+  "source_commit": "b895b839",
   "purpose": "Rank the next optimization targets from measured hot-path profiles, host raw baselines, and missing profile slots.",
   "inputs": {
     "benchmark_coverage_inventory": "tests/conformance/benchmark_coverage_inventory.v1.json",
@@ -14,13 +14,13 @@
     "optimization_proof_ledger": "tests/conformance/optimization_proof_ledger.v1.json"
   },
   "input_digests": {
-    "benchmark_coverage_inventory": "56c0f772a07c8fc15e7ff387b806244aea1ea3410bbcb277fd63697494a96ec5",
+    "benchmark_coverage_inventory": "85dd20771d0e66509ae4c6060bb423e7b202d07852e8f8f140d782ec71c1524f",
     "membrane_overhead_baseline": "4e329a3426be0161ef2c58d327ebf617bbe52d72a644f1ebc90f0a896bb7efaa",
     "optimization_proof_ledger": "c172cb77dbe09508f65afd1597e3aa7763ccf79af69cf53b4e8d822fec9a807b",
     "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
     "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
     "profile_pipeline": "1f6a3dda0d7fb2569477f2a4dfea8a1c2f28c1e0d6ec2256e3e1beb656df85dd",
-    "symbol_latency_baseline": "a9ca01da4815081e91b97954f516969ff1f0e59e8e97649b69703e6cb340037e"
+    "symbol_latency_baseline": "26aeda3ab973e1d992a75605dec267eb0599a290bc1566582d52e52944e82ff0"
   },
   "required_profile_fields": [
     "profile_id",
@@ -8382,5 +8382,5 @@
     "target_report": "target/conformance/hot_path_profile_report.report.json",
     "target_log": "target/conformance/hot_path_profile_report.log.jsonl"
   },
-  "artifact_hash": "9fed7d37346189414a4b0a379252b9d1d6e8d651ed3333d5732a60cd5aa36ab6"
+  "artifact_hash": "8599fbc371af09e32456adaf71a12cde246216a8dff7479df26ce87ba4f310ef"
 }

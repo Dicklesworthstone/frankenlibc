@@ -131,13 +131,13 @@
       "claim_blocked_proof_row_count": 14,
       "missing_evidence_proof_row_count": 14,
       "readiness_matrix_gate_status": "pass",
-      "current_level_must_remain": "L0",
-      "current_release_level_must_remain": "L0",
+      "current_level_must_remain": "L1",
+      "current_release_level_must_remain": "L1",
       "l3_current_claim_status": "blocked",
       "l3_replacement_level_status": "roadmap",
       "l3_host_glibc_required": false,
       "l3_min_blocker_count": 5,
-      "release_claim_current_l0_status": "pass",
+      "release_claim_current_l1_status": "pass",
       "l3_overclaim_status": "fail",
       "l3_overclaim_actual_decision": "claim_blocked",
       "release_dossier_report_status": "pass",
@@ -147,7 +147,7 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "release_claim_harness", "name": "current_l0_release_policy_passes_without_l1_evidence"},
+        {"source": "release_claim_harness", "name": "current_l1_release_policy_passes_with_objective_evidence_bundle"},
         {"source": "release_claim_harness", "name": "l3_release_tag_without_standalone_matrix_fails_closed"},
         {"source": "release_dossier_harness", "name": "dossier_validator_produces_valid_report"},
         {"source": "completion_harness", "name": "manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence"},
@@ -167,13 +167,13 @@
         {"source": "release_dossier_harness", "name": "dossier_validator_release_notes_hook_tracks_closed_beads"},
         {"source": "standalone_readiness_harness", "name": "replacement_levels_remain_blocked_for_l2_l3"},
         {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_current_l0_and_blocks_l3_overclaim"}
+        {"source": "completion_harness", "name": "checker_replays_current_l1_and_blocks_l3_overclaim"}
       ],
       "required_commands": [
         "scripts/release/check_replacement_claim_evidence.sh --report <current-report> --log <current-log>",
         "scripts/release/check_replacement_claim_evidence.sh --claims <l3-overclaim> --report <l3-report> --log <l3-log>",
         "bash scripts/check_l3_full_replace_claim_control_completion_contract.sh",
-        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test l3_full_replace_claim_control_completion_contract_test checker_replays_current_l0_and_blocks_l3_overclaim -- --nocapture"
+        "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test l3_full_replace_claim_control_completion_contract_test checker_replays_current_l1_and_blocks_l3_overclaim -- --nocapture"
       ]
     },
     "fuzz_primary": {
@@ -217,7 +217,7 @@
       "default_report_path": "target/conformance/l3_full_replace_claim_control_completion_contract.report.json",
       "default_log_path": "target/conformance/l3_full_replace_claim_control_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "release_claim_harness", "name": "current_l0_release_policy_passes_without_l1_evidence"},
+        {"source": "release_claim_harness", "name": "current_l1_release_policy_passes_with_objective_evidence_bundle"},
         {"source": "release_claim_harness", "name": "l3_release_tag_without_standalone_matrix_fails_closed"},
         {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
         {"source": "completion_harness", "name": "checker_rejects_missing_required_claim_log_field_binding"}
@@ -232,7 +232,7 @@
         "l3_full_replace_completion_contract_validated",
         "l3_full_replace_completion_contract_failed",
         "l3_full_replace_summary",
-        "release_claim_current_l0_replayed",
+        "release_claim_current_l1_replayed",
         "release_claim_l3_overclaim_blocked",
         "release_dossier_policy_bound",
         "standalone_l3_blockers_preserved"

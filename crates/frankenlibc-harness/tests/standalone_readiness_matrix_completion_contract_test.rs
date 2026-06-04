@@ -286,7 +286,7 @@ fn manifest_binds_missing_items_and_matrix_contract() -> TestResult {
     assert_eq!(contract["bead"].as_str(), Some("bd-bp8fl.6.6"));
     assert_eq!(
         contract["replacement_levels_current_level"].as_str(),
-        Some("L0")
+        Some("L1")
     );
     assert_eq!(contract["minimum_proof_row_count"].as_u64(), Some(14));
     assert_eq!(

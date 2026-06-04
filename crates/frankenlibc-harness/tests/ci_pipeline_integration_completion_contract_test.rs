@@ -152,7 +152,7 @@ fn checker_validates_ci_pipeline_contract() -> TestResult {
     assert_eq!(report["binding_summary"]["binding_count"].as_u64(), Some(5));
     assert_eq!(
         report["source_summary"]["conformance_total_cases"].as_u64(),
-        Some(1733)
+        Some(3369)
     );
 
     Ok(())

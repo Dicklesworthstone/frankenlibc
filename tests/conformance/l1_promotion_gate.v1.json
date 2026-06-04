@@ -12,7 +12,7 @@
     "promotion_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "purpose": "Fail-closed replacement-level promotion gate. Refuses to advance current_level or release_tag_policy.current_release_level past L0 unless every cited evidence artifact (host-independence probes, CRT/TLS/atexit link-run proofs, ld_preload smoke, perf-baseline + waiver-audit, claim-reconciliation, replacement-level blockers) is current, structurally well-formed, and free of stale source_commit drift. Catches README/FEATURE_PARITY overclaim by binding promotion to evidence presence, not prose.",
+  "purpose": "Fail-closed replacement-level promotion gate. L1 remains claimable only while every cited evidence artifact (host-independence probes, CRT/TLS/atexit link-run proofs, ld_preload smoke, perf-baseline + waiver-audit, claim-reconciliation, replacement-level objective gate) is current, structurally well-formed, and free of stale source_commit drift. Catches README/FEATURE_PARITY overclaim by binding promotion to evidence presence, not prose.",
   "subject": {
     "replacement_levels_artifact": "tests/conformance/replacement_levels.json",
     "release_tag_policy_field": "release_tag_policy.current_release_level"
@@ -49,7 +49,7 @@
   ],
   "policy": {
     "default_decision": "block_until_l1_evidence_current",
-    "current_level_at_audit_time": "L0",
+    "current_level_at_audit_time": "L1",
     "max_promotion_target": "L1",
     "block_promotion_kinds": [
       "missing_evidence_artifact",
@@ -66,7 +66,7 @@
       "schema_drift",
       "source_commit_zero_or_blank",
       "stale_source_commit",
-      "current_level_drifted_above_l0_without_gate_pass",
+      "current_level_mismatch_or_regression_without_gate_pass",
       "claim_reconciliation_status_not_pass"
     ]
   },
@@ -114,11 +114,11 @@
       "rationale": "Pin that the waiver-audit gate is wired with the fail-closed default; without it broad waivers could mask perf regressions."
     },
     {
-      "requirement_id": "req-replacement-level-l1-blocker-extant",
+      "requirement_id": "req-replacement-level-l1-objective-gate-pass",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
-      "field": "levels[level=L1].blockers",
-      "expected_kind": "non_empty_array",
-      "rationale": "L1 must enumerate at least one outstanding blocker until promotion happens; an empty list with current_level=L0 indicates docs/state drift."
+      "field": "levels[level=L1].objective_gate.status",
+      "expected_value": "pass",
+      "rationale": "The L1 objective gate must remain passing before L1 can stay claimed."
     }
   ],
   "expires_at_horizon_days": 60,

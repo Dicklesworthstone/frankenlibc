@@ -49,7 +49,7 @@
       "maximum_total_format_issues": 0,
       "minimum_symbols_with_edge_cases": 692,
       "minimum_symbols_with_errno_checks": 1161,
-      "minimum_uncovered_action_count": 1951
+      "minimum_uncovered_action_count": 1952
     },
     "required_fixture_pipeline": {
       "minimum_total_fixture_files": 127,

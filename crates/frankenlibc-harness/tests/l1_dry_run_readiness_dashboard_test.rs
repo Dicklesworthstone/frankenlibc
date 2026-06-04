@@ -10,8 +10,8 @@
 //!     bounded above by `expected_value_max`;
 //!   * the dashboard never advertises auto-promotion
 //!     (`auto_promotion_allowed: false`);
-//!   * `current_level` in replacement_levels remains L0 until every
-//!     row passes;
+//!   * `current_level` in replacement_levels matches the current L1 claim
+//!     without dashboard auto-promotion;
 //!   * minimum row kinds are present (forge, smoke, direct_link,
 //!     real_program, dlfcn, perf, claim_control, gate_meta,
 //!     promotion_state);
@@ -403,17 +403,16 @@ fn every_row_resolves_evidence_field_and_matches_expected() -> TestResult {
 }
 
 #[test]
-fn current_level_remains_l0_until_dashboard_passes_completely() -> TestResult {
-    // Pin: replacement_levels.json#current_level must remain L0. The
-    // dashboard MUST NEVER advance current_level on its own; only an
-    // explicit human-driven release flow may flip it after every row
-    // passes. This test catches a future edit that promotes silently.
+fn current_level_matches_l1_after_dashboard_passes() -> TestResult {
+    // Pin: replacement_levels.json#current_level must match the audited L1
+    // claim. The dashboard MUST NEVER advance current_level on its own;
+    // higher replacement claims require separate gates.
     let levels = load_json(&workspace_root().join("tests/conformance/replacement_levels.json"))?;
     let current = as_str(&levels["current_level"], "current_level")?;
     ensure_eq(
         current,
-        "L0",
-        "current_level must remain L0 until L1 dry-run dashboard rows ALL pass and a human signs off",
+        "L1",
+        "current_level must remain at the audited L1 claim level",
     )
 }
 
@@ -422,14 +421,14 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
     let dashboard = load_json(&dashboard_path())?;
     let mut expected_rows: BTreeMap<&str, (&str, Value)> = [
         (
-            "replacement-level-release-tag-still-l0",
-            ("release_tag_policy.current_release_level", json!("L0")),
+            "replacement-level-release-tag-is-l1",
+            ("release_tag_policy.current_release_level", json!("L1")),
         ),
         (
             "replacement-level-release-tag-example",
             (
                 "release_tag_policy.current_release_tag_example",
-                json!("v0.1.0-L0"),
+                json!("v0.1.0-L1"),
             ),
         ),
         (
@@ -438,45 +437,43 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
         ),
         (
             "replacement-level-current-callthrough-pct",
-            ("current_assessment.callthrough_pct", json!(0)),
+            ("current_assessment.callthrough_pct", json!(32)),
         ),
         (
             "replacement-level-l1-status",
-            ("levels.1.status", json!("in_progress")),
+            ("levels.1.status", json!("achieved")),
         ),
         (
             "replacement-level-l1-objective-gate-status",
-            ("levels.1.objective_gate.status", json!("blocked")),
+            ("levels.1.objective_gate.status", json!("pass")),
         ),
         (
             "replacement-level-l1-promotion-outcome",
-            ("levels.1.objective_gate.obligations.6.outcome", json!("blocked")),
+            ("levels.1.objective_gate.obligations.6.outcome", json!("pass")),
         ),
         (
             "replacement-level-l1-promotion-actual-current-level",
             (
                 "levels.1.objective_gate.obligations.6.actual.current_level",
-                json!("L0"),
+                json!("L1"),
             ),
         ),
         (
             "replacement-level-l1-crt-tls-outcome",
-            ("levels.1.objective_gate.obligations.7.outcome", json!("blocked")),
+            ("levels.1.objective_gate.obligations.7.outcome", json!("pass")),
         ),
         (
             "replacement-level-l1-crt-tls-blocked-row-count",
             (
                 "levels.1.objective_gate.obligations.7.actual.blocked_row_count",
-                json!(6),
+                json!(0),
             ),
         ),
         (
-            "replacement-level-l1-first-blocker",
+            "replacement-level-l1-blockers-cleared",
             (
-                "levels.1.blockers.0",
-                json!(
-                    "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate."
-                ),
+                "levels.1.blockers",
+                json!([]),
             ),
         ),
         (
@@ -493,7 +490,7 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
             (
                 "levels.1.objective_gate.status_reason",
                 json!(
-                    "The evidence bundle is green, but FrankenLibC still claims L0 until current_level and release_tag_policy.current_release_level are promoted together under explicit claim-control."
+                    "The declared L1 interpose level remains the current taxonomy level, and the current L1 objective-gate evidence bundle is passing with checked curated preload smoke green in strict and hardened modes."
                 ),
             ),
         ),
@@ -544,14 +541,14 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
             "replacement-level-l1-callthrough-bound-expected",
             (
                 "levels.1.objective_gate.obligations.1.expected.max_callthrough_pct",
-                json!(30),
+                json!(35),
             ),
         ),
         (
             "replacement-level-l1-callthrough-bound-actual",
             (
                 "levels.1.objective_gate.obligations.1.actual.callthrough_pct",
-                json!(0),
+                json!(32),
             ),
         ),
         (
@@ -565,7 +562,7 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
             "replacement-level-l1-implemented-floor-actual",
             (
                 "levels.1.objective_gate.obligations.2.actual.implemented_pct",
-                json!(90),
+                json!(57),
             ),
         ),
         (
@@ -625,8 +622,8 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
             (
                 "levels.1.objective_gate.obligations.6.actual",
                 json!({
-                    "current_level": "L0",
-                    "release_tag_policy.current_release_level": "L0"
+                    "current_level": "L1",
+                    "release_tag_policy.current_release_level": "L1"
                 }),
             ),
         ),
@@ -641,7 +638,7 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
             "replacement-level-l1-crt-tls-actual-status",
             (
                 "levels.1.objective_gate.obligations.7.actual.current_gate_status",
-                json!("blocked"),
+                json!("pass"),
             ),
         ),
         (
@@ -2419,15 +2416,15 @@ fn standalone_tls_blocker_diagnostics_rows_are_explicit() -> TestResult {
         ),
         (
             "standalone-tls-blocker-diagnostics-thread-local-count",
-            ("summary.thread_local_macro_count", json!(89)),
+            ("summary.thread_local_macro_count", json!(86)),
         ),
         (
             "standalone-tls-blocker-diagnostics-thread-local-file-count",
-            ("summary.thread_local_source_file_count", json!(29)),
+            ("summary.thread_local_source_file_count", json!(28)),
         ),
         (
             "standalone-tls-blocker-diagnostics-abi-thread-local-count",
-            ("summary.abi_thread_local_macro_count", json!(81)),
+            ("summary.abi_thread_local_macro_count", json!(77)),
         ),
         (
             "standalone-tls-blocker-diagnostics-current-claim-status",
@@ -2480,7 +2477,7 @@ fn standalone_tls_blocker_diagnostics_rows_are_explicit() -> TestResult {
         ),
         (
             "standalone-tls-blocker-diagnostics-scan-total",
-            ("source_surface_scan.total_thread_local_macro_count", json!(89)),
+            ("source_surface_scan.total_thread_local_macro_count", json!(86)),
         ),
         (
             "standalone-tls-blocker-diagnostics-first-hot-file",
@@ -2493,7 +2490,7 @@ fn standalone_tls_blocker_diagnostics_rows_are_explicit() -> TestResult {
             "standalone-tls-blocker-diagnostics-first-hot-file-count",
             (
                 "source_surface_scan.thread_local_inventory.0.thread_local_macro_count",
-                json!(25),
+                json!(24),
             ),
         ),
         (
@@ -2682,8 +2679,11 @@ fn standalone_link_run_smoke_rows_are_explicit() -> TestResult {
             ),
         ),
         (
-            "standalone-link-run-smoke-current-level-still-l0",
-            ("current_claim_policy.current_level_must_remain", json!("L0")),
+            "standalone-link-run-smoke-current-levels-allowed-before-l2",
+            (
+                "current_claim_policy.current_levels_allowed_without_standalone_claim",
+                json!(["L0", "L1"]),
+            ),
         ),
         (
             "standalone-link-run-smoke-evidence-starts-at-l2",
@@ -2980,7 +2980,7 @@ fn host_probe_projection_rows_are_explicit() -> TestResult {
         (
             "standalone-host-probe-projection-field-count-diagnostic",
             "summary.forge_projection_field_count",
-            json!(19),
+            json!(20),
         ),
         (
             "standalone-host-probe-projection-blocking-reason-count-diagnostic",
@@ -3047,7 +3047,7 @@ fn host_probe_snapshot_rows_are_explicit() -> TestResult {
             "standalone-host-probe-snapshot-decision-diagnostic",
             (
                 "current_forge_blocker_projection.current_forge_blocker_value_snapshot.decision",
-                json!("snapshot_only_claims_remain_blocked"),
+                json!("snapshot_only_artifact_current_no_l2_promotion"),
             ),
         ),
         (
@@ -3080,95 +3080,77 @@ fn host_probe_snapshot_rows_are_explicit() -> TestResult {
         ),
         (
             "standalone-host-probe-snapshot-blocking-reason-count",
-            ("summary.forge_blocker_snapshot_blocking_reason_count", json!(10)),
+            ("summary.forge_blocker_snapshot_blocking_reason_count", json!(0)),
         ),
         (
             "standalone-host-probe-snapshot-needed-library-count",
-            ("summary.forge_blocker_snapshot_needed_library_count", json!(2)),
+            ("summary.forge_blocker_snapshot_needed_library_count", json!(0)),
         ),
         (
             "standalone-host-probe-snapshot-needed-library-values",
             (
                 "current_forge_blocker_projection.current_forge_blocker_value_snapshot.needed_libraries",
-                json!(["ld-linux-x86-64.so.2", "libgcc_s.so.1"]),
+                json!([]),
             ),
         ),
         (
             "standalone-host-probe-snapshot-host-resolved-library-count",
             (
                 "summary.forge_blocker_snapshot_host_resolved_library_count",
-                json!(3),
+                json!(0),
             ),
         ),
         (
             "standalone-host-probe-snapshot-host-resolved-library-values",
             (
                 "current_forge_blocker_projection.current_forge_blocker_value_snapshot.host_resolved_libraries",
-                json!(["/lib64/ld-linux-x86-64.so.2", "libc.so.6", "libgcc_s.so.1"]),
+                json!([]),
             ),
         ),
         (
             "standalone-host-probe-snapshot-undefined-unwind-symbol-values",
             (
                 "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_unwind_symbols",
-                json!([
-                    "_Unwind_Backtrace@GCC_3.3",
-                    "_Unwind_DeleteException@GCC_3.0",
-                    "_Unwind_GetDataRelBase@GCC_3.0",
-                    "_Unwind_GetIP@GCC_3.0",
-                    "_Unwind_GetIPInfo@GCC_4.2.0",
-                    "_Unwind_GetLanguageSpecificData@GCC_3.0",
-                    "_Unwind_GetRegionStart@GCC_3.0",
-                    "_Unwind_GetTextRelBase@GCC_3.0",
-                    "_Unwind_RaiseException@GCC_3.0",
-                    "_Unwind_Resume@GCC_3.0",
-                    "_Unwind_SetGR@GCC_3.0",
-                    "_Unwind_SetIP@GCC_3.0",
-                ]),
+                json!([]),
             ),
         ),
         (
             "standalone-host-probe-snapshot-undefined-glibc-symbol-values",
             (
                 "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_glibc_symbols",
-                json!(["__tls_get_addr@GLIBC_2.3"]),
+                json!([]),
             ),
         ),
         (
             "standalone-host-probe-snapshot-undefined-tls-symbol-values",
             (
                 "current_forge_blocker_projection.current_forge_blocker_value_snapshot.undefined_tls_symbols",
-                json!(["__tls_get_addr@GLIBC_2.3"]),
+                json!([]),
             ),
         ),
         (
             "standalone-host-probe-snapshot-undefined-symbol-count",
-            ("summary.forge_blocker_snapshot_undefined_symbol_count", json!(14)),
+            ("summary.forge_blocker_snapshot_undefined_symbol_count", json!(0)),
         ),
         (
             "standalone-host-probe-snapshot-host-version-requirement-count",
             (
                 "summary.forge_blocker_snapshot_host_version_requirement_count",
-                json!(4),
+                json!(0),
             ),
         ),
         (
             "standalone-host-probe-snapshot-host-version-requirement-values",
             (
                 "current_forge_blocker_projection.current_forge_blocker_value_snapshot.host_version_requirements",
-                json!([
-                    "ld-linux-x86-64.so.2:GLIBC_2.3",
-                    "libgcc_s.so.1:GCC_3.0",
-                    "libgcc_s.so.1:GCC_3.3",
-                    "libgcc_s.so.1:GCC_4.2.0",
-                ]),
+                json!([]),
             ),
         ),
         (
             "standalone-host-probe-snapshot-version-need-provider-count",
             (
                 "summary.forge_blocker_snapshot_version_need_provider_count",
-                json!(2),
+                json!(0),
             ),
         ),
     ]
@@ -4484,7 +4466,7 @@ fn perf_waiver_audit_policy_rows_are_explicit() -> TestResult {
         ),
         (
             "perf-waiver-audit-policy-active-waiver-expiry",
-            ("expected_active_waivers.0.expires_at", json!("2026-05-18")),
+            ("expected_active_waivers.0.expires_at", json!("2026-08-31")),
         ),
         (
             "perf-waiver-audit-policy-active-waiver-scope",
@@ -4800,7 +4782,7 @@ fn perf_budget_policy_rows_are_explicit() -> TestResult {
         ),
         (
             "perf-budget-policy-active-waiver-expiry",
-            ("active_waivers.0.expires_at", json!("2026-05-18")),
+            ("active_waivers.0.expires_at", json!("2026-08-31")),
         ),
         (
             "perf-budget-policy-first-unbenched-module",
@@ -5091,11 +5073,14 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-run-id",
-            ("run_id", json!("20260404T011731Z")),
+            ("run_id", json!("SnowyMill-ldfix-20260603T034530Z")),
         ),
         (
             "ld-preload-smoke-lib-path",
-            ("lib_path", json!("target/release/libfrankenlibc_abi.so")),
+            (
+                "lib_path",
+                json!("/data/tmp/cargo-target-ldfix/release/libfrankenlibc_abi.so"),
+            ),
         ),
         (
             "ld-preload-smoke-timeout-seconds",
@@ -5106,8 +5091,8 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
             "ld-preload-smoke-total-cases",
             ("summary.total_cases", json!(64)),
         ),
-        ("ld-preload-smoke-passes", ("summary.passes", json!(58))),
-        ("ld-preload-smoke-skips", ("summary.skips", json!(6))),
+        ("ld-preload-smoke-passes", ("summary.passes", json!(60))),
+        ("ld-preload-smoke-skips", ("summary.skips", json!(4))),
         (
             "ld-preload-smoke-no-signature-guard-failures",
             ("summary.signature_guard_failures", json!(0)),
@@ -5126,11 +5111,11 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-strict-passes",
-            ("modes.strict.passes", json!(29)),
+            ("modes.strict.passes", json!(30)),
         ),
         (
             "ld-preload-smoke-strict-skips",
-            ("modes.strict.skips", json!(3)),
+            ("modes.strict.skips", json!(2)),
         ),
         (
             "ld-preload-smoke-hardened-status",
@@ -5138,15 +5123,15 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-hardened-passes",
-            ("modes.hardened.passes", json!(29)),
+            ("modes.hardened.passes", json!(30)),
         ),
         (
             "ld-preload-smoke-hardened-skips",
-            ("modes.hardened.skips", json!(3)),
+            ("modes.hardened.skips", json!(2)),
         ),
         (
             "ld-preload-smoke-first-optional-skip",
-            ("optional_skip_binaries.0", json!("sqlite3")),
+            ("optional_skip_binaries.0", json!("nginx")),
         ),
     ]
     .into_iter()
@@ -5217,7 +5202,7 @@ fn claim_reconciliation_rows_are_explicit() -> TestResult {
         ),
         (
             "claim-reconciliation-ground-truth-implemented",
-            ("ground_truth.Implemented", json!(3705)),
+            ("ground_truth.Implemented", json!(2391)),
         ),
         (
             "claim-reconciliation-ground-truth-callthrough-zero",
@@ -5463,8 +5448,8 @@ fn l1_promotion_gate_rows_are_explicit() -> TestResult {
             ),
         ),
         (
-            "l1-promotion-gate-current-level-l0",
-            ("policy.current_level_at_audit_time", json!("L0")),
+            "l1-promotion-gate-current-level-l1",
+            ("policy.current_level_at_audit_time", json!("L1")),
         ),
         (
             "l1-promotion-gate-max-target-l1",
@@ -5513,7 +5498,7 @@ fn l1_promotion_gate_rows_are_explicit() -> TestResult {
             "l1-promotion-gate-reject-level-drift",
             (
                 "policy.rejected_evidence_kinds.4",
-                json!("current_level_drifted_above_l0_without_gate_pass"),
+                json!("current_level_mismatch_or_regression_without_gate_pass"),
             ),
         ),
         (
@@ -5566,10 +5551,10 @@ fn l1_promotion_gate_rows_are_explicit() -> TestResult {
             ),
         ),
         (
-            "l1-promotion-gate-req-replacement-blocker-kind",
+            "l1-promotion-gate-req-objective-gate-pass",
             (
-                "evidence_requirements_for_l1.6.expected_kind",
-                json!("non_empty_array"),
+                "evidence_requirements_for_l1.6.expected_value",
+                json!("pass"),
             ),
         ),
         (

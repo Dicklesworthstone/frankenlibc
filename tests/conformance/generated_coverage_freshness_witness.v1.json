@@ -2,24 +2,24 @@
   "schema_version": "generated_coverage_freshness_witness.v1",
   "bead_id": "bd-j1u6u.3",
   "trace_id": "bd-j1u6u.3::generated-coverage-freshness::v1",
-  "generated_at_utc": "2026-06-03T15:21:31Z",
-  "source_commit": "93742bf",
+  "generated_at_utc": "2026-06-04T17:25:15Z",
+  "source_commit": "a05d680e",
   "purpose": "Independent freshness witness for generated conformance coverage artifacts. The checker recomputes source file hashes, fixture corpus counts, symbol counts, uncovered counts, and generator command lines so agents do not need to trust timestamps or intent.",
   "source_files": [
     {
       "id": "symbol_fixture_coverage",
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "547d5d68d71cf7733d2bb3e9a460de6fc1b7b70f8fa899d2ee3d80e06cb27130"
+      "sha256": "49016c700f7baf03ad80785cd7e2ad7c31b9dbb2ea87743ed4eb22d918851f6e"
     },
     {
       "id": "per_symbol_fixture_tests",
       "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
-      "sha256": "5572aeb7026241d5644a157c5c5203ef8ebde14e41a7c7b1db900b96e89bc644"
+      "sha256": "e0f19b48e66b0d961d43232c1b6f0b9a9cc64fcd10aff60ee90d66b906533bf7"
     },
     {
       "id": "fixture_coverage_prioritizer",
       "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
-      "sha256": "a341bb32d1361b824a2a5bc1346b825253935fd9e39c43efc56f17469923c731"
+      "sha256": "1c847de1ce35a59ca371b957195979412e03c118b424699e046064cf92d91563"
     },
     {
       "id": "executor_dispatch",
@@ -39,20 +39,20 @@
     "execute_fixture_case_mentions": 223
   },
   "symbol_counts": {
-    "target_total_symbols": 2797,
-    "target_covered_symbols": 848,
-    "target_uncovered_symbols": 1949,
-    "target_coverage_pct": 30.32,
+    "target_total_symbols": 2805,
+    "target_covered_symbols": 855,
+    "target_uncovered_symbols": 1950,
+    "target_coverage_pct": 30.48,
     "symbols_with_fixtures": 1164,
     "symbols_without_fixtures": 2955,
     "total_cases": 2787,
-    "uncovered_action_count": 1951,
+    "uncovered_action_count": 1952,
     "total_format_issues": 0
   },
   "prioritizer_counts": {
     "campaign_count": 8,
-    "selected_target_uncovered_symbols": 1735,
-    "all_uncovered_target_symbols": 1949,
+    "selected_target_uncovered_symbols": 1737,
+    "all_uncovered_target_symbols": 1950,
     "total_first_wave_fixture_count": 88
   },
   "generator_command_lines": [

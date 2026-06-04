@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.1",
-  "generated_at_utc": "2026-06-03T23:33:38Z",
-  "source_commit": "49eb02a4",
+  "generated_at_utc": "2026-06-04T19:59:57Z",
+  "source_commit": "b895b839",
   "purpose": "Inventory current benchmark coverage for ported hot paths and membrane gates before optimization work advances.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -19,10 +19,10 @@
   "input_digests": {
     "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
     "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
-    "support_matrix": "f7debf9eb58a02d6afab8bea9968a4e2df6f450cabcaf72082ad1429c144fe7c",
+    "support_matrix": "c42b23db90394bf94a852670f5b18b04e925338671850ed47486c2e434b7e4c3",
     "user_workload_acceptance_matrix": "e1522428db6fb6f63c2a51cab24ec930cdcd52e8efdbe128794600d5e0336910",
     "workload_matrix": "04f77e974c045a0016ffbe5abd7e602a94b44291c57084400751524acbc5b9ca",
-    "bench_targets": "48a6b5f36041cf1ff7df0878c3fdc1c84e638aeaaaf820b71766d4e691fdd0d0"
+    "bench_targets": "baff4bd3da11172e9e1fd4a4d9eb28b5d4d58f40df824bf7511b1cacf3941c41"
   },
   "required_log_fields": [
     "trace_id",
@@ -66,9 +66,9 @@
   "summary": {
     "family_count": 7,
     "required_family_count": 6,
-    "actual_bench_target_count": 15,
+    "actual_bench_target_count": 17,
     "mapped_bench_target_count": 9,
-    "unmapped_bench_target_count": 6,
+    "unmapped_bench_target_count": 8,
     "hot_symbol_count_in_scope": 321,
     "inventory_row_count": 670,
     "covered_inventory_row_count": 36,
@@ -123,7 +123,7 @@
           "bench": "string_bench",
           "exists": true,
           "path": "crates/frankenlibc-bench/benches/string_bench.rs",
-          "benchmark_function_count": 33,
+          "benchmark_function_count": 35,
           "mode_aware": true
         },
         {
@@ -180,7 +180,7 @@
           "bench": "malloc_bench",
           "exists": true,
           "path": "crates/frankenlibc-bench/benches/malloc_bench.rs",
-          "benchmark_function_count": 5,
+          "benchmark_function_count": 6,
           "mode_aware": true
         }
       ],
@@ -228,7 +228,7 @@
           "bench": "stdio_bench",
           "exists": true,
           "path": "crates/frankenlibc-bench/benches/stdio_bench.rs",
-          "benchmark_function_count": 3,
+          "benchmark_function_count": 4,
           "mode_aware": false
         }
       ],
@@ -41812,15 +41812,23 @@
       "bench": "glibc_baseline_bench",
       "bench_file": "crates/frankenlibc-bench/benches/glibc_baseline_bench.rs",
       "exists": true,
-      "benchmark_function_count": 7,
+      "benchmark_function_count": 20,
       "emits_structured_marker": true,
+      "mentions_strict_or_hardened": false
+    },
+    {
+      "bench": "iconv_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/iconv_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 4,
+      "emits_structured_marker": false,
       "mentions_strict_or_hardened": false
     },
     {
       "bench": "malloc_bench",
       "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
       "exists": true,
-      "benchmark_function_count": 5,
+      "benchmark_function_count": 6,
       "emits_structured_marker": true,
       "mentions_strict_or_hardened": true
     },
@@ -41876,7 +41884,7 @@
       "bench": "stdio_bench",
       "bench_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
       "exists": true,
-      "benchmark_function_count": 3,
+      "benchmark_function_count": 4,
       "emits_structured_marker": false,
       "mentions_strict_or_hardened": false
     },
@@ -41884,9 +41892,17 @@
       "bench": "string_bench",
       "bench_file": "crates/frankenlibc-bench/benches/string_bench.rs",
       "exists": true,
-      "benchmark_function_count": 33,
+      "benchmark_function_count": 35,
       "emits_structured_marker": true,
       "mentions_strict_or_hardened": true
+    },
+    {
+      "bench": "wchar_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/wchar_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 2,
+      "emits_structured_marker": false,
+      "mentions_strict_or_hardened": false
     }
   ],
   "unmapped_bench_targets": [
@@ -41894,8 +41910,10 @@
     "elimination_bench",
     "errno_bench",
     "glibc_baseline_bench",
+    "iconv_bench",
     "metadata_read_bench",
-    "resolv_parsers_bench"
+    "resolv_parsers_bench",
+    "wchar_bench"
   ],
   "closure_evidence": {
     "generator": "scripts/generate_benchmark_coverage_inventory.py",
@@ -41904,5 +41922,5 @@
     "target_report": "target/conformance/benchmark_coverage_inventory.report.json",
     "target_log": "target/conformance/benchmark_coverage_inventory.log.jsonl"
   },
-  "artifact_hash": "28b82429480c93be4332d327b036f516bd9cf5844f59d603455b0dc6c870c4c8"
+  "artifact_hash": "c113e796ed77f913a983b4f09fdd4d7b9b0053da1a858110116459438a78b0a9"
 }

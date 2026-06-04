@@ -106,7 +106,7 @@ EXPECTED_L3_FAILURE_SIGNATURES = {
 EXPECTED_PASS_TELEMETRY_EVENTS = {
     "l3_full_replace_completion_contract_validated",
     "l3_full_replace_summary",
-    "release_claim_current_l0_replayed",
+    "release_claim_current_l1_replayed",
     "release_claim_l3_overclaim_blocked",
     "release_dossier_policy_bound",
     "standalone_l3_blockers_preserved",
@@ -301,7 +301,7 @@ def validate_required_commands(section: dict[str, Any], section_name: str) -> No
 
 def run_current_claim_gate() -> None:
     env = os.environ.copy()
-    env.update({"TRACE_ID": f"{COMPLETION_BEAD}-current-l0"})
+    env.update({"TRACE_ID": f"{COMPLETION_BEAD}-current-l1"})
     result = subprocess.run(
         [
             "bash",
@@ -320,7 +320,7 @@ def run_current_claim_gate() -> None:
     )
     if result.returncode != 0:
         err(
-            "current L0 release claim gate failed: "
+            "current L1 release claim gate failed: "
             f"exit={result.returncode} stdout={result.stdout[-1600:]} stderr={result.stderr[-1600:]}"
         )
 
@@ -655,23 +655,23 @@ run_current_claim_gate()
 run_l3_overclaim_gate()
 run_readiness_gate(source_commit)
 
-current_claim_report = load_json(CURRENT_CLAIM_REPORT, "current L0 release claim report")
-current_claim_rows = load_jsonl(CURRENT_CLAIM_LOG, "current L0 release claim log")
+current_claim_report = load_json(CURRENT_CLAIM_REPORT, "current L1 release claim report")
+current_claim_rows = load_jsonl(CURRENT_CLAIM_LOG, "current L1 release claim log")
 l3_overclaim_report = load_json(L3_OVERCLAIM_REPORT, "synthetic L3 overclaim report")
 l3_overclaim_rows = load_jsonl(L3_OVERCLAIM_LOG, "synthetic L3 overclaim log")
 readiness_report = load_json(READINESS_REPORT, "standalone readiness report")
 readiness_rows = load_jsonl(READINESS_LOG, "standalone readiness log")
 
-if current_claim_report.get("status") != expectations.get("release_claim_current_l0_status"):
-    err("current L0 release claim report status does not match completion expectation")
+if current_claim_report.get("status") != expectations.get("release_claim_current_l1_status"):
+    err("current L1 release claim report status does not match completion expectation")
 if len(current_claim_rows) != int(current_claim_report.get("claim_count", 0) or 0):
-    err("current L0 release claim log row count mismatch")
+    err("current L1 release claim log row count mismatch")
 for index, row in enumerate(current_claim_rows):
     missing = sorted(EXPECTED_CLAIM_LOG_FIELDS - set(row))
     if missing:
-        err(f"current L0 release claim log row {index} missing fields {missing}")
+        err(f"current L1 release claim log row {index} missing fields {missing}")
     if row.get("actual_decision") != "claim_allowed":
-        err(f"current L0 release claim log row {index} must remain claim_allowed")
+        err(f"current L1 release claim log row {index} must remain claim_allowed")
 
 if l3_overclaim_report.get("status") != expectations.get("l3_overclaim_status"):
     err("synthetic L3 overclaim report status does not match completion expectation")
@@ -766,7 +766,7 @@ def event_payload(event: str, level: str, failure_signature: str = "none") -> di
 
 events: list[dict[str, Any]] = [
     event_payload("l3_full_replace_summary", "info"),
-    event_payload("release_claim_current_l0_replayed", "info"),
+    event_payload("release_claim_current_l1_replayed", "info"),
     event_payload("release_claim_l3_overclaim_blocked", "warning"),
     event_payload("release_dossier_policy_bound", "info"),
 ]

@@ -4,7 +4,7 @@
   "bead": "bd-bp8fl.3.8",
   "owner_family_group": "fpg-proof-core-safety",
   "evidence_owner": "membrane proof and conformance-binder owners",
-  "generated_utc": "2026-06-03T03:12:00Z",
+  "generated_utc": "2026-06-04T02:24:36Z",
   "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",

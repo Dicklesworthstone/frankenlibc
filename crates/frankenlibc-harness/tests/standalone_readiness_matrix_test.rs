@@ -402,10 +402,14 @@ fn replacement_levels_remain_blocked_for_l2_l3() {
     let matrix = load_matrix();
     let levels = load_json(&root.join("tests/conformance/replacement_levels.json"));
 
-    assert_eq!(levels["current_level"].as_str(), Some("L0"));
+    assert_eq!(levels["current_level"].as_str(), Some("L1"));
     assert_eq!(
         levels["release_tag_policy"]["current_release_level"].as_str(),
-        Some("L0")
+        Some("L1")
+    );
+    assert_eq!(
+        matrix["claim_policy"]["current_level_must_remain"].as_str(),
+        Some("L1")
     );
     assert_eq!(
         matrix["claim_policy"]["symbol_counts_are_insufficient"].as_bool(),

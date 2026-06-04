@@ -128,12 +128,12 @@ fn manifest_binds_symbol_universe_completion_evidence() -> TestResult {
     assert_eq!(expected["total_symbols"].as_u64(), Some(4119));
     assert_eq!(
         expected["status_counts"]["Implemented"].as_u64(),
-        Some(2384)
+        Some(2391)
     );
     assert_eq!(expected["status_counts"]["RawSyscall"].as_u64(), Some(414));
     assert_eq!(
         expected["status_counts"]["WrapsHostLibc"].as_u64(),
-        Some(1321)
+        Some(1314)
     );
     assert_eq!(
         expected["status_counts"]["GlibcCallThrough"].as_u64(),
@@ -180,7 +180,7 @@ fn checker_validates_symbol_universe_docs_contract() -> TestResult {
     assert_eq!(report["summary"]["total_symbols"].as_u64(), Some(4119));
     assert_eq!(
         report["summary"]["status_counts"]["Implemented"].as_u64(),
-        Some(2384)
+        Some(2391)
     );
     assert_eq!(
         report["summary"]["status_counts"]["RawSyscall"].as_u64(),
@@ -188,7 +188,7 @@ fn checker_validates_symbol_universe_docs_contract() -> TestResult {
     );
     assert_eq!(
         report["summary"]["status_counts"]["WrapsHostLibc"].as_u64(),
-        Some(1321)
+        Some(1314)
     );
 
     Ok(())

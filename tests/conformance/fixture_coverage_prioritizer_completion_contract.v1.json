@@ -81,10 +81,10 @@
     ],
     "required_prioritizer_summary": {
       "campaign_count": 8,
-      "deferred_module_count": 14,
-      "selected_target_uncovered_symbols": 1735,
-      "deferred_target_uncovered_symbols": 214,
-      "all_uncovered_target_symbols": 1949,
+      "deferred_module_count": 15,
+      "selected_target_uncovered_symbols": 1737,
+      "deferred_target_uncovered_symbols": 213,
+      "all_uncovered_target_symbols": 1950,
       "total_first_wave_fixture_count": 88,
       "highest_priority_campaign": "fcq-unistd-process-filesystem",
       "lowest_priority_campaign": "fcq-rpc-legacy-network"

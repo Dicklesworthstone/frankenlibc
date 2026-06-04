@@ -68,6 +68,7 @@ required_modules = {
     "c11threads_abi",
     "ctype_abi",
     "resolv_abi",
+    "search_abi",
     "stdio_abi",
     "stdlib_abi",
     "time_abi",
