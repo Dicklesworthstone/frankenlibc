@@ -63,5 +63,29 @@ fn bench_iconv_utf8_to_koi8r(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_iconv, bench_iconv_utf8_to_koi8r);
+// CP1251 -> KOI8-R: single-byte -> single-byte over Cyrillic-heavy text (bytes
+// 0xC0..=0xFF). Every byte is non-ASCII, so the ASCII fast path does nothing and
+// each byte hits the translation path — exercising the O(1) byte->byte LUT that
+// replaces the per-char O(128) reverse-search in encode_koi8r.
+fn bench_iconv_cp1251_to_koi8r(c: &mut Criterion) {
+    let cyrillic: Vec<u8> = (0..1024).map(|i| 0xC0 + (i % 0x40) as u8).collect();
+    let mut group = c.benchmark_group("iconv_cp1251_to_koi8r");
+    group.throughput(Throughput::Bytes(cyrillic.len() as u64));
+    let mut dest = vec![0u8; cyrillic.len() * 2 + 8];
+    group.bench_with_input(BenchmarkId::from_parameter("cyrillic_1k"), &cyrillic[..], |b, input| {
+        let mut cd = iconv_open(b"KOI8-R", b"CP1251").expect("codec");
+        b.iter(|| {
+            let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
+            black_box(r.is_ok());
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_iconv,
+    bench_iconv_utf8_to_koi8r,
+    bench_iconv_cp1251_to_koi8r
+);
 criterion_main!(benches);

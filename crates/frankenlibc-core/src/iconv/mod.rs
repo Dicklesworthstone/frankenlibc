@@ -1208,6 +1208,12 @@ pub struct IconvDescriptor {
     /// iconv loop can SIMD-bulk-copy ASCII runs. Probed, not hardcoded — see
     /// [`pair_is_ascii_identity`].
     fast_ascii: bool,
+    /// Cached at open time for single-byte -> single-byte conversions: a direct
+    /// `input_byte -> output_byte` table (`-1` = unrepresentable / invalid).
+    /// Lets the loop translate each high byte with one O(1) lookup instead of
+    /// decode_char + the O(128) linear reverse-search inside encode_*. `None`
+    /// when either endpoint is multibyte. See [`build_sb_translation`].
+    sb_translation: Option<[i16; 256]>,
 }
 
 impl IconvDescriptor {
@@ -8413,6 +8419,40 @@ fn pair_is_ascii_identity(from: Encoding, to: Encoding) -> bool {
     true
 }
 
+/// Build a direct `input_byte -> output_byte` translation table for a
+/// single-byte -> single-byte conversion, computed once at open by exercising
+/// `decode_char`/`encode_char` over all 256 bytes. `-1` marks a byte that is
+/// invalid under `from` or unrepresentable under `to` (both yield EILSEQ).
+///
+/// Returns `None` (no table) when either endpoint is multibyte — detected
+/// structurally: `from` is multibyte if any single byte decodes Incomplete or
+/// consumes != 1; `to` is multibyte if encoding a decoded char ever needs > 1
+/// byte. Because it is built from the exact decode/encode arms, the table is
+/// byte-for-byte equivalent to the scalar decode->encode round trip.
+fn build_sb_translation(from: Encoding, to: Encoding) -> Option<[i16; 256]> {
+    let mut lut = [-1i16; 256];
+    let mut buf = [0u8; 8];
+    for b in 0u8..=0xFF {
+        match decode_char(from, &[b]) {
+            Ok((ch, 1)) => match encode_char(to, ch, &mut buf) {
+                Ok(1) => lut[b as usize] = i16::from(buf[0]),
+                // `to` produced a multibyte sequence -> not byte-translatable.
+                Ok(_) => return None,
+                // Unrepresentable under `to`: leave -1 (EILSEQ), same as scalar.
+                Err(EncodeError::Unrepresentable) => {}
+                Err(EncodeError::NoSpace) => return None, // buf is 8 bytes; unreachable
+            },
+            // `from` consumed more than one byte -> multibyte source.
+            Ok((_, _)) => return None,
+            // Byte is invalid under `from`: leave -1 (EILSEQ), same as scalar.
+            Err(DecodeError::Invalid) => {}
+            // `from` needs more bytes for this lead -> multibyte source.
+            Err(DecodeError::Incomplete) => return None,
+        }
+    }
+    Some(lut)
+}
+
 /// Length of the leading run of ASCII bytes (`< 0x80`) in `s`, found with a
 /// 32-lane SIMD scan. Used by the iconv fast path to bulk-copy ASCII runs
 /// between ASCII-transparent encodings instead of dispatching decode_char /
@@ -8841,6 +8881,7 @@ pub fn iconv_open_detailed(
             emit_bom: matches!(to, Encoding::Utf32),
             dispatch,
             fast_ascii: pair_is_ascii_identity(from, to),
+            sb_translation: build_sb_translation(from, to),
         },
         dispatch,
     ))
@@ -8933,7 +8974,7 @@ pub fn iconv(
     let fast_ascii = cd.fast_ascii;
 
     while in_pos < input.len() {
-        if fast_ascii {
+        if fast_ascii && input[in_pos] < 0x80 {
             let avail = outbuf.len() - out_pos;
             if avail > 0 {
                 let run = leading_ascii_len(&input[in_pos..]).min(avail);
@@ -8945,9 +8986,27 @@ pub fn iconv(
                     if in_pos >= input.len() {
                         break;
                     }
-                    // Next byte is >= 0x80 (scalar decodes it) or the output is
-                    // full (scalar encode returns E2BIG at this exact position).
+                    // Next byte is >= 0x80 (handled below) or the output is full
+                    // (the encode path returns E2BIG at this exact position).
                 }
+            }
+        }
+
+        // Single-byte -> single-byte: translate the byte in O(1) via the cached
+        // table, skipping decode_char + the O(128) reverse-search in encode_*.
+        // (For ASCII-transparent pairs the run above already consumed the
+        // <0x80 bytes, so this typically resolves a high byte.) Only the common
+        // case — representable AND output space available — is fast-pathed; an
+        // unrepresentable byte or a full buffer falls through to the scalar
+        // decode/encode below, which reproduces each codec's exact
+        // EILSEQ-vs-E2BIG error ordering.
+        if let Some(lut) = cd.sb_translation.as_ref() {
+            let translated = lut[input[in_pos] as usize];
+            if translated >= 0 && out_pos < outbuf.len() {
+                outbuf[out_pos] = translated as u8;
+                in_pos += 1;
+                out_pos += 1;
+                continue;
             }
         }
 
@@ -9098,6 +9157,13 @@ mod tests {
         // one ASCII char is >1 byte.
         assert!(!iconv_open(b"UTF-16LE", b"UTF-8").unwrap().fast_ascii);
         assert!(!iconv_open(b"UTF-8", b"UTF-16LE").unwrap().fast_ascii);
+
+        // The byte->byte translation table exists exactly for single-byte ->
+        // single-byte pairs, and is absent when either side is multibyte.
+        assert!(iconv_open(b"CP1251", b"KOI8-R").unwrap().sb_translation.is_some());
+        assert!(iconv_open(b"ISO-8859-1", b"KOI8-R").unwrap().sb_translation.is_some());
+        assert!(iconv_open(b"KOI8-R", b"UTF-8").unwrap().sb_translation.is_none());
+        assert!(iconv_open(b"UTF-8", b"KOI8-R").unwrap().sb_translation.is_none());
 
         // Corpus: ASCII of every length around the 32-lane boundary, ASCII with
         // a high byte planted at each offset, NUL-laden ASCII, valid multibyte
