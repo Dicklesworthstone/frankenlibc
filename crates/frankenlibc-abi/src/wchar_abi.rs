@@ -2223,10 +2223,22 @@ pub unsafe extern "C" fn wcsrtombs(
     // Count-only mode.
     if dst.is_null() {
         let mut bytes = 0usize;
-        for &wc in &src_slice[..src_len] {
+        let mut idx = 0usize;
+        while idx < src_len {
+            // SIMD fast-forward the leading ASCII run (each ASCII wc encodes to
+            // exactly one byte), then resolve the multibyte char scalar-side.
+            let k = wchar_core::wcs_ascii_prefix_len(&src_slice[idx..src_len]);
+            idx += k;
+            bytes += k;
+            if idx >= src_len {
+                break;
+            }
             let mut tmp = [0u8; 6];
-            match wchar_core::wctomb(wc, &mut tmp) {
-                Some(n) => bytes += n,
+            match wchar_core::wctomb(src_slice[idx], &mut tmp) {
+                Some(n) => {
+                    bytes += n;
+                    idx += 1;
+                }
                 None => {
                     // SAFETY: setting thread-local errno through libc ABI helper.
                     unsafe { set_abi_errno(libc::EILSEQ) };
@@ -2242,6 +2254,16 @@ pub unsafe extern "C" fn wcsrtombs(
     let mut written = 0usize;
     let mut idx = 0usize;
     while idx < src_len {
+        // SIMD fast-forward: narrow the leading ASCII run straight into `dst`
+        // (one byte per wc), then resolve the dst-full / multibyte boundary with
+        // the unchanged scalar logic below. Bounded to `src_len` so the
+        // terminating NUL is never consumed here.
+        let k = wchar_core::wcs_ascii_prefix(&mut dst_slice[written..], &src_slice[idx..src_len]);
+        idx += k;
+        written += k;
+        if idx >= src_len {
+            break;
+        }
         let wc = src_slice[idx];
         let mut tmp = [0u8; 6];
         let n = match wchar_core::wctomb(wc, &mut tmp) {

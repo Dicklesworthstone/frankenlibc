@@ -320,6 +320,56 @@ pub fn mbs_ascii_prefix(dest: &mut [u32], src: &[u8]) -> usize {
     k
 }
 
+/// Length of the leading plain-ASCII run of wide chars `src`: the count of `wc`
+/// with `0 < wc < 0x80`, stopping at the first NUL or `wc >= 0x80`. The wide
+/// inverse of [`ascii_prefix_len`].
+pub fn wcs_ascii_prefix_len(src: &[u32]) -> usize {
+    const LANES: usize = 16;
+    let zero = Simd::<u32, LANES>::splat(0);
+    let ascii_max = Simd::<u32, LANES>::splat(0x80);
+    let mut k = 0usize;
+    while k + LANES <= src.len() {
+        let chunk = Simd::<u32, LANES>::from_array(src[k..k + LANES].try_into().unwrap());
+        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+            break;
+        }
+        k += LANES;
+    }
+    while k < src.len() && src[k] != 0 && src[k] < 0x80 {
+        k += 1;
+    }
+    k
+}
+
+/// Narrow the leading plain-ASCII run of wide chars `src` (`0 < wc < 0x80`, no
+/// NUL) into `dest` as single output bytes, a SIMD vector at a time, bounded by
+/// `dest.len()`. Returns the number of chars converted (= bytes written); stops
+/// at the first NUL, `wc >= 0x80`, or a full `dest`. The wide-to-multibyte
+/// inverse of [`mbs_ascii_prefix`] — byte-for-byte identical to encoding those
+/// chars one at a time via [`wctomb`]; exposed so streaming `wcsrtombs` can
+/// fast-forward its ASCII runs.
+pub fn wcs_ascii_prefix(dest: &mut [u8], src: &[u32]) -> usize {
+    const LANES: usize = 16;
+    let zero = Simd::<u32, LANES>::splat(0);
+    let ascii_max = Simd::<u32, LANES>::splat(0x80);
+    let mut k = 0usize;
+    while k + LANES <= src.len() && k + LANES <= dest.len() {
+        let wchars: [u32; LANES] = src[k..k + LANES].try_into().unwrap();
+        let chunk = Simd::<u32, LANES>::from_array(wchars);
+        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+            break;
+        }
+        let bytes = Simd::<u8, LANES>::from_array(wchars.map(|w| w as u8));
+        bytes.copy_to_slice(&mut dest[k..k + LANES]);
+        k += LANES;
+    }
+    while k < src.len() && k < dest.len() && src[k] != 0 && src[k] < 0x80 {
+        dest[k] = src[k] as u8;
+        k += 1;
+    }
+    k
+}
+
 /// Convert a wide character string to a multibyte string (UTF-8).
 ///
 /// Returns the number of bytes written (not including NUL terminator), or
@@ -758,6 +808,44 @@ mod tests {
                 let rb = wcstombs_scalar_reference(&mut b, src);
                 assert_eq!(ra, rb, "return mismatch: src={src:x?} cap={cap}");
                 assert_eq!(a, b, "dest mismatch: src={src:x?} cap={cap}");
+            }
+        }
+    }
+
+    #[test]
+    fn wcs_ascii_prefix_helpers_match_scalar() {
+        fn ref_len(src: &[u32]) -> usize {
+            let mut k = 0;
+            while k < src.len() && src[k] != 0 && src[k] < 0x80 {
+                k += 1;
+            }
+            k
+        }
+        // Varied wide corpus: ASCII codepoints around the 16-lane boundary, with
+        // an embedded NUL / non-ASCII codepoint at each offset.
+        let mut corpus: Vec<Vec<u32>> = Vec::new();
+        for len in 0..80usize {
+            corpus.push((0..len).map(|i| (b'a' as u32) + (i as u32 % 26)).collect());
+        }
+        for len in 1..40usize {
+            for pos in 0..len {
+                let mut v: Vec<u32> = (0..len).map(|_| b'x' as u32).collect();
+                v[pos] = 0;
+                corpus.push(v.clone());
+                v[pos] = 0x1F600; // non-ASCII codepoint
+                corpus.push(v);
+            }
+        }
+        for src in &corpus {
+            let want_len = ref_len(src);
+            assert_eq!(wcs_ascii_prefix_len(src), want_len, "wcs_ascii_prefix_len {src:?}");
+            for cap in [0usize, 1, 7, 16, 17, 40, 100] {
+                let mut dest = vec![0u8; cap];
+                let k = wcs_ascii_prefix(&mut dest, src);
+                assert_eq!(k, want_len.min(cap), "wcs_ascii_prefix k {src:?} cap={cap}");
+                for j in 0..k {
+                    assert_eq!(dest[j], src[j] as u8, "narrow {src:?} j={j}");
+                }
             }
         }
     }

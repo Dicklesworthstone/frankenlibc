@@ -1133,6 +1133,58 @@ fn bench_mbsrtowcs_ascii(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_wcsrtombs_ascii(c: &mut Criterion) {
+    use frankenlibc_core::string::wchar::wcs_ascii_prefix;
+    use frankenlibc_core::string::wctomb;
+    let mut group = c.benchmark_group("glibc_baseline_wcsrtombs_ascii");
+    // 4096 wide ASCII codepoints — wcsrtombs's common case. The new SIMD ASCII
+    // narrow vs the previous per-char wctomb loop.
+    let src: Vec<u32> = vec![b'a' as u32; 4096];
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "wcsrtombs_ascii",
+            impl_label: "frankenlibc_core",
+            api_family: "wchar",
+            symbol: "wcsrtombs",
+            workload: "4096 wide ASCII -> bytes (SIMD prefix)",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/wchar.rs",
+        },
+        || {
+            let mut dest = [0u8; 4096];
+            black_box(wcs_ascii_prefix(black_box(&mut dest), black_box(&src)));
+            black_box(dest[0]);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "wcsrtombs_ascii",
+            impl_label: "frankenlibc_old_perchar",
+            api_family: "wchar",
+            symbol: "wcsrtombs",
+            workload: "4096 wide ASCII -> bytes (old per-char wctomb loop)",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/wchar.rs",
+        },
+        || {
+            let mut dest = [0u8; 4096];
+            let mut w = 0usize;
+            for &wc in &src {
+                let mut tmp = [0u8; 6];
+                match wctomb(black_box(wc), &mut tmp) {
+                    Some(n) => {
+                        dest[w..w + n].copy_from_slice(&tmp[..n]);
+                        w += n;
+                    }
+                    None => break,
+                }
+            }
+            black_box(dest[0]);
+        },
+    );
+    group.finish();
+}
+
 fn bench_fnmatch_bracket(c: &mut Criterion) {
     use frankenlibc_core::string::fnmatch::{FnmatchFlags, fnmatch_match};
     let mut group = c.benchmark_group("glibc_baseline_fnmatch_bracket");
@@ -1592,6 +1644,7 @@ criterion_group! {
         bench_fnmatch_adversarial,
         bench_fnmatch_bracket,
         bench_fnmatch_pathname,
-        bench_mbsrtowcs_ascii
+        bench_mbsrtowcs_ascii,
+        bench_wcsrtombs_ascii
 }
 criterion_main!(benches);
