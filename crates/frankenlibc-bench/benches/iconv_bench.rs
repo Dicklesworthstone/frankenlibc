@@ -82,10 +82,34 @@ fn bench_iconv_cp1251_to_koi8r(c: &mut Criterion) {
     group.finish();
 }
 
+// UTF-8 -> KOI8-R over Cyrillic text (the common legacy-encode case). Each
+// 2-byte UTF-8 char decodes then encodes to one KOI8-R byte; encoding formerly
+// did an O(128) linear reverse-search per char, now an O(log n) binary search
+// via the cached codepoint->byte map.
+fn bench_iconv_utf8_cyrillic_to_koi8r(c: &mut Criterion) {
+    // U+0410..=U+044F (А..я): 512 chars -> ~1 KiB of 2-byte UTF-8.
+    let text: String = (0..512)
+        .map(|i| char::from_u32(0x0410 + (i % 0x40) as u32).unwrap())
+        .collect();
+    let utf8 = text.into_bytes();
+    let mut group = c.benchmark_group("iconv_utf8_cyrillic_to_koi8r");
+    group.throughput(Throughput::Bytes(utf8.len() as u64));
+    let mut dest = vec![0u8; utf8.len() + 8];
+    group.bench_with_input(BenchmarkId::from_parameter("cyrillic_1k"), &utf8[..], |b, input| {
+        let mut cd = iconv_open(b"KOI8-R", b"UTF-8").expect("codec");
+        b.iter(|| {
+            let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
+            black_box(r.is_ok());
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_iconv,
     bench_iconv_utf8_to_koi8r,
-    bench_iconv_cp1251_to_koi8r
+    bench_iconv_cp1251_to_koi8r,
+    bench_iconv_utf8_cyrillic_to_koi8r
 );
 criterion_main!(benches);

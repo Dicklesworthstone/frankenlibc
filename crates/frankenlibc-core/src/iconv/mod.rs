@@ -1214,6 +1214,42 @@ pub struct IconvDescriptor {
     /// decode_char + the O(128) linear reverse-search inside encode_*. `None`
     /// when either endpoint is multibyte. See [`build_sb_translation`].
     sb_translation: Option<[i16; 256]>,
+    /// Cached at open time when `to` is a single-byte codec: a sorted
+    /// codepoint -> byte reverse map, so encoding a decoded char (from ANY
+    /// source, e.g. UTF-8) is an O(log n) binary search instead of the O(128)
+    /// linear scan inside encode_*. `None` when `to` is multibyte. See
+    /// [`build_to_reverse`].
+    to_reverse: Option<SingleByteReverse>,
+}
+
+/// Sorted codepoint -> output-byte reverse map for a single-byte target codec.
+/// Codepoints `< 0x80` are the implicit ASCII identity (matching the `cp < 0x80`
+/// shortcut in every single-byte `encode_*`); only `>= 0x80` codepoints that
+/// `encode_*` would emit (canonical first-match byte) are stored, sorted by
+/// codepoint for binary search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SingleByteReverse {
+    high_cp: [u32; 128],
+    high_byte: [u8; 128],
+    high_len: u16,
+}
+
+impl SingleByteReverse {
+    /// Returns the output byte for `ch`, or `None` if unrepresentable — exactly
+    /// matching what the codec's `encode_*` would produce for a successful
+    /// encode (callers delegate the `None` / no-space cases to `encode_char` so
+    /// per-codec error ordering is preserved).
+    fn lookup(&self, ch: char) -> Option<u8> {
+        let cp = ch as u32;
+        if cp < 0x80 {
+            return Some(cp as u8);
+        }
+        let hi = &self.high_cp[..self.high_len as usize];
+        match hi.binary_search(&cp) {
+            Ok(idx) => Some(self.high_byte[idx]),
+            Err(_) => None,
+        }
+    }
 }
 
 impl IconvDescriptor {
@@ -8481,6 +8517,67 @@ fn leading_ascii_len(s: &[u8]) -> usize {
     s.len()
 }
 
+/// Build a codepoint -> byte reverse map for a single-byte target codec, so the
+/// conversion loop can encode in O(log n) instead of the O(128) linear search in
+/// `encode_*`. Returns `None` if `to` is multibyte (some byte decodes Incomplete
+/// or consumes != 1).
+///
+/// Each high byte `b` (0x80..=0xFF) is included only when it round-trips —
+/// `decode(b) = cp` (cp >= 0x80) and `encode(cp) = b` — so the map reproduces
+/// `encode_*`'s canonical first-match exactly and silently drops undefined /
+/// non-canonical bytes (which `lookup` then reports as unrepresentable).
+fn build_to_reverse(to: Encoding) -> Option<SingleByteReverse> {
+    let mut entries: Vec<(u32, u8)> = Vec::with_capacity(128);
+    let mut buf = [0u8; 8];
+    for b in 0u8..=0xFF {
+        let ch = match decode_char(to, &[b]) {
+            Ok((ch, 1)) => ch,
+            // `to` is multibyte (lead byte needs continuation / wide unit).
+            Ok((_, _)) | Err(DecodeError::Incomplete) => return None,
+            Err(DecodeError::Invalid) => continue,
+        };
+        let cp = ch as u32;
+        if cp < 0x80 {
+            continue; // handled by the ASCII shortcut in `lookup`
+        }
+        // Keep only the canonical byte `encode_*` would emit for this cp.
+        if matches!(encode_char(to, ch, &mut buf), Ok(1) if buf[0] == b) {
+            entries.push((cp, b));
+        }
+    }
+    entries.sort_unstable_by_key(|&(cp, _)| cp);
+    entries.dedup_by_key(|&mut (cp, _)| cp);
+    if entries.len() > 128 {
+        return None; // single-byte codec cannot exceed 128 high entries
+    }
+    let mut high_cp = [0u32; 128];
+    let mut high_byte = [0u8; 128];
+    for (i, &(cp, b)) in entries.iter().enumerate() {
+        high_cp[i] = cp;
+        high_byte[i] = b;
+    }
+    Some(SingleByteReverse {
+        high_cp,
+        high_byte,
+        high_len: entries.len() as u16,
+    })
+}
+
+/// Encode one char into `out`, using the cached single-byte reverse map for the
+/// common success case (representable codepoint + space available) and otherwise
+/// delegating to `encode_char` so each codec's exact NoSpace-vs-Unrepresentable
+/// error ordering is preserved.
+fn encode_one(cd: &IconvDescriptor, ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if let Some(rev) = cd.to_reverse.as_ref()
+        && !out.is_empty()
+        && let Some(byte) = rev.lookup(ch)
+    {
+        out[0] = byte;
+        return Ok(1);
+    }
+    encode_char(cd.to, ch, out)
+}
+
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
@@ -8882,6 +8979,7 @@ pub fn iconv_open_detailed(
             dispatch,
             fast_ascii: pair_is_ascii_identity(from, to),
             sb_translation: build_sb_translation(from, to),
+            to_reverse: build_to_reverse(to),
         },
         dispatch,
     ))
@@ -9028,7 +9126,7 @@ pub fn iconv(
             }
         };
 
-        let written = match encode_char(cd.to, ch, &mut outbuf[out_pos..]) {
+        let written = match encode_one(cd, ch, &mut outbuf[out_pos..]) {
             Ok(v) => v,
             Err(EncodeError::NoSpace) => {
                 return Err(IconvError {
@@ -9164,6 +9262,14 @@ mod tests {
         assert!(iconv_open(b"ISO-8859-1", b"KOI8-R").unwrap().sb_translation.is_some());
         assert!(iconv_open(b"KOI8-R", b"UTF-8").unwrap().sb_translation.is_none());
         assert!(iconv_open(b"UTF-8", b"KOI8-R").unwrap().sb_translation.is_none());
+
+        // The codepoint->byte reverse map exists whenever `to` is single-byte
+        // (incl. UTF-8 -> single-byte, where there is no byte->byte LUT), and is
+        // absent when `to` is multibyte.
+        assert!(iconv_open(b"KOI8-R", b"UTF-8").unwrap().to_reverse.is_some());
+        assert!(iconv_open(b"CP1251", b"UTF-8").unwrap().to_reverse.is_some());
+        assert!(iconv_open(b"UTF-8", b"KOI8-R").unwrap().to_reverse.is_none());
+        assert!(iconv_open(b"UTF-16LE", b"UTF-8").unwrap().to_reverse.is_none());
 
         // Corpus: ASCII of every length around the 32-lane boundary, ASCII with
         // a high byte planted at each offset, NUL-laden ASCII, valid multibyte
