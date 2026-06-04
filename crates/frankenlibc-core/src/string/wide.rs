@@ -3,7 +3,7 @@
 //! Corresponds to `<wchar.h>` functions. These operate on `u32` slices
 //! representing `wchar_t` strings (NUL-terminated with `0u32`).
 
-use std::simd::{Simd, Select, cmp::SimdPartialEq, cmp::SimdPartialOrd};
+use std::simd::{Select, Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
 
 /// Number of `u32` wide characters processed per NUL-only scan panel.
 const WIDE_NUL_SIMD_LANES: usize = 16;
@@ -23,6 +23,9 @@ const WIDE_COMPARE_SIMD_LANES: usize = 16;
 
 /// Number of `u32` wide characters compared per unrolled `wmemcmp` step.
 const WIDE_COMPARE_UNROLL_LANES: usize = WIDE_COMPARE_SIMD_LANES * 2;
+
+/// Minimum scan length before paying to recognize contiguous membership sets.
+const WIDE_RANGE_MEMBERSHIP_MIN_LEN: usize = WIDE_COMPARE_SIMD_LANES * 32;
 
 /// Number of `u32` wide characters searched per forward `wmemchr` panel.
 const WIDE_MEMCHR_SIMD_LANES: usize = 16;
@@ -742,6 +745,38 @@ fn wide_panel_membership(
     member
 }
 
+#[inline(always)]
+fn contiguous_wide_range(set: &[u32]) -> Option<(u32, u32)> {
+    let mut min = u32::MAX;
+    let mut max = 0;
+    for &c in set {
+        min = min.min(c);
+        max = max.max(c);
+    }
+
+    let span = max.checked_sub(min)?.checked_add(1)?;
+    let span = usize::try_from(span).ok()?;
+    if span > set.len() {
+        return None;
+    }
+
+    for candidate in min..=max {
+        if !set.contains(&candidate) {
+            return None;
+        }
+    }
+
+    Some((min, max))
+}
+
+#[inline(always)]
+fn wide_panel_all_range_members_no_nul(chunk: &[u32], min: u32, max: u32) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_COMPARE_SIMD_LANES);
+    let lanes = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(chunk);
+    !lanes.simd_eq(Simd::splat(0)).any()
+        && (lanes.simd_ge(Simd::splat(min)) & lanes.simd_le(Simd::splat(max))).all()
+}
+
 /// `true` iff every lane of the panel is in `set` AND no lane is NUL — the
 /// fast-advance condition for [`wcsspn`].
 #[inline(always)]
@@ -749,6 +784,14 @@ fn wide_panel_all_members_no_nul(chunk: &[u32], set: &[u32]) -> bool {
     debug_assert_eq!(chunk.len(), WIDE_COMPARE_SIMD_LANES);
     let lanes = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(chunk);
     !lanes.simd_eq(Simd::splat(0)).any() && wide_panel_membership(lanes, set).all()
+}
+
+#[inline(always)]
+fn wide_panel_no_range_members_no_nul(chunk: &[u32], min: u32, max: u32) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_COMPARE_SIMD_LANES);
+    let lanes = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(chunk);
+    !lanes.simd_eq(Simd::splat(0)).any()
+        && !(lanes.simd_ge(Simd::splat(min)) & lanes.simd_le(Simd::splat(max))).any()
 }
 
 /// `true` iff no lane of the panel is in `set` AND no lane is NUL — the
@@ -773,15 +816,26 @@ pub fn wcsspn(s: &[u32], accept: &[u32]) -> usize {
         return 0;
     }
 
-    // SIMD fast path: stride panels whose lanes are all members and NUL-free.
-    // The first panel that breaks either condition drops to the scalar tail,
-    // which resolves the exact stop index identically to the scalar scan.
     let mut i = 0;
-    while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
-        if !wide_panel_all_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], accept_set) {
-            break;
+    if s.len() >= WIDE_RANGE_MEMBERSHIP_MIN_LEN
+        && let Some((min, max)) = contiguous_wide_range(accept_set)
+    {
+        while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+            if !wide_panel_all_range_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], min, max) {
+                break;
+            }
+            i += WIDE_COMPARE_SIMD_LANES;
         }
-        i += WIDE_COMPARE_SIMD_LANES;
+    } else {
+        // SIMD fast path: stride panels whose lanes are all members and NUL-free.
+        // The first panel that breaks either condition drops to the scalar tail,
+        // which resolves the exact stop index identically to the scalar scan.
+        while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+            if !wide_panel_all_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], accept_set) {
+                break;
+            }
+            i += WIDE_COMPARE_SIMD_LANES;
+        }
     }
 
     while i < s.len() {
@@ -809,11 +863,22 @@ pub fn wcscspn(s: &[u32], reject: &[u32]) -> usize {
 
     // SIMD fast path: stride panels with no rejected lanes and NUL-free.
     let mut i = 0;
-    while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
-        if !wide_panel_no_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], reject_set) {
-            break;
+    if s.len() >= WIDE_RANGE_MEMBERSHIP_MIN_LEN
+        && let Some((min, max)) = contiguous_wide_range(reject_set)
+    {
+        while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+            if !wide_panel_no_range_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], min, max) {
+                break;
+            }
+            i += WIDE_COMPARE_SIMD_LANES;
         }
-        i += WIDE_COMPARE_SIMD_LANES;
+    } else {
+        while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+            if !wide_panel_no_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], reject_set) {
+                break;
+            }
+            i += WIDE_COMPARE_SIMD_LANES;
+        }
     }
 
     while i < s.len() {
@@ -839,11 +904,22 @@ pub fn wcspbrk(s: &[u32], accept: &[u32]) -> Option<usize> {
 
     // SIMD fast path: stride panels with no accepted lanes and NUL-free.
     let mut i = 0;
-    while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
-        if !wide_panel_no_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], accept_set) {
-            break;
+    if s.len() >= WIDE_RANGE_MEMBERSHIP_MIN_LEN
+        && let Some((min, max)) = contiguous_wide_range(accept_set)
+    {
+        while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+            if !wide_panel_no_range_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], min, max) {
+                break;
+            }
+            i += WIDE_COMPARE_SIMD_LANES;
         }
-        i += WIDE_COMPARE_SIMD_LANES;
+    } else {
+        while i + WIDE_COMPARE_SIMD_LANES <= s.len() {
+            if !wide_panel_no_members_no_nul(&s[i..i + WIDE_COMPARE_SIMD_LANES], accept_set) {
+                break;
+            }
+            i += WIDE_COMPARE_SIMD_LANES;
+        }
     }
 
     while i < s.len() {
