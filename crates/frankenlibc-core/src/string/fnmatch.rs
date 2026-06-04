@@ -212,6 +212,82 @@ fn parse_bracket_subexpr(
 /// two-pointer with one remembered star position. No recursion, no memo table.
 /// Output-identical to the general matcher on this input class (verified by
 /// `simple_fast_path_matches_general` over a random corpus).
+/// Match one text byte `c` against the `Terminated` bracket expression at
+/// `pat[pi0] == b'['` (the caller must have confirmed `classify_bracket` ==
+/// `Terminated`). Returns `(matched, next_pi)` with `next_pi` just past the
+/// closing `]`. Case-sensitive only (the `fnmatch_simple` gate excludes
+/// CASEFOLD); reuses the shared `parse_bracket_subexpr` for `[:class:]` /
+/// `[.x.]` / `[=x=]`, so only the range/literal membership is local logic. The
+/// `None => break` arms are unreachable given a `Terminated` bracket.
+fn bracket_match_one(pat: &[u8], pi0: usize, c: u8, noescape: bool) -> (bool, usize) {
+    let mut pi = pi0 + 1; // skip '['
+    let negated = matches!(pat.get(pi), Some(&b'!') | Some(&b'^'));
+    if negated {
+        pi += 1;
+    }
+    let mut matched = false;
+    let mut first = true;
+    loop {
+        let bc = match pat.get(pi) {
+            None => break,
+            Some(&b) => b,
+        };
+        if bc == b']' && !first {
+            break;
+        }
+        first = false;
+
+        if bc == b'['
+            && let Some(&kind) = pat.get(pi + 1)
+            && matches!(kind, b':' | b'.' | b'=')
+            && let Some((next_pi, member)) = parse_bracket_subexpr(pat, pi, kind, c, false)
+        {
+            if member {
+                matched = true;
+            }
+            pi = next_pi;
+            continue;
+        }
+
+        let mut low = bc;
+        pi += 1;
+        if low == b'\\' && !noescape {
+            match pat.get(pi) {
+                None => break,
+                Some(&b) => {
+                    low = b;
+                    pi += 1;
+                }
+            }
+        }
+
+        let next = pat.get(pi);
+        let nextnext = pat.get(pi + 1);
+        if next == Some(&b'-') && nextnext != Some(&b']') && nextnext.is_some() {
+            pi += 1; // skip '-'
+            let mut high = pat.get(pi).copied().unwrap_or(0);
+            if high == b'\\' && !noescape {
+                pi += 1;
+                match pat.get(pi) {
+                    None => break,
+                    Some(&b) => high = b,
+                }
+            }
+            pi += 1;
+            if c >= low && c <= high {
+                matched = true;
+            }
+        } else if c == low {
+            matched = true;
+        }
+    }
+    pi += 1; // skip ']'
+    if negated {
+        matched = !matched;
+    }
+    (matched, pi)
+}
+
 fn fnmatch_simple(pat: &[u8], text: &[u8], noescape: bool) -> bool {
     let mut pi = 0usize;
     let mut si = 0usize;
@@ -244,6 +320,27 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], noescape: bool) -> bool {
                     si += 1;
                     advanced = true;
                 }
+                b'[' => match classify_bracket(pat, pi, noescape) {
+                    BracketShape::Terminated => {
+                        let (m, next_pi) = bracket_match_one(pat, pi, text[si], noescape);
+                        if m {
+                            pi = next_pi;
+                            si += 1;
+                            advanced = true;
+                        }
+                    }
+                    BracketShape::LiteralFallback => {
+                        if text[si] == b'[' {
+                            pi += 1;
+                            si += 1;
+                            advanced = true;
+                        }
+                    }
+                    // Malformed bracket: this fixed pattern position can never
+                    // match (the general matcher returns false here too), so we
+                    // leave `advanced` false and let the backtrack/fail path run.
+                    BracketShape::Invalid => {}
+                },
                 lit => {
                     if lit == text[si] {
                         pi += 1;
@@ -287,7 +384,7 @@ pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
     // (brackets, PATHNAME, PERIOD, CASEFOLD, LEADING_DIR) keeps the general
     // recursive matcher below.
     let only_noescape = (flags.bits() & !FnmatchFlags::NOESCAPE.bits()) == 0;
-    if only_noescape && !pattern.contains(&b'[') {
+    if only_noescape {
         return fnmatch_simple(pattern, text, flags.contains(FnmatchFlags::NOESCAPE));
     }
     // `failed` memoizes (pat_index, text_index) states already proven not to
@@ -654,7 +751,7 @@ mod tests {
                 idx /= alpha.len();
             }
         }
-        let pat_alpha = [b'a', b'b', b'*', b'?', b'\\'];
+        let pat_alpha = [b'a', b'b', b'*', b'?', b'\\', b'[', b']', b'-', b'!'];
         let txt_alpha = [b'a', b'b'];
         let mut pat = Vec::new();
         let mut txt = Vec::new();

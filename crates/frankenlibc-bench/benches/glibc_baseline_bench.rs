@@ -1080,6 +1080,57 @@ fn bench_fnmatch_adversarial(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_fnmatch_bracket(c: &mut Criterion) {
+    use frankenlibc_core::string::fnmatch::{FnmatchFlags, fnmatch_match};
+    let mut group = c.benchmark_group("glibc_baseline_fnmatch_bracket");
+    // Multi-star pattern with bracket classes that backtracks on a no-match:
+    // "*[ab]*[ab]*...*c" vs an all-'a'/'b' text with no 'c'.
+    let pattern = b"*[ab]*[ab]*[ab]*[ab]*[ab]*c"; // 6 stars + 5 brackets
+    let pattern_c = b"*[ab]*[ab]*[ab]*[ab]*[ab]*c\0";
+    let text = b"ababababababababab"; // 18 chars, no 'c'
+    let text_c = b"ababababababababab\0";
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "fnmatch_bracket",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "fnmatch",
+            workload: "6-star+bracket pattern vs 18-char no-match",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/fnmatch.rs",
+        },
+        || {
+            black_box(fnmatch_match(
+                black_box(pattern),
+                black_box(text),
+                FnmatchFlags::NONE,
+            ));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "fnmatch_bracket",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "fnmatch",
+            workload: "6-star+bracket pattern vs 18-char no-match",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/fnmatch.rs",
+        },
+        || {
+            // SAFETY: both are NUL-terminated C strings; flags=0.
+            unsafe {
+                black_box(libc::fnmatch(
+                    pattern_c.as_ptr().cast(),
+                    text_c.as_ptr().cast(),
+                    0,
+                ));
+            }
+        },
+    );
+    group.finish();
+}
+
 fn bench_wcsstr_absent(c: &mut Criterion) {
     use frankenlibc_core::string::wcsstr;
     let mut group = c.benchmark_group("glibc_baseline_wcsstr_absent");
@@ -1433,6 +1484,7 @@ criterion_group! {
         bench_strstr_absent,
         bench_strcasestr_absent,
         bench_wcsstr_absent,
-        bench_fnmatch_adversarial
+        bench_fnmatch_adversarial,
+        bench_fnmatch_bracket
 }
 criterion_main!(benches);
