@@ -27,6 +27,9 @@ const WIDE_COMPARE_UNROLL_LANES: usize = WIDE_COMPARE_SIMD_LANES * 2;
 /// Minimum scan length before paying to recognize contiguous membership sets.
 const WIDE_RANGE_MEMBERSHIP_MIN_LEN: usize = WIDE_COMPARE_SIMD_LANES * 32;
 
+/// Minimum scan length before paying to certify a repeated accepted wide char.
+const WIDE_MEMBER_REPEAT_MIN_LEN: usize = WIDE_COMPARE_UNROLL_LANES * 8;
+
 /// Minimum bounded case-fold compare length before paying to detect repeated
 /// fold-equal wide-character pairs.
 const WIDE_CASE_REPEAT_MIN_LEN: usize = WIDE_COMPARE_UNROLL_LANES * 8;
@@ -934,6 +937,14 @@ fn wide_panel_no_members_no_nul(chunk: &[u32], set: &[u32]) -> bool {
     !lanes.simd_eq(Simd::splat(0)).any() && !wide_panel_membership(lanes, set).any()
 }
 
+#[inline(always)]
+fn repeated_wide_member_panel(chunk: &[u32], member: u32) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_COMPARE_UNROLL_LANES);
+    debug_assert_ne!(member, 0);
+    let lanes = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(chunk);
+    lanes.simd_eq(Simd::splat(member)).all()
+}
+
 /// Returns the length of the initial segment of `s` consisting entirely of
 /// wide characters in `accept`.
 ///
@@ -948,6 +959,18 @@ pub fn wcsspn(s: &[u32], accept: &[u32]) -> usize {
     }
 
     let mut i = 0;
+    if s.len() >= WIDE_MEMBER_REPEAT_MIN_LEN {
+        let repeated = s[0];
+        if repeated != 0 && accept_set.contains(&repeated) {
+            while i + WIDE_COMPARE_UNROLL_LANES <= s.len() {
+                if !repeated_wide_member_panel(&s[i..i + WIDE_COMPARE_UNROLL_LANES], repeated) {
+                    break;
+                }
+                i += WIDE_COMPARE_UNROLL_LANES;
+            }
+        }
+    }
+
     if s.len() >= WIDE_RANGE_MEMBERSHIP_MIN_LEN
         && let Some((min, max)) = contiguous_wide_range(accept_set)
     {
@@ -1686,7 +1709,10 @@ mod tests {
     #[test]
     fn wcsstr_matches_naive_reference_incl_two_way_bail() {
         fn naive(haystack: &[u32], needle: &[u32]) -> Option<usize> {
-            let h = &haystack[..haystack.iter().position(|&c| c == 0).unwrap_or(haystack.len())];
+            let h = &haystack[..haystack
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(haystack.len())];
             let n = &needle[..needle.iter().position(|&c| c == 0).unwrap_or(needle.len())];
             if n.is_empty() {
                 return Some(0);
@@ -1723,7 +1749,7 @@ mod tests {
             &[a, a, a, a, b, 0], // common first char, mostly absent
             &[a, a, a, b, 0],
             &[a, b, a, b, 0],
-            &[b, b, 0], // only past an embedded NUL — must NOT match
+            &[b, b, 0],   // only past an embedded NUL — must NOT match
             &long_needle, // 64 'a' + 'b' — longer than some haystacks
         ];
         for h in haystacks {
@@ -1874,6 +1900,18 @@ mod tests {
         let s = [b'x' as u32, 0];
         let accept = [b'a' as u32, 0];
         assert_eq!(wcsspn(&s, &accept), 0);
+    }
+
+    #[test]
+    fn test_wcsspn_repeated_member_run_stops_at_first_nonmember() {
+        let mut s = vec![b'1' as u32; WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_COMPARE_UNROLL_LANES];
+        s.push(b'x' as u32);
+        s.push(0);
+        let accept = [b'0' as u32, b'1' as u32, b'2' as u32, b'3' as u32, 0];
+        assert_eq!(
+            wcsspn(&s, &accept),
+            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_COMPARE_UNROLL_LANES
+        );
     }
 
     #[test]
