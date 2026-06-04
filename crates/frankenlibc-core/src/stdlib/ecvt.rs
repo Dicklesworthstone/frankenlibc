@@ -225,8 +225,14 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
         };
     }
     if value == 0.0 {
-        // glibc emits "0" even for -0.0, no trailing decimal.
-        return String::from("0");
+        // glibc's %g preserves the sign of zero: gcvt(-0.0) -> "-0", gcvt(0.0)
+        // -> "0" (no trailing decimal in either case). `value == 0.0` matches
+        // both +0.0 and -0.0, so distinguish via the sign bit.
+        return if value.is_sign_negative() {
+            String::from("-0")
+        } else {
+            String::from("0")
+        };
     }
 
     // Pick format based on the decimal exponent the value rounds to.
