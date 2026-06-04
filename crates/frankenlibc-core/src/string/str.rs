@@ -1202,17 +1202,14 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
 
     let accept_set = &accept[..accept_len];
     let accept_table = byte_membership_table(accept_set);
-
-    for (i, &byte) in s.iter().enumerate() {
-        if byte == 0 {
-            return None;
-        }
-        if accept_table[byte as usize] {
-            return Some(i);
-        }
+    // span_general(stop_in_set=true) returns the first member-or-NUL index, or
+    // s.len(). It is strpbrk when the stop is a real member (non-NUL, in range).
+    let index = span_general(s, accept_set, &accept_table, true);
+    if index < s.len() && s[index] != 0 {
+        Some(index)
+    } else {
+        None
     }
-
-    None
 }
 
 /// Case-insensitive version of `strstr`. Finds the first occurrence of
@@ -1760,6 +1757,21 @@ mod tests {
                                 strcspn(&s, set),
                                 span_oracle(&s, set, true),
                                 "strcspn set={:?} len={} stop={} fill={} int={}",
+                                set,
+                                len,
+                                stop_pos,
+                                fill,
+                                interloper
+                            );
+                            // strpbrk reuses the same stop-on-member scan, then
+                            // maps a NUL/end stop to None and a member to Some.
+                            let pb_idx = span_oracle(&s, set, true);
+                            let pb_expected =
+                                if pb_idx < s.len() && s[pb_idx] != 0 { Some(pb_idx) } else { None };
+                            assert_eq!(
+                                strpbrk(&s, set),
+                                pb_expected,
+                                "strpbrk set={:?} len={} stop={} fill={} int={}",
                                 set,
                                 len,
                                 stop_pos,

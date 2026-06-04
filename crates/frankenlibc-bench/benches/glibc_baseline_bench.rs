@@ -10,8 +10,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use frankenlibc_core::malloc::MallocState;
 use frankenlibc_core::stdio::printf::{FormatSegment, FormatSpec, format_float, parse_format_string};
 use frankenlibc_core::string::{
-    memchr, memcpy, memmove, memset, strchr, strcmp, strcpy, strlen, strncasecmp, strncmp, strrchr,
-    strspn,
+    memchr, memcpy, memmove, memset, strchr, strcmp, strcpy, strlen, strncasecmp, strncmp, strpbrk,
+    strrchr, strspn,
 };
 
 #[derive(Default)]
@@ -959,6 +959,53 @@ fn bench_strspn_long(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_strpbrk_absent(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_strpbrk_absent");
+    // 4096 bytes, none in the accept set -> full scan, returns None/NULL.
+    let s = {
+        let mut v = vec![b'a'; 4096];
+        v.push(0);
+        v
+    };
+    let accept = {
+        let mut v = b"XYZ12345".to_vec();
+        v.push(0);
+        v
+    };
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strpbrk_absent",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strpbrk",
+            workload: "4096-byte scan, 8-byte accept set absent",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strpbrk(black_box(&s), black_box(&accept)));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strpbrk_absent",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strpbrk",
+            workload: "4096-byte scan, 8-byte accept set absent",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: both s and accept are NUL-terminated.
+            unsafe {
+                black_box(libc::strpbrk(s.as_ptr().cast(), accept.as_ptr().cast()));
+            }
+        },
+    );
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
@@ -982,6 +1029,7 @@ criterion_group! {
         bench_memmove_4096,
         bench_strcpy_4096,
         bench_memchr_absent,
-        bench_strspn_long
+        bench_strspn_long,
+        bench_strpbrk_absent
 }
 criterion_main!(benches);
