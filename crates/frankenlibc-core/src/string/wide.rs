@@ -790,9 +790,11 @@ fn contiguous_wide_range(set: &[u32]) -> Option<(u32, u32)> {
 #[inline(always)]
 fn wide_panel_all_range_members_no_nul(chunk: &[u32], min: u32, max: u32) -> bool {
     debug_assert_eq!(chunk.len(), WIDE_COMPARE_SIMD_LANES);
+    debug_assert!(min > 0);
     let lanes = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(chunk);
-    !lanes.simd_eq(Simd::splat(0)).any()
-        && (lanes.simd_ge(Simd::splat(min)) & lanes.simd_le(Simd::splat(max))).all()
+    (lanes - Simd::splat(min))
+        .simd_le(Simd::splat(max - min))
+        .all()
 }
 
 /// `true` iff every lane of the panel is in `set` AND no lane is NUL — the
