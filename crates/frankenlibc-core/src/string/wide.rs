@@ -662,12 +662,17 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
         return Some(0);
     }
     let needle = &needle[..needle_len];
-    let h_len = wcslen(haystack);
+    let first = needle[0];
+    let first_pos = find_wide_or_nul_long(haystack, first);
+    if first_pos == haystack.len() || haystack[first_pos] == 0 {
+        return None;
+    }
+
+    let h_len = first_pos + wcslen(&haystack[first_pos..]);
     let hay = &haystack[..h_len];
     if needle_len > h_len {
         return None;
     }
-    let first = needle[0];
 
     // Fast path: jump to each first-char candidate via the SIMD `find_wide_or_nul`
     // scan and verify the full needle there. To keep the O(n+m) worst case, bail
@@ -676,7 +681,7 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     // 'a' run, which previously made every position a candidate: O(n*m)) cannot
     // degrade. Both paths return the leftmost match. `wcslen` bounds both
     // operands before their terminating NUL, preserving wide-string semantics.
-    let mut start = 0usize;
+    let mut start = first_pos;
     let mut miss_work = 0usize;
     while start + needle_len <= hay.len() {
         let scan = &hay[start..];
@@ -1761,6 +1766,94 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Golden sha256 over deterministic `wcsstr` outputs spanning absent first
+    /// characters, NUL-bounded haystacks, late matches, high wide code units,
+    /// unterminated slices, and the common-first-char Two-Way stress case.
+    #[test]
+    fn golden_wcsstr_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        const A: u32 = b'A' as u32;
+        const B: u32 = b'B' as u32;
+        const Q: u32 = b'Q' as u32;
+        const Z: u32 = b'Z' as u32;
+        const HI1: u32 = 0x1F600;
+        const HI2: u32 = 0x1F601;
+
+        let needles: Vec<Vec<u32>> = vec![
+            vec![0],
+            vec![Z, 0],
+            vec![Z, Q, 0],
+            vec![A, A, B, 0],
+            vec![HI1, HI2, 0],
+            vec![A, A, A, A, B, 0],
+            vec![A, 0, Q],
+        ];
+
+        let mut haystacks: Vec<Vec<u32>> = Vec::new();
+        for len in [
+            0usize, 1, 2, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 257, 4096,
+        ] {
+            let mut terminated = vec![A; len];
+            terminated.push(0);
+            haystacks.push(terminated);
+            haystacks.push(vec![A; len]);
+        }
+        for pos in [0usize, 1, 7, 15, 16, 31, 32, 63, 64, 127, 128, 255] {
+            let mut h = vec![A; 300];
+            h.push(0);
+            h[pos] = Z;
+            h[pos + 1] = Q;
+            haystacks.push(h);
+        }
+        for (nul_pos, cand_pos) in [
+            (3usize, 20usize),
+            (20, 3),
+            (31, 32),
+            (32, 31),
+            (64, 96),
+            (96, 64),
+        ] {
+            let mut h = vec![A; 140];
+            h.push(0);
+            h[nul_pos] = 0;
+            h[cand_pos] = Z;
+            h[cand_pos + 1] = Q;
+            haystacks.push(h);
+        }
+        let mut high = vec![HI1; 160];
+        high.push(0);
+        high[129] = HI1;
+        high[130] = HI2;
+        haystacks.push(high);
+
+        let mut stress = vec![A; 300];
+        stress.push(0);
+        haystacks.push(stress);
+        let mut stress_hit = vec![A; 300];
+        stress_hit.extend_from_slice(&[A, A, A, B, 0]);
+        haystacks.push(stress_hit);
+
+        let mut hasher = Sha256::new();
+        for h in &haystacks {
+            for n in &needles {
+                hasher.update((h.len() as u64).to_le_bytes());
+                hasher.update((n.len() as u64).to_le_bytes());
+                let pos = wcsstr(h, n).map(|p| p as i64).unwrap_or(-1);
+                hasher.update(pos.to_le_bytes());
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "ab630f290976e1203e3d24cef20b2269486b92ce1ca4e1949cdaf4d3f38a4837",
+            "wide wcsstr golden corpus hash drifted"
+        );
     }
 
     #[test]
