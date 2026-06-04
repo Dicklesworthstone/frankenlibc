@@ -496,6 +496,10 @@ pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
         return (len < s.len()).then_some(len);
     }
 
+    if wmemchr(s, c, s.len()).is_none() {
+        return None;
+    }
+
     let pos = find_wide_or_nul_long(s, c);
     (pos < s.len() && s[pos] == c).then_some(pos)
 }
@@ -512,6 +516,10 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
             }
         }
         return Some(s.len());
+    }
+
+    if wmemrchr(s, c, s.len()).is_none() {
+        return None;
     }
 
     let mut last = None;
@@ -684,6 +692,10 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     }
     let needle = &needle[..needle_len];
     let first = needle[0];
+    if wmemchr(haystack, first, haystack.len()).is_none() {
+        return None;
+    }
+
     let first_pos = find_wide_or_nul_long(haystack, first);
     if first_pos == haystack.len() || haystack[first_pos] == 0 {
         return None;
@@ -1619,6 +1631,134 @@ mod tests {
         }
 
         None
+    }
+
+    #[test]
+    fn golden_wide_absent_prefilter_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        fn scalar_wcschr_reference(s: &[u32], c: u32) -> Option<usize> {
+            for (i, &ch) in s.iter().enumerate() {
+                if ch == c {
+                    return Some(i);
+                }
+                if ch == 0 {
+                    return None;
+                }
+            }
+            None
+        }
+
+        fn scalar_wcsrchr_reference(s: &[u32], c: u32) -> Option<usize> {
+            if c == 0 {
+                return s.iter().position(|&ch| ch == 0).or(Some(s.len()));
+            }
+
+            let mut last = None;
+            for (i, &ch) in s.iter().enumerate() {
+                if ch == 0 {
+                    return last;
+                }
+                if ch == c {
+                    last = Some(i);
+                }
+            }
+            last
+        }
+
+        fn encode_option_index(hasher: &mut Sha256, value: Option<usize>) {
+            hasher.update(value.map(|x| x as u64).unwrap_or(u64::MAX).to_le_bytes());
+        }
+
+        fn encode_slice(hasher: &mut Sha256, value: &[u32]) {
+            hasher.update((value.len() as u64).to_le_bytes());
+            for &item in value {
+                hasher.update(item.to_le_bytes());
+            }
+        }
+
+        const A: u32 = b'A' as u32;
+        const B: u32 = b'B' as u32;
+        const Q: u32 = b'Q' as u32;
+        const Z: u32 = b'Z' as u32;
+        const HI: u32 = 0xffff_fffe;
+
+        let mut cases: Vec<Vec<u32>> = vec![
+            vec![],
+            vec![0],
+            vec![A, B, 0],
+            vec![A, 0, Z, Q, 0],
+            vec![Z, Q, A, 0, Z, Q],
+            vec![A, Z, A, Z, 0, Z],
+            vec![HI, A, 0, HI],
+            vec![A, B, Q],
+        ];
+
+        let mut long_absent = vec![A; 4096];
+        long_absent.push(0);
+        cases.push(long_absent);
+
+        let mut long_present_before_nul = vec![A; 4096];
+        long_present_before_nul[3071] = Z;
+        long_present_before_nul[3072] = Q;
+        long_present_before_nul.push(0);
+        cases.push(long_present_before_nul);
+
+        let mut long_present_after_nul = vec![A; 4096];
+        long_present_after_nul[257] = 0;
+        long_present_after_nul[3071] = Z;
+        long_present_after_nul[3072] = Q;
+        cases.push(long_present_after_nul);
+
+        let mut long_multi_before_after_nul = vec![A; WIDE_FIND_LONG_MIN_LEN + 128];
+        long_multi_before_after_nul[WIDE_FIND_LONG_SIMD_LANES + 3] = Z;
+        long_multi_before_after_nul[WIDE_FIND_LONG_SIMD_LANES + 4] = Q;
+        long_multi_before_after_nul[WIDE_FIND_LONG_SIMD_LANES * 2 + 11] = Z;
+        long_multi_before_after_nul[WIDE_FIND_LONG_SIMD_LANES * 2 + 12] = Q;
+        long_multi_before_after_nul[WIDE_FIND_LONG_MIN_LEN + 7] = 0;
+        long_multi_before_after_nul[WIDE_FIND_LONG_MIN_LEN + 40] = Z;
+        cases.push(long_multi_before_after_nul);
+
+        let needles = [
+            vec![Z, Q, 0],
+            vec![B, 0],
+            vec![HI, A, 0],
+            vec![A, A, A, 0],
+            vec![0],
+        ];
+        let chars = [Z, B, HI, 0, b'X' as u32];
+
+        let mut hasher = Sha256::new();
+        for haystack in &cases {
+            encode_slice(&mut hasher, haystack);
+
+            for &c in &chars {
+                let chr = wcschr(haystack, c);
+                let rchr = wcsrchr(haystack, c);
+                assert_eq!(chr, scalar_wcschr_reference(haystack, c));
+                assert_eq!(rchr, scalar_wcsrchr_reference(haystack, c));
+                hasher.update(c.to_le_bytes());
+                encode_option_index(&mut hasher, chr);
+                encode_option_index(&mut hasher, rchr);
+            }
+
+            for needle in &needles {
+                let found = wcsstr(haystack, needle);
+                assert_eq!(found, scalar_wcsstr_reference(haystack, needle));
+                encode_slice(&mut hasher, needle);
+                encode_option_index(&mut hasher, found);
+            }
+        }
+
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "5386e6e132c041340e2310b6c14834333ff391547e60e92f96a4da5b28f582ec",
+            "wide absent-prefilter golden corpus hash drifted"
+        );
     }
 
     #[test]
