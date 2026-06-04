@@ -8,7 +8,7 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use frankenlibc_core::string::mbstowcs;
+use frankenlibc_core::string::{mbstowcs, wcstombs};
 
 fn bench_mbstowcs(c: &mut Criterion) {
     // ~1 KiB of ASCII (typical for paths, log lines, identifiers).
@@ -42,5 +42,32 @@ fn bench_mbstowcs(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_mbstowcs);
+fn bench_wcstombs(c: &mut Criterion) {
+    // ~1 KiB of ASCII codepoints.
+    let ascii: Vec<u32> = (0..1024).map(|i| 0x61 + (i % 26) as u32).collect();
+    // Mixed: ASCII runs interleaved with 2/3-byte codepoints.
+    let mut mixed: Vec<u32> = Vec::new();
+    for i in 0..128 {
+        mixed.extend_from_slice(&[0x77, 0x6f, 0x72, 0x64]); // "word"
+        mixed.push(if i % 2 == 0 { 0xE9 } else { 0x20AC }); // é or €
+        mixed.push(0x20); // space
+    }
+
+    let cases: &[(&str, &[u32])] = &[("ascii_1k", &ascii), ("mixed_utf8", &mixed)];
+
+    let mut group = c.benchmark_group("wchar_wcstombs");
+    for &(name, src) in cases {
+        group.throughput(Throughput::Elements(src.len() as u64));
+        let mut dest = vec![0u8; src.len() * 4 + 1];
+        group.bench_with_input(BenchmarkId::from_parameter(name), src, |b, input| {
+            b.iter(|| {
+                let n = wcstombs(black_box(&mut dest), black_box(input));
+                black_box(n);
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_mbstowcs, bench_wcstombs);
 criterion_main!(benches);

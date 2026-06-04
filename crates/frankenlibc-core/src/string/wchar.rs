@@ -276,6 +276,31 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
 pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
     let mut si = 0usize;
     let mut di = 0usize;
+
+    // SIMD ASCII fast path — the inverse of mbstowcs's. Every wide char wc with
+    // 0 < wc < 0x80 encodes to the single byte `wc as u8`, exactly as wctomb
+    // does for a 1-byte sequence. Narrow whole ASCII runs a vector at a time,
+    // bailing to the scalar loop the moment a chunk holds a NUL terminator or a
+    // wc >= 0x80 (which needs multibyte encoding, or is a surrogate / out-of-
+    // range value wctomb rejects). Output is byte-for-byte identical, and the
+    // None/error path stays entirely in the unchanged scalar code below.
+    const LANES: usize = 16;
+    let zero = Simd::<u32, LANES>::splat(0);
+    let ascii_max = Simd::<u32, LANES>::splat(0x80);
+    while si + LANES <= src.len() && di + LANES <= dest.len() {
+        let wchars: [u32; LANES] = src[si..si + LANES].try_into().unwrap();
+        let chunk = Simd::<u32, LANES>::from_array(wchars);
+        // Any NUL (terminator) or any wc >= 0x80 (multibyte/invalid) ends the run.
+        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+            break;
+        }
+        // Narrow each ASCII codepoint to its single output byte.
+        let bytes = Simd::<u8, LANES>::from_array(wchars.map(|w| w as u8));
+        bytes.copy_to_slice(&mut dest[di..di + LANES]);
+        si += LANES;
+        di += LANES;
+    }
+
     while si < src.len() {
         if src[si] == 0 {
             // NUL terminator
@@ -611,6 +636,79 @@ mod tests {
             di += 1;
         }
         Some(di)
+    }
+
+    // Pure scalar reference for wcstombs (no SIMD fast path).
+    fn wcstombs_scalar_reference(dest: &mut [u8], src: &[u32]) -> Option<usize> {
+        let mut si = 0usize;
+        let mut di = 0usize;
+        while si < src.len() {
+            if src[si] == 0 {
+                if di < dest.len() {
+                    dest[di] = 0;
+                }
+                return Some(di);
+            }
+            let remaining = if di < dest.len() {
+                dest.len() - di
+            } else {
+                return Some(di);
+            };
+            let n = wctomb(src[si], &mut dest[di..di + remaining])?;
+            di += n;
+            si += 1;
+        }
+        Some(di)
+    }
+
+    #[test]
+    fn wcstombs_simd_isomorphic_to_scalar() {
+        let mut corpus: Vec<Vec<u32>> = Vec::new();
+        // Pure ASCII of every length around the 16-lane boundary.
+        for len in 0..80usize {
+            corpus.push((0..len).map(|i| 0x41 + (i % 26) as u32).collect());
+        }
+        // ASCII with a NUL planted at each offset.
+        for pos in 0..40usize {
+            let mut v: Vec<u32> = (0..40).map(|i| 0x61 + (i % 26) as u32).collect();
+            v[pos] = 0;
+            corpus.push(v);
+        }
+        // ASCII run interrupted by a multibyte codepoint at each offset
+        // (€ = U+20AC -> 3 bytes; ☃ = U+2603; é = U+00E9 -> 2 bytes).
+        for pos in 0..40usize {
+            for &mb in &[0xE9u32, 0x20AC, 0x2603, 0x1F600] {
+                let mut v: Vec<u32> = (0..40).map(|_| 0x78).collect();
+                v.insert(pos, mb);
+                corpus.push(v);
+            }
+        }
+        // Surrogates / out-of-range values wctomb rejects (must bail to scalar
+        // and return None identically).
+        corpus.push(vec![0x78, 0x79, 0xD800, 0x7A]);
+        corpus.push(vec![0x41; 20].into_iter().chain([0x8000_0000u32]).collect());
+        // Random soup including high codepoints.
+        let mut state: u64 = 0xFEED_FACE_DEAD_C0DE;
+        for _ in 0..2000 {
+            let len = (state % 70) as usize;
+            let mut v = Vec::with_capacity(len);
+            for _ in 0..len {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                v.push((state >> 32) as u32);
+            }
+            corpus.push(v);
+        }
+
+        for src in &corpus {
+            for &cap in &[0usize, 1, 7, 15, 16, 17, 33, 256] {
+                let mut a = vec![0xAAu8; cap];
+                let mut b = vec![0xAAu8; cap];
+                let ra = wcstombs(&mut a, src);
+                let rb = wcstombs_scalar_reference(&mut b, src);
+                assert_eq!(ra, rb, "return mismatch: src={src:x?} cap={cap}");
+                assert_eq!(a, b, "dest mismatch: src={src:x?} cap={cap}");
+            }
+        }
     }
 
     #[test]
