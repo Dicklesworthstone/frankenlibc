@@ -5,7 +5,7 @@
 //! NUL-terminated C strings. In this safe Rust model, strings are `&[u8]` slices
 //! where a NUL byte (`0x00`) marks the logical end of the string.
 
-use std::simd::{Simd, Select, cmp::SimdOrd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
+use std::simd::{Select, Simd, cmp::SimdOrd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
 
 const LO_MAGIC: usize = usize::from_ne_bytes([0x01; size_of::<usize>()]);
 const HI_MAGIC: usize = usize::from_ne_bytes([0x80; size_of::<usize>()]);
@@ -13,6 +13,8 @@ const SIMD_LANES: usize = 32;
 const STRLEN_SIMD_LANES: usize = 64;
 /// Bytes scanned per folded strlen iteration: four `STRLEN_SIMD_LANES` panels.
 const STRLEN_BLOCK: usize = STRLEN_SIMD_LANES * 4;
+/// Bytes scanned per wide folded strlen NUL iteration.
+const STRLEN_NUL_BLOCK: usize = STRLEN_SIMD_LANES * 8;
 
 #[inline(always)]
 fn has_nul_byte(word: usize) -> bool {
@@ -77,6 +79,36 @@ fn block_has_nul_256(chunk: &[u8]) -> bool {
     );
     let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 3..STRLEN_BLOCK]);
     let folded = v0.simd_min(v1).simd_min(v2.simd_min(v3));
+    folded.simd_eq(Simd::splat(0)).any()
+}
+
+#[inline(always)]
+fn block_has_nul_512(chunk: &[u8]) -> bool {
+    debug_assert_eq!(chunk.len(), STRLEN_NUL_BLOCK);
+    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[0..STRLEN_SIMD_LANES]);
+    let v1 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
+    );
+    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4],
+    );
+    let v4 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5],
+    );
+    let v5 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6],
+    );
+    let v6 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7],
+    );
+    let v7 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
+    let folded = v0
+        .simd_min(v1)
+        .simd_min(v2.simd_min(v3))
+        .simd_min(v4.simd_min(v5).simd_min(v6.simd_min(v7)));
     folded.simd_eq(Simd::splat(0)).any()
 }
 
@@ -210,8 +242,16 @@ pub fn strlen(s: &[u8]) -> usize {
         i += 1;
     }
 
-    // Fold four panels per iteration so the expensive horizontal NUL reduction
-    // runs once per 256 bytes instead of once per 64 over NUL-free spans.
+    // Fold eight panels per iteration so the expensive horizontal NUL reduction
+    // runs once per 512 bytes instead of once per 64 over NUL-free spans.
+    while i + STRLEN_NUL_BLOCK <= s.len() {
+        let chunk = &s[i..i + STRLEN_NUL_BLOCK];
+        if block_has_nul_512(chunk) {
+            break;
+        }
+        i += STRLEN_NUL_BLOCK;
+    }
+
     while i + STRLEN_BLOCK <= s.len() {
         let chunk = &s[i..i + STRLEN_BLOCK];
         if block_has_nul_256(chunk) {
