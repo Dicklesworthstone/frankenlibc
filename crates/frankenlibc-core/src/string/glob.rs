@@ -274,14 +274,24 @@ where
         }
     };
 
+    // Rust's `read_dir` never yields "." or "..", but glibc's `readdir` does,
+    // and a component pattern that explicitly begins with '.' (e.g. ".*", ".",
+    // "..") matches them. Re-introduce the two synthetic entries so glob results
+    // match glibc exactly; `fnmatch_component` below still filters them, so they
+    // only appear when the pattern actually matches.
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    if component_pat.first() == Some(&b'.') {
+        names.push(b".".to_vec());
+        names.push(b"..".to_vec());
+    }
     for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        if let Ok(entry) = entry {
+            names.push(entry.file_name().as_bytes().to_vec());
+        }
+    }
 
-        let name = entry.file_name();
-        let name_bytes = name.as_bytes();
+    for name_bytes in &names {
+        let name_bytes = name_bytes.as_slice();
 
         // Skip hidden files unless pattern starts with '.' or GLOB_PERIOD
         if name_bytes.starts_with(b".")

@@ -57,14 +57,11 @@ fn glob_differential_battery() {
     let cases: &[(&str, i32, &str)] = &[
         ("*.txt", 0, "0: a.txt b.txt c.txt"),
         ("*", 0, "0: Foo a.txt b.txt bar c.txt d.log sub"),
-        // KNOWN DIVERGENCE (bd-2g7oyh.91): glibc returns ". .. .hidden" here
-        // because its readdir() yields "." and "..", which the explicit leading
-        // dot in ".*" matches. frankenlibc's glob is built on Rust's
-        // std::fs::read_dir, which never yields "." / "..", so it returns only
-        // ".hidden". Excluding "."/".." from glob is a widely-preferred behavior,
-        // so this is tracked for an owner decision rather than silently changed.
-        // The expected value below pins frankenlibc's CURRENT behavior.
-        (".*", 0, "0: .hidden"),
+        // glibc returns ". .. .hidden" here because its readdir yields "." and
+        // ".." which the explicit leading dot in ".*" matches. frankenlibc's
+        // glob (built on Rust std::fs::read_dir, which omits "."/"..") now
+        // re-introduces the two synthetic entries to match glibc (bd-2g7oyh.91).
+        (".*", 0, "0: . .. .hidden"),
         ("[ab]*", 0, "0: a.txt b.txt bar"),
         ("*.xyz", 0, &format!("{GLOB_NOMATCH}")),
         ("*.xyz", GLOB_NOCHECK, "0: *.xyz"),
