@@ -40,6 +40,8 @@ pub fn log1p(x: f64) -> f64 {
 
 const EXP_MEDIUM_MIN: f64 = 0.5;
 const EXP_MEDIUM_MAX: f64 = 2.5;
+const POW_MEDIUM_EXP_MIN: f64 = -3.0;
+const POW_MEDIUM_EXP_MAX: f64 = 3.0;
 
 /// Fast path for the profiled finite medium interval using the existing exp2
 /// kernel's range reduction. Values outside this bounded interval retain the
@@ -91,6 +93,21 @@ fn pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
     }
 }
 
+/// Fast path for positive finite medium bases and bounded non-special
+/// exponents. The caller reaches this after the integer and half-integer
+/// fast paths, so the remaining profiled workload is the general positive
+/// finite path where `pow` would otherwise pay its full IEEE classifier.
+#[inline]
+fn pow_medium_log2_exp2_fast_path(base: f64, exponent: f64) -> Option<f64> {
+    if (EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&base)
+        && (POW_MEDIUM_EXP_MIN..=POW_MEDIUM_EXP_MAX).contains(&exponent)
+    {
+        Some(libm::exp2(exponent * libm::log2(base)))
+    } else {
+        None
+    }
+}
+
 /// Largest |integer exponent| handled by the fast path. Each squaring/multiply
 /// adds at most ~0.5 ULP; capping the magnitude here keeps the result within
 /// the 4-ULP-vs-glibc contract (verified by `pow_integer_fast_path_within_4_ulps`).
@@ -113,6 +130,9 @@ pub fn pow(base: f64, exponent: f64) -> f64 {
             return base.sqrt();
         }
         if let Some(result) = pow_half_integer_fast_path(base, exponent) {
+            return result;
+        }
+        if let Some(result) = pow_medium_log2_exp2_fast_path(base, exponent) {
             return result;
         }
     }
@@ -269,6 +289,110 @@ mod tests {
         assert_eq!(
             digest, "5d10fe8318e0cba5afc8a3260fa342ca472bf559ead08bc67b82ae3a307e3a61",
             "pow half-integer golden corpus hash drifted"
+        );
+    }
+
+    #[test]
+    fn pow_medium_log2_exp2_fast_path_large_sweep_within_4_ulps() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let scale = 1.0 / ((1_u64 << 53) as f64);
+
+        for _ in 0..1_000_000 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let base_unit = ((state >> 11) as f64) * scale;
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let exponent_unit = ((state >> 11) as f64) * scale;
+
+            let base = EXP_MEDIUM_MIN + (EXP_MEDIUM_MAX - EXP_MEDIUM_MIN) * base_unit;
+            let exponent =
+                POW_MEDIUM_EXP_MIN + (POW_MEDIUM_EXP_MAX - POW_MEDIUM_EXP_MIN) * exponent_unit;
+            let got = pow_medium_log2_exp2_fast_path(base, exponent)
+                .expect("generated pair should be inside medium pow gate");
+            let want = base.powf(exponent);
+            assert!(
+                within_ulps(got, want, 4),
+                "medium pow fast path drifted: pow({base}, {exponent}) = {got:?}, glibc = {want:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pow_medium_log2_exp2_fast_path_preserves_fallback_cases() {
+        let cases = [
+            (f64::NEG_INFINITY, 1.337),
+            (-2.0, 1.337),
+            (-0.0, 1.337),
+            (0.0, 1.337),
+            (0.25, 1.337),
+            (EXP_MEDIUM_MAX, 1.337),
+            (4.0, 1.337),
+            (f64::INFINITY, 1.337),
+            (1.5, POW_MEDIUM_EXP_MIN - f64::EPSILON),
+            (1.5, POW_MEDIUM_EXP_MAX + f64::EPSILON),
+        ];
+
+        for (base, exponent) in cases {
+            assert_eq!(
+                pow(base, exponent).to_bits(),
+                libm::pow(base, exponent).to_bits(),
+                "pow({base}, {exponent}) fallback drifted"
+            );
+        }
+        assert!(pow(f64::NAN, 1.337).is_nan());
+        assert!(pow(1.5, f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn golden_pow_medium_log2_exp2_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let bases = [
+            EXP_MEDIUM_MIN,
+            0.500_000_000_000_000_1,
+            0.593_75,
+            0.999_999,
+            1.0,
+            1.000_001,
+            1.5,
+            2.072_341_547_916_954_7,
+            2.468_75,
+            EXP_MEDIUM_MAX - f64::EPSILON,
+        ];
+        let exponents = [
+            POW_MEDIUM_EXP_MIN,
+            -2.9375,
+            -1.337,
+            -0.25,
+            0.25,
+            0.75,
+            1.337,
+            2.25,
+            2.849_516_429_769_268_6,
+            POW_MEDIUM_EXP_MAX,
+        ];
+
+        let mut hasher = Sha256::new();
+        for &base in &bases {
+            for &exponent in &exponents {
+                let got = pow(base, exponent);
+                let want = base.powf(exponent);
+                assert!(
+                    within_ulps(got, want, 4),
+                    "pow({base}, {exponent}) = {got:?} but glibc = {want:?} (>4 ULP)"
+                );
+                hasher.update(base.to_bits().to_le_bytes());
+                hasher.update(exponent.to_bits().to_le_bytes());
+                hasher.update(got.to_bits().to_le_bytes());
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "970a740ac2a4983abae2831799f179c711201e97de0e8b4373c12cab2e193ab7",
+            "pow medium log2/exp2 golden corpus hash drifted"
         );
     }
 

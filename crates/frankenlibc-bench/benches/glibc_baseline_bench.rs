@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::malloc::MallocState;
-use frankenlibc_core::stdio::printf::{FormatSegment, FormatSpec, format_float, parse_format_string};
+use frankenlibc_core::stdio::printf::{
+    FormatSegment, FormatSpec, format_float, parse_format_string,
+};
 use frankenlibc_core::string::{
     memchr, memcpy, memmem, memmove, memset, strchr, strcmp, strcpy, strlen, strncasecmp, strncmp,
     strpbrk, strrchr, strspn, strstr,
@@ -1464,7 +1466,10 @@ fn bench_strstr_absent(c: &mut Criterion) {
         || {
             // SAFETY: both haystack and needle are NUL-terminated.
             unsafe {
-                black_box(libc::strstr(haystack.as_ptr().cast(), needle.as_ptr().cast()));
+                black_box(libc::strstr(
+                    haystack.as_ptr().cast(),
+                    needle.as_ptr().cast(),
+                ));
             }
         },
     );
@@ -1603,6 +1608,46 @@ fn bench_math(c: &mut Criterion) {
             for &x in &inputs {
                 // SAFETY: plain libm call on finite f64 inputs.
                 acc += unsafe { cmath::pow(black_box(x), black_box(2.5)) };
+            }
+            black_box(acc);
+        },
+    );
+
+    // Irrational exponent: exercises the general pow path rather than the
+    // integer or half-integer fast paths.
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "pow_irrational",
+            impl_label: "frankenlibc_core",
+            api_family: "math",
+            symbol: "pow",
+            workload: "pow(x,1.337) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs {
+                acc += math::pow(black_box(x), black_box(1.337));
+            }
+            black_box(acc);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "pow_irrational",
+            impl_label: "host_glibc",
+            api_family: "math",
+            symbol: "pow",
+            workload: "pow(x,1.337) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs {
+                // SAFETY: plain libm call on finite f64 inputs.
+                acc += unsafe { cmath::pow(black_box(x), black_box(1.337)) };
             }
             black_box(acc);
         },
