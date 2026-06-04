@@ -422,6 +422,23 @@ impl FormatSpec {
             .unwrap_or((10, false))
     }
 
+    /// True when no flags, width, or precision are set: the bare `%d`/`%u`
+    /// conversion whose output is just the (optionally `-`-signed) digits, with
+    /// no prefix or padding. Lets the integer formatters skip the entire
+    /// prefix/precision/width/justify pipeline on the overwhelmingly common
+    /// case. A few branch tests in exchange for ~15 skipped operations.
+    fn is_bare_integer(&self) -> bool {
+        let f = &self.flags;
+        !f.left_justify
+            && !f.force_sign
+            && !f.space_sign
+            && !f.alt_form
+            && !f.zero_pad
+            && !f.group
+            && matches!(self.width, Width::None)
+            && matches!(self.precision, Precision::None)
+    }
+
     fn alt_prefix(&self) -> &'static [u8] {
         if !self.flags.alt_form {
             return b"";
@@ -1006,6 +1023,18 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let digit_count = render_digits(abs, base, uppercase, &mut digits);
     let digit_slice = &digits[64 - digit_count..];
 
+    // Fast path: a bare `%d`/`%i` (base 10, no flags/width/precision) emits an
+    // optional '-' followed by the digits — nothing else. Skips the entire
+    // prefix/precision/width/justify pipeline below. Parity-identical: with no
+    // flags the only sign possible is '-' for a negative value.
+    if base == 10 && spec.is_bare_integer() {
+        if negative {
+            buf.push(b'-');
+        }
+        buf.extend_from_slice(digit_slice);
+        return;
+    }
+
     // Determine sign character.
     let sign = if negative {
         Some(b'-')
@@ -1071,6 +1100,15 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let mut digits = [0u8; 64];
     let digit_count = render_digits(value, base, uppercase, &mut digits);
     let digit_slice = &digits[64 - digit_count..];
+
+    // Fast path: a bare `%u` (base 10, no flags/width/precision) emits just the
+    // digits — base 10 has no alternate-form prefix, so there is nothing else
+    // to compute. Skips the prefix/precision/width/justify pipeline below.
+    if base == 10 && spec.is_bare_integer() {
+        buf.extend_from_slice(digit_slice);
+        return;
+    }
+
     let unsigned_kind = spec
         .raw_render_kind()
         .and_then(RawValueRenderKind::unsigned_kind);
@@ -1805,6 +1843,50 @@ mod tests {
             let mut viad = [0u8; 64];
             let nd = render_digits(v, 10, false, &mut viad);
             assert_eq!(&viad[64 - nd..], &lut[64 - nl..], "render_digits(10) mismatch for {v}");
+        }
+    }
+
+    #[test]
+    fn bare_integer_fast_path_matches_canonical() {
+        let u_spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::Ll,
+            b'u',
+            None,
+        );
+        let i_spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::Ll,
+            b'd',
+            None,
+        );
+
+        let mut state: u64 = 0xDEAD_BEEF_CAFE_F00D;
+        for i in 0..200_000u64 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            // unsigned
+            let mut ub = Vec::new();
+            format_unsigned(state, &u_spec, &mut ub);
+            assert_eq!(ub, state.to_string().as_bytes(), "%u mismatch for {state}");
+            // signed (reinterpret bits across the full i64 range)
+            let s = state as i64;
+            let mut sb = Vec::new();
+            format_signed(s, &i_spec, &mut sb);
+            assert_eq!(sb, s.to_string().as_bytes(), "%d mismatch for {s}");
+            if i < 5 {
+                // also pin the small/edge values explicitly
+                for &edge in &[0i64, 1, -1, 9, -9, 10, i64::MIN, i64::MAX] {
+                    let mut eb = Vec::new();
+                    format_signed(edge, &i_spec, &mut eb);
+                    assert_eq!(eb, edge.to_string().as_bytes(), "%d edge {edge}");
+                }
+            }
         }
     }
 
