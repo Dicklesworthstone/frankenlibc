@@ -1117,6 +1117,45 @@ fn bench_math(c: &mut Criterion) {
         },
     );
 
+    // Half-integer exponent (fast path x^2 * sqrt(x)).
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "pow_half",
+            impl_label: "frankenlibc_core",
+            api_family: "math",
+            symbol: "pow",
+            workload: "pow(x,2.5) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs {
+                acc += math::pow(black_box(x), black_box(2.5));
+            }
+            black_box(acc);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "pow_half",
+            impl_label: "host_glibc",
+            api_family: "math",
+            symbol: "pow",
+            workload: "pow(x,2.5) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs {
+                // SAFETY: plain libm call on finite f64 inputs.
+                acc += unsafe { cmath::pow(black_box(x), black_box(2.5)) };
+            }
+            black_box(acc);
+        },
+    );
+
     group.finish();
 }
 
