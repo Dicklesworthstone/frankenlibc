@@ -150,25 +150,25 @@ fn witness_binds_generated_coverage_state() -> TestResult {
     let corpus = field(&witness, "fixture_corpus", "witness")?;
     assert_eq!(
         field(corpus, "json_file_count", "fixture_corpus")?.as_u64(),
-        Some(123)
+        Some(127)
     );
     assert_eq!(
         field(corpus, "total_case_count", "fixture_corpus")?.as_u64(),
-        Some(2702)
+        Some(2787)
     );
     assert_eq!(
         field(corpus, "unique_function_count", "fixture_corpus")?.as_u64(),
-        Some(1141)
+        Some(1181)
     );
 
     let symbols = field(&witness, "symbol_counts", "witness")?;
     assert_eq!(
         field(symbols, "target_covered_symbols", "symbol_counts")?.as_u64(),
-        Some(1126)
+        Some(848)
     );
     assert_eq!(
         field(symbols, "target_uncovered_symbols", "symbol_counts")?.as_u64(),
-        Some(2993)
+        Some(1949)
     );
     Ok(())
 }

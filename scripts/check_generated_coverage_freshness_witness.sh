@@ -162,7 +162,7 @@ def validate_fixture_corpus(witness: dict[str, Any]) -> dict[str, Any]:
     return actual
 
 
-def validate_counts(witness: dict[str, Any]) -> None:
+def validate_counts(witness: dict[str, Any]) -> dict[str, Any]:
     symbol = as_object(load_json(ROOT / "tests/conformance/symbol_fixture_coverage.v1.json", "symbol_count_drift").get("summary"), "symbol summary", "symbol_count_drift")
     per_symbol = as_object(load_json(ROOT / "tests/conformance/per_symbol_fixture_tests.v1.json", "symbol_count_drift").get("summary"), "per-symbol summary", "symbol_count_drift")
     prioritizer = as_object(load_json(ROOT / "tests/conformance/fixture_coverage_prioritizer.v1.json", "prioritizer_count_drift").get("summary"), "prioritizer summary", "prioritizer_count_drift")
@@ -188,6 +188,7 @@ def validate_counts(witness: dict[str, Any]) -> None:
         "total_first_wave_fixture_count",
     ]:
         number_equals(prioritizer.get(key), expected_prioritizer.get(key), f"prioritizer_counts.{key}", "prioritizer_count_drift")
+    return symbol_actual
 
 
 def validate_executor_dispatch(witness: dict[str, Any]) -> None:
@@ -223,7 +224,7 @@ if witness.get("trace_id") != TRACE_ID:
 
 validate_source_hashes(witness)
 fixture_actual = validate_fixture_corpus(witness)
-validate_counts(witness)
+symbol_actual = validate_counts(witness)
 validate_executor_dispatch(witness)
 validate_generator_commands(witness)
 
@@ -239,8 +240,8 @@ report = {
         "fixture_file_count": fixture_actual.get("json_file_count"),
         "fixture_case_count": fixture_actual.get("total_case_count"),
         "unique_function_count": fixture_actual.get("unique_function_count"),
-        "target_covered_symbols": 1126,
-        "target_uncovered_symbols": 2993,
+        "target_covered_symbols": symbol_actual.get("target_covered_symbols"),
+        "target_uncovered_symbols": symbol_actual.get("target_uncovered_symbols"),
     },
 }
 REPORT.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

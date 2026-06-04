@@ -11,6 +11,7 @@
 //! Filed under [bd-58e87f] follow-up.
 
 use std::ffi::{CStr, CString, c_char, c_int};
+use std::sync::{Mutex, MutexGuard};
 
 use frankenlibc_abi::resolv_abi as fl;
 
@@ -22,7 +23,13 @@ unsafe extern "C" {
     fn loc_ntoa(binary: *const u8, ascii: *mut c_char) -> *const c_char;
 }
 
+fn loc_codec_guard() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|err| err.into_inner())
+}
+
 fn ntoa_both(binary: &[u8; 16]) -> (String, String) {
+    let _guard = loc_codec_guard();
     let mut fl_buf = [0u8; 96];
     let mut lc_buf = [0u8; 96];
     let fl_p = unsafe { fl::__loc_ntoa(binary.as_ptr(), fl_buf.as_mut_ptr() as *mut c_char) };
@@ -39,6 +46,7 @@ fn ntoa_both(binary: &[u8; 16]) -> (String, String) {
 }
 
 fn aton_both(text: &str) -> (Option<[u8; 16]>, Option<[u8; 16]>) {
+    let _guard = loc_codec_guard();
     let cs = CString::new(text).unwrap();
     let mut fl_b = [0u8; 16];
     let mut lc_b = [0u8; 16];

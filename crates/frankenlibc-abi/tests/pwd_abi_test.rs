@@ -39,6 +39,36 @@ fn gshadow_fixture_path() -> std::path::PathBuf {
     root.join("tests/conformance/fixtures/gshadow_sample.txt")
 }
 
+fn missing_gshadow_path() -> std::path::PathBuf {
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "frankenlibc-gshadow-missing-{}-{seq}.txt",
+        std::process::id()
+    ))
+}
+
+fn with_missing_gshadow_file(f: impl FnOnce()) {
+    let _guard = GSHADOW_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = missing_gshadow_path();
+    assert!(
+        !path.exists(),
+        "missing gshadow fixture path unexpectedly exists: {}",
+        path.display()
+    );
+
+    // SAFETY: Serialized by GSHADOW_ENV_LOCK.
+    unsafe {
+        std::env::set_var("FRANKENLIBC_GSHADOW_PATH", &path);
+        frankenlibc_abi::pwd_abi::setsgent();
+    }
+    f();
+    // SAFETY: Same as above.
+    unsafe {
+        frankenlibc_abi::pwd_abi::endsgent();
+        std::env::remove_var("FRANKENLIBC_GSHADOW_PATH");
+    }
+}
+
 fn with_passwd_file(content: &[u8], f: impl FnOnce()) {
     let _guard = PASSWD_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_passwd_path();
@@ -607,22 +637,30 @@ fn setpwent_rewinds_cursor() {
 }
 
 // ---------------------------------------------------------------------------
-// gshadow stubs
+// gshadow missing backend
 // ---------------------------------------------------------------------------
 
 #[test]
-fn gshadow_stubs_return_null_or_enoent() {
+fn gshadow_missing_backend_returns_null_or_enoent() {
     use frankenlibc_abi::pwd_abi::{endsgent, getsgent, getsgnam, setsgent};
 
-    unsafe { setsgent() };
-    let ptr = unsafe { getsgent() };
-    assert!(ptr.is_null(), "getsgent should return null (stub)");
+    with_missing_gshadow_file(|| {
+        unsafe { setsgent() };
+        let ptr = unsafe { getsgent() };
+        assert!(
+            ptr.is_null(),
+            "getsgent should return null for missing backend"
+        );
 
-    let name = CString::new("root").unwrap();
-    let ptr = unsafe { getsgnam(name.as_ptr()) };
-    assert!(ptr.is_null(), "getsgnam should return null (stub)");
+        let name = CString::new("root").unwrap();
+        let ptr = unsafe { getsgnam(name.as_ptr()) };
+        assert!(
+            ptr.is_null(),
+            "getsgnam should return null for missing backend"
+        );
 
-    unsafe { endsgent() };
+        unsafe { endsgent() };
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,56 +1081,59 @@ fn getspent_r_clears_result_before_rejecting_tracked_misaligned_spwd_slot() {
 }
 
 // ---------------------------------------------------------------------------
-// gshadow stubs — additional (getsgent_r, getsgnam_r, fgetsgent, etc.)
+// gshadow missing backend — additional (getsgent_r, getsgnam_r, fgetsgent, etc.)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn getsgent_r_returns_enoent_stub() {
+fn getsgent_r_returns_enoent_for_missing_backend() {
     use frankenlibc_abi::pwd_abi::getsgent_r;
     // sgrp is not in libc crate; use raw bytes
     let mut buf = vec![0u8; 512];
-    // getsgent_r takes (struct sgrp*, char*, size_t, struct sgrp**) → int
-    // We pass zeroed memory as the struct pointer since it's a stub
+    // getsgent_r takes (struct sgrp*, char*, size_t, struct sgrp**) → int.
     let mut sgrp_storage = [0u8; 128];
     let mut result_ptr: *mut u8 = ptr::null_mut();
 
-    let rc = unsafe {
-        getsgent_r(
-            sgrp_storage.as_mut_ptr() as *mut _,
-            buf.as_mut_ptr() as *mut c_char,
-            buf.len(),
-            &mut result_ptr as *mut *mut u8 as *mut *mut _,
-        )
-    };
-    assert!(
-        result_ptr.is_null(),
-        "getsgent_r result should be null (stub)"
-    );
-    assert!(rc == 0 || rc == libc::ENOENT, "unexpected rc: {rc}");
+    with_missing_gshadow_file(|| {
+        let rc = unsafe {
+            getsgent_r(
+                sgrp_storage.as_mut_ptr() as *mut _,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                &mut result_ptr as *mut *mut u8 as *mut *mut _,
+            )
+        };
+        assert!(
+            result_ptr.is_null(),
+            "getsgent_r result should be null for missing backend"
+        );
+        assert_eq!(rc, libc::ENOENT, "unexpected rc: {rc}");
+    });
 }
 
 #[test]
-fn getsgnam_r_returns_enoent_stub() {
+fn getsgnam_r_returns_enoent_for_missing_backend() {
     use frankenlibc_abi::pwd_abi::getsgnam_r;
     let name = CString::new("root").unwrap();
     let mut sgrp_storage = [0u8; 128];
     let mut buf = vec![0u8; 512];
     let mut result_ptr: *mut u8 = ptr::null_mut();
 
-    let rc = unsafe {
-        getsgnam_r(
-            name.as_ptr(),
-            sgrp_storage.as_mut_ptr() as *mut _,
-            buf.as_mut_ptr() as *mut c_char,
-            buf.len(),
-            &mut result_ptr as *mut *mut u8 as *mut *mut _,
-        )
-    };
-    assert!(
-        result_ptr.is_null(),
-        "getsgnam_r result should be null (stub)"
-    );
-    assert!(rc == 0 || rc == libc::ENOENT, "unexpected rc: {rc}");
+    with_missing_gshadow_file(|| {
+        let rc = unsafe {
+            getsgnam_r(
+                name.as_ptr(),
+                sgrp_storage.as_mut_ptr() as *mut _,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                &mut result_ptr as *mut *mut u8 as *mut *mut _,
+            )
+        };
+        assert!(
+            result_ptr.is_null(),
+            "getsgnam_r result should be null for missing backend"
+        );
+        assert_eq!(rc, libc::ENOENT, "unexpected rc: {rc}");
+    });
 }
 
 #[test]

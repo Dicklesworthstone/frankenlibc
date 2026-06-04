@@ -35,6 +35,7 @@ static HOST_DL_ITERATE_PHDR: AtomicUsize = AtomicUsize::new(0);
 static HOST_DLADDR: AtomicUsize = AtomicUsize::new(0);
 static RESOLVED: AtomicUsize = AtomicUsize::new(0);
 static HOST_IMAGE: OnceLock<LoadedGlibcImage> = OnceLock::new();
+static HOST_LOADER_IMAGE: OnceLock<LoadedGlibcImage> = OnceLock::new();
 const DLPI_NAME_SCAN_LIMIT: usize = 512;
 
 #[inline]
@@ -151,7 +152,7 @@ fn find_glibc_image_via_phdr() -> Option<(usize, [u8; 512])> {
     Some((target.base, target.path))
 }
 
-fn find_glibc_image_via_maps() -> Option<(usize, [u8; 512])> {
+fn find_image_via_maps(needle: &str) -> Option<(usize, [u8; 512])> {
     let fd = unsafe { raw_open(c"/proc/self/maps".as_ptr().cast()) };
     if fd < 0 {
         return None;
@@ -167,7 +168,7 @@ fn find_glibc_image_via_maps() -> Option<(usize, [u8; 512])> {
         for &byte in &buf[..n as usize] {
             if byte == b'\n' {
                 if let Ok(line) = core::str::from_utf8(&line_buf[..line_len])
-                    && let Some(image) = parse_maps_line(line)
+                    && let Some(image) = parse_maps_line_for_image(line, needle)
                 {
                     unsafe { raw_close(fd) };
                     return Some(image);
@@ -186,13 +187,25 @@ fn find_glibc_image_via_maps() -> Option<(usize, [u8; 512])> {
     }
     unsafe { raw_close(fd) };
     if let Ok(line) = core::str::from_utf8(&line_buf[..line_len]) {
-        return parse_maps_line(line);
+        return parse_maps_line_for_image(line, needle);
     }
     None
 }
 
+fn find_glibc_image_via_maps() -> Option<(usize, [u8; 512])> {
+    find_image_via_maps("libc.so")
+}
+
+fn find_loader_image_via_maps() -> Option<(usize, [u8; 512])> {
+    find_image_via_maps("ld-linux")
+}
+
 fn parse_maps_line(line: &str) -> Option<(usize, [u8; 512])> {
-    if !line.contains("libc.so") {
+    parse_maps_line_for_image(line, "libc.so")
+}
+
+fn parse_maps_line_for_image(line: &str, needle: &str) -> Option<(usize, [u8; 512])> {
+    if !line.contains(needle) {
         return None;
     }
     let entry = frankenlibc_core::proc_maps::parse_maps_line(line)?;
@@ -410,6 +423,56 @@ fn load_glibc_image() -> Option<&'static LoadedGlibcImage> {
     HOST_IMAGE.get()
 }
 
+fn load_loader_image() -> Option<&'static LoadedGlibcImage> {
+    if let Some(image) = HOST_LOADER_IMAGE.get() {
+        return Some(image);
+    }
+    let (base, path) = find_loader_image_via_maps()?;
+    let fd = unsafe { raw_open(path.as_ptr()) };
+    if fd < 0 {
+        return None;
+    }
+    let mut stat = MaybeUninit::<libc::stat>::uninit();
+    let stat_ok = unsafe { raw_fstat(fd, stat.as_mut_ptr()) } == 0;
+    if !stat_ok {
+        unsafe { raw_close(fd) };
+        return None;
+    }
+    // SAFETY: raw_fstat succeeded and fully initialized the struct.
+    let stat = unsafe { stat.assume_init() };
+    if stat.st_size <= 0 {
+        unsafe { raw_close(fd) };
+        return None;
+    }
+    let len = stat.st_size as usize;
+    // SAFETY: read-only private file mapping for ELF parsing.
+    // Use raw syscall to avoid going through our interposed mmap.
+    let mapped = match unsafe {
+        raw_syscall::sys_mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE,
+            fd,
+            0,
+        )
+    } {
+        Ok(ptr) => ptr as *mut c_void,
+        Err(_) => {
+            unsafe { raw_close(fd) };
+            return None;
+        }
+    };
+    unsafe { raw_close(fd) };
+    let image = LoadedGlibcImage {
+        base,
+        mapped: mapped as usize,
+        len,
+    };
+    let _ = HOST_LOADER_IMAGE.set(image);
+    HOST_LOADER_IMAGE.get()
+}
+
 /// Early-resolve the host dlvsym so that subsequent host_dlvsym_next_raw calls
 /// bypass our interposed dlvsym. Must be called before delegate_to_host_libc_start_main.
 pub(crate) fn ensure_host_dlvsym() {
@@ -462,6 +525,13 @@ pub(crate) fn bootstrap_host_symbols() {
 pub(crate) fn resolve_host_symbol_raw(symbol: &str) -> Option<usize> {
     let image = load_glibc_image()?;
     // SAFETY: cached mapping is process-lifetime read-only storage for libc ELF bytes.
+    let data = unsafe { core::slice::from_raw_parts(image.mapped as *const u8, image.len) };
+    resolve_symbol_from_data(image.base, data, symbol)
+}
+
+pub(crate) fn resolve_loader_symbol_raw(symbol: &str) -> Option<usize> {
+    let image = load_loader_image()?;
+    // SAFETY: cached mapping is process-lifetime read-only storage for ld-linux ELF bytes.
     let data = unsafe { core::slice::from_raw_parts(image.mapped as *const u8, image.len) };
     resolve_symbol_from_data(image.base, data, symbol)
 }

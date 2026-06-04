@@ -104,15 +104,15 @@ fn contract_declares_hardened_mode_dashboard_guardrails() {
     assert_eq!(contract["generated_by_bead"].as_str(), Some("bd-0agsk.10"));
     assert_eq!(
         contract["expected_inventory"]["standard_case_count"].as_u64(),
-        Some(2774)
+        Some(2787)
     );
     assert_eq!(
         contract["expected_inventory"]["mode_case_counts"]["hardened_only"].as_u64(),
-        Some(849)
+        Some(853)
     );
     assert_eq!(
         contract["expected_inventory"]["mode_case_counts"]["strict_hardened_pair"].as_u64(),
-        Some(571)
+        Some(572)
     );
     assert_eq!(
         contract["expected_inventory"]["hardened_repair_deny_matrix"]["repair_count"].as_u64(),
@@ -153,7 +153,7 @@ fn checker_passes_for_current_dashboard() {
     assert_eq!(report["outcome"].as_str(), Some("pass"));
     assert_eq!(
         report["summary"]["fixture_inventory"]["effective_mode_case_counts"]["hardened"].as_u64(),
-        Some(1420)
+        Some(1425)
     );
     assert_eq!(
         report["summary"]["hardened_repair_deny_matrix"]["deny_count"].as_u64(),

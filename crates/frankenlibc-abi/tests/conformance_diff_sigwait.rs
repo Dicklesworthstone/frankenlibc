@@ -13,6 +13,7 @@
 
 use std::ffi::{c_int, c_void};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use frankenlibc_abi::{signal_abi as fl_sig, unistd_abi as fl_uni};
 
@@ -34,6 +35,11 @@ const SIG_BLOCK: c_int = 0;
 const SIG_SETMASK: c_int = 2;
 
 static SIG_LOCK: Mutex<()> = Mutex::new(());
+static SIGUSR1_ESCAPED_COUNT: AtomicU32 = AtomicU32::new(0);
+
+extern "C" fn count_escaped_usr1(_sig: c_int) {
+    SIGUSR1_ESCAPED_COUNT.fetch_add(1, Ordering::SeqCst);
+}
 
 fn empty_set() -> libc::sigset_t {
     let mut s: libc::sigset_t = unsafe { core::mem::zeroed() };
@@ -82,10 +88,12 @@ fn diff_sigtimedwait_pending_sigusr1_returns_signo() {
     let _g = SIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let prior = save_mask();
 
-    // Install SIG_IGN as a safety net (in case the signal escapes the
-    // mask in a sibling thread).
+    // Install a harmless handler as a safety net in case process-directed
+    // SIGUSR1 delivery escapes this thread's mask and reaches a sibling test
+    // worker. Do not use SIG_IGN: ignored signals may be discarded instead of
+    // becoming waitable pending signals.
     let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
-    act.sa_sigaction = libc::SIG_IGN;
+    act.sa_sigaction = count_escaped_usr1 as *const c_void as usize;
     let _ = unsafe { libc::sigemptyset(&mut act.sa_mask) };
     let mut old_act: libc::sigaction = unsafe { core::mem::zeroed() };
     let _ = unsafe { libc::sigaction(libc::SIGUSR1, &act, &mut old_act) };
@@ -96,8 +104,7 @@ fn diff_sigtimedwait_pending_sigusr1_returns_signo() {
     let _ = unsafe { libc::sigaddset(&mut block, libc::SIGUSR1) };
     let _ = unsafe { pthread_sigmask(SIG_BLOCK, &block, std::ptr::null_mut()) };
 
-    let pid = unsafe { libc::getpid() };
-    let _ = unsafe { libc::kill(pid, libc::SIGUSR1) };
+    let _ = unsafe { libc::raise(libc::SIGUSR1) };
 
     let zero = libc::timespec {
         tv_sec: 0,
@@ -112,7 +119,7 @@ fn diff_sigtimedwait_pending_sigusr1_returns_signo() {
     };
 
     // Re-queue for libc
-    let _ = unsafe { libc::kill(pid, libc::SIGUSR1) };
+    let _ = unsafe { libc::raise(libc::SIGUSR1) };
     let r_lc = unsafe { sigtimedwait(&block, std::ptr::null_mut(), &zero) };
 
     // Drain anything pending

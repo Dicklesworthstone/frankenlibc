@@ -258,111 +258,122 @@ fn restore_entrypoint(env: *mut c_void, val: c_int, is_signal_variant: bool) -> 
 // so the jmp_buf layout only needs to be self-consistent.
 
 #[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
-core::arch::global_asm!(
-    // __sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int
-    // rdi = env, esi = savemask
-    ".global __sigsetjmp",
-    ".global sigsetjmp",
-    ".global setjmp",
-    ".global _setjmp",
-    ".type __sigsetjmp, @function",
-    ".type sigsetjmp, @function",
-    ".type setjmp, @function",
-    ".type _setjmp, @function",
-    // setjmp = __sigsetjmp(env, 0).  glibc's default setjmp/_setjmp
-    // path must not save or restore the caller's signal mask; callers that
-    // need mask restoration use sigsetjmp(env, nonzero).
-    "setjmp:",
-    "  xor esi, esi",
-    "  jmp __sigsetjmp",
-    // _setjmp = __sigsetjmp(env, 0)
-    "_setjmp:",
-    "  xor esi, esi",
-    "  jmp __sigsetjmp",
-    // sigsetjmp = __sigsetjmp
-    "sigsetjmp:",
-    "__sigsetjmp:",
-    // Save callee-saved registers
-    "  mov [rdi + 0],  rbx",
-    "  mov [rdi + 8],  rbp",
-    "  mov [rdi + 16], r12",
-    "  mov [rdi + 24], r13",
-    "  mov [rdi + 32], r14",
-    "  mov [rdi + 40], r15",
-    // Save caller's rsp (rsp currently points at return address)
-    "  lea rax, [rsp + 8]",
-    "  mov [rdi + 48], rax",
-    // Save return address
-    "  mov rax, [rsp]",
-    "  mov [rdi + 56], rax",
-    // Save savemask flag
-    "  mov [rdi + 64], esi",
-    // If savemask == 0, skip signal mask save
-    "  test esi, esi",
-    "  jz 2f",
-    // Save signal mask: rt_sigprocmask(SIG_BLOCK=0, NULL, &env[72], 8)
-    "  push rdi",
-    "  lea rdx, [rdi + 72]", // old mask output
-    "  xor edi, edi",        // how = SIG_BLOCK (just query)
-    "  xor esi, esi",        // new = NULL
-    "  mov r10d, 8",         // sigsetsize
-    "  mov eax, 14",         // SYS_rt_sigprocmask
-    "  syscall",
-    "  pop rdi",
-    "2:",
-    // Return 0 (direct call from setjmp always returns 0)
-    "  xor eax, eax",
-    "  ret",
-    // longjmp(env: *mut c_void, val: c_int) -> !
-    // rdi = env, esi = val
-    ".global longjmp",
-    ".global _longjmp",
-    ".global siglongjmp",
-    ".type longjmp, @function",
-    ".type _longjmp, @function",
-    ".type siglongjmp, @function",
-    // All variants share the same implementation
-    "siglongjmp:",
-    "_longjmp:",
-    "longjmp:",
-    // Normalize return value: if val==0, return 1
-    "  mov eax, esi",
-    "  test eax, eax",
-    "  jnz 3f",
-    "  mov eax, 1",
-    "3:",
-    // Save return value and env pointer in caller-saved regs
-    "  mov r8d, eax", // return value
-    "  mov r9, rdi",  // env pointer
-    // Check savemask flag
-    "  mov ecx, [rdi + 64]",
-    "  test ecx, ecx",
-    "  jz 4f",
-    // Restore signal mask: rt_sigprocmask(SIG_SETMASK=2, &env[72], NULL, 8)
-    "  lea rsi, [rdi + 72]", // new mask = &env[72]
-    "  mov edi, 2",          // how = SIG_SETMASK
-    "  xor edx, edx",        // old = NULL
-    "  mov r10d, 8",         // sigsetsize
-    "  mov eax, 14",         // SYS_rt_sigprocmask
-    "  syscall",
-    "  mov rdi, r9", // restore env pointer
-    "4:",
-    // Restore callee-saved registers
-    "  mov rbx, [rdi + 0]",
-    "  mov rbp, [rdi + 8]",
-    "  mov r12, [rdi + 16]",
-    "  mov r13, [rdi + 24]",
-    "  mov r14, [rdi + 32]",
-    "  mov r15, [rdi + 40]",
-    // Load return address before restoring rsp
-    "  mov rcx, [rdi + 56]",
-    // Restore stack pointer
-    "  mov rsp, [rdi + 48]",
-    // Set return value
-    "  mov eax, r8d",
-    // Jump to saved return address (appears as setjmp returning val)
-    "  jmp rcx",
-);
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn setjmp(_env: *mut c_void) -> c_int {
+    std::arch::naked_asm!("xor esi, esi", "jmp __sigsetjmp",);
+}
+
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn _setjmp(_env: *mut c_void) -> c_int {
+    std::arch::naked_asm!("xor esi, esi", "jmp __sigsetjmp",);
+}
+
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn sigsetjmp(_env: *mut c_void, _savemask: c_int) -> c_int {
+    std::arch::naked_asm!("jmp __sigsetjmp",);
+}
+
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn __sigsetjmp(_env: *mut c_void, _savemask: c_int) -> c_int {
+    std::arch::naked_asm!(
+        // Save callee-saved registers.
+        "mov [rdi + 0],  rbx",
+        "mov [rdi + 8],  rbp",
+        "mov [rdi + 16], r12",
+        "mov [rdi + 24], r13",
+        "mov [rdi + 32], r14",
+        "mov [rdi + 40], r15",
+        // Save caller's rsp (rsp currently points at return address).
+        "lea rax, [rsp + 8]",
+        "mov [rdi + 48], rax",
+        // Save return address.
+        "mov rax, [rsp]",
+        "mov [rdi + 56], rax",
+        // Save savemask flag.
+        "mov [rdi + 64], esi",
+        // If savemask == 0, skip signal mask save.
+        "test esi, esi",
+        "jz 2f",
+        // Save signal mask: rt_sigprocmask(SIG_BLOCK=0, NULL, &env[72], 8).
+        "push rdi",
+        "lea rdx, [rdi + 72]",
+        "xor edi, edi",
+        "xor esi, esi",
+        "mov r10d, 8",
+        "mov eax, 14",
+        "syscall",
+        "pop rdi",
+        "2:",
+        // Return 0 (direct call from setjmp always returns 0).
+        "xor eax, eax",
+        "ret",
+    );
+}
+
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn longjmp(_env: *mut c_void, _val: c_int) -> ! {
+    std::arch::naked_asm!(
+        // Normalize return value: if val==0, return 1.
+        "mov eax, esi",
+        "test eax, eax",
+        "jnz 3f",
+        "mov eax, 1",
+        "3:",
+        // Save return value and env pointer in caller-saved regs.
+        "mov r8d, eax",
+        "mov r9, rdi",
+        // Check savemask flag.
+        "mov ecx, [rdi + 64]",
+        "test ecx, ecx",
+        "jz 4f",
+        // Restore signal mask: rt_sigprocmask(SIG_SETMASK=2, &env[72], NULL, 8).
+        "lea rsi, [rdi + 72]",
+        "mov edi, 2",
+        "xor edx, edx",
+        "mov r10d, 8",
+        "mov eax, 14",
+        "syscall",
+        "mov rdi, r9",
+        "4:",
+        // Restore callee-saved registers.
+        "mov rbx, [rdi + 0]",
+        "mov rbp, [rdi + 8]",
+        "mov r12, [rdi + 16]",
+        "mov r13, [rdi + 24]",
+        "mov r14, [rdi + 32]",
+        "mov r15, [rdi + 40]",
+        // Load return address before restoring rsp.
+        "mov rcx, [rdi + 56]",
+        // Restore stack pointer.
+        "mov rsp, [rdi + 48]",
+        // Set return value and jump to saved return address.
+        "mov eax, r8d",
+        "jmp rcx",
+    );
+}
+
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn _longjmp(_env: *mut c_void, _val: c_int) -> ! {
+    std::arch::naked_asm!("jmp longjmp",);
+}
+
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn siglongjmp(_env: *mut c_void, _val: c_int) -> ! {
+    std::arch::naked_asm!("jmp longjmp",);
+}
 
 // aarch64 jmp_buf layout:
 //   [0]:   x19/x20     (16 bytes)
@@ -467,15 +478,12 @@ core::arch::global_asm!(
     "  br x30",
 );
 
-// Rust-callable wrappers that dispatch to either our global_asm symbols
-// (release) or the deterministic phase-1 capture/restore path (debug/test).
-// These are needed because other modules (e.g., glibc_internal_abi) call
-// these as Rust functions.
+// Rust-callable wrappers that dispatch to aarch64 global_asm symbols in release
+// or the deterministic phase-1 capture/restore path in debug/test. The x86_64
+// release path above uses exported naked functions directly, so no wrapper is
+// needed there.
 
-#[cfg(all(
-    not(debug_assertions),
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 unsafe extern "C" {
     #[link_name = "setjmp"]
     fn asm_setjmp(env: *mut c_void) -> c_int;
@@ -491,50 +499,32 @@ unsafe extern "C" {
     fn asm_siglongjmp(env: *mut c_void, val: c_int) -> !;
 }
 
-#[cfg(all(
-    not(debug_assertions),
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 pub unsafe extern "C" fn setjmp(env: *mut c_void) -> c_int {
     unsafe { asm_setjmp(env) }
 }
 
-#[cfg(all(
-    not(debug_assertions),
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 pub unsafe extern "C" fn _setjmp(env: *mut c_void) -> c_int {
     unsafe { asm__setjmp(env) }
 }
 
-#[cfg(all(
-    not(debug_assertions),
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 pub unsafe extern "C" fn sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int {
     unsafe { asm_sigsetjmp(env, savemask) }
 }
 
-#[cfg(all(
-    not(debug_assertions),
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 pub unsafe extern "C" fn longjmp(env: *mut c_void, val: c_int) -> ! {
     unsafe { asm_longjmp(env, val) }
 }
 
-#[cfg(all(
-    not(debug_assertions),
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 pub unsafe extern "C" fn _longjmp(env: *mut c_void, val: c_int) -> ! {
     unsafe { asm__longjmp(env, val) }
 }
 
-#[cfg(all(
-    not(debug_assertions),
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 pub unsafe extern "C" fn siglongjmp(env: *mut c_void, val: c_int) -> ! {
     unsafe { asm_siglongjmp(env, val) }
 }

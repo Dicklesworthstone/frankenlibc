@@ -1092,20 +1092,26 @@ mod tests {
     #[test]
     fn try_offer_reports_slot_bias_and_partner_metadata() {
         let array = Arc::new(EliminationArray::<usize, 4>::with_wait_budget(
-            Duration::from_millis(5),
+            Duration::from_millis(200),
         ));
-        let consumer = Arc::clone(&array);
-        let barrier = Arc::new(Barrier::new(2));
-        let consumer_barrier = Arc::clone(&barrier);
+        let producer = Arc::clone(&array);
 
-        let consumer_handle = std::thread::spawn(move || {
-            consumer_barrier.wait();
-            consumer.try_take(3)
-        });
+        let producer_handle = std::thread::spawn(move || producer.try_offer(3, 0xC0FFEE));
+        let publish_deadline = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < publish_deadline && array.stats().published_slots == 0 {
+            if producer_handle.is_finished() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            array.stats().published_slots,
+            1,
+            "producer should park an offer before the metadata exchange"
+        );
 
-        barrier.wait();
-        let offer = array.try_offer(3, 0xC0FFEE);
-        let take = consumer_handle.join().expect("consumer thread joins");
+        let take = array.try_take(3);
+        let offer = producer_handle.join().expect("producer thread joins");
 
         match offer {
             OfferOutcome::Matched(meta) => {

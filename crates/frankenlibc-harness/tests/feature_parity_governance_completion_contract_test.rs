@@ -162,7 +162,7 @@ fn manifest_binds_track0_governance_completion_items() -> TestResult {
     );
     assert_eq!(
         track0["ledger_expectations"]["gap_count"].as_u64(),
-        Some(111)
+        Some(110)
     );
     assert_eq!(track0["drift_expectations"]["fail_count"].as_u64(), Some(0));
     assert_eq!(
@@ -189,10 +189,10 @@ fn checker_validates_track0_governance_contract_and_emits_report_log() -> TestRe
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["source_bead"].as_str(), Some("bd-w2c3.1"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-w2c3.1.4"));
-    assert_eq!(report["track0_summary"]["ledger_gaps"].as_u64(), Some(111));
+    assert_eq!(report["track0_summary"]["ledger_gaps"].as_u64(), Some(110));
     assert_eq!(
         report["track0_summary"]["drift_diagnostics"].as_u64(),
-        Some(111)
+        Some(110)
     );
     assert_eq!(
         report["track0_summary"]["coverage_uncovered_gaps"].as_u64(),

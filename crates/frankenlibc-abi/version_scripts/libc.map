@@ -7,6 +7,13 @@ GLIBC_2.2.5 {
         __libc_start_main;
         __frankenlibc_startup_phase0;
         __frankenlibc_startup_snapshot;
+        __frankenlibc_is_runtime_ready;
+        __frankenlibc_runtime_phase;
+        __frankenlibc_is_feedback_enabled;
+        __frankenlibc_decision_count;
+        __frankenlibc_healing_double_free_count;
+        __frankenlibc_healing_foreign_free_count;
+        __frankenlibc_is_runtime_math_enabled;
 
         /* C++ ABI / stack protection */
         __cxa_atexit;
@@ -1105,9 +1112,13 @@ GLIBC_2.2.5 {
         _nss_files_gethostbyname4_r;
         _nss_files_gethostbyaddr_r;
         _nss_files_gethostbyaddr2_r;
+        _nss_files_setprotoent;
+        _nss_files_endprotoent;
         _nss_files_getprotoent_r;
         _nss_files_getprotobyname_r;
         _nss_files_getprotobynumber_r;
+        _nss_files_setservent;
+        _nss_files_endservent;
         _nss_files_getservent_r;
         _nss_files_getservbyname_r;
         _nss_files_getservbyport_r;
@@ -4696,10 +4707,15 @@ GLIBC_2.2.5 {
         *;
 };
 
+GLIBC_2.3 {
+    global:
+        __tls_get_addr;
+} GLIBC_2.2.5;
+
 GLIBC_2.11 {
     global:
         __longjmp_chk;
-} GLIBC_2.2.5;
+} GLIBC_2.3;
 
 GCC_3.0 {
     global:
@@ -4715,6 +4731,10 @@ GCC_3.0 {
         _Unwind_Resume;
         _Unwind_SetGR;
         _Unwind_SetIP;
+        __register_frame;
+        __register_frame_info;
+        __deregister_frame;
+        __deregister_frame_info;
 };
 
 GCC_3.3 {

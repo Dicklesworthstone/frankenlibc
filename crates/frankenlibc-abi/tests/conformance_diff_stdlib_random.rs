@@ -244,6 +244,7 @@ const RAND48_CALLS_PER_SEED: usize = 3;
 
 #[test]
 fn diff_erand48_cases() {
+    let _lock = global_rng_lock();
     let mut divs = Vec::new();
     for &seed_init in RAND48_SEEDS {
         let mut fl_state = seed_init;
@@ -286,6 +287,7 @@ fn diff_erand48_cases() {
 
 #[test]
 fn diff_nrand48_cases() {
+    let _lock = global_rng_lock();
     let mut divs = Vec::new();
     for &seed_init in RAND48_SEEDS {
         let mut fl_state = seed_init;
@@ -325,6 +327,7 @@ fn diff_nrand48_cases() {
 
 #[test]
 fn diff_jrand48_cases() {
+    let _lock = global_rng_lock();
     let mut divs = Vec::new();
     for &seed_init in RAND48_SEEDS {
         let mut fl_state = seed_init;

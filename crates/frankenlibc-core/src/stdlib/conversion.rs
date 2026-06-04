@@ -1388,7 +1388,7 @@ mod tests {
             prop_assume!(!is_valid);
 
             let mut idx = 0usize;
-            while idx < input.len() && input[idx].is_ascii_whitespace() {
+            while idx < input.len() && is_c_space(input[idx]) {
                 idx += 1;
             }
             if idx < input.len() && (input[idx] == b'+' || input[idx] == b'-') {

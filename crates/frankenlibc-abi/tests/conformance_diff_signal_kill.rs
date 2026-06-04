@@ -13,6 +13,7 @@
 use std::ffi::{c_int, c_void};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use frankenlibc_abi::signal_abi as fl_sig;
 
@@ -37,6 +38,18 @@ extern "C" fn count_usr1(_sig: c_int) {
 }
 extern "C" fn count_usr2(_sig: c_int) {
     SIGUSR2_COUNT.fetch_add(1, Ordering::SeqCst);
+}
+
+fn wait_for_signal_count(counter: &AtomicU32, target: u32) -> u32 {
+    let deadline = Instant::now() + Duration::from_millis(100);
+    loop {
+        let count = counter.load(Ordering::SeqCst);
+        if count >= target || Instant::now() >= deadline {
+            return count;
+        }
+        std::thread::yield_now();
+        std::thread::sleep(Duration::from_micros(50));
+    }
 }
 
 #[derive(Debug)]
@@ -86,24 +99,11 @@ fn diff_kill_self_sigusr1() {
 
     SIGUSR1_COUNT.store(0, Ordering::SeqCst);
     let r_fl = unsafe { fl_sig::kill(pid, libc::SIGUSR1) };
-    // Brief loop to allow handler to run
-    for _ in 0..1000 {
-        if SIGUSR1_COUNT.load(Ordering::SeqCst) >= 1 {
-            break;
-        }
-        std::thread::yield_now();
-    }
-    let cnt_fl = SIGUSR1_COUNT.load(Ordering::SeqCst);
+    let cnt_fl = wait_for_signal_count(&SIGUSR1_COUNT, 1);
 
     SIGUSR1_COUNT.store(0, Ordering::SeqCst);
     let r_lc = unsafe { kill(pid, libc::SIGUSR1) };
-    for _ in 0..1000 {
-        if SIGUSR1_COUNT.load(Ordering::SeqCst) >= 1 {
-            break;
-        }
-        std::thread::yield_now();
-    }
-    let cnt_lc = SIGUSR1_COUNT.load(Ordering::SeqCst);
+    let cnt_lc = wait_for_signal_count(&SIGUSR1_COUNT, 1);
 
     if r_fl != r_lc {
         divs.push(Divergence {
@@ -172,23 +172,11 @@ fn diff_raise_sigusr2() {
 
     SIGUSR2_COUNT.store(0, Ordering::SeqCst);
     let r_fl = unsafe { fl_sig::raise(libc::SIGUSR2) };
-    for _ in 0..1000 {
-        if SIGUSR2_COUNT.load(Ordering::SeqCst) >= 1 {
-            break;
-        }
-        std::thread::yield_now();
-    }
-    let cnt_fl = SIGUSR2_COUNT.load(Ordering::SeqCst);
+    let cnt_fl = wait_for_signal_count(&SIGUSR2_COUNT, 1);
 
     SIGUSR2_COUNT.store(0, Ordering::SeqCst);
     let r_lc = unsafe { raise(libc::SIGUSR2) };
-    for _ in 0..1000 {
-        if SIGUSR2_COUNT.load(Ordering::SeqCst) >= 1 {
-            break;
-        }
-        std::thread::yield_now();
-    }
-    let cnt_lc = SIGUSR2_COUNT.load(Ordering::SeqCst);
+    let cnt_lc = wait_for_signal_count(&SIGUSR2_COUNT, 1);
 
     if r_fl != r_lc {
         divs.push(Divergence {

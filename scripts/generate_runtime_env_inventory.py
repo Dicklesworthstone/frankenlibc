@@ -268,6 +268,15 @@ SEMANTICS: dict[str, dict[str, Any]] = {
         "owner": "scripts/release_dry_run",
         "safety_impact": "low",
     },
+    "FRANKENLIBC_RUNTIME_MATH": {
+        "default_value": "on",
+        "allowed_values": ["on", "off", "1", "true", "unset", "other"],
+        "parse_rule": "case-insensitive parser; only off disables, on/1/true/absent/invalid resolve to enabled",
+        "mutability": "process-immutable after first runtime-policy resolution",
+        "mode_impact": "enables or skips runtime-math kernel consultation before ABI decisions",
+        "owner": "abi/runtime_policy",
+        "safety_impact": "high",
+    },
     "FRANKENLIBC_SKIP_STATIC": {
         "default_value": "1",
         "allowed_values": ["0", "1"],
@@ -277,6 +286,15 @@ SEMANTICS: dict[str, dict[str, Any]] = {
         "owner": "scripts/gentoo",
         "safety_impact": "medium",
     },
+    "FRANKENLIBC_STARTUP_DELEGATE": {
+        "default_value": "0",
+        "allowed_values": ["0", "1", "unset", "other"],
+        "parse_rule": "owned startup is default; exact value \"1\" delegates __libc_start_main to host glibc",
+        "mutability": "process-startup-time",
+        "mode_impact": "opts out of owned startup path for compatibility debugging",
+        "owner": "abi/startup_abi",
+        "safety_impact": "high",
+    },
     "FRANKENLIBC_STARTUP_PHASE0": {
         "default_value": "0",
         "allowed_values": ["0", "1"],
@@ -284,6 +302,15 @@ SEMANTICS: dict[str, dict[str, Any]] = {
         "mutability": "process-startup-time",
         "mode_impact": "gates phase-0 startup path in __libc_start_main",
         "owner": "abi/startup_abi",
+        "safety_impact": "high",
+    },
+    "FRANKENLIBC_THREAD_DELEGATE": {
+        "default_value": "0",
+        "allowed_values": ["0", "1", "unset", "other"],
+        "parse_rule": "native threading is default; exact value \"1\" opts pthread lifecycle calls back to host fallbacks",
+        "mutability": "process-startup-time prewarm policy",
+        "mode_impact": "opts out of native pthread lifecycle implementation for compatibility debugging",
+        "owner": "abi/pthread_abi",
         "safety_impact": "high",
     },
     "FRANKENLIBC_TMPDIR": {

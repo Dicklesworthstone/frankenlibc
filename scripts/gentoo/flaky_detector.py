@@ -153,9 +153,6 @@ def detect_flaky_tests(runs: List[RunResult]) -> List[FlakyTest]:
 
 def generate_dry_run_results(package: str, n_runs: int = 3) -> List[RunResult]:
     """Generate synthetic test results for dry-run mode."""
-    import random
-    random.seed(hash(package) + 42)
-
     test_names = [
         "test_basic_ops",
         "test_file_io",
@@ -169,23 +166,29 @@ def generate_dry_run_results(package: str, n_runs: int = 3) -> List[RunResult]:
         "test_startup",
     ]
 
+    seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(package))
+    flake_offsets = {
+        "test_timeout_handling": 0,
+        "test_network_connect": 1,
+        "test_random_data": 2,
+    }
+    flake_period = max(n_runs, 1)
+
     runs = []
     for i in range(n_runs):
         outcomes = []
-        for name in test_names:
-            # Make some tests flaky
-            if "timeout" in name:
-                passed = random.random() > 0.3  # 30% fail rate
-            elif "network" in name:
-                passed = random.random() > 0.2  # 20% fail rate
-            elif "random" in name:
-                passed = random.random() > 0.15
+        for name_index, name in enumerate(test_names):
+            # Dry-run mode is a reproducible fixture: selected tests fail on
+            # package-stable run indexes so detection always has signal.
+            if name in flake_offsets and n_runs > 1:
+                fail_index = (seed + flake_offsets[name]) % flake_period
+                passed = i != fail_index
             else:
-                passed = True  # Stable tests
+                passed = True
             outcomes.append(TestOutcome(
                 test_name=name,
                 passed=passed,
-                duration_ms=random.uniform(10, 500),
+                duration_ms=10.0 + ((seed + i * 97 + name_index * 31) % 491),
             ))
         runs.append(RunResult(
             package=package,

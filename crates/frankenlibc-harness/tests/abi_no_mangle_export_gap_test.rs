@@ -105,7 +105,7 @@ fn parse_exports(text: &str) -> BTreeSet<String> {
         if current_block.is_none() {
             if let Some(brace) = line.find('{') {
                 let name = line[..brace].trim();
-                if name.starts_with("GLIBC_") {
+                if name.starts_with("GLIBC_") || name.starts_with("GCC_") {
                     current_block = Some(name.to_string());
                     in_local = false;
                 }

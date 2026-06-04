@@ -91,7 +91,7 @@ capture_top_processes() {
         printf "%s" "${FORCE_TOP_PROCESSES}"
         return 0
     fi
-    ps -eo pid,user,comm,%cpu,etime --sort=-%cpu | head -n 10 | tr '\n' ';' || true
+    printf "process_sample_disabled"
 }
 
 should_skip_overloaded() {
@@ -131,8 +131,7 @@ should_skip_overloaded() {
         HOST_THRESHOLD="${threshold}"
         TOP_PROCESSES="$(capture_top_processes)"
         echo "perf_gate: SKIP (system overloaded) load1=${load1} cpus=${cpus} threshold=${threshold}"
-        echo "perf_gate: top CPU processes:"
-        ps -eo pid,user,comm,%cpu,etime --sort=-%cpu | head -n 10 || true
+        echo "perf_gate: top CPU processes: ${TOP_PROCESSES:-process_sample_unavailable}"
         return 0
     fi
 

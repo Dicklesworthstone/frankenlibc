@@ -334,6 +334,8 @@ def write_outputs(manifest: dict[str, Any]) -> None:
         "artifact_refs": sorted(artifact_refs),
         "errors": errors,
     }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     log_path.write_text(
         "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in events),

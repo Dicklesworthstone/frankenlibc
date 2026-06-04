@@ -103,7 +103,7 @@ fn manifest_binds_reality_bridge_completion_evidence() -> TestResult {
     let counts = &evidence["conformance_primary"]["required_counts"];
     assert_eq!(counts["backlog_source_rows"].as_u64(), Some(10));
     assert_eq!(counts["feature_ledger_rows"].as_u64(), Some(170));
-    assert_eq!(counts["feature_gap_import_rows"].as_u64(), Some(111));
+    assert_eq!(counts["feature_gap_import_rows"].as_u64(), Some(110));
     assert_eq!(counts["unique_target_issue_count"].as_u64(), Some(64));
     assert_eq!(counts["lost_feature_gap_count"].as_u64(), Some(0));
 
@@ -160,7 +160,7 @@ fn checker_emits_completion_report_and_log() -> TestResult {
     assert_eq!(report_json["original_bead"].as_str(), Some("bd-bp8fl.2.2"));
     assert_eq!(
         report_json["required_counts"]["feature_gap_import_rows"].as_u64(),
-        Some(111)
+        Some(110)
     );
     assert_eq!(
         report_json["required_counts"]["unique_target_issue_count"].as_u64(),
@@ -182,7 +182,7 @@ fn checker_emits_completion_report_and_log() -> TestResult {
         log_row["completion_debt_bead"].as_str(),
         Some("bd-bp8fl.2.2.1")
     );
-    assert_eq!(log_row["feature_gap_import_rows"].as_u64(), Some(111));
+    assert_eq!(log_row["feature_gap_import_rows"].as_u64(), Some(110));
     assert!(
         log_row["artifact_refs"]
             .as_array()
@@ -205,7 +205,7 @@ fn checker_rejects_lost_feature_gap_binding() -> TestResult {
     let mut doc = manifest()?;
 
     doc["completion_debt_evidence"]["conformance_primary"]["required_counts"]["feature_gap_import_rows"] =
-        json!(110);
+        json!(109);
     std::fs::write(&fixture, serde_json::to_string_pretty(&doc)? + "\n")?;
 
     let output =

@@ -104,6 +104,10 @@ CATEGORY_ARTIFACT_REFS = {
         "tests/conformance/ld_preload_smoke_summary.v1.json",
         "README.md",
     ],
+    "replacement_level_smoke_evidence_stale": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+    ],
 }
 
 SMOKE_SUMMARY_CLAIM_RE = re.compile(
@@ -558,6 +562,108 @@ def check_replacement_level_text_consistency(findings, replacement, matrix):
             check_text(f"transition {transition_name}", "transition_requirement", requirement)
 
 
+def check_replacement_level_smoke_obligations(findings, replacement, smoke_summary):
+    """Verify replacement-level smoke obligations consume the current smoke artifact."""
+    if not replacement or not smoke_summary:
+        return
+
+    levels = replacement.get("levels", [])
+    l1 = next((entry for entry in levels if entry.get("level") == "L1"), None)
+    if not isinstance(l1, dict):
+        return
+
+    objective_gate = l1.get("objective_gate", {})
+    if not isinstance(objective_gate, dict):
+        return
+
+    obligations = objective_gate.get("obligations", [])
+    if not isinstance(obligations, list):
+        return
+
+    smoke_obligation = next(
+        (
+            obligation
+            for obligation in obligations
+            if isinstance(obligation, dict)
+            and obligation.get("id") == "hardened_smoke_battery"
+        ),
+        None,
+    )
+    if not isinstance(smoke_obligation, dict):
+        return
+
+    summary = smoke_summary.get("summary", {})
+    modes = smoke_summary.get("modes", {})
+    current = {
+        "run_id": smoke_summary.get("run_id"),
+        "overall_failed": summary.get("overall_failed"),
+        "strict_status": modes.get("strict", {}).get("status"),
+        "hardened_status": modes.get("hardened", {}).get("status"),
+        "perf_failures": summary.get("perf_failures"),
+        "signature_guard_failures": summary.get("signature_guard_failures"),
+    }
+
+    actual = smoke_obligation.get("actual", {})
+    expected = smoke_obligation.get("expected", {})
+    source = "replacement_levels.json (level L1 objective_gate hardened_smoke_battery)"
+    for field, expected_value in current.items():
+        if actual.get(field) != expected_value:
+            findings.append({
+                "severity": "error",
+                "category": "replacement_level_smoke_evidence_stale",
+                "source": source,
+                "field": field,
+                "expected": expected_value,
+                "actual": actual.get(field),
+                "message": (
+                    "replacement_levels.json L1 smoke obligation actual "
+                    f"{field}={actual.get(field)!r} but "
+                    "tests/conformance/ld_preload_smoke_summary.v1.json has "
+                    f"{expected_value!r}"
+                ),
+            })
+
+    expected_outcome = "pass"
+    for field, expected_value in expected.items():
+        if current.get(field) != expected_value:
+            expected_outcome = "blocked"
+            break
+    actual_outcome = smoke_obligation.get("outcome")
+    if actual_outcome != expected_outcome:
+        findings.append({
+            "severity": "error",
+            "category": "replacement_level_smoke_evidence_stale",
+            "source": source,
+            "field": "hardened_smoke_battery.outcome",
+            "expected": expected_outcome,
+            "actual": actual_outcome,
+            "message": (
+                "replacement_levels.json L1 smoke obligation outcome must be "
+                f"{expected_outcome!r} for the current smoke artifact"
+            ),
+        })
+
+    blocked_obligations = [
+        obligation.get("id", "<missing>")
+        for obligation in obligations
+        if isinstance(obligation, dict) and obligation.get("outcome") == "blocked"
+    ]
+    expected_gate_status = "blocked" if blocked_obligations else "pass"
+    if objective_gate.get("status") != expected_gate_status:
+        findings.append({
+            "severity": "error",
+            "category": "replacement_level_smoke_evidence_stale",
+            "source": "replacement_levels.json (level L1 objective_gate)",
+            "field": "objective_gate.status",
+            "expected": expected_gate_status,
+            "actual": objective_gate.get("status"),
+            "message": (
+                "replacement_levels.json L1 objective_gate.status must reflect "
+                f"blocked obligations {blocked_obligations}"
+            ),
+        })
+
+
 def check_module_taxonomy(findings, matrix):
     """Verify module-level taxonomy claims in FEATURE_PARITY against support_matrix."""
     if not matrix:
@@ -768,6 +874,10 @@ def check_readme_replacement_smoke_claims(findings, readme_text, replacement, sm
         positive_hits.append("broad smoke marked fully green")
     if "both strict and hardened modes pass all workloads" in readme_lower:
         positive_hits.append("paired strict+hardened smoke marked complete")
+    if "green strict + hardened smoke runs" in readme_lower:
+        positive_hits.append("strict+hardened smoke marked green")
+    if "curated preload smoke battery is green in both strict and hardened modes" in readme_lower:
+        positive_hits.append("curated strict+hardened smoke marked green")
 
     negative_hits = []
     if "broad preload smoke is still unstable" in readme_lower:
@@ -1001,6 +1111,7 @@ def main():
     check_count_consistency(findings, dict(matrix_counts), reality, replacement, fp_counts, readme_counts)
     check_replacement_levels(findings, dict(matrix_counts), replacement)
     check_replacement_level_text_consistency(findings, replacement, matrix)
+    check_replacement_level_smoke_obligations(findings, replacement, smoke_summary)
     check_module_taxonomy(findings, matrix)
     check_hard_parts(findings, hard_parts, matrix)
     check_timestamp_consistency(findings, reality, matrix, hard_parts, replacement)

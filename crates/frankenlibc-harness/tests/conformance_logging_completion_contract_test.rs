@@ -162,6 +162,18 @@ fn conformance_expectations_cover_fixtures_and_benchmarks() -> TestResult {
             .as_array()
             .is_some_and(|packages| !packages.is_empty())
     );
+
+    let benchmark_completion = load_json(
+        &root.join("tests/conformance/benchmark_coverage_inventory_completion_contract.v1.json"),
+    )?;
+    let canonical_inventory_rows =
+        benchmark_completion["inventory_expectations"]["inventory_row_count"]
+            .as_u64()
+            .ok_or_else(|| test_error("canonical inventory_row_count missing"))?;
+    assert_eq!(
+        expectations["benchmark_inventory"]["minimum_inventory_rows"].as_u64(),
+        Some(canonical_inventory_rows)
+    );
     Ok(())
 }
 

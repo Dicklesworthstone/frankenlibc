@@ -146,7 +146,7 @@ fn contract_anchors_benchmark_coverage_inventory_completion_debt() -> TestResult
     );
     assert_eq!(
         manifest["inventory_expectations"]["inventory_row_count"].as_u64(),
-        Some(794)
+        Some(670)
     );
     assert_eq!(
         manifest["inventory_expectations"]["missing_owner_row_count"].as_u64(),
@@ -235,8 +235,8 @@ fn checker_accepts_contract_and_emits_telemetry() -> TestResult {
     assert_eq!(report["source_count"].as_u64(), Some(7));
     assert_eq!(report["binding_count"].as_u64(), Some(4));
     assert_eq!(report["family_count"].as_u64(), Some(7));
-    assert_eq!(report["inventory_row_count"].as_u64(), Some(794));
-    assert_eq!(report["missing_inventory_row_count"].as_u64(), Some(750));
+    assert_eq!(report["inventory_row_count"].as_u64(), Some(670));
+    assert_eq!(report["missing_inventory_row_count"].as_u64(), Some(634));
     let events = read_log_events(&out_dir.join("events.jsonl"))?;
     assert!(events.contains("benchmark_coverage_inventory.source_artifacts_validated"));
     assert!(events.contains("benchmark_coverage_inventory.inventory_expectations_validated"));
@@ -279,7 +279,7 @@ fn checker_rejects_inventory_expectation_drift() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "inventory-drift")?;
     let mut manifest = load_json(&manifest_path(&root))?;
-    manifest["inventory_expectations"]["inventory_row_count"] = Value::from(795);
+    manifest["inventory_expectations"]["inventory_row_count"] = Value::from(671);
     let bad_manifest = out_dir.join("inventory_drift.json");
     write_json(&bad_manifest, &manifest)?;
     let output = run_checker(&root, &bad_manifest, &out_dir)?;

@@ -95,7 +95,7 @@ fn manifest_binds_feature_parity_done_evidence_completion() -> TestResult {
 
     let counts = &evidence["conformance_primary"]["required_counts"];
     assert_eq!(counts["row_count"].as_u64(), Some(170));
-    assert_eq!(counts["gap_count"].as_u64(), Some(111));
+    assert_eq!(counts["gap_count"].as_u64(), Some(110));
     assert_eq!(counts["done_row_count"].as_u64(), Some(60));
     assert_eq!(counts["done_evidence_audit_count"].as_u64(), Some(60));
     assert_eq!(counts["invalid_done_evidence_count"].as_u64(), Some(59));

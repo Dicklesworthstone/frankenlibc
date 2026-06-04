@@ -1,4 +1,4 @@
-//! Integration test: feature parity fail-fast drift gate (bd-w2c3.1.2)
+//! Integration test: feature parity fail-fast drift gate (bd-w2c3.10)
 
 use std::error::Error;
 use std::io;
@@ -166,7 +166,7 @@ fn gate_fails_when_unresolved_drift_loses_owner() -> TestResult {
         }
         let mut row: serde_json::Value = serde_json::from_str(raw)
             .map_err(|err| missing_data(format!("issues.jsonl line must be valid JSON: {err}")))?;
-        if row["id"].as_str() == Some("bd-w2c3.1.2") {
+        if row["id"].as_str() == Some("bd-w2c3.10") {
             row["status"] = serde_json::Value::String("orphaned".to_string());
         }
         lines_out.push(serde_json::to_string(&row)?);
@@ -204,10 +204,10 @@ fn gate_fails_when_unresolved_drift_loses_owner() -> TestResult {
     let diagnostics = required_array(&report, "diagnostics")?;
     assert!(
         diagnostics.iter().any(|row| {
-            row["owner_bead"].as_str() == Some("bd-w2c3.1.2")
+            row["owner_bead"].as_str() == Some("bd-w2c3.10")
                 && row["status"].as_str() == Some("fail")
         }),
-        "expected at least one failed diagnostic for orphaned owner bead bd-w2c3.1.2"
+        "expected at least one failed diagnostic for orphaned owner bead bd-w2c3.10"
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);

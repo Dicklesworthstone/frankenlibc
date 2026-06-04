@@ -190,10 +190,8 @@ impl LocalizationChooser {
             } else {
                 // ewma = alpha * new + (1-alpha) * old
                 // In milli: ewma = (ALPHA_MILLI * new + (1000 - ALPHA_MILLI) * old) / 1000
-                self.signal_ewma_milli[i] = (EWMA_ALPHA_MILLI * new_milli
-                    + (1000 - EWMA_ALPHA_MILLI) * old)
-                    .checked_div(1000)
-                    .unwrap_or(0);
+                self.signal_ewma_milli[i] =
+                    (EWMA_ALPHA_MILLI * new_milli + (1000 - EWMA_ALPHA_MILLI) * old) / 1000;
             }
         }
 
@@ -219,12 +217,9 @@ impl LocalizationChooser {
                 raw_score += 2;
             }
 
-            // Normalize by Euler weight: score = raw * SCALE / euler.
-            let score = raw_score
-                .checked_mul(SCALE)
-                .unwrap_or(raw_score)
-                .checked_div(EULER_WEIGHT[arm])
-                .unwrap_or(0);
+            // Values are bounded by clamped 0..3 signals, small constant
+            // profiles, SCALE=256, and nonzero Euler weights.
+            let score = raw_score * SCALE / EULER_WEIGHT[arm];
 
             if score > best_score {
                 best_score = score;
@@ -268,11 +263,7 @@ impl LocalizationChooser {
             if self.mode.heals_enabled() && arm >= 3 {
                 raw_score += 2;
             }
-            arm_scores[arm] = raw_score
-                .checked_mul(SCALE)
-                .unwrap_or(raw_score)
-                .checked_div(EULER_WEIGHT[arm])
-                .unwrap_or(0);
+            arm_scores[arm] = raw_score * SCALE / EULER_WEIGHT[arm];
         }
 
         ChooserSummary {
@@ -289,7 +280,7 @@ impl LocalizationChooser {
         let mut out = [0u8; SIGNAL_COUNT];
         for (i, &ewma_milli) in self.signal_ewma_milli.iter().enumerate() {
             // 0..750 → 0, 750..1500 → 1, 1500..2250 → 2, 2250..3000 → 3
-            out[i] = (ewma_milli.checked_div(750).unwrap_or(0)).min(3) as u8;
+            out[i] = (ewma_milli / 750).min(3) as u8;
         }
         out
     }

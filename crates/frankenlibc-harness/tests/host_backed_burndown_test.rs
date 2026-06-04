@@ -80,6 +80,14 @@ fn burndown_summary_has_required_fields() -> TestResult {
         "summary must have wraps_host_libc"
     );
     assert!(
+        summary.get("glibc_callthrough").is_some(),
+        "summary must have glibc_callthrough"
+    );
+    assert!(
+        summary.get("total_host_backed").is_some(),
+        "summary must have total_host_backed"
+    );
+    assert!(
         summary.get("standalone_capable").is_some(),
         "summary must have standalone_capable"
     );
@@ -97,11 +105,38 @@ fn burndown_summary_has_required_fields() -> TestResult {
         .get("standalone_capable")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let host_backed = summary
+        .get("total_host_backed")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let wraps_host_libc = summary
+        .get("wraps_host_libc")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let glibc_callthrough = summary
+        .get("glibc_callthrough")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
 
     assert!(total > 4000, "should have >4000 total symbols");
+    assert!(wraps_host_libc > 0, "should track host-backed rows");
+    assert_eq!(
+        glibc_callthrough, 0,
+        "opaque glibc call-through rows should stay burned down"
+    );
+    assert_eq!(
+        host_backed,
+        wraps_host_libc + glibc_callthrough,
+        "host-backed total should match host-backed categories"
+    );
+    assert_eq!(
+        standalone + host_backed,
+        total,
+        "standalone plus host-backed rows should cover the matrix"
+    );
     assert!(
-        standalone > 3900,
-        "should have >3900 standalone-capable symbols"
+        standalone > host_backed,
+        "native standalone-capable rows should remain the majority"
     );
     assert!(standalone <= total, "standalone <= total");
 

@@ -202,10 +202,10 @@ fn completion_debt_evidence_binds_conformance_and_telemetry_items() {
             "artifact_has_required_report_only_shape",
             "checker_passes_and_emits_report_and_log",
             "checker_fails_on_row_count_drift",
-            "checker_fails_on_stale_pending_row_claiming_closed",
+            "checker_fails_on_completed_row_claiming_open_route",
             "checker_fails_on_unsupported_done_row_without_evidence",
             "checker_fails_when_ledger_mapping_is_missing",
-            "checker_fails_when_target_bead_is_unknown",
+            "checker_fails_when_scan_finding_target_bead_is_unknown",
             "completion_debt_evidence_resolves_original_close_reason_wording",
             "checker_fails_when_close_reason_wording_resolution_drifts",
         ])
@@ -459,12 +459,12 @@ fn checker_fails_when_archive_notice_is_not_in_ledger() {
 }
 
 #[test]
-fn checker_fails_on_stale_pending_row_claiming_closed() {
+fn checker_fails_on_completed_row_claiming_open_route() {
     let _guard = lock_script();
     let root = workspace_root();
     let artifact_path = root.join("tests/conformance/architecture_todo_reconciliation.v1.json");
     let mut artifact = load_json(&artifact_path);
-    let routed = artifact["row_mappings"]
+    let closed = artifact["row_mappings"]
         .as_array_mut()
         .expect("row_mappings must be array")
         .iter_mut()
@@ -473,23 +473,22 @@ fn checker_fails_on_stale_pending_row_claiming_closed() {
                 .as_array()
                 .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some("TODO-0102")))
         })
-        .expect("TODO-0102 routed mapping should exist");
-    routed["live_classification"] =
-        serde_json::Value::from("already_closed_by_ledger_or_closed_bead_evidence");
-    routed["evidence_refs"] = serde_json::json!(["bd-closed-example"]);
-    let mutation_path = write_mutation(&root, "stale_pending_claiming_closed", &artifact);
+        .expect("TODO-0102 closed mapping should exist");
+    closed["live_classification"] = serde_json::Value::from("routed_to_new_open_bead");
+    closed["target_beads"] = serde_json::json!(["bd-0agsk.3"]);
+    let mutation_path = write_mutation(&root, "completed_claiming_open_route", &artifact);
 
     let output = run_checker(&root, Some(&mutation_path));
     assert!(
         !output.status.success(),
-        "checker should fail when a pending row claims closed evidence"
+        "checker should fail when a completed row claims an open route"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("closed_mapping_status_mismatch"),
+        stderr.contains("routed_mapping_status_mismatch"),
         "unexpected stderr: {stderr}"
     );
-    assert_failure_outputs(&root, "closed_mapping_status_mismatch");
+    assert_failure_outputs(&root, "routed_mapping_status_mismatch");
 }
 
 #[test]
@@ -553,18 +552,18 @@ fn checker_fails_when_ledger_mapping_is_missing() {
 }
 
 #[test]
-fn checker_fails_when_target_bead_is_unknown() {
+fn checker_fails_when_scan_finding_target_bead_is_unknown() {
     let _guard = lock_script();
     let root = workspace_root();
     let artifact_path = root.join("tests/conformance/architecture_todo_reconciliation.v1.json");
     let mut artifact = load_json(&artifact_path);
-    let routed = artifact["row_mappings"]
+    let finding = artifact["scan_findings"]
         .as_array_mut()
-        .expect("row_mappings must be array")
+        .expect("scan_findings must be array")
         .iter_mut()
-        .find(|row| row["live_classification"].as_str() == Some("routed_to_new_open_bead"))
-        .expect("expected routed mapping");
-    routed["target_beads"] = serde_json::json!(["bd-unknown-target"]);
+        .find(|row| row["kind"].as_str() == Some("placeholder_fixture_output_comment"))
+        .expect("expected placeholder scan finding");
+    finding["target_beads"] = serde_json::json!(["bd-unknown-target"]);
     let mutation_path = write_mutation(&root, "unknown_target", &artifact);
 
     let output = run_checker(&root, Some(&mutation_path));
@@ -574,7 +573,7 @@ fn checker_fails_when_target_bead_is_unknown() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("routed_mapping_unknown_target"),
+        stderr.contains("scan_finding_unknown_target"),
         "unexpected stderr: {stderr}"
     );
 }

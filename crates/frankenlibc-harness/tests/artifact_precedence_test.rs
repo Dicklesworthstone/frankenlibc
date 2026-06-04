@@ -167,7 +167,7 @@ fn manifest_declares_artifacts_claims_and_log_contract() {
 }
 
 #[test]
-fn gate_passes_current_manifest_and_emits_report_and_log() {
+fn gate_emits_current_manifest_pass_report_and_log() {
     let root = workspace_root();
     let script = root.join("scripts/check_artifact_precedence.sh");
     assert!(script.exists(), "missing {}", script.display());
@@ -185,7 +185,7 @@ fn gate_passes_current_manifest_and_emits_report_and_log() {
     let output = run_gate_with_env(&[]);
     assert!(
         output.status.success(),
-        "artifact precedence gate failed:\nstdout={}\nstderr={}",
+        "artifact precedence gate should pass for current authoritative artifacts:\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -209,6 +209,18 @@ fn gate_passes_current_manifest_and_emits_report_and_log() {
     assert_eq!(
         report["checks"]["artifact_regeneration_command"].as_str(),
         Some("pass")
+    );
+    assert_eq!(
+        report["checks"]["artifact_freshness"].as_str(),
+        Some("pass")
+    );
+    assert!(report["errors"].as_array().expect("errors array").is_empty());
+    assert!(
+        report["stale_artifacts"]
+            .as_array()
+            .expect("stale_artifacts array")
+            .is_empty(),
+        "current authoritative artifacts should not be stale"
     );
     assert_eq!(
         report["summary"]["readme_rpc_stub_claim_count"].as_u64(),

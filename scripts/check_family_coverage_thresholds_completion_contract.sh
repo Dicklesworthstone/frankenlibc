@@ -357,15 +357,28 @@ def validate_threshold_artifact(manifest: dict[str, Any], artifact: dict[str, An
             err(f"{family_id}: failing row lacks failure_signature")
 
     family_ids = {row.get("family_id") for row in records if isinstance(row, dict)}
-    expected_families = {
-        row.get("module")
+    symbol_family_targets = {
+        row.get("module"): int(row.get("target_total", 0))
         for row in symbol_coverage.get("families", [])
-        if isinstance(row, dict) and int(row.get("target_total", 0)) > 0
+        if isinstance(row, dict)
     }
-    if family_ids != expected_families:
+    expected_families = {
+        family
+        for family, target_total in symbol_family_targets.items()
+        if target_total > 0
+    }
+    allowed_zero_target_extras = {
+        row.get("family_id")
+        for row in records
+        if isinstance(row, dict)
+        and row.get("decision") == "not_applicable"
+        and symbol_family_targets.get(row.get("family_id"), 0) == 0
+    }
+    unexpected_extras = family_ids - expected_families - allowed_zero_target_extras
+    if expected_families - family_ids or unexpected_extras:
         err(
             "threshold family inventory mismatch: "
-            f"missing={sorted(expected_families - family_ids)} extra={sorted(family_ids - expected_families)}"
+            f"missing={sorted(expected_families - family_ids)} extra={sorted(unexpected_extras)}"
         )
 
     fail_ids = {row["family_id"] for row in records if isinstance(row, dict) and row.get("decision") == "fail"}
@@ -385,9 +398,22 @@ def validate_threshold_artifact(manifest: dict[str, Any], artifact: dict[str, An
 
 def validate_source_gate(source_paths: dict[str, str], artifact: dict[str, Any]) -> None:
     source_gate = source_paths.get("source_gate", "scripts/check_family_coverage_thresholds.sh")
+    source_env = os.environ.copy()
+    source_env.update(
+        {
+            "FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_ARTIFACT": str(ARTIFACT),
+            "FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_SYMBOL_COVERAGE": str(SYMBOL_COVERAGE),
+            "FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_REPORT": str(SOURCE_REPORT),
+            "FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_LOG": str(SOURCE_LOG),
+            "FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_REGENERATED": str(
+                SOURCE_REPORT.with_name("family_coverage_thresholds.regenerated.v1.json")
+            ),
+        }
+    )
     result = subprocess.run(
         ["bash", str(ROOT / source_gate)],
         cwd=ROOT,
+        env=source_env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -399,9 +425,7 @@ def validate_source_gate(source_paths: dict[str, str], artifact: dict[str, Any])
         )
         return
 
-    source_report = load_json(DEFAULT_SOURCE_REPORT, "source gate report")
-    if source_report and SOURCE_REPORT.resolve() != DEFAULT_SOURCE_REPORT.resolve():
-        write_json(SOURCE_REPORT, source_report)
+    source_report = load_json(SOURCE_REPORT, "source gate report")
     if source_report.get("status") != "pass":
         err(f"source gate report status must be pass, got {source_report.get('status')!r}")
     if source_report.get("bead") != ORIGINAL_BEAD:
@@ -410,13 +434,10 @@ def validate_source_gate(source_paths: dict[str, str], artifact: dict[str, Any])
     required_logs = set(strings(artifact.get("required_log_fields"), "canonical_artifact.required_log_fields"))
     log_rows: list[dict[str, Any]] = []
     try:
-        source_log_text = DEFAULT_SOURCE_LOG.read_text(encoding="utf-8")
+        source_log_text = SOURCE_LOG.read_text(encoding="utf-8")
     except OSError as exc:
-        err(f"source gate log missing: {rel(DEFAULT_SOURCE_LOG)}: {exc}")
+        err(f"source gate log missing: {rel(SOURCE_LOG)}: {exc}")
         return
-    if SOURCE_LOG.resolve() != DEFAULT_SOURCE_LOG.resolve():
-        SOURCE_LOG.parent.mkdir(parents=True, exist_ok=True)
-        SOURCE_LOG.write_text(source_log_text, encoding="utf-8")
     lines = source_log_text.splitlines()
     for line_no, line in enumerate(lines, start=1):
         if not line.strip():

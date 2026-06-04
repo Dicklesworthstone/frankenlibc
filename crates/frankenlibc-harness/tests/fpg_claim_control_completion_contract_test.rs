@@ -18,7 +18,6 @@ const EXPECTED_GAP_IDS: &[&str] = &[
     "fp-macro-targets-b1983d62901c",
     "fp-macro-targets-556631616b22",
     "fp-macro-targets-1e330b896784",
-    "gap-macro-fp-macro-targets-fa7a23e18f01",
 ];
 
 const REQUIRED_EVENTS: &[&str] = &[
@@ -208,7 +207,7 @@ fn checker_validates_fpg_claim_control_completion_contract() -> TestResult {
 
     let report = read_json(&report_path(&out_dir))?;
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["gap_count"].as_u64(), Some(8));
+    assert_eq!(report["summary"]["gap_count"].as_u64(), Some(7));
     assert_eq!(report["summary"]["binding_count"].as_u64(), Some(1));
     assert_eq!(
         report["fpg_claim_control"]["source_checker"]["status"].as_str(),

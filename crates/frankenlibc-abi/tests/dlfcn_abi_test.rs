@@ -399,7 +399,7 @@ fn dlclose_idempotent_for_main_handle() {
 }
 
 #[test]
-fn dlclose_second_close_returns_error() {
+fn dlclose_repeated_main_handle_close_is_noop() {
     let _guard = TEST_GUARD.lock().unwrap();
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!handle.is_null());
@@ -407,7 +407,7 @@ fn dlclose_second_close_returns_error() {
     let rc1 = unsafe { dlclose(handle) };
     let rc2 = unsafe { dlclose(handle) };
     assert_eq!(rc1, 0, "first close should succeed");
-    assert_ne!(rc2, 0, "second close should fail deterministically");
+    assert_eq!(rc2, 0, "main-program handle close is a repeatable no-op");
 }
 
 #[test]

@@ -38,7 +38,13 @@ fn latest_run_dir(root: &Path, parent: &str, prefix: &str) -> Option<PathBuf> {
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
         .collect();
-    runs.sort_by_key(|e| e.file_name());
+    runs.sort_by(|a, b| {
+        let a_mtime = a.metadata().and_then(|m| m.modified()).ok();
+        let b_mtime = b.metadata().and_then(|m| m.modified()).ok();
+        a_mtime
+            .cmp(&b_mtime)
+            .then_with(|| a.file_name().cmp(&b.file_name()))
+    });
     runs.last().map(|e| e.path())
 }
 

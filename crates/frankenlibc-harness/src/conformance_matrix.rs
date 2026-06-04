@@ -267,7 +267,7 @@ fn run_case_from_execution(
         family = fixture_set.family,
         symbol = case.function,
         mode = active_mode,
-        case_name = case_name
+        case_name = case.name
     );
 
     let input_hex = serde_json::to_vec(&case.inputs)
@@ -412,7 +412,8 @@ fn mode_matches(active_mode: &str, case_mode: &str) -> bool {
 }
 
 fn host_oracle_is_undefined(host_output: &str) -> bool {
-    host_output.trim().eq_ignore_ascii_case("UB")
+    let value = host_output.trim();
+    value.eq_ignore_ascii_case("UB") || value.eq_ignore_ascii_case("UNSUPPORTED_HOST_ORACLE")
 }
 
 fn row_counts_as_error(row: &ConformanceCaseRow) -> bool {
@@ -602,14 +603,15 @@ mod tests {
             report
                 .cases
                 .iter()
-                .any(|row| row.trace_id == "unit::string/strlen::strlen::strict::len_a [strict]"),
-            "trace_id should use the same disambiguated case name as the row"
+                .any(|row| row.trace_id == "unit::string/strlen::strlen::strict::len_a"),
+            "trace_id should keep the raw fixture case name for stable baseline joins"
         );
         assert!(
-            report.cases.iter().any(
-                |row| row.trace_id == "unit::string/strlen::strlen::hardened::len_a [hardened]"
-            ),
-            "trace_id should use the same disambiguated case name as the row"
+            report
+                .cases
+                .iter()
+                .any(|row| row.trace_id == "unit::string/strlen::strlen::hardened::len_a"),
+            "trace_id should keep the raw fixture case name for stable baseline joins"
         );
         Ok(())
     }

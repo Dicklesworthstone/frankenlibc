@@ -156,6 +156,7 @@ pub const NUM_LATENT_CAUSES: usize = 6;
 ///
 /// These are confluent and terminating (each rule strictly decreases the
 /// degree under lex order since `rhs` is a proper subset of `lhs`).
+#[cfg(test)]
 const CANONICAL_RULES: [ReductionRule; 3] = [
     // temporal + regime-shift → regime-shift
     ReductionRule {
@@ -194,22 +195,52 @@ pub const NUM_CANONICAL_CLASSES: usize = 8;
 /// mask via the Gröbner reduction table, and returns a compact class ID.
 #[must_use]
 pub fn canonical_class_from_support(active: &[bool; NUM_LATENT_CAUSES]) -> u8 {
-    let mut mask: MonomialMask = 0;
-    for (i, &a) in active.iter().enumerate() {
-        if a {
-            mask |= 1u128 << i;
-        }
-    }
+    let mask = support_mask(active);
     if mask == 0 {
         return CANONICAL_CLASS_NONE;
     }
 
-    // Reduce — the canonical rules are confluent and terminate in ≤3 steps.
-    let reduced = reduce_mask_with_limit(mask, &CANONICAL_RULES, 16)
-        .map(|(m, _)| m)
-        .unwrap_or(mask);
+    canonical_id_from_reduced(canonical_reduce_mask(mask))
+}
 
-    canonical_id_from_reduced(reduced)
+#[inline]
+#[must_use]
+fn support_mask(active: &[bool; NUM_LATENT_CAUSES]) -> MonomialMask {
+    let mut mask: MonomialMask = 0;
+    if active[0] {
+        mask |= C0_TEMPORAL;
+    }
+    if active[1] {
+        mask |= C1_CONGESTION;
+    }
+    if active[2] {
+        mask |= C2_TOPOLOGICAL;
+    }
+    if active[3] {
+        mask |= C3_REGIME;
+    }
+    if active[4] {
+        mask |= C4_NUMERIC;
+    }
+    if active[5] {
+        mask |= C5_ADMISSIBILITY;
+    }
+    mask
+}
+
+#[inline]
+#[must_use]
+fn canonical_reduce_mask(mut mask: MonomialMask) -> MonomialMask {
+    if (mask & (C0_TEMPORAL | C3_REGIME)) == (C0_TEMPORAL | C3_REGIME) {
+        mask = (mask & !(C0_TEMPORAL | C3_REGIME)) | C3_REGIME;
+    }
+    if (mask & (C1_CONGESTION | C4_NUMERIC)) == (C1_CONGESTION | C4_NUMERIC) {
+        mask = (mask & !(C1_CONGESTION | C4_NUMERIC)) | C1_CONGESTION;
+    }
+    if (mask & (C2_TOPOLOGICAL | C5_ADMISSIBILITY)) == (C2_TOPOLOGICAL | C5_ADMISSIBILITY) {
+        mask = (mask & !(C2_TOPOLOGICAL | C5_ADMISSIBILITY)) | C5_ADMISSIBILITY;
+    }
+    mask
 }
 
 /// Map a reduced monomial mask to a compact canonical class ID.
@@ -473,6 +504,28 @@ mod tests {
                 stats.steps,
                 bits
             );
+        }
+    }
+
+    #[test]
+    fn canonical_fast_path_matches_reducer_all_64_patterns() {
+        for bits in 0u8..64 {
+            let mut active = [false; NUM_LATENT_CAUSES];
+            for (j, a) in active.iter_mut().enumerate() {
+                *a = (bits >> j) & 1 == 1;
+            }
+
+            let mut mask: MonomialMask = 0;
+            for j in 0..NUM_LATENT_CAUSES {
+                if (bits >> j) & 1 == 1 {
+                    mask |= 1u128 << j;
+                }
+            }
+
+            let generic = reduce_mask_with_limit(mask, &CANONICAL_RULES, 16)
+                .map(|(m, _)| canonical_id_from_reduced(m))
+                .unwrap_or_else(|_| canonical_id_from_reduced(mask));
+            assert_eq!(canonical_class_from_support(&active), generic);
         }
     }
 

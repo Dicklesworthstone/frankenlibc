@@ -2049,6 +2049,13 @@ fn stable_artifact_source_path(path: &Path) -> String {
         return path.to_string_lossy().to_string();
     }
 
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace_root) = manifest_dir.parent().and_then(|parent| parent.parent())
+        && let Ok(relative) = path.strip_prefix(workspace_root)
+    {
+        return relative.to_string_lossy().to_string();
+    }
+
     if let Ok(current_dir) = std::env::current_dir()
         && let Ok(relative) = path.strip_prefix(&current_dir)
     {

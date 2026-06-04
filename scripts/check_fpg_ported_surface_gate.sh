@@ -43,7 +43,7 @@ EXPECTED_GAP_IDS = [
     "fp-gap-summary-267b493369f9",
     "fp-gap-summary-17c934647652",
     "fp-gap-summary-a51012652c16",
-    "fp-gap-summary-17d24896af61",
+    "fp-gap-summary-a50e943093eb",
     "fp-gap-summary-161e06bc3a3d",
     "fp-gap-summary-7bd4926c4439",
 ]

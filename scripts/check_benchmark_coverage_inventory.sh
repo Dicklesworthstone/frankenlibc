@@ -12,6 +12,7 @@ REPORT="${FRANKENLIBC_BENCHMARK_COVERAGE_REPORT:-target/conformance/benchmark_co
 LOG="${FRANKENLIBC_BENCHMARK_COVERAGE_LOG:-target/conformance/benchmark_coverage_inventory.log.jsonl}"
 
 cd "$REPO_ROOT"
+mkdir -p "$(dirname "$REPORT")" "$(dirname "$LOG")"
 
 echo "=== Benchmark Coverage Inventory Gate (bd-bp8fl.8.1) ==="
 echo "report=${REPORT}"

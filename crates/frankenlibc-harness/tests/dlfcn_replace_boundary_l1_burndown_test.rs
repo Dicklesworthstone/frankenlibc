@@ -5,9 +5,11 @@
 //! does NOT change the sentinel's host-callsite census but adds a
 //! per-callsite L1-relevance classification:
 //!
-//!   * `l1_blocker` must be removed before current_level can promote to L1.
-//!   * `below_l1` structurally unreachable at L1 (proven by a cited
-//!     runtime_policy guard); permitted to remain.
+//!   * `l1_blocker` is this artifact's legacy field name for a standalone
+//!     replacement blocker; it must be removed before current_level can
+//!     promote to L2/L3.
+//!   * `below_l1` is structurally unreachable in hardened interpose paths
+//!     (proven by a cited runtime_policy guard); permitted to remain.
 //!
 //! The harness gate enforces:
 //!   * every sentinel callsite has exactly one classification row;

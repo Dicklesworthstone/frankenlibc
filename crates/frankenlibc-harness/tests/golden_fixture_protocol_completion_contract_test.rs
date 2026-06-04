@@ -172,13 +172,17 @@ fn checker_validates_golden_fixture_protocol_contract() -> TestResult {
     assert_eq!(report["source_bead"].as_str(), Some("bd-15n.3"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-15n.3.1"));
     assert_eq!(report["summary"]["required_outputs"].as_u64(), Some(4));
+    let baseline =
+        load_json(&root.join("tests/conformance/conformance_coverage_baseline.v1.json"))?;
+    let snapshot =
+        load_json(&root.join("tests/conformance/conformance_coverage_snapshot.v1.json"))?;
     assert_eq!(
         report["summary"]["coverage_baseline_cases"].as_u64(),
-        Some(558)
+        baseline["summary"]["total_fixture_cases"].as_u64()
     );
     assert_eq!(
         report["summary"]["coverage_snapshot_cases"].as_u64(),
-        Some(2703)
+        snapshot["summary"]["total_fixture_cases"].as_u64()
     );
 
     Ok(())

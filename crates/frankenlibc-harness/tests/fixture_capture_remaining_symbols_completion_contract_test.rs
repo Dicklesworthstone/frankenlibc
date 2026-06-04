@@ -377,21 +377,21 @@ fn checker_accepts_remaining_symbols_contract() -> TestResult {
         summary
             .get("covered_exported_symbols")
             .and_then(Value::as_u64),
-        Some(405)
+        Some(1166)
     );
     assert_eq!(
         summary
             .get("uncovered_action_count")
             .and_then(Value::as_u64),
-        Some(3716)
+        Some(1951)
     );
     assert_eq!(
         summary.get("total_cases").and_then(Value::as_u64),
-        Some(1284)
+        Some(2787)
     );
     assert_eq!(
         summary.get("golden_total").and_then(Value::as_u64),
-        Some(1817)
+        Some(3369)
     );
     assert_eq!(
         summary.get("binding_count").and_then(Value::as_u64),
@@ -437,17 +437,17 @@ fn checker_generates_per_symbol_probe() -> TestResult {
     );
     assert_eq!(
         summary.get("symbols_with_fixtures").and_then(Value::as_u64),
-        Some(403)
+        Some(1164)
     );
     assert_eq!(
         summary.get("total_cases").and_then(Value::as_u64),
-        Some(1284)
+        Some(2787)
     );
     assert_eq!(
         summary
             .get("uncovered_action_count")
             .and_then(Value::as_u64),
-        Some(3716)
+        Some(1951)
     );
 
     Ok(())
@@ -484,7 +484,7 @@ fn checker_rejects_understated_fixture_case_inventory() -> TestResult {
         .get_mut("summary")
         .and_then(Value::as_object_mut)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "summary missing"))?;
-    summary.insert("total_cases".to_string(), json!(1283));
+    summary.insert("total_cases".to_string(), json!(2786));
     write_json(&report_path, &report)?;
 
     let output = run_checker(
@@ -509,7 +509,7 @@ fn checker_rejects_golden_suite_failure_drift() -> TestResult {
     let suite_obj = suite
         .as_object_mut()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "golden suite must be object"))?;
-    suite_obj.insert("passed".to_string(), json!(1816));
+    suite_obj.insert("passed".to_string(), json!(3368));
     suite_obj.insert("failed".to_string(), json!(1));
     write_json(&suite_path, &suite)?;
 

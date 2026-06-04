@@ -24,7 +24,7 @@ const EXPECTED_CLAIM_IDS: &[&str] = &[
     "feature-parity-macro-targets",
     "support-taxonomy-counts",
     "semantic-overlay-blocker",
-    "replacement-level-current-l0",
+    "replacement-level-current-l1",
     "compatibility-reality-report",
     "generated-claim-control-gate",
 ];

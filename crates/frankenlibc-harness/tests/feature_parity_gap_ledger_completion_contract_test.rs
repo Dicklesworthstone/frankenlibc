@@ -146,7 +146,7 @@ fn manifest_binds_gap_ledger_completion_items() -> TestResult {
     assert_eq!(contract["schema_version"].as_str(), Some("v1"));
     assert_eq!(contract["bead"].as_str(), Some("bd-w2c3.1.1"));
     assert_eq!(contract["row_count"].as_u64(), Some(170));
-    assert_eq!(contract["gap_count"].as_u64(), Some(111));
+    assert_eq!(contract["gap_count"].as_u64(), Some(110));
     assert_eq!(contract["delta_count"].as_u64(), Some(5));
     assert_eq!(contract["parse_error_count"].as_u64(), Some(0));
     assert_eq!(contract["done_evidence_audit_count"].as_u64(), Some(60));
@@ -189,7 +189,7 @@ fn checker_validates_gap_ledger_contract_and_emits_report_log() -> TestResult {
     );
     assert_eq!(
         report["gap_ledger_summary"]["gap_count"].as_u64(),
-        Some(111)
+        Some(110)
     );
     assert_eq!(
         report["gap_ledger_summary"]["done_evidence_audit_count"].as_u64(),
@@ -296,7 +296,7 @@ fn checker_rejects_wrong_gap_count() -> TestResult {
     let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "wrong-gap-count")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["required_gap_ledger_contract"]["gap_count"] = json!(110);
+    manifest["required_gap_ledger_contract"]["gap_count"] = json!(109);
     let mutated = out_dir.join("feature_parity_gap_ledger_wrong_gap_count.json");
     write_json(&mutated, &manifest)?;
 

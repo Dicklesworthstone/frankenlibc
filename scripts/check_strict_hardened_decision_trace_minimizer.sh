@@ -193,9 +193,9 @@ def validate_report_contract(manifest: dict) -> list[str]:
     report_contract = manifest.get("report_contract")
     if not isinstance(report_contract, dict):
         return ["report_contract_not_object"]
-    if report_contract.get("output_path") != rel(report_path):
+    if report_contract.get("output_path") != EXPECTED_REPORT:
         errors.append("report_contract_output_path_mismatch")
-    if report_contract.get("log_path") != rel(log_path):
+    if report_contract.get("log_path") != EXPECTED_LOG:
         errors.append("report_contract_log_path_mismatch")
     fields = set(report_contract_field_list(manifest))
     missing = sorted(REQUIRED_REPORT_FIELDS - fields)

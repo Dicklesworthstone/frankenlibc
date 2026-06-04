@@ -5,9 +5,12 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
+
+static CHECKER_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 const REQUIRED_EVENTS: &[&str] = &[
     "source_artifacts_validated",
@@ -23,6 +26,13 @@ const REQUIRED_EVENTS: &[&str] = &[
 
 fn test_error(message: impl Into<String>) -> Box<dyn Error> {
     std::io::Error::other(message.into()).into()
+}
+
+fn checker_lock() -> MutexGuard<'static, ()> {
+    CHECKER_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn workspace_root() -> TestResult<PathBuf> {
@@ -107,6 +117,7 @@ fn string_set(value: &Value, key: &str, context: &str) -> TestResult<BTreeSet<St
 }
 
 fn run_checker(root: &Path, manifest: &Path, out_dir: &Path) -> TestResult<Output> {
+    let _lock = checker_lock();
     Ok(Command::new("bash")
         .arg(checker_path(root))
         .current_dir(root)
@@ -241,16 +252,13 @@ fn contract_binds_fixture_coverage_prioritizer_sources() -> TestResult {
         "required_prioritizer_summary",
         "completion_contract",
     )?;
-    assert_eq!(summary["campaign_count"].as_u64(), Some(18));
-    assert_eq!(summary["deferred_module_count"].as_u64(), Some(18));
+    assert_eq!(summary["campaign_count"].as_u64(), Some(8));
+    assert_eq!(summary["deferred_module_count"].as_u64(), Some(14));
     assert_eq!(
         summary["selected_target_uncovered_symbols"].as_u64(),
-        Some(3332)
+        Some(1735)
     );
-    assert_eq!(
-        summary["total_first_wave_fixture_count"].as_u64(),
-        Some(196)
-    );
+    assert_eq!(summary["total_first_wave_fixture_count"].as_u64(), Some(88));
     Ok(())
 }
 
@@ -260,10 +268,8 @@ fn checker_accepts_fixture_coverage_prioritizer_completion_contract() -> TestRes
     let out_dir = unique_output_dir(&root, "fixture-coverage-prioritizer-check")?;
     let output = run_checker(&root, &manifest_path(&root), &out_dir)?;
     expect_checker_success(&output)?;
-    assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains("PASS fixture coverage prioritizer completion contract")
-    );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains("PASS fixture coverage prioritizer completion contract"));
 
     let report = load_json(&checker_report(&out_dir))?;
     assert_eq!(
@@ -298,10 +304,8 @@ fn checker_emits_structured_fixture_coverage_telemetry() -> TestResult {
     }
     for row in &events {
         assert_eq!(string_field(row, "bead_id", "event")?, "bd-bp8fl.4.1.1");
-        assert!(
-            string_field(row, "trace_id", "event")?
-                .starts_with("bd-bp8fl.4.1.1::fixture-coverage-prioritizer::completion::v1::")
-        );
+        assert!(string_field(row, "trace_id", "event")?
+            .starts_with("bd-bp8fl.4.1.1::fixture-coverage-prioritizer::completion::v1::"));
     }
     Ok(())
 }

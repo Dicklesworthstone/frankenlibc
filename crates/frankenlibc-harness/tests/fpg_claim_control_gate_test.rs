@@ -1,6 +1,6 @@
 //! Integration test: fpg-claim-control evidence gate (bd-bp8fl.3.5)
 //!
-//! Drives the eight `fpg-claim-control` gaps from
+//! Drives the seven `fpg-claim-control` gaps from
 //! `tests/conformance/feature_parity_gap_ledger.v1.json` through a fail-closed
 //! evidence binder rooted at `tests/conformance/fpg_claim_control_gate.v1.json`.
 //! Each macro-coverage-target row in `FEATURE_PARITY.md` must:
@@ -120,7 +120,6 @@ const EXPECTED_GAP_IDS: &[&str] = &[
     "fp-macro-targets-b1983d62901c",
     "fp-macro-targets-556631616b22",
     "fp-macro-targets-1e330b896784",
-    "gap-macro-fp-macro-targets-fa7a23e18f01",
 ];
 
 #[test]
@@ -222,10 +221,10 @@ fn gate_artifact_is_well_formed() -> TestResult {
 }
 
 #[test]
-fn gate_rows_cover_all_eight_fpg_claim_control_gaps() -> TestResult {
+fn gate_rows_cover_all_current_fpg_claim_control_gaps() -> TestResult {
     let gate = load_json(&gate_path())?;
     let rows = as_array(&gate["rows"], "rows")?;
-    ensure_eq(rows.len(), 8usize, "rows count")?;
+    ensure_eq(rows.len(), 7usize, "rows count")?;
 
     let mut row_ids: Vec<&str> = rows
         .iter()
@@ -301,9 +300,6 @@ fn gate_rows_resolve_at_cited_feature_parity_lines() -> TestResult {
         })?;
 
         let primary_key = as_str(&row["primary_key"], "row.primary_key")?;
-        // The machine_delta sentinel reuses the linked row's line; both rows
-        // are still required to land on a macro-targets row that mentions a
-        // recognizable claim string.
         let kind = as_str(&row["kind"], "row.kind")?;
         if kind == "feature_parity_row_status" {
             ensure(
@@ -320,14 +316,6 @@ fn gate_rows_resolve_at_cited_feature_parity_lines() -> TestResult {
             )?;
             seen_lines.insert(line as usize);
             macro_target_keys.insert(primary_key.to_string());
-        } else if kind == "machine_delta_drift" {
-            let linked = as_str(&row["linked_gap_id"], "row.linked_gap_id")?;
-            ensure(
-                EXPECTED_GAP_IDS.contains(&linked),
-                format!(
-                    "{gap_id}: linked_gap_id {linked} must be one of the macro_targets gap ids"
-                ),
-            )?;
         } else {
             return Err(test_error(format!("{gap_id}: unknown row.kind {kind}")));
         }
@@ -394,42 +382,6 @@ fn gate_evidence_anchors_resolve_in_cited_artifacts() -> TestResult {
                     resolved.exists(),
                     exists,
                     format!("{gap_id}: version script existence must match anchor"),
-                )?;
-                continue;
-            }
-
-            // The machine_delta sentinel anchors point at rows in the gap
-            // ledger: `self.*` resolves the sentinel's own gap, `linked.*`
-            // resolves the row named in `linked_gap_id`.
-            if artifact == "tests/conformance/feature_parity_gap_ledger.v1.json"
-                && (field.starts_with("self.") || field.starts_with("linked."))
-            {
-                let ledger = load_json(&workspace_root().join(artifact))?;
-                let target_gap_id: &str = if field.starts_with("self.") {
-                    gap_id
-                } else {
-                    row["linked_gap_id"].as_str().ok_or_else(|| {
-                        test_error(format!(
-                            "{gap_id}: linked.* anchor requires row.linked_gap_id"
-                        ))
-                    })?
-                };
-                let gaps = as_array(&ledger["gaps"], "ledger.gaps")?;
-                let gap = gaps
-                    .iter()
-                    .find(|g| g["gap_id"].as_str() == Some(target_gap_id))
-                    .ok_or_else(|| {
-                        test_error(format!(
-                            "{gap_id}: target gap {target_gap_id} not found in ledger"
-                        ))
-                    })?;
-                let key = field.split_once('.').map(|(_, k)| k).unwrap_or(field);
-                let actual = gap[key].as_str().unwrap_or_default();
-                let expected = as_str(&anchor["expected_value"], "anchor.expected_value")?;
-                ensure_eq(
-                    actual,
-                    expected,
-                    format!("{gap_id}: anchor {artifact}/{field} on {target_gap_id} mismatch"),
                 )?;
                 continue;
             }

@@ -164,6 +164,8 @@ use frankenlibc_abi::glibc_internal_abi::{
 use frankenlibc_abi::stdio_abi::{fclose, tmpfile};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::ptr;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 // ===========================================================================
 // DNS name validators
@@ -4829,8 +4831,36 @@ fn libc_use_alloca_matches_libc_alloca_cutoff() {
 
 use frankenlibc_abi::glibc_internal_abi::__libc_fatal;
 
+static LIBC_FATAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn wait_for_sigabrt_child(pid: libc::pid_t) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut status: c_int = 0;
+    loop {
+        let waited = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if waited == pid {
+            assert!(libc::WIFSIGNALED(status));
+            assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+            return;
+        }
+        assert_eq!(waited, 0, "waitpid failed while waiting for child {pid}");
+
+        if Instant::now() >= deadline {
+            unsafe {
+                let _ = libc::kill(pid, libc::SIGKILL);
+                let _ = libc::waitpid(pid, &mut status, 0);
+            }
+            panic!("child {pid} did not terminate with SIGABRT before timeout; status={status}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn libc_fatal_aborts_child_with_message() {
+    let _guard = LIBC_FATAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     // The function never returns and aborts the process. Run it
     // in a forked child so we can observe SIGABRT without
     // killing the test runner.
@@ -4840,43 +4870,37 @@ fn libc_fatal_aborts_child_with_message() {
         let msg = c"frankenlibc test fatal\n";
         unsafe { __libc_fatal(msg.as_ptr()) };
     }
-    let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
-    assert_eq!(waited, pid);
-    assert!(libc::WIFSIGNALED(status));
-    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+    wait_for_sigabrt_child(pid);
 }
 
 #[test]
 fn libc_fatal_null_message_still_aborts_with_fallback() {
+    let _guard = LIBC_FATAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0, "fork failed");
     if pid == 0 {
         unsafe { __libc_fatal(std::ptr::null()) };
     }
-    let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
-    assert_eq!(waited, pid);
-    assert!(libc::WIFSIGNALED(status));
-    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+    wait_for_sigabrt_child(pid);
 }
 
 #[test]
 fn libc_fatal_unterminated_message_still_aborts_with_fallback() {
+    let _guard = LIBC_FATAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let raw_message = unsafe { malloc_unterminated(b"unterminated fatal message") };
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0, "fork failed");
     if pid == 0 {
         unsafe { __libc_fatal(raw_message) };
     }
-    let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    wait_for_sigabrt_child(pid);
     unsafe {
         frankenlibc_abi::malloc_abi::free(raw_message.cast());
     }
-    assert_eq!(waited, pid);
-    assert!(libc::WIFSIGNALED(status));
-    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
 }
 
 // ---------------------------------------------------------------------------

@@ -84,9 +84,9 @@ fn backlog_and_feature_gap_rows_are_preserved_without_rejections() -> TestResult
     assert_eq!(summary["feature_ledger_rows"].as_u64(), Some(170));
     assert_eq!(
         summary["feature_ledger_unresolved_gaps"].as_u64(),
-        Some(111)
+        Some(110)
     );
-    assert_eq!(summary["feature_gap_import_rows"].as_u64(), Some(111));
+    assert_eq!(summary["feature_gap_import_rows"].as_u64(), Some(110));
     assert_eq!(summary["rejected_row_count"].as_u64(), Some(0));
     assert_eq!(summary["missing_target_issue_count"].as_u64(), Some(0));
     assert_eq!(summary["missing_acceptance_target_count"].as_u64(), Some(0));
@@ -141,7 +141,7 @@ fn backlog_and_feature_gap_rows_are_preserved_without_rejections() -> TestResult
             .ok_or_else(|| test_error("gap source_row_id should be string"))?;
         assert!(gap_ids.insert(gap_id.to_string()));
     }
-    assert_eq!(gap_ids.len(), 111);
+    assert_eq!(gap_ids.len(), 110);
     Ok(())
 }
 
@@ -181,7 +181,7 @@ fn fixture_replay_emits_report_logs_and_negative_cases() -> TestResult {
         report_json["fixture_tracker"]["issue_count"].as_u64(),
         Some(64)
     );
-    assert_eq!(report_json["log"]["row_count"].as_u64(), Some(181));
+    assert_eq!(report_json["log"]["row_count"].as_u64(), Some(180));
 
     let cases = report_json["negative_case_results"]
         .as_array()
@@ -211,7 +211,7 @@ fn fixture_replay_emits_report_logs_and_negative_cases() -> TestResult {
         .lines()
         .map(serde_json::from_str)
         .collect::<Result<_, _>>()?;
-    assert_eq!(rows.len(), 181);
+    assert_eq!(rows.len(), 180);
     for row in &rows {
         assert_eq!(
             row["trace_id"].as_str(),

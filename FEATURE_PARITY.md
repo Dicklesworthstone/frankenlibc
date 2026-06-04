@@ -3,7 +3,8 @@
 ## Current Reality
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
-Reality snapshot: total_exported=4119, implemented=3550, raw_syscall=414, wraps_host_libc=155, glibc_call_through=0, stub=0.
+Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).
+Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0.
 Counts below reflect the checked-in support matrix symbol rows and will change as matrix drift fixes land. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; `Stub: 0` means zero support-taxonomy rows with status `Stub`, not zero no-op/fallback/bootstrap contracts in the codebase.
 Regenerate deterministically with:
 
@@ -14,9 +15,9 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 ```
 
 Current exported ABI surface is **4119 symbols**, classified as:
-- `Implemented`: 3550
+- `Implemented`: 2384
 - `RawSyscall`: 414
-- `WrapsHostLibc`: 155
+- `WrapsHostLibc`: 1321
 - `GlibcCallThrough`: 0
 - `Stub`: 0
 
@@ -79,12 +80,12 @@ This file tracks the current staged parity profile, not a full replacement profi
 
 Source of truth: `tests/conformance/hard_parts_truth_table.v1.json` (generated `2026-02-13T08:48:00Z`).
 
-- `startup`: `IMPLEMENTED_PARTIAL` — implemented scope: phase-0 startup fixture path (`__libc_start_main`, `__frankenlibc_startup_phase0`, snapshot invariants). Deferred scope: full `csu`/TLS init-order hardening and secure-mode closure campaign.
+- `startup`: `IMPLEMENTED_PARTIAL` — fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign.
 - `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live, including lifecycle and rwlock native routing. Deferred scope: close lifecycle/TLS stress beads.
-- `resolver`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap numeric resolver ABI (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`, `gai_strerror`). Deferred scope: full retry/cache/poisoning hardening campaign.
-- `nss`: `IMPLEMENTED_PARTIAL` — implemented scope: passwd/group APIs are exported as `Implemented` via `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
+- `resolver`: `IMPLEMENTED_PARTIAL` — bootstrap numeric resolver ABI is exported; `getnameinfo` and `gai_strerror` are native, while `getaddrinfo` and `freeaddrinfo` remain host-backed in the support taxonomy. Deferred scope: full retry/cache/poisoning hardening campaign.
+- `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
-- `iconv`: `IMPLEMENTED_PARTIAL` — implemented scope: phase-1 `iconv_open`/`iconv`/`iconv_close` conversions for UTF-8/ISO-8859-1/UTF-16LE/UTF-32 with deterministic strict+hardened fixtures; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full `iconvdata` breadth and deterministic table-generation closure.
+- `iconv`: `IMPLEMENTED_PARTIAL` — phase-1 codec core and fixtures exist, but `iconv_open`/`iconv`/`iconv_close` remain host-backed in the support taxonomy; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full native `iconvdata` breadth and deterministic table-generation closure.
 
 ## Deterministic Stub Surface
 
@@ -172,7 +173,7 @@ Current semantic fallback/no-op/bootstrap contracts:
 | inet integration | runtime-math routing active for `<arpa/inet.h>` entrypoints (`htons`, `htonl`, `ntohs`, `ntohl`, `inet_pton`, `inet_ntop`, `inet_addr`) under `ApiFamily::Inet` | DONE |
 | locale integration | runtime-math routing active for `<locale.h>` entrypoints (`setlocale`, `localeconv`) under `ApiFamily::Locale` with strict/hardened locale validation + C-locale fallback repair | DONE |
 | termios integration | runtime-math routing active for `<termios.h>` entrypoints (`tcgetattr`, `tcsetattr`, `cfget*speed`, `cfset*speed`, `tcdrain`, `tcflush`, `tcflow`, `tcsendbreak`) under `ApiFamily::Termios` with strict/hardened optional_actions/queue/flow validation + repair | DONE |
-| dlfcn integration | dlfcn boundary policy: native phase-1 `dlopen`/`dlsym`/`dlclose`/`dlerror`, hardened invalid-flags repair is `RTLD_NOW`, replacement forbids direct host fallback | DONE |
+| dlfcn integration | dlfcn boundary policy: phase-1 native local/pathname handles plus `WrapsHostLibc` interpose delegation for remaining loader cases; hardened invalid-flags repair is `RTLD_NOW`; replacement forbids residual host fallback | DONE |
 
 ## Reverse Core Coverage Matrix
 
@@ -327,7 +328,7 @@ RC-WS7 proof-program status: no machine-checked formal proof artifacts are commi
 26. Conformal risk controller live — split conformal prediction (Vovk et al. 2005) with sliding-window calibration (256 entries), conformal p-values, EWMA coverage tracking, distribution-free finite-sample miscoverage detection (math item #27).
 27. Five new POSIX function families ported: `<unistd.h>` (27 entrypoints), `<sys/socket.h>` (14 entrypoints), `<arpa/inet.h>` (7 entrypoints), `<locale.h>` (2 entrypoints), `<termios.h>` (10 entrypoints). All routed through the RuntimeMathKernel via new ApiFamily variants (Socket=13, Locale=14, Termios=15, Inet=16). Core modules provide pure-Rust validators and constants; ABI modules wrap libc with membrane gating.
 28. Six new runtime math monitors integrated: Malliavin sensitivity, Fisher-Rao information geometry, matrix concentration (Bernstein), Čech nerve complex, Wasserstein drift, kernel MMD. Total test count: 792 (up from 608).
-29. `<dlfcn.h>` boundary locked — dlfcn boundary policy: native phase-1 `dlopen`/`dlsym`/`dlclose`/`dlerror`, hardened invalid-flags repair is `RTLD_NOW`, replacement forbids direct host fallback.
+29. `<dlfcn.h>` boundary locked — dlfcn boundary policy: phase-1 native local/pathname handles plus `WrapsHostLibc` interpose delegation for remaining loader cases; hardened invalid-flags repair is `RTLD_NOW`; replacement forbids residual host fallback.
 30. Stein discrepancy monitor fixed — replaced mean-score-norm KSD (broken for deterministic inputs) with KL divergence D(current||reference) between live EWMA and calibration-frozen models; all 7 tests pass.
 31. Five additional runtime math monitors verified: Stein discrepancy (KSD goodness-of-fit), POMDP repair (belief-space policy), K-theory (contract drift), SOS invariant (Lyapunov synthesis). Total test count: 792.
 32. POSIX Batch 3: stdio file ops (27 ABI entrypoints wired via stream registry), process control (6 entrypoints under `ApiFamily::Process=17`: fork, _exit, execve, execvp, waitpid, wait), virtual memory (5 entrypoints under `ApiFamily::VirtualMemory=18`: mmap, munmap, mprotect, msync, madvise), pthread sync (15 entrypoints extending `ApiFamily::Threading`: mutex init/destroy/lock/trylock/unlock, cond init/destroy/wait/signal/broadcast, rwlock init/destroy/rdlock/wrlock/unlock), I/O multiplexing (4 entrypoints under `ApiFamily::Poll=19`: poll, ppoll, select, pselect). ApiFamily::COUNT expanded from 17 to 20. Total test count: 897.

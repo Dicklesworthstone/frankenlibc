@@ -179,6 +179,10 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
             "accepts_multiple_input_files_via_repeated_flag must be true",
         ),
         (
+            "allow_current_dir_mutation",
+            "allow_current_dir_mutation must be true",
+        ),
+        (
             "default_output_paths_when_overrides_omitted",
             "default_output_paths_when_overrides_omitted must be true",
         ),

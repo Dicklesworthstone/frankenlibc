@@ -107,7 +107,7 @@ fn issue_fixture() -> TestResult<String> {
     let mut rows = vec![json!({
         "id": "bd-3qq",
         "status": "closed",
-        "close_reason": "HA1zgq Critique Response: project is real, honest, and falsifiable. 3980 classified symbols, 100% native coverage, zero stubs, comprehensive tests, CVE arena, differential testing, formal proofs.",
+        "close_reason": "HA1zgq Critique Response: project is real, honest, and falsifiable. 3980+ classified symbols, host-backed wrappers explicitly accounted, zero stubs, comprehensive tests, CVE arena, differential testing, formal proofs.",
         "dependencies": dependencies,
     })];
     rows.extend(

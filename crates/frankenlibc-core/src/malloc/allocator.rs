@@ -10,6 +10,7 @@ use super::size_class::{self, NUM_SIZE_CLASSES, SizeClassIndex};
 use super::thread_cache::ThreadCache;
 use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
 use std::borrow::Cow;
+use std::fmt;
 use std::sync::Arc;
 
 const TRACE_ID_PREFIX: &str = "core::malloc::";
@@ -30,13 +31,61 @@ pub enum AllocatorLogLevel {
     Error,
 }
 
+/// Symbolic allocator trace id.
+///
+/// Lifecycle rows use the legacy `core::malloc::{symbol}::{decision_id:016x}`
+/// text when observed, but the hot allocator path stores only the components.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AllocatorTraceId {
+    symbol: &'static str,
+    decision_id: u64,
+}
+
+impl AllocatorTraceId {
+    fn new(symbol: &'static str, decision_id: u64) -> Self {
+        Self {
+            symbol,
+            decision_id,
+        }
+    }
+}
+
+impl fmt::Debug for AllocatorTraceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("\"")?;
+        fmt::Display::fmt(self, f)?;
+        f.write_str("\"")
+    }
+}
+
+impl fmt::Display for AllocatorTraceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(TRACE_ID_PREFIX)?;
+        f.write_str(self.symbol)?;
+        f.write_str(TRACE_ID_SEPARATOR)?;
+        write_fixed_lower_hex_u64(f, self.decision_id)
+    }
+}
+
+impl PartialEq<String> for AllocatorTraceId {
+    fn eq(&self, other: &String) -> bool {
+        self.to_string() == *other
+    }
+}
+
+impl PartialEq<&str> for AllocatorTraceId {
+    fn eq(&self, other: &&str) -> bool {
+        self.to_string() == *other
+    }
+}
+
 /// Structured allocator lifecycle record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AllocatorLogRecord {
     /// Monotonic decision/event id.
     pub decision_id: u64,
     /// Correlation id for this lifecycle record.
-    pub trace_id: String,
+    pub trace_id: AllocatorTraceId,
     /// Severity level.
     pub level: AllocatorLogLevel,
     /// API symbol (`malloc`, `free`, `calloc`, `realloc`).
@@ -534,14 +583,8 @@ impl MallocState {
     }
 }
 
-fn lifecycle_trace_id(symbol: &str, decision_id: u64) -> String {
-    let mut trace_id =
-        String::with_capacity(TRACE_ID_PREFIX.len() + symbol.len() + TRACE_ID_SEPARATOR.len() + 16);
-    trace_id.push_str(TRACE_ID_PREFIX);
-    trace_id.push_str(symbol);
-    trace_id.push_str(TRACE_ID_SEPARATOR);
-    push_fixed_lower_hex_u64(&mut trace_id, decision_id);
-    trace_id
+fn lifecycle_trace_id(symbol: &'static str, decision_id: u64) -> AllocatorTraceId {
+    AllocatorTraceId::new(symbol, decision_id)
 }
 
 fn size_class_certificate_details(
@@ -577,11 +620,12 @@ fn size_class_certificate_value(
     }
 }
 
-fn push_fixed_lower_hex_u64(out: &mut String, value: u64) {
+fn write_fixed_lower_hex_u64(out: &mut impl fmt::Write, value: u64) -> fmt::Result {
     for shift in (0..16).rev().map(|n| n * 4) {
         let digit = ((value >> shift) & 0x0f) as usize;
-        out.push(char::from(LOWER_HEX[digit]));
+        out.write_char(char::from(LOWER_HEX[digit]))?;
     }
+    Ok(())
 }
 
 impl Default for MallocState {
@@ -677,11 +721,12 @@ mod tests {
 
         for (symbol, decision_id) in cases {
             let trace_id = lifecycle_trace_id(symbol, decision_id);
+            let rendered_trace_id = trace_id.to_string();
             assert_eq!(
-                trace_id,
+                rendered_trace_id,
                 format!("core::malloc::{symbol}::{decision_id:016x}")
             );
-            canonical.push_str(&trace_id);
+            canonical.push_str(&rendered_trace_id);
             canonical.push('\n');
         }
 

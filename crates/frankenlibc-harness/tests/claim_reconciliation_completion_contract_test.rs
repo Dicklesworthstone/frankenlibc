@@ -178,7 +178,7 @@ fn manifest_binds_claim_reconciliation_completion_items() -> TestResult {
         evidence["unit_primary"]["required_engine_functions"]
             .as_array()
             .map(Vec::len),
-        Some(18)
+        Some(19)
     );
     assert_eq!(
         evidence["unit_primary"]["required_test_refs"]
@@ -217,7 +217,7 @@ fn checker_validates_claim_reconciliation_contract_and_emits_report_log() -> Tes
     assert_eq!(report["bead"].as_str(), Some("bd-w2c3.10.1.1"));
     assert_eq!(
         report["engine_functions"].as_array().map(Vec::len),
-        Some(18)
+        Some(19)
     );
     assert_eq!(report["unit_bindings"].as_array().map(Vec::len), Some(5));
     assert_eq!(report["e2e_artifacts"].as_array().map(Vec::len), Some(7));

@@ -1556,6 +1556,25 @@ fn clear_stdio_evidence_log() {
 
 #[cfg(feature = "conformance-testing")]
 pub mod conformance_testing {
+    type HostFcloseFn = unsafe extern "C" fn(*mut std::ffi::c_void) -> std::ffi::c_int;
+    type HostTmpfileFn = unsafe extern "C" fn() -> *mut std::ffi::c_void;
+
+    unsafe fn host_fclose(stream: *mut std::ffi::c_void) -> std::ffi::c_int {
+        let Some(raw) = crate::host_resolve::resolve_host_symbol_raw("fclose") else {
+            return -1;
+        };
+        let host_fclose: HostFcloseFn = unsafe { core::mem::transmute(raw) };
+        unsafe { host_fclose(stream) }
+    }
+
+    unsafe fn host_tmpfile() -> *mut std::ffi::c_void {
+        let Some(raw) = crate::host_resolve::resolve_host_symbol_raw("tmpfile") else {
+            return std::ptr::null_mut();
+        };
+        let host_tmpfile: HostTmpfileFn = unsafe { core::mem::transmute(raw) };
+        unsafe { host_tmpfile() }
+    }
+
     #[must_use]
     pub fn export_stdio_evidence_jsonl() -> String {
         super::export_stdio_evidence_jsonl()
@@ -1577,14 +1596,14 @@ pub mod conformance_testing {
         // Exercise the adoption path without retaining a direct host libc
         // call-through in replacement-mode source scans.
         unsafe {
-            let foreign = crate::stdio_abi::tmpfile();
+            let foreign = host_tmpfile();
             if foreign.is_null() {
                 return String::new();
             }
 
-            let native = super::adopt_foreign_file(foreign.cast());
+            let native = super::adopt_foreign_file(foreign);
             if native.is_null() {
-                let _ = crate::stdio_abi::fclose(foreign);
+                let _ = host_fclose(foreign);
                 return String::new();
             }
 
@@ -1600,7 +1619,7 @@ pub mod conformance_testing {
                     .unwrap_or_else(|e| e.into_inner());
                 map.remove(&(foreign as usize));
             }
-            let _ = crate::stdio_abi::fclose(foreign);
+            let _ = host_fclose(foreign);
             jsonl
         }
     }

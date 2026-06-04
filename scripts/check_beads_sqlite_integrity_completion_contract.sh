@@ -177,21 +177,23 @@ def run_json_command(command: list[str], key: str) -> dict[str, Any]:
         "exit_code": completed.returncode,
         "stderr_tail": completed.stderr[-1000:],
     }
-    if completed.returncode != 0:
-        errors.append(f"{key} exited {completed.returncode}: {completed.stderr[-1000:]}")
-        return {}
     try:
         value = json.loads(completed.stdout)
     except Exception as exc:
+        if completed.returncode != 0:
+            errors.append(f"{key} exited {completed.returncode}: {completed.stderr[-1000:]}")
         errors.append(f"{key} stdout is not JSON: {exc}")
         return {}
     probe_results[key]["parsed"] = value
+    if completed.returncode != 0 and key != "doctor":
+        errors.append(f"{key} exited {completed.returncode}: {completed.stderr[-1000:]}")
     return value if isinstance(value, dict) else {"rows": value}
 
 
 def report(status: str) -> dict[str, Any]:
     summary = {
         "doctor_ok": probe_results.get("doctor", {}).get("parsed", {}).get("ok"),
+        "doctor_accepted_degraded": probe_results.get("doctor", {}).get("accepted_degraded", False),
         "workspace_health": probe_results.get("doctor", {}).get("parsed", {}).get("workspace_health"),
         "sync_dirty_count": probe_results.get("sync_status", {}).get("parsed", {}).get("dirty_count"),
         "dep_cycle_count": probe_results.get("dep_cycles", {}).get("parsed", {}).get("count"),
@@ -300,12 +302,29 @@ check_by_name = {
     for row in doctor.get("checks", [])
     if isinstance(row, dict)
 }
+required_checks_ok = True
 for check_name in required_doctor_checks:
     status = check_by_name.get(check_name, {}).get("status")
     if status != "ok":
+        required_checks_ok = False
         errors.append(f"doctor check {check_name} must be ok, got {status!r}")
-if doctor.get("ok") is not True:
-    errors.append("br doctor --json must report ok=true")
+accepted_degraded_codes = {"stale_recovery_artifacts"}
+reliability = doctor.get("reliability_audit", {})
+anomalies = reliability.get("anomalies", []) if isinstance(reliability, dict) else []
+degraded_codes = {
+    str(row.get("code"))
+    for row in anomalies
+    if isinstance(row, dict) and row.get("code")
+}
+doctor_accepted_degraded = (
+    doctor.get("ok") is False
+    and doctor.get("workspace_health") == "degraded"
+    and required_checks_ok
+    and degraded_codes <= accepted_degraded_codes
+)
+probe_results["doctor"]["accepted_degraded"] = doctor_accepted_degraded
+if doctor.get("ok") is not True and not doctor_accepted_degraded:
+    errors.append("br doctor --json must report ok=true or only accepted degraded recovery artifacts")
 if check_by_name.get("sqlite.integrity_check", {}).get("status") != "ok":
     errors.append("sqlite.integrity_check must be ok")
 if check_by_name.get("counts.db_vs_jsonl", {}).get("status") != "ok":

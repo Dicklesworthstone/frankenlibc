@@ -3933,8 +3933,11 @@ fn dlfcn_sentinel_boundary_rows_are_explicit() -> TestResult {
             ),
         ),
         (
-            "dlfcn-sentinel-boundary-l1-host-callsite-limit",
-            ("policy.max_total_host_callsites_at_L1", json!(0)),
+            "dlfcn-sentinel-boundary-standalone-host-callsite-limit",
+            (
+                "policy.max_total_host_callsites_at_standalone_levels",
+                json!(0),
+            ),
         ),
         (
             "dlfcn-sentinel-boundary-l0-interpose-allowed",
@@ -4023,7 +4026,7 @@ fn dlfcn_sentinel_boundary_rows_are_explicit() -> TestResult {
             "dlfcn-sentinel-boundary-support-dlvsym-status",
             (
                 "support_matrix_required_status.dlfcn_abi.dlvsym",
-                json!("Implemented"),
+                json!("WrapsHostLibc"),
             ),
         ),
         (

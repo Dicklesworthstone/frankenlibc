@@ -136,6 +136,25 @@ def build_snapshot(fixtures, covered_functions, covered_families, fixture_cases,
     }
 
 
+def preserve_generated_at_for_unchanged_snapshot(snapshot):
+    """Keep canonical snapshot bytes stable when only generated_at would change."""
+    if not SNAPSHOT_FILE.exists():
+        return snapshot
+    try:
+        with open(SNAPSHOT_FILE) as f:
+            previous = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return snapshot
+
+    previous_content = dict(previous)
+    current_content = dict(snapshot)
+    previous_generated_at = previous_content.pop("generated_at", None)
+    current_content.pop("generated_at", None)
+    if previous_content == current_content and isinstance(previous_generated_at, str):
+        snapshot["generated_at"] = previous_generated_at
+    return snapshot
+
+
 def check_regression(snapshot, baseline):
     """Compare snapshot against baseline, emit findings."""
     findings = []
@@ -246,6 +265,7 @@ def main():
     symbols, modules = load_support_matrix()
     snapshot = build_snapshot(fixtures, covered_functions, covered_families,
                               fixture_cases, symbols, modules)
+    snapshot = preserve_generated_at_for_unchanged_snapshot(snapshot)
 
     if mode == "update-baseline":
         # Save snapshot as baseline

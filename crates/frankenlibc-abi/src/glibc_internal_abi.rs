@@ -8750,6 +8750,24 @@ pub struct TlsIndex {
     pub ti_offset: u64,
 }
 
+type HostTlsGetAddr = unsafe extern "C" fn(*const TlsIndex) -> *mut c_void;
+
+static HOST_TLS_GET_ADDR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn host_tls_get_addr() -> Option<HostTlsGetAddr> {
+    let cached = HOST_TLS_GET_ADDR.load(std::sync::atomic::Ordering::Acquire);
+    let addr = if cached == 0 {
+        let resolved = crate::host_resolve::resolve_loader_symbol_raw("__tls_get_addr")?;
+        HOST_TLS_GET_ADDR.store(resolved, std::sync::atomic::Ordering::Release);
+        resolved
+    } else {
+        cached
+    };
+    // SAFETY: address is resolved from the already-loaded dynamic linker and
+    // matches the platform `__tls_get_addr(tls_index*)` ABI.
+    Some(unsafe { core::mem::transmute::<usize, HostTlsGetAddr>(addr) })
+}
+
 /// Per-thread DTV (Dynamic Thread Vector) for dynamically loaded TLS.
 ///
 /// Slot 0 is the generation counter; slots 1..N point to TLS blocks.
@@ -8804,6 +8822,9 @@ fn with_dtv<R>(f: impl FnOnce(&mut Vec<*mut u8>) -> R) -> R {
 pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut c_void {
     if ti.is_null() {
         return std::ptr::null_mut();
+    }
+    if let Some(host_fn) = host_tls_get_addr() {
+        return unsafe { host_fn(ti) };
     }
     let module = unsafe { (*ti).ti_module } as usize;
     let offset = unsafe { (*ti).ti_offset } as usize;
@@ -9796,28 +9817,26 @@ pub unsafe extern "C" fn __libc_csu_fini() {
 /// bounds and a fixed limit before the process aborts.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
-    if message.is_null() {
-        let fallback = b"fatal: unknown error\n";
-        unsafe {
-            let _ = raw_syscall::sys_write(2, fallback.as_ptr(), fallback.len());
-            crate::stdlib_abi::abort();
+    let fallback = b"fatal: unknown error\n";
+    let message_bytes = if message.is_null() {
+        fallback.as_slice()
+    } else {
+        let bound = known_remaining(message as usize)
+            .map_or(FATAL_MESSAGE_SCAN_LIMIT, |remaining| {
+                remaining.min(FATAL_MESSAGE_SCAN_LIMIT)
+            });
+        let (len, terminated) = unsafe { scan_c_string(message, Some(bound)) };
+        if terminated {
+            // SAFETY: scan_c_string observed len readable bytes before the NUL.
+            unsafe { std::slice::from_raw_parts(message.cast::<u8>(), len) }
+        } else {
+            fallback.as_slice()
         }
-    }
-
-    let mut len = 0;
-    let mut has_newline = false;
-    while len < FATAL_MESSAGE_SCAN_LIMIT {
-        let c = unsafe { *message.add(len) };
-        if c == 0 {
-            break;
-        }
-        has_newline = c == b'\n' as c_char;
-        len += 1;
-    }
+    };
 
     unsafe {
-        let _ = raw_syscall::sys_write(2, message.cast::<u8>(), len);
-        if !has_newline {
+        let _ = raw_syscall::sys_write(2, message_bytes.as_ptr(), message_bytes.len());
+        if message_bytes.last().copied() != Some(b'\n') {
             let _ = raw_syscall::sys_write(2, b"\n".as_ptr(), 1);
         }
         crate::stdlib_abi::abort();

@@ -19,6 +19,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 MATRIX="${ROOT}/support_matrix.json"
 README="${ROOT}/README.md"
+SMOKE_SUMMARY="${ROOT}/tests/conformance/ld_preload_smoke_summary.v1.json"
 L1_CRT_MATRIX="${FLC_L1_CRT_MATRIX_PATH:-${ROOT}/tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json}"
 DEFAULT_REPORT_PATH="${ROOT}/target/conformance/replacement_levels_l1_gate.report.json"
 DEFAULT_LOG_PATH="${ROOT}/target/conformance/replacement_levels_l1_gate.log.jsonl"
@@ -342,6 +343,8 @@ with open('${LEVELS}') as f:
     lvl = json.load(f)
 with open('${README}', encoding='utf-8') as f:
     readme = f.read()
+with open('${SMOKE_SUMMARY}', encoding='utf-8') as f:
+    smoke = json.load(f)
 
 errors = []
 levels = lvl.get('levels', [])
@@ -404,7 +407,14 @@ l1_blockers = ' '.join(
 hardened_smoke_incomplete = (
     'hardened-mode e2e smoke' in l1_blockers and 'incomplete' in l1_blockers
 )
-if hardened_smoke_incomplete:
+smoke_summary = smoke.get('summary', {})
+smoke_modes = smoke.get('modes', {})
+smoke_red = (
+    smoke_summary.get('overall_failed') is True
+    or smoke_modes.get('strict', {}).get('status') != 'green'
+    or smoke_modes.get('hardened', {}).get('status') != 'green'
+)
+if hardened_smoke_incomplete or smoke_red:
     overclaim_patterns = [
         (
             r'latest broad preload smoke run is \\*\\*fully green\\*\\*',
@@ -413,6 +423,14 @@ if hardened_smoke_incomplete:
         (
             r'both strict and hardened modes pass all workloads',
             'README must not claim paired strict+hardened smoke closure while L1 hardened smoke remains blocked'
+        ),
+        (
+            r'green strict \\+ hardened smoke runs',
+            'README must not claim strict+hardened smoke is green while the checked smoke artifact is red'
+        ),
+        (
+            r'curated preload smoke battery is green in both strict and hardened modes',
+            'README must not claim the curated preload smoke battery is green while the checked smoke artifact is red'
         ),
     ]
     for pattern, message in overclaim_patterns:
@@ -649,6 +667,7 @@ ROOT="${ROOT}" \
 LEVELS="${LEVELS}" \
 MATRIX="${MATRIX}" \
 README="${README}" \
+SMOKE_SUMMARY="${SMOKE_SUMMARY}" \
 L1_CRT_MATRIX="${L1_CRT_MATRIX}" \
 DEFAULT_REPORT_PATH="${DEFAULT_REPORT_PATH}" \
 DEFAULT_LOG_PATH="${DEFAULT_LOG_PATH}" \
@@ -665,6 +684,7 @@ root = Path(os.environ["ROOT"])
 levels_path = Path(os.environ["LEVELS"])
 matrix_path = Path(os.environ["MATRIX"])
 readme_path = Path(os.environ["README"])
+smoke_summary_path = Path(os.environ["SMOKE_SUMMARY"])
 l1_crt_matrix_path = Path(os.environ["L1_CRT_MATRIX"])
 default_report_path = Path(os.environ["DEFAULT_REPORT_PATH"])
 default_log_path = Path(os.environ["DEFAULT_LOG_PATH"])
@@ -842,7 +862,12 @@ def find_obligation(objective_gate: dict, obligation_id: str) -> dict:
     return {}
 
 
-def validate_l1_objective_gate_consistency(levels: dict, objective_gate: dict, l1_crt_matrix: dict) -> list[str]:
+def validate_l1_objective_gate_consistency(
+    levels: dict,
+    objective_gate: dict,
+    l1_crt_matrix: dict,
+    smoke_summary: dict,
+) -> list[str]:
     failures = []
     if not isinstance(objective_gate, dict):
         return ["L1 objective_gate must be an object"]
@@ -875,6 +900,37 @@ def validate_l1_objective_gate_consistency(levels: dict, objective_gate: dict, l
                 "crt_startup_tls_proof_matrix.outcome must pass exactly when the proof matrix has pass/0 blocked rows"
             )
 
+    smoke_obligation = find_obligation(objective_gate, "hardened_smoke_battery")
+    summary = smoke_summary.get("summary", {}) if isinstance(smoke_summary, dict) else {}
+    modes = smoke_summary.get("modes", {}) if isinstance(smoke_summary, dict) else {}
+    smoke_actual = {
+        "run_id": smoke_summary.get("run_id") if isinstance(smoke_summary, dict) else None,
+        "overall_failed": summary.get("overall_failed"),
+        "strict_status": modes.get("strict", {}).get("status"),
+        "hardened_status": modes.get("hardened", {}).get("status"),
+        "perf_failures": summary.get("perf_failures"),
+        "signature_guard_failures": summary.get("signature_guard_failures"),
+    }
+    smoke_expected_outcome = "pass"
+    if not smoke_obligation:
+        failures.append("objective_gate missing hardened_smoke_battery obligation")
+    else:
+        expected = smoke_obligation.get("expected", {})
+        actual = smoke_obligation.get("actual", {})
+        for field, expected_value in smoke_actual.items():
+            if actual.get(field) != expected_value:
+                failures.append(
+                    f"hardened_smoke_battery.actual.{field} must match ld_preload_smoke_summary"
+                )
+        for field, expected_value in expected.items():
+            if smoke_actual.get(field) != expected_value:
+                smoke_expected_outcome = "blocked"
+                break
+        if smoke_obligation.get("outcome") != smoke_expected_outcome:
+            failures.append(
+                "hardened_smoke_battery.outcome must be blocked exactly when the current smoke artifact misses the green L1 criteria"
+            )
+
     promotion = find_obligation(objective_gate, "promotion_claim_control")
     release_policy = levels.get("release_tag_policy", {})
     current_level = levels.get("current_level")
@@ -901,15 +957,21 @@ def validate_l1_objective_gate_consistency(levels: dict, objective_gate: dict, l
         for obligation in objective_gate.get("obligations", [])
         if isinstance(obligation, dict) and obligation.get("outcome") == "blocked"
     ]
-    expected_blocked = [] if promotion_is_complete else ["promotion_claim_control"]
+    expected_blocked = []
+    if expected_outcome == "blocked":
+        expected_blocked.append("crt_startup_tls_proof_matrix")
+    if smoke_expected_outcome == "blocked":
+        expected_blocked.append("hardened_smoke_battery")
+    if not promotion_is_complete:
+        expected_blocked.append("promotion_claim_control")
     if blocked_obligations != expected_blocked:
         failures.append(
             f"objective gate blocked obligations mismatch: expected {expected_blocked}, got {blocked_obligations}"
         )
-    expected_objective_status = "pass" if promotion_is_complete else "blocked"
+    expected_objective_status = "blocked" if expected_blocked else "pass"
     if objective_gate.get("status") != expected_objective_status:
         failures.append(
-            f"objective_gate.status must be {expected_objective_status} for the current promotion-control state"
+            f"objective_gate.status must be {expected_objective_status} for the current objective obligations"
         )
     return failures
 
@@ -963,6 +1025,7 @@ try:
         raise FileNotFoundError(f"{rel(levels_path)} not found")
 
     levels = load_json(levels_path)
+    smoke_summary = load_json(smoke_summary_path)
     schema_version = levels.get("schema_version", 0)
     level_entries = levels.get("levels", [])
     assessment = levels.get("current_assessment", {})
@@ -1246,9 +1309,9 @@ try:
     )
     add_check(
         "l1_objective_gate_consistency",
-        "L1 objective gate consumes the current CRT/startup/TLS proof matrix without promoting the release claim",
+        "L1 objective gate consumes current proof and smoke evidence without overclaiming readiness",
         rel(levels_path),
-        validate_l1_objective_gate_consistency(levels, objective_gate, l1_crt_matrix),
+        validate_l1_objective_gate_consistency(levels, objective_gate, l1_crt_matrix, smoke_summary),
     )
 except Exception as exc:
     if not script_checks:
@@ -1285,6 +1348,7 @@ artifact_refs = [
     rel(levels_path),
     rel(matrix_path),
     rel(readme_path),
+    rel(smoke_summary_path),
     rel(l1_crt_matrix_path),
     rel(root / "scripts/check_replacement_levels.sh"),
 ]

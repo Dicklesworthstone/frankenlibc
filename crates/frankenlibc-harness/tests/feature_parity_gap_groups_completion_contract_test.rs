@@ -171,11 +171,11 @@ fn checker_validates_existing_feature_parity_gap_group_gate() -> TestResult {
         report["completion_debt_bead"].as_str(),
         Some("bd-bp8fl.3.1.1")
     );
-    assert_eq!(report["summary"]["ledger_gap_count"].as_u64(), Some(111));
+    assert_eq!(report["summary"]["ledger_gap_count"].as_u64(), Some(110));
     assert_eq!(report["summary"]["batch_count"].as_u64(), Some(10));
-    assert_eq!(report["summary"]["batched_gap_count"].as_u64(), Some(111));
+    assert_eq!(report["summary"]["batched_gap_count"].as_u64(), Some(110));
     assert_eq!(report["summary"]["unbatched_gap_count"].as_u64(), Some(0));
-    assert_eq!(report["source_log_row_count"].as_u64(), Some(122));
+    assert_eq!(report["source_log_row_count"].as_u64(), Some(121));
     assert_eq!(
         report["checks"]["exact_gap_coverage"].as_str(),
         Some("pass")
@@ -202,9 +202,16 @@ fn checker_emits_report_and_jsonl() -> TestResult {
         Some("feature_parity_gap_groups_completion_contract.report.v1")
     );
     assert_eq!(report["events"].as_array().map(Vec::len), Some(3));
-    assert_eq!(
-        report["source_gate_report"].as_str(),
-        Some("target/conformance/feature_parity_gap_groups.report.json")
+    let source_gate_report = report["source_gate_report"]
+        .as_str()
+        .ok_or("source_gate_report must be string")?;
+    assert!(
+        source_gate_report.ends_with("feature_parity_gap_groups.source.report.json"),
+        "source_gate_report should point at isolated replay artifact, got {source_gate_report}"
+    );
+    assert!(
+        root.join(source_gate_report).exists(),
+        "source_gate_report artifact missing at {source_gate_report}"
     );
 
     let records =

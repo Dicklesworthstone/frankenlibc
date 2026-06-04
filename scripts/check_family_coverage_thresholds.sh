@@ -9,14 +9,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GEN="${ROOT}/scripts/generate_family_coverage_thresholds.py"
-CANONICAL="${ROOT}/tests/conformance/family_coverage_thresholds.v1.json"
-SYMBOL_COVERAGE="${ROOT}/tests/conformance/symbol_fixture_coverage.v1.json"
-OUT_DIR="${ROOT}/target/conformance"
-REGENERATED="${OUT_DIR}/family_coverage_thresholds.regenerated.v1.json"
-REPORT="${OUT_DIR}/family_coverage_thresholds.report.json"
-LOG="${OUT_DIR}/family_coverage_thresholds.log.jsonl"
+CANONICAL="${FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_ARTIFACT:-${ROOT}/tests/conformance/family_coverage_thresholds.v1.json}"
+SYMBOL_COVERAGE="${FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_SYMBOL_COVERAGE:-${ROOT}/tests/conformance/symbol_fixture_coverage.v1.json}"
+OUT_DIR="${FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_OUT_DIR:-${ROOT}/target/conformance}"
+REGENERATED="${FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_REGENERATED:-${OUT_DIR}/family_coverage_thresholds.regenerated.v1.json}"
+REPORT="${FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_REPORT:-${OUT_DIR}/family_coverage_thresholds.report.json}"
+LOG="${FRANKENLIBC_FAMILY_COVERAGE_THRESHOLDS_LOG:-${OUT_DIR}/family_coverage_thresholds.log.jsonl}"
 
-mkdir -p "${OUT_DIR}"
+mkdir -p "${OUT_DIR}" "$(dirname "${REGENERATED}")" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 python3 "${GEN}" --self-test
 python3 "${GEN}" --output "${REGENERATED}"

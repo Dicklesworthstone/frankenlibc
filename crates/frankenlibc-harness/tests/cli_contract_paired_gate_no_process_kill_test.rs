@@ -5,7 +5,6 @@
 //! explicit integration/e2e lanes with isolated artifacts.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 type TestResult<T = ()> = Result<T, String>;
 
@@ -18,30 +17,21 @@ fn workspace_root() -> TestResult<PathBuf> {
         .ok_or_else(|| format!("could not derive workspace root from {manifest}"))
 }
 
-fn tracked_paired_gate_paths(root: &Path) -> TestResult<Vec<PathBuf>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args([
-            "ls-files",
-            "--",
-            "crates/frankenlibc-harness/tests/*_cli_contract_test.rs",
-        ])
-        .output()
-        .map_err(|e| format!("git ls-files failed to start: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git ls-files failed with status {:?}: {}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
-        ));
+fn paired_gate_paths(root: &Path) -> TestResult<Vec<PathBuf>> {
+    let test_dir = root.join("crates/frankenlibc-harness/tests");
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(&test_dir).map_err(|e| format!("read_dir {test_dir:?}: {e}"))? {
+        let entry = entry.map_err(|e| format!("read_dir entry {test_dir:?}: {e}"))?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.ends_with("_cli_contract_test.rs") {
+            paths.push(path);
+        }
     }
-
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| root.join(line))
-        .collect())
+    paths.sort();
+    Ok(paths)
 }
 
 fn strip_line_comments(body: &str) -> String {
@@ -104,7 +94,7 @@ fn contains_process_termination_hazard(body: &str) -> bool {
 #[test]
 fn no_paired_cli_contract_gate_terminates_processes() -> TestResult {
     let root = workspace_root()?;
-    let paths = tracked_paired_gate_paths(&root)?;
+    let paths = paired_gate_paths(&root)?;
     let mut violations: Vec<String> = Vec::new();
     let mut checked = 0usize;
 

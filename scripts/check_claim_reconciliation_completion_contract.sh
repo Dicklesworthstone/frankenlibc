@@ -75,6 +75,7 @@ EXPECTED_ENGINE_FUNCTIONS = {
     "check_count_consistency",
     "check_replacement_levels",
     "check_replacement_level_text_consistency",
+    "check_replacement_level_smoke_obligations",
     "check_module_taxonomy",
     "check_hard_parts",
     "check_timestamp_consistency",
@@ -87,7 +88,7 @@ EXPECTED_ENGINE_FUNCTIONS = {
 EXPECTED_UNIT_REFS = {
     ("claim_reconciliation_test", "claim_reconciliation_gate_passes"),
     ("claim_reconciliation_test", "claim_reconciliation_detects_readme_drift_and_routes_owner"),
-    ("claim_reconciliation_test", "claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner"),
+    ("claim_reconciliation_test", "claim_reconciliation_detects_replacement_level_smoke_drift_and_routes_owner"),
     ("claim_reconciliation_test", "claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_owner"),
     ("claim_reconciliation_test", "claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner"),
 }

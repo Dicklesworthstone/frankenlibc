@@ -16,6 +16,7 @@ mkdir -p "${OUT_DIR}" "${FIXTURE_DIR}"
 
 python3 - "${ROOT}" "${ARTIFACT}" "${REPORT}" "${LOG}" "${FIXTURE_DIR}" "$@" <<'PY'
 import json
+import os
 import subprocess
 import sys
 from collections import Counter
@@ -106,6 +107,12 @@ def normalize_rel(path):
     return str(candidate)
 
 
+def atomic_write_text(path, text):
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
 def validate_report_contract(artifact, report):
     contract = artifact.get("report_contract")
     if not isinstance(contract, dict):
@@ -165,7 +172,7 @@ def materialize_fixture(row, commit):
         "artifact_refs": row["artifact_refs"],
         "source_commit": commit,
     }
-    path.write_text(json.dumps(fixture, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(fixture, indent=2, sort_keys=True) + "\n")
     return path
 
 
@@ -186,23 +193,24 @@ def replay(row, commit):
 
 
 def emit_log(rows, commit):
-    with log_path.open("w", encoding="utf-8") as handle:
-        for index, row in enumerate(rows, start=1):
-            event = {
-                "trace_id": f"bd-bp8fl.9.1::counterexample_fixture_loop::{index:03d}",
-                "bead_id": "bd-bp8fl.9.1",
-                "counterexample_id": row["id"],
-                "symbol": row["symbol"],
-                "api_family": row["api_family"],
-                "minimization_state": row["minimization_state"],
-                "fixture_id": row.get("fixture_id"),
-                "expected": row["expected"],
-                "actual": row["actual"],
-                "artifact_refs": row["artifact_refs"],
-                "source_commit": commit,
-                "failure_signature": row["failure_signature"],
-            }
-            handle.write(json.dumps(event, sort_keys=True) + "\n")
+    events = []
+    for index, row in enumerate(rows, start=1):
+        event = {
+            "trace_id": f"bd-bp8fl.9.1::counterexample_fixture_loop::{index:03d}",
+            "bead_id": "bd-bp8fl.9.1",
+            "counterexample_id": row["id"],
+            "symbol": row["symbol"],
+            "api_family": row["api_family"],
+            "minimization_state": row["minimization_state"],
+            "fixture_id": row.get("fixture_id"),
+            "expected": row["expected"],
+            "actual": row["actual"],
+            "artifact_refs": row["artifact_refs"],
+            "source_commit": commit,
+            "failure_signature": row["failure_signature"],
+        }
+        events.append(json.dumps(event, sort_keys=True) + "\n")
+    atomic_write_text(log_path, "".join(events))
 
 
 def validate(artifact, commit):
@@ -379,7 +387,7 @@ def validate(artifact, commit):
     if contract_errors:
         errors.extend(f"report_contract: {error}" for error in contract_errors)
     report["status"] = "pass" if not errors else "fail"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(report_path, json.dumps(report, indent=2, sort_keys=True) + "\n")
     return report
 
 

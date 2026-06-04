@@ -1066,6 +1066,9 @@ fn condvar_wait_errorcheck_without_lock_returns_eperm() {
 #[test]
 fn condvar_native_attr_stays_on_native_path_for_lifecycle_and_waits() {
     unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
         let mut mutex_attr: libc::pthread_mutexattr_t = std::mem::zeroed();
         assert_eq!(pthread_mutexattr_init(&mut mutex_attr), 0);
         let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
@@ -1143,6 +1146,9 @@ fn native_condvar_wait_rejects_host_mutex_mismatch() {
 #[test]
 fn cond_clockwait_realtime_deadline_on_monotonic_condvar_times_out_before_signal() {
     unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
         let mut mutex_attr: libc::pthread_mutexattr_t = std::mem::zeroed();
         assert_eq!(pthread_mutexattr_init(&mut mutex_attr), 0);
         let mut cond_attr: libc::pthread_condattr_t = std::mem::zeroed();
@@ -1231,6 +1237,9 @@ fn cond_clockwait_realtime_immediate_timeout_on_managed_condvar() {
 #[test]
 fn cond_clockwait_realtime_future_signal_returns_zero_on_managed_condvar() {
     unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
         let state = Box::new(SharedCondState {
             mutex: std::mem::zeroed(),
             cond: std::mem::zeroed(),
@@ -1308,6 +1317,9 @@ fn cond_clockwait_monotonic_immediate_timeout_on_managed_condvar() {
 #[test]
 fn cond_clockwait_monotonic_future_signal_returns_zero_on_managed_condvar() {
     unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
         let mut cond_attr: libc::pthread_condattr_t = std::mem::zeroed();
         assert_eq!(pthread_condattr_init(&mut cond_attr), 0);
         assert_eq!(
@@ -3746,6 +3758,9 @@ fn gettid_np_returns_tid_for_live_detached_managed_thread_after_restoring_host_m
 #[test]
 fn tryjoin_np_on_finished_thread() {
     unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
         let mut thr: libc::pthread_t = 0;
         let rc = pthread_create(&mut thr, ptr::null(), Some(noop_thread), ptr::null_mut());
         assert_eq!(rc, 0);
@@ -4290,6 +4305,9 @@ unsafe extern "C" fn host_cancel_disabled_thread(arg: *mut c_void) -> *mut c_voi
 #[test]
 fn cancel_running_thread() {
     unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
         let mut thr: libc::pthread_t = 0;
         let rc = pthread_create(
             &mut thr,

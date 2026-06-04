@@ -311,8 +311,11 @@ expected_inputs = {
 }
 if contract.get("inputs") != expected_inputs:
     errors.append("contract inputs mismatch")
-for key, value in expected_inputs.items():
-    repo_path(contract.get("inputs", {}).get(key), f"inputs.{key}")
+runtime_inputs = dict(expected_inputs)
+runtime_inputs["tracker_jsonl_degraded_readiness_report"] = repo_relative(readiness_report_path)
+runtime_inputs["rch_remote_admissibility_report"] = repo_relative(rch_report_path)
+for key, value in runtime_inputs.items():
+    repo_path(value, f"inputs.{key}")
 
 guard = contract.get("guard_contract", {})
 if not isinstance(guard, dict):

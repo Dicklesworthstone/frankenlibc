@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 const EXPECTED_ROWS: &[(&str, &str, u64)] = &[
-    ("fpg-claim-control", "bd-bp8fl.3.5", 8),
+    ("fpg-claim-control", "bd-bp8fl.3.5", 7),
     ("fpg-reverse-runtime-core", "bd-bp8fl.3.6", 10),
     ("fpg-reverse-loader-process-abi", "bd-bp8fl.3.7", 10),
     ("fpg-proof-core-safety", "bd-bp8fl.3.8", 7),
@@ -282,7 +282,7 @@ fn artifact_defines_complete_targeted_closure_contract() -> TestResult {
     )?;
     ensure_eq(
         summary["expected_gap_count"].as_u64(),
-        Some(111),
+        Some(110),
         "summary.expected_gap_count",
     )?;
     ensure_eq(
@@ -500,7 +500,7 @@ fn closure_rows_match_owner_groups_and_tracker_dependencies() -> TestResult {
 
     ensure_eq(actual_source_ids, expected_source_ids, "source row ids")?;
     ensure_eq(actual_issue_ids, expected_issue_ids, "created issue ids")?;
-    ensure_eq(total_gap_count, 111, "total mapped gap count")
+    ensure_eq(total_gap_count, 110, "total mapped gap count")
 }
 
 #[test]
@@ -566,7 +566,7 @@ fn gate_script_passes_and_emits_structured_artifacts() -> TestResult {
     )?;
     ensure_eq(
         report["summary"]["gap_count"].as_u64(),
-        Some(111),
+        Some(110),
         "report summary.gap_count",
     )?;
     ensure(

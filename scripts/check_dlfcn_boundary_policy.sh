@@ -184,7 +184,7 @@ if replacement.get("replacement_forbidden", {}).get("enforcement") != "scripts/c
     raise SystemExit("FAIL: replacement_profile replacement_forbidden.enforcement drift")
 
 census = replacement.get("call_through_census", {}).get("modules", {}).get("dlfcn_abi", {})
-if census.get("count") != 0:
+if census.get("count", 0) != 0:
     raise SystemExit("FAIL: replacement_profile dlfcn_abi call-through count must remain 0")
 functions = set(census.get("functions", []))
 if functions:

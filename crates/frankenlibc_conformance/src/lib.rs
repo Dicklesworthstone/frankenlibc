@@ -904,6 +904,13 @@ pub fn execute_fixture_case(
         | "fts64_set"
         | "fts_children"
         | "fts_close" => execute_unistd_process_filesystem_case(function, inputs, mode),
+        "err" | "errc" | "errx" | "verr" | "verrc" | "verrx" | "vwarn" | "vwarnc" | "vwarnx"
+        | "warn" | "warnc" | "warnx" => execute_err_ops_case(function, inputs, mode),
+        "feclearexcept" | "fegetenv" | "fegetexceptflag" | "fegetround" | "feholdexcept"
+        | "feraiseexcept" | "fesetenv" | "fesetexceptflag" | "fesetround" | "fetestexcept"
+        | "feupdateenv" => execute_fenv_ops_case(function, inputs, mode),
+        "__isoc99_fwscanf" | "__isoc99_swscanf" | "__isoc99_vfwscanf" | "__isoc99_vswscanf"
+        | "__isoc99_vwscanf" => execute_isoc_wide_scanf_ops_case(function, inputs, mode),
         "_IO_2_1_stderr_" | "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_feof" | "_IO_ferror"
         | "_IO_flockfile" | "_IO_ftrylockfile" | "_IO_funlockfile" | "_IO_getc" | "_IO_padn"
         | "_IO_peekc_locked" | "_IO_putc" | "_IO_puts" | "_IO_seekoff" | "_IO_seekpos"
@@ -3630,6 +3637,496 @@ fn non_host_execution(impl_output: String) -> DifferentialExecution {
     }
 }
 
+fn json_fixture_output(value: serde_json::Value) -> Result<String, String> {
+    serde_json::to_string(&value).map_err(|err| err.to_string())
+}
+
+fn execute_err_ops_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    let format = parse_string(inputs, "format")?;
+    let explicit_code = matches!(function, "errc" | "verrc" | "vwarnc" | "warnc");
+    let with_errno = explicit_code || matches!(function, "err" | "verr" | "vwarn" | "warn");
+    let exits = matches!(
+        function,
+        "err" | "errc" | "errx" | "verr" | "verrc" | "verrx"
+    );
+    let va_list = matches!(
+        function,
+        "verr" | "verrc" | "verrx" | "vwarn" | "vwarnc" | "vwarnx"
+    );
+
+    let stderr_body = if with_errno {
+        let errnum = if explicit_code {
+            parse_i32(inputs, "code")?
+        } else {
+            parse_i32(inputs, "errno")?
+        };
+        format!(
+            "{format}: {}\n",
+            frankenlibc_core::errno::strerror_message(errnum)
+        )
+    } else {
+        format!("{format}\n")
+    };
+
+    let mut output = serde_json::Map::new();
+    if explicit_code {
+        output.insert(String::from("explicit_code"), serde_json::json!(true));
+    }
+    output.insert(String::from("exits"), serde_json::json!(exits));
+    if exits {
+        output.insert(
+            String::from("exit_status"),
+            serde_json::json!(parse_i32(inputs, "eval")?),
+        );
+    }
+    output.insert(String::from("stderr_body"), serde_json::json!(stderr_body));
+    if va_list {
+        output.insert(String::from("va_list"), serde_json::json!(true));
+    }
+    output.insert(String::from("with_errno"), serde_json::json!(with_errno));
+
+    Ok(non_host_execution(json_fixture_output(
+        serde_json::Value::Object(output),
+    )?))
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct HarnessFenvT {
+    cw: u16,
+    _pad1: u16,
+    sw: u16,
+    _pad2: u16,
+    tags: u16,
+    _pad3: u16,
+    eip: u32,
+    cs_opcode: u32,
+    data_off: u32,
+    ds_pad: u32,
+    mxcsr: u32,
+}
+
+const FENV_FE_INVALID: c_int = 0x01;
+const FENV_FE_DIVBYZERO: c_int = 0x04;
+const FENV_FE_OVERFLOW: c_int = 0x08;
+const FENV_FE_UNDERFLOW: c_int = 0x10;
+const FENV_FE_INEXACT: c_int = 0x20;
+const FENV_ALL_EXCEPT: c_int =
+    FENV_FE_INVALID | FENV_FE_DIVBYZERO | FENV_FE_OVERFLOW | FENV_FE_UNDERFLOW | FENV_FE_INEXACT;
+const FENV_FE_TONEAREST: c_int = 0x000;
+const FENV_FE_DOWNWARD: c_int = 0x400;
+const FENV_FE_UPWARD: c_int = 0x800;
+const FENV_FE_TOWARDZERO: c_int = 0xC00;
+
+fn zeroed_harness_fenv() -> HarnessFenvT {
+    HarnessFenvT {
+        cw: 0,
+        _pad1: 0,
+        sw: 0,
+        _pad2: 0,
+        tags: 0,
+        _pad3: 0,
+        eip: 0,
+        cs_opcode: 0,
+        data_off: 0,
+        ds_pad: 0,
+        mxcsr: 0,
+    }
+}
+
+fn with_restored_fenv<T>(op: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let mut saved = zeroed_harness_fenv();
+    let saved_ok = unsafe {
+        frankenlibc_abi::fenv_abi::fegetenv((&mut saved as *mut HarnessFenvT).cast::<c_void>()) == 0
+    };
+
+    unsafe {
+        let _ = frankenlibc_abi::fenv_abi::fesetenv(usize::MAX as *const c_void);
+        let _ = frankenlibc_abi::fenv_abi::feclearexcept(FENV_ALL_EXCEPT);
+        let _ = frankenlibc_abi::fenv_abi::fesetround(FENV_FE_TONEAREST);
+    }
+
+    let result = op();
+
+    unsafe {
+        if saved_ok {
+            let _ = frankenlibc_abi::fenv_abi::fesetenv(
+                (&saved as *const HarnessFenvT).cast::<c_void>(),
+            );
+        } else {
+            let _ = frankenlibc_abi::fenv_abi::fesetenv(usize::MAX as *const c_void);
+        }
+    }
+
+    result
+}
+
+fn fenv_flag_mask(inputs: &serde_json::Value, key: &str) -> Result<c_int, String> {
+    let Some(flags) = inputs.get(key) else {
+        return Ok(0);
+    };
+    let Some(flags) = flags.as_array() else {
+        return Err(format!("{key} must be an array of FE_* names"));
+    };
+
+    let mut mask = 0;
+    for flag in flags {
+        let Some(flag) = flag.as_str() else {
+            return Err(format!("{key} entries must be FE_* names"));
+        };
+        mask |= match flag {
+            "FE_INVALID" => FENV_FE_INVALID,
+            "FE_DIVBYZERO" => FENV_FE_DIVBYZERO,
+            "FE_OVERFLOW" => FENV_FE_OVERFLOW,
+            "FE_UNDERFLOW" => FENV_FE_UNDERFLOW,
+            "FE_INEXACT" => FENV_FE_INEXACT,
+            other => return Err(format!("unsupported fenv flag: {other}")),
+        };
+    }
+    Ok(mask)
+}
+
+fn fenv_rounding_mode(inputs: &serde_json::Value, key: &str) -> Result<c_int, String> {
+    let mode = parse_string(inputs, key)?;
+    match mode.as_str() {
+        "FE_TONEAREST" => Ok(FENV_FE_TONEAREST),
+        "FE_DOWNWARD" => Ok(FENV_FE_DOWNWARD),
+        "FE_UPWARD" => Ok(FENV_FE_UPWARD),
+        "FE_TOWARDZERO" => Ok(FENV_FE_TOWARDZERO),
+        other => Err(format!("unsupported fenv rounding mode: {other}")),
+    }
+}
+
+fn fenv_rounding_mode_name(mode: c_int) -> String {
+    match mode {
+        FENV_FE_TONEAREST => String::from("FE_TONEAREST"),
+        FENV_FE_DOWNWARD => String::from("FE_DOWNWARD"),
+        FENV_FE_UPWARD => String::from("FE_UPWARD"),
+        FENV_FE_TOWARDZERO => String::from("FE_TOWARDZERO"),
+        other => format!("UNKNOWN_ROUNDING_MODE_{other:#x}"),
+    }
+}
+
+fn fenv_flag_names(mask: c_int) -> Vec<&'static str> {
+    [
+        (FENV_FE_INVALID, "FE_INVALID"),
+        (FENV_FE_DIVBYZERO, "FE_DIVBYZERO"),
+        (FENV_FE_OVERFLOW, "FE_OVERFLOW"),
+        (FENV_FE_UNDERFLOW, "FE_UNDERFLOW"),
+        (FENV_FE_INEXACT, "FE_INEXACT"),
+    ]
+    .into_iter()
+    .filter_map(|(bit, name)| ((mask & bit) != 0).then_some(name))
+    .collect()
+}
+
+fn fenv_saved_flags(env: &HarnessFenvT, mask: c_int) -> c_int {
+    ((u32::from(env.sw) | env.mxcsr) as c_int) & mask
+}
+
+fn fenv_status(rc: c_int, predicate: bool) -> &'static str {
+    if rc == 0 && predicate { "pass" } else { "fail" }
+}
+
+fn fenv_prepare(inputs: &serde_json::Value) -> Result<(), String> {
+    let pre_raise = fenv_flag_mask(inputs, "pre_raise_flags")?;
+    if pre_raise != 0 {
+        unsafe {
+            let _ = frankenlibc_abi::fenv_abi::feraiseexcept(pre_raise);
+        }
+    }
+    if inputs.get("pre_rounding_mode").is_some() {
+        let mode = fenv_rounding_mode(inputs, "pre_rounding_mode")?;
+        unsafe {
+            let _ = frankenlibc_abi::fenv_abi::fesetround(mode);
+        }
+    }
+    Ok(())
+}
+
+fn execute_fenv_ops_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    with_restored_fenv(|| {
+        fenv_prepare(inputs)?;
+        let output = match function {
+            "feclearexcept" => {
+                let clear_mask = fenv_flag_mask(inputs, "clear_mask")?;
+                let test_mask = fenv_flag_mask(inputs, "test_mask")?;
+                let rc = unsafe { frankenlibc_abi::fenv_abi::feclearexcept(clear_mask) };
+                let after = unsafe { frankenlibc_abi::fenv_abi::fetestexcept(test_mask) };
+                serde_json::json!({
+                    "status": fenv_status(rc, after == 0),
+                    "return_value": rc,
+                    "fenv_flags_after": fenv_flag_names(after),
+                    "rounding_mode_after": "unchanged",
+                })
+            }
+            "feraiseexcept" => {
+                let raise_mask = fenv_flag_mask(inputs, "raise_mask")?;
+                let test_mask = fenv_flag_mask(inputs, "test_mask")?;
+                let rc = unsafe { frankenlibc_abi::fenv_abi::feraiseexcept(raise_mask) };
+                let after = unsafe { frankenlibc_abi::fenv_abi::fetestexcept(test_mask) };
+                serde_json::json!({
+                    "status": fenv_status(rc, after == test_mask),
+                    "return_value": rc,
+                    "fenv_flags_after": fenv_flag_names(after),
+                    "rounding_mode_after": "unchanged",
+                })
+            }
+            "fetestexcept" => {
+                let pre_raise = fenv_flag_mask(inputs, "pre_raise_flags")?;
+                let test_mask = fenv_flag_mask(inputs, "test_mask")?;
+                let reported = unsafe { frankenlibc_abi::fenv_abi::fetestexcept(test_mask) };
+                serde_json::json!({
+                    "status": if reported == (pre_raise & test_mask) { "pass" } else { "fail" },
+                    "reported_flags": fenv_flag_names(reported),
+                    "excluded_flags": fenv_flag_names(pre_raise & !test_mask),
+                    "rounding_mode_after": "unchanged",
+                })
+            }
+            "fegetexceptflag" => {
+                let get_mask = fenv_flag_mask(inputs, "get_mask")?;
+                let mut flags: u16 = 0;
+                let rc = unsafe {
+                    frankenlibc_abi::fenv_abi::fegetexceptflag(&mut flags as *mut u16, get_mask)
+                };
+                let saved = c_int::from(flags) & get_mask;
+                serde_json::json!({
+                    "status": fenv_status(rc, saved == get_mask),
+                    "return_value": rc,
+                    "saved_flags": fenv_flag_names(saved),
+                    "rounding_mode_after": "unchanged",
+                })
+            }
+            "fesetexceptflag" => {
+                let set_mask = fenv_flag_mask(inputs, "set_mask")?;
+                let saved = fenv_flag_mask(inputs, "saved_flags")? as u16;
+                unsafe {
+                    let _ = frankenlibc_abi::fenv_abi::feclearexcept(FENV_ALL_EXCEPT);
+                }
+                let rc = unsafe {
+                    frankenlibc_abi::fenv_abi::fesetexceptflag(&saved as *const u16, set_mask)
+                };
+                let after = unsafe { frankenlibc_abi::fenv_abi::fetestexcept(set_mask) };
+                serde_json::json!({
+                    "status": fenv_status(rc, after == set_mask),
+                    "return_value": rc,
+                    "fenv_flags_after": fenv_flag_names(after),
+                    "rounding_mode_after": "unchanged",
+                })
+            }
+            "fegetround" => {
+                let expected = fenv_rounding_mode(inputs, "pre_rounding_mode")?;
+                let rc = unsafe { frankenlibc_abi::fenv_abi::fegetround() };
+                serde_json::json!({
+                    "status": if rc == expected { "pass" } else { "fail" },
+                    "return_value": fenv_rounding_mode_name(rc),
+                    "fenv_flags_after": "unchanged",
+                })
+            }
+            "fesetround" => {
+                let rounding_mode = fenv_rounding_mode(inputs, "rounding_mode")?;
+                let rc = unsafe { frankenlibc_abi::fenv_abi::fesetround(rounding_mode) };
+                let after = unsafe { frankenlibc_abi::fenv_abi::fegetround() };
+                serde_json::json!({
+                    "status": fenv_status(rc, after == rounding_mode),
+                    "return_value": rc,
+                    "rounding_mode_after": fenv_rounding_mode_name(after),
+                    "fenv_flags_after": "unchanged",
+                })
+            }
+            "fegetenv" => {
+                let expected = fenv_rounding_mode(inputs, "pre_rounding_mode")?;
+                let mut env = zeroed_harness_fenv();
+                let rc = unsafe {
+                    frankenlibc_abi::fenv_abi::fegetenv((&mut env as *mut HarnessFenvT).cast())
+                };
+                unsafe {
+                    let _ = frankenlibc_abi::fenv_abi::fesetround(FENV_FE_UPWARD);
+                    let _ =
+                        frankenlibc_abi::fenv_abi::fesetenv((&env as *const HarnessFenvT).cast());
+                }
+                let restored = unsafe { frankenlibc_abi::fenv_abi::fegetround() };
+                serde_json::json!({
+                    "status": fenv_status(rc, restored == expected),
+                    "return_value": rc,
+                    "saved_rounding_mode": fenv_rounding_mode_name(restored),
+                })
+            }
+            "fesetenv" => {
+                let saved_mode = fenv_rounding_mode(inputs, "saved_rounding_mode")?;
+                let mutated_mode = fenv_rounding_mode(inputs, "mutated_rounding_mode")?;
+                let mut env = zeroed_harness_fenv();
+                unsafe {
+                    let _ = frankenlibc_abi::fenv_abi::fesetround(saved_mode);
+                    let _ =
+                        frankenlibc_abi::fenv_abi::fegetenv((&mut env as *mut HarnessFenvT).cast());
+                    let _ = frankenlibc_abi::fenv_abi::fesetround(mutated_mode);
+                }
+                let rc = unsafe {
+                    frankenlibc_abi::fenv_abi::fesetenv((&env as *const HarnessFenvT).cast())
+                };
+                let after = unsafe { frankenlibc_abi::fenv_abi::fegetround() };
+                serde_json::json!({
+                    "status": fenv_status(rc, after == saved_mode),
+                    "return_value": rc,
+                    "rounding_mode_after": fenv_rounding_mode_name(after),
+                })
+            }
+            "feholdexcept" => {
+                let pre_raise = fenv_flag_mask(inputs, "pre_raise_flags")?;
+                let mut env = zeroed_harness_fenv();
+                let rc = unsafe {
+                    frankenlibc_abi::fenv_abi::feholdexcept((&mut env as *mut HarnessFenvT).cast())
+                };
+                let after = unsafe { frankenlibc_abi::fenv_abi::fetestexcept(FENV_ALL_EXCEPT) };
+                let saved = fenv_saved_flags(&env, pre_raise);
+                serde_json::json!({
+                    "status": fenv_status(rc, after == 0 && saved == pre_raise),
+                    "return_value": rc,
+                    "saved_flags": fenv_flag_names(saved),
+                    "fenv_flags_after": fenv_flag_names(after),
+                })
+            }
+            "feupdateenv" => {
+                let saved_flags = fenv_flag_mask(inputs, "saved_flags")?;
+                let pending_flags = fenv_flag_mask(inputs, "pending_flags")?;
+                let mut env = zeroed_harness_fenv();
+                unsafe {
+                    let _ = frankenlibc_abi::fenv_abi::feraiseexcept(saved_flags);
+                    let _ =
+                        frankenlibc_abi::fenv_abi::fegetenv((&mut env as *mut HarnessFenvT).cast());
+                    let _ = frankenlibc_abi::fenv_abi::feclearexcept(FENV_ALL_EXCEPT);
+                    let _ = frankenlibc_abi::fenv_abi::feraiseexcept(pending_flags);
+                }
+                let rc = unsafe {
+                    frankenlibc_abi::fenv_abi::feupdateenv((&env as *const HarnessFenvT).cast())
+                };
+                let after = unsafe { frankenlibc_abi::fenv_abi::fetestexcept(FENV_ALL_EXCEPT) };
+                serde_json::json!({
+                    "status": fenv_status(rc, after == (saved_flags | pending_flags)),
+                    "return_value": rc,
+                    "fenv_flags_after": fenv_flag_names(after),
+                })
+            }
+            other => return Err(format!("unsupported fenv fixture function: {other}")),
+        };
+
+        Ok(non_host_execution(json_fixture_output(output)?))
+    })
+}
+
+fn wide_i32_string(text: &str) -> Vec<i32> {
+    text.chars()
+        .map(|ch| ch as i32)
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+fn isoc_wide_scanf_return(rc: c_int) -> serde_json::Value {
+    if rc == libc::EOF {
+        serde_json::json!("EOF")
+    } else {
+        serde_json::json!(rc)
+    }
+}
+
+fn execute_isoc_wide_scanf_ops_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    let format = wide_i32_string(&parse_string(inputs, "wide_format")?);
+    let output = match function {
+        "__isoc99_swscanf" => {
+            let input = wide_i32_string(&parse_string(inputs, "wide_input")?);
+            let mut value: c_int = -99;
+            let rc = unsafe {
+                frankenlibc_abi::isoc_abi::__isoc99_swscanf(
+                    input.as_ptr(),
+                    format.as_ptr(),
+                    &mut value as *mut c_int,
+                )
+            };
+            serde_json::json!({
+                "status": if rc == 1 && value == 42 { "pass" } else { "fail" },
+                "return_value": isoc_wide_scanf_return(rc),
+                "assignments": { "int": value },
+                "failure_signature": if rc == 1 { "none" } else { "conversion_failure" },
+            })
+        }
+        "__isoc99_fwscanf" => {
+            let rc = unsafe {
+                frankenlibc_abi::isoc_abi::__isoc99_fwscanf(std::ptr::null_mut(), format.as_ptr())
+            };
+            serde_json::json!({
+                "status": if rc == libc::EOF { "pass" } else { "fail" },
+                "return_value": isoc_wide_scanf_return(rc),
+                "failure_signature": "null_stream",
+            })
+        }
+        "__isoc99_vswscanf" => {
+            let input = wide_i32_string(&parse_string(inputs, "wide_input")?);
+            let rc = unsafe {
+                frankenlibc_abi::isoc_abi::__isoc99_vswscanf(
+                    input.as_ptr(),
+                    format.as_ptr(),
+                    std::ptr::null_mut(),
+                )
+            };
+            serde_json::json!({
+                "status": if rc == libc::EOF { "pass" } else { "fail" },
+                "return_value": isoc_wide_scanf_return(rc),
+                "failure_signature": "null_va_list",
+            })
+        }
+        "__isoc99_vfwscanf" => {
+            let rc = unsafe {
+                frankenlibc_abi::isoc_abi::__isoc99_vfwscanf(
+                    std::ptr::null_mut(),
+                    format.as_ptr(),
+                    std::ptr::null_mut(),
+                )
+            };
+            serde_json::json!({
+                "status": if rc == libc::EOF { "pass" } else { "fail" },
+                "return_value": isoc_wide_scanf_return(rc),
+                "failure_signature": "null_stream_or_va_list",
+            })
+        }
+        "__isoc99_vwscanf" => {
+            let rc = unsafe {
+                frankenlibc_abi::isoc_abi::__isoc99_vwscanf(format.as_ptr(), std::ptr::null_mut())
+            };
+            serde_json::json!({
+                "status": if rc == libc::EOF { "pass" } else { "fail" },
+                "return_value": isoc_wide_scanf_return(rc),
+                "failure_signature": "null_va_list",
+            })
+        }
+        other => {
+            return Err(format!(
+                "unsupported ISO wide scanf fixture function: {other}"
+            ));
+        }
+    };
+
+    Ok(non_host_execution(json_fixture_output(output)?))
+}
+
 fn execute_mntent_getmntent_r_case(
     inputs: &serde_json::Value,
     mode: &str,
@@ -4982,6 +5479,8 @@ enum PrintfArg {
     NullPtr,
 }
 
+const HOST_ORACLE_UNSUPPORTED: &str = "UNSUPPORTED_HOST_ORACLE";
+
 #[repr(C)]
 struct X86_64VaListTag {
     gp_offset: u32,
@@ -5158,6 +5657,85 @@ fn promote_args_by_format(fmt: &str, args: &mut [PrintfArg]) {
                 arg_idx += 1;
             }
         }
+    }
+}
+
+fn printf_format_needs_long_double(fmt: &str) -> bool {
+    let bytes = fmt.as_bytes();
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        if bytes[pos] != b'%' {
+            pos += 1;
+            continue;
+        }
+        pos += 1;
+        if pos >= bytes.len() {
+            break;
+        }
+        if bytes[pos] == b'%' {
+            pos += 1;
+            continue;
+        }
+        while pos < bytes.len() && matches!(bytes[pos], b'-' | b'+' | b' ' | b'#' | b'0' | b'\'') {
+            pos += 1;
+        }
+        if pos < bytes.len() && bytes[pos] == b'*' {
+            pos += 1;
+        } else {
+            while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+                pos += 1;
+            }
+        }
+        if pos < bytes.len() && bytes[pos] == b'.' {
+            pos += 1;
+            if pos < bytes.len() && bytes[pos] == b'*' {
+                pos += 1;
+            } else {
+                while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+                    pos += 1;
+                }
+            }
+        }
+
+        let long_double = if pos < bytes.len() && bytes[pos] == b'L' {
+            pos += 1;
+            true
+        } else {
+            if pos < bytes.len() {
+                match bytes[pos] {
+                    b'h' | b'l' => {
+                        let marker = bytes[pos];
+                        pos += 1;
+                        if pos < bytes.len() && bytes[pos] == marker {
+                            pos += 1;
+                        }
+                    }
+                    b'j' | b'z' | b't' | b'q' => pos += 1,
+                    _ => {}
+                }
+            }
+            false
+        };
+        if pos >= bytes.len() {
+            break;
+        }
+        let conv = bytes[pos];
+        pos += 1;
+        if long_double && matches!(conv, b'a' | b'A' | b'e' | b'E' | b'f' | b'F' | b'g' | b'G') {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn unsupported_host_oracle(impl_output: String, note: &'static str) -> DifferentialExecution {
+    DifferentialExecution {
+        host_output: String::from(HOST_ORACLE_UNSUPPORTED),
+        impl_output,
+        host_parity: false,
+        note: Some(note.to_string()),
     }
 }
 
@@ -5609,6 +6187,15 @@ fn stdio_stdout_redirect_lock() -> std::sync::MutexGuard<'static, ()> {
     }
 }
 
+#[cfg(test)]
+fn process_fixture_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 fn run_with_stdout_redirected_to_devnull(f: impl FnOnce() -> c_int) -> Result<c_int, String> {
     let _guard = stdio_stdout_redirect_lock();
     let devnull = CString::new("/dev/null").map_err(|_| String::from("invalid /dev/null path"))?;
@@ -5865,6 +6452,12 @@ fn execute_snprintf_case(
     let impl_output = render_printf_buffer(&impl_buf, size, impl_rc);
 
     if strict {
+        if printf_format_needs_long_double(&format) {
+            return Ok(unsupported_host_oracle(
+                impl_output,
+                "strict snprintf host oracle unavailable for long double varargs",
+            ));
+        }
         let mut host_buf = vec![0 as c_char; size.max(1)];
         let host_rc = run_host_snprintf(host_buf.as_mut_ptr(), size, format_c.as_ptr(), &args)?;
         let host_output = render_printf_buffer(&host_buf, size, host_rc);
@@ -5913,6 +6506,12 @@ fn execute_sprintf_case(
     let impl_output = render_printf_buffer(&impl_buf, SPRINTF_BUF_SIZE, impl_rc);
 
     if strict {
+        if printf_format_needs_long_double(&format) {
+            return Ok(unsupported_host_oracle(
+                impl_output,
+                "strict sprintf host oracle unavailable for long double varargs",
+            ));
+        }
         let mut host_buf = vec![0 as c_char; SPRINTF_BUF_SIZE];
         let host_rc = run_host_snprintf(
             host_buf.as_mut_ptr(),
@@ -31019,6 +31618,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("pthread sync wave05 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -31060,6 +31660,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("process/spawn wave01 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -31101,6 +31702,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("process/spawn wave02 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -31142,6 +31744,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("process/spawn wait-tail fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -31184,6 +31787,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("fortify checked-wrapper wave01 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -31226,6 +31830,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("fortify checked-wrapper wave02 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -31268,6 +31873,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("fortify checked-wrapper wave03 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -31601,6 +32207,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("signal/async wave01 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -31642,6 +32249,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("signal/async wave02 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -32524,6 +33132,7 @@ mod tests {
         let fixture: FixtureSetLite = serde_json::from_str(raw)
             .expect("unistd_process_filesystem_wave08 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -32559,6 +33168,7 @@ mod tests {
         let fixture: FixtureSetLite = serde_json::from_str(raw)
             .expect("unistd_process_filesystem_wave09 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -32594,6 +33204,7 @@ mod tests {
         let fixture: FixtureSetLite = serde_json::from_str(raw)
             .expect("unistd_process_filesystem_wave10 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -32629,6 +33240,7 @@ mod tests {
         let fixture: FixtureSetLite = serde_json::from_str(raw)
             .expect("unistd_process_filesystem_wave11 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -32664,6 +33276,7 @@ mod tests {
         let fixture: FixtureSetLite = serde_json::from_str(raw)
             .expect("unistd_process_filesystem_wave12 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -32699,6 +33312,7 @@ mod tests {
         let fixture: FixtureSetLite = serde_json::from_str(raw)
             .expect("unistd_process_filesystem_wave13 fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
                 .unwrap_or_else(|err| {
@@ -34280,6 +34894,7 @@ mod tests {
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("process_ops fixture should parse");
 
+        let _process_guard = process_fixture_lock();
         for case in fixture.cases {
             let expected = normalize_expected(&case.expected_output);
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
@@ -34379,6 +34994,7 @@ mod tests {
             "../../../tests/conformance/fixtures/spawn_exec_ops.json"
         ))
         .unwrap();
+        let _process_guard = process_fixture_lock();
         for c in fixture.cases {
             let exp = normalize(&c.expected_output);
             let r = execute_fixture_case(&c.function, &c.inputs, &c.mode).unwrap();

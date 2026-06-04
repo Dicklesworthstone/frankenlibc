@@ -71,14 +71,23 @@ cargo_check_command_for_log() {
   fi
 }
 
-run_cargo_check() {
-  local package="$1"
+run_core_cargo_check() {
   if [[ "${RUN_MODE}" == "rch" ]]; then
-    RCH_REQUIRE_REMOTE=1 \
+      RCH_REQUIRE_REMOTE=1 \
       RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" \
-      rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p "${package}"
+      rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p frankenlibc-core
   else
-    CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p "${package}"
+    CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p frankenlibc-core
+  fi
+}
+
+run_abi_cargo_check() {
+  if [[ "${RUN_MODE}" == "rch" ]]; then
+      RCH_REQUIRE_REMOTE=1 \
+      RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" \
+      rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p frankenlibc-abi
+  else
+    CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p frankenlibc-abi
   fi
 }
 
@@ -107,7 +116,7 @@ fi
 # the aarch64 linker, `cargo build` would fail but `cargo check` succeeds.
 CORE_COMMAND="$(cargo_check_command_for_log frankenlibc-core)"
 log_event "check_core" "in_progress" "${CORE_COMMAND}"
-if run_cargo_check frankenlibc-core >>"${LOG}" 2>&1; then
+if run_core_cargo_check >>"${LOG}" 2>&1; then
   log_event "check_core" "pass" "frankenlibc-core cross-checks clean"
   CORE_STATUS="pass"
 else
@@ -117,7 +126,7 @@ fi
 
 ABI_COMMAND="$(cargo_check_command_for_log frankenlibc-abi)"
 log_event "check_abi" "in_progress" "${ABI_COMMAND}"
-if run_cargo_check frankenlibc-abi >>"${LOG}" 2>&1; then
+if run_abi_cargo_check >>"${LOG}" 2>&1; then
   log_event "check_abi" "pass" "frankenlibc-abi cross-checks clean"
   ABI_STATUS="pass"
 else

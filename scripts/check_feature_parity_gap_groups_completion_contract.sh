@@ -138,10 +138,20 @@ def compute_summary(groups: dict[str, Any], ledger: dict[str, Any]) -> dict[str,
     }
 
 
-def run_source_checker(source_checker: str) -> dict[str, Any]:
+def run_source_checker(
+    source_checker: str,
+    source_report_path: pathlib.Path,
+    source_log_path: pathlib.Path,
+    source_regenerated_path: pathlib.Path,
+) -> dict[str, Any]:
+    env = os.environ.copy()
+    env["FRANKENLIBC_FEATURE_PARITY_GAP_GROUP_REPORT"] = str(source_report_path)
+    env["FRANKENLIBC_FEATURE_PARITY_GAP_GROUP_LOG"] = str(source_log_path)
+    env["FRANKENLIBC_FEATURE_PARITY_GAP_REGENERATED"] = str(source_regenerated_path)
     proc = subprocess.run(
         ["bash", source_checker],
         cwd=ROOT,
+        env=env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -260,15 +270,22 @@ if not isinstance(outputs, dict):
 for output_id in as_string_list(required.get("required_generated_outputs"), "required_source_contract.required_generated_outputs"):
     require(output_id in outputs, f"required generated output missing: {output_id}")
 
+source_report_path = REPORT.parent / "feature_parity_gap_groups.source.report.json"
+source_log_path = REPORT.parent / "feature_parity_gap_groups.source.log.jsonl"
+source_regenerated_path = REPORT.parent / "feature_parity_gap_groups.source.regenerated.v1.json"
+
 source_checker = source_artifacts.get("source_checker")
 source_report = {}
 if isinstance(source_checker, str) and source_checker:
-    source_report = run_source_checker(source_checker)
+    source_report = run_source_checker(
+        source_checker,
+        source_report_path,
+        source_log_path,
+        source_regenerated_path,
+    )
 else:
     err("source_checker artifact path is missing")
 
-source_report_path = ROOT / "target/conformance/feature_parity_gap_groups.report.json"
-source_log_path = ROOT / "target/conformance/feature_parity_gap_groups.log.jsonl"
 if source_report_path.exists():
     disk_report = load_json(source_report_path, "source_gate_report")
     if disk_report:

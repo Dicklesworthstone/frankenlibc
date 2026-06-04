@@ -23,6 +23,7 @@ GATE_SEED="${FRANKENLIBC_E2E_GATE_SEED:-91337}"
 COMPLETION_MANIFEST="${FRANKENLIBC_E2E_COMPLETION_MANIFEST:-${ROOT}/tests/conformance/e2e_scenario_manifest.v1.json}"
 COMPLETION_REPORT="${FRANKENLIBC_E2E_COMPLETION_REPORT:-${ROOT}/target/conformance/e2e_suite_completion_debt.report.json}"
 COMPLETION_LOG="${FRANKENLIBC_E2E_COMPLETION_LOG:-${ROOT}/target/conformance/e2e_suite_completion_debt.log.jsonl}"
+SCRATCH_DIR="${TMPDIR:-/tmp}"
 
 failures=0
 
@@ -87,11 +88,18 @@ def err(message: str) -> None:
     errors.append(message)
 
 
+def rel_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def read_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        err(f"{path.relative_to(ROOT)} is not valid JSON: {exc}")
+        err(f"{rel_path(path)} is not valid JSON: {exc}")
         return {}
 
 
@@ -204,7 +212,7 @@ if latest_run_path and latest_run_path.exists():
         if not candidate.exists():
             err(f"latest e2e run missing {rel}")
         else:
-            latest_artifacts.append(str(candidate.relative_to(ROOT)))
+            latest_artifacts.append(rel_path(candidate))
     trace_path = latest_run_path / "trace.jsonl"
     if trace_path.exists():
         actual_events: set[str] = set()
@@ -251,7 +259,7 @@ report = {
     "implementation_refs": implementation_refs if isinstance(implementation_refs, list) else [],
     "required_events": sorted(events),
     "required_fields": sorted(fields),
-    "latest_e2e_run": str(latest_run_path.relative_to(ROOT)) if latest_run_path and latest_run_path.exists() else None,
+    "latest_e2e_run": rel_path(latest_run_path) if latest_run_path and latest_run_path.exists() else None,
     "artifact_refs": latest_artifacts,
     "errors": errors,
 }
@@ -266,9 +274,9 @@ log_row = {
     "original_bead": ORIGINAL_BEAD,
     "status": status,
     "missing_items_bound": sorted(missing_items),
-    "report_path": str(REPORT.relative_to(ROOT)),
-    "latest_e2e_run": str(latest_run_path.relative_to(ROOT)) if latest_run_path and latest_run_path.exists() else "",
-    "artifact_refs": [str(REPORT.relative_to(ROOT)), *latest_artifacts],
+    "report_path": rel_path(REPORT),
+    "latest_e2e_run": rel_path(latest_run_path) if latest_run_path and latest_run_path.exists() else "",
+    "artifact_refs": [rel_path(REPORT), *latest_artifacts],
     "failure_signature": "none" if status == "pass" else "completion_debt_contract_failed",
 }
 LOG.write_text(json.dumps(log_row, sort_keys=True) + "\n", encoding="utf-8")
@@ -352,13 +360,15 @@ fi
 echo ""
 
 echo "--- Check 3: Flake policy unit tests ---"
+mkdir -p "${SCRATCH_DIR}"
+flake_policy_log="${SCRATCH_DIR%/}/e2e_flake_policy_test.log"
 set +e
-python3 -m unittest "${ROOT}/tests/conformance/test_e2e_flake_policy.py" -q >/tmp/e2e_flake_policy_test.log 2>&1
+python3 -m unittest "${ROOT}/tests/conformance/test_e2e_flake_policy.py" -q >"${flake_policy_log}" 2>&1
 ut_rc=$?
 set -e
 if [[ "${ut_rc}" -ne 0 ]]; then
     echo "FAIL: flake policy unit tests failed"
-    tail -n 40 /tmp/e2e_flake_policy_test.log || true
+    tail -n 40 "${flake_policy_log}" || true
     failures=$((failures + 1))
 else
     echo "PASS: flake policy unit tests"
@@ -387,8 +397,9 @@ export FRANKENLIBC_E2E_RETRYABLE_CODES=124,125
 export FRANKENLIBC_E2E_FLAKE_QUARANTINE_THRESHOLD=0.34
 export FRANKENLIBC_E2E_PACK_MAX_FAILS_FAULT=6
 export FRANKENLIBC_E2E_PACK_MAX_QUARANTINED_FAULT=2
+e2e_gate_run_log="${SCRATCH_DIR%/}/e2e_suite_gate_run.log"
 set +e
-bash "${ROOT}/scripts/e2e_suite.sh" fault >/tmp/e2e_suite_gate_run.log 2>&1
+bash "${ROOT}/scripts/e2e_suite.sh" fault >"${e2e_gate_run_log}" 2>&1
 suite_rc=$?
 set -e
 latest_run="$(ls -td "${ROOT}"/target/e2e_suite/e2e-*"-s${GATE_SEED}" 2>/dev/null | head -1)"

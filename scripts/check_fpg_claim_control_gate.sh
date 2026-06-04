@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # check_fpg_claim_control_gate.sh -- bd-bp8fl.3.5
 #
-# Fail-closed gate for the eight `fpg-claim-control` gaps in
+# Fail-closed gate for the seven `fpg-claim-control` gaps in
 # tests/conformance/feature_parity_gap_ledger.v1.json. Drives the binder at
 # tests/conformance/fpg_claim_control_gate.v1.json:
 #   * every macro-coverage-target row in FEATURE_PARITY.md must remain bound
 #     to the cited primary key + IN_PROGRESS status,
 #   * every evidence anchor must resolve in the cited source artifact at the
 #     expected value/threshold,
-#   * the machine_delta sentinel row must remain visible until the linked
-#     POSIX/GNU completeness row can promote on machine evidence.
 #
 # Modes:
 #   --validate-only  static structural checks only (does not invoke cargo)
@@ -182,7 +180,6 @@ expected_gap_ids = {
     "fp-macro-targets-b1983d62901c",
     "fp-macro-targets-556631616b22",
     "fp-macro-targets-1e330b896784",
-    "gap-macro-fp-macro-targets-fa7a23e18f01",
 }
 rows = gate.get("rows", [])
 gate_ids = {row.get("gap_id") for row in rows}

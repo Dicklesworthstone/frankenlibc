@@ -10,7 +10,7 @@
 //! 7. The CI gate script exists and is executable.
 //! 8. README replacement-level claim matches current_level.
 //! 9. Release tag policy is aligned with current_level.
-//! 10. README smoke-readiness prose does not outrun replacement-level blockers.
+//! 10. README smoke-readiness prose does not outrun replacement-level blockers or red smoke evidence.
 //!
 //! Run: cargo test -p frankenlibc-harness --test replacement_levels_test
 
@@ -51,6 +51,12 @@ fn load_l1_crt_startup_tls_matrix() -> serde_json::Value {
     let content =
         std::fs::read_to_string(&path).expect("l1_crt_startup_tls_proof_matrix should exist");
     serde_json::from_str(&content).expect("l1_crt_startup_tls_proof_matrix should be valid JSON")
+}
+
+fn load_smoke_summary() -> serde_json::Value {
+    let path = workspace_root().join("tests/conformance/ld_preload_smoke_summary.v1.json");
+    let content = std::fs::read_to_string(&path).expect("ld_preload_smoke_summary should exist");
+    serde_json::from_str(&content).expect("ld_preload_smoke_summary should be valid JSON")
 }
 
 fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
@@ -869,6 +875,7 @@ fn claim_drift_guard_consistent_with_readme_and_release_policy() {
 fn readme_smoke_claims_do_not_outrun_replacement_level_blockers() {
     let lvl = load_levels();
     let readme = load_readme().to_ascii_lowercase();
+    let smoke = load_smoke_summary();
 
     let levels = lvl["levels"].as_array().unwrap();
     let l1 = levels
@@ -890,8 +897,11 @@ fn readme_smoke_claims_do_not_outrun_replacement_level_blockers() {
 
     let hardened_smoke_incomplete =
         blockers.contains("hardened-mode e2e smoke") && blockers.contains("incomplete");
+    let smoke_red = smoke["summary"]["overall_failed"].as_bool().unwrap_or(true)
+        || smoke["modes"]["strict"]["status"].as_str() != Some("green")
+        || smoke["modes"]["hardened"]["status"].as_str() != Some("green");
 
-    if hardened_smoke_incomplete {
+    if hardened_smoke_incomplete || smoke_red {
         assert!(
             !readme.contains("latest broad preload smoke run is **fully green**"),
             "README must not claim broad preload smoke is fully green while L1 hardened smoke remains blocked"
@@ -899,6 +909,14 @@ fn readme_smoke_claims_do_not_outrun_replacement_level_blockers() {
         assert!(
             !readme.contains("both strict and hardened modes pass all workloads"),
             "README must not claim paired strict+hardened smoke closure while L1 hardened smoke remains blocked"
+        );
+        assert!(
+            !readme.contains("green strict + hardened smoke runs"),
+            "README must not claim strict+hardened smoke is green while the checked smoke artifact is red"
+        );
+        assert!(
+            !readme.contains("curated preload smoke battery is green in both strict and hardened modes"),
+            "README must not claim curated smoke is green while the checked smoke artifact is red"
         );
     }
 }
@@ -971,6 +989,7 @@ fn gate_script_exists_and_executable() {
 fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
     let levels = load_levels();
     let matrix = load_l1_crt_startup_tls_matrix();
+    let smoke = load_smoke_summary();
     let l1 = levels["levels"]
         .as_array()
         .and_then(|items| {
@@ -1012,6 +1031,45 @@ fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
         Some("pass"),
         "CRT/startup/TLS proof matrix must not remain an L1 blocker after all rows pass"
     );
+    let smoke_obligation = obligations
+        .iter()
+        .find(|entry| entry["id"].as_str() == Some("hardened_smoke_battery"))
+        .expect("L1 objective gate should bind the checked preload smoke summary");
+    assert_eq!(
+        smoke_obligation["actual"]["run_id"].as_str(),
+        smoke["run_id"].as_str(),
+        "replacement_levels.json should consume the current smoke run id"
+    );
+    assert_eq!(
+        smoke_obligation["actual"]["overall_failed"].as_bool(),
+        smoke["summary"]["overall_failed"].as_bool(),
+        "replacement_levels.json should consume the current smoke overall status"
+    );
+    assert_eq!(
+        smoke_obligation["actual"]["strict_status"].as_str(),
+        smoke["modes"]["strict"]["status"].as_str(),
+        "replacement_levels.json should consume strict smoke status"
+    );
+    assert_eq!(
+        smoke_obligation["actual"]["hardened_status"].as_str(),
+        smoke["modes"]["hardened"]["status"].as_str(),
+        "replacement_levels.json should consume hardened smoke status"
+    );
+    assert_eq!(
+        smoke_obligation["actual"]["perf_failures"].as_u64(),
+        smoke["summary"]["perf_failures"].as_u64(),
+        "replacement_levels.json should consume smoke perf failure count"
+    );
+    assert_eq!(
+        smoke_obligation["actual"]["signature_guard_failures"].as_u64(),
+        smoke["summary"]["signature_guard_failures"].as_u64(),
+        "replacement_levels.json should consume smoke signature-guard failure count"
+    );
+    assert_eq!(
+        smoke_obligation["outcome"].as_str(),
+        Some("pass"),
+        "green strict/hardened smoke evidence must pass the L1 smoke obligation"
+    );
 
     let blocked_obligations: Vec<_> = obligations
         .iter()
@@ -1021,7 +1079,7 @@ fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
     assert_eq!(
         blocked_obligations,
         Vec::<&str>::new(),
-        "L1 objective gate should have no blocked obligations after explicit claim promotion"
+        "L1 objective gate should have no blocked obligations when smoke, CRT, and promotion controls pass"
     );
     let promotion_obligation = obligations
         .iter()
@@ -1279,7 +1337,12 @@ fn gate_script_refreshes_l1_objective_gate_artifacts() {
     assert_eq!(
         report["status"].as_str(),
         Some("pass"),
-        "replacement-level gate report should succeed for the checked-in artifacts"
+        "replacement-level consistency gate should succeed for the checked-in artifacts"
+    );
+    assert_eq!(
+        report["objective_gate_status"].as_str(),
+        Some("pass"),
+        "replacement-level report should surface the passing objective gate"
     );
     let script_checks = report["script_checks"]
         .as_array()

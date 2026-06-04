@@ -16,7 +16,7 @@ const EXPECTED_GAP_IDS: &[&str] = &[
     "fp-gap-summary-7b67c9268b67",
     "fp-gap-summary-d643858a62b5",
     "fp-gap-summary-7c8a46cdcb5e",
-    "fp-gap-summary-b04531fdcdde",
+    "fp-gap-summary-fb294d721471",
     "fp-gap-summary-3675b24bb188",
     "fp-gap-summary-e0624b12f6a0",
     "fp-gap-summary-be0b24532a7e",

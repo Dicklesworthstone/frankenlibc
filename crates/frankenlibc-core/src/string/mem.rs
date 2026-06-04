@@ -406,7 +406,7 @@ fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
 
     let (ms_le, p0) = max_suffix(false);
     let (ms_ge, p_ge) = max_suffix(true);
-    let (mut ms, mut p) = if ms_ge > ms_le {
+    let (ms, mut p) = if ms_ge > ms_le {
         (ms_ge, p_ge)
     } else {
         (ms_le, p0)

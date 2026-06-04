@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use frankenlibc_abi::pthread_abi::{
     pthread_create, pthread_detach, pthread_equal, pthread_getname_np, pthread_join, pthread_self,
-    pthread_setname_np, pthread_threading_force_native_for_tests,
+    pthread_setname_np, pthread_threading_restore_for_tests,
+    pthread_threading_swap_force_native_for_tests,
 };
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
@@ -15,10 +16,24 @@ fn lock_only() -> std::sync::MutexGuard<'static, ()> {
     TEST_GUARD.lock().unwrap()
 }
 
-fn lock_and_force_native() -> std::sync::MutexGuard<'static, ()> {
+struct NativeThreadingTestGuard {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    previous: bool,
+}
+
+impl Drop for NativeThreadingTestGuard {
+    fn drop(&mut self) {
+        pthread_threading_restore_for_tests(self.previous);
+    }
+}
+
+fn lock_and_force_native() -> NativeThreadingTestGuard {
     let guard = TEST_GUARD.lock().unwrap();
-    pthread_threading_force_native_for_tests();
-    guard
+    let previous = pthread_threading_swap_force_native_for_tests();
+    NativeThreadingTestGuard {
+        _guard: guard,
+        previous,
+    }
 }
 
 unsafe extern "C" fn start_return_arg(arg: *mut c_void) -> *mut c_void {
@@ -184,7 +199,7 @@ fn pthread_create_argument_validation() {
 }
 
 #[test]
-fn pthread_create_join_roundtrip_uses_default_native_routing() {
+fn pthread_create_join_roundtrip_uses_default_host_routing() {
     let _guard = lock_only();
 
     let arg = 0x4444usize as *mut c_void;
@@ -202,11 +217,11 @@ fn pthread_create_join_roundtrip_uses_default_native_routing() {
     let mut retval: *mut c_void = std::ptr::null_mut();
     let join_rc = unsafe { pthread_join(tid, &mut retval as *mut *mut c_void) };
     assert_eq!(join_rc, 0, "pthread_join failed rc={join_rc}");
-    assert_eq!(retval, arg, "default routing lost thread return value");
+    assert_eq!(retval, arg, "default host routing lost thread return value");
 }
 
 #[test]
-fn pthread_create_join_parallel_batch_uses_default_native_routing() {
+fn pthread_create_join_parallel_batch_uses_default_host_routing() {
     let _guard = lock_only();
     run_create_join_parallel_batch(8);
 }

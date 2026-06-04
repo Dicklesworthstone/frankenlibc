@@ -183,7 +183,7 @@ fn native_loader_phase2_contract_pins_dependency_policy_scope() {
         .iter()
         .find(|row| row["symbol"].as_str() == Some("dlopen"))
         .expect("support matrix must include dlopen");
-    assert_eq!(dlopen["status"].as_str(), Some("Implemented"));
+    assert_eq!(dlopen["status"].as_str(), Some("WrapsHostLibc"));
     let strict = dlopen["strict_semantics"]
         .as_str()
         .expect("dlopen strict_semantics must be string");
@@ -204,7 +204,7 @@ fn native_loader_phase2_contract_pins_dependency_policy_scope() {
             .unwrap_or_else(|| panic!("support matrix must include {symbol}"));
         assert_eq!(
             row["status"].as_str(),
-            Some("Implemented"),
+            Some("WrapsHostLibc"),
             "{symbol} support matrix status"
         );
     }

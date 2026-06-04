@@ -131,6 +131,7 @@ def check_status_distribution(support_matrix, reality_report, replacement_levels
         status_map = {
             "Implemented": "implemented",
             "RawSyscall": "raw_syscall",
+            "WrapsHostLibc": "wraps_host_libc",
             "GlibcCallThrough": "glibc_call_through",
             "Stub": "stub",
         }
@@ -156,7 +157,8 @@ def check_status_distribution(support_matrix, reality_report, replacement_levels
         rl_map = {
             "Implemented": "implemented",
             "RawSyscall": "raw_syscall",
-            "GlibcCallThrough": "callthrough",
+            "WrapsHostLibc": "wraps_host_libc",
+            "GlibcCallThrough": "glibc_callthrough",
             "Stub": "stub",
         }
         for sm_status, rl_key in rl_map.items():

@@ -398,14 +398,18 @@ def validate_sources(manifest: dict[str, Any], source_paths: dict[str, str]) -> 
     support_counts = Counter(row.get("status") for row in support_symbols if isinstance(row, dict))
     if len(support_symbols) != support_req.get("total_symbols"):
         err(f"support_matrix total_symbols mismatch: expected={support_req.get('total_symbols')} got={len(support_symbols)}")
-    if support_counts.get("GlibcCallThrough", 0) != support_req.get("callthrough"):
+    expected_glibc_callthrough = support_req.get("glibc_callthrough", support_req.get("callthrough"))
+    if support_counts.get("GlibcCallThrough", 0) != expected_glibc_callthrough:
         err("support_matrix GlibcCallThrough count mismatch")
     if support_counts.get("Stub", 0) != support_req.get("stub"):
         err("support_matrix Stub count mismatch")
     if assessment.get("total_symbols") != len(support_symbols):
         err("replacement_levels current_assessment.total_symbols must match support_matrix.symbols")
-    if assessment.get("callthrough") != support_counts.get("GlibcCallThrough", 0):
-        err("replacement_levels current_assessment.callthrough must match support_matrix")
+    if assessment.get("glibc_callthrough") != support_counts.get("GlibcCallThrough", 0):
+        err("replacement_levels current_assessment.glibc_callthrough must match support_matrix")
+    expected_host_backed = support_counts.get("WrapsHostLibc", 0) + support_counts.get("GlibcCallThrough", 0)
+    if assessment.get("callthrough") != expected_host_backed:
+        err("replacement_levels current_assessment.callthrough must match WrapsHostLibc + GlibcCallThrough")
     if assessment.get("stub") != support_counts.get("Stub", 0):
         err("replacement_levels current_assessment.stub must match support_matrix")
 
@@ -466,7 +470,8 @@ def validate_sources(manifest: dict[str, Any], source_paths: dict[str, str]) -> 
         "release_level": release_level,
         "level_statuses": {level_id: level_map.get(level_id, {}).get("status") for level_id in level_ids},
         "support_total": len(support_symbols),
-        "callthrough": assessment.get("callthrough"),
+        "glibc_callthrough": assessment.get("glibc_callthrough"),
+        "host_backed_callthrough": assessment.get("callthrough"),
         "stub": assessment.get("stub"),
         "l1_objective_gate_status": objective_gate.get("status"),
         "l1_objective_outcomes": sorted(str(outcome) for outcome in objective_outcomes),

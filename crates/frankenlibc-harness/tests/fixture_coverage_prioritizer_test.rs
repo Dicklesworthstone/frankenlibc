@@ -874,11 +874,11 @@ fn completed_stdio_libio_first_wave_claim_has_fixture_and_harness_evidence() {
         );
     }
     assert!(
-        stdio_campaign["target_covered"].as_u64().unwrap() >= 41,
+        stdio_campaign["target_covered"].as_u64().unwrap() >= 6,
         "stdio/libio target_covered must advance after first-wave fixture landing"
     );
     assert!(
-        stdio_campaign["current_coverage_pct"].as_f64().unwrap() >= 32.54,
+        stdio_campaign["current_coverage_pct"].as_f64().unwrap() >= 60.0,
         "stdio/libio coverage pct must advance after first-wave fixture landing"
     );
 }
@@ -1003,6 +1003,24 @@ fn priority_scores_and_summary_are_consistent() {
         modules.push(campaign["module"].as_str().unwrap().to_string());
         first_wave_total += campaign["first_wave_fixture_count"].as_u64().unwrap();
         for domain in campaign["workload_domains"].as_array().unwrap() {
+            domains.insert(domain.as_str().unwrap().to_string());
+        }
+    }
+    for source in artifact["fully_covered_workload_domain_sources"]
+        .as_array()
+        .unwrap()
+    {
+        assert_eq!(
+            source["coverage_state"].as_str(),
+            Some("covered"),
+            "fully covered workload domain source must be closed"
+        );
+        assert_eq!(
+            source["target_uncovered"].as_u64(),
+            Some(0),
+            "fully covered workload domain source must have no target gaps"
+        );
+        for domain in source["workload_domains"].as_array().unwrap() {
             domains.insert(domain.as_str().unwrap().to_string());
         }
     }

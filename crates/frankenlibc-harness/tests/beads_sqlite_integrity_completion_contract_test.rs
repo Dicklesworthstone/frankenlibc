@@ -204,16 +204,26 @@ fn checker_validates_current_tracker_health_and_emits_telemetry() -> TestResult 
             "issues JSONL missing required id bd-yaiw",
             "issues JSONL missing required id bd-yaiw.1",
         ];
+        let generic_doctor_gap =
+            "br doctor --json must report ok=true or only accepted degraded recovery artifacts";
         let errors = report["errors"]
             .as_array()
             .ok_or("failure report must include errors array")?;
         assert!(!errors.is_empty(), "{}", output_text(&output));
+        let has_specific_worker_tracker_gap = errors.iter().any(|error| {
+            error
+                .as_str()
+                .is_some_and(|error| allowed_worker_tracker_gap.iter().any(|fragment| error.contains(fragment)))
+        });
         for error in errors {
             let error = error.as_str().ok_or("failure error must be string")?;
+            let generic_doctor_error =
+                error.contains(generic_doctor_gap) && has_specific_worker_tracker_gap;
             assert!(
                 allowed_worker_tracker_gap
                     .iter()
-                    .any(|fragment| error.contains(fragment)),
+                    .any(|fragment| error.contains(fragment))
+                    || generic_doctor_error,
                 "unexpected checker failure: {error}; {}",
                 output_text(&output)
             );
@@ -228,7 +238,11 @@ fn checker_validates_current_tracker_health_and_emits_telemetry() -> TestResult 
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["original_bead"].as_str(), Some("bd-yaiw"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-yaiw.1"));
-    assert_eq!(report["summary"]["doctor_ok"].as_bool(), Some(true));
+    assert!(
+        report["summary"]["doctor_ok"].as_bool() == Some(true)
+            || report["summary"]["doctor_accepted_degraded"].as_bool() == Some(true),
+        "doctor must be green or explicitly accepted degraded: {report}"
+    );
     assert_eq!(report["summary"]["sync_dirty_count"].as_u64(), Some(0));
     assert_eq!(report["summary"]["dep_cycle_count"].as_u64(), Some(0));
     assert_eq!(

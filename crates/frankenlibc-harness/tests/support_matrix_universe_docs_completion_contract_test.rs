@@ -123,14 +123,18 @@ fn manifest_binds_symbol_universe_completion_evidence() -> TestResult {
     let expected = &manifest["expected_symbol_universe"];
     assert_eq!(
         expected["generated_at_utc"].as_str(),
-        Some("2026-02-18T04:49:26Z")
+        Some("2026-06-03T21:45:00Z")
     );
     assert_eq!(expected["total_symbols"].as_u64(), Some(4119));
     assert_eq!(
         expected["status_counts"]["Implemented"].as_u64(),
-        Some(3705)
+        Some(2384)
     );
     assert_eq!(expected["status_counts"]["RawSyscall"].as_u64(), Some(414));
+    assert_eq!(
+        expected["status_counts"]["WrapsHostLibc"].as_u64(),
+        Some(1321)
+    );
     assert_eq!(
         expected["status_counts"]["GlibcCallThrough"].as_u64(),
         Some(0)
@@ -176,11 +180,15 @@ fn checker_validates_symbol_universe_docs_contract() -> TestResult {
     assert_eq!(report["summary"]["total_symbols"].as_u64(), Some(4119));
     assert_eq!(
         report["summary"]["status_counts"]["Implemented"].as_u64(),
-        Some(3705)
+        Some(2384)
     );
     assert_eq!(
         report["summary"]["status_counts"]["RawSyscall"].as_u64(),
         Some(414)
+    );
+    assert_eq!(
+        report["summary"]["status_counts"]["WrapsHostLibc"].as_u64(),
+        Some(1321)
     );
 
     Ok(())

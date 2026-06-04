@@ -172,9 +172,9 @@ fn manifest_binds_full_release_rehearsal_completion_items() -> TestResult {
 
     let smoke = &manifest["required_rehearsal_contract"]["ld_preload_smoke"];
     assert_eq!(smoke["expected_total_cases"].as_u64(), Some(64));
-    assert_eq!(smoke["expected_passes"].as_u64(), Some(58));
+    assert_eq!(smoke["expected_passes"].as_u64(), Some(60));
     assert_eq!(smoke["expected_fails"].as_u64(), Some(0));
-    assert_eq!(smoke["expected_skips"].as_u64(), Some(6));
+    assert_eq!(smoke["expected_skips"].as_u64(), Some(4));
 
     for binding in bindings {
         for test_ref in json_array(&binding["required_test_refs"], "required_test_refs")? {
@@ -221,7 +221,7 @@ fn checker_emits_release_rehearsal_report_and_log() -> TestResult {
     assert_eq!(report["summaries"]["dag"]["gate_count"].as_u64(), Some(9));
     assert_eq!(
         report["summaries"]["smoke"]["summary"]["passes"].as_u64(),
-        Some(58)
+        Some(60)
     );
     assert_eq!(
         report["command_results"]["replacement_levels_checker"]["status"].as_str(),

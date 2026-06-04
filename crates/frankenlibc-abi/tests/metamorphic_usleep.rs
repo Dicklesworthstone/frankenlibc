@@ -4,7 +4,7 @@
 //!
 //! Internal invariants:
 //!
-//!   - usleep(0) returns immediately and returns 0
+//!   - usleep(0) returns promptly and returns 0
 //!   - usleep(N) sleeps for at least N microseconds (within
 //!     timer-resolution tolerance)
 //!   - usleep is monotonic: sleeping N then M takes at least N+M
@@ -18,6 +18,8 @@ use std::time::Instant;
 use frankenlibc_abi::time_abi as fl_time;
 use frankenlibc_abi::unistd_abi as fl;
 
+const ZERO_SLEEP_UPPER_BOUND_US: u128 = 50_000;
+
 #[test]
 fn metamorphic_usleep_zero_returns_immediately() {
     let start = Instant::now();
@@ -25,7 +27,7 @@ fn metamorphic_usleep_zero_returns_immediately() {
     let elapsed = start.elapsed();
     assert_eq!(r, 0);
     assert!(
-        elapsed.as_micros() < 1000,
+        elapsed.as_micros() < ZERO_SLEEP_UPPER_BOUND_US,
         "usleep(0) took {} us",
         elapsed.as_micros()
     );
@@ -97,9 +99,12 @@ fn metamorphic_nanosleep_zero_returns_immediately() {
     let r = unsafe { fl_time::nanosleep(&req, &mut rem) };
     let elapsed_us = start.elapsed().as_micros();
     assert_eq!(r, 0);
-    // Allow a generous 50ms upper bound — system may have lots of
-    // scheduling pressure under cargo's parallel test runner.
-    assert!(elapsed_us < 50_000, "nanosleep(0) took {elapsed_us}us");
+    // Allow a generous upper bound: remote workers may have scheduler pressure
+    // under cargo's parallel test runner.
+    assert!(
+        elapsed_us < ZERO_SLEEP_UPPER_BOUND_US,
+        "nanosleep(0) took {elapsed_us}us"
+    );
 }
 
 #[test]

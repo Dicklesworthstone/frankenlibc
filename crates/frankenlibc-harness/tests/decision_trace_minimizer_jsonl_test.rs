@@ -128,7 +128,12 @@ fn manifest_serialization_contract_pins_fail_closed_kinds() -> TestResult {
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    for k in ["missing_required_field", "wrong_field_type", "invalid_json"] {
+    for k in [
+        "missing_required_field",
+        "wrong_field_type",
+        "invalid_json",
+        "unexpected_kind",
+    ] {
         require(
             kinds.contains(k),
             format!("rejected_serialization_kinds must include {k}"),
@@ -176,8 +181,8 @@ fn parser_rejects_missing_required_field_with_kind_label() -> TestResult {
     let bad = r#"{"replay_command":"x","source_commit":"y"}"#;
     match parse_minimized_trace_jsonl(bad) {
         Err(MinimizerSerError::MissingField(name)) => require(
-            name == "expected_failure_signature",
-            format!("expected `expected_failure_signature`; got {name}"),
+            name == "kind",
+            format!("expected `kind`; got {name}"),
         ),
         other => Err(format!("expected MissingField; got {other:?}")),
     }

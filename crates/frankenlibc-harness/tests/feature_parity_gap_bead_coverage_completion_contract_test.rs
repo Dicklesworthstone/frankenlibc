@@ -146,11 +146,11 @@ fn manifest_binds_gap_bead_coverage_completion_items() -> TestResult {
     assert_eq!(coverage["bead"].as_str(), Some("bd-w2c3.1.3"));
     assert_eq!(
         coverage["summary_expectations"]["total_unresolved_gaps"].as_u64(),
-        Some(111)
+        Some(110)
     );
     assert_eq!(
         coverage["summary_expectations"]["covered_gaps"].as_u64(),
-        Some(111)
+        Some(110)
     );
     assert_eq!(
         coverage["summary_expectations"]["uncovered_gaps"].as_u64(),
@@ -190,11 +190,11 @@ fn checker_validates_gap_bead_coverage_contract_and_emits_report_log() -> TestRe
     );
     assert_eq!(
         report["coverage_summary"]["total_unresolved_gaps"].as_u64(),
-        Some(111)
+        Some(110)
     );
     assert_eq!(
         report["coverage_summary"]["covered_gaps"].as_u64(),
-        Some(111)
+        Some(110)
     );
     assert_eq!(
         report["coverage_summary"]["uncovered_gaps"].as_u64(),
@@ -305,7 +305,7 @@ fn checker_rejects_wrong_covered_gap_count() -> TestResult {
     let out_dir = unique_out_dir(&root, "wrong-count")?;
     let mut manifest = read_json(&contract_path(&root))?;
     manifest["required_gap_bead_coverage_contract"]["summary_expectations"]["covered_gaps"] =
-        json!(110);
+        json!(109);
     let mutated = out_dir.join("feature_parity_gap_bead_coverage_wrong_count.json");
     write_json(&mutated, &manifest)?;
 

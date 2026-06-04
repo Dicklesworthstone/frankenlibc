@@ -81,6 +81,31 @@ fn block_has_nul_256(chunk: &[u8]) -> bool {
 }
 
 #[inline(always)]
+fn has_non_byte_simd_64(chunk: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(chunk.len(), STRLEN_SIMD_LANES);
+    !Simd::<u8, STRLEN_SIMD_LANES>::from_slice(chunk)
+        .simd_eq(Simd::splat(byte))
+        .all()
+}
+
+#[inline(always)]
+fn block_has_non_byte_256(chunk: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(chunk.len(), STRLEN_BLOCK);
+    let splat = Simd::<u8, STRLEN_SIMD_LANES>::splat(byte);
+    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[0..STRLEN_SIMD_LANES]);
+    let v1 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
+    );
+    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 3..STRLEN_BLOCK]);
+    let folded = (v0 ^ splat)
+        .simd_max(v1 ^ splat)
+        .simd_max((v2 ^ splat).simd_max(v3 ^ splat));
+    folded.simd_ne(Simd::splat(0)).any()
+}
+
+#[inline(always)]
 fn equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
     debug_assert_eq!(left.len(), SIMD_LANES);
     debug_assert_eq!(right.len(), SIMD_LANES);
@@ -598,6 +623,40 @@ fn find_non_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
 #[allow(unsafe_code)]
 fn find_non_byte_or_nul(s: &[u8], accepted: u8) -> usize {
     const WORD_SIZE: usize = size_of::<usize>();
+
+    if accepted == 0 {
+        return 0;
+    }
+
+    if s.len() >= STRLEN_BLOCK {
+        let mut i = 0usize;
+
+        while i + STRLEN_BLOCK <= s.len() {
+            let chunk = &s[i..i + STRLEN_BLOCK];
+            if block_has_non_byte_256(chunk, accepted) {
+                break;
+            }
+            i += STRLEN_BLOCK;
+        }
+
+        while i + STRLEN_SIMD_LANES <= s.len() {
+            let chunk = &s[i..i + STRLEN_SIMD_LANES];
+            if has_non_byte_simd_64(chunk, accepted) {
+                break;
+            }
+            i += STRLEN_SIMD_LANES;
+        }
+
+        while i < s.len() {
+            let byte = s[i];
+            if byte == 0 || byte != accepted {
+                return i;
+            }
+            i += 1;
+        }
+
+        return s.len();
+    }
 
     let repeated = repeated_byte(accepted);
     let mut i = 0;

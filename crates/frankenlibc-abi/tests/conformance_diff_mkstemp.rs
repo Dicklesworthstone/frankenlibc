@@ -13,6 +13,7 @@
 use std::ffi::{c_char, c_int};
 use std::os::unix::ffi::OsStrExt;
 
+use frankenlibc_abi::errno_abi::__errno_location as fl_errno_location;
 use frankenlibc_abi::stdlib_abi as fl;
 use frankenlibc_abi::unistd_abi as fl_unistd;
 use frankenlibc_abi::wchar_abi as fl_wchar;
@@ -31,6 +32,21 @@ fn nano_template(suffix: &str) -> Vec<u8> {
         .unwrap()
         .as_nanos();
     format!("/tmp/fl_mkstemp_{nanos}_{suffix}\0").into_bytes()
+}
+
+unsafe fn reset_errno_slots() {
+    unsafe {
+        *fl_errno_location() = 0;
+        *libc::__errno_location() = 0;
+    }
+}
+
+unsafe fn read_fl_errno() -> c_int {
+    unsafe { *fl_errno_location() }
+}
+
+unsafe fn read_lc_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
 }
 
 #[test]
@@ -62,10 +78,12 @@ fn diff_mkstemp_invalid_template_returns_einval() {
     // Template not ending in XXXXXX → both impls must reject.
     let mut t1 = b"/tmp/fl_mkstemp_no_marker\0".to_vec();
     let mut t2 = b"/tmp/fl_mkstemp_no_marker\0".to_vec();
+    unsafe { reset_errno_slots() };
     let fl_fd = unsafe { fl_wchar::mkstemp(t1.as_mut_ptr() as *mut c_char) };
-    let fl_e = unsafe { *libc::__errno_location() };
+    let fl_e = unsafe { read_fl_errno() };
+    unsafe { reset_errno_slots() };
     let lc_fd = unsafe { mkstemp(t2.as_mut_ptr() as *mut c_char) };
-    let lc_e = unsafe { *libc::__errno_location() };
+    let lc_e = unsafe { read_lc_errno() };
     assert_eq!(fl_fd, lc_fd);
     assert_eq!(fl_fd, -1);
     assert_eq!(fl_e, lc_e, "errno: fl={fl_e} lc={lc_e}");
@@ -124,10 +142,12 @@ fn diff_mkostemp_with_o_cloexec_sets_close_on_exec() {
 fn diff_mkostemps_invalid_template_returns_einval() {
     let mut t1 = b"/tmp/fl_mkostemps_no_marker.tmp\0".to_vec();
     let mut t2 = b"/tmp/fl_mkostemps_no_marker.tmp\0".to_vec();
+    unsafe { reset_errno_slots() };
     let fl_fd = unsafe { fl::mkostemps(t1.as_mut_ptr() as *mut c_char, 4, libc::O_CLOEXEC) };
-    let fl_e = unsafe { *libc::__errno_location() };
+    let fl_e = unsafe { read_fl_errno() };
+    unsafe { reset_errno_slots() };
     let lc_fd = unsafe { mkostemps(t2.as_mut_ptr() as *mut c_char, 4, libc::O_CLOEXEC) };
-    let lc_e = unsafe { *libc::__errno_location() };
+    let lc_e = unsafe { read_lc_errno() };
     assert_eq!(fl_fd, lc_fd);
     assert_eq!(fl_fd, -1);
     assert_eq!(fl_e, lc_e, "errno: fl={fl_e} lc={lc_e}");

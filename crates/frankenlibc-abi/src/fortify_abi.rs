@@ -118,9 +118,9 @@ unsafe extern "C" {
         ps: *mut c_void,
     ) -> usize;
     fn wctomb(s: *mut c_char, wchar: WcharT) -> c_int;
-    #[cfg(any(
-        debug_assertions,
-        not(all(target_os = "linux", target_arch = "x86_64"))
+    #[cfg(all(
+        not(debug_assertions),
+        not(any(target_arch = "x86_64", target_arch = "aarch64"))
     ))]
     fn longjmp(env: *mut c_void, val: c_int) -> !;
     fn getlogin_r(buf: *mut c_char, buflen: usize) -> c_int;
@@ -1109,23 +1109,46 @@ pub unsafe extern "C" fn __wctomb_chk(s: *mut c_char, wchar: WcharT, _buflen: us
 
 // ── longjmp ────────────────────────────────────────────────────────────────
 
-#[cfg(all(not(debug_assertions), target_os = "linux", target_arch = "x86_64"))]
-core::arch::global_asm!(
-    ".global __frankenlibc_longjmp_chk_impl",
-    ".type __frankenlibc_longjmp_chk_impl, @function",
-    "__frankenlibc_longjmp_chk_impl:",
-    "  jmp longjmp",
-    ".size __frankenlibc_longjmp_chk_impl, . - __frankenlibc_longjmp_chk_impl",
-    ".symver __frankenlibc_longjmp_chk_impl,__longjmp_chk@@GLIBC_2.11, remove",
-);
-
-#[cfg(any(
-    debug_assertions,
-    not(all(target_os = "linux", target_arch = "x86_64"))
-))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __longjmp_chk(env: *mut c_void, val: c_int) -> ! {
-    unsafe { longjmp(env, val) }
+    if env.is_null() {
+        unsafe {
+            let mut unblock_set = core::mem::zeroed::<libc::sigset_t>();
+            let _ = crate::signal_abi::sigemptyset(&mut unblock_set);
+            let _ = crate::signal_abi::sigaddset(&mut unblock_set, libc::SIGSEGV);
+            let _ = raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_UNBLOCK,
+                &unblock_set as *const libc::sigset_t as *const u8,
+                std::ptr::null_mut(),
+                core::mem::size_of::<libc::c_ulong>(),
+            );
+
+            let mut act = core::mem::zeroed::<libc::sigaction>();
+            act.sa_sigaction = libc::SIG_DFL as libc::sighandler_t;
+            let _ = raw_syscall::sys_rt_sigaction(
+                libc::SIGSEGV,
+                &act as *const libc::sigaction as *const u8,
+                std::ptr::null_mut(),
+                core::mem::size_of::<libc::c_ulong>(),
+            );
+
+            let pid = raw_syscall::sys_getpid();
+            let tid = raw_syscall::sys_gettid();
+            let _ = raw_syscall::sys_tgkill(pid, tid, libc::SIGSEGV);
+            raw_syscall::sys_exit_group(128 + libc::SIGSEGV)
+        }
+    }
+    #[cfg(any(debug_assertions, target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        unsafe { crate::setjmp_abi::longjmp(env, val) }
+    }
+    #[cfg(all(
+        not(debug_assertions),
+        not(any(target_arch = "x86_64", target_arch = "aarch64"))
+    ))]
+    {
+        unsafe { longjmp(env, val) }
+    }
 }
 
 // ── poll ───────────────────────────────────────────────────────────────────

@@ -441,7 +441,7 @@ events = [
         "api_family": "feature_parity_gap_ledger",
         "symbol": "*",
         "oracle_kind": "ledger_exact_cover_grouping",
-        "expected": "111 ledger gaps covered exactly once",
+        "expected": f"{len(ledger_ids)} ledger gaps covered exactly once",
         "actual": status,
         "errno": None,
         "decision_path": list(checks.keys()),

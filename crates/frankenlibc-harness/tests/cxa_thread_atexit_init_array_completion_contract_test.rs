@@ -143,7 +143,7 @@ fn manifest_binds_cxa_thread_atexit_init_array_completion_evidence() -> TestResu
         BTreeSet::from([
             "host-cxa-cache-is-atomic-not-oncelock".to_string(),
             "host-cxa-resolver-has-reentry-escape".to_string(),
-            "sweep-regression-gate-builds-current-abi-through-rch".to_string(),
+            "sweep-regression-gate-builds-current-abi-before-smoke".to_string(),
             "tls-fallback-breaks-recursive-registration".to_string(),
         ])
     );

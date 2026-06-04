@@ -350,8 +350,8 @@ fn manifest_matches_replacement_level_sources() -> TestResult {
 
     let assessment = &levels["current_assessment"];
     assert_eq!(
-        assessment["callthrough"].as_u64(),
-        policy["replacement_levels"]["expected_zero_counts"]["callthrough"].as_u64()
+        assessment["glibc_callthrough"].as_u64(),
+        policy["replacement_levels"]["expected_zero_counts"]["glibc_callthrough"].as_u64()
     );
     assert_eq!(
         assessment["stub"].as_u64(),
@@ -478,6 +478,7 @@ fn checker_replays_replacement_level_gate_and_emits_report() -> TestResult {
     );
     assert_eq!(gate_report["status"].as_str(), Some("pass"));
     assert_eq!(gate_report["current_level"].as_str(), Some("L1"));
+    assert_eq!(gate_report["objective_gate_status"].as_str(), Some("pass"));
 
     let gate_rows = read_jsonl(&out_dir.join("replacement_levels_l1_gate.log.jsonl"))?;
     assert!(

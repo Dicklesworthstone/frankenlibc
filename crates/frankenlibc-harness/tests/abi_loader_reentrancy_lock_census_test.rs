@@ -125,10 +125,10 @@ fn checker_accepts_current_census_and_emits_telemetry() -> TestResult {
     assert!(stdout.contains("abi_loader_reentrancy_lock_census: PASS"));
     let report = load_json(&out_dir.join("report.json"))?;
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["classified_file_count"].as_u64(), Some(36));
+    assert_eq!(report["classified_file_count"].as_u64(), Some(37));
     assert_eq!(
         report["actual_surface_totals"]["thread_local_macro"].as_u64(),
-        Some(78)
+        Some(79)
     );
 
     let log = fs::read_to_string(out_dir.join("events.jsonl"))

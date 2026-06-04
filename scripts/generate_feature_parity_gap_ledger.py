@@ -24,6 +24,7 @@ ALLOWED_STATUSES = {STATUS_DONE, STATUS_IN_PROGRESS, STATUS_PLANNED, STATUS_UNKN
 SUPPORT_STATUS_SUMMARY_KEYS = {
     "Implemented": "implemented",
     "RawSyscall": "raw_syscall",
+    "WrapsHostLibc": "wraps_host_libc",
     "GlibcCallThrough": "glibc_call_through",
     "Stub": "stub",
 }
@@ -164,8 +165,16 @@ def parse_section_rows(
             continue
         in_table = True
 
-        # Skip markdown table header row if encountered in body scan.
-        if [c.strip().lower() for c in cells] == [c.strip().lower() for c in columns]:
+        # Skip markdown table header row if encountered in body scan. Some
+        # sections intentionally use a more descriptive middle-column header
+        # than the canonical artifact key, so key/status agreement is enough
+        # to identify the header row.
+        normalized_cells = [c.strip().lower() for c in cells]
+        normalized_columns = [c.strip().lower() for c in columns]
+        if normalized_cells == normalized_columns or (
+            normalized_cells[key_col] == normalized_columns[key_col]
+            and normalized_cells[status_col] == normalized_columns[status_col]
+        ):
             continue
 
         if len(cells) != len(columns):
@@ -330,6 +339,7 @@ def support_status_counts(summary: dict[str, Any]) -> dict[str, int]:
     return {
         "implemented": support_status_count(summary, "Implemented"),
         "raw_syscall": support_status_count(summary, "RawSyscall"),
+        "wraps_host_libc": support_status_count(summary, "WrapsHostLibc"),
         "glibc_call_through": support_status_count(summary, "GlibcCallThrough"),
         "stub": support_status_count(summary, "Stub"),
     }
@@ -669,6 +679,7 @@ def machine_deltas(
     reality_norm = {
         "implemented": int(reality_counts.get("implemented", 0)),
         "raw_syscall": int(reality_counts.get("raw_syscall", 0)),
+        "wraps_host_libc": int(reality_counts.get("wraps_host_libc", 0)),
         "glibc_call_through": int(reality_counts.get("glibc_call_through", 0)),
         "stub": int(reality_counts.get("stub", 0)),
     }
@@ -691,7 +702,12 @@ def machine_deltas(
     replacement_norm = {
         "implemented": int(current_assessment.get("implemented", 0)),
         "raw_syscall": int(current_assessment.get("raw_syscall", 0)),
-        "glibc_call_through": int(current_assessment.get("callthrough", 0)),
+        "wraps_host_libc": int(current_assessment.get("wraps_host_libc", 0)),
+        "glibc_call_through": int(
+            current_assessment.get(
+                "glibc_callthrough", current_assessment.get("glibc_call_through", 0)
+            )
+        ),
         "stub": int(current_assessment.get("stub", 0)),
     }
     replacement_total = int(current_assessment.get("total_symbols", 0))
@@ -722,11 +738,14 @@ def macro_delta_rows(
     summary = support_matrix.get("summary", {})
     support_total = int(support_matrix.get("total_exported", 0))
     reality_counts = reality_report.get("counts", {})
-    callthrough = int(reality_counts.get("glibc_call_through", 0))
+    callthrough = int(reality_counts.get("wraps_host_libc", 0)) + int(
+        reality_counts.get("glibc_call_through", 0)
+    )
     stubs = int(reality_counts.get("stub", 0))
     support_classification_done = (
         support_status_count(summary, "Implemented")
         + support_status_count(summary, "RawSyscall")
+        + support_status_count(summary, "WrapsHostLibc")
         + support_status_count(summary, "GlibcCallThrough")
         + support_status_count(summary, "Stub")
         == support_total
@@ -884,6 +903,7 @@ class ParserUnitTests(unittest.TestCase):
         summary = {
             "implemented": 2,
             "raw_syscall": 3,
+            "wraps_host_libc": 4,
             "glibc_call_through": 5,
             "stub": 7,
         }
@@ -892,6 +912,7 @@ class ParserUnitTests(unittest.TestCase):
             {
                 "implemented": 2,
                 "raw_syscall": 3,
+                "wraps_host_libc": 4,
                 "glibc_call_through": 5,
                 "stub": 7,
             },
@@ -903,6 +924,8 @@ class ParserUnitTests(unittest.TestCase):
             "implemented": 2,
             "RawSyscall": 13,
             "raw_syscall": 3,
+            "WrapsHostLibc": 15,
+            "wraps_host_libc": 4,
             "GlibcCallThrough": 17,
             "glibc_call_through": 5,
             "Stub": 19,
@@ -913,6 +936,7 @@ class ParserUnitTests(unittest.TestCase):
             {
                 "implemented": 11,
                 "raw_syscall": 13,
+                "wraps_host_libc": 15,
                 "glibc_call_through": 17,
                 "stub": 19,
             },

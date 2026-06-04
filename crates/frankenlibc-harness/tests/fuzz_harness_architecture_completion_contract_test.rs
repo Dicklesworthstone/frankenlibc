@@ -174,13 +174,18 @@ fn checker_validates_fuzz_harness_architecture_contract() -> TestResult {
 
     let report =
         load_json(&out_dir.join("fuzz_harness_architecture_completion_contract.report.json"))?;
+    let source_report =
+        load_json(&root.join("tests/conformance/fuzz_harness_architecture.v1.json"))?;
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["source_bead"].as_str(), Some("bd-1oz.5"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-1oz.5.1"));
     assert_eq!(report["summary"]["total_targets"].as_u64(), Some(66));
     assert_eq!(report["summary"]["functional_targets"].as_u64(), Some(66));
     assert_eq!(report["summary"]["checks_passed"].as_u64(), Some(330));
-    assert_eq!(report["summary"]["seed_corpus"].as_u64(), Some(22987));
+    assert_eq!(
+        report["summary"]["seed_corpus"].as_u64(),
+        source_report["summary"]["total_seed_corpus"].as_u64()
+    );
     assert_eq!(report["summary"]["unique_cwes"].as_u64(), Some(17));
 
     Ok(())

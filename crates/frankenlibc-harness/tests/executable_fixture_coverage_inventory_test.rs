@@ -13,13 +13,15 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn generated_report_path() -> PathBuf {
-    workspace_root().join("target/conformance/executable_fixture_coverage_inventory.generated.json")
+fn generated_report_path(label: &str) -> PathBuf {
+    workspace_root().join(format!(
+        "target/conformance/executable_fixture_coverage_inventory.{label}.generated.json"
+    ))
 }
 
-fn run_checker() -> Value {
+fn run_checker(label: &str) -> Value {
     let root = workspace_root();
-    let output = generated_report_path();
+    let output = generated_report_path(label);
     let status = Command::new("python3")
         .arg(root.join("scripts/check_executable_fixture_coverage.py"))
         .arg("--repo-root")
@@ -38,7 +40,7 @@ fn run_checker() -> Value {
 
 #[test]
 fn executable_fixture_inventory_has_required_shape() {
-    let report = run_checker();
+    let report = run_checker("shape");
     assert_eq!(report["schema_version"].as_str(), Some("v1"));
     assert_eq!(report["bead"].as_str(), Some("bd-j1u6u.1"));
 
@@ -67,7 +69,7 @@ fn executable_fixture_inventory_has_required_shape() {
 
 #[test]
 fn executable_fixture_gaps_are_actionable() {
-    let report = run_checker();
+    let report = run_checker("gaps");
     let required_fields: Vec<_> = report["required_gap_fields"]
         .as_array()
         .unwrap()
@@ -112,7 +114,7 @@ fn executable_fixture_gaps_are_actionable() {
 
 #[test]
 fn rpc_wave03_is_counted_as_executable_coverage() {
-    let report = run_checker();
+    let report = run_checker("rpc-wave03");
     let inventory = report["fixture_inventory"].as_array().unwrap();
     let row = inventory
         .iter()

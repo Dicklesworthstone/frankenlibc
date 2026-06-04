@@ -50,6 +50,7 @@ const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "discretization_constants",
     "env_contract",
     "env_override",
+    "execution_lane",
     "expected_action_table",
     "expected_anchor_table",
     "expected_class_table",

@@ -14,6 +14,7 @@ python3 - "${ROOT}" "${CONTRACT}" "${REPORT}" "${LOG}" <<'PY'
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import stat
 import subprocess
@@ -230,10 +231,15 @@ def validate_sources(contract: dict[str, Any]) -> None:
     )
 
 
-def run_command(argv: list[str], description: str) -> str:
+def run_command(argv: list[str], description: str, env: dict[str, str] | None = None) -> str:
+    child_env = None
+    if env is not None:
+        child_env = os.environ.copy()
+        child_env.update(env)
     proc = subprocess.run(
         argv,
         cwd=ROOT,
+        env=child_env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -316,6 +322,13 @@ def validate_inventory_expectations(contract: dict[str, Any]) -> None:
 
 
 def run_base_gates() -> None:
+    base_gate_dir = REPORT.parent / "benchmark_coverage_inventory_base_gate"
+    generator_check_dir = base_gate_dir / "generator_check"
+    base_gate_dir.mkdir(parents=True, exist_ok=True)
+    generator_check_dir.mkdir(parents=True, exist_ok=True)
+    gate_report = base_gate_dir / "benchmark_coverage_inventory.report.json"
+    gate_log = base_gate_dir / "benchmark_coverage_inventory.log.jsonl"
+
     run_command(["python3", "-m", "py_compile", "scripts/generate_benchmark_coverage_inventory.py"], "generator py_compile")
     run_command(["python3", "scripts/generate_benchmark_coverage_inventory.py", "--self-test"], "generator self-test")
     run_command(
@@ -326,11 +339,18 @@ def run_base_gates() -> None:
             "--output",
             "tests/conformance/benchmark_coverage_inventory.v1.json",
             "--target-dir",
-            "target/conformance",
+            str(generator_check_dir),
         ],
         "generator canonical check",
     )
-    gate_stdout = run_command(["bash", "scripts/check_benchmark_coverage_inventory.sh"], "benchmark coverage gate")
+    gate_stdout = run_command(
+        ["bash", "scripts/check_benchmark_coverage_inventory.sh"],
+        "benchmark coverage gate",
+        {
+            "FRANKENLIBC_BENCHMARK_COVERAGE_REPORT": str(gate_report),
+            "FRANKENLIBC_BENCHMARK_COVERAGE_LOG": str(gate_log),
+        },
+    )
     if "check_benchmark_coverage_inventory: PASS" not in gate_stdout:
         error("benchmark coverage gate did not print PASS marker")
 

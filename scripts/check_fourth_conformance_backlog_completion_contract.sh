@@ -481,6 +481,20 @@ validate_base_gates()
 validate_test_surface(contract_obj)
 validate_telemetry(contract_obj)
 
+summary_expectations = as_object(contract_obj.get("coverage_expectations"), "coverage_expectations")
+symbol_expectations = as_object(
+    summary_expectations.get("symbol_fixture_coverage"),
+    "coverage_expectations.symbol_fixture_coverage",
+)
+per_symbol_expectations = as_object(
+    summary_expectations.get("per_symbol_fixture_tests"),
+    "coverage_expectations.per_symbol_fixture_tests",
+)
+prioritizer_expectations = as_object(
+    summary_expectations.get("fixture_coverage_prioritizer"),
+    "coverage_expectations.fixture_coverage_prioritizer",
+)
+
 status = "pass" if not errors else "fail"
 failure_signature = "none" if not errors else primary_signature()
 events.append(
@@ -505,10 +519,12 @@ report = {
     "summary": {
         "closed_child_count": 11,
         "completed_wave_symbol_count": len(completed_symbols),
-        "target_covered_symbols": 1126,
-        "symbols_with_fixtures": 1124,
-        "fixture_cases": 2702,
-        "selected_target_uncovered_symbols": 2639,
+        "target_covered_symbols": symbol_expectations.get("target_covered_symbols"),
+        "symbols_with_fixtures": per_symbol_expectations.get("symbols_with_fixtures"),
+        "fixture_cases": per_symbol_expectations.get("total_cases"),
+        "selected_target_uncovered_symbols": prioritizer_expectations.get(
+            "selected_target_uncovered_symbols"
+        ),
     },
 }
 write_json(REPORT, report)

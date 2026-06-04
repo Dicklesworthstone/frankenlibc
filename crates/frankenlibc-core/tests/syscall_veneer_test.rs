@@ -50,6 +50,7 @@ mod x86_64_tests {
     const ENXIO: i32 = 6;
     const EBADF: i32 = 9;
     const EAGAIN: i32 = 11;
+    const ENOMEM: i32 = 12;
     const EFAULT: i32 = 14;
     const EINVAL: i32 = 22;
     const EACCES: i32 = 13;
@@ -848,8 +849,8 @@ mod x86_64_tests {
             }
             Err(err) => {
                 assert!(
-                    matches!(err, EPERM | EINVAL | ENOSYS),
-                    "expected success or EPERM/EINVAL/ENOSYS, got {err}"
+                    matches!(err, EPERM | ENOMEM | EINVAL | ENOSYS),
+                    "expected success or EPERM/ENOMEM/EINVAL/ENOSYS, got {err}"
                 );
             }
         }

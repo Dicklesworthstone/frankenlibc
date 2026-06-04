@@ -45,7 +45,7 @@ EXPECTED_MISSING_ITEMS = {
 }
 EXPECTED_COUNTS = {
     "row_count": 170,
-    "gap_count": 111,
+    "gap_count": 110,
     "delta_count": 5,
     "done_row_count": 60,
     "done_evidence_audit_count": 60,
@@ -57,7 +57,7 @@ EXPECTED_COUNTS = {
     "source_only_done_evidence_count": 25,
     "parse_error_count": 0,
     "transition_count": 0,
-    "drift_delta_count": 1,
+    "drift_delta_count": 0,
 }
 EXPECTED_NEGATIVE_CASES = {
     "fresh_evidence",

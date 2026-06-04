@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # check_dlfcn_replace_boundary_sentinel.sh -- bd-b92jd.5.2
 #
-# Fail-closed sentinel for the dlfcn replace boundary. Refuses replacement-
-# level promotion past L0 while interpose_only / host_handle_passthrough
+# Fail-closed sentinel for the dlfcn replace boundary. Refuses standalone
+# replacement-level promotion while interpose_only / host_handle_passthrough
 # host-delegation call sites remain in dlfcn_abi.rs, and detects any new
 # unannotated `resolve_host_symbol_raw("dlopen"|"dlsym"|"dlvsym"|"dlclose")`
 # call appearing in the source.
@@ -73,15 +73,20 @@ if sentinel.get("required_log_fields") != required_log_fields:
 policy = sentinel.get("policy", {})
 if policy.get("default_decision") != "block_until_replace_mode_evidence_current":
     errors.append("policy.default_decision drift")
-if policy.get("max_total_host_callsites_at_L1") != 0:
-    errors.append("max_total_host_callsites_at_L1 must be 0")
+if policy.get("max_total_host_callsites_at_standalone_levels") != 0:
+    errors.append("max_total_host_callsites_at_standalone_levels must be 0")
+standalone_levels = policy.get("standalone_replacement_levels") or []
+if standalone_levels != ["L2", "L3"]:
+    errors.append("standalone_replacement_levels must be ['L2', 'L3']")
 for ann in ("interpose_only", "bootstrap_passthrough", "host_handle_passthrough"):
     if ann not in policy.get("allowed_at_L0", []):
         errors.append(f"allowed_at_L0 missing {ann}")
+    if ann not in policy.get("allowed_at_L1", []):
+        errors.append(f"allowed_at_L1 missing {ann}")
 for kind in (
     "unannotated_host_callsite",
     "host_callsite_count_drift",
-    "interpose_only_after_L0",
+    "host_callsite_after_standalone_promotion",
     "missing_native_handle_guard",
     "support_matrix_drift",
     "replacement_level_drift_without_evidence",
@@ -187,9 +192,9 @@ interpose_count = sum(
     if e.get("annotation") in ("interpose_only", "host_handle_passthrough")
 )
 current_level = levels.get("current_level")
-if interpose_count > 0 and current_level != "L0":
+if interpose_count > 0 and current_level in standalone_levels:
     errors.append(
-        f"current_level={current_level} but {interpose_count} interpose-only / host-handle delegation site(s) remain — promotion blocked"
+        f"current_level={current_level} but {interpose_count} interpose-only / host-handle delegation site(s) remain — standalone replacement promotion blocked"
     )
 
 print(json.dumps(

@@ -1903,6 +1903,8 @@ pub(crate) fn try_signal_runtime_ready(
 /// Signal that the dynamic linker's init phase is complete and the
 /// membrane can safely use TLS, locks, and the heap.
 pub(crate) fn signal_runtime_ready() {
+    #[cfg(test)]
+    let _lock = runtime_policy_test_lock();
     let _ = try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed);
 }
 
@@ -2493,7 +2495,8 @@ mod tests {
     fn set_runtime_ready_state_for_tests(state: u8) -> RuntimeReadyGuard {
         let lock = runtime_policy_test_lock();
         let previous_ready = RUNTIME_READY.swap(state, AtomicOrdering::SeqCst);
-        let previous_mode_log_ready = MODE_LOG_READY.swap(1, AtomicOrdering::SeqCst);
+        let mode_log_ready = u8::from(state == RUNTIME_STATE_ACTIVE);
+        let previous_mode_log_ready = MODE_LOG_READY.swap(mode_log_ready, AtomicOrdering::SeqCst);
         RuntimeReadyGuard {
             _lock: lock,
             previous_ready,
@@ -2749,6 +2752,7 @@ mod tests {
 
     #[test]
     fn runtime_ready_arms_only_after_startup_window_closes() {
+        let _lock = runtime_policy_test_lock();
         reset_ffi_pcc_state_for_tests();
         clear_mode_event_log();
         let _runtime_ready = set_runtime_ready_state_for_tests(RUNTIME_STATE_BOOTSTRAP);

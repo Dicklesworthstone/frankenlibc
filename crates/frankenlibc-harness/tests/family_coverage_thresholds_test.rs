@@ -98,6 +98,13 @@ fn every_target_family_has_threshold_record() {
         .filter(|row| row["target_total"].as_u64().unwrap_or(0) > 0)
         .filter_map(|row| row["module"].as_str().map(String::from))
         .collect();
+    let zero_target: BTreeSet<String> = symbol_coverage["families"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["target_total"].as_u64().unwrap_or(0) == 0)
+        .filter_map(|row| row["module"].as_str().map(String::from))
+        .collect();
     let actual: BTreeSet<String> = doc["threshold_records"]
         .as_array()
         .unwrap()
@@ -105,9 +112,23 @@ fn every_target_family_has_threshold_record() {
         .filter_map(|row| row["family_id"].as_str().map(String::from))
         .collect();
     assert_eq!(
-        expected, actual,
+        expected,
+        expected.intersection(&actual).cloned().collect(),
         "threshold records must not hide any exported target family"
     );
+    for row in doc["threshold_records"].as_array().unwrap() {
+        let Some(family_id) = row["family_id"].as_str() else {
+            continue;
+        };
+        if expected.contains(family_id) {
+            continue;
+        }
+        assert!(
+            zero_target.contains(family_id)
+                && row["decision"].as_str() == Some("not_applicable"),
+            "extra threshold record must be zero-target not_applicable: {family_id}"
+        );
+    }
 }
 
 #[test]

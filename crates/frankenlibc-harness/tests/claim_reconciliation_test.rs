@@ -192,22 +192,40 @@ fn claim_reconciliation_detects_readme_drift_and_routes_owner() {
 }
 
 #[test]
-fn claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner() {
+fn claim_reconciliation_detects_replacement_level_smoke_drift_and_routes_owner() {
     let repo_root = workspace_root();
     let script = repo_root.join("scripts/claim_reconciliation.py");
     let levels_src = repo_root.join("tests/conformance/replacement_levels.json");
     let mutated_levels_path = unique_temp_path("claim-reconciliation-replacement-levels.json");
 
-    let canonical_blocker = "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate.";
-    let mutated_blocker = "Eliminate all 6 stub symbols before L1 claim promotion.";
-    let levels_text =
-        std::fs::read_to_string(&levels_src).expect("replacement_levels.json should exist");
-    assert!(
-        levels_text.contains(canonical_blocker),
-        "replacement_levels.json must contain the canonical L1 blocker line"
-    );
-    let mutated_levels = levels_text.replace(canonical_blocker, mutated_blocker);
-    std::fs::write(&mutated_levels_path, mutated_levels)
+    let mut levels: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&levels_src).expect("replacement_levels.json should exist"),
+    )
+    .expect("replacement_levels.json should parse");
+    let l1 = levels["levels"]
+        .as_array_mut()
+        .expect("levels must be an array")
+        .iter_mut()
+        .find(|entry| entry["level"].as_str() == Some("L1"))
+        .expect("L1 level must exist");
+    let smoke = l1["objective_gate"]["obligations"]
+        .as_array_mut()
+        .expect("objective obligations must be an array")
+        .iter_mut()
+        .find(|entry| entry["id"].as_str() == Some("hardened_smoke_battery"))
+        .expect("hardened_smoke_battery obligation must exist");
+    smoke["actual"]["run_id"] = serde_json::json!("20260602T073740Z-2701357");
+    smoke["actual"]["overall_failed"] = serde_json::json!(true);
+    smoke["actual"]["strict_status"] = serde_json::json!("red");
+    smoke["actual"]["hardened_status"] = serde_json::json!("red");
+    smoke["actual"]["perf_failures"] = serde_json::json!(6);
+    smoke["actual"]["signature_guard_failures"] = serde_json::json!(12);
+    smoke["outcome"] = serde_json::json!("blocked");
+    l1["objective_gate"]["status"] = serde_json::json!("blocked");
+    std::fs::write(
+        &mutated_levels_path,
+        serde_json::to_string_pretty(&levels).expect("mutated levels should serialize"),
+    )
         .expect("failed to write mutated replacement_levels.json");
 
     let output = Command::new("python3")
@@ -219,7 +237,7 @@ fn claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner
 
     assert!(
         !output.status.success(),
-        "mutated replacement level blocker should fail reconciliation\nstdout={}\nstderr={}",
+        "mutated replacement level smoke evidence should fail reconciliation\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -232,33 +250,43 @@ fn claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner
     let findings = report["findings"]
         .as_array()
         .expect("findings must be an array");
-    let stale_blocker = findings.iter().find(|finding| {
-        finding["category"].as_str() == Some("replacement_level_blocker_stale")
+    let stale_smoke = findings.iter().find(|finding| {
+        finding["category"].as_str() == Some("replacement_level_smoke_evidence_stale")
             && finding["owner_bead"].as_str() == Some("bd-w2c3.2.3")
     });
-    let stale_blocker =
-        stale_blocker.expect("expected replacement-level blocker drift routed to bd-w2c3.2.3");
+    let stale_smoke =
+        stale_smoke.expect("expected replacement-level smoke drift routed to bd-w2c3.2.3");
     assert!(
-        stale_blocker["source"]
+        stale_smoke["source"]
             .as_str()
             .unwrap_or_default()
             .contains("replacement_levels.json"),
-        "replacement-level drift finding should cite replacement_levels.json"
+        "replacement-level smoke drift finding should cite replacement_levels.json"
     );
     assert!(
-        stale_blocker["message"]
+        stale_smoke["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("stub_count"),
-        "replacement-level drift finding should explain the stale blocker count"
+            .contains("ld_preload_smoke_summary.v1.json"),
+        "replacement-level smoke drift finding should cite the canonical smoke summary"
     );
     assert!(
-        stale_blocker["artifact_refs"]
+        stale_smoke["artifact_refs"]
             .as_array()
             .unwrap_or(&Vec::new())
             .iter()
             .any(|value| value.as_str() == Some("tests/conformance/replacement_levels.json")),
-        "replacement-level drift finding should reference replacement_levels.json"
+        "replacement-level smoke drift finding should reference replacement_levels.json"
+    );
+    assert!(
+        stale_smoke["artifact_refs"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| {
+                value.as_str() == Some("tests/conformance/ld_preload_smoke_summary.v1.json")
+            }),
+        "replacement-level smoke drift finding should reference ld_preload_smoke_summary.v1.json"
     );
 }
 
@@ -269,12 +297,17 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
     let readme_src = repo_root.join("README.md");
     let mutated_readme_path = unique_temp_path("claim-reconciliation-readme-smoke.md");
 
-    let mutated_readme = std::fs::read_to_string(&readme_src)
+        let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
         .replace(
-            "The checked curated preload smoke battery is green in both strict and hardened modes, but broader production hardening and release-claim closure are still in progress; use the canonical smoke artifact and gates rather than paraphrased README prose when the exact status matters.",
+            "The checked curated preload smoke battery has 60 pass / 0 fail / 4 optional skips across strict and hardened modes. This is a curated workload signal, not broad production workload readiness; non-curated workload stability and release-claim closure for L2/L3 replacement levels remain active work. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.",
             "The latest broad preload smoke run is **fully green** and both strict and hardened modes pass all workloads.",
         );
+    assert_ne!(
+        mutated_readme,
+        std::fs::read_to_string(&readme_src).expect("README.md should still be readable"),
+        "README smoke overclaim mutation fixture must replace the current curated smoke sentence"
+    );
     std::fs::write(&mutated_readme_path, mutated_readme)
         .expect("failed to write mutated README smoke overclaim");
 
@@ -341,8 +374,8 @@ fn claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner() {
     let readme_src = repo_root.join("README.md");
     let mutated_readme_path = unique_temp_path("claim-reconciliation-readme-smoke-summary.md");
 
-    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260404T011731Z`, checked April 4, 2026) reports 58 passes / 0 fails / 6 skips overall, with strict 29/0/3 and hardened 29/0/3 across the curated preload smoke battery.";
-    let stale = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260405T000000Z`, checked April 5, 2026) reports 57 passes / 1 fails / 6 skips overall, with strict 28/1/3 and hardened 29/0/3 across the curated preload smoke battery.";
+    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `SnowyMill-ldfix-20260603T034530Z`, checked June 3, 2026) reports 60 passes / 0 fails / 4 skips overall, with strict 30/0/2 and hardened 30/0/2 across the curated preload smoke battery.";
+    let stale = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260404T011731Z`, checked April 4, 2026) reports 58 passes / 0 fails / 6 skips overall, with strict 29/0/3 and hardened 29/0/3 across the curated preload smoke battery.";
     let readme = std::fs::read_to_string(&readme_src).expect("README.md should exist");
     assert!(
         readme.contains(canonical),

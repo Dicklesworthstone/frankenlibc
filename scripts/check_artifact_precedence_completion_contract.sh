@@ -364,7 +364,8 @@ def replay_source_checker(cfg: dict[str, Any]) -> dict[str, Any]:
         timeout=120,
         check=False,
     )
-    if completed.returncode != 0:
+    expected_status = cfg.get("expected_status", "pass")
+    if completed.returncode != 0 and expected_status == "pass":
         add_error("source_checker_failed", f"source checker failed rc={completed.returncode}; stderr={completed.stderr[-1200:]}")
         return {}
     try:
@@ -372,7 +373,8 @@ def replay_source_checker(cfg: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         add_error("source_checker_failed", f"source checker stdout was not JSON: {exc}")
         return {}
-    expected_status = cfg.get("expected_status", "pass")
+    if completed.returncode == 0 and expected_status != "pass":
+        add_error("source_checker_failed", f"source checker unexpectedly exited 0 while expected_status={expected_status}")
     require(payload.get("status") == expected_status, "source_checker_failed", "source checker status mismatch")
     expected_summary = cfg.get("expected_summary", {})
     summary = payload.get("summary", {})
@@ -386,9 +388,15 @@ def replay_source_checker(cfg: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(checks, dict):
         add_error("source_checker_failed", "source checker checks missing")
     else:
-        for key in string_list(cfg, "expected_checks", "artifact_precedence_contract"):
-            if checks.get(key) != "pass":
-                add_error("source_checker_failed", f"source checker check {key} expected pass, got {checks.get(key)}")
+        expected_check_statuses = cfg.get("expected_check_statuses")
+        if isinstance(expected_check_statuses, dict):
+            for key, expected_check_status in expected_check_statuses.items():
+                if checks.get(key) != expected_check_status:
+                    add_error("source_checker_failed", f"source checker check {key} expected {expected_check_status}, got {checks.get(key)}")
+        else:
+            for key in string_list(cfg, "expected_checks", "artifact_precedence_contract"):
+                if checks.get(key) != "pass":
+                    add_error("source_checker_failed", f"source checker check {key} expected pass, got {checks.get(key)}")
     log_path_value = payload.get("log_path")
     if isinstance(log_path_value, str):
         source_log = resolve(log_path_value)

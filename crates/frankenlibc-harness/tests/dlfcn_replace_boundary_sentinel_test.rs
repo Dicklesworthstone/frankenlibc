@@ -3,10 +3,11 @@
 //! Inventories every host dlopen/dlsym/dlvsym/dlclose call site in
 //! `crates/frankenlibc-abi/src/dlfcn_abi.rs` against
 //! `tests/conformance/dlfcn_replace_boundary_sentinel.v1.json`. While
-//! `current_level` is L0 the listed call sites are permitted under their
-//! cited annotation (interpose_only, bootstrap_passthrough,
-//! host_handle_passthrough). Promotion to L1 is blocked until every
-//! interpose_only / host_handle_passthrough site disappears, and any new
+//! `current_level` is an interpose level (L0/L1) the listed call sites are
+//! permitted under their cited annotation (interpose_only,
+//! bootstrap_passthrough, host_handle_passthrough). Promotion to standalone
+//! replacement levels is blocked until every interpose_only /
+//! host_handle_passthrough site disappears, and any new
 //! `crate::host_resolve::resolve_host_symbol_raw("dlopen"|"dlsym"|"dlvsym"|"dlclose")`
 //! call appearing in the source is detected as drift.
 
@@ -165,7 +166,7 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
 const REJECTED_EVIDENCE_KINDS: &[&str] = &[
     "unannotated_host_callsite",
     "host_callsite_count_drift",
-    "interpose_only_after_L0",
+    "host_callsite_after_standalone_promotion",
     "missing_native_handle_guard",
     "support_matrix_drift",
     "stale_source_commit",
@@ -266,9 +267,21 @@ fn sentinel_artifact_is_well_formed() -> TestResult {
         "policy.default_decision",
     )?;
     ensure_eq(
-        policy_obj["max_total_host_callsites_at_L1"].as_u64(),
+        policy_obj["max_total_host_callsites_at_standalone_levels"].as_u64(),
         Some(0),
-        "max_total_host_callsites_at_L1 must be 0",
+        "max_total_host_callsites_at_standalone_levels must be 0",
+    )?;
+    let standalone_levels: Vec<&str> = as_array(
+        &policy_obj["standalone_replacement_levels"],
+        "policy.standalone_replacement_levels",
+    )?
+    .iter()
+    .map(|v| v.as_str().unwrap_or_default())
+    .collect();
+    ensure_eq(
+        standalone_levels,
+        vec!["L2", "L3"],
+        "standalone_replacement_levels",
     )?;
 
     let allowed: Vec<&str> = as_array(&policy_obj["allowed_at_L0"], "policy.allowed_at_L0")?
@@ -279,6 +292,16 @@ fn sentinel_artifact_is_well_formed() -> TestResult {
         ensure(
             allowed.contains(marker),
             format!("policy.allowed_at_L0 must include {marker}"),
+        )?;
+    }
+    let allowed_l1: Vec<&str> = as_array(&policy_obj["allowed_at_L1"], "policy.allowed_at_L1")?
+        .iter()
+        .map(|v| v.as_str().unwrap_or_default())
+        .collect();
+    for marker in ALLOWED_ANNOTATIONS {
+        ensure(
+            allowed_l1.contains(marker),
+            format!("policy.allowed_at_L1 must include {marker}"),
         )?;
     }
 
@@ -527,14 +550,20 @@ fn support_matrix_status_matches_sentinel_expectations() -> TestResult {
 }
 
 #[test]
-fn replacement_level_promotion_blocked_while_interpose_callsites_remain() -> TestResult {
-    // While any host_callsite has annotation interpose_only or
-    // host_handle_passthrough, current_level must remain L0 (or PLANNED L1
-    // gated by an explicit blocker). Promotion to L1 with these callsites
-    // present is rejected.
+fn standalone_replacement_promotion_blocked_while_host_callsites_remain() -> TestResult {
+    // L1 is still a host-backed interpose level. While any host_callsite has
+    // annotation interpose_only or host_handle_passthrough, standalone
+    // replacement levels must remain unclaimed.
     let sentinel = load_json(&sentinel_path())?;
     let levels = load_json(&workspace_root().join("tests/conformance/replacement_levels.json"))?;
     let current = as_str(&levels["current_level"], "replacement_levels.current_level")?;
+    let standalone_levels: BTreeSet<String> = as_array(
+        &sentinel["policy"]["standalone_replacement_levels"],
+        "policy.standalone_replacement_levels",
+    )?
+    .iter()
+    .map(|v| v.as_str().unwrap_or_default().to_owned())
+    .collect();
 
     let mut interpose_count = 0usize;
     for entry in as_array(&sentinel["host_callsites"], "host_callsites")? {
@@ -546,9 +575,9 @@ fn replacement_level_promotion_blocked_while_interpose_callsites_remain() -> Tes
 
     if interpose_count > 0 {
         ensure(
-            current == "L0",
+            !standalone_levels.contains(current),
             format!(
-                "current_level={current} but {interpose_count} interpose-only / host-handle host-delegation site(s) remain in dlfcn_abi.rs; promotion to L1+ is blocked until they are removed or carry an explicit replace_mode_native_required annotation",
+                "current_level={current} but {interpose_count} interpose-only / host-handle host-delegation site(s) remain in dlfcn_abi.rs; promotion to standalone replacement is blocked until they are removed or carry an explicit replace_mode_native_required annotation",
             ),
         )?;
     }

@@ -104,10 +104,12 @@ static FORCE_NATIVE_MUTEX: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// When true, thread lifecycle operations (create/join/detach/self/equal) skip
-/// host delegation and use the native implementation. Defaults to true (bd-73h55.4).
-/// Set `FRANKENLIBC_THREAD_DELEGATE=1` to opt-out and delegate to host pthreads.
+/// host delegation and use the native implementation. Non-standalone preload
+/// mode defaults to host pthreads because foreign runtimes depend on glibc's
+/// thread-control-block/TLS startup. Set `FRANKENLIBC_THREAD_NATIVE=1` to opt in
+/// to the native lifecycle path outside standalone mode.
 static FORCE_NATIVE_THREADING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
+    std::sync::atomic::AtomicBool::new(false);
 const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
 
 // ---------------------------------------------------------------------------
@@ -268,10 +270,13 @@ fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<
     {
         PTHREAD_TLS
             .try_with(|tls| {
-                let mut tls = tls.borrow_mut();
-                f(&mut tls)
+                let Ok(mut tls) = tls.try_borrow_mut() else {
+                    return None;
+                };
+                Some(f(&mut tls))
             })
             .ok()
+            .flatten()
     }
 }
 
@@ -284,10 +289,11 @@ fn force_native_threading_enabled() -> bool {
     }
     #[cfg(not(feature = "standalone"))]
     {
-        with_pthread_tls(|tls| {
+        try_with_pthread_tls(|tls| {
             tls.force_native_threading_override
                 .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire))
         })
+        .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire))
     }
 }
 
@@ -589,7 +595,14 @@ pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
 pub(crate) fn prewarm_host_thread_symbols() {
     prewarm_host_thread_lifecycle_symbols();
 
-    // Check for opt-out env var (bd-73h55.4)
+    // Check for explicit thread-backend env vars. Host delegation is the
+    // preload-compatible default; native remains available for focused tests
+    // and standalone-style validation.
+    if let Ok(val) = std::env::var("FRANKENLIBC_THREAD_NATIVE")
+        && val == "1"
+    {
+        FORCE_NATIVE_THREADING.store(true, Ordering::Release);
+    }
     if let Ok(val) = std::env::var("FRANKENLIBC_THREAD_DELEGATE")
         && val == "1"
     {
@@ -2211,19 +2224,18 @@ pub fn pthread_threading_force_native_for_tests() {
 /// can restore it afterwards.
 #[doc(hidden)]
 pub fn pthread_threading_swap_force_native_for_tests() -> bool {
+    let previous = FORCE_NATIVE_THREADING.swap(true, Ordering::AcqRel);
     with_pthread_tls(|tls| {
-        let previous = tls
-            .force_native_threading_override
-            .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire));
         tls.force_native_threading_override = Some(true);
-        previous
-    })
+    });
+    previous
 }
 
 /// Test hook: restore the thread lifecycle delegation mode after temporarily
 /// forcing native behavior in a test.
 #[doc(hidden)]
 pub fn pthread_threading_restore_for_tests(previous: bool) {
+    FORCE_NATIVE_THREADING.store(previous, Ordering::Release);
     with_pthread_tls(|tls| tls.force_native_threading_override = Some(previous));
 }
 

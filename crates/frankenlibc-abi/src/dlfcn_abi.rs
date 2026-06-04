@@ -251,12 +251,10 @@ fn open_main_program_handle() -> *mut c_void {
 }
 
 fn close_main_program_handle() -> c_int {
-    match MAIN_PROGRAM_REFS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |refs| {
+    let _ = MAIN_PROGRAM_REFS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |refs| {
         if refs > 0 { Some(refs - 1) } else { None }
-    }) {
-        Ok(_) => 0,
-        Err(_) => -1,
-    }
+    });
+    0
 }
 
 const NATIVE_DSO_HANDLE_TAG: usize = 0x4d;

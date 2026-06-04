@@ -1203,15 +1203,15 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
         )
     };
     if !mode_terminated {
-        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     }
 
     let mode_bytes = unsafe { std::slice::from_raw_parts(mode as *const u8, mode_len) };
     let Some(open_flags) = parse_mode(mode_bytes) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     };
 
@@ -3171,7 +3171,7 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
             FormatSegment::Percent => buf.push(b'%'),
             FormatSegment::Spec(spec) => {
                 // Resolve width from args if needed.
-                let mut resolved_spec = spec.clone();
+                let mut resolved_spec = *spec;
                 if spec.width.uses_arg() {
                     let width_position = if uses_positional {
                         spec.width.position()

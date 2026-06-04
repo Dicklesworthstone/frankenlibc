@@ -57,6 +57,15 @@ enum Command {
         /// Optional fixed timestamp string for deterministic report generation.
         #[arg(long)]
         timestamp: Option<String>,
+        /// Run each fixture case in a child process so crash/abort cases become report rows.
+        #[arg(long)]
+        isolate: bool,
+        /// Per-case timeout used when `--isolate` is enabled.
+        #[arg(long, default_value_t = 5000)]
+        case_timeout_ms: u64,
+        /// Write reports even when some fixture rows fail.
+        #[arg(long)]
+        allow_failures: bool,
     },
     /// Generate traceability matrix.
     Traceability {
@@ -1679,6 +1688,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fixture,
             report,
             timestamp,
+            isolate,
+            case_timeout_ms,
+            allow_failures,
         } => {
             eprintln!("Verifying against fixtures in {}", fixture.display());
             let mut fixture_sets = Vec::new();
@@ -1700,26 +1712,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             #[cfg(feature = "asupersync-tooling")]
             let (mut results, suite) = {
-                let run = frankenlibc_harness::asupersync_orchestrator::run_fixture_verification(
-                    "fixture-verify",
-                    &fixture_sets,
-                );
-                (run.verification_results, run.suite)
+                if isolate {
+                    let output_hint = report
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("target/conformance/fixture_verify.md"));
+                    let exe =
+                        stable_conformance_case_runner(&std::env::current_exe()?, &output_hint)?;
+                    let timeout = Duration::from_millis(case_timeout_ms.max(1));
+                    let run = run_fixture_verification_isolated(
+                        "fixture-verify",
+                        &fixture_sets,
+                        &exe,
+                        timeout,
+                    );
+                    (run.verification_results, run.suite)
+                } else {
+                    let run =
+                        frankenlibc_harness::asupersync_orchestrator::run_fixture_verification(
+                            "fixture-verify",
+                            &fixture_sets,
+                        );
+                    (run.verification_results, run.suite)
+                }
             };
 
             #[cfg(not(feature = "asupersync-tooling"))]
             let mut results = {
-                let strict_runner =
-                    frankenlibc_harness::TestRunner::new("fixture-verify", "strict");
-                let hardened_runner =
-                    frankenlibc_harness::TestRunner::new("fixture-verify", "hardened");
+                if isolate {
+                    let output_hint = report
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("target/conformance/fixture_verify.md"));
+                    let exe =
+                        stable_conformance_case_runner(&std::env::current_exe()?, &output_hint)?;
+                    let timeout = Duration::from_millis(case_timeout_ms.max(1));
+                    run_fixture_verification_isolated(
+                        "fixture-verify",
+                        &fixture_sets,
+                        &exe,
+                        timeout,
+                    )
+                    .verification_results
+                } else {
+                    let strict_runner =
+                        frankenlibc_harness::TestRunner::new("fixture-verify", "strict");
+                    let hardened_runner =
+                        frankenlibc_harness::TestRunner::new("fixture-verify", "hardened");
 
-                let mut results = Vec::new();
-                for set in &fixture_sets {
-                    results.extend(strict_runner.run(set));
-                    results.extend(hardened_runner.run(set));
+                    let mut results = Vec::new();
+                    for set in &fixture_sets {
+                        results.extend(strict_runner.run(set));
+                        results.extend(hardened_runner.run(set));
+                    }
+                    results
                 }
-                results
             };
 
             // Stabilize report ordering for reproducible golden-output hashing.
@@ -1763,7 +1808,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            if !report_doc.summary.all_passed() {
+            if !allow_failures && !report_doc.summary.all_passed() {
                 return Err("Conformance verification failed".into());
             }
         }
@@ -5127,6 +5172,261 @@ enum MatrixCaseSubprocessError {
     Error(String),
 }
 
+struct IsolatedFixtureVerificationRun {
+    verification_results: Vec<frankenlibc_harness::verify::VerificationResult>,
+    #[cfg(feature = "asupersync-tooling")]
+    suite: asupersync_conformance::SuiteResult,
+}
+
+fn run_fixture_verification_isolated(
+    campaign: &str,
+    fixture_sets: &[frankenlibc_harness::FixtureSet],
+    exe: &Path,
+    timeout: Duration,
+) -> IsolatedFixtureVerificationRun {
+    let mut verification_results = Vec::new();
+    #[cfg(feature = "asupersync-tooling")]
+    let mut suite =
+        asupersync_conformance::SuiteResult::new(format!("frankenlibc-harness:{campaign}"));
+
+    let suite_start = Instant::now();
+    let mut sets: Vec<&frankenlibc_harness::FixtureSet> = fixture_sets.iter().collect();
+    sets.sort_by(|a, b| {
+        a.family
+            .cmp(&b.family)
+            .then_with(|| a.captured_at.cmp(&b.captured_at))
+            .then_with(|| a.version.cmp(&b.version))
+    });
+
+    for set in sets {
+        let mut cases: Vec<&frankenlibc_harness::FixtureCase> = set.cases.iter().collect();
+        cases.sort_by(|a, b| {
+            a.function
+                .cmp(&b.function)
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.mode.cmp(&b.mode))
+        });
+
+        for case in cases {
+            for exec_mode in verify_case_execution_modes(&case.mode) {
+                let start = Instant::now();
+                let execution = match run_conformance_case_subprocess(
+                    exe,
+                    &case.function,
+                    &case.inputs,
+                    &exec_mode,
+                    timeout,
+                ) {
+                    Ok(run) => CaseExecution::Completed(run),
+                    Err(MatrixCaseSubprocessError::Timeout(err)) => CaseExecution::Timeout(err),
+                    Err(MatrixCaseSubprocessError::Crash(err)) => CaseExecution::Crash(err),
+                    Err(MatrixCaseSubprocessError::Error(err)) => CaseExecution::Error(err),
+                };
+                let duration_ms = start.elapsed().as_millis() as u64;
+                let result =
+                    verify_result_from_case_execution(campaign, set, case, &exec_mode, execution);
+
+                #[cfg(feature = "asupersync-tooling")]
+                {
+                    use asupersync_conformance::{
+                        SuiteTestResult, TestCategory, TestResult as SuiteTestResultStatus,
+                    };
+
+                    let mut status = if result.passed {
+                        SuiteTestResultStatus::passed()
+                    } else {
+                        SuiteTestResultStatus::failed(
+                            result.diff.clone().unwrap_or_else(|| result.actual.clone()),
+                        )
+                    };
+                    status.duration_ms = Some(duration_ms);
+                    if result.passed {
+                        suite.passed += 1;
+                    } else {
+                        suite.failed += 1;
+                    }
+                    suite.results.push(SuiteTestResult {
+                        test_id: result.trace_id.clone(),
+                        test_name: result.case_name.clone(),
+                        category: TestCategory::IO,
+                        expected: result.expected.clone(),
+                        result: status,
+                        events: Vec::new(),
+                    });
+                }
+
+                verification_results.push(result);
+            }
+        }
+    }
+
+    #[cfg(feature = "asupersync-tooling")]
+    {
+        suite.total = suite.results.len();
+        suite.duration_ms = suite_start.elapsed().as_millis() as u64;
+        IsolatedFixtureVerificationRun {
+            verification_results,
+            suite,
+        }
+    }
+    #[cfg(not(feature = "asupersync-tooling"))]
+    {
+        let _ = suite_start;
+        IsolatedFixtureVerificationRun {
+            verification_results,
+        }
+    }
+}
+
+fn verify_case_execution_modes(mode: &str) -> Vec<String> {
+    if mode.eq_ignore_ascii_case("both") {
+        return vec![String::from("strict"), String::from("hardened")];
+    }
+    vec![mode.to_string()]
+}
+
+fn verify_result_from_case_execution(
+    campaign: &str,
+    set: &frankenlibc_harness::FixtureSet,
+    case: &frankenlibc_harness::FixtureCase,
+    exec_mode: &str,
+    execution: CaseExecution,
+) -> frankenlibc_harness::verify::VerificationResult {
+    let display_case_name = if case.mode.eq_ignore_ascii_case("both") {
+        format!("{} [{}]", case.name, exec_mode)
+    } else {
+        case.name.clone()
+    };
+    let trace_id = format!(
+        "{campaign}::{family}::{symbol}::{mode}::{case_name}",
+        family = set.family,
+        symbol = case.function,
+        mode = exec_mode,
+        case_name = case.name
+    );
+
+    match execution {
+        CaseExecution::Completed(run) => {
+            let mut notes = Vec::new();
+            if exec_mode.eq_ignore_ascii_case("strict") && !run.host_parity {
+                notes.push(format!(
+                    "strict host parity mismatch: host={}, impl={}",
+                    frankenlibc_harness::verify::report_note_output(&run.host_output),
+                    frankenlibc_harness::verify::report_note_output(&run.impl_output)
+                ));
+            }
+            if let Some(note) = run.note.clone() {
+                notes.push(note);
+            }
+            let match_kind = frankenlibc_harness::verify::expected_output_match(
+                &case.expected_output,
+                &run.impl_output,
+            );
+            if let Some(kind) = match_kind
+                && let Some(note) = frankenlibc_harness::verify::expected_output_match_note(kind)
+            {
+                notes.push(note.to_string());
+            }
+            let host_match_kind = frankenlibc_harness::verify::expected_output_match(
+                &case.expected_output,
+                &run.host_output,
+            );
+            let report_host_output = frankenlibc_harness::verify::report_actual_output(
+                &case.expected_output,
+                &frankenlibc_harness::verify::report_note_output(&run.host_output),
+                host_match_kind,
+            );
+
+            let diff = if match_kind.is_none() {
+                Some(frankenlibc_harness::diff::render_diff(
+                    &case.expected_output,
+                    &run.impl_output,
+                ))
+            } else if notes.is_empty() {
+                None
+            } else {
+                Some(notes.join("\n"))
+            };
+
+            frankenlibc_harness::verify::VerificationResult {
+                trace_id,
+                campaign: campaign.to_string(),
+                family: set.family.clone(),
+                symbol: case.function.clone(),
+                mode: exec_mode.to_string(),
+                case_name: display_case_name,
+                spec_section: case.spec_section.clone(),
+                passed: match_kind.is_some(),
+                expected: case.expected_output.clone(),
+                actual: frankenlibc_harness::verify::report_actual_output(
+                    &case.expected_output,
+                    &run.impl_output,
+                    match_kind,
+                ),
+                host_output: Some(report_host_output),
+                host_parity: Some(run.host_parity),
+                diff,
+            }
+        }
+        CaseExecution::Error(err) => verify_synthetic_failure(
+            campaign,
+            set,
+            case,
+            exec_mode,
+            display_case_name,
+            trace_id,
+            format!("unsupported:{err}"),
+        ),
+        CaseExecution::Timeout(err) => verify_synthetic_failure(
+            campaign,
+            set,
+            case,
+            exec_mode,
+            display_case_name,
+            trace_id,
+            format!("timeout:{err}"),
+        ),
+        CaseExecution::Crash(err) => verify_synthetic_failure(
+            campaign,
+            set,
+            case,
+            exec_mode,
+            display_case_name,
+            trace_id,
+            format!("crash:{err}"),
+        ),
+    }
+}
+
+fn verify_synthetic_failure(
+    campaign: &str,
+    set: &frankenlibc_harness::FixtureSet,
+    case: &frankenlibc_harness::FixtureCase,
+    exec_mode: &str,
+    display_case_name: String,
+    trace_id: String,
+    actual: String,
+) -> frankenlibc_harness::verify::VerificationResult {
+    frankenlibc_harness::verify::VerificationResult {
+        trace_id,
+        campaign: campaign.to_string(),
+        family: set.family.clone(),
+        symbol: case.function.clone(),
+        mode: exec_mode.to_string(),
+        case_name: display_case_name,
+        spec_section: case.spec_section.clone(),
+        passed: false,
+        expected: case.expected_output.clone(),
+        actual: actual.clone(),
+        host_output: None,
+        host_parity: None,
+        diff: Some(frankenlibc_harness::diff::render_diff(
+            &case.expected_output,
+            &actual,
+        )),
+    }
+}
+
 fn stable_conformance_case_runner(
     current_exe: &Path,
     output: &Path,
@@ -5951,6 +6251,18 @@ mod tests {
         ConformanceCaseRow, ConformanceMatrixSummary, SymbolMatrixRow,
     };
 
+    fn parse_cli_on_expanded_stack<const N: usize>(args: [&'static str; N]) -> Cli {
+        // The derived clap graph is large enough to overflow the test harness
+        // worker stack on some builders while the process main stack is fine.
+        std::thread::Builder::new()
+            .name("harness-cli-parse".to_string())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || Cli::try_parse_from(args).expect("cli parses"))
+            .expect("spawn cli parser thread")
+            .join()
+            .expect("cli parser thread")
+    }
+
     fn sample_case(
         trace_id: &str,
         status: &str,
@@ -6041,8 +6353,8 @@ mod tests {
 
     #[test]
     fn shadow_run_cli_accepts_manifest_and_defaults() {
-        let cli = Cli::try_parse_from(["harness", "shadow-run", "--manifest", "shadow.json"])
-            .expect("cli parses");
+        let cli =
+            parse_cli_on_expanded_stack(["harness", "shadow-run", "--manifest", "shadow.json"]);
 
         match cli.command {
             Command::ShadowRun {
@@ -6085,8 +6397,8 @@ mod tests {
 
     #[test]
     fn fault_inject_cli_accepts_manifest_and_defaults() {
-        let cli = Cli::try_parse_from(["harness", "fault-inject", "--manifest", "fault.yaml"])
-            .expect("cli parses");
+        let cli =
+            parse_cli_on_expanded_stack(["harness", "fault-inject", "--manifest", "fault.yaml"]);
 
         match cli.command {
             Command::FaultInject {
