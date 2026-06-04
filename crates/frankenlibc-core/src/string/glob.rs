@@ -143,6 +143,14 @@ pub fn glob_expand(pattern: &[u8], flags: i32) -> Result<GlobResult, i32> {
     glob_expand_with_error_handler(pattern, flags, |_, _| false)
 }
 
+/// Maximum brace-nesting recursion depth before brace expansion bails out.
+/// Bounds stack use; glibc itself stack-overflows (SIGSEGV) on deeply nested
+/// `{{{...}}}`, so a safe-Rust libc must cap this rather than crash.
+const BRACE_MAX_DEPTH: usize = 256;
+/// Maximum number of expanded patterns. Bounds the cartesian-product memory
+/// blow-up of `{a,b}{a,b}...` (2^N); glibc OOMs/hangs, we return GLOB_NOSPACE.
+const BRACE_MAX_EXPANSIONS: usize = 65_536;
+
 /// Expand GNU brace alternations (`GLOB_BRACE`) into a list of concrete
 /// patterns, matching glibc semantics: the leftmost balanced `{...}` group is
 /// split on its top-level commas, each alternative is substituted into
@@ -150,14 +158,34 @@ pub fn glob_expand(pattern: &[u8], flags: i32) -> Result<GlobResult, i32> {
 /// cartesian product across multiple groups and handling nesting). Braces with
 /// no comma still expand (`{x}` -> `x`, `{}` -> ``); an unbalanced `{` or an
 /// escaped `\{` is left literal. Numeric/alpha ranges (`{1..9}`) are NOT a
-/// glibc GLOB_BRACE feature and remain literal. Returns `vec![pattern]` when no
-/// expansion applies.
-fn brace_expand(pat: &[u8], noescape: bool) -> Vec<Vec<u8>> {
+/// glibc GLOB_BRACE feature and remain literal.
+///
+/// Returns `Some(vec![pattern])` when no expansion applies, or `None` when the
+/// pattern would exceed [`BRACE_MAX_DEPTH`] nesting or [`BRACE_MAX_EXPANSIONS`]
+/// total expansions — a DoS guard the caller maps to `GLOB_NOSPACE`. (glibc has
+/// no such guard and crashes/OOMs on these inputs.)
+fn brace_expand(pat: &[u8], noescape: bool) -> Option<Vec<Vec<u8>>> {
+    let mut out = Vec::new();
+    brace_expand_into(pat, noescape, 0, &mut out)?;
+    Some(out)
+}
+
+fn brace_expand_into(
+    pat: &[u8],
+    noescape: bool,
+    depth: usize,
+    out: &mut Vec<Vec<u8>>,
+) -> Option<()> {
+    if depth > BRACE_MAX_DEPTH || out.len() >= BRACE_MAX_EXPANSIONS {
+        return None;
+    }
+
     // Locate the first unescaped '{'.
     let mut i = 0;
     let open = loop {
         if i >= pat.len() {
-            return vec![pat.to_vec()];
+            out.push(pat.to_vec()); // no brace -> literal
+            return Some(());
         }
         let b = pat[i];
         if b == b'\\' && !noescape && i + 1 < pat.len() {
@@ -171,11 +199,12 @@ fn brace_expand(pat: &[u8], noescape: bool) -> Vec<Vec<u8>> {
     };
 
     // Find the matching '}' (track nesting depth, respect escapes).
-    let mut depth = 1;
+    let mut bdepth = 1;
     let mut j = open + 1;
     let close = loop {
         if j >= pat.len() {
-            return vec![pat.to_vec()]; // unbalanced -> literal
+            out.push(pat.to_vec()); // unbalanced -> literal
+            return Some(());
         }
         let b = pat[j];
         if b == b'\\' && !noescape && j + 1 < pat.len() {
@@ -183,10 +212,10 @@ fn brace_expand(pat: &[u8], noescape: bool) -> Vec<Vec<u8>> {
             continue;
         }
         if b == b'{' {
-            depth += 1;
+            bdepth += 1;
         } else if b == b'}' {
-            depth -= 1;
-            if depth == 0 {
+            bdepth -= 1;
+            if bdepth == 0 {
                 break j;
             }
         }
@@ -219,15 +248,14 @@ fn brace_expand(pat: &[u8], noescape: bool) -> Vec<Vec<u8>> {
 
     let prefix = &pat[..open];
     let suffix = &pat[close + 1..];
-    let mut out = Vec::new();
     for alt in alts {
         let mut combined = Vec::with_capacity(prefix.len() + alt.len() + suffix.len());
         combined.extend_from_slice(prefix);
         combined.extend_from_slice(alt);
         combined.extend_from_slice(suffix);
-        out.extend(brace_expand(&combined, noescape));
+        brace_expand_into(&combined, noescape, depth + 1, out)?;
     }
-    out
+    Some(())
 }
 
 /// Expand a glob pattern and invoke `errfunc` on directory traversal errors.
@@ -273,7 +301,12 @@ fn glob_expand_dyn(
     // its own tilde handling, exactly like glibc.
     if flags & GLOB_BRACE != 0 {
         let noescape = flags & GLOB_NOESCAPE != 0;
-        let expansions = brace_expand(pat, noescape);
+        // A pathological pattern (excessive brace nesting or cartesian blow-up)
+        // returns None; surface it as GLOB_NOSPACE rather than crashing/OOMing.
+        let expansions = match brace_expand(pat, noescape) {
+            Some(e) => e,
+            None => return Err(GLOB_NOSPACE),
+        };
         if expansions.len() > 1 || expansions[0].as_slice() != pat {
             let inner_flags = flags & !(GLOB_BRACE | GLOB_NOCHECK | GLOB_APPEND);
             let mut combined: Vec<Vec<u8>> = Vec::new();
