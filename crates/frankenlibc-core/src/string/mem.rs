@@ -417,14 +417,35 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
 /// algorithm-independent, so this is bit-for-bit output-equivalent to the
 /// naive scan (and to glibc). `ndl` must be non-empty and no longer than
 /// `hay`. Ported from musl's `twoway_memmem`; every index is bounds-safe.
+/// Case-fold helper threaded through Two-Way: identity when `ICASE` is false
+/// (the case-sensitive path stays bit-for-bit unchanged and the branch compiles
+/// away), ASCII lowercase when true.
+#[inline(always)]
+fn fold_case<const ICASE: bool>(b: u8) -> u8 {
+    if ICASE { b.to_ascii_lowercase() } else { b }
+}
+
 fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
+    two_way_search_impl::<false>(hay, ndl)
+}
+
+/// Case-insensitive (ASCII) Two-Way search. Folds every needle and haystack
+/// byte to lowercase inline, so it is allocation-free and returns the leftmost
+/// case-insensitive match — used by `strcasestr` to bound its O(n*m) probe
+/// pathology to O(n+m), exactly as `memmem` does for `strstr`.
+pub(crate) fn two_way_search_icase(hay: &[u8], ndl: &[u8]) -> Option<usize> {
+    two_way_search_impl::<true>(hay, ndl)
+}
+
+fn two_way_search_impl<const ICASE: bool>(hay: &[u8], ndl: &[u8]) -> Option<usize> {
     let l = ndl.len();
     let li = l as isize;
 
-    // Membership set + Horspool last-occurrence shift table for the needle.
+    // Membership set + Horspool last-occurrence shift table for the (folded) needle.
     let mut byteset = [0u64; 4];
     let mut shift = [0usize; 256];
-    for (i, &b) in ndl.iter().enumerate() {
+    for (i, &raw) in ndl.iter().enumerate() {
+        let b = fold_case::<ICASE>(raw);
         byteset[(b >> 6) as usize] |= 1u64 << (b & 63);
         shift[b as usize] = i + 1;
     }
@@ -438,8 +459,8 @@ fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
         let mut k: isize = 1;
         let mut p: isize = 1;
         while jp + k < li {
-            let a = ndl[(ip + k) as usize];
-            let b = ndl[(jp + k) as usize];
+            let a = fold_case::<ICASE>(ndl[(ip + k) as usize]);
+            let b = fold_case::<ICASE>(ndl[(jp + k) as usize]);
             let take = if reverse { a < b } else { a > b };
             if a == b {
                 if k == p {
@@ -475,7 +496,10 @@ fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
     // unreachable) bound is exceeded we conservatively treat it as the
     // general, non-periodic case, which Two-Way handles correctly.
     let suffix = (ms + 1) as usize;
-    let periodic = (0..suffix).all(|i| ndl.get(p as usize + i) == Some(&ndl[i]));
+    let periodic = (0..suffix).all(|i| {
+        ndl.get(p as usize + i).map(|&b| fold_case::<ICASE>(b))
+            == Some(fold_case::<ICASE>(ndl[i]))
+    });
     let mem0: isize = if periodic {
         li - p
     } else {
@@ -493,7 +517,7 @@ fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
         // Boyer–Moore–Horspool: examine the window's last byte first. If it
         // is absent from the needle, skip a whole needle length; otherwise
         // shift so that byte aligns with its last needle occurrence.
-        let last = hay[pos + l - 1];
+        let last = fold_case::<ICASE>(hay[pos + l - 1]);
         if !in_needle(last) {
             pos += l;
             mem = 0;
@@ -508,7 +532,7 @@ fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
 
         // Right factor: compare from the critical position rightward.
         let mut k = (ms + 1) as usize;
-        while k < l && ndl[k] == hay[pos + k] {
+        while k < l && fold_case::<ICASE>(ndl[k]) == fold_case::<ICASE>(hay[pos + k]) {
             k += 1;
         }
         if k < l {
@@ -520,7 +544,10 @@ fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
 
         // Left factor: compare the head down to the remembered prefix.
         let mut j = ms + 1;
-        while j > mem && ndl[(j - 1) as usize] == hay[pos + (j - 1) as usize] {
+        while j > mem
+            && fold_case::<ICASE>(ndl[(j - 1) as usize])
+                == fold_case::<ICASE>(hay[pos + (j - 1) as usize])
+        {
             j -= 1;
         }
         if j <= mem {

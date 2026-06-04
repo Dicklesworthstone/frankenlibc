@@ -1019,6 +1019,61 @@ mod cmath {
     }
 }
 
+// Host glibc `strcasestr` (GNU extension; not bound by the `libc` crate).
+mod chost {
+    use std::ffi::c_char;
+    unsafe extern "C" {
+        pub fn strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char;
+    }
+}
+
+fn bench_strcasestr_absent(c: &mut Criterion) {
+    use frankenlibc_core::string::strcasestr;
+    let mut group = c.benchmark_group("glibc_baseline_strcasestr_absent");
+    // Mixed-case 'a'/'A' run; 32B common-first-byte absent needle — every
+    // position is a folded candidate, the O(n*m)-vs-O(n) icase Two-Way stress.
+    let mut haystack: Vec<u8> = (0..4096)
+        .map(|k| if k % 2 == 0 { b'a' } else { b'A' })
+        .collect();
+    haystack.push(0);
+    let needle = b"aAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaB\0"; // 31 mixed 'a' + 'B', absent
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strcasestr_absent",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strcasestr",
+            workload: "4096B mixed-case haystack, 32B common-first-byte absent needle",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strcasestr(black_box(&haystack), black_box(needle)));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strcasestr_absent",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strcasestr",
+            workload: "4096B mixed-case haystack, 32B common-first-byte absent needle",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: both haystack and needle are NUL-terminated.
+            unsafe {
+                black_box(chost::strcasestr(
+                    haystack.as_ptr().cast(),
+                    needle.as_ptr().cast(),
+                ));
+            }
+        },
+    );
+    group.finish();
+}
+
 fn bench_memmem_absent(c: &mut Criterion) {
     let mut group = c.benchmark_group("glibc_baseline_memmem_absent");
     // Common-first-byte absent needle: every position matches the 'a' run then
@@ -1275,6 +1330,7 @@ criterion_group! {
         bench_strpbrk_absent,
         bench_math,
         bench_memmem_absent,
-        bench_strstr_absent
+        bench_strstr_absent,
+        bench_strcasestr_absent
 }
 criterion_main!(benches);

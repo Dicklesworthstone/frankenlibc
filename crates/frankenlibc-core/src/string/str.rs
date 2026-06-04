@@ -1189,40 +1189,52 @@ pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     }
 
     let needle = &needle[..n_len];
+    let h_len = strlen(haystack);
+    let hay = &haystack[..h_len];
+    if n_len > h_len {
+        return None;
+    }
     let first = needle[0].to_ascii_lowercase();
 
+    // Fast path: jump to each case-folded first-byte candidate and verify with
+    // an ASCII case-insensitive compare. To keep the O(n+m) worst case against
+    // a common needle first byte (e.g. icase "aaaa…b" over an 'a' run, which
+    // previously made every position a candidate — O(n*m)), bail to a
+    // case-insensitive Two-Way once cumulative failed-candidate work exceeds the
+    // haystack length, mirroring `memmem`'s gated fallback. Both paths return
+    // the leftmost match, so the result is identical.
     let mut start = 0usize;
-    while start < haystack.len() {
-        let offset = find_ascii_folded_byte_or_nul(&haystack[start..], first);
-        if offset == haystack.len() - start {
-            return None;
+    let mut miss_work = 0usize;
+    while start + n_len <= hay.len() {
+        let scan = &hay[start..];
+        let offset = find_ascii_folded_byte_or_nul(scan, first);
+        if offset == scan.len() {
+            return None; // first byte (either case) does not occur again
         }
 
-        let i = start + offset;
-        let byte = haystack[i];
-        if byte == 0 {
-            return None;
-        }
-        if i + n_len > haystack.len() {
-            return None;
+        let cand = start + offset;
+        if cand + n_len > hay.len() {
+            return None; // not enough room left for the needle
         }
 
         let mut matched = true;
-        for j in 1..n_len {
-            let candidate = haystack[i + j];
-            if candidate == 0 {
-                return None;
-            }
-            if !candidate.eq_ignore_ascii_case(&needle[j]) {
+        for j in 0..n_len {
+            if !hay[cand + j].eq_ignore_ascii_case(&needle[j]) {
                 matched = false;
                 break;
             }
         }
         if matched {
-            return Some(i);
+            return Some(cand);
         }
 
-        start = i + 1;
+        miss_work += n_len;
+        start = cand + 1;
+        if miss_work > hay.len() {
+            // Everything before `start` is ruled out; finish with the guaranteed
+            // O(n+m) case-insensitive search over the remaining suffix.
+            return super::mem::two_way_search_icase(&hay[start..], needle).map(|m| m + start);
+        }
     }
 
     None
@@ -2096,6 +2108,70 @@ mod tests {
     #[test]
     fn test_strcasestr_found() {
         assert_eq!(strcasestr(b"Hello World\0", b"world\0"), Some(6));
+    }
+
+    // Isomorphism: the work-counter-gated probe AND the case-insensitive Two-Way
+    // bail must both equal a trivial NUL-bounded icase window search — including
+    // the common-first-byte stress (mixed case) that forces the Two-Way bail.
+    #[test]
+    fn strcasestr_matches_naive_icase_reference() {
+        fn naive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+            let h = &haystack[..haystack.iter().position(|&b| b == 0).unwrap_or(haystack.len())];
+            let n = &needle[..needle.iter().position(|&b| b == 0).unwrap_or(needle.len())];
+            if n.is_empty() {
+                return Some(0);
+            }
+            if n.len() > h.len() {
+                return None;
+            }
+            (0..=h.len() - n.len())
+                .find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
+        }
+        // A long mixed-case 'a'/'A' run with an absent (and a present) suffix —
+        // every position is a folded first-byte candidate, forcing the bail.
+        let mut stress = Vec::new();
+        for k in 0..300 {
+            stress.push(if k % 2 == 0 { b'a' } else { b'A' });
+        }
+        let mut stress_hit = stress.clone();
+        stress_hit.extend_from_slice(b"XyZ");
+        stress.push(0);
+        stress_hit.push(0);
+
+        let haystacks: &[&[u8]] = &[
+            b"\0",
+            b"A\0",
+            b"Hello World\0",
+            b"MixEdCaSeMixEdCaSe\0",
+            b"aAaAaAaAaAaAaAaAaAaAb\0",
+            stress.as_slice(),
+            stress_hit.as_slice(),
+            b"abc\0DEF\0", // embedded NUL bounds the haystack
+        ];
+        let needles: &[&[u8]] = &[
+            b"\0",
+            b"a\0",
+            b"A\0",
+            b"world\0",
+            b"WORLD\0",
+            b"mixedcase\0",
+            b"aaaaaaaaab\0",
+            b"AAAAAAAAAB\0",
+            b"xyz\0",
+            b"def\0", // only past an embedded NUL — must NOT match
+            b"hello world fox\0", // longer than some haystacks
+        ];
+        for h in haystacks {
+            for n in needles {
+                assert_eq!(
+                    strcasestr(h, n),
+                    naive(h, n),
+                    "strcasestr({:?}, {:?}) diverged from naive icase reference",
+                    h,
+                    n
+                );
+            }
+        }
     }
 
     #[test]
