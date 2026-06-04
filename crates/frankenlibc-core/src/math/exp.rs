@@ -2,6 +2,9 @@
 
 #[inline]
 pub fn exp(x: f64) -> f64 {
+    if let Some(result) = exp_medium_exp2_fast_path(x) {
+        return result;
+    }
     libm::exp(x)
 }
 
@@ -33,6 +36,21 @@ pub fn log10(x: f64) -> f64 {
 #[inline]
 pub fn log1p(x: f64) -> f64 {
     libm::log1p(x)
+}
+
+const EXP_MEDIUM_MIN: f64 = 0.5;
+const EXP_MEDIUM_MAX: f64 = 2.5;
+
+/// Fast path for the profiled finite medium interval using the existing exp2
+/// kernel's range reduction. Values outside this bounded interval retain the
+/// previous libm::exp behavior bit-for-bit.
+#[inline]
+fn exp_medium_exp2_fast_path(x: f64) -> Option<f64> {
+    if (EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&x) {
+        Some(libm::exp2(x * std::f64::consts::LOG2_E))
+    } else {
+        None
+    }
 }
 
 /// `base` raised to a small integer power via exponentiation by squaring.
@@ -251,6 +269,83 @@ mod tests {
         assert_eq!(
             digest, "5d10fe8318e0cba5afc8a3260fa342ca472bf559ead08bc67b82ae3a307e3a61",
             "pow half-integer golden corpus hash drifted"
+        );
+    }
+
+    #[test]
+    fn exp_medium_exp2_fast_path_within_4_ulps() {
+        let mut inputs = vec![
+            EXP_MEDIUM_MIN,
+            0.500_000_000_000_000_1,
+            std::f64::consts::LN_2,
+            1.0,
+            std::f64::consts::SQRT_2,
+            2.0,
+            2.468_75,
+            EXP_MEDIUM_MAX - f64::EPSILON,
+        ];
+        inputs.extend((0..64).map(|k| 0.5 + (k as f64) * 0.031_25));
+
+        for x in inputs {
+            let got = exp(x);
+            let want = x.exp();
+            assert!(
+                within_ulps(got, want, 4),
+                "exp({x}) = {got:?} but host exp = {want:?} (>4 ULP)"
+            );
+        }
+    }
+
+    #[test]
+    fn exp_medium_exp2_fast_path_preserves_fallback_cases() {
+        let cases = [
+            f64::NEG_INFINITY,
+            -20.0,
+            -1.0,
+            0.0,
+            EXP_MEDIUM_MIN - f64::EPSILON,
+            EXP_MEDIUM_MAX,
+            20.0,
+            f64::INFINITY,
+        ];
+        for x in cases {
+            assert_eq!(
+                exp(x).to_bits(),
+                libm::exp(x).to_bits(),
+                "exp({x}) fallback drifted"
+            );
+        }
+        assert!(exp(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn golden_exp_medium_exp2_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut inputs = vec![
+            EXP_MEDIUM_MIN,
+            0.500_000_000_000_000_1,
+            std::f64::consts::LN_2,
+            1.0,
+            std::f64::consts::SQRT_2,
+            2.0,
+            2.468_75,
+            EXP_MEDIUM_MAX - f64::EPSILON,
+        ];
+        inputs.extend((0..64).map(|k| 0.5 + (k as f64) * 0.031_25));
+
+        let mut hasher = Sha256::new();
+        for x in inputs {
+            hasher.update(exp(x).to_bits().to_le_bytes());
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "e43bc9b2b3385417dc6560ef3544112eeac1993aaf03b43d6d9a3035373e331d",
+            "exp medium exp2 golden corpus hash drifted"
         );
     }
 
