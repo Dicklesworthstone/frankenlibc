@@ -4,7 +4,7 @@
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
 Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).
-Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0.
+Reality snapshot: total_exported=4119, implemented=2391, raw_syscall=414, wraps_host_libc=1314, glibc_call_through=0, stub=0.
 Counts below reflect the checked-in support matrix symbol rows and will change as matrix drift fixes land. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; `Stub: 0` means zero support-taxonomy rows with status `Stub`, not zero no-op/fallback/bootstrap contracts in the codebase.
 Regenerate deterministically with:
 
@@ -15,9 +15,9 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 ```
 
 Current exported ABI surface is **4119 symbols**, classified as:
-- `Implemented`: 2384
+- `Implemented`: 2391
 - `RawSyscall`: 414
-- `WrapsHostLibc`: 1321
+- `WrapsHostLibc`: 1314
 - `GlibcCallThrough`: 0
 - `Stub`: 0
 
@@ -85,7 +85,7 @@ Source of truth: `tests/conformance/hard_parts_truth_table.v1.json` (generated `
 - `resolver`: `IMPLEMENTED_PARTIAL` — bootstrap numeric resolver ABI is exported; `getnameinfo` and `gai_strerror` are native, while `getaddrinfo` and `freeaddrinfo` remain host-backed in the support taxonomy. Deferred scope: full retry/cache/poisoning hardening campaign.
 - `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
-- `iconv`: `IMPLEMENTED_PARTIAL` — phase-1 codec core and fixtures exist, but `iconv_open`/`iconv`/`iconv_close` remain host-backed in the support taxonomy; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full native `iconvdata` breadth and deterministic table-generation closure.
+- `iconv`: `IMPLEMENTED_PARTIAL` — phase-1 codec core and fixtures exist, and `iconv_open`/`iconv`/`iconv_close` are native bootstrap implementations in the support taxonomy; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full native `iconvdata` breadth and deterministic table-generation closure.
 
 ## Deterministic Stub Surface
 
