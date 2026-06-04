@@ -414,10 +414,8 @@ fn glob_recursive(
         names.push(b".".to_vec());
         names.push(b"..".to_vec());
     }
-    for entry in entries {
-        if let Ok(entry) = entry {
-            names.push(entry.file_name().as_bytes().to_vec());
-        }
+    for entry in entries.flatten() {
+        names.push(entry.file_name().as_bytes().to_vec());
     }
 
     for name_bytes in &names {

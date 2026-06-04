@@ -7,15 +7,19 @@
 //! names in returned (sorted) order.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use frankenlibc_core::string::glob::{
-    GLOB_BRACE, GLOB_MARK, GLOB_NOCHECK, GLOB_NOMATCH, glob_expand,
+    glob_expand, GLOB_BRACE, GLOB_MARK, GLOB_NOCHECK, GLOB_NOMATCH,
 };
 
 fn make_tree() -> PathBuf {
     let mut dir = std::env::temp_dir();
-    dir.push(format!("fl_glob_probe_{}_{:p}", std::process::id(), &dir as *const _));
+    dir.push(format!(
+        "fl_glob_probe_{}_{:p}",
+        std::process::id(),
+        &dir as *const _
+    ));
     fs::create_dir_all(&dir).unwrap();
     for f in ["Foo", "a.txt", "b.txt", "bar", "c.txt", "d.log", ".hidden"] {
         fs::write(dir.join(f), b"").unwrap();
@@ -25,7 +29,7 @@ fn make_tree() -> PathBuf {
     dir
 }
 
-fn run(dir: &PathBuf, relpat: &str, flags: i32) -> String {
+fn run(dir: &Path, relpat: &str, flags: i32) -> String {
     let mut pat = dir.to_str().unwrap().as_bytes().to_vec();
     pat.push(b'/');
     pat.extend_from_slice(relpat.as_bytes());
@@ -41,7 +45,11 @@ fn run(dir: &PathBuf, relpat: &str, flags: i32) -> String {
                 .paths
                 .iter()
                 .map(|p| {
-                    let rel = if p.starts_with(&prefix) { &p[prefix.len()..] } else { &p[..] };
+                    let rel = if p.starts_with(&prefix) {
+                        &p[prefix.len()..]
+                    } else {
+                        &p[..]
+                    };
                     String::from_utf8_lossy(rel).into_owned()
                 })
                 .collect();
@@ -79,7 +87,9 @@ fn glob_differential_battery() {
     for (relpat, flags, expected) in cases {
         let got = run(&dir, relpat, *flags);
         if got != *expected {
-            diffs.push(format!("glob({relpat:?}, 0x{flags:x}): frankenlibc={got:?} glibc={expected:?}"));
+            diffs.push(format!(
+                "glob({relpat:?}, 0x{flags:x}): frankenlibc={got:?} glibc={expected:?}"
+            ));
         }
     }
 
@@ -95,7 +105,11 @@ fn glob_differential_battery() {
 
 fn make_brace_tree() -> PathBuf {
     let mut dir = std::env::temp_dir();
-    dir.push(format!("fl_glob_brace_{}_{:p}", std::process::id(), &dir as *const _));
+    dir.push(format!(
+        "fl_glob_brace_{}_{:p}",
+        std::process::id(),
+        &dir as *const _
+    ));
     fs::create_dir_all(&dir).unwrap();
     for f in [
         "a1b", "a2b", "a3b", "ac", "ad", "bc", "bd", "abe", "ace", "ade", "abc", "x", "xfoo",
@@ -123,8 +137,8 @@ fn glob_brace_differential_battery() {
         ("a{b}c", GLOB_BRACE, "0: abc"),
         ("a{}c", GLOB_BRACE, "0: ac"),
         ("file.{c,h}", GLOB_BRACE, "0: file.c file.h"),
-        ("{q,p}", GLOB_BRACE, "0: q p"),       // batch order, NOT sorted
-        ("{a,a}c", GLOB_BRACE, "0: ac ac"),    // no de-duplication
+        ("{q,p}", GLOB_BRACE, "0: q p"),    // batch order, NOT sorted
+        ("{a,a}c", GLOB_BRACE, "0: ac ac"), // no de-duplication
         ("{1..3}", GLOB_BRACE, &format!("{GLOB_NOMATCH}")), // ranges unsupported -> literal, no match
         ("zz{x,y}", GLOB_BRACE, &format!("{GLOB_NOMATCH}")),
         ("zz{x,y}", GLOB_BRACE | GLOB_NOCHECK, "0: zz{x,y}"), // original pattern on total no-match
@@ -134,7 +148,9 @@ fn glob_brace_differential_battery() {
     for (relpat, flags, expected) in cases {
         let got = run(&dir, relpat, *flags);
         if got != *expected {
-            diffs.push(format!("glob({relpat:?}, 0x{flags:x}): frankenlibc={got:?} glibc={expected:?}"));
+            diffs.push(format!(
+                "glob({relpat:?}, 0x{flags:x}): frankenlibc={got:?} glibc={expected:?}"
+            ));
         }
     }
 
