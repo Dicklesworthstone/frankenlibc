@@ -205,10 +205,91 @@ fn parse_bracket_subexpr(
     Some((next_pi, member))
 }
 
+/// Iterative single-backtrack matcher for the common case: bracket-free
+/// patterns under flags that impose no positional constraints (no PATHNAME /
+/// PERIOD / CASEFOLD / LEADING_DIR). Handles `*`, `?`, `\X` escapes (unless
+/// `noescape`) and literals in O(n*m) time, O(1) space — the standard wildcard
+/// two-pointer with one remembered star position. No recursion, no memo table.
+/// Output-identical to the general matcher on this input class (verified by
+/// `simple_fast_path_matches_general` over a random corpus).
+fn fnmatch_simple(pat: &[u8], text: &[u8], noescape: bool) -> bool {
+    let mut pi = 0usize;
+    let mut si = 0usize;
+    let mut star: Option<(usize, usize)> = None; // (pat index after the '*' run, text index when seen)
+
+    while si < text.len() {
+        let mut advanced = false;
+        if pi < pat.len() {
+            match pat[pi] {
+                b'*' => {
+                    while pi < pat.len() && pat[pi] == b'*' {
+                        pi += 1;
+                    }
+                    star = Some((pi, si));
+                    continue;
+                }
+                b'\\' if !noescape => {
+                    // `\X` matches the literal X; a trailing `\` matches nothing
+                    // (the general matcher returns false there too).
+                    if let Some(&esc) = pat.get(pi + 1)
+                        && esc == text[si]
+                    {
+                        pi += 2;
+                        si += 1;
+                        advanced = true;
+                    }
+                }
+                b'?' => {
+                    pi += 1;
+                    si += 1;
+                    advanced = true;
+                }
+                lit => {
+                    if lit == text[si] {
+                        pi += 1;
+                        si += 1;
+                        advanced = true;
+                    }
+                }
+            }
+        }
+        if advanced {
+            continue;
+        }
+        // Mismatch (or pattern exhausted with text left): let the last '*' eat
+        // one more text byte. With no remembered star, there is no match.
+        match star {
+            Some((spi, ssi)) => {
+                si = ssi + 1;
+                pi = spi;
+                star = Some((spi, ssi + 1));
+            }
+            None => return false,
+        }
+    }
+
+    // Text consumed: any trailing '*' run matches empty; accept iff the whole
+    // pattern is consumed.
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
 /// Match `text` against `pattern` per POSIX fnmatch semantics + the
 /// flags. Returns `true` if the entire `text` matches (modulo
 /// [`FnmatchFlags::LEADING_DIR`]).
 pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
+    // Fast path: bracket-free patterns under flags with no positional
+    // constraints (only NOESCAPE permitted) take the iterative single-backtrack
+    // matcher — O(n*m), no recursion/memo. This is the dominant glob-component
+    // case (NONE / NOESCAPE) and reaches glibc-class speed; everything else
+    // (brackets, PATHNAME, PERIOD, CASEFOLD, LEADING_DIR) keeps the general
+    // recursive matcher below.
+    let only_noescape = (flags.bits() & !FnmatchFlags::NOESCAPE.bits()) == 0;
+    if only_noescape && !pattern.contains(&b'[') {
+        return fnmatch_simple(pattern, text, flags.contains(FnmatchFlags::NOESCAPE));
+    }
     // `failed` memoizes (pat_index, text_index) states already proven not to
     // match when a '*' re-enters the matcher (always at_start=false). Without it
     // a pattern with many '*' (e.g. "*a*a*…*b" over an all-'a' text) backtracks
@@ -553,6 +634,52 @@ mod tests {
         // Exact-fit alternating stars that DO match.
         assert!(m("*a*b*c*", "xxaxxbxxcxx", FnmatchFlags::NONE));
         assert!(!m("*a*b*c*d", "xxaxxbxxcxx", FnmatchFlags::NONE));
+    }
+
+    // Exhaustive isomorphism: the simple iterative fast path must equal the
+    // general recursive matcher for EVERY short bracket-free pattern (over
+    // a/b/*/?/\) and text (over a/b), under both NONE and NOESCAPE — the exact
+    // input class the fast path is gated to.
+    #[test]
+    fn simple_fast_path_matches_general() {
+        fn general(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
+            let stride = if pat.contains(&b'*') { text.len() + 1 } else { 0 };
+            let mut failed = vec![false; (pat.len() + 1) * stride];
+            fnmatch_inner(pat, 0, text, 0, flags, true, &mut failed, stride)
+        }
+        fn build_bytes(alpha: &[u8], len: usize, mut idx: usize, out: &mut Vec<u8>) {
+            out.clear();
+            for _ in 0..len {
+                out.push(alpha[idx % alpha.len()]);
+                idx /= alpha.len();
+            }
+        }
+        let pat_alpha = [b'a', b'b', b'*', b'?', b'\\'];
+        let txt_alpha = [b'a', b'b'];
+        let mut pat = Vec::new();
+        let mut txt = Vec::new();
+        for &noescape in &[false, true] {
+            let flags = if noescape {
+                FnmatchFlags::NOESCAPE
+            } else {
+                FnmatchFlags::NONE
+            };
+            for plen in 0..=4usize {
+                for pidx in 0..pat_alpha.len().pow(plen as u32) {
+                    build_bytes(&pat_alpha, plen, pidx, &mut pat);
+                    for tlen in 0..=4usize {
+                        for tidx in 0..txt_alpha.len().pow(tlen as u32) {
+                            build_bytes(&txt_alpha, tlen, tidx, &mut txt);
+                            assert_eq!(
+                                fnmatch_simple(&pat, &txt, noescape),
+                                general(&pat, &txt, flags),
+                                "fnmatch_simple({pat:?}, {txt:?}, noescape={noescape}) != general"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
