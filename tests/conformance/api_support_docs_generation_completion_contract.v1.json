@@ -18,12 +18,12 @@
     "completion_harness": "crates/frankenlibc-harness/tests/api_support_docs_generation_completion_contract_test.rs"
   },
   "expected_reality_snapshot": {
-    "generated_at_utc": "2026-02-18T04:49:26Z",
+    "generated_at_utc": "2026-06-03T21:45:00Z",
     "total_exported": 4119,
     "counts": {
-      "implemented": 3705,
+      "implemented": 2384,
       "raw_syscall": 414,
-      "wraps_host_libc": 0,
+      "wraps_host_libc": 1321,
       "glibc_call_through": 0,
       "stub": 0
     }
@@ -59,19 +59,19 @@
         "id": "readme",
         "path": "README.md",
         "required_text": [
-          "Current source of truth: `tests/conformance/reality_report.v1.json`.",
-          "Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).",
-          "Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, wraps_host_libc=0, glibc_call_through=0, stub=0.",
+          "Current source of truth: `support_matrix.json` plus `tests/conformance/replacement_levels.json`.",
+          "Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).",
+          "Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0.",
           "support_matrix.json",
-          "FrankenLibC is not a full standalone libc replacement today."
+          "is not a full standalone libc replacement."
         ]
       },
       {
         "id": "feature_parity",
         "path": "FEATURE_PARITY.md",
         "required_text": [
-          "Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).",
-          "Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, glibc_call_through=0, stub=0.",
+          "Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).",
+          "Reality snapshot: total_exported=4119, implemented=2384, raw_syscall=414, wraps_host_libc=1321, glibc_call_through=0, stub=0.",
           "Current exported ABI surface is **4119 symbols**, classified as:",
           "not a full replacement profile",
           "support_matrix.json"

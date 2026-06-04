@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.6",
-  "generated_at": "2026-04-27T03:57:04Z",
+  "generated_at": "2026-06-03T21:31:10Z",
   "summary": {
     "phase": 1,
     "total_targets": 4,
@@ -9,7 +9,7 @@
     "partial_targets": 0,
     "stub_targets": 0,
     "smoke_viable_targets": 4,
-    "average_readiness_score": 77.5,
+    "average_readiness_score": 72.5,
     "total_symbols_covered": 30,
     "total_cwes_targeted": 11,
     "crash_severity_classes": 12,
@@ -436,16 +436,16 @@
       ],
       "source_analysis": {
         "source_exists": true,
-        "total_lines": 25,
-        "logic_lines": 19,
+        "total_lines": 162,
+        "logic_lines": 144,
         "todo_count": 0,
         "todos": [],
         "uses_frankenlibc_crates": true,
         "has_cleanup_logic": false,
-        "has_size_guard": true,
+        "has_size_guard": false,
         "has_iteration": true,
-        "has_chunk_parsing": true,
-        "ready": true
+        "has_chunk_parsing": false,
+        "ready": false
       },
       "symbol_coverage": {
         "target_symbols": [
@@ -457,7 +457,7 @@
         "coverage_pct": 0,
         "uncovered": []
       },
-      "readiness_score": 90,
+      "readiness_score": 70,
       "implementation_status": "functional",
       "smoke_viable": true
     },
@@ -471,8 +471,8 @@
       ],
       "source_analysis": {
         "source_exists": true,
-        "total_lines": 571,
-        "logic_lines": 432,
+        "total_lines": 569,
+        "logic_lines": 430,
         "todo_count": 0,
         "todos": [],
         "uses_frankenlibc_crates": true,

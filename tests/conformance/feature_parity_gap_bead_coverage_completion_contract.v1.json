@@ -64,17 +64,16 @@
       "issues"
     ],
     "summary_expectations": {
-      "total_unresolved_gaps": 111,
-      "covered_gaps": 111,
+      "total_unresolved_gaps": 110,
+      "covered_gaps": 110,
       "uncovered_gaps": 0,
       "active_owner_gaps": 0,
-      "inactive_owner_gaps": 111,
-      "owner_count": 5,
-      "critical_blocker_count": 5
+      "inactive_owner_gaps": 110,
+      "owner_count": 4,
+      "critical_blocker_count": 4
     },
     "owner_gap_counts": {
       "bd-w2c3.1": 7,
-      "bd-w2c3.1.2": 1,
       "bd-w2c3.10": 38,
       "bd-w2c3.4": 20,
       "bd-w2c3.6": 45

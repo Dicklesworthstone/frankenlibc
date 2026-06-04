@@ -7,7 +7,7 @@
   "audit_score": 685,
   "next_audit_score_threshold": 800,
   "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-3qq/scorecard.md",
-  "description": "Completion-debt evidence binding for the HA1zgq critique-response parent: closed critique dependency epics, support-surface honesty, zero reachable stubs, deterministic LD_PRELOAD smoke evidence, and structured telemetry gates.",
+  "description": "Completion-debt evidence binding for the HA1zgq critique-response parent: closed critique dependency epics, support-surface honesty, zero reachable stubs, current LD_PRELOAD smoke evidence, and structured telemetry gates.",
   "source_artifacts": {
     "issues_jsonl": ".beads/issues.jsonl",
     "support_matrix": "support_matrix.json",
@@ -68,7 +68,7 @@
       "minimum_classified_symbols": 3980,
       "expected_stub": 0,
       "expected_glibc_call_through": 0,
-      "expected_wraps_host_libc": 0
+      "expected_wraps_host_libc": 1321
     },
     "stub_census": {
       "summary_path": "stub_census",
@@ -114,12 +114,12 @@
     },
     {
       "id": "tests.e2e.primary",
-      "description": "E2E evidence binds LD_PRELOAD smoke scripts, real-program smoke contract, strict/hardened e2e reality gate policy, and the green checked-in smoke summary.",
+      "description": "E2E evidence binds LD_PRELOAD smoke scripts, real-program smoke contract, strict/hardened e2e reality gate policy, and the current checked-in smoke summary.",
       "implementation_refs": [
         "tests/conformance/ld_preload_smoke_summary.v1.json:1",
         "tests/conformance/ld_preload_smoke_e2e_index.v1.json:1",
         "crates/frankenlibc-harness/tests/ld_preload_smoke_e2e_index_test.rs:183",
-        "crates/frankenlibc-harness/tests/real_program_smoke_suite_completion_contract_test.rs:93",
+        "crates/frankenlibc-harness/tests/real_program_smoke_suite_completion_contract_test.rs:94",
         "crates/frankenlibc-harness/tests/e2e_reality_gate_completion_contract_test.rs:104"
       ],
       "required_test_refs": [

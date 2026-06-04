@@ -16,15 +16,15 @@
     "failure_signature"
   ],
   "scheduler_inputs": {
-    "symbols": [
-      "fgetxattr",
-      "setbuffer",
-      "vfprintf",
+      "symbols": [
+        "fts_open",
+      "stdin",
+      "stdout",
       "__ctype_init",
       "pthread_gettid_np",
       "getsecretkey",
       "__wcscoll_l",
-      "fpathconf",
+      "fts_read",
       "pthread_kill",
       "__dn_expand"
     ],
@@ -86,7 +86,7 @@
   "candidates": [
     {
       "candidate_id": "ca-001",
-      "symbol": "fgetxattr",
+      "symbol": "fts_open",
       "campaign_id": "fcq-unistd-process-filesystem",
       "symbol_family": "unistd_process",
       "runtime_mode": "hardened",
@@ -99,11 +99,11 @@
       "hard_parts_weight": 4,
       "priority_score": 1103,
       "feasible": true,
-      "reason": "High-risk filesystem extended-attribute fixture covers hardened invalid-pointer pressure in the current top inventory campaign."
+      "reason": "High-risk filesystem traversal fixture covers hardened invalid-pointer pressure in the current top inventory campaign."
     },
     {
       "candidate_id": "ca-002",
-      "symbol": "setbuffer",
+      "symbol": "stdin",
       "campaign_id": "fcq-stdio-libio",
       "symbol_family": "stdio_libio",
       "runtime_mode": "strict",
@@ -116,11 +116,11 @@
       "hard_parts_weight": 3,
       "priority_score": 1090,
       "feasible": true,
-      "reason": "Strict-mode stdio buffering fixture anchors stream-state parity for shell and package-manager workloads."
+      "reason": "Strict-mode stdio stream fixture anchors global stream parity for shell and package-manager workloads."
     },
     {
       "candidate_id": "ca-003",
-      "symbol": "vfprintf",
+      "symbol": "stdout",
       "campaign_id": "fcq-stdio-libio",
       "symbol_family": "stdio_libio",
       "runtime_mode": "hardened",
@@ -133,7 +133,7 @@
       "hard_parts_weight": 3,
       "priority_score": 1080,
       "feasible": true,
-      "reason": "Hardened stdio formatting fixture exercises locale and stream interaction coverage."
+      "reason": "Hardened stdio stream fixture exercises locale and stream-state interaction coverage."
     },
     {
       "candidate_id": "ca-004",
@@ -205,9 +205,9 @@
     },
     {
       "candidate_id": "ca-008",
-      "symbol": "fpathconf",
+      "symbol": "fts_read",
       "campaign_id": "fcq-unistd-process-filesystem",
-      "symbol_family": "process_exit",
+      "symbol_family": "filesystem_metadata",
       "runtime_mode": "strict",
       "locale_env_thread_state": "c_posix_single_thread",
       "invalid_input_class": "valid_input",
@@ -218,7 +218,7 @@
       "hard_parts_weight": 3,
       "priority_score": 821,
       "feasible": true,
-      "reason": "Path-configuration fixture preserves process/filesystem workload exposure and anchors the top inventory campaign."
+      "reason": "Filesystem traversal fixture preserves process/filesystem workload exposure and anchors the top inventory campaign."
     },
     {
       "candidate_id": "ca-009",
@@ -364,7 +364,7 @@
         "replacement_level"
       ],
       "values": [
-        "process_exit",
+        "filesystem_metadata",
         "L0"
       ]
     }

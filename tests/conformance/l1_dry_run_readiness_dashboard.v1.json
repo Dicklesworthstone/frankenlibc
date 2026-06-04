@@ -1781,12 +1781,12 @@
       "rationale": "Dashboard consumers must see dlfcn replacement evidence remains blocked until current evidence exists."
     },
     {
-      "row_id": "dlfcn-sentinel-boundary-l1-host-callsite-limit",
+      "row_id": "dlfcn-sentinel-boundary-standalone-host-callsite-limit",
       "row_kind": "dlfcn",
       "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
-      "field": "policy.max_total_host_callsites_at_L1",
+      "field": "policy.max_total_host_callsites_at_standalone_levels",
       "expected_value": 0,
-      "rationale": "The dashboard must expose that L1 allows no host dlfcn delegation callsites."
+      "rationale": "The dashboard must expose that standalone replacement levels allow no host dlfcn delegation callsites."
     },
     {
       "row_id": "dlfcn-sentinel-boundary-l0-interpose-allowed",
@@ -1905,8 +1905,8 @@
       "row_kind": "dlfcn",
       "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
       "field": "support_matrix_required_status.dlfcn_abi.dlvsym",
-      "expected_value": "Implemented",
-      "rationale": "The dashboard must expose that support-matrix status is distinct from replacement-level dlfcn evidence."
+      "expected_value": "WrapsHostLibc",
+      "rationale": "The dashboard must expose that dlfcn support-matrix status is explicitly host-backed at the interpose level."
     },
     {
       "row_id": "dlfcn-sentinel-boundary-first-callsite-id",
@@ -1930,7 +1930,7 @@
       "evidence_artifact": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
       "field": "host_callsites.4.annotation",
       "expected_value": "interpose_only",
-      "rationale": "The dashboard must expose post-bootstrap dlopen as an interpose-only L1 blocker."
+      "rationale": "The dashboard must expose post-bootstrap dlopen as an interpose-only standalone replacement blocker."
     },
     {
       "row_id": "dlfcn-sentinel-boundary-dlsym-host-handle-annotation",

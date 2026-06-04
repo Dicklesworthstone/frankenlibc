@@ -25,9 +25,9 @@
           "\"must_cover_every_gap_once\": true",
           "\"required_grouping_axes\"",
           "\"required_log_fields\"",
-          "\"ledger_gap_count\": 111",
+          "\"ledger_gap_count\": 110",
           "\"batch_count\": 10",
-          "\"batched_gap_count\": 111",
+          "\"batched_gap_count\": 110",
           "\"highest_priority_batches\""
         ]
       },
@@ -35,8 +35,8 @@
         "id": "owner-family-markdown-documents-all-groups-and-followups",
         "path": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
         "required_text": [
-          "Source ledger gaps: **111**",
-          "Grouped gaps: **111**",
+          "Source ledger gaps: **110**",
+          "Grouped gaps: **110**",
           "Owner-family groups: **10**",
           "Unassigned gaps: **0**",
           "`bd-bp8fl.3.5`",
@@ -101,16 +101,15 @@
   },
   "required_source_contract": {
     "summary_exact": {
-      "ledger_gap_count": 111,
+      "ledger_gap_count": 110,
       "batch_count": 10,
-      "batched_gap_count": 111,
+      "batched_gap_count": 110,
       "duplicate_gap_count": 0,
       "unbatched_gap_count": 0
     },
     "required_sections": [
       "gap_summary",
       "macro_targets",
-      "machine_delta",
       "proof_math",
       "reverse_core"
     ],

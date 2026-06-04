@@ -146,46 +146,46 @@
       "tests.conformance.primary"
     ],
     "required_fixture_pipeline": {
-      "total_fixture_files": 58,
-      "total_fixture_cases_min": 1289,
-      "unique_symbols_in_fixtures_min": 421,
-      "symbols_with_fixtures_min": 403,
+      "total_fixture_files": 127,
+      "total_fixture_cases_min": 2792,
+      "unique_symbols_in_fixtures_min": 1182,
+      "symbols_with_fixtures_min": 846,
       "fixture_format_issues": 0,
       "coverage_pct_min": 5.0
     },
     "required_fixture_unit": {
-      "total_fixture_files": 58,
-      "valid_fixture_files": 58,
+      "total_fixture_files": 127,
+      "valid_fixture_files": 127,
       "invalid_fixture_files": 0,
-      "total_cases_min": 1294,
+      "total_cases_min": 2797,
       "total_issues": 0,
       "total_warnings": 0,
-      "unique_families_min": 57,
-      "unique_symbols_min": 421,
+      "unique_families_min": 93,
+      "unique_symbols_min": 1182,
       "determinism_verified": true,
       "regression_status": "clean",
       "baseline_digest_length": 64
     },
     "required_schema_inventory": {
-      "fixture_file_count": 58,
-      "standard_fixture_files": 57,
+      "fixture_file_count": 127,
+      "standard_fixture_files": 126,
       "structured_fixture_files": 1,
-      "standard_case_count": 1284,
+      "standard_case_count": 2787,
       "structured_program_scenarios": 2,
       "structured_unsupported_scenarios": 3,
-      "expected_errno_required_cases": 1242,
+      "expected_errno_required_cases": 2745,
       "expected_errno_optional_cases": 42
     },
     "required_golden": {
       "executor_case_count": 7,
-      "verify_suite_total": 1817,
-      "verify_suite_passed": 1817,
+      "verify_suite_total": 3369,
+      "verify_suite_passed": 3369,
       "verify_suite_failed": 0,
       "verify_suite_skipped": 0
     },
     "required_gate_markers": {
       "fixture_schema_gate": [
-        "PASS: fixture schema validation files=58 cases=1284 structured=1"
+        "PASS: fixture schema validation files=127 cases=2787 structured=1"
       ],
       "fixture_executor_golden_gate": [
         "PASS: fixture executor ownership and golden manifest validated cases=7"

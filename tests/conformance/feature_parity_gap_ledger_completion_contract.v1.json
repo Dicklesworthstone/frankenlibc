@@ -83,7 +83,7 @@
     "schema_version": "v1",
     "bead": "bd-w2c3.1.1",
     "row_count": 170,
-    "gap_count": 111,
+    "gap_count": 110,
     "delta_count": 5,
     "parse_error_count": 0,
     "done_evidence_audit_count": 60,

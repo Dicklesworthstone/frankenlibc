@@ -1,23 +1,23 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.5",
-  "generated_at": "2026-05-10T00:00:00Z",
+  "generated_at": "2026-03-19T17:47:00Z",
   "summary": {
-    "total_fixture_files": 123,
-    "valid_fixture_files": 123,
+    "total_fixture_files": 127,
+    "valid_fixture_files": 127,
     "invalid_fixture_files": 0,
-    "total_cases": 2712,
+    "total_cases": 2797,
     "total_issues": 0,
     "total_warnings": 0,
-    "unique_families": 92,
-    "unique_symbols": 1142,
+    "unique_families": 93,
+    "unique_symbols": 1182,
     "determinism_verified": true
   },
   "regression_detection": {
     "status": "clean",
     "invalid_fixture_files": [],
     "invalid_fixture_issue_counts": {},
-    "baseline_fixture_digest": "ccd2435c5c3eb4728a403003fdafa5de7a3501054c074fc724a40483b2960aae"
+    "baseline_fixture_digest": "248fe9d90aba3f6d74a458cbf2b455274d9897ec1bea8aa49575c8a0e281c40e"
   },
   "fixture_results": [
     {
@@ -44,8 +44,8 @@
       "file": "c11threads_ops.json",
       "version": "v1",
       "family": "c11threads/ops",
-      "case_count": 23,
-      "fixture_hash": "18fc2a96e492a3b4",
+      "case_count": 24,
+      "fixture_hash": "0d676f4c55bf7c65",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -194,8 +194,8 @@
       "file": "iconv_phase1.json",
       "version": "v1",
       "family": "iconv/phase1",
-      "case_count": 13,
-      "fixture_hash": "b8a60a0a37f3ce94",
+      "case_count": 18,
+      "fixture_hash": "6f02be45d2fd3988",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -235,7 +235,7 @@
       "version": "v1",
       "family": "loader_edges",
       "case_count": 7,
-      "fixture_hash": "94470b86850542ab",
+      "fixture_hash": "a7bdfddc3c7d7f72",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -325,7 +325,7 @@
       "version": "v1",
       "family": "string/memcpy",
       "case_count": 9,
-      "fixture_hash": "019955b8e8a3eb83",
+      "fixture_hash": "e5a6814122282699",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -734,8 +734,8 @@
       "file": "startup_ops.json",
       "version": "v1",
       "family": "startup_ops",
-      "case_count": 16,
-      "fixture_hash": "c9eda25f37ddc3a8",
+      "case_count": 17,
+      "fixture_hash": "46708b92b502368e",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -1181,6 +1181,36 @@
       "warnings": []
     },
     {
+      "file": "unistd_process_filesystem_wave11.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "0c3501969da96608",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave12.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "9f9f560149b79d29",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
+      "file": "unistd_process_filesystem_wave13.json",
+      "version": "v1",
+      "family": "unistd/process-filesystem",
+      "case_count": 24,
+      "fixture_hash": "8658bf164d0fcdfd",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "virtual_memory_ops.json",
       "version": "v1",
       "family": "virtual_memory_ops",
@@ -1191,11 +1221,21 @@
       "warnings": []
     },
     {
+      "file": "wchar_abi_promotion_tranche.json",
+      "version": "v1",
+      "family": "wchar-abi-promotion-tranche",
+      "case_count": 6,
+      "fixture_hash": "06c1710860d4db3a",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "wchar_locale_encoding_wave01.json",
       "version": "v1",
       "family": "wchar/locale-encoding",
       "case_count": 24,
-      "fixture_hash": "68d809e405d0a683",
+      "fixture_hash": "689f25ffe04ca4dc",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -1252,8 +1292,8 @@
     }
   ],
   "regression_baseline": {
-    "symbol_count": 1142,
-    "total_cases": 2712,
+    "symbol_count": 1182,
+    "total_cases": 2797,
     "symbols": {
       "DnsHeader::new_query": {
         "count": 1,
@@ -2480,7 +2520,7 @@
         ]
       },
       "__libc_start_main": {
-        "count": 4,
+        "count": 5,
         "fixtures": [
           "startup_ops.json"
         ]
@@ -4842,6 +4882,18 @@
           "stdio_libio_wave03.json"
         ]
       },
+      "fgetpwent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
+        ]
+      },
+      "fgetpwent_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
+        ]
+      },
       "fgets": {
         "count": 2,
         "fixtures": [
@@ -4854,6 +4906,18 @@
           "stdio_libio_wave03.json"
         ]
       },
+      "fgetspent": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
+        ]
+      },
+      "fgetspent_r": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
+        ]
+      },
       "fgetwc_unlocked": {
         "count": 2,
         "fixtures": [
@@ -4864,6 +4928,12 @@
         "count": 2,
         "fixtures": [
           "stdio_libio_wave03.json"
+        ]
+      },
+      "fgetxattr": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
         ]
       },
       "fileno": {
@@ -4890,6 +4960,18 @@
           "math_ops.json"
         ]
       },
+      "flistxattr": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
+        ]
+      },
+      "flock": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
+        ]
+      },
       "flockfile": {
         "count": 2,
         "fixtures": [
@@ -4912,6 +4994,12 @@
         "count": 2,
         "fixtures": [
           "math_ops.json"
+        ]
+      },
+      "fmtmsg": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
         ]
       },
       "fnmatch": {
@@ -4942,6 +5030,18 @@
         "count": 2,
         "fixtures": [
           "process_ops.json"
+        ]
+      },
+      "forkpty": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
+        ]
+      },
+      "fpathconf": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
         ]
       },
       "fprintf": {
@@ -5010,10 +5110,22 @@
           "resolver.json"
         ]
       },
+      "freeifaddrs": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
+        ]
+      },
       "freelocale": {
         "count": 2,
         "fixtures": [
           "locale_ops.json"
+        ]
+      },
+      "fremovexattr": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave11.json"
         ]
       },
       "freopen": {
@@ -5032,6 +5144,12 @@
         "count": 2,
         "fixtures": [
           "stdio_libio_wave04.json"
+        ]
+      },
+      "fsconfig": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
         ]
       },
       "fseek": {
@@ -5064,6 +5182,84 @@
           "stdio_libio_wave04.json"
         ]
       },
+      "fsetxattr": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fsmount": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fsopen": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fspick": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fstat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fstat64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fstatat": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fstatat64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fstatfs": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fstatfs64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fstatvfs": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave12.json"
+        ]
+      },
+      "fstatvfs64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "fsync": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
       "ftell": {
         "count": 1,
         "fixtures": [
@@ -5082,10 +5278,70 @@
           "stdio_libio_wave05.json"
         ]
       },
+      "ftok": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "ftruncate": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "ftruncate64": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
       "ftrylockfile": {
         "count": 2,
         "fixtures": [
           "stdio_libio_wave05.json"
+        ]
+      },
+      "fts64_children": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "fts64_close": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "fts64_open": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "fts64_read": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "fts64_set": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "fts_children": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
+        ]
+      },
+      "fts_close": {
+        "count": 2,
+        "fixtures": [
+          "unistd_process_filesystem_wave13.json"
         ]
       },
       "funlockfile": {
@@ -5439,7 +5695,7 @@
         ]
       },
       "iconv": {
-        "count": 8,
+        "count": 13,
         "fixtures": [
           "iconv_phase1.json"
         ]
@@ -5684,6 +5940,12 @@
           "malloc_membrane_wave02.json"
         ]
       },
+      "mbrtoc16": {
+        "count": 2,
+        "fixtures": [
+          "wchar_abi_promotion_tranche.json"
+        ]
+      },
       "mcount": {
         "count": 2,
         "fixtures": [
@@ -5896,6 +6158,12 @@
         "count": 2,
         "fixtures": [
           "stdio_libio_wave06.json"
+        ]
+      },
+      "open_wmemstream": {
+        "count": 2,
+        "fixtures": [
+          "wchar_abi_promotion_tranche.json"
         ]
       },
       "opendir": {
@@ -7744,6 +8012,12 @@
           "c11threads_ops.json"
         ]
       },
+      "thrd_exit": {
+        "count": 1,
+        "fixtures": [
+          "c11threads_ops.json"
+        ]
+      },
       "thrd_join": {
         "count": 1,
         "fixtures": [
@@ -8048,6 +8322,12 @@
           "wide_string.json"
         ]
       },
+      "wcsdup": {
+        "count": 2,
+        "fixtures": [
+          "wchar_abi_promotion_tranche.json"
+        ]
+      },
       "wcslen": {
         "count": 5,
         "fixtures": [
@@ -8153,7 +8433,7 @@
   "fixture_hashes": {
     "allocator.json": "0ca36dd7fc898456",
     "backtrace_ops.json": "aa44dadcef4e24b3",
-    "c11threads_ops.json": "18fc2a96e492a3b4",
+    "c11threads_ops.json": "0d676f4c55bf7c65",
     "ctype_ops.json": "ce64b3a410dc1f75",
     "dirent_ops.json": "f1a75d458bf894e6",
     "dlfcn_ops.json": "f8766ad1170306bd",
@@ -8168,11 +8448,11 @@
     "glibc_internal_compat_wave02.json": "f1ba1808c1339d95",
     "glibc_internal_compat_wave03.json": "25b823c46f4cc2da",
     "grp_ops.json": "ddb9255ac967ca8b",
-    "iconv_phase1.json": "b8a60a0a37f3ce94",
+    "iconv_phase1.json": "6f02be45d2fd3988",
     "inet_ops.json": "c075da66c5ff6ac4",
     "io_internal_ops.json": "6e65f4468f622224",
     "isoc_wide_scanf_ops.json": "f83e52afba7d7502",
-    "loader_edges.json": "94470b86850542ab",
+    "loader_edges.json": "a7bdfddc3c7d7f72",
     "locale_catalog_wave01.json": "a7be15e9df074f8a",
     "locale_ops.json": "86ee8c90c46dee29",
     "malloc_membrane_wave01.json": "62729e4d076b73c0",
@@ -8181,7 +8461,7 @@
     "math_finite_special_wave03.json": "b8f5518fc8059d95",
     "math_ops.json": "f8c61f404d06bd45",
     "membrane_mode_split.json": "bd8641139f333985",
-    "memcpy_strict.json": "019955b8e8a3eb83",
+    "memcpy_strict.json": "e5a6814122282699",
     "memory_ops.json": "c870298b53f8fd75",
     "mntent_ops.json": "ddcd44eb374be4af",
     "poll_event_loop_wave01.json": "e6c18c5131c0c065",
@@ -8222,7 +8502,7 @@
     "socket_network_wave01.json": "90e97bad26ed95a5",
     "socket_ops.json": "e4d160e2c6d32a95",
     "spawn_exec_ops.json": "9f1653399ce4ec14",
-    "startup_ops.json": "c9eda25f37ddc3a8",
+    "startup_ops.json": "46708b92b502368e",
     "stdbit_ops.json": "dcae7bac0a0dabbe",
     "stdio_file_ops.json": "5e865785991b7ce7",
     "stdio_libio_symbols.json": "fe6422d57bcc9ffc",
@@ -8267,8 +8547,12 @@
     "unistd_process_filesystem_wave08.json": "94fde7bcdafdd869",
     "unistd_process_filesystem_wave09.json": "521d5b35c6d8eab5",
     "unistd_process_filesystem_wave10.json": "932ec93bcdefdafa",
+    "unistd_process_filesystem_wave11.json": "0c3501969da96608",
+    "unistd_process_filesystem_wave12.json": "9f9f560149b79d29",
+    "unistd_process_filesystem_wave13.json": "8658bf164d0fcdfd",
     "virtual_memory_ops.json": "677248cdc30d10fe",
-    "wchar_locale_encoding_wave01.json": "68d809e405d0a683",
+    "wchar_abi_promotion_tranche.json": "06c1710860d4db3a",
+    "wchar_locale_encoding_wave01.json": "689f25ffe04ca4dc",
     "wchar_locale_encoding_wave02.json": "d6cdf5c7c993c1f5",
     "wchar_locale_encoding_wave03.json": "90b670d80377ef5f",
     "wide_memory.json": "0bcf13d7c7220745",

@@ -123,7 +123,7 @@
       "\"functional_targets\": 66",
       "\"stub_targets\": 0",
       "\"quality_score_pct\": 100.0",
-      "\"total_seed_corpus\": 22987"
+      "\"total_seed_corpus\": 23199"
     ],
     "fuzz_harness_gate": [
       "fuzz_harness_architecture",

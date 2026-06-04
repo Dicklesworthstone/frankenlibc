@@ -26,11 +26,11 @@
     "completion_harness_test": "crates/frankenlibc-harness/tests/full_release_rehearsal_completion_contract_test.rs"
   },
   "implementation_refs": [
-    "scripts/ci.sh:20",
+    "scripts/ci.sh:18",
     "scripts/ci.sh:30",
     "scripts/ci.sh:35",
     "scripts/ci.sh:40",
-    "scripts/ci.sh:45",
+    "scripts/ci.sh:46",
     "scripts/ci.sh:275",
     "scripts/ci.sh:295",
     "scripts/ci.sh:300",
@@ -252,20 +252,19 @@
     },
     "ld_preload_smoke": {
       "expected_total_cases": 64,
-      "expected_passes": 58,
+      "expected_passes": 60,
       "expected_fails": 0,
-      "expected_skips": 6,
+      "expected_skips": 4,
       "required_modes": [
         "strict",
         "hardened"
       ],
       "expected_mode_status": "green",
       "expected_mode_total_cases": 32,
-      "expected_mode_passes": 29,
+      "expected_mode_passes": 30,
       "expected_mode_fails": 0,
-      "expected_mode_skips": 3,
+      "expected_mode_skips": 2,
       "expected_optional_skip_binaries": [
-        "sqlite3",
         "redis-cli",
         "nginx"
       ]

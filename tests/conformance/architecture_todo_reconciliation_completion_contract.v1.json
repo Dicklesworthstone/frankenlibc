@@ -28,11 +28,11 @@
       "replacement_level_change": "forbidden",
       "expected_counts": {
         "row_count": 73,
-        "status_completed": 30,
-        "status_in_progress": 3,
-        "status_pending": 40,
-        "already_closed_by_ledger_or_closed_bead_evidence": 30,
-        "routed_to_new_open_bead": 43,
+        "status_completed": 73,
+        "status_in_progress": 0,
+        "status_pending": 0,
+        "already_closed_by_ledger_or_closed_bead_evidence": 73,
+        "routed_to_new_open_bead": 0,
         "stale_doc_only": 0,
         "blocked_by_missing_artifact": 0
       },
@@ -93,8 +93,8 @@
       ],
       "required_invariants": [
         "all 73 source ledger rows are mapped exactly once",
-        "30 completed rows are bound to existing ledger or closed-bead evidence",
-        "43 pending or in-progress rows are routed to the bd-0agsk child graph",
+        "73 completed rows are bound to existing ledger or closed-bead evidence",
+        "0 pending or in-progress rows remain in the archived ledger snapshot",
         "report_only claim status forbids replacement-level promotion"
       ],
       "required_test_refs": [

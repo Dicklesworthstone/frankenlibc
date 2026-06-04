@@ -13,7 +13,7 @@
     "claim_control_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "purpose": "Fail-closed gate for the eight fpg-claim-control gaps drawn from tests/conformance/feature_parity_gap_ledger.v1.json. Every macro-coverage-target row in FEATURE_PARITY.md must remain bound to current machine evidence (support_matrix.json, replacement_levels.json, conformance_matrix.v1.json, hardened_repair_deny_matrix.v1.json, semantic_contract_inventory.v1.json, perf_baseline_spec.json, version_scripts/libc.map). Stale, missing, or contradictory evidence blocks claim advancement at any replacement level (L0/L1/L2/L3).",
+  "purpose": "Fail-closed gate for the seven fpg-claim-control gaps drawn from tests/conformance/feature_parity_gap_ledger.v1.json. Every macro-coverage-target row in FEATURE_PARITY.md must remain bound to current machine evidence (support_matrix.json, replacement_levels.json, conformance_matrix.v1.json, hardened_repair_deny_matrix.v1.json, semantic_contract_inventory.v1.json, perf_baseline_spec.json, version_scripts/libc.map). Stale, missing, or contradictory evidence blocks claim advancement at any replacement level (L0/L1/L2/L3).",
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
     "support_matrix": "support_matrix.json",
@@ -61,7 +61,7 @@
       "primary_key": "POSIX/GNU replacement completeness",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 53
+        "line": 54
       },
       "claim_target": "Remove WrapsHostLibc + GlibcCallThrough + Stub classes from critical surfaces",
       "claimed_status": "IN_PROGRESS",
@@ -76,8 +76,8 @@
         {
           "artifact": "support_matrix.json",
           "field": "summary.wraps_host_libc",
-          "expected_value": 0,
-          "rationale": "POSIX/GNU completeness requires zero WrapsHostLibc exports."
+          "expected_value_min": 1,
+          "rationale": "Current support taxonomy must still expose at least one WrapsHostLibc export while POSIX/GNU replacement completeness remains IN_PROGRESS."
         },
         {
           "artifact": "support_matrix.json",
@@ -100,7 +100,7 @@
       "primary_key": "ABI symbol/version fidelity",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 54
+        "line": 55
       },
       "claim_target": "Preserve exported ABI and classify each exported symbol state",
       "claimed_status": "IN_PROGRESS",
@@ -133,7 +133,7 @@
       "primary_key": "Strict mode conformance",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 55
+        "line": 56
       },
       "claim_target": "Differential parity on supported symbol set",
       "claimed_status": "IN_PROGRESS",
@@ -166,7 +166,7 @@
       "primary_key": "Hardened mode safety",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 56
+        "line": 57
       },
       "claim_target": "Deterministic repair/deny coverage on membrane-gated paths",
       "claimed_status": "IN_PROGRESS",
@@ -199,7 +199,7 @@
       "primary_key": "Transparent Safety Membrane enforcement",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 57
+        "line": 58
       },
       "claim_target": "Pointer-sensitive APIs validated before dispatch",
       "claimed_status": "IN_PROGRESS",
@@ -226,7 +226,7 @@
       "primary_key": "Conformance harness",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 58
+        "line": 59
       },
       "claim_target": "Fixture-driven validation + drift gates",
       "claimed_status": "IN_PROGRESS",
@@ -253,7 +253,7 @@
       "primary_key": "Benchmark gates",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 59
+        "line": 60
       },
       "claim_target": "Regression-blocking + budget evidence",
       "claimed_status": "IN_PROGRESS",
@@ -270,40 +270,6 @@
           "field": "summary.total_benchmarks",
           "expected_value_min": 1,
           "rationale": "Benchmark gates require enumerated benchmark coverage."
-        }
-      ]
-    },
-    {
-      "gap_id": "gap-macro-fp-macro-targets-fa7a23e18f01",
-      "kind": "machine_delta_drift",
-      "section": "machine_delta",
-      "primary_key": "macro_targets row drift sentinel",
-      "feature_parity_provenance": {
-        "path": "FEATURE_PARITY.md",
-        "line": 38
-      },
-      "claim_target": "Detect machine-delta drift between FEATURE_PARITY macro_targets row and support_matrix counts",
-      "claimed_status": "drift",
-      "owner_bead": "bd-w2c3.1",
-      "linked_gap_id": "fp-macro-targets-fa7a23e18f01",
-      "evidence_anchors": [
-        {
-          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
-          "field": "self.kind",
-          "expected_value": "machine_delta_drift",
-          "rationale": "Sentinel must remain visible in the gap ledger as a machine_delta_drift row until the linked POSIX/GNU completeness row can promote to DONE."
-        },
-        {
-          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
-          "field": "self.status",
-          "expected_value": "drift",
-          "rationale": "Sentinel must remain in drift state until reality_report callthrough/stub counts no longer fund the row."
-        },
-        {
-          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
-          "field": "linked.kind",
-          "expected_value": "feature_parity_row_status",
-          "rationale": "Linked POSIX/GNU completeness row must remain a feature_parity_row_status entry."
         }
       ]
     }

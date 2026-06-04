@@ -12,7 +12,7 @@
     "classification_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "purpose": "Burn-down classification atop tests/conformance/dlfcn_replace_boundary_sentinel.v1.json. The sentinel keeps the eight current host-delegation call sites visible; this file records, per call site, whether it is an L1 promotion blocker (must be removed before current_level can advance to L1) or whether it is structurally below L1 (only reachable from a runtime path that L1 turns off). The harness gate enforces the classification per the source-code guards and refuses any silent reclassification that would lift L1 promotion blockers without a native replacement.",
+  "purpose": "Burn-down classification atop tests/conformance/dlfcn_replace_boundary_sentinel.v1.json. The sentinel keeps the eight current host-delegation call sites visible; this file records, per call site, whether it is a standalone replacement blocker (must be removed before current_level can advance to L2/L3) or whether it is structurally below the hardened interpose path (only reachable from a runtime path that hardened interpose turns off). The harness gate enforces the classification per the source-code guards and refuses any silent reclassification that would lift standalone replacement blockers without a native replacement.",
   "subject": {
     "sentinel": "tests/conformance/dlfcn_replace_boundary_sentinel.v1.json",
     "module": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
@@ -85,7 +85,7 @@
     {
       "callsite_id": "dlopen_post_bootstrap",
       "l1_relevance": "l1_blocker",
-      "rationale": "Post-bootstrap dlopen path delegates to host loader because we have no native ELF loader yet; L1 promotion REQUIRES a native loader, so this site is the central blocker."
+      "rationale": "Post-bootstrap dlopen path delegates to host loader because we have no native ELF loader yet; standalone replacement promotion requires a native loader, so this site is the central blocker."
     },
     {
       "callsite_id": "dlsym_post_bootstrap_host_handle",

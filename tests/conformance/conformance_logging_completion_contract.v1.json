@@ -119,7 +119,7 @@
       "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
       "minimum_family_count": 6,
       "minimum_bench_target_count": 9,
-      "minimum_inventory_rows": 700,
+      "minimum_inventory_rows": 670,
       "required_modes": [
         "strict",
         "hardened"

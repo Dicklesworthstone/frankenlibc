@@ -86,7 +86,7 @@
           "crates/frankenlibc-harness/tests/artifact_precedence_completion_contract_test.rs"
         ],
         "required_positive_tests": [
-          "gate_passes_current_manifest_and_emits_report_and_log",
+          "gate_emits_current_manifest_pass_report_and_log",
           "checker_validates_artifact_precedence_completion_contract"
         ],
         "required_negative_tests": [
@@ -111,7 +111,7 @@
         ],
         "required_positive_tests": [
           "manifest_declares_artifacts_claims_and_log_contract",
-          "gate_passes_current_manifest_and_emits_report_and_log",
+          "gate_emits_current_manifest_pass_report_and_log",
           "checker_validates_artifact_precedence_completion_contract"
         ],
         "required_negative_tests": [
@@ -176,6 +176,16 @@
       "prose_only_claim_count": 0,
       "out_of_order_artifact_count": 0
     },
+    "expected_check_statuses": {
+      "manifest_shape": "pass",
+      "artifact_shape": "pass",
+      "artifact_regeneration_command": "pass",
+      "artifact_freshness": "pass",
+      "artifact_dependency_order": "pass",
+      "claim_precedence": "pass",
+      "expected_current_summary": "pass",
+      "readme_rpc_stub_claim": "pass"
+    },
     "required_log_fields": [
       "trace_id",
       "bead_id",
@@ -194,7 +204,7 @@
     ],
     "required_source_tests": [
       "manifest_declares_artifacts_claims_and_log_contract",
-      "gate_passes_current_manifest_and_emits_report_and_log",
+      "gate_emits_current_manifest_pass_report_and_log",
       "missing_authoritative_artifact_fails",
       "missing_regeneration_command_fails",
       "source_commit_mismatch_fails",

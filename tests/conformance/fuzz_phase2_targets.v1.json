@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.7",
-  "generated_at": "2026-04-27T03:57:04Z",
+  "generated_at": "2026-06-03T21:31:10Z",
   "summary": {
     "phase": 2,
     "total_targets": 4,
@@ -26,8 +26,8 @@
       ],
       "source_analysis": {
         "source_exists": true,
-        "total_lines": 256,
-        "logic_lines": 172,
+        "total_lines": 394,
+        "logic_lines": 295,
         "todo_count": 0,
         "todos": [],
         "uses_frankenlibc_crates": true,
@@ -124,8 +124,8 @@
       ],
       "source_analysis": {
         "source_exists": true,
-        "total_lines": 165,
-        "logic_lines": 124,
+        "total_lines": 289,
+        "logic_lines": 218,
         "todo_count": 0,
         "todos": [],
         "uses_frankenlibc_crates": true,
@@ -220,8 +220,8 @@
       ],
       "source_analysis": {
         "source_exists": true,
-        "total_lines": 121,
-        "logic_lines": 91,
+        "total_lines": 239,
+        "logic_lines": 181,
         "todo_count": 0,
         "todos": [],
         "uses_frankenlibc_crates": true,
@@ -296,8 +296,8 @@
       ],
       "source_analysis": {
         "source_exists": true,
-        "total_lines": 128,
-        "logic_lines": 109,
+        "total_lines": 342,
+        "logic_lines": 287,
         "todo_count": 0,
         "todos": [],
         "uses_frankenlibc_crates": true,
@@ -415,5 +415,5 @@
       "runtime-math"
     ]
   },
-  "validation_hash": "6e5bee45d6880c7a"
+  "validation_hash": "be91348643d82283"
 }

@@ -46,6 +46,14 @@
     "record_count": 1,
     "format": "replay outcome JSONL record",
     "required_kind": "replay_outcome",
+    "required_fields": [
+      "kind",
+      "outcome",
+      "asupersync_available",
+      "detection_reason",
+      "trace_class",
+      "source_commit"
+    ],
     "outcome_enum": [
       "pass",
       "code_failure",

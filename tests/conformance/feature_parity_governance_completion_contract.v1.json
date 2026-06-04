@@ -122,7 +122,7 @@
       "schema_version": "v1",
       "bead": "bd-w2c3.1.1",
       "row_count": 170,
-      "gap_count": 111,
+      "gap_count": 110,
       "delta_count": 5,
       "parse_error_count": 0,
       "done_evidence_audit_count": 60
@@ -130,17 +130,17 @@
     "drift_expectations": {
       "schema_version": "v1",
       "bead": "bd-w2c3.1.2",
-      "diagnostic_count": 111,
+      "diagnostic_count": 110,
       "fail_count": 0,
-      "tracked_count": 111
+      "tracked_count": 110
     },
     "coverage_expectations": {
       "schema_version": "v1",
       "bead": "bd-w2c3.1.3",
-      "covered_gaps": 111,
+      "covered_gaps": 110,
       "uncovered_gaps": 0,
-      "owner_count": 5,
-      "critical_blocker_count": 5
+      "owner_count": 4,
+      "critical_blocker_count": 4
     },
     "required_dashboard_sections": [
       "## Critical Blockers",

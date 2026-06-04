@@ -216,25 +216,25 @@
     {
       "kind": "docs_harness_surface_test",
       "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
-      "line": 125,
+      "line": 159,
       "anchor": "fn source_of_truth_map_covers_major_surfaces"
     },
     {
       "kind": "docs_harness_section_test",
       "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
-      "line": 245,
+      "line": 279,
       "anchor": "fn governed_sections_have_sources_owners_and_triggers"
     },
     {
       "kind": "docs_harness_trace_test",
       "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
-      "line": 319,
+      "line": 353,
       "anchor": "fn governance_trace_rows_cover_every_section"
     },
     {
       "kind": "docs_harness_gate_test",
       "path": "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs",
-      "line": 396,
+      "line": 557,
       "anchor": "fn gate_script_passes"
     },
     {

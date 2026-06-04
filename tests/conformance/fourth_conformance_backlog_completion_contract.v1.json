@@ -3,8 +3,8 @@
   "bead_id": "bd-gmbqy.12",
   "parent_bead": "bd-gmbqy",
   "trace_id": "bd-gmbqy.12::fourth-conformance-backlog::completion::v1",
-  "generated_at_utc": "2026-05-14T02:45:00Z",
-  "source_commit": "38065bf5",
+  "generated_at_utc": "2026-06-03T00:48:31Z",
+  "source_commit": "5da2ffed",
   "purpose": "Completion contract for the bd-gmbqy fourth artifact-guided conformance wave backlog. It binds the closed child wave evidence, generated coverage artifact counts, current prioritizer advancement, base gates, and a dedicated harness test before bd-gmbqy.12 or parent bd-gmbqy can close.",
   "source_artifacts": [
     {
@@ -145,29 +145,29 @@
         "status": "closed",
         "commit_refs": ["bac738dc"],
         "fixture": "tests/conformance/fixtures/rpc_legacy_network_wave03.json",
-        "evidence_fragments": ["legacy RPC wave-03", "covered_count=1126", "2702 cases", "RCH remote"]
+        "evidence_fragments": ["legacy RPC wave-03", "coverage artifacts refreshed", "RCH remote"]
       }
     ]
   },
   "coverage_expectations": {
     "symbol_fixture_coverage": {
-      "target_total_symbols": 3910,
-      "target_covered_symbols": 1032,
-      "target_uncovered_symbols": 2878,
-      "target_coverage_pct": 26.39
+      "target_total_symbols": 2797,
+      "target_covered_symbols": 848,
+      "target_uncovered_symbols": 1949,
+      "target_coverage_pct": 30.32
     },
     "per_symbol_fixture_tests": {
       "total_symbols": 4119,
-      "symbols_with_fixtures": 1160,
-      "total_cases": 2774,
-      "uncovered_action_count": 2880,
+      "symbols_with_fixtures": 1164,
+      "total_cases": 2787,
+      "uncovered_action_count": 1951,
       "total_format_issues": 0
     },
     "fixture_coverage_prioritizer": {
       "campaign_count": 8,
-      "selected_target_uncovered_symbols": 2584,
-      "all_uncovered_target_symbols": 2878,
-      "total_first_wave_fixture_count": 93,
+      "selected_target_uncovered_symbols": 1735,
+      "all_uncovered_target_symbols": 1949,
+      "total_first_wave_fixture_count": 88,
       "required_covered_modules": [
         "fortify_abi",
         "glibc_internal_abi",
@@ -258,17 +258,17 @@
     "current_campaign_first_wave": [
       {
         "campaign_id": "fcq-unistd-process-filesystem",
-        "first_wave_symbols": ["fts_open", "fts_read", "fts_set", "ftw", "ftw64", "futex", "futex_requeue", "futex_wait", "futex_waitv", "futex_wake", "gai_cancel", "gai_error"],
-        "current_coverage_pct": 27.36,
-        "target_covered": 203,
-        "target_uncovered": 539
+        "first_wave_symbols": ["fts_open", "fts_read", "fts_set", "ftw64", "futex", "futex_requeue", "futex_wait", "futex_waitv", "futex_wake", "gai_cancel", "gai_error", "gai_suspend"],
+        "current_coverage_pct": 28.28,
+        "target_covered": 194,
+        "target_uncovered": 492
       },
       {
         "campaign_id": "fcq-stdio-libio",
-        "first_wave_symbols": ["stderr", "stdin", "stdout", "tmpnam", "vfprintf", "vfscanf", "vprintf", "vscanf", "vsscanf"],
-        "current_coverage_pct": 73.53,
-        "target_covered": 25,
-        "target_uncovered": 9
+        "first_wave_symbols": ["stderr", "stdin", "stdout", "tmpnam"],
+        "current_coverage_pct": 60.0,
+        "target_covered": 6,
+        "target_uncovered": 4
       },
       {
         "campaign_id": "fcq-pthread-sync",
@@ -279,38 +279,38 @@
       },
       {
         "campaign_id": "fcq-wchar-locale-encoding",
-        "first_wave_symbols": ["__wcscasecmp_l", "__wcscoll_l", "__wcsftime_l", "__wcsncasecmp_l", "__wcstod_internal", "__wcstod_l", "__wcstof_internal", "__wcstof_l", "__wcstol_internal", "__wcstol_l", "__wcstold_internal", "__wcstold_l"],
-        "current_coverage_pct": 36.99,
-        "target_covered": 54,
-        "target_uncovered": 92
+        "first_wave_symbols": ["__wcscasecmp_l", "__wcscoll_l", "__wcsftime_l", "__wcsncasecmp_l", "__wcstod_internal", "__wcstod_l", "__wcstof_internal", "__wcstof_l", "__wcstold_internal", "__wcstold_l", "__wcsxfrm_l", "btowc"],
+        "current_coverage_pct": 43.48,
+        "target_covered": 40,
+        "target_uncovered": 52
       },
       {
         "campaign_id": "fcq-fortify-bounds",
-        "first_wave_symbols": ["__pread_chk", "__printf_chk", "__ptsname_r_chk", "__read_chk", "__readlink_chk", "__readlinkat_chk", "__realpath_chk", "__recv_chk", "__recvfrom_chk", "__snprintf_chk", "__sprintf_chk", "__stpcpy_chk"],
-        "current_coverage_pct": 46.15,
-        "target_covered": 36,
-        "target_uncovered": 42
+        "first_wave_symbols": ["__ptsname_r_chk", "__stpcpy_chk", "__stpncpy_chk", "__strcat_chk", "__strcpy_chk", "__strncat_chk", "__strncpy_chk", "__swprintf_chk", "__ttyname_r_chk", "__vswprintf_chk", "__wcscat_chk", "__wcscpy_chk"],
+        "current_coverage_pct": 32.0,
+        "target_covered": 8,
+        "target_uncovered": 17
       },
       {
         "campaign_id": "fcq-math-special",
         "first_wave_symbols": ["__cosh_finite", "__coshf128_finite", "__coshf_finite", "__coshl_finite", "__exp10_finite", "__exp10f128_finite", "__exp10f_finite", "__exp10l_finite", "__exp2_finite", "__exp2f128_finite", "__exp2f_finite", "__exp2l_finite"],
-        "current_coverage_pct": 4.35,
-        "target_covered": 55,
-        "target_uncovered": 1210
+        "current_coverage_pct": 6.88,
+        "target_covered": 52,
+        "target_uncovered": 704
       },
       {
         "campaign_id": "fcq-glibc-internal-compat",
-        "first_wave_symbols": ["__ctype32_toupper", "__ctype_init", "__curbrk", "__daylight", "__dcgettext", "__default_morecore", "__dgettext", "__dn_comp", "__dn_expand", "__dn_skipname", "__dup2", "__duplocale"],
-        "current_coverage_pct": 6.87,
-        "target_covered": 39,
-        "target_uncovered": 529
+        "first_wave_symbols": ["__ctype32_toupper", "__ctype_init", "__curbrk", "__daylight", "__dcgettext", "__default_morecore", "__dgettext", "__dn_comp", "__dn_expand", "__dn_skipname", "__duplocale", "__endmntent"],
+        "current_coverage_pct": 8.91,
+        "target_covered": 32,
+        "target_uncovered": 327
       },
       {
         "campaign_id": "fcq-rpc-legacy-network",
-        "first_wave_symbols": ["getsecretkey", "host2netname", "key_decryptsession", "key_decryptsession_pk", "key_encryptsession", "key_encryptsession_pk", "key_gendes", "key_get_conv", "key_secretkey_is_set", "key_setnet", "key_setsecret", "netname2host"],
-        "current_coverage_pct": 22.64,
-        "target_covered": 36,
-        "target_uncovered": 123
+        "first_wave_symbols": ["getsecretkey", "key_decryptsession", "key_decryptsession_pk", "key_encryptsession", "key_encryptsession_pk", "key_gendes", "key_get_conv", "key_secretkey_is_set", "key_setnet", "key_setsecret", "netname2host", "netname2user"],
+        "current_coverage_pct": 25.56,
+        "target_covered": 34,
+        "target_uncovered": 99
       }
     ]
   },

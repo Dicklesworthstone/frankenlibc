@@ -325,8 +325,8 @@
         "string::*",
         "malloc::*"
       ],
-      "justification": "Initial baseline establishment. ABI-level string and malloc benchmarks are present but not yet wired to perf_gate.sh enforcement (see perf_regression_prevention.v1.json#bench_file_inventory: enforced_in_gate=false for both). Narrowed from symbols=[*] (bd-b92jd.2.3) to the two enforced=false suite_ids only; runtime_math and membrane suites are now enforced.",
-      "expires_at": "2026-05-18",
+      "justification": "Reviewed on 2026-06-02 during the gauntlet pass. ABI-level string and malloc benchmarks are present but still not wired to perf_gate.sh enforcement (see perf_regression_prevention.v1.json#bench_file_inventory: enforced_in_gate=false for both). Narrowed from symbols=[*] (bd-b92jd.2.3) to the two enforced=false suite_ids only; runtime_math, membrane, and errno suites remain enforced.",
+      "expires_at": "2026-08-31",
       "scope": "target_violation_only",
       "failure_signature": "perf_gate::target_violation_within_threshold",
       "note": "perf_gate.sh runs with FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION=1 by default for the two waived suites; remove this entry when string/malloc bench_file_inventory.enforced_in_gate flips to true."

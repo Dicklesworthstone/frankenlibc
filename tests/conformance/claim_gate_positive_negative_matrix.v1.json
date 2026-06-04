@@ -238,7 +238,7 @@
         },
         "skipped_runtime_mode": {
           "scenario_id": "fpg-skipped-hardened-mode-anchor",
-          "harness_test_anchor": "gate_rows_cover_all_eight_fpg_claim_control_gaps",
+          "harness_test_anchor": "gate_rows_cover_all_current_fpg_claim_control_gaps",
           "expected_decision": "block",
           "failure_signature": "claim_gate_skipped_runtime_mode",
           "evidence_refs": ["tests/conformance/hardened_repair_deny_matrix.v1.json"]
@@ -621,11 +621,11 @@
           "evidence_refs": ["tests/conformance/claim_reconciliation_report.v1.json"]
         },
         "insufficient_replacement_level": {
-          "scenario_id": "claim-reconciliation-replacement-level-blocker-drift",
-          "harness_test_anchor": "claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner",
+          "scenario_id": "claim-reconciliation-replacement-level-smoke-drift",
+          "harness_test_anchor": "claim_reconciliation_detects_replacement_level_smoke_drift_and_routes_owner",
           "expected_decision": "block",
           "failure_signature": "claim_gate_insufficient_replacement_level",
-          "evidence_refs": ["tests/conformance/replacement_levels.json"]
+          "evidence_refs": ["tests/conformance/replacement_levels.json", "tests/conformance/ld_preload_smoke_summary.v1.json"]
         },
         "skipped_runtime_mode": {
           "scenario_id": "claim-reconciliation-skipped-mode-pair",

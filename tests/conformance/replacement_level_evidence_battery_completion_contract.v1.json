@@ -102,13 +102,13 @@
     {
       "kind": "levels_gate_json_validation",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 43,
+      "line": 44,
       "anchor": "valid_check"
     },
     {
       "kind": "levels_gate_assessment_check",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 132,
+      "line": 133,
       "anchor": "assessment_check"
     },
     {
@@ -284,7 +284,7 @@
         "L3": "roadmap"
       },
       "expected_zero_counts": {
-        "callthrough": 0,
+        "glibc_callthrough": 0,
         "stub": 0
       },
       "l1_objective_gate_status": "pass",
@@ -310,7 +310,7 @@
     },
     "support_matrix": {
       "total_symbols": 4119,
-      "callthrough": 0,
+      "glibc_callthrough": 0,
       "stub": 0
     },
     "callthrough_census": {
@@ -379,7 +379,7 @@
     {
       "missing_item_id": "tests.e2e.primary",
       "status": "covered",
-      "description": "E2E coverage replays the replacement-level gate into deterministic target reports/logs and proves current L1 claim-control is evidence-backed while L2/L3 overclaim paths remain blocked.",
+      "description": "E2E coverage replays the replacement-level gate into deterministic target reports/logs and proves current L1 claim-control stays evidence-bound while L2/L3 overclaim paths remain blocked.",
       "implementation_refs": [
         "l1_objective_gate",
         "l1_objective_obligations",

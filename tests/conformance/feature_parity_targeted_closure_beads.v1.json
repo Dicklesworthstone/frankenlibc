@@ -261,7 +261,7 @@
   ],
   "summary": {
     "expected_source_rows": 10,
-    "expected_gap_count": 111,
+    "expected_gap_count": 110,
     "created_issue_count": 10,
     "source_artifact_freshness": "validated_by_gate"
   },

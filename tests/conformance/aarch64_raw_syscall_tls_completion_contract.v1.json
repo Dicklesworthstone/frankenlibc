@@ -225,7 +225,7 @@
       "implementation_refs": [
         "crates/frankenlibc-core/src/syscall/raw.rs:59",
         "crates/frankenlibc-core/src/syscall/raw.rs:551",
-        "crates/frankenlibc-core/src/syscall/raw.rs:540",
+        "crates/frankenlibc-core/src/syscall/raw.rs:543",
         "crates/frankenlibc-core/src/pthread/tls.rs:440",
         "crates/frankenlibc-core/src/pthread/tls.rs:459"
       ],
@@ -246,7 +246,7 @@
       "implementation_refs": [
         "crates/frankenlibc-core/src/pthread/thread.rs:223",
         "crates/frankenlibc-core/src/pthread/thread.rs:363",
-        "crates/frankenlibc-core/src/pthread/thread.rs:588",
+        "crates/frankenlibc-core/src/pthread/thread.rs:589",
         "crates/frankenlibc-abi/src/startup_abi.rs:1006"
       ],
       "test_refs": [

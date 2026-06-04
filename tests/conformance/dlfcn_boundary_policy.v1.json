@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-33zg",
-  "description": "dlfcn boundary policy for the native phase-1 loader/resolver surface with explicit guard rails and auditable enforcement.",
+  "description": "dlfcn boundary policy for the phase-1 loader/resolver surface: native local/pathname handles plus explicit host-backed interpose delegation for remaining loader cases.",
   "captured_at": "2026-02-13T00:00:00Z",
   "surface_classification": {
     "module": "dlfcn_abi",
@@ -12,8 +12,12 @@
       "dlerror"
     ],
     "interpose_profile": {
-      "status": "Implemented",
-      "host_callthrough_symbols": [],
+      "status": "WrapsHostLibc",
+      "host_callthrough_symbols": [
+        "dlopen",
+        "dlsym",
+        "dlclose"
+      ],
       "local_symbols": [
         "dlopen",
         "dlsym",
@@ -35,6 +39,21 @@
           "symbol": "dlclose",
           "condition": "null_handle_or_membrane_deny",
           "action": "return_minus_one_and_set_thread_local_dlerror"
+        },
+        {
+          "symbol": "dlopen",
+          "condition": "bare_soname_or_dependency_loading_in_l0_interpose",
+          "action": "delegate_to_host_ld_so_via_host_resolve"
+        },
+        {
+          "symbol": "dlsym",
+          "condition": "host_loaded_handle_or_host_namespace_pseudohandle",
+          "action": "delegate_to_host_dlsym_for_host_handle_roundtrip"
+        },
+        {
+          "symbol": "dlclose",
+          "condition": "host_loaded_handle",
+          "action": "delegate_to_host_dlclose_for_host_handle_roundtrip"
         }
       ]
     },
@@ -46,7 +65,7 @@
         "Implemented",
         "RawSyscall"
       ],
-      "transition_requirement": "dlfcn_abi must remain free of direct host dlopen/dlsym/dlclose call-through before L2 replacement claims"
+      "transition_requirement": "dlfcn_abi must remove host-resolve dlopen/dlsym/dlclose delegation before L2 replacement claims"
     }
   },
   "guard_rails": {
@@ -74,19 +93,19 @@
   },
   "support_matrix_contract": {
     "path": "support_matrix.json",
-    "expected_status": "Implemented",
+    "expected_status": "WrapsHostLibc",
     "dlerror_expected_status": "Implemented",
-    "strict_semantics": "Native phase-1 loader/resolver surface with thread-local dlerror contract and deterministic local main-program handle semantics",
-    "hardened_semantics": "Native phase-1 loader/resolver surface with RTLD_NOW healing for invalid dlopen flags and deterministic dlerror behavior",
+    "strict_semantics": "Phase-1 native local/pathname loader surface with host-backed interpose delegation for remaining loader cases",
+    "hardened_semantics": "Phase-1 native local/pathname loader surface with RTLD_NOW healing for invalid dlopen flags and host-backed interpose delegation for remaining loader cases",
     "strict_semantics_by_symbol": {
       "dlopen": "Native phase-1 loader: NULL and recognized libc NOLOAD aliases return a local main-program handle; self-contained pathname ELF64 DSOs are mapped, relocated, and returned as native handles; unsupported pathname libraries return NULL with thread-local dlerror",
       "dlsym": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, the local main-program handle, and native pathname DSO handles with thread-local dlerror on misses",
-      "dlclose": "Native main-program and pathname DSO handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract"
+      "dlclose": "Native main-program handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract"
     },
     "hardened_semantics_by_symbol": {
       "dlopen": "Native phase-1 loader: invalid flags heal to RTLD_NOW; NULL and recognized libc NOLOAD aliases return a local main-program handle; self-contained pathname ELF64 DSOs are mapped, relocated, and returned as native handles; unsupported pathname libraries return NULL with thread-local dlerror",
       "dlsym": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, the local main-program handle, and native pathname DSO handles with deterministic invalid-handle / symbol-miss dlerror behavior",
-      "dlclose": "Native main-program and pathname DSO handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract"
+      "dlclose": "Native main-program handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract"
     },
     "dlerror_strict_semantics": "Native thread-local dlerror: returns last dl* error message and clears error state per POSIX",
     "dlerror_hardened_semantics": "Native thread-local dlerror with deterministic error-message return and state clearing"
@@ -100,13 +119,13 @@
   },
   "docs_contract": {
     "README.md": [
-      "### dlfcn Boundary Policy",
-      "Interpose (`L0/L1`): `dlopen`, `dlsym`, `dlclose`, and `dlerror` stay inside FrankenLibC's native phase-1 loader boundary for supported handles and exported symbols.",
-      "Hardened invalid `dlopen` flags heal to `RTLD_NOW` before local phase-1 resolution.",
-      "Replacement (`L2/L3`) forbids direct host `dlopen`/`dlsym`/`dlclose` fallback paths; any residual call-through is a release-blocking gate failure."
+      "## dlfcn — Phase 1",
+      "Interpose (`L0/L1`): `dlopen`, `dlsym`, and `dlclose` are classified as `WrapsHostLibc`; local main-program handles and self-contained pathname ELF64 DSOs use the phase-1 native path, while remaining loader cases delegate to host `ld.so`.",
+      "Hardened mode heals invalid `dlopen` flags to `RTLD_NOW` before local resolution",
+      "Replacement-level L2/L3 forbids any residual host `dlopen`/`dlsym`/`dlclose` fallback; any such call would be a release-blocking gate failure"
     ],
     "FEATURE_PARITY.md": [
-      "dlfcn boundary policy: native phase-1 `dlopen`/`dlsym`/`dlclose`/`dlerror`, hardened invalid-flags repair is `RTLD_NOW`, replacement forbids direct host fallback"
+      "dlfcn boundary policy: phase-1 native local/pathname handles plus `WrapsHostLibc` interpose delegation for remaining loader cases; hardened invalid-flags repair is `RTLD_NOW`; replacement forbids residual host fallback"
     ]
   },
   "structured_log_required_fields": [
@@ -128,7 +147,7 @@
   "summary": {
     "symbol_count": 4,
     "approved_host_call_sites": 0,
-    "approved_fallback_paths": 3,
+    "approved_fallback_paths": 6,
     "docs_marker_count": 5
   }
 }

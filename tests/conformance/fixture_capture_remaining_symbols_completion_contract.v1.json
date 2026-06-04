@@ -33,8 +33,8 @@
     ],
     "required_symbol_fixture_coverage": {
       "minimum_total_exported_symbols": 4119,
-      "minimum_covered_exported_symbols": 405,
-      "minimum_explicit_uncovered_symbols": 3714,
+      "minimum_covered_exported_symbols": 1166,
+      "minimum_explicit_uncovered_symbols": 1949,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
@@ -43,24 +43,24 @@
     },
     "required_per_symbol_fixture_report": {
       "minimum_total_symbols": 4119,
-      "minimum_symbols_with_fixtures": 403,
-      "minimum_total_fixture_files": 58,
-      "minimum_total_cases": 1284,
+      "minimum_symbols_with_fixtures": 1164,
+      "minimum_total_fixture_files": 127,
+      "minimum_total_cases": 2787,
       "maximum_total_format_issues": 0,
-      "minimum_symbols_with_edge_cases": 301,
-      "minimum_symbols_with_errno_checks": 400,
-      "minimum_uncovered_action_count": 3716
+      "minimum_symbols_with_edge_cases": 692,
+      "minimum_symbols_with_errno_checks": 1161,
+      "minimum_uncovered_action_count": 1951
     },
     "required_fixture_pipeline": {
-      "minimum_total_fixture_files": 58,
-      "minimum_total_fixture_cases": 1289,
-      "minimum_unique_symbols_in_fixtures": 421,
-      "minimum_symbols_with_fixtures": 403,
+      "minimum_total_fixture_files": 127,
+      "minimum_total_fixture_cases": 2792,
+      "minimum_unique_symbols_in_fixtures": 1182,
+      "minimum_symbols_with_fixtures": 846,
       "maximum_fixture_format_issues": 0
     },
     "required_golden_fixture_suite": {
-      "total": 1817,
-      "passed": 1817,
+      "total": 3369,
+      "passed": 3369,
       "failed": 0,
       "skipped": 0
     },

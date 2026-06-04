@@ -5,7 +5,7 @@
       "access_count": 4,
       "accesses": [
         {
-          "line": 76,
+          "line": 78,
           "operation": "read",
           "path": "crates/frankenlibc-bench/benches/membrane_bench.rs",
           "scope": "bench",
@@ -19,7 +19,7 @@
           "snippet": "if std::env::var(\"FRANKENLIBC_BENCH_PIN\").ok().as_deref() != Some(\"1\") {"
         },
         {
-          "line": 116,
+          "line": 124,
           "operation": "read",
           "path": "crates/frankenlibc-bench/benches/runtime_math_kernels_bench.rs",
           "scope": "bench",
@@ -51,28 +51,35 @@
       "write_count": 1
     },
     {
-      "access_count": 4,
+      "access_count": 5,
       "accesses": [
         {
-          "line": 271,
+          "line": 337,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_CONTRACT_PATH\", &contract_path)"
         },
         {
-          "line": 352,
+          "line": 418,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_CONTRACT_PATH\", &broken_path)"
         },
         {
-          "line": 401,
+          "line": 467,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_CONTRACT_PATH\", &broken_path)"
+        },
+        {
+          "line": 550,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
+          "scope": "harness",
+          "snippet": ".env(\"FRANKENLIBC_CLOSURE_CONTRACT_PATH\", &contract_path)"
         },
         {
           "line": 12,
@@ -96,20 +103,27 @@
       },
       "read_count": 1,
       "reference_count": 0,
-      "write_count": 3
+      "write_count": 4
     },
     {
-      "access_count": 3,
+      "access_count": 4,
       "accesses": [
         {
-          "line": 354,
+          "line": 420,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_LEVEL\", \"L0\")"
         },
         {
-          "line": 403,
+          "line": 469,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
+          "scope": "harness",
+          "snippet": ".env(\"FRANKENLIBC_CLOSURE_LEVEL\", \"L0\")"
+        },
+        {
+          "line": 553,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
@@ -141,31 +155,38 @@
       },
       "read_count": 1,
       "reference_count": 0,
-      "write_count": 2
+      "write_count": 3
     },
     {
-      "access_count": 6,
+      "access_count": 7,
       "accesses": [
         {
-          "line": 270,
+          "line": 336,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_LOG\", &log_path)"
         },
         {
-          "line": 353,
+          "line": 419,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_LOG\", &broken_log)"
         },
         {
-          "line": 402,
+          "line": 468,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_CLOSURE_LOG\", &broken_log)"
+        },
+        {
+          "line": 552,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/closure_contract_test.rs",
+          "scope": "harness",
+          "snippet": ".env(\"FRANKENLIBC_CLOSURE_LOG\", &log_path)"
         },
         {
           "line": 13,
@@ -175,14 +196,14 @@
           "snippet": "LOG_PATH=\"${FRANKENLIBC_CLOSURE_LOG:-/tmp/frankenlibc_closure_contract.log.jsonl}\""
         },
         {
-          "line": 257,
+          "line": 424,
           "operation": "reference",
           "path": "scripts/check_closure_contract.sh",
           "scope": "scripts",
           "snippet": "if telemetry.get(\"log_env\") != \"FRANKENLIBC_CLOSURE_LOG\":"
         },
         {
-          "line": 258,
+          "line": 425,
           "operation": "reference",
           "path": "scripts/check_closure_contract.sh",
           "scope": "scripts",
@@ -203,7 +224,7 @@
       },
       "read_count": 1,
       "reference_count": 2,
-      "write_count": 3
+      "write_count": 4
     },
     {
       "access_count": 37,
@@ -529,14 +550,14 @@
           "snippet": "require(\"FRANKENLIBC_EXTENDED_GATES\" in ci_script, \"ci.sh must keep extended gate switch\")"
         },
         {
-          "line": 72,
+          "line": 130,
           "operation": "read",
           "path": "scripts/ci.sh",
           "scope": "scripts",
           "snippet": "if [[ \"${FRANKENLIBC_EXTENDED_GATES:-0}\" == \"1\" ]]; then"
         },
         {
-          "line": 576,
+          "line": 634,
           "operation": "write",
           "path": "scripts/ci.sh",
           "scope": "scripts",
@@ -596,8 +617,22 @@
       "write_count": 1
     },
     {
-      "access_count": 15,
+      "access_count": 19,
       "accesses": [
+        {
+          "line": 126,
+          "operation": "read",
+          "path": "scripts/check_owned_unwinder_e2e.sh",
+          "scope": "scripts",
+          "snippet": "LIB_PATH=\"${FRANKENLIBC_LIB:-}\""
+        },
+        {
+          "line": 136,
+          "operation": "reference",
+          "path": "scripts/check_owned_unwinder_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"FAIL: set FRANKENLIBC_LIB to a standalone+owned-unwind-stub libfrankenlibc_abi.so\""
+        },
         {
           "line": 136,
           "operation": "read",
@@ -639,6 +674,20 @@
           "path": "scripts/gentoo/frankenlibc-ebuild-hooks.sh",
           "scope": "scripts",
           "snippet": "local lib=\"${FRANKENLIBC_LIB:-}\""
+        },
+        {
+          "line": 11,
+          "operation": "read",
+          "path": "scripts/profile_python3_preload.sh",
+          "scope": "scripts",
+          "snippet": "PRELOAD_LIB=\"${FRANKENLIBC_LIB:-$REPO_ROOT/target/release/libfrankenlibc_abi.so}\""
+        },
+        {
+          "line": 29,
+          "operation": "read",
+          "path": "scripts/python3_preload_profile.sh",
+          "scope": "scripts",
+          "snippet": "\"${FRANKENLIBC_LIB:-}\""
         },
         {
           "line": 19,
@@ -716,8 +765,8 @@
         "parse_rule": "shell path lookup with existence check",
         "safety_impact": "medium"
       },
-      "read_count": 13,
-      "reference_count": 0,
+      "read_count": 16,
+      "reference_count": 1,
       "write_count": 2
     },
     {
@@ -731,7 +780,7 @@
           "snippet": "assert!(required_keys.contains(\"FRANKENLIBC_LOG\"));"
         },
         {
-          "line": 332,
+          "line": 334,
           "operation": "read",
           "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
           "scope": "membrane",
@@ -1033,182 +1082,210 @@
       "write_count": 8
     },
     {
-      "access_count": 205,
+      "access_count": 245,
       "accesses": [
         {
-          "line": 157,
+          "line": 168,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "const KEY_EQ: &[u8] = b\"FRANKENLIBC_MODE=\";"
         },
         {
-          "line": 1982,
+          "line": 2440,
           "operation": "read",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "let previous = std::env::var_os(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 1986,
+          "line": 2444,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", v);"
         },
         {
-          "line": 1988,
+          "line": 2446,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 2000,
+          "line": 2458,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", previous);"
         },
         {
-          "line": 2002,
+          "line": 2460,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 2110,
+          "line": 2573,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 2130,
+          "line": 2593,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 2192,
+          "line": 2655,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 2239,
+          "line": 2702,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "let exact_key = CString::new(\"FRANKENLIBC_MODE=\").expect(\"exact key row\");"
         },
         {
-          "line": 2243,
+          "line": 2706,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "assert!(!cstr_has_byte_prefix(empty.as_ptr(), b\"FRANKENLIBC_MODE=\"));"
         },
         {
-          "line": 2246,
+          "line": 2709,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "b\"FRANKENLIBC_MODE=\""
         },
         {
-          "line": 2250,
+          "line": 2713,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "b\"FRANKENLIBC_MODE=\""
         },
         {
-          "line": 2254,
+          "line": 2717,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "b\"FRANKENLIBC_MODE=\""
         },
         {
-          "line": 2267,
+          "line": 2730,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"bogus\");"
         },
         {
-          "line": 973,
+          "line": 978,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/grp_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::set_var(\"FRANKENLIBC_MODE\", mode) };"
         },
         {
-          "line": 976,
+          "line": 981,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/grp_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::remove_var(\"FRANKENLIBC_MODE\") };"
         },
         {
-          "line": 988,
+          "line": 993,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/grp_abi_test.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", mode);"
         },
         {
-          "line": 994,
+          "line": 999,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/grp_abi_test.rs",
           "scope": "abi",
           "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 777,
+          "line": 941,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::set_var(\"FRANKENLIBC_MODE\", mode) };"
         },
         {
-          "line": 780,
+          "line": 944,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::remove_var(\"FRANKENLIBC_MODE\") };"
         },
         {
-          "line": 1208,
+          "line": 1312,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::set_var(\"FRANKENLIBC_MODE\", mode) };"
         },
         {
-          "line": 1211,
+          "line": 1315,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
           "scope": "abi",
           "snippet": "unsafe { std::env::remove_var(\"FRANKENLIBC_MODE\") };"
         },
         {
-          "line": 1223,
+          "line": 1327,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", mode);"
         },
         {
-          "line": 1229,
+          "line": 1333,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
           "scope": "abi",
           "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
+        },
+        {
+          "line": 1351,
+          "operation": "reference",
+          "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
+          "scope": "abi",
+          "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", mode);"
+        },
+        {
+          "line": 1360,
+          "operation": "reference",
+          "path": "crates/frankenlibc-abi/tests/pwd_abi_test.rs",
+          "scope": "abi",
+          "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
+        },
+        {
+          "line": 18,
+          "operation": "reference",
+          "path": "crates/frankenlibc-abi/tests/search_abi_test.rs",
+          "scope": "abi",
+          "snippet": "unsafe { std::env::set_var(\"FRANKENLIBC_MODE\", mode) };"
+        },
+        {
+          "line": 20,
+          "operation": "reference",
+          "path": "crates/frankenlibc-abi/tests/search_abi_test.rs",
+          "scope": "abi",
+          "snippet": "unsafe { std::env::remove_var(\"FRANKENLIBC_MODE\") };"
         },
         {
           "line": 70,
@@ -1274,7 +1351,7 @@
           "snippet": "let mode_raw = std::env::var(\"FRANKENLIBC_MODE\").unwrap_or_else(|_| \"<unset>\".to_string());"
         },
         {
-          "line": 92,
+          "line": 100,
           "operation": "read",
           "path": "crates/frankenlibc-bench/benches/runtime_math_kernels_bench.rs",
           "scope": "bench",
@@ -1428,42 +1505,42 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 2679,
+          "line": 2724,
           "operation": "read",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": "let startup_frankenlibc_mode = std::env::var(\"FRANKENLIBC_MODE\").ok();"
         },
         {
-          "line": 5196,
+          "line": 5496,
           "operation": "write",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_MODE\", mode)"
         },
         {
-          "line": 5276,
+          "line": 5576,
           "operation": "write",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": "\"runtime_mode_startup_mismatch: expected FRANKENLIBC_MODE={mode}, child observed {observed_mode}\""
         },
         {
-          "line": 5318,
+          "line": 5618,
           "operation": "write",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_MODE\", mode)"
         },
         {
-          "line": 5573,
+          "line": 5873,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
           "snippet": "\"env_key\": \"FRANKENLIBC_MODE\","
         },
         {
-          "line": 5584,
+          "line": 5884,
           "operation": "reference",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
@@ -1566,6 +1643,27 @@
           "path": "crates/frankenlibc-harness/tests/kernel_regression_mode_cli_contract_test.rs",
           "scope": "harness",
           "snippet": "\"harness must exit non-zero when FRANKENLIBC_MODE != --mode\","
+        },
+        {
+          "line": 377,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/ld_preload_smoke_e2e_index_test.rs",
+          "scope": "harness",
+          "snippet": "\"env FRANKENLIBC_MODE=\\\"${mode}\\\" LD_PRELOAD=\\\"${LIB_PATH}\\\" \\\\\\n            valgrind\","
+        },
+        {
+          "line": 390,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/ld_preload_smoke_e2e_index_test.rs",
+          "scope": "harness",
+          "snippet": ".find(\"env FRANKENLIBC_MODE=\\\"${mode}\\\" LD_PRELOAD=\\\"${LIB_PATH}\\\" \\\"$@\\\"\")"
+        },
+        {
+          "line": 392,
+          "operation": "reference",
+          "path": "crates/frankenlibc-harness/tests/ld_preload_smoke_e2e_index_test.rs",
+          "scope": "harness",
+          "snippet": "\"ld_preload_smoke.sh must apply FRANKENLIBC_MODE/LD_PRELOAD to the valgrind target\""
         },
         {
           "line": 219,
@@ -1806,7 +1904,7 @@
           "snippet": "\"FRANKENLIBC_MODE\","
         },
         {
-          "line": 397,
+          "line": 622,
           "operation": "read",
           "path": "scripts/check_closure_contract.sh",
           "scope": "scripts",
@@ -1860,6 +1958,20 @@
           "path": "scripts/check_fragmentation_storms.sh",
           "scope": "scripts",
           "snippet": "FRANKENLIBC_MODE=\"${mode}\" \\"
+        },
+        {
+          "line": 105,
+          "operation": "write",
+          "path": "scripts/check_heavyweight_runtime_perf.sh",
+          "scope": "scripts",
+          "snippet": "FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" bash -c \"${cmd}\" >/dev/null 2>&1 || true"
+        },
+        {
+          "line": 116,
+          "operation": "write",
+          "path": "scripts/check_heavyweight_runtime_perf.sh",
+          "scope": "scripts",
+          "snippet": "FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" bash -c \"${cmd}\" >/dev/null 2>&1 || true"
         },
         {
           "line": 95,
@@ -1995,11 +2107,60 @@
           "snippet": "require(matrix.get(\"env_variable\") == expectations.get(\"env_variable\") == \"FRANKENLIBC_MODE\", \"matrix env_variable drifted\")"
         },
         {
+          "line": 102,
+          "operation": "write",
+          "path": "scripts/check_native_threading_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 155,
+          "operation": "write",
+          "path": "scripts/check_observe_feedback_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 167,
+          "operation": "write",
+          "path": "scripts/check_observe_feedback_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" --require-decisions 2>&1)"
+        },
+        {
+          "line": 139,
+          "operation": "write",
+          "path": "scripts/check_owned_startup_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 154,
+          "operation": "write",
+          "path": "scripts/check_owned_startup_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_STARTUP_DELEGATE=1 FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
           "line": 404,
           "operation": "write",
           "path": "scripts/check_packaging.sh",
           "scope": "scripts",
           "snippet": "if hardened_deploy.startswith('FRANKENLIBC_MODE=hardened'):"
+        },
+        {
+          "line": 127,
+          "operation": "write",
+          "path": "scripts/check_pcc_double_free_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 158,
+          "operation": "write",
+          "path": "scripts/check_pcc_double_free_e2e.sh",
+          "scope": "scripts",
+          "snippet": "manifest_output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 5 sh -c 'cat /proc/self/maps > /dev/null 2>&1; exit 0' 2>&1)"
         },
         {
           "line": 25,
@@ -2016,6 +2177,34 @@
           "snippet": "FRANKENLIBC_MODE=\"${mode}\" \\"
         },
         {
+          "line": 94,
+          "operation": "write",
+          "path": "scripts/check_preload_e2e_battery.sh",
+          "scope": "scripts",
+          "snippet": "timeout \"${TIMEOUT_SEC}\" env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" bash -c \"${cmd}\" >/dev/null 2>&1 || true"
+        },
+        {
+          "line": 99,
+          "operation": "write",
+          "path": "scripts/check_preload_e2e_battery.sh",
+          "scope": "scripts",
+          "snippet": "if timeout \"${TIMEOUT_SEC}\" env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" bash -c \"${cmd}\" >/dev/null 2>&1; then"
+        },
+        {
+          "line": 218,
+          "operation": "write",
+          "path": "scripts/check_preload_e2e_battery.sh",
+          "scope": "scripts",
+          "snippet": "timeout 5 env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" /nonexistent_binary 2>/dev/null || true"
+        },
+        {
+          "line": 220,
+          "operation": "write",
+          "path": "scripts/check_preload_e2e_battery.sh",
+          "scope": "scripts",
+          "snippet": "timeout 5 env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" /nonexistent_binary 2>/dev/null || true"
+        },
+        {
           "line": 337,
           "operation": "reference",
           "path": "scripts/check_pthread_family_completion_contract.sh",
@@ -2028,6 +2217,69 @@
           "path": "scripts/check_real_program_smoke_suite.sh",
           "scope": "scripts",
           "snippet": "env[\"FRANKENLIBC_MODE\"] = case[\"runtime_mode\"]"
+        },
+        {
+          "line": 106,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_RUNTIME_MATH=off FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 120,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_RUNTIME_MATH=on FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 133,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 146,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_RUNTIME_MATH=invalid FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 159,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_RUNTIME_MATH=off FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 sh -c 'ls /tmp > /dev/null' 2>&1)"
+        },
+        {
+          "line": 113,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_live_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 /bin/echo \"trace test\" 2>&1)"
+        },
+        {
+          "line": 163,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_live_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${CXX_FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 191,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_liveness_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 15 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 209,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_liveness_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" timeout 15 \"${FIXTURE_BIN}\" 2>&1)"
         },
         {
           "line": 139,
@@ -2093,6 +2345,27 @@
           "snippet": "require(policy.get(\"env_key\") == \"FRANKENLIBC_MODE\", \"evidence_env_key\", \"runtime evidence contract env key drifted\")"
         },
         {
+          "line": 75,
+          "operation": "write",
+          "path": "scripts/check_runtime_ready_arm_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" -v 2>&1)"
+        },
+        {
+          "line": 87,
+          "operation": "write",
+          "path": "scripts/check_runtime_ready_arm_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" -v 2>&1)"
+        },
+        {
+          "line": 101,
+          "operation": "write",
+          "path": "scripts/check_runtime_ready_arm_e2e.sh",
+          "scope": "scripts",
+          "snippet": "(FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" timeout 5 \"${FIXTURE_BIN}\" >/dev/null 2>&1) &"
+        },
+        {
           "line": 132,
           "operation": "reference",
           "path": "scripts/check_setjmp_fixture_pack.sh",
@@ -2121,18 +2394,53 @@
           "snippet": "printf '      \"command\": \"FRANKENLIBC_MODE=%s rch exec -- env CARGO_HOME=%s CARGO_TARGET_DIR=%s cargo test -p frankenlibc-abi --test signal_abi_test %s -- --exact --nocapture --test-threads=1\",\\n' \\"
         },
         {
-          "line": 674,
+          "line": 703,
           "operation": "reference",
           "path": "scripts/check_standalone_link_run_smoke.sh",
           "scope": "scripts",
           "snippet": "env[\"FRANKENLIBC_MODE\"] = runtime_mode"
         },
         {
-          "line": 114,
+          "line": 115,
           "operation": "write",
           "path": "scripts/check_stdio_native.sh",
           "scope": "scripts",
           "snippet": "FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB}\" \"${bin}\" >\"${stdout_file}\" 2>\"${stderr_file}\""
+        },
+        {
+          "line": 56,
+          "operation": "write",
+          "path": "scripts/check_strict_observation_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${REPO_ROOT}/target/observe_feedback_e2e/fixture_observe_feedback\" 2>&1)"
+        },
+        {
+          "line": 79,
+          "operation": "write",
+          "path": "scripts/check_strict_observation_e2e.sh",
+          "scope": "scripts",
+          "snippet": "read_output=$(FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" cat \"${test_file}\" 2>&1)"
+        },
+        {
+          "line": 87,
+          "operation": "write",
+          "path": "scripts/check_strict_observation_e2e.sh",
+          "scope": "scripts",
+          "snippet": "FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" sh -c \"echo 'written content' > '${test_file}'\""
+        },
+        {
+          "line": 96,
+          "operation": "write",
+          "path": "scripts/check_strict_observation_e2e.sh",
+          "scope": "scripts",
+          "snippet": "ls_output=$(FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" ls -la /etc/hosts 2>&1)"
+        },
+        {
+          "line": 106,
+          "operation": "write",
+          "path": "scripts/check_strict_observation_e2e.sh",
+          "scope": "scripts",
+          "snippet": "python_output=$(FRANKENLIBC_MODE=strict LD_PRELOAD=\"${LIB_PATH}\" python3 -c \"print(2+2)\" 2>&1)"
         },
         {
           "line": 68,
@@ -2254,32 +2562,32 @@
           "snippet": "if ! run_cmd env FRANKENLIBC_MODE=\"${MODE}\" \"${ROOT_DIR}/scripts/gentoo/build-package.sh\" \"${atom}\" \"${out_dir}\"; then"
         },
         {
-          "line": 382,
+          "line": 419,
           "operation": "write",
           "path": "scripts/ld_preload_smoke.sh",
           "scope": "scripts",
           "snippet": "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \"$@\" \\"
         },
         {
-          "line": 402,
+          "line": 439,
           "operation": "reference",
           "path": "scripts/ld_preload_smoke.sh",
           "scope": "scripts",
           "snippet": "grep -Ev '^(FRANKENLIBC_MODE|LD_PRELOAD)=' \"${baseline_stdout}\" > \"${baseline_stdout_normalized}\" || true"
         },
         {
-          "line": 403,
+          "line": 440,
           "operation": "reference",
           "path": "scripts/ld_preload_smoke.sh",
           "scope": "scripts",
           "snippet": "grep -Ev '^(FRANKENLIBC_MODE|LD_PRELOAD)=' \"${preload_stdout}\" > \"${preload_stdout_normalized}\" || true"
         },
         {
-          "line": 447,
+          "line": 490,
           "operation": "write",
           "path": "scripts/ld_preload_smoke.sh",
           "scope": "scripts",
-          "snippet": "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \\"
+          "snippet": "env FRANKENLIBC_MODE=\"${mode}\" LD_PRELOAD=\"${LIB_PATH}\" \"$@\" \\"
         },
         {
           "line": 71,
@@ -2289,21 +2597,21 @@
           "snippet": "mode_env_args+=(FRANKENLIBC_MODE=\"${mode}\")"
         },
         {
-          "line": 534,
+          "line": 533,
           "operation": "reference",
           "path": "scripts/perf_gate.sh",
           "scope": "scripts",
           "snippet": "out_rt=\"$(capture_bench_lines \"${mode}\" \"runtime_math_bench\" \"RUNTIME_MATH_BENCH\" \"FRANKENLIBC_MODE\")\""
         },
         {
-          "line": 535,
+          "line": 534,
           "operation": "reference",
           "path": "scripts/perf_gate.sh",
           "scope": "scripts",
           "snippet": "out_mem=\"$(capture_bench_lines \"${mode}\" \"membrane_bench\" \"MEMBRANE_BENCH\" \"FRANKENLIBC_MODE\")\""
         },
         {
-          "line": 539,
+          "line": 538,
           "operation": "reference",
           "path": "scripts/perf_gate.sh",
           "scope": "scripts",
@@ -2350,6 +2658,27 @@
           "path": "scripts/profile_pipeline.sh",
           "scope": "scripts",
           "snippet": "env FRANKENLIBC_MODE=\"${MODE}\" \"${CARGO_BIN}\" bench -p frankenlibc-bench --bench \"${bench}\" -- \\"
+        },
+        {
+          "line": 126,
+          "operation": "write",
+          "path": "scripts/profile_python3_preload.sh",
+          "scope": "scripts",
+          "snippet": "env_cmd=(FRANKENLIBC_MODE=strict LD_PRELOAD=\"$PRELOAD_LIB\")"
+        },
+        {
+          "line": 129,
+          "operation": "write",
+          "path": "scripts/profile_python3_preload.sh",
+          "scope": "scripts",
+          "snippet": "env_cmd=(FRANKENLIBC_MODE=hardened LD_PRELOAD=\"$PRELOAD_LIB\")"
+        },
+        {
+          "line": 89,
+          "operation": "write",
+          "path": "scripts/python3_preload_profile.sh",
+          "scope": "scripts",
+          "snippet": "[[ -n \"${mode_env}\" ]] && env_cmd+=(FRANKENLIBC_MODE=\"${mode_env}\")"
         },
         {
           "line": 178,
@@ -2490,8 +2819,8 @@
         "safety_impact": "high"
       },
       "read_count": 30,
-      "reference_count": 120,
-      "write_count": 60
+      "reference_count": 125,
+      "write_count": 95
     },
     {
       "access_count": 2,
@@ -3229,6 +3558,136 @@
       "write_count": 2
     },
     {
+      "access_count": 15,
+      "accesses": [
+        {
+          "line": 221,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "scope": "abi",
+          "snippet": "const KEY_EQ: &[u8] = b\"FRANKENLIBC_RUNTIME_MATH=\";"
+        },
+        {
+          "line": 60,
+          "operation": "reference",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "/* fixture_killswitch.c \u2014 verify FRANKENLIBC_RUNTIME_MATH kill-switch */"
+        },
+        {
+          "line": 105,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"--- Test 1: FRANKENLIBC_RUNTIME_MATH=off ---\""
+        },
+        {
+          "line": 106,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_RUNTIME_MATH=off FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 111,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"PASS: runtime-math disabled when FRANKENLIBC_RUNTIME_MATH=off\""
+        },
+        {
+          "line": 113,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"FAIL: runtime-math should be disabled when FRANKENLIBC_RUNTIME_MATH=off (got rc=${rc})\""
+        },
+        {
+          "line": 119,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"--- Test 2: FRANKENLIBC_RUNTIME_MATH=on ---\""
+        },
+        {
+          "line": 120,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_RUNTIME_MATH=on FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 124,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"PASS: runtime-math enabled when FRANKENLIBC_RUNTIME_MATH=on\""
+        },
+        {
+          "line": 126,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"FAIL: runtime-math should be enabled when FRANKENLIBC_RUNTIME_MATH=on\""
+        },
+        {
+          "line": 132,
+          "operation": "reference",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"--- Test 3: FRANKENLIBC_RUNTIME_MATH absent (default) ---\""
+        },
+        {
+          "line": 145,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"--- Test 4: FRANKENLIBC_RUNTIME_MATH=invalid ---\""
+        },
+        {
+          "line": 146,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_RUNTIME_MATH=invalid FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 159,
+          "operation": "write",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_RUNTIME_MATH=off FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 sh -c 'ls /tmp > /dev/null' 2>&1)"
+        },
+        {
+          "line": 186,
+          "operation": "reference",
+          "path": "scripts/check_runtime_math_killswitch_e2e.sh",
+          "scope": "scripts",
+          "snippet": "\"env_var\": \"FRANKENLIBC_RUNTIME_MATH\","
+        }
+      ],
+      "env_key": "FRANKENLIBC_RUNTIME_MATH",
+      "metadata": {
+        "allowed_values": [
+          "on",
+          "off",
+          "1",
+          "true",
+          "unset",
+          "other"
+        ],
+        "default_value": "on",
+        "mode_impact": "enables or skips runtime-math kernel consultation before ABI decisions",
+        "mutability": "process-immutable after first runtime-policy resolution",
+        "owner": "abi/runtime_policy",
+        "parse_rule": "case-insensitive parser; only off disables, on/1/true/absent/invalid resolve to enabled",
+        "safety_impact": "high"
+      },
+      "read_count": 0,
+      "reference_count": 3,
+      "write_count": 12
+    },
+    {
       "access_count": 1,
       "accesses": [
         {
@@ -3260,39 +3719,104 @@
       "access_count": 5,
       "accesses": [
         {
-          "line": 426,
+          "line": 472,
+          "operation": "write",
+          "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+          "scope": "abi",
+          "snippet": "const KEY_EQ: &[u8] = b\"FRANKENLIBC_STARTUP_DELEGATE=\";"
+        },
+        {
+          "line": 192,
+          "operation": "reference",
+          "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+          "scope": "abi",
+          "snippet": "let key = \"FRANKENLIBC_STARTUP_DELEGATE\";"
+        },
+        {
+          "line": 153,
+          "operation": "write",
+          "path": "scripts/check_owned_startup_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"--- Test 2: FRANKENLIBC_STARTUP_DELEGATE=1 delegates to host ---\""
+        },
+        {
+          "line": 154,
+          "operation": "write",
+          "path": "scripts/check_owned_startup_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "output=$(FRANKENLIBC_STARTUP_DELEGATE=1 FRANKENLIBC_MODE=hardened LD_PRELOAD=\"${LIB_PATH}\" timeout 10 \"${FIXTURE_BIN}\" 2>&1)"
+        },
+        {
+          "line": 214,
+          "operation": "write",
+          "path": "scripts/check_owned_startup_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "\"opt_out_env_var\": \"FRANKENLIBC_STARTUP_DELEGATE=1\","
+        }
+      ],
+      "env_key": "FRANKENLIBC_STARTUP_DELEGATE",
+      "metadata": {
+        "allowed_values": [
+          "0",
+          "1",
+          "unset",
+          "other"
+        ],
+        "default_value": "0",
+        "mode_impact": "opts out of owned startup path for compatibility debugging",
+        "mutability": "process-startup-time",
+        "owner": "abi/startup_abi",
+        "parse_rule": "owned startup is default; exact value \"1\" delegates __libc_start_main to host glibc",
+        "safety_impact": "high"
+      },
+      "read_count": 0,
+      "reference_count": 1,
+      "write_count": 4
+    },
+    {
+      "access_count": 6,
+      "accesses": [
+        {
+          "line": 427,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/startup_abi.rs",
           "scope": "abi",
           "snippet": "unsafe { cstr_has_byte_prefix(ptr, b\"FRANKENLIBC_STARTUP_PHASE0=\") }"
         },
         {
-          "line": 437,
+          "line": 438,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/startup_abi.rs",
           "scope": "abi",
           "snippet": "const KEY_EQ: &[u8] = b\"FRANKENLIBC_STARTUP_PHASE0=\";"
         },
         {
-          "line": 142,
+          "line": 165,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
           "scope": "abi",
           "snippet": "let key = \"FRANKENLIBC_STARTUP_PHASE0\";"
         },
         {
-          "line": 173,
+          "line": 223,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
           "scope": "abi",
           "snippet": "let short_key = CString::new(\"FRANKENLIBC_STARTUP_PHASE0\").expect(\"short env row\");"
         },
         {
-          "line": 174,
+          "line": 224,
           "operation": "write",
           "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
           "scope": "abi",
           "snippet": "let exact_key = CString::new(\"FRANKENLIBC_STARTUP_PHASE0=\").expect(\"exact key row\");"
+        },
+        {
+          "line": 215,
+          "operation": "write",
+          "path": "scripts/check_owned_startup_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "\"legacy_env_var\": \"FRANKENLIBC_STARTUP_PHASE0=1 (still forces owned, now redundant)\""
         }
       ],
       "env_key": "FRANKENLIBC_STARTUP_PHASE0",
@@ -3310,7 +3834,72 @@
       },
       "read_count": 0,
       "reference_count": 2,
-      "write_count": 3
+      "write_count": 4
+    },
+    {
+      "access_count": 6,
+      "accesses": [
+        {
+          "line": 597,
+          "operation": "read",
+          "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+          "scope": "abi",
+          "snippet": "if let Ok(val) = std::env::var(\"FRANKENLIBC_THREAD_DELEGATE\")"
+        },
+        {
+          "line": 51,
+          "operation": "reference",
+          "path": "scripts/check_native_threading_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"--- Test 2: FRANKENLIBC_THREAD_DELEGATE env var present ---\""
+        },
+        {
+          "line": 52,
+          "operation": "reference",
+          "path": "scripts/check_native_threading_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "if grep -q \"FRANKENLIBC_THREAD_DELEGATE\" \"${PTHREAD_ABI}\"; then"
+        },
+        {
+          "line": 53,
+          "operation": "reference",
+          "path": "scripts/check_native_threading_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"PASS: FRANKENLIBC_THREAD_DELEGATE env var check present\""
+        },
+        {
+          "line": 55,
+          "operation": "reference",
+          "path": "scripts/check_native_threading_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "echo \"FAIL: FRANKENLIBC_THREAD_DELEGATE env var check missing\""
+        },
+        {
+          "line": 129,
+          "operation": "write",
+          "path": "scripts/check_native_threading_default_e2e.sh",
+          "scope": "scripts",
+          "snippet": "\"opt_out_env_var\": \"FRANKENLIBC_THREAD_DELEGATE=1\""
+        }
+      ],
+      "env_key": "FRANKENLIBC_THREAD_DELEGATE",
+      "metadata": {
+        "allowed_values": [
+          "0",
+          "1",
+          "unset",
+          "other"
+        ],
+        "default_value": "0",
+        "mode_impact": "opts out of native pthread lifecycle implementation for compatibility debugging",
+        "mutability": "process-startup-time prewarm policy",
+        "owner": "abi/pthread_abi",
+        "parse_rule": "native threading is default; exact value \"1\" opts pthread lifecycle calls back to host fallbacks",
+        "safety_impact": "high"
+      },
+      "read_count": 1,
+      "reference_count": 4,
+      "write_count": 1
     },
     {
       "access_count": 2,
@@ -3349,8 +3938,8 @@
   ],
   "schema_version": "v1",
   "summary": {
-    "keys_with_reads": 25,
-    "keys_with_writes": 26,
+    "keys_with_reads": 26,
+    "keys_with_writes": 29,
     "scanned_extensions": [
       ".py",
       ".rs",
@@ -3361,7 +3950,7 @@
       "scripts",
       "tests"
     ],
-    "total_keys": 29,
+    "total_keys": 32,
     "unknown_or_ambiguous_count": 0
   },
   "unknown_or_ambiguous": []

@@ -22,7 +22,7 @@
     },
     "implementation_refs": [
       "crates/frankenlibc-membrane/src/arena.rs:268",
-      "crates/frankenlibc-membrane/src/arena.rs:286",
+      "crates/frankenlibc-membrane/src/arena.rs:287",
       "crates/frankenlibc-membrane/src/arena.rs:340",
       "crates/frankenlibc-membrane/src/ptr_validator.rs:1799",
       "crates/frankenlibc-membrane/src/ptr_validator.rs:1816",

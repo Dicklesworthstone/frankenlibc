@@ -65,6 +65,7 @@
         "check_count_consistency",
         "check_replacement_levels",
         "check_replacement_level_text_consistency",
+        "check_replacement_level_smoke_obligations",
         "check_module_taxonomy",
         "check_hard_parts",
         "check_timestamp_consistency",
@@ -87,8 +88,8 @@
         },
         {
           "artifact": "claim_reconciliation_test",
-          "name": "claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner",
-          "covers": ["replacement-level blocker drift", "owner routing"]
+          "name": "claim_reconciliation_detects_replacement_level_smoke_drift_and_routes_owner",
+          "covers": ["replacement-level smoke evidence drift", "owner routing"]
         },
         {
           "artifact": "claim_reconciliation_test",

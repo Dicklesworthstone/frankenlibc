@@ -4,7 +4,7 @@
   "bead": "bd-bp8fl.3.8",
   "owner_family_group": "fpg-proof-core-safety",
   "evidence_owner": "membrane proof and conformance-binder owners",
-  "generated_utc": "2026-05-22T09:04:00Z",
+  "generated_utc": "2026-06-03T03:12:00Z",
   "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
@@ -13,7 +13,7 @@
     "proof_core_safety_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "purpose": "Fail-closed gate for the seven `fpg-proof-core-safety` proof_math gaps drawn from tests/conformance/feature_parity_gap_ledger.v1.json. Every safety-theorem row in FEATURE_PARITY.md (lines 229-263) must remain bound to executable witnesses in tests/conformance/proof_obligations_binder.v1.json, tests/conformance/proof_binder_validation.v1.json, and tests/conformance/mode_contract_lock.v1.json. Prose-only or closed-tracker-state advancement is rejected; PLANNED/IN_PROGRESS rows cannot promote to DONE without the cited proof obligation reporting valid=true and the binder validation reporting binder_valid=true at every replacement level.",
+  "purpose": "Fail-closed gate for the seven `fpg-proof-core-safety` proof_math gaps drawn from tests/conformance/feature_parity_gap_ledger.v1.json. Every safety-theorem row in FEATURE_PARITY.md (lines 249-283) must remain bound to executable witnesses in tests/conformance/proof_obligations_binder.v1.json, tests/conformance/proof_binder_validation.v1.json, and tests/conformance/mode_contract_lock.v1.json. Prose-only or closed-tracker-state advancement is rejected; PLANNED/IN_PROGRESS rows cannot promote to DONE without the cited proof obligation reporting valid=true and the binder validation reporting binder_valid=true at every replacement level.",
   "inputs": {
     "feature_parity": "FEATURE_PARITY.md",
     "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
@@ -68,7 +68,7 @@
       "primary_key": "strict refinement theorem",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 246
+        "line": 249
       },
       "claim_target": "SMT/proof notes + differential fixtures",
       "claimed_status": "PLANNED",
@@ -104,7 +104,7 @@
       "primary_key": "hardened safety theorem",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 247
+        "line": 250
       },
       "claim_target": "invariant checks + policy proof notes",
       "claimed_status": "IN_PROGRESS",
@@ -146,7 +146,7 @@
       "primary_key": "deterministic replay theorem",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 248
+        "line": 251
       },
       "claim_target": "reproducibility campaign logs",
       "claimed_status": "PLANNED",
@@ -182,7 +182,7 @@
       "primary_key": "barrier invariance",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 255
+        "line": 258
       },
       "claim_target": "barrier-certificate proof artifacts + runtime checks",
       "claimed_status": "PLANNED",
@@ -211,7 +211,7 @@
       "primary_key": "robust-radius guarantee",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 256
+        "line": 259
       },
       "claim_target": "Wasserstein robustness reports + constraint audits",
       "claimed_status": "PLANNED",
@@ -240,7 +240,7 @@
       "primary_key": "secure-mode noninterference",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 279
+        "line": 282
       },
       "claim_target": "relational proof notes + leak-budget test reports",
       "claimed_status": "PLANNED",
@@ -273,7 +273,7 @@
       "primary_key": "conformal decision validity",
       "feature_parity_provenance": {
         "path": "FEATURE_PARITY.md",
-        "line": 280
+        "line": 283
       },
       "claim_target": "coverage/risk-control reports + calibration replay logs",
       "claimed_status": "PLANNED",

@@ -10,15 +10,6 @@
       "is_blocked": false,
       "root_blockers": []
     },
-    "bd-w2c3.1.2": {
-      "available": true,
-      "chain_ids": [
-        "bd-w2c3.1.2"
-      ],
-      "chain_length": 0,
-      "is_blocked": false,
-      "root_blockers": []
-    },
     "bd-w2c3.10": {
       "available": true,
       "chain_ids": [
@@ -94,18 +85,6 @@
       "owner_bead": "bd-w2c3.1",
       "owner_status": "closed",
       "priority": 0
-    },
-    {
-      "assignee": "SnowyWaterfall",
-      "dependency_path": [
-        "bd-w2c3.1.2",
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
-      "gap_count": 1,
-      "owner_bead": "bd-w2c3.1.2",
-      "owner_status": "closed",
-      "priority": 0
     }
   ],
   "dependency_bottlenecks": [
@@ -148,19 +127,9 @@
       "owner_bead": "bd-w2c3.1",
       "owner_status": "closed",
       "priority": 0
-    },
-    {
-      "assignee": "SnowyWaterfall",
-      "blocked_dependency_count": 0,
-      "bv_chain_length": 0,
-      "bv_root_blockers": [],
-      "gap_count": 1,
-      "owner_bead": "bd-w2c3.1.2",
-      "owner_status": "closed",
-      "priority": 0
     }
   ],
-  "generated_at": "2026-02-18T04:49:26Z",
+  "generated_at": "2026-06-03T21:45:00Z",
   "rows": [
     {
       "blocking_dependencies": [],
@@ -426,44 +395,6 @@
       "bv_blocker_chain": {
         "available": true,
         "chain_ids": [
-          "bd-w2c3.1.2"
-        ],
-        "chain_length": 0,
-        "is_blocked": false,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.1.2",
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "gap-macro-fp-macro-targets-fa7a23e18f01",
-      "gap_kind": "machine_delta_drift",
-      "message": "derived from reality_report callthrough/stub counts",
-      "owner_active": false,
-      "owner_assignee": "SnowyWaterfall",
-      "owner_bead": "bd-w2c3.1.2",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "closed",
-      "owner_title": "T0.2 Drift Gates: fail-fast parity-truth enforcement",
-      "section": "",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "drift"
-    },
-    {
-      "blocking_dependencies": [],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
           "bd-w2c3.10"
         ],
         "chain_length": 0,
@@ -668,43 +599,6 @@
         }
       },
       "gap_id": "fp-gap-summary-17c934647652",
-      "gap_kind": "feature_parity_row_status",
-      "message": "",
-      "owner_active": false,
-      "owner_assignee": null,
-      "owner_bead": "bd-w2c3.10",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "closed",
-      "owner_title": "Track 9: Release Claim-Control + Closure Protocol",
-      "section": "gap_summary",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "IN_PROGRESS"
-    },
-    {
-      "blocking_dependencies": [],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
-        "chain_length": 0,
-        "is_blocked": false,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "fp-gap-summary-17d24896af61",
       "gap_kind": "feature_parity_row_status",
       "message": "",
       "owner_active": false,
@@ -1444,7 +1338,7 @@
           "status": "DONE"
         }
       },
-      "gap_id": "fp-gap-summary-a51012652c16",
+      "gap_id": "fp-gap-summary-a50e943093eb",
       "gap_kind": "feature_parity_row_status",
       "message": "",
       "owner_active": false,
@@ -1481,7 +1375,7 @@
           "status": "DONE"
         }
       },
-      "gap_id": "fp-gap-summary-b04531fdcdde",
+      "gap_id": "fp-gap-summary-a51012652c16",
       "gap_kind": "feature_parity_row_status",
       "message": "",
       "owner_active": false,
@@ -1852,6 +1746,43 @@
         }
       },
       "gap_id": "fp-gap-summary-e9257a2a9c49",
+      "gap_kind": "feature_parity_row_status",
+      "message": "",
+      "owner_active": false,
+      "owner_assignee": null,
+      "owner_bead": "bd-w2c3.10",
+      "owner_found": true,
+      "owner_priority": 0,
+      "owner_status": "closed",
+      "owner_title": "Track 9: Release Claim-Control + Closure Protocol",
+      "section": "gap_summary",
+      "source_file": "FEATURE_PARITY.md",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "blocking_dependencies": [],
+      "bv_blocker_chain": {
+        "available": true,
+        "chain_ids": [
+          "bd-w2c3.10"
+        ],
+        "chain_length": 0,
+        "is_blocked": false,
+        "root_blockers": []
+      },
+      "dependency_path": [
+        "bd-w2c3.10",
+        "bd-29b"
+      ],
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-fb294d721471",
       "gap_kind": "feature_parity_row_status",
       "message": "",
       "owner_active": false,
@@ -4338,11 +4269,11 @@
   },
   "summary": {
     "active_owner_gaps": 0,
-    "covered_gaps": 111,
-    "critical_blocker_count": 5,
-    "inactive_owner_gaps": 111,
-    "owner_count": 5,
-    "total_unresolved_gaps": 111,
+    "covered_gaps": 110,
+    "critical_blocker_count": 4,
+    "inactive_owner_gaps": 110,
+    "owner_count": 4,
+    "total_unresolved_gaps": 110,
     "uncovered_gaps": 0
   }
 }

@@ -275,6 +275,7 @@
     "summary_struct": "frankenlibc_harness::decision_trace_minimizer::MinimizedTraceSummary",
     "report_path_template": "target/conformance/decision_trace_minimizer.<bead>.jsonl",
     "required_fields": [
+      "kind",
       "expected_failure_signature",
       "replay_command",
       "source_commit",
@@ -290,7 +291,8 @@
     "rejected_serialization_kinds": [
       "missing_required_field",
       "wrong_field_type",
-      "invalid_json"
+      "invalid_json",
+      "unexpected_kind"
     ]
   }
 }

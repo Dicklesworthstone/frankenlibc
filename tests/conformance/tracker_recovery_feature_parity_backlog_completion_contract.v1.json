@@ -129,9 +129,9 @@
         "report_filename": "feature_parity_targeted_closure_beads.report.json",
         "log_filename": "feature_parity_targeted_closure_beads.log.jsonl",
         "expected_report_status": "pass",
-        "expected_stdout_contains": "\"gap_count\": 111",
+        "expected_stdout_contains": "\"gap_count\": 110",
         "expected_summary": {
-          "expected_gap_count": 111,
+          "expected_gap_count": 110,
           "created_issue_count": 10
         }
       },
@@ -189,7 +189,7 @@
         "expected_stdout_contains": "PASS: reality bridge import reconciliation valid",
         "expected_summary": {
           "backlog_import_rows": 10,
-          "feature_gap_import_rows": 111,
+          "feature_gap_import_rows": 110,
           "unique_target_issue_count": 64
         }
       }

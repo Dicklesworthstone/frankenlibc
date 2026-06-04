@@ -70,7 +70,7 @@
     "hardened_only_case_refreshed",
     "strict_case_left_stale",
     "mode_both_case_left_stale",
-    "placeholder_midnight_timestamp_preserved",
+    "template_midnight_timestamp_preserved",
     "capture_host_fingerprint_missing",
     "capture_rerun_not_byte_identical_with_pinned_timestamp",
     "unsupported_case_silently_dropped",

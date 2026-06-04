@@ -102,10 +102,10 @@
         "symbol": "__isoc23_swscanf",
         "scenario": "swscanf_empty_wide_format_no_destination_capture",
         "oracle_source": "FrankenLibC isoc_abi::__isoc23_swscanf empty-format replay",
-        "expected": "WSCANF_EMPTY_FORMAT_RC_-1",
+        "expected": "WSCANF_EMPTY_FORMAT_RC_0",
         "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
       },
-      "expected_output": "symbol=__isoc23_swscanf;mode=strict;expected=WSCANF_EMPTY_FORMAT_RC_-1;actual=WSCANF_EMPTY_FORMAT_RC_-1;failure_signature=none",
+      "expected_output": "symbol=__isoc23_swscanf;mode=strict;expected=WSCANF_EMPTY_FORMAT_RC_0;actual=WSCANF_EMPTY_FORMAT_RC_0;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -117,10 +117,10 @@
         "symbol": "__isoc23_swscanf",
         "scenario": "swscanf_empty_wide_format_no_destination_capture",
         "oracle_source": "FrankenLibC isoc_abi::__isoc23_swscanf empty-format replay",
-        "expected": "WSCANF_EMPTY_FORMAT_RC_-1",
+        "expected": "WSCANF_EMPTY_FORMAT_RC_0",
         "ambient_state_policy": "forbid_raw_locale_pointer_wide_buffer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
       },
-      "expected_output": "symbol=__isoc23_swscanf;mode=hardened;expected=WSCANF_EMPTY_FORMAT_RC_-1;actual=WSCANF_EMPTY_FORMAT_RC_-1;failure_signature=none",
+      "expected_output": "symbol=__isoc23_swscanf;mode=hardened;expected=WSCANF_EMPTY_FORMAT_RC_0;actual=WSCANF_EMPTY_FORMAT_RC_0;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },

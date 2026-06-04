@@ -2,8 +2,8 @@
 
 Generated from `tests/conformance/feature_parity_gap_ledger.v1.json` and `tests/conformance/feature_parity_gap_groups.v1.json`.
 
-Source ledger gaps: **111**
-Grouped gaps: **111**
+Source ledger gaps: **110**
+Grouped gaps: **110**
 Owner-family groups: **10**
 Unassigned gaps: **0**
 
@@ -12,7 +12,6 @@ Unassigned gaps: **0**
 | FEATURE_PARITY section | Gap count |
 |---|---:|
 | `macro_targets` | 7 |
-| `machine_delta` | 1 |
 | `reverse_core` | 20 |
 | `proof_math` | 45 |
 | `gap_summary` | 38 |
@@ -21,7 +20,7 @@ Unassigned gaps: **0**
 
 | Evidence owner | Gap count |
 |---|---:|
-| docs/conformance release-gate owners | 8 |
+| docs/conformance release-gate owners | 7 |
 | frankenlibc-core and frankenlibc-abi subsystem owners | 10 |
 | ABI, loader, syscall, process, and hard-parts harness owners | 10 |
 | membrane proof and conformance-binder owners | 7 |
@@ -36,7 +35,7 @@ Unassigned gaps: **0**
 
 | Group | Section | Symbol family | Evidence owner | Owner bead(s) | Support / semantic status | Oracle kind | Replacement level(s) | Evidence artifacts | Gap count | Follow-up bead |
 |---|---|---|---|---|---|---|---|---|---:|---|
-| `fpg-claim-control` | `macro_targets`, `machine_delta` | global replacement claims, strict/hardened mode claims, conformance and benchmark gates | docs/conformance release-gate owners | `bd-w2c3.1`, `bd-w2c3.1.2` | Implemented, RawSyscall, WrapsHostLibc, GlibcCallThrough, Stub / IN_PROGRESS, drift | `claim_reconciliation_gate` | L0, L1, L2, L3 | `FEATURE_PARITY.md`<br>`support_matrix.json`<br>`tests/conformance/reality_report.v1.json`<br>`tests/conformance/replacement_levels.json`<br>`tests/conformance/semantic_contract_inventory.v1.json` | 8 | `bd-bp8fl.3.5` |
+| `fpg-claim-control` | `macro_targets` | global replacement claims, strict/hardened mode claims, conformance and benchmark gates | docs/conformance release-gate owners | `bd-w2c3.1` | Implemented, RawSyscall, WrapsHostLibc, GlibcCallThrough, Stub / IN_PROGRESS | `claim_reconciliation_gate` | L0, L1, L2, L3 | `FEATURE_PARITY.md`<br>`support_matrix.json`<br>`tests/conformance/reality_report.v1.json`<br>`tests/conformance/replacement_levels.json`<br>`tests/conformance/semantic_contract_inventory.v1.json` | 7 | `bd-bp8fl.3.5` |
 | `fpg-reverse-runtime-core` | `reverse_core` | allocator, string/memory, pthread/cancellation, stdio/locale parsing, signal/setjmp, time, NSS/resolver, iconv/i18n, strict/hardened decisions | frankenlibc-core and frankenlibc-abi subsystem owners | `bd-w2c3.4` | Implemented, RawSyscall, semantic_evidence_gap / IN_PROGRESS, PLANNED | `fixture_and_semantic_overlay` | L0, L1, L2, L3 | `tests/conformance/fixtures/membrane_mode_split.json`<br>`tests/conformance/symbol_fixture_coverage.v1.json`<br>`tests/conformance/per_symbol_fixture_tests.v1.json`<br>`tests/conformance/semantic_contract_inventory.v1.json` | 10 | `bd-bp8fl.3.6` |
 | `fpg-reverse-loader-process-abi` | `reverse_core` | loader/symbol/IFUNC, ABI/time64/layout, VM transitions, process bootstrap, syscall glue, SysV IPC, diagnostics/unwinding, session accounting, profiling, floating-point/fenv | ABI, loader, syscall, process, and hard-parts harness owners | `bd-w2c3.4` | Implemented, RawSyscall, standalone_replacement_gap / PLANNED | `link_run_and_versioned_symbol_gate` | L1, L2, L3 | `crates/frankenlibc-abi/version_scripts/libc.map`<br>`tests/conformance/conformance_matrix.v1.json`<br>`tests/conformance/e2e_scenario_manifest.v1.json`<br>`tests/conformance/hard_parts_e2e_failure_matrix.v1.json` | 10 | `bd-bp8fl.3.7` |
 | `fpg-proof-core-safety` | `proof_math` | strict refinement, hardened safety, deterministic replay, barrier invariance, robust radius, secure-mode noninterference, conformal validity | membrane proof and conformance-binder owners | `bd-w2c3.6` | not_symbol_scoped, proof_gap / IN_PROGRESS, PLANNED | `proof_binder_and_mode_contract` | L0, L1, L2, L3 | `tests/conformance/proof_obligations_binder.v1.json`<br>`tests/conformance/proof_binder_validation.v1.json`<br>`tests/conformance/mode_contract_lock.v1.json` | 7 | `bd-bp8fl.3.8` |

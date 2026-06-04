@@ -3,7 +3,7 @@
   "manifest_id": "explain-dossier-contract",
   "bead": "bd-juvqm.10",
   "generated_utc": "2026-05-09T00:00:00Z",
-  "source_commit": "6622a48844408e59dd309e0f3def7f0220f10472",
+  "source_commit": "f9fef4c2bafafa5f224f7fb61eadbf30574bf427",
   "source_commit_freshness": {
     "require_no_tracked_source_changes_since_source_commit": true,
     "tracked_source_roots": [

@@ -80,12 +80,12 @@
       "telemetry.primary"
     ],
     "required_prioritizer_summary": {
-      "campaign_count": 18,
-      "deferred_module_count": 18,
-      "selected_target_uncovered_symbols": 3332,
-      "deferred_target_uncovered_symbols": 382,
-      "all_uncovered_target_symbols": 3714,
-      "total_first_wave_fixture_count": 196,
+      "campaign_count": 8,
+      "deferred_module_count": 14,
+      "selected_target_uncovered_symbols": 1735,
+      "deferred_target_uncovered_symbols": 214,
+      "all_uncovered_target_symbols": 1949,
+      "total_first_wave_fixture_count": 88,
       "highest_priority_campaign": "fcq-unistd-process-filesystem",
       "lowest_priority_campaign": "fcq-rpc-legacy-network"
     },
@@ -99,30 +99,30 @@
       },
       {
         "rank": 2,
-        "campaign_id": "fcq-string-memory-hotpaths",
-        "module": "string_abi",
-        "priority_score": 2509,
-        "first_wave_fixture_count": 12
+        "campaign_id": "fcq-stdio-libio",
+        "module": "stdio_abi",
+        "priority_score": 2354,
+        "first_wave_fixture_count": 4
       },
       {
         "rank": 3,
-        "campaign_id": "fcq-stdio-libio",
-        "module": "stdio_abi",
-        "priority_score": 2447,
+        "campaign_id": "fcq-pthread-sync",
+        "module": "pthread_abi",
+        "priority_score": 2340,
         "first_wave_fixture_count": 12
       },
       {
         "rank": 4,
-        "campaign_id": "fcq-pthread-sync",
-        "module": "pthread_abi",
-        "priority_score": 2414,
+        "campaign_id": "fcq-wchar-locale-encoding",
+        "module": "wchar_abi",
+        "priority_score": 2052,
         "first_wave_fixture_count": 12
       },
       {
         "rank": 5,
-        "campaign_id": "fcq-malloc-membrane",
-        "module": "malloc_abi",
-        "priority_score": 2367,
+        "campaign_id": "fcq-fortify-bounds",
+        "module": "fortify_abi",
+        "priority_score": 2017,
         "first_wave_fixture_count": 12
       }
     ],

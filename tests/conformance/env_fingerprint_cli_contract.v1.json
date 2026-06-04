@@ -23,7 +23,31 @@
     "record_count": 1,
     "output_path_selected_by": "--output",
     "detect_kind": "environment_fingerprint",
-    "validate_kind": "environment_fingerprint_validation"
+    "validate_kind": "environment_fingerprint_validation",
+    "detect_required_fields": [
+      "kind",
+      "fingerprint",
+      "os",
+      "arch",
+      "cpus",
+      "kernel_release",
+      "source"
+    ],
+    "validate_required_fields_when_ok_true": [
+      "kind",
+      "input",
+      "ok",
+      "os",
+      "arch",
+      "cpus",
+      "kernel_release"
+    ],
+    "validate_required_fields_when_ok_false": [
+      "kind",
+      "input",
+      "ok",
+      "error"
+    ]
   },
   "modes": {
     "detect": {

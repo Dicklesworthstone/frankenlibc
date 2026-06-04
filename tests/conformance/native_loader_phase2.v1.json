@@ -66,9 +66,9 @@
     "tls": "tests/conformance/dlfcn_tls.v1.json (planned)"
   },
   "support_matrix_update": {
-    "dlopen": "Implemented (native loader in standalone)",
-    "dlsym": "Implemented (native loader in standalone)",
-    "dlclose": "Implemented (native loader in standalone)",
+    "dlopen": "WrapsHostLibc (phase-1 native local/pathname handles plus host-backed interpose delegation; native-only standalone loader remains phase-2 scope)",
+    "dlsym": "WrapsHostLibc (phase-1 native local/pathname handles plus host-backed interpose delegation; native-only standalone loader remains phase-2 scope)",
+    "dlclose": "WrapsHostLibc (phase-1 native local/pathname handles plus host-backed interpose delegation; native-only standalone loader remains phase-2 scope)",
     "dlmopen": "Stub (returns ENOSYS)",
     "dlvsym": "Planned (version-aware symbol lookup)"
   }

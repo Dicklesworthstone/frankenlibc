@@ -23,7 +23,7 @@
     "implementation_refs": [
       "crates/frankenlibc-abi/src/startup_abi.rs:934",
       "crates/frankenlibc-abi/src/startup_abi.rs:938",
-      "crates/frankenlibc-abi/src/startup_abi.rs:940",
+      "crates/frankenlibc-abi/src/startup_abi.rs:941",
       "crates/frankenlibc-abi/src/startup_abi.rs:943",
       "crates/frankenlibc-abi/src/startup_abi.rs:963",
       "crates/frankenlibc-abi/src/startup_abi.rs:978",
@@ -34,7 +34,7 @@
       "crates/frankenlibc-abi/src/startup_abi.rs:1022",
       "crates/frankenlibc-abi/tests/startup_abi_test.rs:214",
       "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8579",
-      "scripts/check_setjmp_native.sh:29",
+      "scripts/check_setjmp_native.sh:28",
       "scripts/check_setjmp_native.sh:34",
       "tests/conformance/signal_setjmp_async_cancellation_fixture_pack.v1.json:27",
       "scripts/check_cxa_thread_atexit_init_array_completion_contract.sh:1",
@@ -69,7 +69,9 @@
           "static HOST_CXA_LOOKUP_REENTRY: std::cell::Cell<bool>",
           "if c.get()",
           "return None;",
-          "let _ = HOST_CXA_LOOKUP_REENTRY.try_with(|c| c.set(false));"
+          "fn set_host_cxa_lookup_reentry(value: bool)",
+          "let _ = HOST_CXA_LOOKUP_REENTRY.try_with(|c| c.set(value));",
+          "set_host_cxa_lookup_reentry(false);"
         ],
         "must_not_contain": []
       },
@@ -84,10 +86,11 @@
         "must_not_contain": []
       },
       {
-        "id": "sweep-regression-gate-builds-current-abi-through-rch",
+        "id": "sweep-regression-gate-builds-current-abi-before-smoke",
         "source": "setjmp_native_gate",
         "must_contain": [
-          "rch exec -- env CARGO_TARGET_DIR=\"${BUILD_TARGET_DIR}\" cargo build -p frankenlibc-abi --release",
+          "env CARGO_TARGET_DIR=\"${BUILD_TARGET_DIR}\" cargo build -p frankenlibc-abi --release",
+          "Always overwrite LIB with the freshly-built BUILD_LIB",
           "regression source for bd-yf86e during sweep validation"
         ],
         "must_not_contain": []

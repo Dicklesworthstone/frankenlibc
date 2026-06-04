@@ -11,7 +11,7 @@
     "sentinel_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "purpose": "Fail-closed sentinel for the dlfcn replace boundary. While current_level remains L0, dlfcn_abi.rs is permitted to delegate to host dlopen/dlsym/dlvsym/dlclose under documented L0 interpose paths (bootstrap pass-through, host-handle round-tripping, RTLD_DEFAULT/RTLD_NEXT lookups). When current_level promotes to L1+, every host-delegation call site must either be removed (replaced by a native loader) or carry an explicit `replace_mode_native_required` annotation that ships a native fallback. The sentinel inventories every host-delegation site, refuses promotion past L0 while any site is still annotated `interpose_only` or `host_handle_passthrough`, and detects any new unannotated host call appearing in dlfcn_abi.rs.",
+  "purpose": "Fail-closed sentinel for the dlfcn replace boundary. While current_level remains L0/L1 interpose, dlfcn_abi.rs is permitted to delegate to host dlopen/dlsym/dlvsym/dlclose under documented host-backed interpose paths (bootstrap pass-through, host-handle round-tripping, RTLD_DEFAULT/RTLD_NEXT lookups). When a standalone replacement level (L2/L3) is claimed, every host-delegation call site must either be removed (replaced by a native loader) or carry an explicit `replace_mode_native_required` annotation that ships a native fallback. The sentinel inventories every host-delegation site, refuses standalone replacement promotion while any site is still annotated `interpose_only` or `host_handle_passthrough`, and detects any new unannotated host call appearing in dlfcn_abi.rs.",
   "subject": {
     "module": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
     "policy_artifact": "tests/conformance/dlfcn_boundary_policy.v1.json",
@@ -41,8 +41,17 @@
   ],
   "policy": {
     "default_decision": "block_until_replace_mode_evidence_current",
-    "max_total_host_callsites_at_L1": 0,
+    "max_total_host_callsites_at_standalone_levels": 0,
+    "standalone_replacement_levels": [
+      "L2",
+      "L3"
+    ],
     "allowed_at_L0": [
+      "interpose_only",
+      "host_handle_passthrough",
+      "bootstrap_passthrough"
+    ],
+    "allowed_at_L1": [
       "interpose_only",
       "host_handle_passthrough",
       "bootstrap_passthrough"
@@ -50,7 +59,7 @@
     "rejected_evidence_kinds": [
       "unannotated_host_callsite",
       "host_callsite_count_drift",
-      "interpose_only_after_L0",
+      "host_callsite_after_standalone_promotion",
       "missing_native_handle_guard",
       "support_matrix_drift",
       "stale_source_commit",
@@ -105,7 +114,7 @@
       "annotation": "interpose_only",
       "guard": "post-bootstrap path with name validation",
       "source_pattern": "            if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
-      "context_anchor": "            // Delegate to host libc's dlopen for actual shared object loading.",
+      "context_anchor": "            // Bare SONAME search/dependency loading remains delegated while",
       "rationale": "Native dlopen would load ELF dependencies; until then host loader is required."
     },
     {
@@ -162,13 +171,13 @@
   ],
   "support_matrix_required_status": {
     "dlfcn_abi": {
-      "dlopen": "Implemented",
-      "dlsym": "Implemented",
-      "dlvsym": "Implemented",
-      "dlclose": "Implemented",
+      "dlopen": "WrapsHostLibc",
+      "dlsym": "WrapsHostLibc",
+      "dlvsym": "WrapsHostLibc",
+      "dlclose": "WrapsHostLibc",
       "dlerror": "Implemented",
-      "dl_iterate_phdr": "Implemented",
-      "dladdr": "Implemented"
+      "dl_iterate_phdr": "WrapsHostLibc",
+      "dladdr": "WrapsHostLibc"
     }
   },
   "consuming_gates": [

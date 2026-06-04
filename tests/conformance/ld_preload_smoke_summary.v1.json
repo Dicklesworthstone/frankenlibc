@@ -1,54 +1,54 @@
 {
   "schema_version": "v1",
   "bead": "bd-3rw.5.1",
-  "source_report_path": "target/ld_preload_smoke/20260521T080754Z/abi_compat_report.json",
-  "run_id": "20260521T080754Z",
-  "checked_at_utc": "2026-05-21T08:07:54Z",
-  "checked_date_display": "May 21, 2026",
-  "lib_path": "/data/tmp/rch_target_frankenlibc_LavenderHorizon_bd_3yr14_8_smoke_runs_remote/20260521T080718Z/cargo-target/release/libfrankenlibc_abi.so",
+  "source_report_path": "target/ld_preload_smoke/SnowyMill-ldfix-20260603T034530Z/abi_compat_report.json",
+  "run_id": "SnowyMill-ldfix-20260603T034530Z",
+  "checked_at_utc": "2026-06-03T03:45:30Z",
+  "checked_date_display": "June 3, 2026",
+  "lib_path": "/data/tmp/cargo-target-ldfix/release/libfrankenlibc_abi.so",
   "timeout_seconds": 10,
   "stress_iters": 5,
   "summary": {
     "total_cases": 64,
-    "passes": 40,
-    "fails": 20,
+    "passes": 60,
+    "fails": 0,
     "skips": 4,
-    "signature_guard_failures": 12,
-    "perf_failures": 8,
+    "signature_guard_failures": 0,
+    "perf_failures": 0,
     "valgrind_failures": 0,
-    "overall_failed": true
+    "overall_failed": false
   },
   "modes": {
     "strict": {
       "total_cases": 32,
-      "passes": 22,
-      "fails": 8,
+      "passes": 30,
+      "fails": 0,
       "skips": 2,
-      "signature_guard_failures": 4,
+      "signature_guard_failures": 0,
       "strict_parity_failures": 0,
-      "perf_failures": 4,
+      "perf_failures": 0,
       "valgrind_failures": 0,
-      "status": "red"
+      "status": "green"
     },
     "hardened": {
       "total_cases": 32,
-      "passes": 18,
-      "fails": 12,
+      "passes": 30,
+      "fails": 0,
       "skips": 2,
-      "signature_guard_failures": 8,
+      "signature_guard_failures": 0,
       "strict_parity_failures": 0,
-      "perf_failures": 4,
+      "perf_failures": 0,
       "valgrind_failures": 0,
-      "status": "red"
+      "status": "green"
     }
   },
   "optional_skip_binaries": [
-    "redis-cli",
-    "nginx"
+    "nginx",
+    "redis-cli"
   ],
   "notes": [
     "This checked-in summary is the canonical source for README smoke-status claims.",
     "The four skips come from the two optional binary probes across strict and hardened modes.",
-    "The May 21, 2026 regeneration is red: strict mode has eight perf regressions, while hardened mode has guarded timeout, abort, and segfault startup failures."
+    "The June 3, 2026 regeneration is green: strict and hardened mode both pass the sort fixture, sort stress cases, sqlite3 probe, parity checks, and perf guards."
   ]
 }

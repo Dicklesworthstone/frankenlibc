@@ -1,20 +1,20 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-05-23T16:10:14Z",
+  "generated_at": "2026-06-03T22:39:36Z",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1160,
+    "symbols_with_fixtures": 1164,
     "coverage_pct": 28,
-    "total_fixture_files": 126,
-    "total_fixture_cases": 2775,
+    "total_fixture_files": 127,
+    "total_fixture_cases": 2788,
     "total_families": 56
   },
   "module_coverage": {
     "c11threads_abi": {
       "total": 25,
-      "covered": 23,
-      "pct": 92
+      "covered": 24,
+      "pct": 96
     },
     "ctype_abi": {
       "total": 49,
@@ -52,7 +52,7 @@
       "pct": 46
     },
     "glibc_internal_abi": {
-      "total": 569,
+      "total": 568,
       "covered": 40,
       "pct": 7
     },
@@ -72,9 +72,9 @@
       "pct": 41
     },
     "io_abi": {
-      "total": 29,
+      "total": 27,
       "covered": 1,
-      "pct": 3
+      "pct": 4
     },
     "io_internal_abi": {
       "total": 114,
@@ -152,9 +152,9 @@
       "pct": 100
     },
     "setjmp_abi": {
-      "total": 7,
+      "total": 8,
       "covered": 3,
-      "pct": 43
+      "pct": 38
     },
     "signal_abi": {
       "total": 28,
@@ -202,14 +202,14 @@
       "pct": 100
     },
     "unistd_abi": {
-      "total": 742,
+      "total": 744,
       "covered": 201,
       "pct": 27
     },
     "wchar_abi": {
       "total": 146,
-      "covered": 54,
-      "pct": 37
+      "covered": 57,
+      "pct": 39
     }
   },
   "family_coverage": {
@@ -231,7 +231,7 @@
       ]
     },
     "c11threads": {
-      "function_count": 23,
+      "function_count": 24,
       "functions": [
         "call_once",
         "cnd_broadcast",
@@ -249,6 +249,7 @@
         "thrd_current",
         "thrd_detach",
         "thrd_equal",
+        "thrd_exit",
         "thrd_join",
         "thrd_sleep",
         "thrd_yield",
@@ -1622,7 +1623,7 @@
       ]
     },
     "wchar": {
-      "function_count": 36,
+      "function_count": 39,
       "functions": [
         "__islower_l",
         "__isoc23_fwscanf",
@@ -1659,7 +1660,10 @@
         "__toupper_l",
         "__towctrans_l",
         "__towlower_l",
-        "__towupper_l"
+        "__towupper_l",
+        "mbrtoc16",
+        "open_wmemstream",
+        "wcsdup"
       ]
     },
     "wide": {
@@ -1716,8 +1720,8 @@
     },
     "c11threads_ops": {
       "file": "c11threads_ops.json",
-      "sha256": "be2677f42d40cbcd6d31f44b322b4ea2bcda3a47a3224e2195676dfe48823151",
-      "case_count": 23,
+      "sha256": "88f0754462543ee64d22b6c5eff26f5b474a9a5bb189fcb45420f48d3baf7115",
+      "case_count": 24,
       "functions": [
         "call_once",
         "cnd_broadcast",
@@ -1735,6 +1739,7 @@
         "thrd_current",
         "thrd_detach",
         "thrd_equal",
+        "thrd_exit",
         "thrd_join",
         "thrd_sleep",
         "thrd_yield",
@@ -2025,8 +2030,8 @@
     },
     "iconv_phase1": {
       "file": "iconv_phase1.json",
-      "sha256": "7b3626c078285c7ede5de0afdeedcc3a40086cd0bf68d0e7775da03958452f77",
-      "case_count": 13,
+      "sha256": "0a268ade0e41fafd54dc63b486909cc0dda48f8ab9e777afb7d4eafb3fdeb515",
+      "case_count": 18,
       "functions": [
         "iconv",
         "iconv_close",
@@ -2108,7 +2113,7 @@
     },
     "loader_edges": {
       "file": "loader_edges.json",
-      "sha256": "9edc36e71269c8d543f896d861f505e55ca7794665627c58bcfd66463253c566",
+      "sha256": "277c497e7b928eb9b74a8aba24609f9b5fc09074bade73f620b3b99854ba69a4",
       "case_count": 7,
       "functions": [
         "dladdr",
@@ -2978,8 +2983,8 @@
     },
     "startup_ops": {
       "file": "startup_ops.json",
-      "sha256": "34b8afb1bb08f6f08d2cceedfa655656cb4136afe4b2352a53cda57bfcc5b081",
-      "case_count": 16,
+      "sha256": "00c632900510486bb50a3f6f65658e11d96d81aa2700a0f11bffa95a3ab8bde0",
+      "case_count": 17,
       "functions": [
         "__frankenlibc_startup_phase0",
         "__frankenlibc_startup_snapshot",
@@ -4036,9 +4041,22 @@
         "virtual"
       ]
     },
+    "wchar_abi_promotion_tranche": {
+      "file": "wchar_abi_promotion_tranche.json",
+      "sha256": "d4721f88e87d52e6bd05845f40454675416cc57b85c00099f3fa61bfa7ca072e",
+      "case_count": 6,
+      "functions": [
+        "mbrtoc16",
+        "open_wmemstream",
+        "wcsdup"
+      ],
+      "families": [
+        "wchar"
+      ]
+    },
     "wchar_locale_encoding_wave01": {
       "file": "wchar_locale_encoding_wave01.json",
-      "sha256": "4e843b33c8218f579c299a5574b070c71cc967b3a97a64845199d66c1bcf67ea",
+      "sha256": "db7a39da85e9adbd41a7b09ef829a7e33b2a700e8fd1382effeae763d7c2f0f7",
       "case_count": 24,
       "functions": [
         "__islower_l",

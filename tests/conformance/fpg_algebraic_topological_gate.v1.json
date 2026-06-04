@@ -81,7 +81,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 257, "line_contains": "sheaf consistency detection"},
+      "feature_parity_provenance": {"line": 262, "line_contains": "sheaf consistency detection"},
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -118,7 +118,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/sos_invariant.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 262, "line_contains": "SOS invariant synthesis"},
+      "feature_parity_provenance": {"line": 267, "line_contains": "SOS invariant synthesis"},
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -155,7 +155,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/large_deviations.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 263, "line_contains": "large-deviation catastrophe bounds"},
+      "feature_parity_provenance": {"line": 268, "line_contains": "large-deviation catastrophe bounds"},
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -192,7 +192,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/persistence.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 264, "line_contains": "topological anomaly detection"},
+      "feature_parity_provenance": {"line": 269, "line_contains": "topological anomaly detection"},
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -229,7 +229,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/rough_path.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 265, "line_contains": "rough-signature feature stability"},
+      "feature_parity_provenance": {"line": 270, "line_contains": "rough-signature feature stability"},
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -265,7 +265,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 268, "line_contains": "coalgebraic stream bisimulation"},
+      "feature_parity_provenance": {"line": 273, "line_contains": "coalgebraic stream bisimulation"},
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -302,7 +302,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 269, "line_contains": "Krohn-Rhodes codec factorization"},
+      "feature_parity_provenance": {"line": 274, "line_contains": "Krohn-Rhodes codec factorization"},
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -339,7 +339,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 273, "line_contains": "loader namespace sheaf consistency"},
+      "feature_parity_provenance": {"line": 278, "line_contains": "loader namespace sheaf consistency"},
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -376,7 +376,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 279, "line_contains": "spectral-sequence obstruction convergence"},
+      "feature_parity_provenance": {"line": 284, "line_contains": "spectral-sequence obstruction convergence"},
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -413,7 +413,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 280, "line_contains": "algebraic normal-form uniqueness"},
+      "feature_parity_provenance": {"line": 285, "line_contains": "algebraic normal-form uniqueness"},
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -450,7 +450,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 283, "line_contains": "Serre spectral convergence integrity"},
+      "feature_parity_provenance": {"line": 288, "line_contains": "Serre spectral convergence integrity"},
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -487,7 +487,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 284, "line_contains": "Grothendieck descent coherence"},
+      "feature_parity_provenance": {"line": 289, "line_contains": "Grothendieck descent coherence"},
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -524,7 +524,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 285, "line_contains": "families-index nullity"},
+      "feature_parity_provenance": {"line": 290, "line_contains": "families-index nullity"},
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -561,7 +561,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 286, "line_contains": "Atiyah-Bott localization conservativity"},
+      "feature_parity_provenance": {"line": 291, "line_contains": "Atiyah-Bott localization conservativity"},
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -598,7 +598,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 288, "line_contains": "derived t-structure bootstrap ordering"},
+      "feature_parity_provenance": {"line": 293, "line_contains": "derived t-structure bootstrap ordering"},
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {

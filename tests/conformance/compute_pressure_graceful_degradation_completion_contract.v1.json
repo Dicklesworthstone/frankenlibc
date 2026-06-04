@@ -36,15 +36,15 @@
       "crates/frankenlibc-membrane/src/runtime_math/mod.rs:6386",
       "crates/frankenlibc-membrane/src/runtime_math/mod.rs:6419",
       "crates/frankenlibc-membrane/src/runtime_math/mod.rs:6475",
-      "scripts/check_pressure_sensing.sh:88",
+      "scripts/check_pressure_sensing.sh:87",
       "scripts/check_pressure_sensing.sh:176",
       "scripts/check_pressure_sensing.sh:364",
-      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:25",
-      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:39",
-      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:190",
-      "crates/frankenlibc-harness/tests/pressure_sensing_conformance_test.rs:264",
+      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:35",
+      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:49",
+      "crates/frankenlibc-harness/tests/pressure_sensing_test.rs:126",
+      "crates/frankenlibc-harness/tests/pressure_sensing_conformance_test.rs:285",
       "crates/frankenlibc-harness/tests/family_degradation_policy_completion_contract_test.rs:196",
-      "crates/frankenlibc-harness/tests/evidence_ring_backpressure_stress_contract_test.rs:102"
+      "crates/frankenlibc-harness/tests/evidence_ring_backpressure_stress_contract_test.rs:177"
     ],
     "pressure_sensing": {
       "scenario_bead": "bd-w2c3.7.1",

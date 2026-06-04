@@ -5,8 +5,8 @@
   "generator": "scripts/generate_docs_env_mismatch_report.py",
   "schema_version": "v1",
   "summary": {
-    "code_keys": 29,
-    "docs_keys": 29,
+    "code_keys": 32,
+    "docs_keys": 32,
     "missing_in_code_count": 0,
     "missing_in_docs_count": 0,
     "semantic_drift_count": 0,

@@ -52,7 +52,7 @@
     },
     "feature_parity_gap_ledger": {
       "rows": 170,
-      "gaps": 111,
+      "gaps": 110,
       "status_counts": {
         "DONE": 60,
         "IN_PROGRESS": 64,
@@ -128,7 +128,7 @@
       "title": "Recover live br backlog from reality-check gaps",
       "priority": "P0",
       "status": "blocked_on_br",
-      "why": "bv reports zero open/in-progress work while the feature parity gap ledger still reports 111 gaps.",
+      "why": "bv reports zero open/in-progress work while the feature parity gap ledger still reports 110 gaps.",
       "subtasks": [
         "Repair or rebuild the br database/source-of-truth state until br ready/list/create complete without hanging.",
         "Import this backlog as real beads with dependency structure.",
@@ -147,9 +147,9 @@
       "title": "Close feature parity verification gaps",
       "priority": "P0",
       "status": "pending",
-      "why": "The gap ledger reports 111 unfinished rows even though all beads are closed.",
+      "why": "The gap ledger reports 110 unfinished rows even though all beads are closed.",
       "subtasks": [
-        "Group the 111 ledger gaps by section and owner bead.",
+        "Group the 110 ledger gaps by section and owner bead.",
         "Identify closed beads whose promised evidence is missing or stale.",
         "Reopen or recreate beads for each missing proof, fixture, or gate row.",
         "Make every DONE row point at current machine-verifiable evidence.",

@@ -9,8 +9,8 @@
     "TODO-0505",
     "TODO-0506"
   ],
-  "generated_utc": "2026-05-06T13:08:00Z",
-  "source_commit": "3f9739248083b95cde5c1cd0bf20c04db29b3ca6",
+  "generated_utc": "2026-06-03T21:06:41Z",
+  "source_commit": "630aadf32020fb52d507eb510628c71f520489f5",
   "canonical_command": "scripts/check_hardened_mode_coverage_inventory.sh --validate-only",
   "purpose": "Inventory current conformance fixture depth by family, runtime mode, and risk class before adding individual hardened-mode fixture waves.",
   "input_artifacts": {
@@ -52,17 +52,17 @@
     ]
   },
   "expected_inventory": {
-    "fixture_file_count": 126,
-    "standard_case_count": 2774,
-    "family_count": 91,
+    "fixture_file_count": 127,
+    "standard_case_count": 2787,
+    "family_count": 92,
     "mode_case_counts": {
-      "strict_only": 1354,
-      "hardened_only": 849,
-      "strict_hardened_pair": 571
+      "strict_only": 1362,
+      "hardened_only": 853,
+      "strict_hardened_pair": 572
     },
     "effective_mode_case_counts": {
-      "strict": 1925,
-      "hardened": 1420
+      "strict": 1934,
+      "hardened": 1425
     },
     "missing_hardened_family_count": 7,
     "missing_hardened_families": [
@@ -154,11 +154,11 @@
         "hardened-repair-stdio-format-truncation"
       ],
       "expected_counts": {
-        "fixture_case_count": 474,
-        "strict_only": 331,
-        "hardened_only": 18,
+        "fixture_case_count": 479,
+        "strict_only": 335,
+        "hardened_only": 19,
         "strict_hardened_pair": 125,
-        "effective_hardened": 143,
+        "effective_hardened": 144,
         "support_symbol_count": 600,
         "stress_repair_scenarios": 1
       },
@@ -271,11 +271,11 @@
         "hardened-repair-stdio-format-truncation"
       ],
       "expected_counts": {
-        "fixture_case_count": 167,
+        "fixture_case_count": 168,
         "strict_only": 38,
         "hardened_only": 20,
-        "strict_hardened_pair": 109,
-        "effective_hardened": 129,
+        "strict_hardened_pair": 110,
+        "effective_hardened": 130,
         "support_symbol_count": 292,
         "stress_repair_scenarios": 1
       },
@@ -349,11 +349,11 @@
         "hardened-repair-stdio-format-truncation"
       ],
       "expected_counts": {
-        "fixture_case_count": 552,
-        "strict_only": 421,
-        "hardened_only": 64,
+        "fixture_case_count": 557,
+        "strict_only": 425,
+        "hardened_only": 65,
         "strict_hardened_pair": 67,
-        "effective_hardened": 131,
+        "effective_hardened": 132,
         "support_symbol_count": 815,
         "stress_repair_scenarios": 2
       },

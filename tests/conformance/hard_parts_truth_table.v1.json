@@ -9,12 +9,12 @@
     "reality_report": "tests/conformance/reality_report.v1.json"
   },
   "reality_snapshot": {
-    "generated_at_utc": "2026-02-18T04:49:26Z",
+    "generated_at_utc": "2026-05-23T12:39:21Z",
     "total_exported": 4119,
     "counts": {
-      "implemented": 3588,
+      "implemented": 2383,
       "raw_syscall": 414,
-      "wraps_host_libc": 117,
+      "wraps_host_libc": 1322,
       "glibc_call_through": 0,
       "stub": 0
     }
@@ -23,8 +23,8 @@
     {
       "id": "startup",
       "status": "IMPLEMENTED_PARTIAL",
-      "implemented_scope": "Phase-0 startup fixture path is implemented (`__libc_start_main`, `__frankenlibc_startup_phase0`, `__frankenlibc_startup_snapshot`) with invariant capture and strict/hardened tests.",
-      "deferred_scope": "Full `csu`/TLS init-order hardening and secure-mode closure campaign remains open.",
+      "implemented_scope": "Phase-0 startup fixture path is exported and fixture-backed, but `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture remain host-backed in the support taxonomy.",
+      "deferred_scope": "Full native `csu`/TLS init-order hardening and secure-mode closure campaign remains open.",
       "support_expectations": {
         "required_symbols": [
           {
@@ -33,15 +33,15 @@
           },
           {
             "symbol": "__frankenlibc_startup_phase0",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "__frankenlibc_startup_snapshot",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           }
         ]
       },
-      "doc_line": "- `startup`: `IMPLEMENTED_PARTIAL` \u2014 implemented scope: phase-0 startup fixture path (`__libc_start_main`, `__frankenlibc_startup_phase0`, snapshot invariants). Deferred scope: full `csu`/TLS init-order hardening and secure-mode closure campaign."
+      "doc_line": "- `startup`: `IMPLEMENTED_PARTIAL` \u2014 fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign."
     },
     {
       "id": "threading",
@@ -54,7 +54,7 @@
             "module": "pthread_abi",
             "status": "Implemented",
             "min_count": 1,
-            "implemented_count": 129,
+            "implemented_count": 109,
             "total_count": 141
           }
         ]
@@ -64,17 +64,17 @@
     {
       "id": "resolver",
       "status": "IMPLEMENTED_PARTIAL",
-      "implemented_scope": "Bootstrap numeric resolver ABI path is implemented (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`, `gai_strerror`).",
+      "implemented_scope": "Bootstrap numeric resolver ABI is exported; `getnameinfo` and `gai_strerror` are native, while `getaddrinfo` and `freeaddrinfo` remain host-backed in the support taxonomy.",
       "deferred_scope": "Full retry/cache/poisoning hardening campaign remains open.",
       "support_expectations": {
         "required_symbols": [
           {
             "symbol": "getaddrinfo",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "freeaddrinfo",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "getnameinfo",
@@ -86,18 +86,18 @@
           }
         ]
       },
-      "doc_line": "- `resolver`: `IMPLEMENTED_PARTIAL` \u2014 implemented scope: bootstrap numeric resolver ABI (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`, `gai_strerror`). Deferred scope: full retry/cache/poisoning hardening campaign."
+      "doc_line": "- `resolver`: `IMPLEMENTED_PARTIAL` \u2014 bootstrap numeric resolver ABI is exported; `getnameinfo` and `gai_strerror` are native, while `getaddrinfo` and `freeaddrinfo` remain host-backed in the support taxonomy. Deferred scope: full retry/cache/poisoning hardening campaign."
     },
     {
       "id": "nss",
       "status": "IMPLEMENTED_PARTIAL",
-      "implemented_scope": "Passwd/group lookup entrypoints are exported and marked `Implemented` via `pwd_abi` and `grp_abi`.",
+      "implemented_scope": "Passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`.",
       "deferred_scope": "Hosts/backend breadth plus NSS concurrency/cache-coherence closure remain pending.",
       "support_expectations": {
         "required_symbols": [
           {
             "symbol": "getpwnam",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "getpwnam_r",
@@ -105,7 +105,7 @@
           },
           {
             "symbol": "getpwuid",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "getpwuid_r",
@@ -113,7 +113,7 @@
           },
           {
             "symbol": "getgrnam",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "getgrnam_r",
@@ -121,7 +121,7 @@
           },
           {
             "symbol": "getgrgid",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "getgrgid_r",
@@ -132,7 +132,7 @@
           "nss_abi"
         ]
       },
-      "doc_line": "- `nss`: `IMPLEMENTED_PARTIAL` \u2014 implemented scope: passwd/group APIs are exported as `Implemented` via `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure."
+      "doc_line": "- `nss`: `IMPLEMENTED_PARTIAL` \u2014 passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure."
     },
     {
       "id": "locale",
@@ -156,25 +156,25 @@
     {
       "id": "iconv",
       "status": "IMPLEMENTED_PARTIAL",
-      "implemented_scope": "Phase-1 iconv ABI path is implemented (`iconv_open`, `iconv`, `iconv_close`) with deterministic strict/hardened fixture coverage.",
-      "deferred_scope": "Full `iconvdata` breadth and deterministic table-generation closure remain open.",
+      "implemented_scope": "Phase-1 codec core and fixtures exist, but `iconv_open`/`iconv`/`iconv_close` remain host-backed in the support taxonomy.",
+      "deferred_scope": "Full native `iconvdata` breadth and deterministic table-generation closure remain open.",
       "support_expectations": {
         "required_symbols": [
           {
             "symbol": "iconv_open",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "iconv",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           },
           {
             "symbol": "iconv_close",
-            "status": "Implemented"
+            "status": "WrapsHostLibc"
           }
         ]
       },
-      "doc_line": "- `iconv`: `IMPLEMENTED_PARTIAL` \u2014 implemented scope: phase-1 `iconv_open`/`iconv`/`iconv_close` conversions for UTF-8/ISO-8859-1/UTF-16LE/UTF-32 with deterministic strict+hardened fixtures; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full `iconvdata` breadth and deterministic table-generation closure."
+      "doc_line": "- `iconv`: `IMPLEMENTED_PARTIAL` \u2014 phase-1 codec core and fixtures exist, but `iconv_open`/`iconv`/`iconv_close` remain host-backed in the support taxonomy; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full native `iconvdata` breadth and deterministic table-generation closure."
     }
   ],
   "contradictions": [],

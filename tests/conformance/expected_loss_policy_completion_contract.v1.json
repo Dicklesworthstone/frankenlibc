@@ -47,7 +47,7 @@
       "crates/frankenlibc-membrane/src/runtime_math/evidence.rs:3083",
       "crates/frankenlibc-membrane/src/runtime_math/mod.rs:749",
       "crates/frankenlibc-membrane/src/runtime_math/mod.rs:2150",
-      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:8295",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs:8288",
       "tests/cve_arena/results/bd-35a/bd35a-20260211T063028Z/trace.jsonl:2",
       "tests/cve_arena/results/bd-35a/bd35a-20260211T063028Z/trace.jsonl:12",
       "tests/cve_arena/results/bd-35a/bd35a-20260211T063028Z/trace.jsonl:21"

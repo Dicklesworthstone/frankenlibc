@@ -41,13 +41,13 @@
   },
   "ledger_counts": {
     "row_count": 73,
-    "status_completed": 30,
-    "status_in_progress": 3,
-    "status_pending": 40
+    "status_completed": 73,
+    "status_in_progress": 0,
+    "status_pending": 0
   },
   "classification_counts": {
-    "already_closed_by_ledger_or_closed_bead_evidence": 30,
-    "routed_to_new_open_bead": 43,
+    "already_closed_by_ledger_or_closed_bead_evidence": 73,
+    "routed_to_new_open_bead": 0,
     "stale_doc_only": 0,
     "blocked_by_missing_artifact": 0
   },
@@ -203,9 +203,9 @@
         "TODO-0105"
       ],
       "source_lines": "32-35",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.3"
       ],
       "next_action": "Define the canonical joint regeneration wrapper before editing support or reality artifacts."
@@ -215,9 +215,9 @@
         "TODO-0107"
       ],
       "source_lines": "37",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.4"
       ],
       "next_action": "Emit a per-symbol drift triage artifact after the regeneration wrapper exists."
@@ -254,9 +254,9 @@
         "NEXT-0003"
       ],
       "source_lines": "42-68,136",
-      "ledger_status": "in_progress_or_pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.9",
         "bd-0agsk.17",
         "bd-0agsk.18"
@@ -289,9 +289,9 @@
         "TODO-0304"
       ],
       "source_lines": "75",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.5"
       ],
       "next_action": "Lock the expected_output schema policy before whole-tree schema validation."
@@ -301,9 +301,9 @@
         "TODO-0306"
       ],
       "source_lines": "77",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.6"
       ],
       "next_action": "Add the full fixture schema gate after policy is locked."
@@ -327,9 +327,9 @@
         "TODO-0404"
       ],
       "source_lines": "83-85",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.7"
       ],
       "next_action": "Define ownership and golden invariants before moving executor implementation."
@@ -341,9 +341,9 @@
         "TODO-0406"
       ],
       "source_lines": "84-87",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.8"
       ],
       "next_action": "Extract executor code only after the ownership and golden invariant bead closes."
@@ -358,9 +358,9 @@
         "TODO-0506"
       ],
       "source_lines": "91-96",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.10"
       ],
       "next_action": "Build coverage inventory before adding individual hardened fixture waves."
@@ -372,9 +372,9 @@
         "TODO-0603"
       ],
       "source_lines": "100-102",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.18"
       ],
       "next_action": "Plan implementation waves from drift and threshold evidence instead of directly editing broad symbol surfaces."
@@ -384,9 +384,9 @@
         "TODO-0604"
       ],
       "source_lines": "103",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.17"
       ],
       "next_action": "Define per-family replacement readiness thresholds after drift, call-through, and hardened coverage data exist."
@@ -398,9 +398,9 @@
         "TODO-0703"
       ],
       "source_lines": "107-109",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.11"
       ],
       "next_action": "Verify FRANKENLIBC_MODE startup evidence and mismatch handling across harness campaigns."
@@ -414,9 +414,9 @@
         "TODO-0805"
       ],
       "source_lines": "113-117",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.12"
       ],
       "next_action": "Refresh runtime_math linkage and classification against current AGENTS.md and source inventory."
@@ -428,9 +428,9 @@
         "TODO-0903"
       ],
       "source_lines": "121-123",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.13"
       ],
       "next_action": "Audit asupersync and frankentui as tooling-only dependencies."
@@ -442,9 +442,9 @@
         "TODO-1003"
       ],
       "source_lines": "127-129",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.16"
       ],
       "next_action": "Render architecture and migration-state report after the live-evidence gates exist."
@@ -454,9 +454,9 @@
         "TODO-1004"
       ],
       "source_lines": "130",
-      "ledger_status": "pending",
-      "live_classification": "routed_to_new_open_bead",
-      "target_beads": [
+      "ledger_status": "completed",
+      "live_classification": "already_closed_by_ledger_or_closed_bead_evidence",
+      "evidence_refs": [
         "bd-0agsk.15"
       ],
       "next_action": "Generate contributor quickstart from live scripts after gate commands stabilize."
@@ -498,10 +498,10 @@
         "artifact_has_required_report_only_shape",
         "checker_passes_and_emits_report_and_log",
         "checker_fails_on_row_count_drift",
-        "checker_fails_on_stale_pending_row_claiming_closed",
+        "checker_fails_on_completed_row_claiming_open_route",
         "checker_fails_on_unsupported_done_row_without_evidence",
         "checker_fails_when_ledger_mapping_is_missing",
-        "checker_fails_when_target_bead_is_unknown",
+        "checker_fails_when_scan_finding_target_bead_is_unknown",
         "completion_debt_evidence_resolves_original_close_reason_wording",
         "checker_fails_when_close_reason_wording_resolution_drifts"
       ]

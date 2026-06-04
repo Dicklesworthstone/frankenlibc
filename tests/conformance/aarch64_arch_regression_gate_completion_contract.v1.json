@@ -34,14 +34,14 @@
       {
         "id": "aarch64-core-crosscheck",
         "path": "scripts/check_aarch64_crosscompile.sh",
-        "line": 42,
-        "required_text": "cargo check --target ${TARGET} -p frankenlibc-core"
+        "line": 78,
+        "required_text": "cargo check --target \"${TARGET}\" -p frankenlibc-core"
       },
       {
         "id": "aarch64-abi-crosscheck",
         "path": "scripts/check_aarch64_crosscompile.sh",
-        "line": 51,
-        "required_text": "cargo check --target ${TARGET} -p frankenlibc-abi"
+        "line": 88,
+        "required_text": "cargo check --target \"${TARGET}\" -p frankenlibc-abi"
       },
       {
         "id": "environment-log-architecture-field",

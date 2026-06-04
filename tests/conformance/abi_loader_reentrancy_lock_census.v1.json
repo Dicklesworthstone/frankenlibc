@@ -2,7 +2,7 @@
   "schema_version": "abi_loader_reentrancy_lock_census.v1",
   "manifest_id": "abi-loader-reentrancy-lock-census",
   "bead": "bd-esbow",
-  "source_commit": "68e82a611a00116ee69817d5cbcdbb743e6aa8f8",
+  "source_commit": "93742bf7035aafcd0b1dbfb34f27c8b0dfd6d730",
   "source_commit_freshness": {
     "require_no_scan_root_changes_since_source_commit": true,
     "failure_reason": "Refresh this manifest whenever ABI/startup source roots add, remove, or move loader-reentrancy primitives."
@@ -67,6 +67,8 @@
         "bd-emcn5"
       ],
       "counts": {
+        "once_lock_static": 1,
+        "static_mutex": 1,
         "thread_local_macro": 1
       }
     },
@@ -117,7 +119,7 @@
       "counts": {
         "once_lock_static": 2,
         "static_mutex": 3,
-        "thread_local_macro": 5
+        "thread_local_macro": 6
       }
     },
     {
@@ -143,7 +145,7 @@
         "bd-c51oi"
       ],
       "counts": {
-        "once_lock_static": 1
+        "once_lock_static": 2
       }
     },
     {
@@ -221,6 +223,19 @@
       }
     },
     {
+      "path": "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+      "classification": "owned_unwind_environment_and_mutex_state",
+      "risk_rationale": "owned-unwind experiment paths add explicit mutex and environment-policy state; keep classified so standalone unwinder changes remain visible to loader/reentrancy audits.",
+      "linked_beads": [
+        "bd-8ol5y",
+        "bd-zo01r"
+      ],
+      "counts": {
+        "static_mutex": 1,
+        "std_env_var": 1
+      }
+    },
+    {
       "path": "crates/frankenlibc-abi/src/process_abi.rs",
       "classification": "process_env_policy_reads",
       "risk_rationale": "process helpers read environment policy; env reads must stay separate from early loader-safe paths.",
@@ -244,7 +259,7 @@
         "lazy_lock_static": 10,
         "once_lock_static": 13,
         "static_mutex": 10,
-        "std_env_var": 1,
+        "std_env_var": 3,
         "thread_local_macro": 1
       }
     },
@@ -258,7 +273,7 @@
       ],
       "counts": {
         "static_mutex": 1,
-        "std_env_var": 1,
+        "std_env_var": 2,
         "thread_local_macro": 3
       }
     },

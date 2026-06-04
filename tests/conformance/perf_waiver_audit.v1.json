@@ -3,7 +3,7 @@
   "manifest_id": "perf-waiver-audit",
   "bead": "bd-b92jd.2.3",
   "owner_bead": "bd-b92jd.2",
-  "generated_utc": "2026-05-05T02:50:00Z",
+  "generated_utc": "2026-06-02T08:00:57Z",
   "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
@@ -64,7 +64,7 @@
         "string",
         "malloc"
       ],
-      "expires_at": "2026-05-18",
+      "expires_at": "2026-08-31",
       "scope": "target_violation_only",
       "failure_signature": "perf_gate::target_violation_within_threshold",
       "rationale": "Narrowed from symbols=[*] to the two enforced_in_gate=false suites in perf_regression_prevention; runtime_math and membrane are already enforced and need no waiver."

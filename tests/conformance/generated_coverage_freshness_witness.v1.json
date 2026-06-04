@@ -2,58 +2,58 @@
   "schema_version": "generated_coverage_freshness_witness.v1",
   "bead_id": "bd-j1u6u.3",
   "trace_id": "bd-j1u6u.3::generated-coverage-freshness::v1",
-  "generated_at_utc": "2026-05-14T02:55:00Z",
-  "source_commit": "0070e800",
+  "generated_at_utc": "2026-06-03T15:21:31Z",
+  "source_commit": "93742bf",
   "purpose": "Independent freshness witness for generated conformance coverage artifacts. The checker recomputes source file hashes, fixture corpus counts, symbol counts, uncovered counts, and generator command lines so agents do not need to trust timestamps or intent.",
   "source_files": [
     {
       "id": "symbol_fixture_coverage",
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "3330ddf4c9ecbc814d2ff727081515286f10b10b88b4f07b9e4d0c586dbbe71a"
+      "sha256": "547d5d68d71cf7733d2bb3e9a460de6fc1b7b70f8fa899d2ee3d80e06cb27130"
     },
     {
       "id": "per_symbol_fixture_tests",
       "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
-      "sha256": "f39c4ebd9756a55c7f66ebe4e2e68cc6dfcd974218eabba0afdb95c5739ceb2f"
+      "sha256": "5572aeb7026241d5644a157c5c5203ef8ebde14e41a7c7b1db900b96e89bc644"
     },
     {
       "id": "fixture_coverage_prioritizer",
       "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
-      "sha256": "1ceb1949a7051bebe74f3feb490fc978b4c758e7dd94d5a2ac82d4ecaaa6c954"
+      "sha256": "a341bb32d1361b824a2a5bc1346b825253935fd9e39c43efc56f17469923c731"
     },
     {
       "id": "executor_dispatch",
       "path": "crates/frankenlibc_conformance/src/lib.rs",
-      "sha256": "f9cab8dba7783bc9c2b77de680546f2ee315626f4d67e76bf2a54493834b87e2"
+      "sha256": "2e2f24cb116298c0ca7b9fdc8fd93011429eda97ff68398860ad4be5a3d7566b"
     }
   ],
   "fixture_corpus": {
     "root": "tests/conformance/fixtures",
-    "json_file_count": 123,
-    "total_case_count": 2702,
-    "unique_function_count": 1141,
-    "corpus_sha256": "18fb3ad0fad1670ecc798b4b53666fb31cd8b38c060b3f1ebf901177577dec43"
+    "json_file_count": 127,
+    "total_case_count": 2787,
+    "unique_function_count": 1181,
+    "corpus_sha256": "d4f0ee2567b8800b7d948eacb79810bc5f284c20c4d89ab6a57826b20c5883f4"
   },
   "executor_dispatch": {
     "path": "crates/frankenlibc_conformance/src/lib.rs",
-    "execute_fixture_case_mentions": 215
+    "execute_fixture_case_mentions": 223
   },
   "symbol_counts": {
-    "target_total_symbols": 4119,
-    "target_covered_symbols": 1126,
-    "target_uncovered_symbols": 2993,
-    "target_coverage_pct": 27.34,
-    "symbols_with_fixtures": 1124,
-    "symbols_without_fixtures": 2995,
-    "total_cases": 2702,
-    "uncovered_action_count": 2995,
+    "target_total_symbols": 2797,
+    "target_covered_symbols": 848,
+    "target_uncovered_symbols": 1949,
+    "target_coverage_pct": 30.32,
+    "symbols_with_fixtures": 1164,
+    "symbols_without_fixtures": 2955,
+    "total_cases": 2787,
+    "uncovered_action_count": 1951,
     "total_format_issues": 0
   },
   "prioritizer_counts": {
     "campaign_count": 8,
-    "selected_target_uncovered_symbols": 2639,
-    "all_uncovered_target_symbols": 2993,
-    "total_first_wave_fixture_count": 96
+    "selected_target_uncovered_symbols": 1735,
+    "all_uncovered_target_symbols": 1949,
+    "total_first_wave_fixture_count": 88
   },
   "generator_command_lines": [
     "python3 scripts/generate_symbol_fixture_coverage.py --output tests/conformance/symbol_fixture_coverage.v1.json",

@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.3",
-  "generated_at_utc": "2026-05-20T02:43:37Z",
-  "source_commit": "6f65f1a8",
+  "generated_at_utc": "2026-06-03T23:52:27Z",
+  "source_commit": "2d4f9abd",
   "purpose": "Rank the next optimization targets from measured hot-path profiles, host raw baselines, and missing profile slots.",
   "inputs": {
     "benchmark_coverage_inventory": "tests/conformance/benchmark_coverage_inventory.v1.json",
@@ -14,13 +14,13 @@
     "optimization_proof_ledger": "tests/conformance/optimization_proof_ledger.v1.json"
   },
   "input_digests": {
-    "benchmark_coverage_inventory": "97e72b25cce6d7de5ae17798edc0f71360de582f3dfba1f6be7d99c625873dd0",
+    "benchmark_coverage_inventory": "56c0f772a07c8fc15e7ff387b806244aea1ea3410bbcb277fd63697494a96ec5",
     "membrane_overhead_baseline": "4e329a3426be0161ef2c58d327ebf617bbe52d72a644f1ebc90f0a896bb7efaa",
     "optimization_proof_ledger": "c172cb77dbe09508f65afd1597e3aa7763ccf79af69cf53b4e8d822fec9a807b",
     "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
     "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
     "profile_pipeline": "1f6a3dda0d7fb2569477f2a4dfea8a1c2f28c1e0d6ec2256e3e1beb656df85dd",
-    "symbol_latency_baseline": "5dcdcace475e6ee32303c38f53091fd2d7b1ddf287d4ee733e60c0109f56cddf"
+    "symbol_latency_baseline": "a9ca01da4815081e91b97954f516969ff1f0e59e8e97649b69703e6cb340037e"
   },
   "required_profile_fields": [
     "profile_id",
@@ -161,7 +161,7 @@
         "api_family": "pthread",
         "symbol": "pthread_detach",
         "runtime_mode": "hardened",
-        "hotness_score": 450.693,
+        "hotness_score": 420.693,
         "failure_signature": "none",
         "p99_ns": 409800347.0
       },
@@ -170,7 +170,7 @@
         "api_family": "pthread",
         "symbol": "pthread_create",
         "runtime_mode": "hardened",
-        "hotness_score": 450.591,
+        "hotness_score": 420.591,
         "failure_signature": "none",
         "p99_ns": 409344903.0
       },
@@ -179,7 +179,7 @@
         "api_family": "pthread",
         "symbol": "pthread_join",
         "runtime_mode": "hardened",
-        "hotness_score": 450.591,
+        "hotness_score": 420.591,
         "failure_signature": "none",
         "p99_ns": 409344903.0
       },
@@ -188,7 +188,7 @@
         "api_family": "pthread",
         "symbol": "pthread_create",
         "runtime_mode": "strict",
-        "hotness_score": 427.703,
+        "hotness_score": 397.703,
         "failure_signature": "none",
         "p99_ns": 309100493.0
       }
@@ -285,7 +285,7 @@
     {
       "title": "Capture and optimize missing strict/hardened string and malloc profile slots",
       "seed_profiles": [
-        "malloc:hardened:aligned_alloc:missing",
+        "malloc:hardened:malloc_usable_size:missing",
         "string:hardened:argz_count:missing"
       ]
     },
@@ -725,10 +725,10 @@
       "api_family": "pthread",
       "symbol": "pthread_detach",
       "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
+      "replacement_level": "L0-interpose",
       "profile_tool": "symbol_latency_capture+profile_pipeline",
       "sample_count": 1,
-      "hotness_score": 450.693,
+      "hotness_score": 420.693,
       "baseline_artifact": {
         "path": "tests/conformance/symbol_latency_baseline.v1.json",
         "source": "thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
@@ -784,7 +784,7 @@
         "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
       },
       "rank_inputs": {
-        "capture_priority_score": 170,
+        "capture_priority_score": 140,
         "perf_class": "strict_hotpath",
         "fixture_covered": true
       }
@@ -795,10 +795,10 @@
       "api_family": "pthread",
       "symbol": "pthread_create",
       "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
+      "replacement_level": "L0-interpose",
       "profile_tool": "symbol_latency_capture+profile_pipeline",
       "sample_count": 1,
-      "hotness_score": 450.591,
+      "hotness_score": 420.591,
       "baseline_artifact": {
         "path": "tests/conformance/symbol_latency_baseline.v1.json",
         "source": "thread_hotpath:symbol_latency_samples.v1.log:create_join_churn,thread_hotpath:symbol_latency_samples.v1.log:fanout_fanin_single,thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
@@ -854,7 +854,7 @@
         "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
       },
       "rank_inputs": {
-        "capture_priority_score": 170,
+        "capture_priority_score": 140,
         "perf_class": "strict_hotpath",
         "fixture_covered": true
       }
@@ -865,10 +865,10 @@
       "api_family": "pthread",
       "symbol": "pthread_join",
       "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
+      "replacement_level": "L0-interpose",
       "profile_tool": "symbol_latency_capture+profile_pipeline",
       "sample_count": 1,
-      "hotness_score": 450.591,
+      "hotness_score": 420.591,
       "baseline_artifact": {
         "path": "tests/conformance/symbol_latency_baseline.v1.json",
         "source": "thread_hotpath:symbol_latency_samples.v1.log:create_join_churn,thread_hotpath:symbol_latency_samples.v1.log:fanout_fanin_single,thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
@@ -924,7 +924,7 @@
         "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
       },
       "rank_inputs": {
-        "capture_priority_score": 170,
+        "capture_priority_score": 140,
         "perf_class": "strict_hotpath",
         "fixture_covered": true
       }
@@ -935,10 +935,10 @@
       "api_family": "pthread",
       "symbol": "pthread_create",
       "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
+      "replacement_level": "L0-interpose",
       "profile_tool": "symbol_latency_capture+profile_pipeline",
       "sample_count": 1,
-      "hotness_score": 427.703,
+      "hotness_score": 397.703,
       "baseline_artifact": {
         "path": "tests/conformance/symbol_latency_baseline.v1.json",
         "source": "thread_hotpath:symbol_latency_samples.v1.log:create_join_churn,thread_hotpath:symbol_latency_samples.v1.log:fanout_fanin_single,thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
@@ -994,7 +994,7 @@
         "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
       },
       "rank_inputs": {
-        "capture_priority_score": 170,
+        "capture_priority_score": 140,
         "perf_class": "strict_hotpath",
         "fixture_covered": true
       }
@@ -1005,10 +1005,10 @@
       "api_family": "pthread",
       "symbol": "pthread_detach",
       "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
+      "replacement_level": "L0-interpose",
       "profile_tool": "symbol_latency_capture+profile_pipeline",
       "sample_count": 1,
-      "hotness_score": 427.703,
+      "hotness_score": 397.703,
       "baseline_artifact": {
         "path": "tests/conformance/symbol_latency_baseline.v1.json",
         "source": "thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
@@ -1064,7 +1064,7 @@
         "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
       },
       "rank_inputs": {
-        "capture_priority_score": 170,
+        "capture_priority_score": 140,
         "perf_class": "strict_hotpath",
         "fixture_covered": true
       }
@@ -1075,10 +1075,10 @@
       "api_family": "pthread",
       "symbol": "pthread_join",
       "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
+      "replacement_level": "L0-interpose",
       "profile_tool": "symbol_latency_capture+profile_pipeline",
       "sample_count": 1,
-      "hotness_score": 427.703,
+      "hotness_score": 397.703,
       "baseline_artifact": {
         "path": "tests/conformance/symbol_latency_baseline.v1.json",
         "source": "thread_hotpath:symbol_latency_samples.v1.log:create_join_churn,thread_hotpath:symbol_latency_samples.v1.log:fanout_fanin_single,thread_hotpath:symbol_latency_samples.v1.log:mixed_detach_join",
@@ -1134,7 +1134,7 @@
         "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
       },
       "rank_inputs": {
-        "capture_priority_score": 170,
+        "capture_priority_score": 140,
         "perf_class": "strict_hotpath",
         "fixture_covered": true
       }
@@ -2079,200 +2079,6 @@
       }
     },
     {
-      "profile_id": "pthread:hardened:pthread_create:missing",
-      "workload_or_microbenchmark": "pthread/<missing-spec-suite>",
-      "api_family": "pthread",
-      "symbol": "pthread_create",
-      "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 232.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "pthread/<missing-spec-suite>",
-        "runtime_mode": "hardened",
-        "present": false,
-        "missing_benchmark_reason": "missing_perf_baseline_spec_suite"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/condvar_perf_validation.v1.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/thread_hotpath_optimization.v1.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_create:hardened",
-      "tail_attribution": {
-        "measurement_state": "missing_profile",
-        "api_family": "pthread",
-        "symbol": "pthread_create",
-        "runtime_mode": "hardened",
-        "validation_profile": "hardened:missing_profile_slot:pthread",
-        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "proof_command": null,
-        "metric_unit": "ns/op",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "p99_to_p50_ratio": null,
-        "tail_source": "missing_perf_baseline_spec_suite"
-      },
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
-        "user_workload_exposure": {
-          "workload_count": 4,
-          "critical_symbol_workload_count": 4,
-          "user_workload_count": 4,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-002",
-            "wl-003",
-            "wl-005",
-            "wl-010"
-          ],
-          "user_workload_ids": [
-            "uwm-language-runtime",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
-      }
-    },
-    {
-      "profile_id": "pthread:strict:pthread_create:missing",
-      "workload_or_microbenchmark": "pthread/<missing-spec-suite>",
-      "api_family": "pthread",
-      "symbol": "pthread_create",
-      "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 232.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "pthread/<missing-spec-suite>",
-        "runtime_mode": "strict",
-        "present": false,
-        "missing_benchmark_reason": "missing_perf_baseline_spec_suite"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/condvar_perf_validation.v1.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/thread_hotpath_optimization.v1.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_create:strict",
-      "tail_attribution": {
-        "measurement_state": "missing_profile",
-        "api_family": "pthread",
-        "symbol": "pthread_create",
-        "runtime_mode": "strict",
-        "validation_profile": "strict:missing_profile_slot:pthread",
-        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "proof_command": null,
-        "metric_unit": "ns/op",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "p99_to_p50_ratio": null,
-        "tail_source": "missing_perf_baseline_spec_suite"
-      },
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
-        "user_workload_exposure": {
-          "workload_count": 4,
-          "critical_symbol_workload_count": 4,
-          "user_workload_count": 4,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-002",
-            "wl-003",
-            "wl-005",
-            "wl-010"
-          ],
-          "user_workload_ids": [
-            "uwm-language-runtime",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
-      }
-    },
-    {
       "profile_id": "pthread:strict:pthread_cond_destroy",
       "workload_or_microbenchmark": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
       "api_family": "pthread",
@@ -2324,76 +2130,6 @@
         "measurement_state": "measured",
         "api_family": "pthread",
         "symbol": "pthread_cond_destroy",
-        "runtime_mode": "strict",
-        "validation_profile": "strict:symbol_latency_capture:pthread",
-        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
-        "metric_unit": "ns/op",
-        "p50_ns": 3.3,
-        "p95_ns": 6.3,
-        "p99_ns": 35.0,
-        "p99_to_p50_ratio": 10.606061,
-        "tail_source": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
-        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
-      },
-      "rank_inputs": {
-        "capture_priority_score": 170,
-        "perf_class": "strict_hotpath",
-        "fixture_covered": true
-      }
-    },
-    {
-      "profile_id": "pthread:strict:pthread_cond_init",
-      "workload_or_microbenchmark": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
-      "api_family": "pthread",
-      "symbol": "pthread_cond_init",
-      "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "symbol_latency_capture+profile_pipeline",
-      "sample_count": 1,
-      "hotness_score": 227.778,
-      "baseline_artifact": {
-        "path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "source": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
-        "runtime_mode": "strict",
-        "p50_ns": 3.3,
-        "p95_ns": 6.3,
-        "p99_ns": 35.0,
-        "present": true
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": true,
-        "kind": "raw_host_glibc_baseline",
-        "p50_ns": 2.879,
-        "p95_ns": 4.508,
-        "p99_ns": 20.0,
-        "comparison_ratio_p50": 1.146231,
-        "source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
-        "limit": null
-      },
-      "coverage_state": "measured",
-      "artifact_refs": [
-        "scripts/profile_pipeline.sh",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/symbol_latency_baseline.v1.json",
-        "tests/conformance/symbol_latency_capture_map.v1.json"
-      ],
-      "failure_signature": "none",
-      "tail_attribution": {
-        "measurement_state": "measured",
-        "api_family": "pthread",
-        "symbol": "pthread_cond_init",
         "runtime_mode": "strict",
         "validation_profile": "strict:symbol_latency_capture:pthread",
         "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
@@ -2553,76 +2289,6 @@
       }
     },
     {
-      "profile_id": "pthread:hardened:pthread_cond_init",
-      "workload_or_microbenchmark": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
-      "api_family": "pthread",
-      "symbol": "pthread_cond_init",
-      "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "symbol_latency_capture+profile_pipeline",
-      "sample_count": 1,
-      "hotness_score": 222.03,
-      "baseline_artifact": {
-        "path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
-        "runtime_mode": "hardened",
-        "p50_ns": 3.389,
-        "p95_ns": 5.0,
-        "p99_ns": 25.0,
-        "present": true
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": true,
-        "kind": "raw_host_glibc_baseline",
-        "p50_ns": 2.879,
-        "p95_ns": 4.508,
-        "p99_ns": 20.0,
-        "comparison_ratio_p50": 1.177145,
-        "source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
-        "limit": null
-      },
-      "coverage_state": "measured",
-      "artifact_refs": [
-        "scripts/profile_pipeline.sh",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/symbol_latency_baseline.v1.json",
-        "tests/conformance/symbol_latency_capture_map.v1.json"
-      ],
-      "failure_signature": "none",
-      "tail_attribution": {
-        "measurement_state": "measured",
-        "api_family": "pthread",
-        "symbol": "pthread_cond_init",
-        "runtime_mode": "hardened",
-        "validation_profile": "hardened:symbol_latency_capture:pthread",
-        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
-        "metric_unit": "ns/op",
-        "p50_ns": 3.389,
-        "p95_ns": 5.0,
-        "p99_ns": 25.0,
-        "p99_to_p50_ratio": 7.376807,
-        "tail_source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
-        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
-      },
-      "rank_inputs": {
-        "capture_priority_score": 170,
-        "perf_class": "strict_hotpath",
-        "fixture_covered": true
-      }
-    },
-    {
       "profile_id": "string:strict:memcpy",
       "workload_or_microbenchmark": "string_hotpath:symbol_latency_samples.v1.log:memcpy_1024,string_hotpath:symbol_latency_samples.v1.log:memcpy_16,string_hotpath:symbol_latency_samples.v1.log:memcpy_256,string_hotpath:symbol_latency_samples.v1.log:memcpy_4096,string_hotpath:symbol_latency_samples.v1.log:memcpy_64,string_hotpath:symbol_latency_samples.v1.log:memcpy_65536",
       "api_family": "string",
@@ -2685,200 +2351,6 @@
         "capture_priority_score": 170,
         "perf_class": "strict_hotpath",
         "fixture_covered": true
-      }
-    },
-    {
-      "profile_id": "pthread:hardened:pthread_mutex_lock:missing",
-      "workload_or_microbenchmark": "pthread/<missing-spec-suite>",
-      "api_family": "pthread",
-      "symbol": "pthread_mutex_lock",
-      "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 216.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "pthread/<missing-spec-suite>",
-        "runtime_mode": "hardened",
-        "present": false,
-        "missing_benchmark_reason": "missing_perf_baseline_spec_suite"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/condvar_perf_validation.v1.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/thread_hotpath_optimization.v1.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_lock:hardened",
-      "tail_attribution": {
-        "measurement_state": "missing_profile",
-        "api_family": "pthread",
-        "symbol": "pthread_mutex_lock",
-        "runtime_mode": "hardened",
-        "validation_profile": "hardened:missing_profile_slot:pthread",
-        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "proof_command": null,
-        "metric_unit": "ns/op",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "p99_to_p50_ratio": null,
-        "tail_source": "missing_perf_baseline_spec_suite"
-      },
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
-        "user_workload_exposure": {
-          "workload_count": 4,
-          "critical_symbol_workload_count": 3,
-          "user_workload_count": 4,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-002",
-            "wl-003",
-            "wl-005",
-            "wl-010"
-          ],
-          "user_workload_ids": [
-            "uwm-language-runtime",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
-      }
-    },
-    {
-      "profile_id": "pthread:strict:pthread_mutex_lock:missing",
-      "workload_or_microbenchmark": "pthread/<missing-spec-suite>",
-      "api_family": "pthread",
-      "symbol": "pthread_mutex_lock",
-      "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
-      "sample_count": 0,
-      "hotness_score": 216.0,
-      "baseline_artifact": {
-        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "benchmark_id": "pthread/<missing-spec-suite>",
-        "runtime_mode": "strict",
-        "present": false,
-        "missing_benchmark_reason": "missing_perf_baseline_spec_suite"
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": false,
-        "kind": "not_applicable",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "comparison_ratio_p50": null,
-        "source": null,
-        "limit": "host comparison is blocked until the profile/baseline slot is captured"
-      },
-      "coverage_state": "missing_profile",
-      "artifact_refs": [
-        "crates/frankenlibc-bench/benches",
-        "scripts/perf_baseline.json",
-        "scripts/profile_pipeline.sh",
-        "support_matrix.json",
-        "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "tests/conformance/condvar_perf_validation.v1.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/perf_baseline_spec.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/thread_hotpath_optimization.v1.json",
-        "tests/conformance/workload_matrix.json"
-      ],
-      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_lock:strict",
-      "tail_attribution": {
-        "measurement_state": "missing_profile",
-        "api_family": "pthread",
-        "symbol": "pthread_mutex_lock",
-        "runtime_mode": "strict",
-        "validation_profile": "strict:missing_profile_slot:pthread",
-        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
-        "proof_command": null,
-        "metric_unit": "ns/op",
-        "p50_ns": null,
-        "p95_ns": null,
-        "p99_ns": null,
-        "p99_to_p50_ratio": null,
-        "tail_source": "missing_perf_baseline_spec_suite"
-      },
-      "rank_inputs": {
-        "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
-        "user_workload_exposure": {
-          "workload_count": 4,
-          "critical_symbol_workload_count": 3,
-          "user_workload_count": 4,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-002",
-            "wl-003",
-            "wl-005",
-            "wl-010"
-          ],
-          "user_workload_ids": [
-            "uwm-language-runtime",
-            "uwm-threaded-service",
-            "uwm-allocator-stress",
-            "uwm-performance-hotpaths"
-          ],
-          "artifact_refs": [
-            "tests/conformance/workload_matrix.json",
-            "tests/conformance/user_workload_acceptance_matrix.v1.json"
-          ]
-        }
       }
     },
     {
@@ -2952,146 +2424,6 @@
       }
     },
     {
-      "profile_id": "pthread:hardened:pthread_mutex_lock",
-      "workload_or_microbenchmark": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-      "api_family": "pthread",
-      "symbol": "pthread_mutex_lock",
-      "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "symbol_latency_capture+profile_pipeline",
-      "sample_count": 1,
-      "hotness_score": 209.666,
-      "baseline_artifact": {
-        "path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "runtime_mode": "hardened",
-        "p50_ns": 4.193,
-        "p95_ns": 5.031,
-        "p99_ns": 25.0,
-        "present": true
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": true,
-        "kind": "raw_host_glibc_baseline",
-        "p50_ns": 4.171,
-        "p95_ns": 7.5,
-        "p99_ns": 41.728,
-        "comparison_ratio_p50": 1.005275,
-        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "limit": null
-      },
-      "coverage_state": "measured",
-      "artifact_refs": [
-        "scripts/profile_pipeline.sh",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/symbol_latency_baseline.v1.json",
-        "tests/conformance/symbol_latency_capture_map.v1.json"
-      ],
-      "failure_signature": "none",
-      "tail_attribution": {
-        "measurement_state": "measured",
-        "api_family": "pthread",
-        "symbol": "pthread_mutex_lock",
-        "runtime_mode": "hardened",
-        "validation_profile": "hardened:symbol_latency_capture:pthread",
-        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
-        "metric_unit": "ns/op",
-        "p50_ns": 4.193,
-        "p95_ns": 5.031,
-        "p99_ns": 25.0,
-        "p99_to_p50_ratio": 5.962318,
-        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
-      },
-      "rank_inputs": {
-        "capture_priority_score": 170,
-        "perf_class": "strict_hotpath",
-        "fixture_covered": true
-      }
-    },
-    {
-      "profile_id": "pthread:hardened:pthread_mutex_unlock",
-      "workload_or_microbenchmark": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-      "api_family": "pthread",
-      "symbol": "pthread_mutex_unlock",
-      "runtime_mode": "hardened",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "symbol_latency_capture+profile_pipeline",
-      "sample_count": 1,
-      "hotness_score": 209.666,
-      "baseline_artifact": {
-        "path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "runtime_mode": "hardened",
-        "p50_ns": 4.193,
-        "p95_ns": 5.031,
-        "p99_ns": 25.0,
-        "present": true
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": true,
-        "kind": "raw_host_glibc_baseline",
-        "p50_ns": 4.171,
-        "p95_ns": 7.5,
-        "p99_ns": 41.728,
-        "comparison_ratio_p50": 1.005275,
-        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "limit": null
-      },
-      "coverage_state": "measured",
-      "artifact_refs": [
-        "scripts/profile_pipeline.sh",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/symbol_latency_baseline.v1.json",
-        "tests/conformance/symbol_latency_capture_map.v1.json"
-      ],
-      "failure_signature": "none",
-      "tail_attribution": {
-        "measurement_state": "measured",
-        "api_family": "pthread",
-        "symbol": "pthread_mutex_unlock",
-        "runtime_mode": "hardened",
-        "validation_profile": "hardened:symbol_latency_capture:pthread",
-        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
-        "metric_unit": "ns/op",
-        "p50_ns": 4.193,
-        "p95_ns": 5.031,
-        "p99_ns": 25.0,
-        "p99_to_p50_ratio": 5.962318,
-        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
-      },
-      "rank_inputs": {
-        "capture_priority_score": 170,
-        "perf_class": "strict_hotpath",
-        "fixture_covered": true
-      }
-    },
-    {
       "profile_id": "pthread:strict:pthread_cond_signal",
       "workload_or_microbenchmark": "condvar_perf:symbol_latency_samples.v1.log:signal_no_waiters",
       "api_family": "pthread",
@@ -3153,146 +2485,6 @@
         "p99_ns": 15.0,
         "p99_to_p50_ratio": 7.5,
         "tail_source": "condvar_perf:symbol_latency_samples.v1.log:signal_no_waiters",
-        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
-      },
-      "rank_inputs": {
-        "capture_priority_score": 170,
-        "perf_class": "strict_hotpath",
-        "fixture_covered": true
-      }
-    },
-    {
-      "profile_id": "pthread:strict:pthread_mutex_lock",
-      "workload_or_microbenchmark": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-      "api_family": "pthread",
-      "symbol": "pthread_mutex_lock",
-      "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "symbol_latency_capture+profile_pipeline",
-      "sample_count": 1,
-      "hotness_score": 203.243,
-      "baseline_artifact": {
-        "path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "runtime_mode": "strict",
-        "p50_ns": 4.244,
-        "p95_ns": 5.0,
-        "p99_ns": 15.0,
-        "present": true
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": true,
-        "kind": "raw_host_glibc_baseline",
-        "p50_ns": 4.171,
-        "p95_ns": 7.5,
-        "p99_ns": 41.728,
-        "comparison_ratio_p50": 1.017502,
-        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "limit": null
-      },
-      "coverage_state": "measured",
-      "artifact_refs": [
-        "scripts/profile_pipeline.sh",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/symbol_latency_baseline.v1.json",
-        "tests/conformance/symbol_latency_capture_map.v1.json"
-      ],
-      "failure_signature": "none",
-      "tail_attribution": {
-        "measurement_state": "measured",
-        "api_family": "pthread",
-        "symbol": "pthread_mutex_lock",
-        "runtime_mode": "strict",
-        "validation_profile": "strict:symbol_latency_capture:pthread",
-        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
-        "metric_unit": "ns/op",
-        "p50_ns": 4.244,
-        "p95_ns": 5.0,
-        "p99_ns": 15.0,
-        "p99_to_p50_ratio": 3.534402,
-        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
-      },
-      "rank_inputs": {
-        "capture_priority_score": 170,
-        "perf_class": "strict_hotpath",
-        "fixture_covered": true
-      }
-    },
-    {
-      "profile_id": "pthread:strict:pthread_mutex_unlock",
-      "workload_or_microbenchmark": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-      "api_family": "pthread",
-      "symbol": "pthread_mutex_unlock",
-      "runtime_mode": "strict",
-      "replacement_level": "L1-native-rust",
-      "profile_tool": "symbol_latency_capture+profile_pipeline",
-      "sample_count": 1,
-      "hotness_score": 203.243,
-      "baseline_artifact": {
-        "path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "runtime_mode": "strict",
-        "p50_ns": 4.244,
-        "p95_ns": 5.0,
-        "p99_ns": 15.0,
-        "present": true
-      },
-      "parity_proof_refs": [
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
-      ],
-      "host_baseline": {
-        "available": true,
-        "kind": "raw_host_glibc_baseline",
-        "p50_ns": 4.171,
-        "p95_ns": 7.5,
-        "p99_ns": 41.728,
-        "comparison_ratio_p50": 1.017502,
-        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
-        "limit": null
-      },
-      "coverage_state": "measured",
-      "artifact_refs": [
-        "scripts/profile_pipeline.sh",
-        "tests/conformance/fixtures/pthread_cond.json",
-        "tests/conformance/fixtures/pthread_mutex.json",
-        "tests/conformance/proofs/condvar-nochange-v1.json",
-        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
-        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
-        "tests/conformance/symbol_latency_baseline.v1.json",
-        "tests/conformance/symbol_latency_capture_map.v1.json"
-      ],
-      "failure_signature": "none",
-      "tail_attribution": {
-        "measurement_state": "measured",
-        "api_family": "pthread",
-        "symbol": "pthread_mutex_unlock",
-        "runtime_mode": "strict",
-        "validation_profile": "strict:symbol_latency_capture:pthread",
-        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
-        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
-        "metric_unit": "ns/op",
-        "p50_ns": 4.244,
-        "p95_ns": 5.0,
-        "p99_ns": 15.0,
-        "p99_to_p50_ratio": 3.534402,
-        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
         "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
       },
       "rank_inputs": {
@@ -3372,6 +2564,76 @@
       }
     },
     {
+      "profile_id": "pthread:strict:pthread_cond_init",
+      "workload_or_microbenchmark": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
+      "api_family": "pthread",
+      "symbol": "pthread_cond_init",
+      "runtime_mode": "strict",
+      "replacement_level": "L0-interpose",
+      "profile_tool": "symbol_latency_capture+profile_pipeline",
+      "sample_count": 1,
+      "hotness_score": 197.778,
+      "baseline_artifact": {
+        "path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "source": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
+        "runtime_mode": "strict",
+        "p50_ns": 3.3,
+        "p95_ns": 6.3,
+        "p99_ns": 35.0,
+        "present": true
+      },
+      "parity_proof_refs": [
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
+      ],
+      "host_baseline": {
+        "available": true,
+        "kind": "raw_host_glibc_baseline",
+        "p50_ns": 2.879,
+        "p95_ns": 4.508,
+        "p99_ns": 20.0,
+        "comparison_ratio_p50": 1.146231,
+        "source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
+        "limit": null
+      },
+      "coverage_state": "measured",
+      "artifact_refs": [
+        "scripts/profile_pipeline.sh",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/symbol_latency_capture_map.v1.json"
+      ],
+      "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_init",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 3.3,
+        "p95_ns": 6.3,
+        "p99_ns": 35.0,
+        "p99_to_p50_ratio": 10.606061,
+        "tail_source": "condvar_perf:symbol_latency_samples.v1.log:init_destroy",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
+      "rank_inputs": {
+        "capture_priority_score": 140,
+        "perf_class": "strict_hotpath",
+        "fixture_covered": true
+      }
+    },
+    {
       "profile_id": "pthread:strict:pthread_cond_timedwait",
       "workload_or_microbenchmark": "condvar_perf:symbol_latency_samples.v1.log:timedwait_past_deadline",
       "api_family": "pthread",
@@ -3438,6 +2700,76 @@
       "rank_inputs": {
         "capture_priority_score": 70,
         "perf_class": "coldpath",
+        "fixture_covered": true
+      }
+    },
+    {
+      "profile_id": "pthread:hardened:pthread_cond_init",
+      "workload_or_microbenchmark": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
+      "api_family": "pthread",
+      "symbol": "pthread_cond_init",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0-interpose",
+      "profile_tool": "symbol_latency_capture+profile_pipeline",
+      "sample_count": 1,
+      "hotness_score": 192.03,
+      "baseline_artifact": {
+        "path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
+        "runtime_mode": "hardened",
+        "p50_ns": 3.389,
+        "p95_ns": 5.0,
+        "p99_ns": 25.0,
+        "present": true
+      },
+      "parity_proof_refs": [
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
+      ],
+      "host_baseline": {
+        "available": true,
+        "kind": "raw_host_glibc_baseline",
+        "p50_ns": 2.879,
+        "p95_ns": 4.508,
+        "p99_ns": 20.0,
+        "comparison_ratio_p50": 1.177145,
+        "source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
+        "limit": null
+      },
+      "coverage_state": "measured",
+      "artifact_refs": [
+        "scripts/profile_pipeline.sh",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/symbol_latency_capture_map.v1.json"
+      ],
+      "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_init",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 3.389,
+        "p95_ns": 5.0,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 7.376807,
+        "tail_source": "condvar_hotpath_bench:symbol_latency_samples.v1.log:init_destroy",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
+      "rank_inputs": {
+        "capture_priority_score": 140,
+        "perf_class": "strict_hotpath",
         "fixture_covered": true
       }
     },
@@ -7402,10 +6734,280 @@
       }
     },
     {
-      "profile_id": "malloc:hardened:aligned_alloc:missing",
+      "profile_id": "syscall:hardened:epoll_pwait2:missing",
+      "workload_or_microbenchmark": "syscall/<missing-benchmark-target>",
+      "api_family": "syscall",
+      "symbol": "epoll_pwait2",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-raw-syscall",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 190.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "syscall/<missing-benchmark-target>",
+        "runtime_mode": "hardened",
+        "present": false,
+        "missing_benchmark_reason": "missing_benchmark_target"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_benchmark_target:syscall:epoll_pwait2:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "epoll_pwait2",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_benchmark_target",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 0,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "syscall:strict:epoll_pwait2:missing",
+      "workload_or_microbenchmark": "syscall/<missing-benchmark-target>",
+      "api_family": "syscall",
+      "symbol": "epoll_pwait2",
+      "runtime_mode": "strict",
+      "replacement_level": "L1-native-raw-syscall",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 190.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "syscall/<missing-benchmark-target>",
+        "runtime_mode": "strict",
+        "present": false,
+        "missing_benchmark_reason": "missing_benchmark_target"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_benchmark_target:syscall:epoll_pwait2:strict",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "epoll_pwait2",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_benchmark_target",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 0,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "syscall:hardened:ether_aton:missing",
+      "workload_or_microbenchmark": "syscall/<missing-benchmark-target>",
+      "api_family": "syscall",
+      "symbol": "ether_aton",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-rust",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 190.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "syscall/<missing-benchmark-target>",
+        "runtime_mode": "hardened",
+        "present": false,
+        "missing_benchmark_reason": "missing_benchmark_target"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_benchmark_target:syscall:ether_aton:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "syscall",
+        "symbol": "ether_aton",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:syscall",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_benchmark_target"
+      },
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_benchmark_target",
+        "user_workload_exposure": {
+          "workload_count": 10,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 0,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-001",
+            "wl-002",
+            "wl-003",
+            "wl-004",
+            "wl-005",
+            "wl-006",
+            "wl-007",
+            "wl-008"
+          ],
+          "user_workload_ids": [],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "malloc:hardened:malloc_usable_size:missing",
       "workload_or_microbenchmark": "malloc/<missing-symbol-specific-benchmark>",
       "api_family": "malloc",
-      "symbol": "aligned_alloc",
+      "symbol": "malloc_usable_size",
       "runtime_mode": "hardened",
       "replacement_level": "L1-native-rust",
       "profile_tool": "benchmark_inventory_gap+profile_pipeline",
@@ -7446,11 +7048,11 @@
         "tests/conformance/perf_baseline_spec.json",
         "tests/conformance/workload_matrix.json"
       ],
-      "failure_signature": "missing_symbol_specific_benchmark:malloc:aligned_alloc:hardened",
+      "failure_signature": "missing_symbol_specific_benchmark:malloc:malloc_usable_size:hardened",
       "tail_attribution": {
         "measurement_state": "missing_profile",
         "api_family": "malloc",
-        "symbol": "aligned_alloc",
+        "symbol": "malloc_usable_size",
         "runtime_mode": "hardened",
         "validation_profile": "hardened:missing_profile_slot:malloc",
         "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
@@ -7496,6 +7098,286 @@
             "tests/conformance/user_workload_acceptance_matrix.v1.json"
           ]
         }
+      }
+    },
+    {
+      "profile_id": "pthread:hardened:pthread_mutex_lock",
+      "workload_or_microbenchmark": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_lock",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0-interpose",
+      "profile_tool": "symbol_latency_capture+profile_pipeline",
+      "sample_count": 1,
+      "hotness_score": 179.666,
+      "baseline_artifact": {
+        "path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "runtime_mode": "hardened",
+        "p50_ns": 4.193,
+        "p95_ns": 5.031,
+        "p99_ns": 25.0,
+        "present": true
+      },
+      "parity_proof_refs": [
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
+      ],
+      "host_baseline": {
+        "available": true,
+        "kind": "raw_host_glibc_baseline",
+        "p50_ns": 4.171,
+        "p95_ns": 7.5,
+        "p99_ns": 41.728,
+        "comparison_ratio_p50": 1.005275,
+        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "limit": null
+      },
+      "coverage_state": "measured",
+      "artifact_refs": [
+        "scripts/profile_pipeline.sh",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/symbol_latency_capture_map.v1.json"
+      ],
+      "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_lock",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.193,
+        "p95_ns": 5.031,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 5.962318,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
+      "rank_inputs": {
+        "capture_priority_score": 140,
+        "perf_class": "strict_hotpath",
+        "fixture_covered": true
+      }
+    },
+    {
+      "profile_id": "pthread:hardened:pthread_mutex_unlock",
+      "workload_or_microbenchmark": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_unlock",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0-interpose",
+      "profile_tool": "symbol_latency_capture+profile_pipeline",
+      "sample_count": 1,
+      "hotness_score": 179.666,
+      "baseline_artifact": {
+        "path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "runtime_mode": "hardened",
+        "p50_ns": 4.193,
+        "p95_ns": 5.031,
+        "p99_ns": 25.0,
+        "present": true
+      },
+      "parity_proof_refs": [
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
+      ],
+      "host_baseline": {
+        "available": true,
+        "kind": "raw_host_glibc_baseline",
+        "p50_ns": 4.171,
+        "p95_ns": 7.5,
+        "p99_ns": 41.728,
+        "comparison_ratio_p50": 1.005275,
+        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "limit": null
+      },
+      "coverage_state": "measured",
+      "artifact_refs": [
+        "scripts/profile_pipeline.sh",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/symbol_latency_capture_map.v1.json"
+      ],
+      "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_unlock",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.193,
+        "p95_ns": 5.031,
+        "p99_ns": 25.0,
+        "p99_to_p50_ratio": 5.962318,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
+      "rank_inputs": {
+        "capture_priority_score": 140,
+        "perf_class": "strict_hotpath",
+        "fixture_covered": true
+      }
+    },
+    {
+      "profile_id": "pthread:strict:pthread_mutex_lock",
+      "workload_or_microbenchmark": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_lock",
+      "runtime_mode": "strict",
+      "replacement_level": "L0-interpose",
+      "profile_tool": "symbol_latency_capture+profile_pipeline",
+      "sample_count": 1,
+      "hotness_score": 173.243,
+      "baseline_artifact": {
+        "path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "runtime_mode": "strict",
+        "p50_ns": 4.244,
+        "p95_ns": 5.0,
+        "p99_ns": 15.0,
+        "present": true
+      },
+      "parity_proof_refs": [
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
+      ],
+      "host_baseline": {
+        "available": true,
+        "kind": "raw_host_glibc_baseline",
+        "p50_ns": 4.171,
+        "p95_ns": 7.5,
+        "p99_ns": 41.728,
+        "comparison_ratio_p50": 1.017502,
+        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "limit": null
+      },
+      "coverage_state": "measured",
+      "artifact_refs": [
+        "scripts/profile_pipeline.sh",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/symbol_latency_capture_map.v1.json"
+      ],
+      "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_lock",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.244,
+        "p95_ns": 5.0,
+        "p99_ns": 15.0,
+        "p99_to_p50_ratio": 3.534402,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
+      "rank_inputs": {
+        "capture_priority_score": 140,
+        "perf_class": "strict_hotpath",
+        "fixture_covered": true
+      }
+    },
+    {
+      "profile_id": "pthread:strict:pthread_mutex_unlock",
+      "workload_or_microbenchmark": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_unlock",
+      "runtime_mode": "strict",
+      "replacement_level": "L0-interpose",
+      "profile_tool": "symbol_latency_capture+profile_pipeline",
+      "sample_count": 1,
+      "hotness_score": 173.243,
+      "baseline_artifact": {
+        "path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "runtime_mode": "strict",
+        "p50_ns": 4.244,
+        "p95_ns": 5.0,
+        "p99_ns": 15.0,
+        "present": true
+      },
+      "parity_proof_refs": [
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
+      ],
+      "host_baseline": {
+        "available": true,
+        "kind": "raw_host_glibc_baseline",
+        "p50_ns": 4.171,
+        "p95_ns": 7.5,
+        "p99_ns": 41.728,
+        "comparison_ratio_p50": 1.017502,
+        "source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "limit": null
+      },
+      "coverage_state": "measured",
+      "artifact_refs": [
+        "scripts/profile_pipeline.sh",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/symbol_latency_capture_map.v1.json"
+      ],
+      "failure_signature": "none",
+      "tail_attribution": {
+        "measurement_state": "measured",
+        "api_family": "pthread",
+        "symbol": "pthread_mutex_unlock",
+        "runtime_mode": "strict",
+        "validation_profile": "strict:symbol_latency_capture:pthread",
+        "artifact_path": "tests/conformance/symbol_latency_baseline.v1.json",
+        "proof_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "metric_unit": "ns/op",
+        "p50_ns": 4.244,
+        "p95_ns": 5.0,
+        "p99_ns": 15.0,
+        "p99_to_p50_ratio": 3.534402,
+        "tail_source": "mutex_hotpath:symbol_latency_samples.v1.log:lock_unlock",
+        "sample_log": "tests/conformance/symbol_latency_samples.v1.log"
+      },
+      "rank_inputs": {
+        "capture_priority_score": 140,
+        "perf_class": "strict_hotpath",
+        "fixture_covered": true
       }
     },
     {
@@ -7582,6 +7464,103 @@
             "wl-008"
           ],
           "user_workload_ids": [
+            "uwm-performance-hotpaths"
+          ],
+          "artifact_refs": [
+            "tests/conformance/workload_matrix.json",
+            "tests/conformance/user_workload_acceptance_matrix.v1.json"
+          ]
+        }
+      }
+    },
+    {
+      "profile_id": "pthread:hardened:pthread_cond_broadcast:missing",
+      "workload_or_microbenchmark": "pthread/<missing-spec-suite>",
+      "api_family": "pthread",
+      "symbol": "pthread_cond_broadcast",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-rust",
+      "profile_tool": "benchmark_inventory_gap+profile_pipeline",
+      "sample_count": 0,
+      "hotness_score": 168.0,
+      "baseline_artifact": {
+        "path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "benchmark_id": "pthread/<missing-spec-suite>",
+        "runtime_mode": "hardened",
+        "present": false,
+        "missing_benchmark_reason": "missing_perf_baseline_spec_suite"
+      },
+      "parity_proof_refs": [
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json"
+      ],
+      "host_baseline": {
+        "available": false,
+        "kind": "not_applicable",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "comparison_ratio_p50": null,
+        "source": null,
+        "limit": "host comparison is blocked until the profile/baseline slot is captured"
+      },
+      "coverage_state": "missing_profile",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "scripts/profile_pipeline.sh",
+        "support_matrix.json",
+        "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "tests/conformance/condvar_perf_validation.v1.json",
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/fixtures/pthread_mutex.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/proofs/condvar-nochange-v1.json",
+        "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+        "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+        "tests/conformance/thread_hotpath_optimization.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_cond_broadcast:hardened",
+      "tail_attribution": {
+        "measurement_state": "missing_profile",
+        "api_family": "pthread",
+        "symbol": "pthread_cond_broadcast",
+        "runtime_mode": "hardened",
+        "validation_profile": "hardened:missing_profile_slot:pthread",
+        "artifact_path": "tests/conformance/benchmark_coverage_inventory.v1.json",
+        "proof_command": null,
+        "metric_unit": "ns/op",
+        "p50_ns": null,
+        "p95_ns": null,
+        "p99_ns": null,
+        "p99_to_p50_ratio": null,
+        "tail_source": "missing_perf_baseline_spec_suite"
+      },
+      "rank_inputs": {
+        "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
+        "user_workload_exposure": {
+          "workload_count": 4,
+          "critical_symbol_workload_count": 0,
+          "user_workload_count": 4,
+          "top_priority_impacts": [
+            "critical",
+            "high",
+            "medium"
+          ],
+          "workload_ids": [
+            "wl-002",
+            "wl-003",
+            "wl-005",
+            "wl-010"
+          ],
+          "user_workload_ids": [
+            "uwm-language-runtime",
+            "uwm-threaded-service",
+            "uwm-allocator-stress",
             "uwm-performance-hotpaths"
           ],
           "artifact_refs": [
@@ -8403,5 +8382,5 @@
     "target_report": "target/conformance/hot_path_profile_report.report.json",
     "target_log": "target/conformance/hot_path_profile_report.log.jsonl"
   },
-  "artifact_hash": "b8bb010a51a7ec92973e51522e444dc571a7d64a7f9b7291b56ef4ca741a5049"
+  "artifact_hash": "9fed7d37346189414a4b0a379252b9d1d6e8d651ed3333d5732a60cd5aa36ab6"
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.3.1",
-  "generated_at_utc": "2026-05-01T17:35:00Z",
+  "generated_at_utc": "2026-06-03T21:45:00Z",
   "purpose": "Group every unresolved feature-parity ledger gap into countable implementation batches by FEATURE_PARITY section, symbol family, evidence artifact, and likely source owner.",
   "inputs": {
     "gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
@@ -61,8 +61,7 @@
       "batch_id": "fpg-claim-control",
       "title": "Release-claim and replacement-level gates",
       "feature_parity_sections": [
-        "macro_targets",
-        "machine_delta"
+        "macro_targets"
       ],
       "symbol_family": "global replacement claims, strict/hardened mode claims, conformance and benchmark gates",
       "abi_modules": [
@@ -78,8 +77,7 @@
         "Stub"
       ],
       "semantic_statuses": [
-        "IN_PROGRESS",
-        "drift"
+        "IN_PROGRESS"
       ],
       "evidence_artifacts": [
         "FEATURE_PARITY.md",
@@ -90,8 +88,7 @@
       ],
       "source_owner": "docs/conformance release-gate owners",
       "owner_beads": [
-        "bd-w2c3.1",
-        "bd-w2c3.1.2"
+        "bd-w2c3.1"
       ],
       "priority": 0,
       "oracle_kind": "claim_reconciliation_gate",
@@ -105,7 +102,7 @@
         "README, FEATURE_PARITY, replacement_levels, and release surfaces must fail closed until current machine evidence supports the claimed level.",
         "Closed owner beads do not close unresolved FEATURE_PARITY gaps without fresh artifact evidence."
       ],
-      "gap_count": 8,
+      "gap_count": 7,
       "gap_ids": [
         "fp-macro-targets-fa7a23e18f01",
         "fp-macro-targets-7b75050a0f03",
@@ -113,8 +110,7 @@
         "fp-macro-targets-b1b8d5acbeff",
         "fp-macro-targets-b1983d62901c",
         "fp-macro-targets-556631616b22",
-        "fp-macro-targets-1e330b896784",
-        "gap-macro-fp-macro-targets-fa7a23e18f01"
+        "fp-macro-targets-1e330b896784"
       ],
       "actionable_next_step": "Make README, FEATURE_PARITY, replacement_levels, and release notes consume machine evidence rather than support taxonomy counts alone."
     },
@@ -517,7 +513,7 @@
         "fp-gap-summary-7b67c9268b67",
         "fp-gap-summary-d643858a62b5",
         "fp-gap-summary-7c8a46cdcb5e",
-        "fp-gap-summary-b04531fdcdde",
+        "fp-gap-summary-fb294d721471",
         "fp-gap-summary-3675b24bb188",
         "fp-gap-summary-e0624b12f6a0",
         "fp-gap-summary-be0b24532a7e"
@@ -575,7 +571,7 @@
         "fp-gap-summary-267b493369f9",
         "fp-gap-summary-17c934647652",
         "fp-gap-summary-a51012652c16",
-        "fp-gap-summary-17d24896af61",
+        "fp-gap-summary-a50e943093eb",
         "fp-gap-summary-161e06bc3a3d",
         "fp-gap-summary-7bd4926c4439"
       ],
@@ -650,20 +646,19 @@
     }
   ],
   "summary": {
-    "ledger_gap_count": 111,
+    "ledger_gap_count": 110,
     "batch_count": 10,
-    "batched_gap_count": 111,
+    "batched_gap_count": 110,
     "duplicate_gap_count": 0,
     "unbatched_gap_count": 0,
     "by_feature_parity_section": {
       "macro_targets": 7,
-      "machine_delta": 1,
       "reverse_core": 20,
       "proof_math": 45,
       "gap_summary": 38
     },
     "by_likely_source_owner": {
-      "docs/conformance release-gate owners": 8,
+      "docs/conformance release-gate owners": 7,
       "frankenlibc-core and frankenlibc-abi subsystem owners": 10,
       "ABI, loader, syscall, process, and hard-parts harness owners": 10,
       "membrane proof and conformance-binder owners": 7,
