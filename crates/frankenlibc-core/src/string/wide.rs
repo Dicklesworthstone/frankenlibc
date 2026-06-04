@@ -27,6 +27,10 @@ const WIDE_COMPARE_UNROLL_LANES: usize = WIDE_COMPARE_SIMD_LANES * 2;
 /// Minimum scan length before paying to recognize contiguous membership sets.
 const WIDE_RANGE_MEMBERSHIP_MIN_LEN: usize = WIDE_COMPARE_SIMD_LANES * 32;
 
+/// Minimum bounded case-fold compare length before paying to detect repeated
+/// fold-equal wide-character pairs.
+const WIDE_CASE_REPEAT_MIN_LEN: usize = WIDE_COMPARE_UNROLL_LANES * 8;
+
 /// Number of `u32` wide characters searched per forward `wmemchr` panel.
 const WIDE_MEMCHR_SIMD_LANES: usize = 16;
 
@@ -103,6 +107,27 @@ fn fold_equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
         .simd_eq(fold_ascii_upper_wide(bv))
         .all()
         && !av.simd_eq(Simd::splat(0)).any()
+}
+
+/// Returns `true` when a 32-wide panel consists entirely of one non-NUL
+/// code-unit pair whose ASCII-folded values are equal. This narrow fast path
+/// handles long repeated case-equivalent runs (`A...` vs `a...`); every panel
+/// that does not meet the certificate falls back to the regular fold/scalar
+/// resolver without advancing.
+#[inline(always)]
+fn repeated_case_pair_equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
+    debug_assert_eq!(a.len(), WIDE_COMPARE_UNROLL_LANES);
+    debug_assert_eq!(b.len(), WIDE_COMPARE_UNROLL_LANES);
+
+    let first_a = a[0];
+    let first_b = b[0];
+    if first_a == 0 || simple_towlower(first_a) != simple_towlower(first_b) {
+        return false;
+    }
+
+    let av = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(a);
+    let bv = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(b);
+    av.simd_eq(Simd::splat(first_a)).all() && bv.simd_eq(Simd::splat(first_b)).all()
 }
 
 #[inline(always)]
@@ -1052,6 +1077,17 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
     // (post-fold) or holds a NUL drops to the scalar tail for exact resolution.
     let bounded = s1.len().min(s2.len());
     let mut i = 0;
+    if bounded >= WIDE_CASE_REPEAT_MIN_LEN {
+        while i + WIDE_COMPARE_UNROLL_LANES <= bounded {
+            if !repeated_case_pair_equal_and_no_nul_wide(
+                &s1[i..i + WIDE_COMPARE_UNROLL_LANES],
+                &s2[i..i + WIDE_COMPARE_UNROLL_LANES],
+            ) {
+                break;
+            }
+            i += WIDE_COMPARE_UNROLL_LANES;
+        }
+    }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
         if !fold_equal_and_no_nul_wide(
             &s1[i..i + WIDE_COMPARE_SIMD_LANES],
@@ -1088,6 +1124,17 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     // out-of-range (logical NUL) elements, identical to the scalar scan.
     let bounded = n.min(s1.len()).min(s2.len());
     let mut i = 0;
+    if bounded >= WIDE_CASE_REPEAT_MIN_LEN {
+        while i + WIDE_COMPARE_UNROLL_LANES <= bounded {
+            if !repeated_case_pair_equal_and_no_nul_wide(
+                &s1[i..i + WIDE_COMPARE_UNROLL_LANES],
+                &s2[i..i + WIDE_COMPARE_UNROLL_LANES],
+            ) {
+                break;
+            }
+            i += WIDE_COMPARE_UNROLL_LANES;
+        }
+    }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
         if !fold_equal_and_no_nul_wide(
             &s1[i..i + WIDE_COMPARE_SIMD_LANES],
@@ -1855,6 +1902,22 @@ mod tests {
         let s1 = [b'A' as u32, 0];
         let s2 = [b'Z' as u32, 0];
         assert_eq!(wcsncasecmp(&s1, &s2, 0), 0);
+    }
+
+    #[test]
+    fn test_wcsncasecmp_repeated_case_pair_long_run() {
+        let mut s1 = vec![b'A' as u32; WIDE_CASE_REPEAT_MIN_LEN + WIDE_COMPARE_UNROLL_LANES];
+        let mut s2 = vec![b'a' as u32; WIDE_CASE_REPEAT_MIN_LEN + WIDE_COMPARE_UNROLL_LANES];
+        s1.push(0);
+        s2.push(0);
+        assert_eq!(wcsncasecmp(&s1, &s2, s1.len()), 0);
+        assert_eq!(wcscasecmp(&s1, &s2), 0);
+
+        let diverge = WIDE_CASE_REPEAT_MIN_LEN + 3;
+        s1[diverge] = b'B' as u32;
+        s2[diverge] = b'C' as u32;
+        assert!(wcsncasecmp(&s1, &s2, s1.len()) < 0);
+        assert!(wcscasecmp(&s1, &s2) < 0);
     }
 
     #[test]
