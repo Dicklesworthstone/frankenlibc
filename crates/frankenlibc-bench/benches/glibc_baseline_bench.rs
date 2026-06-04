@@ -10,8 +10,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use frankenlibc_core::malloc::MallocState;
 use frankenlibc_core::stdio::printf::{FormatSegment, FormatSpec, format_float, parse_format_string};
 use frankenlibc_core::string::{
-    memchr, memcpy, memmove, memset, strchr, strcmp, strcpy, strlen, strncasecmp, strncmp, strpbrk,
-    strrchr, strspn,
+    memchr, memcpy, memmem, memmove, memset, strchr, strcmp, strcpy, strlen, strncasecmp, strncmp,
+    strpbrk, strrchr, strspn, strstr,
 };
 
 #[derive(Default)]
@@ -1019,6 +1019,95 @@ mod cmath {
     }
 }
 
+fn bench_memmem_absent(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_memmem_absent");
+    // Common-first-byte absent needle: every position matches the 'a' run then
+    // fails at the trailing 'b' — the O(n*m)-vs-O(n) Two-Way stress case.
+    let haystack = vec![b'a'; 4096];
+    let needle = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"; // 31 a + b, common-first-byte absent
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "memmem_absent",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "memmem",
+            workload: "4096B all-'a' haystack, common-first-byte 8B absent needle",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/mem.rs",
+        },
+        || {
+            black_box(memmem(
+                black_box(&haystack),
+                4096,
+                black_box(needle),
+                needle.len(),
+            ));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "memmem_absent",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "memmem",
+            workload: "4096B all-'a' haystack, common-first-byte 8B absent needle",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/mem.rs",
+        },
+        || {
+            // SAFETY: haystack is 4096 bytes, needle is 8 bytes, lengths exact.
+            unsafe {
+                black_box(libc::memmem(
+                    haystack.as_ptr().cast(),
+                    4096,
+                    needle.as_ptr().cast(),
+                    needle.len(),
+                ));
+            }
+        },
+    );
+    group.finish();
+}
+
+fn bench_strstr_absent(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_strstr_absent");
+    let mut haystack = vec![b'a'; 4096];
+    haystack.push(0);
+    let needle = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab\0"; // 31 a + b, absent
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strstr_absent",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strstr",
+            workload: "4096B all-'a' haystack, common-first-byte 8B absent needle",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strstr(black_box(&haystack), black_box(needle)));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strstr_absent",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strstr",
+            workload: "4096B all-'a' haystack, common-first-byte 8B absent needle",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: both haystack and needle are NUL-terminated.
+            unsafe {
+                black_box(libc::strstr(haystack.as_ptr().cast(), needle.as_ptr().cast()));
+            }
+        },
+    );
+    group.finish();
+}
+
 fn bench_math(c: &mut Criterion) {
     use frankenlibc_core::math;
     let mut group = c.benchmark_group("glibc_baseline_math");
@@ -1184,6 +1273,8 @@ criterion_group! {
         bench_memchr_absent,
         bench_strspn_long,
         bench_strpbrk_absent,
-        bench_math
+        bench_math,
+        bench_memmem_absent,
+        bench_strstr_absent
 }
 criterion_main!(benches);

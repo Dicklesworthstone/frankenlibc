@@ -893,51 +893,15 @@ pub fn strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         return Some(0);
     }
 
-    let needle = &needle[..n_len];
-    let first = needle[0];
-
-    // Jump to each first-byte candidate with the SIMD-accelerated
-    // `find_byte_or_nul` scan instead of testing every byte in scalar code,
-    // mirroring the proven idiom in `strcasestr`. `find_byte_or_nul` returns
-    // the index (relative to the slice) of the first byte equal to `first`
-    // OR the terminating NUL, whichever comes first, so the NUL check below
-    // preserves the original C-string termination semantics exactly.
-    let mut start = 0usize;
-    while start < haystack.len() {
-        let offset = find_byte_or_nul(&haystack[start..], first);
-        if offset == haystack.len() - start {
-            // Neither the first byte nor a NUL occurs in the remaining slice.
-            return None;
-        }
-
-        let i = start + offset;
-        let byte = haystack[i];
-        if byte == 0 {
-            return None;
-        }
-        if i + n_len > haystack.len() {
-            return None;
-        }
-
-        let mut matched = true;
-        for j in 1..n_len {
-            let candidate = haystack[i + j];
-            if candidate == 0 {
-                return None;
-            }
-            if candidate != needle[j] {
-                matched = false;
-                break;
-            }
-        }
-        if matched {
-            return Some(i);
-        }
-
-        start = i + 1;
-    }
-
-    None
+    // Delegate to `memmem`, which carries BOTH the SIMD first-byte prefilter and
+    // the adaptive Two-Way fallback. The previous first-byte-probe + scalar
+    // verify-at-each-candidate degraded to O(n*m) whenever the needle's first
+    // byte was common (e.g. "aaaaaaab" scanned over an 'a' run made every
+    // position a candidate, each verified byte-by-byte — ~3.4x slower than
+    // glibc). `strlen` bounds both operands to before their terminating NUL, so
+    // the C-string termination semantics are preserved exactly.
+    let h_len = strlen(haystack);
+    super::mem::memmem(haystack, h_len, needle, n_len)
 }
 
 /// BSD `strnstr`: like [`strstr`] but searches at most `n` bytes of
@@ -1946,6 +1910,59 @@ mod tests {
     #[test]
     fn test_strstr_unterminated_haystack_short_candidate() {
         assert_eq!(strstr(b"ab", b"bc\0"), None);
+    }
+
+    // Isomorphism: the memmem-delegated strstr must equal a trivial NUL-bounded
+    // window-search reference for every haystack/needle — including the
+    // common-first-byte O(n*m) stress case that motivated the rewrite.
+    #[test]
+    fn strstr_matches_naive_reference() {
+        fn naive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+            let h = &haystack[..haystack.iter().position(|&b| b == 0).unwrap_or(haystack.len())];
+            let n = &needle[..needle.iter().position(|&b| b == 0).unwrap_or(needle.len())];
+            if n.is_empty() {
+                return Some(0);
+            }
+            if n.len() > h.len() {
+                return None;
+            }
+            (0..=h.len() - n.len()).find(|&i| &h[i..i + n.len()] == n)
+        }
+        let haystacks: &[&[u8]] = &[
+            b"\0",
+            b"a\0",
+            b"abcabcabd\0",
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab\0", // common-first-byte stress
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0", // no match
+            b"the quick brown fox\0",
+            b"mississippi\0",
+            b"abc\0def\0", // embedded NUL bounds the haystack
+        ];
+        let needles: &[&[u8]] = &[
+            b"\0",
+            b"a\0",
+            b"b\0",
+            b"aaaaaaab\0", // common first byte, absent
+            b"aaab\0",
+            b"abd\0",
+            b"issi\0",
+            b"fox\0",
+            b"def\0", // only past an embedded NUL — must NOT match
+            b"xyz\0",
+            b"the quick brown fox\0",
+            b"the quick brown fox jumps\0", // needle longer than haystack
+        ];
+        for h in haystacks {
+            for n in needles {
+                assert_eq!(
+                    strstr(h, n),
+                    naive(h, n),
+                    "strstr({:?}, {:?}) diverged from naive reference",
+                    h,
+                    n
+                );
+            }
+        }
     }
 
     // ---- strnstr (BSD bounded substring search) ----
