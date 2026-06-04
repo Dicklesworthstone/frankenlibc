@@ -348,6 +348,64 @@ fn bench_malloc_free_64(c: &mut Criterion) {
     group.finish();
 }
 
+// 256-byte cycle: unlike the 64-byte profile (which hits the certificate
+// fast-path constant), a 256-byte request exercises the general size-class
+// certificate path, so this profile reflects whether the diagnostic
+// barrier/detail work runs on the hot path for arbitrary sizes.
+fn bench_malloc_free_256(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_malloc_free_256");
+
+    let mut state = MallocState::new();
+    let mut next_ptr = 0x4000_0000_usize;
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "malloc_free_256",
+            impl_label: "frankenlibc_core_state",
+            api_family: "malloc",
+            symbol: "malloc/free",
+            workload: "256 byte allocate-free cycle",
+            parity_proof_ref: "crates/frankenlibc-core/src/malloc",
+        },
+        || {
+            if let Some(ptr) = state.malloc(256, |size| {
+                next_ptr = next_ptr.wrapping_add(size.max(1));
+                Some(next_ptr)
+            }) {
+                state.free(ptr, 256, |_| {});
+                if state.lifecycle_logs().len() > 2048 {
+                    let _ = state.drain_lifecycle_logs();
+                }
+                black_box(ptr);
+            }
+        },
+    );
+
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "malloc_free_256",
+            impl_label: "host_glibc",
+            api_family: "malloc",
+            symbol: "malloc/free",
+            workload: "256 byte allocate-free cycle",
+            parity_proof_ref: "crates/frankenlibc-core/src/malloc",
+        },
+        || {
+            // SAFETY: malloc/free are paired in the same iteration.
+            unsafe {
+                let ptr = libc::malloc(256);
+                black_box(ptr);
+                if !ptr.is_null() {
+                    libc::free(ptr);
+                }
+            }
+        },
+    );
+
+    group.finish();
+}
+
 fn bench_qsort_128_i32(c: &mut Criterion) {
     let mut group = c.benchmark_group("glibc_baseline_qsort_128_i32");
     let template: Vec<i32> = (0..128).rev().map(|value| value * 17 % 97).collect();
@@ -469,6 +527,7 @@ criterion_group! {
         bench_strlen_4096,
         bench_strcmp_256_equal,
         bench_malloc_free_64,
+        bench_malloc_free_256,
         bench_qsort_128_i32
 }
 criterion_main!(benches);

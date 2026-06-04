@@ -342,24 +342,34 @@ impl MallocState {
         let size_class_cert_value =
             size_class_certificate_value(size, class_size, class_membership_valid);
 
-        self.record_lifecycle(
-            if size_class_cert_value >= 0 {
-                AllocatorLogLevel::Trace
-            } else {
-                AllocatorLogLevel::Warn
-            },
-            "malloc",
-            "size_class_certificate",
-            None,
-            Some(size),
-            Some(bin_usize),
-            if size_class_cert_value >= 0 {
-                "certificate_pass"
-            } else {
-                "certificate_violation"
-            },
-            size_class_certificate_details(size, class_size, size_class_cert_value),
-        );
+        // The size-class certificate is diagnostic only (the allocation proceeds
+        // regardless of the value). Its detail string is a per-call `format!`
+        // heap allocation — wasteful when the row would be dropped by the log
+        // gate. Build the details + record only when the chosen level actually
+        // passes the threshold; the result is byte-for-byte identical to always
+        // calling record_lifecycle (which drops sub-threshold rows anyway), but
+        // no longer allocates a string inside every (non-64) malloc.
+        let cert_level = if size_class_cert_value >= 0 {
+            AllocatorLogLevel::Trace
+        } else {
+            AllocatorLogLevel::Warn
+        };
+        if (cert_level as u8) >= (self.min_log_level as u8) {
+            self.record_lifecycle(
+                cert_level,
+                "malloc",
+                "size_class_certificate",
+                None,
+                Some(size),
+                Some(bin_usize),
+                if size_class_cert_value >= 0 {
+                    "certificate_pass"
+                } else {
+                    "certificate_violation"
+                },
+                size_class_certificate_details(size, class_size, size_class_cert_value),
+            );
+        }
 
         // Try thread cache first
         if let Some(ptr) = self.thread_cache.alloc_index(bin) {
