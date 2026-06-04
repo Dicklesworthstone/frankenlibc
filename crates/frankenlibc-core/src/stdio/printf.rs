@@ -1370,7 +1370,56 @@ fn resolve_width(spec: &FormatSpec) -> usize {
 
 /// Render `value` in the given `base` into the END of `buf`.
 /// Returns the number of digits written. Digits are placed right-aligned.
+/// Two-ASCII-digit lookup table for decimal pairs `00`..=`99`, built at compile
+/// time (`DEC_PAIRS[2*n..2*n+2]` is the zero-padded decimal of `n`). Used by
+/// [`render_decimal`] to emit two digits per division.
+static DEC_PAIRS: [u8; 200] = build_dec_pairs();
+
+const fn build_dec_pairs() -> [u8; 200] {
+    let mut table = [0u8; 200];
+    let mut n = 0usize;
+    while n < 100 {
+        table[2 * n] = b'0' + (n / 10) as u8;
+        table[2 * n + 1] = b'0' + (n % 10) as u8;
+        n += 1;
+    }
+    table
+}
+
+/// Specialised decimal renderer (base 10): emits two digits per iteration via
+/// [`DEC_PAIRS`] with a compile-time divisor of 100, so the compiler lowers the
+/// division to a magic-multiply instead of the runtime `DIV` that the
+/// general-base [`render_digits`] loop is forced to use. Writes least-
+/// significant digits at the high end of `buf` and returns the digit count —
+/// byte-for-byte identical output to the general loop with `base == 10`.
+fn render_decimal(mut value: u64, buf: &mut [u8; 64]) -> usize {
+    let mut pos = 64;
+    while value >= 100 {
+        let pair = (value % 100) as usize;
+        value /= 100;
+        pos -= 2;
+        buf[pos] = DEC_PAIRS[2 * pair];
+        buf[pos + 1] = DEC_PAIRS[2 * pair + 1];
+    }
+    // 0..=99 remains: one digit if < 10, else the final pair.
+    if value >= 10 {
+        let pair = value as usize;
+        pos -= 2;
+        buf[pos] = DEC_PAIRS[2 * pair];
+        buf[pos + 1] = DEC_PAIRS[2 * pair + 1];
+    } else {
+        pos -= 1;
+        buf[pos] = b'0' + value as u8;
+    }
+    64 - pos
+}
+
 fn render_digits(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
+    // Decimal is the overwhelmingly common case (%d/%i/%u); take the LUT path
+    // with a const divisor. The general loop below handles hex/octal/binary.
+    if base == 10 {
+        return render_decimal(value, buf);
+    }
     if value == 0 {
         buf[63] = b'0';
         return 1;
@@ -1680,6 +1729,84 @@ extern crate alloc;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Reference decimal renderer: the original general-base loop, kept here so
+    // the LUT path can be proven byte-for-byte isomorphic to it.
+    fn render_decimal_reference(mut value: u64, buf: &mut [u8; 64]) -> usize {
+        if value == 0 {
+            buf[63] = b'0';
+            return 1;
+        }
+        let mut pos = 64;
+        while value > 0 {
+            pos -= 1;
+            buf[pos] = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+        64 - pos
+    }
+
+    #[test]
+    fn render_decimal_isomorphic_to_reference_and_std() {
+        let mut probes: Vec<u64> = vec![
+            0,
+            1,
+            9,
+            10,
+            99,
+            100,
+            999,
+            1000,
+            12_345,
+            4_294_967_295,
+            4_294_967_296,
+            9_999_999_999,
+            10_000_000_000,
+            18_446_744_073_709_551_614,
+            u64::MAX,
+        ];
+        // Every power of ten and its neighbours (digit-count boundaries).
+        let mut p: u64 = 1;
+        loop {
+            probes.push(p.saturating_sub(1));
+            probes.push(p);
+            probes.push(p + 1);
+            match p.checked_mul(10) {
+                Some(next) => p = next,
+                None => break,
+            }
+        }
+        // Deterministic LCG sweep across the whole u64 range.
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for _ in 0..200_000 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            probes.push(state);
+        }
+
+        for &v in &probes {
+            let mut lut = [0u8; 64];
+            let mut reff = [0u8; 64];
+            let nl = render_decimal(v, &mut lut);
+            let nr = render_decimal_reference(v, &mut reff);
+            assert_eq!(nl, nr, "digit count mismatch for {v}");
+            assert_eq!(
+                &lut[64 - nl..],
+                &reff[64 - nr..],
+                "LUT vs reference digits mismatch for {v}"
+            );
+            assert_eq!(
+                &lut[64 - nl..],
+                v.to_string().as_bytes(),
+                "LUT vs std::to_string mismatch for {v}"
+            );
+            // render_digits(base=10) must dispatch to the same bytes.
+            let mut viad = [0u8; 64];
+            let nd = render_digits(v, 10, false, &mut viad);
+            assert_eq!(&viad[64 - nd..], &lut[64 - nl..], "render_digits(10) mismatch for {v}");
+        }
+    }
 
     #[test]
     fn test_parse_simple_int() {

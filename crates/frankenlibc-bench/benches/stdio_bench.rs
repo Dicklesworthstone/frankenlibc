@@ -5,7 +5,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::stdio::{
     BufMode, FormatFlags, FormatSpec, LengthMod, OpenFlags, Precision, StdioStream, Width,
-    format_signed, format_str, parse_format_string,
+    format_signed, format_str, format_unsigned, parse_format_string,
 };
 
 fn write_only_flags() -> OpenFlags {
@@ -88,6 +88,50 @@ fn bench_printf_render(c: &mut Criterion) {
     group.finish();
 }
 
+// Isolates the decimal digit-generation core (render_digits) by formatting
+// with a plain `%llu` spec (no width/precision/flags), so padding and flag
+// handling do not dilute the measurement. Sweeps a realistic spread of
+// magnitudes plus the 20-digit worst case (u64::MAX).
+fn bench_int_digit_generation(c: &mut Criterion) {
+    let plain_unsigned = FormatSpec::new(
+        FormatFlags::default(),
+        Width::None,
+        Precision::None,
+        LengthMod::Ll,
+        b'u',
+        None,
+    );
+    // A fixed corpus spanning 1..20 decimal digits.
+    let values: [u64; 12] = [
+        0,
+        7,
+        42,
+        999,
+        12_345,
+        678_901,
+        45_678_912,
+        3_456_789_012,
+        987_654_321_098,
+        76_543_210_987_654,
+        9_007_199_254_740_993,
+        u64::MAX,
+    ];
+
+    let mut group = c.benchmark_group("stdio_printf_render");
+    group.throughput(Throughput::Elements(values.len() as u64));
+    group.bench_function("unsigned_decimal_sweep", |b| {
+        b.iter(|| {
+            let mut out = Vec::with_capacity(24);
+            for &v in &values {
+                out.clear();
+                format_unsigned(black_box(v), &plain_unsigned, &mut out);
+                black_box(&out);
+            }
+        });
+    });
+    group.finish();
+}
+
 fn bench_stream_buffering(c: &mut Criterion) {
     let payload = [b'x'; 256];
     let mut group = c.benchmark_group("stdio_stream_buffer");
@@ -133,6 +177,7 @@ criterion_group!(
     benches,
     bench_printf_parse,
     bench_printf_render,
+    bench_int_digit_generation,
     bench_stream_buffering
 );
 criterion_main!(benches);
