@@ -46,12 +46,15 @@ impl BufMode {
 /// Stream buffer state for a single direction (read or write).
 ///
 /// Invariants:
-/// - `read_pos <= read_filled <= data.len()`
-/// - `write_len <= data.len()`
-/// - `data.len() <= capacity` (capacity is fixed at creation)
+/// - `read_pos <= read_filled <= capacity`
+/// - `write_len <= capacity`
+/// - `data.len() == 0 || data.len() == capacity`
+/// - non-empty readable/writable state implies materialized `data`
 #[derive(Debug)]
 pub struct StreamBuffer {
     data: Vec<u8>,
+    /// Logical buffer capacity reported to callers.
+    capacity: usize,
     /// Current read cursor position.
     read_pos: usize,
     /// Number of valid bytes available for read buffering.
@@ -73,7 +76,8 @@ impl StreamBuffer {
             capacity.max(1)
         };
         Self {
-            data: vec![0u8; cap],
+            data: Vec::new(),
+            capacity: cap,
             read_pos: 0,
             read_filled: 0,
             write_len: 0,
@@ -104,7 +108,7 @@ impl StreamBuffer {
 
     /// Buffer capacity.
     pub fn capacity(&self) -> usize {
-        self.data.len()
+        self.capacity
     }
 
     /// Change buffering mode and optionally resize.
@@ -120,12 +124,8 @@ impl StreamBuffer {
         } else {
             size.max(1)
         };
-        if cap <= self.data.capacity() {
-            self.data.resize(cap, 0);
-            self.data.fill(0);
-        } else {
-            self.data = vec![0u8; cap];
-        }
+        self.capacity = cap;
+        self.data.clear();
         self.read_pos = 0;
         self.read_filled = 0;
         self.write_len = 0;
@@ -160,7 +160,11 @@ impl StreamBuffer {
 
     /// Get any pending buffered write data that needs flushing.
     pub fn pending_write_data(&self) -> &[u8] {
-        &self.data[..self.write_len]
+        if self.write_len == 0 {
+            &[]
+        } else {
+            &self.data[..self.write_len]
+        }
     }
 
     /// Mark write buffer as flushed (reset position).
@@ -193,7 +197,10 @@ impl StreamBuffer {
     /// Fill the read buffer with data from an external source.
     /// Resets position to 0. Returns the number of bytes accepted.
     pub fn fill(&mut self, data: &[u8]) -> usize {
-        let take = data.len().min(self.data.len());
+        let take = data.len().min(self.capacity);
+        if take > 0 {
+            self.ensure_storage();
+        }
         self.data[..take].copy_from_slice(&data[..take]);
         self.read_pos = 0;
         self.read_filled = take;
@@ -208,7 +215,8 @@ impl StreamBuffer {
             self.read_pos -= 1;
             self.data[self.read_pos] = byte;
             true
-        } else if self.read_filled < self.data.len() {
+        } else if self.read_filled < self.capacity {
+            self.ensure_storage();
             // Shift buffer right by 1 to make room.
             if self.read_filled > 0 {
                 self.data.copy_within(0..self.read_filled, 1);
@@ -232,11 +240,20 @@ impl StreamBuffer {
     // Internal
     // -----------------------------------------------------------------------
 
+    fn ensure_storage(&mut self) {
+        if self.data.len() < self.capacity {
+            self.data.resize(self.capacity, 0);
+        }
+    }
+
     fn write_full<'a>(&mut self, data: &'a [u8]) -> WriteResult<'a> {
-        let remaining = self.data.len().saturating_sub(self.write_len);
+        let remaining = self.capacity.saturating_sub(self.write_len);
         if data.len() <= remaining {
             // Fits entirely in the buffer.
-            self.data[self.write_len..self.write_len + data.len()].copy_from_slice(data);
+            if !data.is_empty() {
+                self.ensure_storage();
+                self.data[self.write_len..self.write_len + data.len()].copy_from_slice(data);
+            }
             self.write_len += data.len();
             WriteResult {
                 buffered: data.len(),
@@ -285,7 +302,7 @@ impl StreamBuffer {
 
                 // If the remainder exceeds buffer capacity, we cannot buffer it
                 // without losing data. Fall back to flushing the entire write.
-                if remainder.len() > self.data.len() {
+                if remainder.len() > self.capacity {
                     return self.write_full(data);
                 }
 
@@ -302,7 +319,10 @@ impl StreamBuffer {
                 self.write_len = 0;
 
                 // Buffer the remainder after the newline.
-                self.data[..remainder.len()].copy_from_slice(remainder);
+                if !remainder.is_empty() {
+                    self.ensure_storage();
+                    self.data[..remainder.len()].copy_from_slice(remainder);
+                }
                 self.write_len = remainder.len();
 
                 WriteResult {
