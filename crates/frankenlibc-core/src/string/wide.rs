@@ -32,7 +32,8 @@ const WIDE_MEMBER_REPEAT_MIN_LEN: usize = WIDE_COMPARE_UNROLL_LANES * 8;
 
 /// Minimum bounded case-fold compare length before paying to detect repeated
 /// fold-equal wide-character pairs.
-const WIDE_CASE_REPEAT_MIN_LEN: usize = WIDE_COMPARE_UNROLL_LANES * 8;
+const WIDE_CASE_REPEAT_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
+const WIDE_CASE_REPEAT_MIN_LEN: usize = WIDE_CASE_REPEAT_LANES * 4;
 
 /// Number of `u32` wide characters searched per forward `wmemchr` panel.
 const WIDE_MEMCHR_SIMD_LANES: usize = 16;
@@ -130,6 +131,26 @@ fn repeated_case_pair_equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
 
     let av = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(a);
     let bv = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(b);
+    av.simd_eq(Simd::splat(first_a)).all() && bv.simd_eq(Simd::splat(first_b)).all()
+}
+
+/// The 64-wide variant of [`repeated_case_pair_equal_and_no_nul_wide`] for long
+/// fold-equal runs. This is the same certificate over a wider panel: both
+/// inputs must be one repeated non-NUL code unit and their ASCII folds must
+/// match, otherwise the scalar resolver keeps the first-difference semantics.
+#[inline(always)]
+fn repeated_case_pair_equal_and_no_nul_wide_long(a: &[u32], b: &[u32]) -> bool {
+    debug_assert_eq!(a.len(), WIDE_CASE_REPEAT_LANES);
+    debug_assert_eq!(b.len(), WIDE_CASE_REPEAT_LANES);
+
+    let first_a = a[0];
+    let first_b = b[0];
+    if first_a == 0 || simple_towlower(first_a) != simple_towlower(first_b) {
+        return false;
+    }
+
+    let av = Simd::<u32, WIDE_CASE_REPEAT_LANES>::from_slice(a);
+    let bv = Simd::<u32, WIDE_CASE_REPEAT_LANES>::from_slice(b);
     av.simd_eq(Simd::splat(first_a)).all() && bv.simd_eq(Simd::splat(first_b)).all()
 }
 
@@ -1192,6 +1213,15 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
     let bounded = s1.len().min(s2.len());
     let mut i = 0;
     if bounded >= WIDE_CASE_REPEAT_MIN_LEN {
+        while i + WIDE_CASE_REPEAT_LANES <= bounded {
+            if !repeated_case_pair_equal_and_no_nul_wide_long(
+                &s1[i..i + WIDE_CASE_REPEAT_LANES],
+                &s2[i..i + WIDE_CASE_REPEAT_LANES],
+            ) {
+                break;
+            }
+            i += WIDE_CASE_REPEAT_LANES;
+        }
         while i + WIDE_COMPARE_UNROLL_LANES <= bounded {
             if !repeated_case_pair_equal_and_no_nul_wide(
                 &s1[i..i + WIDE_COMPARE_UNROLL_LANES],
@@ -1239,6 +1269,15 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     let bounded = n.min(s1.len()).min(s2.len());
     let mut i = 0;
     if bounded >= WIDE_CASE_REPEAT_MIN_LEN {
+        while i + WIDE_CASE_REPEAT_LANES <= bounded {
+            if !repeated_case_pair_equal_and_no_nul_wide_long(
+                &s1[i..i + WIDE_CASE_REPEAT_LANES],
+                &s2[i..i + WIDE_CASE_REPEAT_LANES],
+            ) {
+                break;
+            }
+            i += WIDE_CASE_REPEAT_LANES;
+        }
         while i + WIDE_COMPARE_UNROLL_LANES <= bounded {
             if !repeated_case_pair_equal_and_no_nul_wide(
                 &s1[i..i + WIDE_COMPARE_UNROLL_LANES],
@@ -2192,6 +2231,150 @@ mod tests {
         s2[diverge] = b'C' as u32;
         assert!(wcsncasecmp(&s1, &s2, s1.len()) < 0);
         assert!(wcscasecmp(&s1, &s2) < 0);
+    }
+
+    /// Golden sha256 over deterministic `wcscasecmp`/`wcsncasecmp` outputs.
+    /// The corpus spans 16/32/64-wide panel boundaries, NUL stop positions,
+    /// fold-equal repeated runs, raw-equal runs, high wide code units, and
+    /// early/late divergences. Every case is also checked against the scalar
+    /// ASCII-fold oracle before hashing.
+    #[test]
+    fn golden_wide_casefold_compare_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        fn scalar_wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
+            let mut i = 0;
+            while i < n {
+                let a = if i < s1.len() { s1[i] } else { 0 };
+                let b = if i < s2.len() { s2[i] } else { 0 };
+                let la = simple_towlower(a);
+                let lb = simple_towlower(b);
+                if la != lb {
+                    return if (la as i32) < (lb as i32) { -1 } else { 1 };
+                }
+                if a == 0 {
+                    return 0;
+                }
+                i += 1;
+            }
+            0
+        }
+
+        fn scalar_wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
+            let mut i = 0;
+            loop {
+                let a = if i < s1.len() { s1[i] } else { 0 };
+                let b = if i < s2.len() { s2[i] } else { 0 };
+                let la = simple_towlower(a);
+                let lb = simple_towlower(b);
+                if la != lb {
+                    return if (la as i32) < (lb as i32) { -1 } else { 1 };
+                }
+                if a == 0 {
+                    return 0;
+                }
+                i += 1;
+            }
+        }
+
+        const A: u32 = b'A' as u32;
+        const B: u32 = b'B' as u32;
+        const C: u32 = b'C' as u32;
+        const LOW_A: u32 = b'a' as u32;
+        const LOW_B: u32 = b'b' as u32;
+        const Z: u32 = b'Z' as u32;
+        const HI1: u32 = 0x0101;
+        const HI2: u32 = 0x1F600;
+
+        let mut cases: Vec<(Vec<u32>, Vec<u32>, Vec<usize>)> = Vec::new();
+        for len in [
+            0usize, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 255, 256, 257, 4096,
+        ] {
+            let mut left = vec![A; len];
+            let mut right = vec![LOW_A; len];
+            left.push(0);
+            right.push(0);
+            cases.push((left, right, vec![0, len / 2, len, len + 3]));
+
+            let mut raw_left = vec![LOW_B; len];
+            let mut raw_right = vec![LOW_B; len];
+            raw_left.push(0);
+            raw_right.push(0);
+            cases.push((raw_left, raw_right, vec![len, len + 1]));
+
+            let mut mixed_left = Vec::with_capacity(len + 1);
+            let mut mixed_right = Vec::with_capacity(len + 1);
+            for i in 0..len {
+                mixed_left.push(if i % 2 == 0 { A } else { LOW_B });
+                mixed_right.push(if i % 2 == 0 { LOW_A } else { B });
+            }
+            mixed_left.push(0);
+            mixed_right.push(0);
+            cases.push((mixed_left, mixed_right, vec![len]));
+        }
+
+        for pos in [0usize, 1, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256] {
+            let mut left = vec![A; 300];
+            let mut right = vec![LOW_A; 300];
+            left.push(0);
+            right.push(0);
+            left[pos] = Z;
+            right[pos] = C;
+            cases.push((left, right, vec![pos, pos + 1, 300]));
+        }
+
+        for (nul_pos, diff_pos) in [
+            (3usize, 20usize),
+            (20, 3),
+            (31, 64),
+            (64, 31),
+            (127, 256),
+            (256, 127),
+        ] {
+            let mut left = vec![A; 320];
+            let mut right = vec![LOW_A; 320];
+            left.push(0);
+            right.push(0);
+            left[nul_pos] = 0;
+            right[nul_pos] = 0;
+            left[diff_pos] = Z;
+            right[diff_pos] = C;
+            cases.push((left, right, vec![nul_pos, diff_pos, 320]));
+        }
+
+        let mut high_left = vec![HI1; 512];
+        let mut high_right = vec![HI1; 512];
+        high_left[400] = HI2;
+        high_right[400] = HI1;
+        high_left.push(0);
+        high_right.push(0);
+        cases.push((high_left, high_right, vec![399, 400, 512]));
+
+        let mut hasher = Sha256::new();
+        for (left, right, ns) in &cases {
+            let casecmp = wcscasecmp(left, right);
+            assert_eq!(casecmp, scalar_wcscasecmp(left, right));
+            hasher.update((left.len() as u64).to_le_bytes());
+            hasher.update((right.len() as u64).to_le_bytes());
+            hasher.update(casecmp.to_le_bytes());
+
+            for &n in ns {
+                let bounded = wcsncasecmp(left, right, n);
+                assert_eq!(bounded, scalar_wcsncasecmp(left, right, n));
+                hasher.update((n as u64).to_le_bytes());
+                hasher.update(bounded.to_le_bytes());
+            }
+        }
+
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "e3cef37478ec7090a742821c4489a19cfba9e9d1f23b7237517847ad78b785ac",
+            "wide casefold compare golden corpus hash drifted"
+        );
     }
 
     #[test]
