@@ -1027,6 +1027,34 @@ pub unsafe extern "C" fn strptime(
             };
             fi += 1;
 
+            // glibc's strptime skips leading whitespace before numeric field
+            // conversions (its `get_number` helper) and before `%z`'s sign, but
+            // NOT before name conversions (%a/%A/%b/%B/%h/%p), %n/%t, or %%.
+            // Composite conversions (%D/%T/%R/%F) recurse through this loop, so
+            // their first numeric field is covered automatically.
+            if matches!(
+                spec,
+                b'Y' | b'C'
+                    | b'y'
+                    | b'm'
+                    | b'd'
+                    | b'e'
+                    | b'H'
+                    | b'I'
+                    | b'M'
+                    | b'S'
+                    | b'j'
+                    | b's'
+                    | b'U'
+                    | b'W'
+                    | b'V'
+                    | b'G'
+                    | b'g'
+                    | b'z'
+            ) {
+                si = skip_ws(input, si);
+            }
+
             match spec {
                 b'Y' => {
                     // 4-digit year
