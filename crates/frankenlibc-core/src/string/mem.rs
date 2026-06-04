@@ -146,6 +146,8 @@ const WORD: usize = size_of::<u64>();
 const SIMD_LANES: usize = 32;
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
+const MEMCHR_FOLD_PANELS: usize = 8;
+const MEMCHR_FOLD_BYTES: usize = SIMD_LANES * MEMCHR_FOLD_PANELS;
 
 const LO_U64: u64 = u64::from_ne_bytes([0x01; WORD]);
 const HI_U64: u64 = u64::from_ne_bytes([0x80; WORD]);
@@ -184,6 +186,27 @@ fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
     (p0 | p1 | p2 | p3).any()
 }
 
+#[inline(always)]
+fn has_byte_memchr_folded(block: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(block.len(), MEMCHR_FOLD_BYTES);
+    let needle = Simd::splat(byte);
+    let p0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]).simd_eq(needle);
+    let p1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]).simd_eq(needle);
+    let p2 =
+        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]).simd_eq(needle);
+    let p3 =
+        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_LANES * 4]).simd_eq(needle);
+    let p4 =
+        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 4..SIMD_LANES * 5]).simd_eq(needle);
+    let p5 =
+        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 5..SIMD_LANES * 6]).simd_eq(needle);
+    let p6 =
+        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 6..SIMD_LANES * 7]).simd_eq(needle);
+    let p7 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 7..MEMCHR_FOLD_BYTES])
+        .simd_eq(needle);
+    (p0 | p1 | p2 | p3 | p4 | p5 | p6 | p7).any()
+}
+
 #[inline]
 fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     for (&av, &bv) in a.iter().zip(b.iter()) {
@@ -203,17 +226,17 @@ fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 /// Equivalent to C `memchr`. Returns the index of the first occurrence,
 /// or `None` if not found.
 ///
-/// Scans 8 bytes per step with a word-parallel SWAR probe (`has_byte_u64`),
-/// then resolves the exact index within the first matching word low-to-high.
-/// Behaviour is identical to a byte-at-a-time `position` scan.
+/// Scans absent-heavy prefixes as folded 256-byte SIMD blocks, then resolves
+/// the exact index within the first matching panel low-to-high. Behaviour is
+/// identical to a byte-at-a-time `position` scan.
 pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
-    let mut simd_blocks = hs.chunks_exact(SIMD_FOLD_BYTES);
+    let mut simd_blocks = hs.chunks_exact(MEMCHR_FOLD_BYTES);
     let mut simd_base = 0usize;
 
     for block in simd_blocks.by_ref() {
-        if has_byte_simd_folded(block, needle) {
+        if has_byte_memchr_folded(block, needle) {
             for (panel_index, chunk) in block.chunks_exact(SIMD_LANES).enumerate() {
                 if has_byte_simd_32(chunk, needle)
                     && let Some(j) = chunk.iter().position(|&b| b == needle)
@@ -222,7 +245,7 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
                 }
             }
         }
-        simd_base += SIMD_FOLD_BYTES;
+        simd_base += MEMCHR_FOLD_BYTES;
     }
 
     let hs = simd_blocks.remainder();
@@ -782,12 +805,12 @@ mod tests {
 
     #[test]
     fn test_memchr_folded_simd_block_resolves_first_match() {
-        let mut haystack = vec![b'A'; SIMD_FOLD_BYTES + SIMD_LANES];
-        haystack[SIMD_LANES * 2 + 5] = b'Z';
-        haystack[SIMD_LANES * 3 + 11] = b'Z';
+        let mut haystack = vec![b'A'; MEMCHR_FOLD_BYTES + SIMD_LANES];
+        haystack[SIMD_LANES * 5 + 5] = b'Z';
+        haystack[SIMD_LANES * 7 + 11] = b'Z';
         assert_eq!(
             memchr(&haystack, b'Z', haystack.len()),
-            Some(SIMD_LANES * 2 + 5)
+            Some(SIMD_LANES * 5 + 5)
         );
     }
 

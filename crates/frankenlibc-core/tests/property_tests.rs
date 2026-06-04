@@ -337,6 +337,73 @@ mod string_properties {
         }
     }
 
+    /// Golden sha256 over a deterministic memchr corpus. Pins returned offsets
+    /// across empty, tail, SIMD-panel, folded-block, and long absent scans while
+    /// cross-checking every case against the scalar first-occurrence oracle.
+    #[test]
+    fn golden_memchr_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut state: u64 = 0x6A09_E667_F3BC_C909;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+
+        let lengths = [
+            0usize, 1, 7, 8, 31, 32, 33, 63, 64, 127, 128, 129, 255, 256, 257, 511, 512, 1023,
+            1024, 4095, 4096, 4097,
+        ];
+        let ns = [
+            0usize, 1, 7, 8, 31, 32, 33, 63, 64, 127, 128, 129, 255, 256, 257, 511, 512, 1024,
+            4096, 8192,
+        ];
+
+        let mut hasher = Sha256::new();
+        for &len in &lengths {
+            let mut hay: Vec<u8> = (0..len).map(|_| next()).collect();
+            for &(pos, byte) in &[
+                (0usize, 0x5A),
+                (31, 0x5A),
+                (32, 0xA5),
+                (127, 0x5A),
+                (128, 0xA5),
+                (255, 0x5A),
+                (256, 0xA5),
+                (4095, 0x5A),
+            ] {
+                if let Some(slot) = hay.get_mut(pos) {
+                    *slot = byte;
+                }
+            }
+
+            for needle in [0x00, 0x5A, 0xA5, 0xFF, next()] {
+                for &n in &ns {
+                    let count = n.min(hay.len());
+                    let expected = hay[..count].iter().position(|&b| b == needle);
+                    let got = memchr(&hay, needle, n);
+                    assert_eq!(
+                        got, expected,
+                        "memchr drift len={len} needle={needle:#04x} n={n}"
+                    );
+                    hasher.update((got.map(|idx| idx as i64).unwrap_or(-1)).to_le_bytes());
+                }
+            }
+        }
+
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "aec12be451b7b8803c8c57199f64dd2f40fc7c8894f3830e203eacaf0039f952",
+            "memchr golden corpus hash drifted"
+        );
+    }
+
     /// Golden sha256 over a deterministic strncmp corpus. Pins the exact output
     /// (sign-normalized to -1/0/1, matching C semantics) so any future refactor
     /// that changes behavior is caught. The corpus spans short/long, equal/diff
