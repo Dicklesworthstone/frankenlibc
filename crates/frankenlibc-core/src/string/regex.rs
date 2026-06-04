@@ -130,7 +130,7 @@ pub struct RegexComplexityCertificate {
     pub risk_reason: Option<RegexRiskReason>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct FirstByteSet {
     words: [u64; 4],
     any: bool,
@@ -149,6 +149,24 @@ impl FirstByteSet {
             words: [u64::MAX; 4],
             any: true,
         }
+    }
+
+    /// True iff `byte` is a member of this first-byte set.
+    fn contains(&self, byte: u8) -> bool {
+        if self.any {
+            return true;
+        }
+        let index = (byte / 64) as usize;
+        let bit = byte % 64;
+        self.words[index] & (1u64 << bit) != 0
+    }
+
+    /// Number of bytes in the set (256 when `any`).
+    fn count(&self) -> u32 {
+        if self.any {
+            return 256;
+        }
+        self.words.iter().map(|w| w.count_ones()).sum()
     }
 
     fn singleton(byte: u8) -> Self {
@@ -266,12 +284,21 @@ fn analyze_ast(ast: &Ast) -> AstAnalysis {
     match ast {
         Ast::Literal(byte) => AstAnalysis::linear(false, FirstByteSet::singleton(*byte)),
         Ast::AnyChar => AstAnalysis::linear(false, FirstByteSet::any()),
-        Ast::CharClass { ranges, .. } => {
-            let mut set = FirstByteSet::empty();
-            for &(lo, hi) in ranges {
-                set = set.union(FirstByteSet::range(lo, hi));
+        Ast::CharClass { ranges, negated } => {
+            if *negated {
+                // A negated class matches the complement of its ranges (modulo
+                // newline/locale rules). Conservatively report `any` so the
+                // first-byte prefilter never wrongly skips a valid start — the
+                // exact set would have to mirror the VM's negation+newline
+                // handling, which is not worth the parity risk here.
+                AstAnalysis::linear(false, FirstByteSet::any())
+            } else {
+                let mut set = FirstByteSet::empty();
+                for &(lo, hi) in ranges {
+                    set = set.union(FirstByteSet::range(lo, hi));
+                }
+                AstAnalysis::linear(false, set)
             }
-            AstAnalysis::linear(false, set)
         }
         Ast::Anchor(_) => AstAnalysis::linear(true, FirstByteSet::empty()),
         Ast::Group { inner, .. } => analyze_ast(inner),
@@ -459,6 +486,12 @@ pub struct CompiledRegex {
     icase: bool,
     newline: bool,
     complexity_certificate: RegexComplexityCertificate,
+    /// Set of bytes that can begin a match, when a sound first-byte prefilter
+    /// applies (non-nullable, non-`.`-leading, case-sensitive). `Some` lets the
+    /// unanchored search loop skip start positions whose byte cannot begin a
+    /// match — avoiding the per-start thread/Vec setup — turning the worst case
+    /// (no match, rare first byte) from O(n^2) toward O(n). `None` = no skip.
+    prefilter: Option<FirstByteSet>,
 }
 
 impl CompiledRegex {
@@ -1104,6 +1137,7 @@ struct PikeVm<'a> {
     input: &'a [u8],
     num_slots: usize,
     eflags: i32,
+    prefilter: Option<FirstByteSet>,
 }
 
 /// Thread state in Pike VM
@@ -1114,12 +1148,30 @@ struct Thread {
 }
 
 impl<'a> PikeVm<'a> {
-    fn new(nfa: &'a [NfaInstr], input: &'a [u8], num_slots: usize, eflags: i32) -> Self {
+    fn new(
+        nfa: &'a [NfaInstr],
+        input: &'a [u8],
+        num_slots: usize,
+        eflags: i32,
+        prefilter: Option<FirstByteSet>,
+    ) -> Self {
         Self {
             nfa,
             input,
             num_slots,
             eflags,
+            prefilter,
+        }
+    }
+
+    /// True iff a match cannot begin at `start` because its byte is not in the
+    /// prefilter's first-byte set (or there is no byte left). Sound only because
+    /// the prefilter is built for non-nullable, determinate-first-byte patterns.
+    #[inline]
+    fn prefilter_skips(&self, start: usize) -> bool {
+        match self.prefilter {
+            Some(fb) => start >= self.input.len() || !fb.contains(self.input[start]),
+            None => false,
         }
     }
 
@@ -1131,8 +1183,13 @@ impl<'a> PikeVm<'a> {
         let noteol = self.eflags & REG_NOTEOL != 0;
         let input_len = self.input.len();
 
-        // Try each start position (leftmost wins)
+        // Try each start position (leftmost wins). The prefilter skips starts
+        // whose byte cannot begin a match, avoiding the per-start slot/thread
+        // allocation below — sound because a skipped start could not match.
         for start in 0..=input_len {
+            if self.prefilter_skips(start) {
+                continue;
+            }
             let mut slots = vec![-1i32; self.num_slots];
             slots[0] = start as i32; // group 0 start
             if let Some(matched_slots) = self.run_from(start, &slots, notbol, noteol) {
@@ -1396,6 +1453,7 @@ struct BacktrackVm<'a> {
     icase: bool,
     newline: bool,
     eflags: i32,
+    prefilter: Option<FirstByteSet>,
 }
 
 impl<'a> BacktrackVm<'a> {
@@ -1409,6 +1467,7 @@ impl<'a> BacktrackVm<'a> {
         icase: bool,
         newline: bool,
         eflags: i32,
+        prefilter: Option<FirstByteSet>,
     ) -> Self {
         Self {
             ast,
@@ -1417,11 +1476,19 @@ impl<'a> BacktrackVm<'a> {
             icase,
             newline,
             eflags,
+            prefilter,
         }
     }
 
     fn execute(&self) -> Option<Vec<i32>> {
         for start in 0..=self.input.len() {
+            // Prefilter: skip starts whose byte cannot begin a match, avoiding
+            // the full backtracking attempt below (the O(n*m)-per-start cost).
+            if let Some(fb) = self.prefilter {
+                if start >= self.input.len() || !fb.contains(self.input[start]) {
+                    continue;
+                }
+            }
             let mut slots = vec![-1i32; self.num_slots];
             slots[0] = start as i32;
 
@@ -1731,6 +1798,25 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         (nfa, estimated_states)
     };
     let complexity_certificate = build_complexity_certificate(pat, &ast, estimated_states);
+
+    // First-byte prefilter: sound only when every match must consume a byte from
+    // a determinate, proper subset of [0,256) at its start. `nullable` rules out
+    // zero-width matches (which could start anywhere); `any` rules out
+    // `.`-leading patterns; `icase` is excluded because the first-byte set is
+    // computed case-sensitively from the AST. Anchors are handled for free: a
+    // leading `^` is nullable so the concat prefix still yields the next literal
+    // byte, and a non-line-start candidate simply fails the anchor in the VM.
+    let prefilter = if icase {
+        None
+    } else {
+        let analysis = analyze_ast(&ast);
+        if !analysis.nullable && !analysis.first_bytes.any && analysis.first_bytes.count() > 0 {
+            Some(analysis.first_bytes)
+        } else {
+            None
+        }
+    };
+
     let backtrack_ast = if has_backref { Some(ast) } else { None };
 
     Ok(Box::new(CompiledRegex {
@@ -1741,6 +1827,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         icase,
         newline,
         complexity_certificate,
+        prefilter,
     }))
 }
 
@@ -1845,11 +1932,12 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
             compiled.icase,
             compiled.newline,
             eflags,
+            compiled.prefilter,
         );
         return vm.execute();
     }
 
-    let vm = PikeVm::new(&compiled.nfa, input, num_slots, eflags);
+    let vm = PikeVm::new(&compiled.nfa, input, num_slots, eflags, compiled.prefilter);
 
     vm.execute()
 }
@@ -2012,6 +2100,29 @@ mod tests {
     fn negated_character_class() {
         assert!(!compile_and_match("[^abc]", "a", REG_EXTENDED));
         assert!(compile_and_match("[^abc]", "d", REG_EXTENDED));
+    }
+
+    #[test]
+    fn first_byte_prefilter_preserves_match_positions() {
+        // Each case exercises the unanchored search where the first-byte
+        // prefilter skips non-candidate starts. The whole-match offsets must be
+        // identical to a full scan: match at start / middle / not-at-all, plus
+        // char-class / plus / negated-class / backref leading bytes.
+        let cases: &[(&str, &str, Option<(i32, i32)>)] = &[
+            ("abc", "abcxx", Some((0, 3))),     // at start
+            ("abc", "xxabcxx", Some((2, 5))),   // skip to candidate in the middle
+            ("abc", "xxxxxxxx", None),          // absent -> skip everything
+            ("abc", "ababcab", Some((2, 5))),   // false candidate at 0, real at 2
+            ("[xy]z", "aazbxz", Some((4, 6))),  // char-class first byte
+            ("a+b", "cccaaab", Some((3, 7))),   // plus-leading
+            ("[^abc]d", "xxbdyd", Some((4, 6))), // negated class (prefilter=any)
+            ("xyz", "", None),                  // empty input
+        ];
+        for &(pat, input, expected) in cases {
+            let (matched, subs) = compile_and_submatch(pat, input, REG_EXTENDED);
+            let got = if matched { Some(subs[0]) } else { None };
+            assert_eq!(got, expected, "pattern {pat:?} on input {input:?}");
+        }
     }
 
     #[test]

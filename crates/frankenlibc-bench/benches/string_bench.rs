@@ -1337,6 +1337,23 @@ fn bench_memchr_absent(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_regex_search(c: &mut Criterion) {
+    use frankenlibc_core::string::regex::{REG_EXTENDED, regex_compile, regex_match_bounds_bytes};
+    let mode = mode_label();
+    // 4 KiB haystack of 'a' (no 'n'); pattern begins with a literal 'n' that
+    // never occurs, so the first-byte prefilter skips every start position
+    // instead of seeding a thread set (and its Vec allocs) at each one.
+    let haystack = vec![b'a'; 4096];
+    let compiled = regex_compile(b"needle[0-9]+", REG_EXTENDED).expect("compile");
+
+    let mut group = c.benchmark_group("regex_search_absent");
+    group.throughput(Throughput::Bytes(haystack.len() as u64));
+    group.bench_function(BenchmarkId::new(mode, 4096), |b| {
+        b.iter(|| black_box(regex_match_bounds_bytes(&compiled, black_box(&haystack), 0)));
+    });
+    group.finish();
+}
+
 fn bench_memmem(c: &mut Criterion) {
     let mode = mode_label();
     // ~4 KiB of English-like text; the needle's first byte ('q') is uncommon,
@@ -1367,6 +1384,6 @@ criterion_group!(
         .warm_up_time(Duration::from_millis(1))
         .measurement_time(Duration::from_secs(2))
         .sample_size(100);
-    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strncmp, bench_strncasecmp_equal, bench_memccpy_absent, bench_bcmp_equal, bench_strchr_absent, bench_strstr_absent, bench_strnstr_bounded_absent, bench_strcasestr_absent, bench_strrchr_absent, bench_strcspn_absent, bench_strcspn_general_absent, bench_strpbrk_absent, bench_strpbrk_general_absent, bench_strspn_full, bench_strspn_general_full, bench_strsep_absent, bench_strchrnul_absent, bench_wcsrchr_absent, bench_wcsstr_absent, bench_wcslen, bench_wcschr_absent, bench_wmemchr_absent, bench_wmemrchr_absent, bench_wmemcmp_equal, bench_wcsncmp_equal, bench_wcsncasecmp_equal, bench_wcsspn_full, bench_wcsnlen_full, bench_memchr_absent, bench_memmem
+    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strncmp, bench_strncasecmp_equal, bench_memccpy_absent, bench_bcmp_equal, bench_strchr_absent, bench_strstr_absent, bench_strnstr_bounded_absent, bench_strcasestr_absent, bench_strrchr_absent, bench_strcspn_absent, bench_strcspn_general_absent, bench_strpbrk_absent, bench_strpbrk_general_absent, bench_strspn_full, bench_strspn_general_full, bench_strsep_absent, bench_strchrnul_absent, bench_wcsrchr_absent, bench_wcsstr_absent, bench_wcslen, bench_wcschr_absent, bench_wmemchr_absent, bench_wmemrchr_absent, bench_wmemcmp_equal, bench_wcsncmp_equal, bench_wcsncasecmp_equal, bench_wcsspn_full, bench_wcsnlen_full, bench_memchr_absent, bench_memmem, bench_regex_search
 );
 criterion_main!(benches);
