@@ -26,10 +26,6 @@ fn repeated_byte(byte: u8) -> usize {
     usize::from_ne_bytes([byte; size_of::<usize>()])
 }
 
-#[inline(always)]
-fn has_byte(word: usize, byte: u8) -> bool {
-    has_nul_byte(word ^ repeated_byte(byte))
-}
 
 #[inline(always)]
 fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
@@ -69,13 +65,6 @@ fn has_byte_or_nul_simd_folded(block: &[u8], byte: u8) -> bool {
     (h0 | h1 | h2 | h3).any()
 }
 
-#[inline(always)]
-fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(chunk.len(), SIMD_LANES);
-    Simd::<u8, SIMD_LANES>::from_slice(chunk)
-        .simd_eq(Simd::splat(byte))
-        .any()
-}
 
 #[inline(always)]
 fn has_nul_simd_64(chunk: &[u8]) -> bool {
@@ -766,59 +755,41 @@ pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
         return Some(strlen(s));
     }
 
-    find_last_byte_before(s, strlen(s), c)
-}
+    // Single forward pass tracking the last match — exactly what glibc does,
+    // versus the old strlen()+reverse-scan that walked the buffer TWICE. A
+    // 128B folded SIMD probe skips blocks containing neither `c` nor NUL with
+    // one reduction; only a block that has a hit is resolved scalar-side,
+    // updating the last-seen `c` until the terminating NUL ends the string.
+    let mut last = None;
+    let mut i = 0;
 
-#[allow(unsafe_code)]
-fn find_last_byte_before(s: &[u8], mut end: usize, needle: u8) -> Option<usize> {
-    const WORD_SIZE: usize = size_of::<usize>();
-
-    while end > 0 && !(s.as_ptr() as usize + end).is_multiple_of(WORD_SIZE) {
-        end -= 1;
-        if s[end] == needle {
-            return Some(end);
-        }
-    }
-
-    while end >= SIMD_LANES {
-        let start = end - SIMD_LANES;
-        let chunk = &s[start..end];
-        if has_byte_simd_32(chunk, needle) {
-            let mut i = end;
-            while i > start {
-                i -= 1;
-                if s[i] == needle {
-                    return Some(i);
+    while i + SIMD_FOLD_BYTES <= s.len() {
+        if has_byte_or_nul_simd_folded(&s[i..i + SIMD_FOLD_BYTES], c) {
+            for k in 0..SIMD_FOLD_BYTES {
+                let byte = s[i + k];
+                if byte == 0 {
+                    return last;
+                }
+                if byte == c {
+                    last = Some(i + k);
                 }
             }
         }
-        end = start;
+        i += SIMD_FOLD_BYTES;
     }
 
-    while end >= WORD_SIZE {
-        let start = end - WORD_SIZE;
-        // SAFETY: start is aligned to WORD_SIZE, and end <= s.len().
-        let word = unsafe { core::ptr::read(s.as_ptr().add(start) as *const usize) };
-        if has_byte(word, needle) {
-            let mut i = end;
-            while i > start {
-                i -= 1;
-                if s[i] == needle {
-                    return Some(i);
-                }
-            }
+    while i < s.len() {
+        let byte = s[i];
+        if byte == 0 {
+            return last;
         }
-        end = start;
-    }
-
-    while end > 0 {
-        end -= 1;
-        if s[end] == needle {
-            return Some(end);
+        if byte == c {
+            last = Some(i);
         }
+        i += 1;
     }
 
-    None
+    last
 }
 
 /// Finds the first occurrence of the NUL-terminated substring `needle` in
