@@ -932,7 +932,7 @@ mod tests {
     #[test]
     fn offer_matches_pop_across_threads() {
         let array = Arc::new(EliminationArray::<usize, 4>::with_wait_budget(
-            Duration::from_millis(20),
+            Duration::from_millis(200),
         ));
         let ready = Arc::new(Barrier::new(2));
         let producer = Arc::clone(&array);
@@ -943,6 +943,19 @@ mod tests {
             producer.offer(0xDEAD_BEEF)
         });
         ready.wait();
+
+        let publish_deadline = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < publish_deadline && array.stats().published_slots == 0 {
+            if handle.is_finished() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            array.stats().published_slots,
+            1,
+            "producer should publish before the consumer starts empty-pop pressure"
+        );
 
         let mut observed = None;
         let deadline = Instant::now() + Duration::from_millis(50);

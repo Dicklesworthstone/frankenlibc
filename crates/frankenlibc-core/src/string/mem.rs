@@ -675,8 +675,8 @@ mod tests {
             let alpha = 1 + (next() % 4) as u8; // alphabet size 1..=4
             let hlen = (next() % 64) as usize;
             let nlen = 1 + (next() % 8) as usize;
-            let hay: Vec<u8> = (0..hlen).map(|_| (b'a' + (next() % alpha as u64) as u8)).collect();
-            let ndl: Vec<u8> = (0..nlen).map(|_| (b'a' + (next() % alpha as u64) as u8)).collect();
+            let hay: Vec<u8> = (0..hlen).map(|_| b'a' + (next() % alpha as u64) as u8).collect();
+            let ndl: Vec<u8> = (0..nlen).map(|_| b'a' + (next() % alpha as u64) as u8).collect();
             let got = memmem(&hay, hay.len(), &ndl, ndl.len());
             let want = memmem_naive(&hay, &ndl);
             assert_eq!(got, want, "memmem mismatch hay={hay:?} ndl={ndl:?}");

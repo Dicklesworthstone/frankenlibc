@@ -1716,7 +1716,8 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
         return c;
     }
 
-    let write_result = match s.buffer_write(&[byte]) {
+    let single_byte = [byte];
+    let write_result = match s.buffer_write(&single_byte) {
         Some(result) => result,
         None => {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
