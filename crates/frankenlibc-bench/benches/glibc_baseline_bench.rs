@@ -10,7 +10,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use frankenlibc_core::malloc::MallocState;
 use frankenlibc_core::stdio::printf::{FormatSegment, FormatSpec, format_float, parse_format_string};
 use frankenlibc_core::string::{
-    memcpy, memmove, memset, strchr, strcmp, strlen, strncasecmp, strncmp, strrchr,
+    memchr, memcpy, memmove, memset, strchr, strcmp, strcpy, strlen, strncasecmp, strncmp, strrchr,
+    strspn,
 };
 
 #[derive(Default)]
@@ -835,6 +836,129 @@ fn bench_strrchr_absent(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_strcpy_4096(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_strcpy_4096");
+    let mut src = vec![b'a'; 4096];
+    src.push(0);
+    let mut dst = vec![0u8; 4097];
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strcpy_4096",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strcpy",
+            workload: "4096-byte string copy",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strcpy(black_box(&mut dst), black_box(&src)));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strcpy_4096",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strcpy",
+            workload: "4096-byte string copy",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: src is NUL-terminated, dst has 4097 bytes (room for 4096 + NUL).
+            unsafe {
+                black_box(libc::strcpy(dst.as_mut_ptr().cast(), src.as_ptr().cast()));
+            }
+        },
+    );
+    group.finish();
+}
+
+fn bench_memchr_absent(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_memchr_absent");
+    let s = vec![b'a'; 4096];
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "memchr_absent",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "memchr",
+            workload: "4096-byte scan for absent byte",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/mem.rs",
+        },
+        || {
+            black_box(memchr(black_box(&s), b'z', 4096));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "memchr_absent",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "memchr",
+            workload: "4096-byte scan for absent byte",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/mem.rs",
+        },
+        || {
+            // SAFETY: s is 4096 bytes, n=4096 stays in bounds.
+            unsafe {
+                black_box(libc::memchr(s.as_ptr().cast(), b'z' as i32, 4096));
+            }
+        },
+    );
+    group.finish();
+}
+
+fn bench_strspn_long(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_strspn_long");
+    // 4096 bytes all in the accept set; large (>4) accept set -> general table path.
+    let s = {
+        let mut v = vec![b'a'; 4096];
+        v.push(0);
+        v
+    };
+    let accept = {
+        let mut v = b"abcdefgh".to_vec();
+        v.push(0);
+        v
+    };
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strspn_long",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strspn",
+            workload: "4096-byte span over 8-byte accept set",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strspn(black_box(&s), black_box(&accept)));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strspn_long",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strspn",
+            workload: "4096-byte span over 8-byte accept set",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: both s and accept are NUL-terminated.
+            unsafe {
+                black_box(libc::strspn(s.as_ptr().cast(), accept.as_ptr().cast()));
+            }
+        },
+    );
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
@@ -855,6 +979,9 @@ criterion_group! {
         bench_strrchr_absent,
         bench_strncmp_256_equal,
         bench_strncasecmp_256_equal,
-        bench_memmove_4096
+        bench_memmove_4096,
+        bench_strcpy_4096,
+        bench_memchr_absent,
+        bench_strspn_long
 }
 criterion_main!(benches);

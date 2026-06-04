@@ -5,7 +5,7 @@
 //! NUL-terminated C strings. In this safe Rust model, strings are `&[u8]` slices
 //! where a NUL byte (`0x00`) marks the logical end of the string.
 
-use std::simd::{Select, Simd, cmp::SimdOrd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
+use std::simd::{Mask, Select, Simd, cmp::SimdOrd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
 
 const LO_MAGIC: usize = usize::from_ne_bytes([0x01; size_of::<usize>()]);
 const HI_MAGIC: usize = usize::from_ne_bytes([0x80; size_of::<usize>()]);
@@ -678,6 +678,95 @@ fn find_non_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
     s.len()
 }
 
+/// HAND-UNROLLED membership mask for 8 set bytes: a lane is set iff it equals
+/// any of `set[0..8]`. The explicit `|` chain (NOT a `while k<N` loop, which
+/// stays a scalar per-lane gather and runs at scalar speed) vectorizes to 8
+/// `vpcmpeqb` + an OR tree. Callers pad short sets by repeating a real member,
+/// which only adds true-positive lanes — never a false "in-set".
+#[inline(always)]
+fn in_set_mask8(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 8]) -> Mask<i8, SIMD_LANES> {
+    lanes.simd_eq(Simd::splat(set[0]))
+        | lanes.simd_eq(Simd::splat(set[1]))
+        | lanes.simd_eq(Simd::splat(set[2]))
+        | lanes.simd_eq(Simd::splat(set[3]))
+        | lanes.simd_eq(Simd::splat(set[4]))
+        | lanes.simd_eq(Simd::splat(set[5]))
+        | lanes.simd_eq(Simd::splat(set[6]))
+        | lanes.simd_eq(Simd::splat(set[7]))
+}
+
+/// Hand-unrolled membership mask for 16 set bytes (two [`in_set_mask8`] halves).
+#[inline(always)]
+fn in_set_mask16(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 16]) -> Mask<i8, SIMD_LANES> {
+    let lo: &[u8; 8] = set[0..8].try_into().unwrap();
+    let hi: &[u8; 8] = set[8..16].try_into().unwrap();
+    in_set_mask8(lanes, lo) | in_set_mask8(lanes, hi)
+}
+
+/// Branchless 32-byte-chunk span scan. `in_set` computes a chunk's membership
+/// mask; `stop_in_set` selects direction — `true` is `strcspn` (stop on a member
+/// or NUL), `false` is `strspn` (stop on a non-member or NUL). The exact stop is
+/// resolved scalar-side via `table` (built from the REAL, unpadded set), so a
+/// padded mask only ever fast-forwards correct chunks.
+#[inline(always)]
+fn span_scan<F>(s: &[u8], table: &[bool; 256], stop_in_set: bool, in_set: F) -> usize
+where
+    F: Fn(Simd<u8, SIMD_LANES>) -> Mask<i8, SIMD_LANES>,
+{
+    let zero = Simd::<u8, SIMD_LANES>::splat(0);
+    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
+    let mut base = 0usize;
+
+    for chunk in simd_chunks.by_ref() {
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+        let nul = lanes.simd_eq(zero);
+        let member = in_set(lanes);
+        let stop = if stop_in_set {
+            (nul | member).any()
+        } else {
+            nul.any() || !member.all()
+        };
+        if stop {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || (table[byte as usize] == stop_in_set) {
+                    return base + j;
+                }
+            }
+        }
+        base += SIMD_LANES;
+    }
+
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || (table[byte as usize] == stop_in_set) {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
+/// Dispatches the `strspn`/`strcspn` general path (set size > 4) to a branchless
+/// SIMD multi-compare for sets up to 16 bytes — padding short sets with a real
+/// member — or a scalar `table` scan for larger sets (rare). `set` is non-empty.
+fn span_general(s: &[u8], set: &[u8], table: &[bool; 256], stop_in_set: bool) -> usize {
+    if set.len() <= 8 {
+        let mut padded = [set[0]; 8];
+        padded[..set.len()].copy_from_slice(set);
+        span_scan(s, table, stop_in_set, |lanes| in_set_mask8(lanes, &padded))
+    } else if set.len() <= 16 {
+        let mut padded = [set[0]; 16];
+        padded[..set.len()].copy_from_slice(set);
+        span_scan(s, table, stop_in_set, |lanes| in_set_mask16(lanes, &padded))
+    } else {
+        for (i, &byte) in s.iter().enumerate() {
+            if byte == 0 || (table[byte as usize] == stop_in_set) {
+                return i;
+            }
+        }
+        s.len()
+    }
+}
+
 #[allow(unsafe_code)]
 fn find_non_byte_or_nul(s: &[u8], accepted: u8) -> usize {
     const WORD_SIZE: usize = size_of::<usize>();
@@ -1014,14 +1103,7 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
 
     let accept_set = &accept[..accept_len];
     let accept_table = byte_membership_table(accept_set);
-
-    for (i, &byte) in s.iter().enumerate() {
-        if byte == 0 || !accept_table[byte as usize] {
-            return i;
-        }
-    }
-
-    s.len()
+    span_general(s, accept_set, &accept_table, false)
 }
 
 /// Returns the length of the initial segment of `s` consisting entirely of
@@ -1063,14 +1145,7 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
 
     let reject_set = &reject[..reject_len];
     let reject_table = byte_membership_table(reject_set);
-
-    for (i, &byte) in s.iter().enumerate() {
-        if byte == 0 || reject_table[byte as usize] {
-            return i;
-        }
-    }
-
-    s.len()
+    span_general(s, reject_set, &reject_table, true)
 }
 
 /// Locates the first occurrence of any byte from `accept` in `s`.
@@ -1632,6 +1707,70 @@ mod tests {
     fn test_strspn_small_accept_sets() {
         assert_eq!(strspn(b"ababaZ\0", b"ab\0"), 5);
         assert_eq!(strspn(b"cabbaZ\0", b"abc\0"), 5);
+    }
+
+    // Isomorphism: the generalized SIMD span scan (set size > 4: padded-8,
+    // padded-16, and the scalar >16 tier) must equal a trivial scalar oracle
+    // for every input/set, across chunk boundaries and stop positions.
+    #[test]
+    fn span_general_matches_scalar_oracle() {
+        fn span_oracle(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
+            let set_len = set.iter().position(|&b| b == 0).unwrap_or(set.len());
+            let real = &set[..set_len];
+            for (i, &b) in s.iter().enumerate() {
+                if b == 0 || (real.contains(&b) == stop_in_set) {
+                    return i;
+                }
+            }
+            s.len()
+        }
+        // Sets of size 5,8,9,16,17,20 (exercise padded-8 / padded-16 / scalar).
+        let sets: &[&[u8]] = &[
+            b"abcde\0",
+            b"abcdefgh\0",
+            b"abcdefghi\0",
+            b"abcdefghijklmnop\0",
+            b"abcdefghijklmnopq\0",
+            b"0123456789abcdefghij\0",
+        ];
+        for set in sets {
+            for len in [0usize, 1, 7, 31, 32, 33, 65, 200] {
+                for stop_pos in [usize::MAX, 0, 1, 30, 31, 32, 64, len.saturating_sub(1)] {
+                    // Vary fill/interloper membership so both directions get
+                    // non-trivial scans: 'a' is in every set, 'x' in none,
+                    // 'm'/'5' in some.
+                    for &fill in &[b'a', b'x', b'm', b'5'] {
+                        for &interloper in &[b'Z', b'a', b'5', b'm'] {
+                            let mut s = vec![fill; len];
+                            if stop_pos < len {
+                                s[stop_pos] = interloper;
+                            }
+                            s.push(0);
+                            assert_eq!(
+                                strspn(&s, set),
+                                span_oracle(&s, set, false),
+                                "strspn set={:?} len={} stop={} fill={} int={}",
+                                set,
+                                len,
+                                stop_pos,
+                                fill,
+                                interloper
+                            );
+                            assert_eq!(
+                                strcspn(&s, set),
+                                span_oracle(&s, set, true),
+                                "strcspn set={:?} len={} stop={} fill={} int={}",
+                                set,
+                                len,
+                                stop_pos,
+                                fill,
+                                interloper
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
