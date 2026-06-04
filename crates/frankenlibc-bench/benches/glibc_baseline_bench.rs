@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::malloc::MallocState;
+use frankenlibc_core::stdio::printf::{FormatSegment, FormatSpec, format_float, parse_format_string};
 use frankenlibc_core::string::{memcpy, memset, strcmp, strlen};
 
 #[derive(Default)]
@@ -462,6 +463,73 @@ fn bench_malloc_free_large(c: &mut Criterion) {
     group.finish();
 }
 
+fn spec_of(fmt: &[u8]) -> FormatSpec {
+    parse_format_string(fmt)
+        .as_slice()
+        .iter()
+        .find_map(|s| match s {
+            FormatSegment::Spec(spec) => Some(*spec),
+            _ => None,
+        })
+        .expect("spec")
+}
+
+// printf float formatting (%.6f and %.6g) vs glibc snprintf. Sizes the gap on a
+// hot path frankenlibc currently services via core::fmt + a per-call heap String.
+fn bench_printf_float(c: &mut Criterion) {
+    let f_spec = spec_of(b"%.6f");
+    let g_spec = spec_of(b"%.6g");
+    let value = 12345.678901_f64;
+
+    let mut group = c.benchmark_group("glibc_baseline_printf_float");
+    for (profile, spec, cfmt) in [
+        ("printf_f_6", f_spec, c"%.6f"),
+        ("printf_g_6", g_spec, c"%.6g"),
+    ] {
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: profile,
+                impl_label: "frankenlibc_core",
+                api_family: "stdio",
+                symbol: "printf/float",
+                workload: "format f64 12345.678901",
+                parity_proof_ref: "crates/frankenlibc-core/src/stdio/printf.rs",
+            },
+            || {
+                let mut buf = Vec::with_capacity(32);
+                format_float(black_box(value), &spec, &mut buf);
+                black_box(&buf);
+            },
+        );
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: profile,
+                impl_label: "host_glibc",
+                api_family: "stdio",
+                symbol: "printf/float",
+                workload: "format f64 12345.678901",
+                parity_proof_ref: "crates/frankenlibc-core/src/stdio/printf.rs",
+            },
+            || {
+                let mut buf = [0u8; 64];
+                // SAFETY: buf is 64 bytes, format is a valid C string, one f64 arg.
+                unsafe {
+                    libc::snprintf(
+                        buf.as_mut_ptr().cast(),
+                        buf.len(),
+                        cfmt.as_ptr(),
+                        black_box(value),
+                    );
+                }
+                black_box(&buf);
+            },
+        );
+    }
+    group.finish();
+}
+
 fn bench_qsort_128_i32(c: &mut Criterion) {
     let mut group = c.benchmark_group("glibc_baseline_qsort_128_i32");
     let template: Vec<i32> = (0..128).rev().map(|value| value * 17 % 97).collect();
@@ -585,6 +653,7 @@ criterion_group! {
         bench_malloc_free_64,
         bench_malloc_free_256,
         bench_malloc_free_large,
+        bench_printf_float,
         bench_qsort_128_i32
 }
 criterion_main!(benches);
