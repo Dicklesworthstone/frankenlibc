@@ -306,19 +306,24 @@ impl MallocState {
             if let Some(ptr) = out {
                 if let Some(large_alloc) = self.large_allocations.register(ptr, size) {
                     self.track_allocation(size);
-                    self.record_lifecycle(
-                        AllocatorLogLevel::Trace,
-                        "malloc",
-                        "alloc",
-                        Some(ptr),
-                        Some(size),
-                        Some(NUM_SIZE_CLASSES),
-                        "success",
-                        format!(
-                            "path=large_allocator;mapped_size={}",
-                            large_alloc.mapped_size
-                        ),
-                    );
+                    // Only build the per-alloc detail string when the Trace row
+                    // would actually be kept (default Warn drops it) — avoids a
+                    // heap `format!` inside every large allocation. Identical logs.
+                    if (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8) {
+                        self.record_lifecycle(
+                            AllocatorLogLevel::Trace,
+                            "malloc",
+                            "alloc",
+                            Some(ptr),
+                            Some(size),
+                            Some(NUM_SIZE_CLASSES),
+                            "success",
+                            format!(
+                                "path=large_allocator;mapped_size={}",
+                                large_alloc.mapped_size
+                            ),
+                        );
+                    }
                 } else {
                     self.record_lifecycle(
                         AllocatorLogLevel::Warn,
@@ -393,21 +398,26 @@ impl MallocState {
         match self.elimination.try_take(bin_usize) {
             TakeOutcome::Matched { value: ptr, meta } => {
                 self.track_allocation(size);
-                self.record_lifecycle(
-                    AllocatorLogLevel::Trace,
-                    "malloc",
-                    "alloc",
-                    Some(ptr),
-                    Some(size),
-                    Some(bin_usize),
-                    "success",
-                    format!(
-                        "path=elimination;slot={};wait_cycles={};partner_thread={}",
-                        meta.slot_index.unwrap_or(usize::MAX),
-                        meta.wait_cycles,
-                        meta.partner_thread.unwrap_or(0)
-                    ),
-                );
+                // Build the detail string only when the Trace row would be kept;
+                // avoids a heap `format!` on every elimination-matched alloc
+                // (the common path under multi-threaded malloc/free traffic).
+                if (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8) {
+                    self.record_lifecycle(
+                        AllocatorLogLevel::Trace,
+                        "malloc",
+                        "alloc",
+                        Some(ptr),
+                        Some(size),
+                        Some(bin_usize),
+                        "success",
+                        format!(
+                            "path=elimination;slot={};wait_cycles={};partner_thread={}",
+                            meta.slot_index.unwrap_or(usize::MAX),
+                            meta.wait_cycles,
+                            meta.partner_thread.unwrap_or(0)
+                        ),
+                    );
+                }
                 return Some(ptr);
             }
             TakeOutcome::Fallback { .. } => {}
@@ -501,21 +511,25 @@ impl MallocState {
         if Arc::strong_count(&self.elimination) > 1 {
             match self.elimination.try_offer(bin_usize, ptr) {
                 OfferOutcome::Matched(meta) => {
-                    self.record_lifecycle(
-                        AllocatorLogLevel::Trace,
-                        "free",
-                        "free",
-                        Some(ptr),
-                        Some(size),
-                        Some(bin_usize),
-                        "success",
-                        format!(
-                            "path=elimination;slot={};wait_cycles={};partner_thread={}",
-                            meta.slot_index.unwrap_or(usize::MAX),
-                            meta.wait_cycles,
-                            meta.partner_thread.unwrap_or(0)
-                        ),
-                    );
+                    // Detail string only when the Trace row survives the gate —
+                    // skips a heap `format!` on every elimination-matched free.
+                    if (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8) {
+                        self.record_lifecycle(
+                            AllocatorLogLevel::Trace,
+                            "free",
+                            "free",
+                            Some(ptr),
+                            Some(size),
+                            Some(bin_usize),
+                            "success",
+                            format!(
+                                "path=elimination;slot={};wait_cycles={};partner_thread={}",
+                                meta.slot_index.unwrap_or(usize::MAX),
+                                meta.wait_cycles,
+                                meta.partner_thread.unwrap_or(0)
+                            ),
+                        );
+                    }
                     return;
                 }
                 OfferOutcome::Fallback { value, .. } => {
