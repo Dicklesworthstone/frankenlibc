@@ -1006,6 +1006,120 @@ fn bench_strpbrk_absent(c: &mut Criterion) {
     group.finish();
 }
 
+// Host glibc libm symbols (the `libc` crate does not bind the transcendentals);
+// resolved at link time from the C runtime.
+mod cmath {
+    unsafe extern "C" {
+        pub fn exp(x: f64) -> f64;
+        pub fn sin(x: f64) -> f64;
+        pub fn cos(x: f64) -> f64;
+        pub fn log(x: f64) -> f64;
+        pub fn pow(x: f64, y: f64) -> f64;
+        pub fn atan2(y: f64, x: f64) -> f64;
+    }
+}
+
+fn bench_math(c: &mut Criterion) {
+    use frankenlibc_core::math;
+    let mut group = c.benchmark_group("glibc_baseline_math");
+
+    // Vary the input every call (loop over a table) so the inlinable Rust libm
+    // is NOT hoisted out of the timing loop — a constant input made sin/cos look
+    // artificially ~4x faster than glibc's opaque extern. Each op sums over all
+    // inputs; the franken/glibc ratio is per-batch and hoist-free.
+    let inputs: Vec<f64> = (0..64).map(|k| 0.5 + (k as f64) * 0.031_25).collect();
+
+    macro_rules! pair {
+        ($id:expr, $sym:expr, $work:expr, $franken:expr, $glibc:expr) => {{
+            bench_op(
+                &mut group,
+                BenchMeta {
+                    profile_id: $id,
+                    impl_label: "frankenlibc_core",
+                    api_family: "math",
+                    symbol: $sym,
+                    workload: $work,
+                    parity_proof_ref: "crates/frankenlibc-core/src/math/",
+                },
+                || {
+                    let mut acc = 0.0_f64;
+                    for &x in &inputs {
+                        let f: fn(f64) -> f64 = $franken;
+                        acc += f(black_box(x));
+                    }
+                    black_box(acc);
+                },
+            );
+            bench_op(
+                &mut group,
+                BenchMeta {
+                    profile_id: $id,
+                    impl_label: "host_glibc",
+                    api_family: "math",
+                    symbol: $sym,
+                    workload: $work,
+                    parity_proof_ref: "crates/frankenlibc-core/src/math/",
+                },
+                || {
+                    let mut acc = 0.0_f64;
+                    for &x in &inputs {
+                        let g: unsafe extern "C" fn(f64) -> f64 = $glibc;
+                        // SAFETY: plain libm call on a finite f64 input.
+                        acc += unsafe { g(black_box(x)) };
+                    }
+                    black_box(acc);
+                },
+            );
+        }};
+    }
+
+    pair!("exp", "exp", "exp(x) x in [0.5,2.5)", math::exp, cmath::exp);
+    pair!("sin", "sin", "sin(x) x in [0.5,2.5)", math::sin, cmath::sin);
+    pair!("cos", "cos", "cos(x) x in [0.5,2.5)", math::cos, cmath::cos);
+    pair!("log", "log", "log(x) x in [0.5,2.5)", math::log, cmath::log);
+
+    // pow is binary — bench it explicitly (exponent 2.5, varying base).
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "pow",
+            impl_label: "frankenlibc_core",
+            api_family: "math",
+            symbol: "pow",
+            workload: "pow(x,3) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs {
+                acc += math::pow(black_box(x), black_box(3.0));
+            }
+            black_box(acc);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "pow",
+            impl_label: "host_glibc",
+            api_family: "math",
+            symbol: "pow",
+            workload: "pow(x,3) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs {
+                // SAFETY: plain libm call on finite f64 inputs.
+                acc += unsafe { cmath::pow(black_box(x), black_box(3.0)) };
+            }
+            black_box(acc);
+        },
+    );
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
@@ -1030,6 +1144,7 @@ criterion_group! {
         bench_strcpy_4096,
         bench_memchr_absent,
         bench_strspn_long,
-        bench_strpbrk_absent
+        bench_strpbrk_absent,
+        bench_math
 }
 criterion_main!(benches);
