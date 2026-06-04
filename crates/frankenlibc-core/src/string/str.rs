@@ -35,12 +35,38 @@ fn has_byte(word: usize, byte: u8) -> bool {
 fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
     debug_assert_eq!(chunk.len(), SIMD_LANES);
     let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-    let nul = lanes.simd_eq(Simd::splat(0));
-    if byte == 0 {
-        nul.any()
-    } else {
-        nul.any() || lanes.simd_eq(Simd::splat(byte)).any()
-    }
+    // Fold the needle and NUL comparisons into one mask, then a SINGLE `.any()`
+    // reduction (movemask + test) instead of two — needle==0 collapses to a NUL
+    // scan, which is still correct.
+    let hit = lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(byte));
+    hit.any()
+}
+
+/// Number of 32-byte SIMD panels folded under a single `.any()` reduction. The
+/// reduction (movemask + test) is the per-iteration cost that dominates a flat
+/// per-32B scan, so OR-ing four panels' hit masks before reducing amortizes it
+/// across 128 bytes — the same lever that makes the core `memchr` ~2x. (Eight
+/// panels / 256B was measured slightly slower — register pressure outweighs the
+/// halved reduction count, so four is the sweet spot.)
+const SIMD_FOLD_PANELS: usize = 4;
+const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
+
+/// True if any of the 128 bytes in `block` equal `byte` or NUL. OR's the four
+/// 32-byte panels' hit masks and reduces once.
+#[inline(always)]
+fn has_byte_or_nul_simd_folded(block: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
+    let n = Simd::<u8, SIMD_LANES>::splat(byte);
+    let z = Simd::<u8, SIMD_LANES>::splat(0);
+    let p0 = Simd::<u8, SIMD_LANES>::from_slice(&block[0..SIMD_LANES]);
+    let p1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..2 * SIMD_LANES]);
+    let p2 = Simd::<u8, SIMD_LANES>::from_slice(&block[2 * SIMD_LANES..3 * SIMD_LANES]);
+    let p3 = Simd::<u8, SIMD_LANES>::from_slice(&block[3 * SIMD_LANES..4 * SIMD_LANES]);
+    let h0 = p0.simd_eq(n) | p0.simd_eq(z);
+    let h1 = p1.simd_eq(n) | p1.simd_eq(z);
+    let h2 = p2.simd_eq(n) | p2.simd_eq(z);
+    let h3 = p3.simd_eq(n) | p3.simd_eq(z);
+    (h0 | h1 | h2 | h3).any()
 }
 
 #[inline(always)]
@@ -544,34 +570,37 @@ pub fn strchrnul(s: &[u8], c: u8) -> usize {
 
 #[allow(unsafe_code)]
 fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
-    const WORD_SIZE: usize = size_of::<usize>();
-
     let mut i = 0;
-    while i < s.len() && !(s.as_ptr() as usize + i).is_multiple_of(WORD_SIZE) {
-        let byte = s[i];
-        if byte == needle || byte == 0 {
-            return i;
+
+    // Tier 1: 128-byte folded blocks — one `.any()` reduction per 4 panels.
+    // On a hit, resolve the first matching byte within the block scalar-side
+    // (rare path), so the steady-state scan pays a single reduction per 128B.
+    while i + SIMD_FOLD_BYTES <= s.len() {
+        if has_byte_or_nul_simd_folded(&s[i..i + SIMD_FOLD_BYTES], needle) {
+            for k in 0..SIMD_FOLD_BYTES {
+                let byte = s[i + k];
+                if byte == needle || byte == 0 {
+                    return i + k;
+                }
+            }
         }
-        i += 1;
+        i += SIMD_FOLD_BYTES;
     }
 
+    // Tier 2: remaining whole 32-byte panels.
     while i + SIMD_LANES <= s.len() {
-        let chunk = &s[i..i + SIMD_LANES];
-        if has_byte_or_nul_simd_32(chunk, needle) {
-            break;
+        if has_byte_or_nul_simd_32(&s[i..i + SIMD_LANES], needle) {
+            for k in 0..SIMD_LANES {
+                let byte = s[i + k];
+                if byte == needle || byte == 0 {
+                    return i + k;
+                }
+            }
         }
         i += SIMD_LANES;
     }
 
-    while i + WORD_SIZE <= s.len() {
-        // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= s.len().
-        let word = unsafe { core::ptr::read(s.as_ptr().add(i) as *const usize) };
-        if has_nul_byte(word) || has_byte(word, needle) {
-            break;
-        }
-        i += WORD_SIZE;
-    }
-
+    // Tier 3: scalar tail.
     while i < s.len() {
         let byte = s[i];
         if byte == needle || byte == 0 {

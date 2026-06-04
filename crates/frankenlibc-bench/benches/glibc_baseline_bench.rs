@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::malloc::MallocState;
 use frankenlibc_core::stdio::printf::{FormatSegment, FormatSpec, format_float, parse_format_string};
-use frankenlibc_core::string::{memcpy, memset, strcmp, strlen};
+use frankenlibc_core::string::{
+    memcpy, memmove, memset, strchr, strcmp, strlen, strncasecmp, strncmp, strrchr,
+};
 
 #[derive(Default)]
 struct BenchStats {
@@ -639,6 +641,200 @@ unsafe extern "C" fn compare_i32_ptr(left: *const c_void, right: *const c_void) 
     }
 }
 
+fn bench_strchr_absent(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_strchr_absent");
+    let mut s = vec![b'a'; 4096];
+    s.push(0); // NUL terminator
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strchr_absent",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strchr",
+            workload: "4096-byte scan for absent byte",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strchr(black_box(&s), b'z'));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strchr_absent",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strchr",
+            workload: "4096-byte scan for absent byte",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: s is NUL-terminated.
+            unsafe {
+                black_box(libc::strchr(s.as_ptr().cast(), b'z' as i32));
+            }
+        },
+    );
+    group.finish();
+}
+
+fn bench_strncmp_256_equal(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_strncmp_256_equal");
+    let a = vec![b'Q'; 257];
+    let b = vec![b'Q'; 257];
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strncmp_256_equal",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strncmp",
+            workload: "256-byte equal compare",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strncmp(black_box(&a), black_box(&b), 256));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strncmp_256_equal",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strncmp",
+            workload: "256-byte equal compare",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: both buffers are 257 bytes, n=256 stays in bounds.
+            unsafe {
+                black_box(libc::strncmp(a.as_ptr().cast(), b.as_ptr().cast(), 256));
+            }
+        },
+    );
+    group.finish();
+}
+
+fn bench_strncasecmp_256_equal(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_strncasecmp_256_equal");
+    let a = vec![b'q'; 257];
+    let b = vec![b'Q'; 257]; // differ only in case
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strncasecmp_256_equal",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strncasecmp",
+            workload: "256-byte case-insensitive equal compare",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strncasecmp(black_box(&a), black_box(&b), 256));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strncasecmp_256_equal",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strncasecmp",
+            workload: "256-byte case-insensitive equal compare",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: both buffers are 257 bytes, n=256 stays in bounds.
+            unsafe {
+                black_box(libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), 256));
+            }
+        },
+    );
+    group.finish();
+}
+
+fn bench_memmove_4096(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_memmove_4096");
+    let src = vec![0xABu8; 4096];
+    let mut dst = vec![0u8; 4096];
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "memmove_4096",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "memmove",
+            workload: "4096-byte non-overlapping move",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/mem.rs",
+        },
+        || {
+            black_box(memmove(black_box(&mut dst), black_box(&src), 4096));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "memmove_4096",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "memmove",
+            workload: "4096-byte non-overlapping move",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/mem.rs",
+        },
+        || {
+            // SAFETY: dst and src are both 4096 bytes, non-overlapping.
+            unsafe {
+                black_box(libc::memmove(
+                    dst.as_mut_ptr().cast(),
+                    src.as_ptr().cast(),
+                    4096,
+                ));
+            }
+        },
+    );
+    group.finish();
+}
+
+fn bench_strrchr_absent(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_strrchr_absent");
+    let mut s = vec![b'a'; 4096];
+    s.push(0);
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strrchr_absent",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "strrchr",
+            workload: "4096-byte reverse scan for absent byte",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            black_box(strrchr(black_box(&s), b'z'));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "strrchr_absent",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "strrchr",
+            workload: "4096-byte reverse scan for absent byte",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/str.rs",
+        },
+        || {
+            // SAFETY: s is NUL-terminated.
+            unsafe {
+                black_box(libc::strrchr(s.as_ptr().cast(), b'z' as i32));
+            }
+        },
+    );
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
@@ -654,6 +850,11 @@ criterion_group! {
         bench_malloc_free_256,
         bench_malloc_free_large,
         bench_printf_float,
-        bench_qsort_128_i32
+        bench_qsort_128_i32,
+        bench_strchr_absent,
+        bench_strrchr_absent,
+        bench_strncmp_256_equal,
+        bench_strncasecmp_256_equal,
+        bench_memmove_4096
 }
 criterion_main!(benches);
