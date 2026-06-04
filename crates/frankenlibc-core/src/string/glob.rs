@@ -25,9 +25,14 @@ pub const GLOB_NOESCAPE: i32 = 0x40;
 pub const GLOB_PERIOD: i32 = 0x80;
 pub const GLOB_MAGCHAR: i32 = 0x100;
 /// GNU `GLOB_BRACE`: expand `{a,b,...}` alternations before globbing. Value
-/// matches glibc's `<glob.h>` (`GLOB_ALTDIRFUNC` 0x200 and `GLOB_NOMAGIC` 0x800
-/// remain unimplemented; see bd-2g7oyh.90).
+/// matches glibc's `<glob.h>` (`GLOB_ALTDIRFUNC` 0x200 remains unimplemented;
+/// see bd-2g7oyh.92).
 pub const GLOB_BRACE: i32 = 0x400;
+/// GNU `GLOB_NOMAGIC`: if the pattern contains no metacharacters, return it as
+/// the sole match even when no file matches — like `GLOB_NOCHECK`, but only for
+/// magic-free patterns (a magic pattern with no match still yields GLOB_NOMATCH
+/// unless GLOB_NOCHECK is also set). Value matches glibc's `<glob.h>`.
+pub const GLOB_NOMAGIC: i32 = 0x800;
 pub const GLOB_TILDE: i32 = 0x1000;
 pub const GLOB_ONLYDIR: i32 = 0x2000;
 pub const GLOB_TILDE_CHECK: i32 = 0x4000;
@@ -349,7 +354,10 @@ fn glob_expand_dyn(
             }
             return Ok(GlobResult { paths: vec![p] });
         }
-        if flags & GLOB_NOCHECK != 0 {
+        // The pattern is magic-free, so both GLOB_NOCHECK and GLOB_NOMAGIC make
+        // an absent pattern its own sole result (GLOB_NOMAGIC applies ONLY to
+        // magic-free patterns, which is exactly this branch).
+        if flags & (GLOB_NOCHECK | GLOB_NOMAGIC) != 0 {
             return Ok(GlobResult {
                 paths: vec![pat.to_vec()],
             });
@@ -669,6 +677,25 @@ mod tests {
     fn test_glob_expand_nonexistent_nomatch() {
         let result = glob_expand(b"/nonexistent_path_xyz\0", 0);
         assert_eq!(result.unwrap_err(), GLOB_NOMATCH);
+    }
+
+    #[test]
+    fn test_glob_nomagic_returns_magic_free_pattern() {
+        // GLOB_NOMAGIC: a magic-free pattern with no match returns itself.
+        let res = glob_expand(b"/nonexistent_path_xyz\0", GLOB_NOMAGIC).unwrap();
+        assert_eq!(res.paths.len(), 1);
+        assert_eq!(res.paths[0], b"/nonexistent_path_xyz");
+    }
+
+    #[test]
+    fn test_glob_nomagic_does_not_apply_to_magic_pattern() {
+        // GLOB_NOMAGIC applies ONLY to magic-free patterns; a no-match magic
+        // pattern still yields GLOB_NOMATCH (unlike GLOB_NOCHECK).
+        let result = glob_expand(b"/nonexistent_dir_xyz/*.nope\0", GLOB_NOMAGIC);
+        assert_eq!(result.unwrap_err(), GLOB_NOMATCH);
+        // GLOB_NOCHECK on the same magic pattern DOES return the pattern.
+        let res = glob_expand(b"/nonexistent_dir_xyz/*.nope\0", GLOB_NOCHECK).unwrap();
+        assert_eq!(res.paths[0], b"/nonexistent_dir_xyz/*.nope");
     }
 
     #[test]
