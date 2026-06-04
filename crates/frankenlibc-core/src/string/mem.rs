@@ -339,7 +339,42 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
         return memchr(hay, ndl[0], h_count);
     }
 
-    two_way_search(hay, ndl)
+    // Fast path: jump to each first-byte candidate with the SIMD `memchr` scan
+    // and verify the full needle there (a SIMD slice compare), instead of the
+    // scalar byte-at-a-time shift loop in Two-Way. This is the common case for
+    // real text where the needle's first byte is uncommon.
+    //
+    // To keep the documented O(n+m) worst-case guarantee against adversarial
+    // input (many first-byte hits that fail to match, e.g. "aa…ab" in "aa…a"),
+    // bail to `two_way_search` once cumulative verification work (failed
+    // candidates x needle length) exceeds the haystack length — at which point
+    // Two-Way is at least as good. Both paths return the leftmost match, so the
+    // result is identical.
+    let first = ndl[0];
+    let mut start = 0usize;
+    let mut miss_work = 0usize;
+    while start + n_count <= hay.len() {
+        let scan = &hay[start..];
+        let Some(off) = memchr(scan, first, scan.len()) else {
+            return None; // first byte does not occur again → no match
+        };
+        let cand = start + off;
+        if cand + n_count > hay.len() {
+            return None; // not enough room left for the needle
+        }
+        if hay[cand..cand + n_count] == *ndl {
+            return Some(cand);
+        }
+        miss_work += n_count;
+        start = cand + 1;
+        if miss_work > hay.len() {
+            // Too many failed candidates: finish with the guaranteed O(n+m)
+            // search over the remaining suffix (everything before `start` has
+            // already been ruled out, so the leftmost match lies in `start..`).
+            return two_way_search(&hay[start..], ndl).map(|m| m + start);
+        }
+    }
+    None
 }
 
 /// Linear-time substring search via the Two-Way (Crochemore–Perrin)
@@ -586,6 +621,63 @@ mod tests {
             cases,
             failure_persistence: None,
             ..ProptestConfig::default()
+        }
+    }
+
+    // Naive reference: leftmost substring match (the algorithm-independent
+    // result memmem must reproduce).
+    fn memmem_naive(hay: &[u8], ndl: &[u8]) -> Option<usize> {
+        if ndl.is_empty() {
+            return Some(0);
+        }
+        if ndl.len() > hay.len() {
+            return None;
+        }
+        (0..=hay.len() - ndl.len()).find(|&i| &hay[i..i + ndl.len()] == ndl)
+    }
+
+    #[test]
+    fn memmem_simd_prefilter_isomorphic_to_naive() {
+        // Deterministic mix: small alphabets make first-byte hits (and false
+        // candidates) common, exercising both the fast path and the Two-Way
+        // fallback; the adversarial block targets the O(n+m) guard directly.
+        let mut state: u64 = 0x51F0_A3C5_9E2B_7D11;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            state
+        };
+        for _ in 0..20_000 {
+            let alpha = 1 + (next() % 4) as u8; // alphabet size 1..=4
+            let hlen = (next() % 64) as usize;
+            let nlen = 1 + (next() % 8) as usize;
+            let hay: Vec<u8> = (0..hlen).map(|_| (b'a' + (next() % alpha as u64) as u8)).collect();
+            let ndl: Vec<u8> = (0..nlen).map(|_| (b'a' + (next() % alpha as u64) as u8)).collect();
+            let got = memmem(&hay, hay.len(), &ndl, ndl.len());
+            let want = memmem_naive(&hay, &ndl);
+            assert_eq!(got, want, "memmem mismatch hay={hay:?} ndl={ndl:?}");
+        }
+        // Adversarial: "aa…ab" needle in "aa…a" haystack (every position is a
+        // first-byte candidate that fails) — must still find / not-find correctly.
+        for n in [4usize, 16, 64, 256] {
+            let hay = vec![b'a'; n];
+            let mut ndl = vec![b'a'; n.min(8)];
+            *ndl.last_mut().unwrap() = b'b';
+            assert_eq!(
+                memmem(&hay, hay.len(), &ndl, ndl.len()),
+                memmem_naive(&hay, &ndl),
+                "adversarial mismatch n={n}"
+            );
+            // And a guaranteed match at the tail.
+            let mut hay2 = vec![b'a'; n];
+            let tail = ndl.len().min(n);
+            hay2[n - tail..].copy_from_slice(&ndl[..tail]);
+            assert_eq!(
+                memmem(&hay2, hay2.len(), &ndl, ndl.len()),
+                memmem_naive(&hay2, &ndl),
+                "adversarial-tail mismatch n={n}"
+            );
         }
     }
 

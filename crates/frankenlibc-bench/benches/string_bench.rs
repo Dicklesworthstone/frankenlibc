@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::string::{
-    bcmp, memccpy, memchr, memcmp, memcpy, strcasecmp, strcasestr, strchr, strchrnul, strcmp,
+    bcmp, memccpy, memchr, memcmp, memcpy, memmem, strcasecmp, strcasestr, strchr, strchrnul,
+    strcmp,
     strcspn,
     strlen,
     strncasecmp, strncmp,
@@ -1336,12 +1337,36 @@ fn bench_memchr_absent(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_memmem(c: &mut Criterion) {
+    let mode = mode_label();
+    // ~4 KiB of English-like text; the needle's first byte ('q') is uncommon,
+    // so the SIMD memchr prefilter skips long stretches the scalar Two-Way loop
+    // would walk byte-by-byte.
+    let unit = b"the brown fox jumps over the lazy dog and then rests a while. ";
+    let mut hay: Vec<u8> = Vec::new();
+    while hay.len() < 4096 {
+        hay.extend_from_slice(unit);
+    }
+    let present: &[u8] = b"quznorf"; // absent (no 'q' run matches) -> full scan
+    let absent: &[u8] = b"zzzzzzfox"; // 'z' present but needle never matches
+
+    let cases: &[(&str, &[u8])] = &[("rare_first_byte", present), ("common_first_byte", absent)];
+    let mut group = c.benchmark_group("memmem");
+    for &(name, ndl) in cases {
+        group.throughput(Throughput::Bytes(hay.len() as u64));
+        group.bench_with_input(BenchmarkId::new(mode, name), &name, |b, _| {
+            b.iter(|| black_box(memmem(black_box(&hay), hay.len(), black_box(ndl), ndl.len())));
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_millis(1))
         .measurement_time(Duration::from_secs(2))
         .sample_size(100);
-    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strncmp, bench_strncasecmp_equal, bench_memccpy_absent, bench_bcmp_equal, bench_strchr_absent, bench_strstr_absent, bench_strnstr_bounded_absent, bench_strcasestr_absent, bench_strrchr_absent, bench_strcspn_absent, bench_strcspn_general_absent, bench_strpbrk_absent, bench_strpbrk_general_absent, bench_strspn_full, bench_strspn_general_full, bench_strsep_absent, bench_strchrnul_absent, bench_wcsrchr_absent, bench_wcsstr_absent, bench_wcslen, bench_wcschr_absent, bench_wmemchr_absent, bench_wmemrchr_absent, bench_wmemcmp_equal, bench_wcsncmp_equal, bench_wcsncasecmp_equal, bench_wcsspn_full, bench_wcsnlen_full, bench_memchr_absent
+    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strncmp, bench_strncasecmp_equal, bench_memccpy_absent, bench_bcmp_equal, bench_strchr_absent, bench_strstr_absent, bench_strnstr_bounded_absent, bench_strcasestr_absent, bench_strrchr_absent, bench_strcspn_absent, bench_strcspn_general_absent, bench_strpbrk_absent, bench_strpbrk_general_absent, bench_strspn_full, bench_strspn_general_full, bench_strsep_absent, bench_strchrnul_absent, bench_wcsrchr_absent, bench_wcsstr_absent, bench_wcslen, bench_wcschr_absent, bench_wmemchr_absent, bench_wmemrchr_absent, bench_wmemcmp_equal, bench_wcsncmp_equal, bench_wcsncasecmp_equal, bench_wcsspn_full, bench_wcsnlen_full, bench_memchr_absent, bench_memmem
 );
 criterion_main!(benches);
