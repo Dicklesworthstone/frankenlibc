@@ -24,6 +24,10 @@ pub const GLOB_NOESCAPE: i32 = 0x40;
 // GNU extensions
 pub const GLOB_PERIOD: i32 = 0x80;
 pub const GLOB_MAGCHAR: i32 = 0x100;
+/// GNU `GLOB_BRACE`: expand `{a,b,...}` alternations before globbing. Value
+/// matches glibc's `<glob.h>` (`GLOB_ALTDIRFUNC` 0x200 and `GLOB_NOMAGIC` 0x800
+/// remain unimplemented; see bd-2g7oyh.90).
+pub const GLOB_BRACE: i32 = 0x400;
 pub const GLOB_TILDE: i32 = 0x1000;
 pub const GLOB_ONLYDIR: i32 = 0x2000;
 pub const GLOB_TILDE_CHECK: i32 = 0x4000;
@@ -139,6 +143,93 @@ pub fn glob_expand(pattern: &[u8], flags: i32) -> Result<GlobResult, i32> {
     glob_expand_with_error_handler(pattern, flags, |_, _| false)
 }
 
+/// Expand GNU brace alternations (`GLOB_BRACE`) into a list of concrete
+/// patterns, matching glibc semantics: the leftmost balanced `{...}` group is
+/// split on its top-level commas, each alternative is substituted into
+/// prefix+alt+suffix, and the result is expanded recursively (yielding the
+/// cartesian product across multiple groups and handling nesting). Braces with
+/// no comma still expand (`{x}` -> `x`, `{}` -> ``); an unbalanced `{` or an
+/// escaped `\{` is left literal. Numeric/alpha ranges (`{1..9}`) are NOT a
+/// glibc GLOB_BRACE feature and remain literal. Returns `vec![pattern]` when no
+/// expansion applies.
+fn brace_expand(pat: &[u8], noescape: bool) -> Vec<Vec<u8>> {
+    // Locate the first unescaped '{'.
+    let mut i = 0;
+    let open = loop {
+        if i >= pat.len() {
+            return vec![pat.to_vec()];
+        }
+        let b = pat[i];
+        if b == b'\\' && !noescape && i + 1 < pat.len() {
+            i += 2;
+            continue;
+        }
+        if b == b'{' {
+            break i;
+        }
+        i += 1;
+    };
+
+    // Find the matching '}' (track nesting depth, respect escapes).
+    let mut depth = 1;
+    let mut j = open + 1;
+    let close = loop {
+        if j >= pat.len() {
+            return vec![pat.to_vec()]; // unbalanced -> literal
+        }
+        let b = pat[j];
+        if b == b'\\' && !noescape && j + 1 < pat.len() {
+            j += 2;
+            continue;
+        }
+        if b == b'{' {
+            depth += 1;
+        } else if b == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                break j;
+            }
+        }
+        j += 1;
+    };
+
+    // Split the brace body on top-level commas.
+    let inner = &pat[open + 1..close];
+    let mut alts: Vec<&[u8]> = Vec::new();
+    let mut start = 0;
+    let mut d = 0;
+    let mut k = 0;
+    while k < inner.len() {
+        let b = inner[k];
+        if b == b'\\' && !noescape && k + 1 < inner.len() {
+            k += 2;
+            continue;
+        }
+        if b == b'{' {
+            d += 1;
+        } else if b == b'}' {
+            d -= 1;
+        } else if b == b',' && d == 0 {
+            alts.push(&inner[start..k]);
+            start = k + 1;
+        }
+        k += 1;
+    }
+    alts.push(&inner[start..]);
+
+    let prefix = &pat[..open];
+    let suffix = &pat[close + 1..];
+    let mut out = Vec::new();
+    for alt in alts {
+        let mut combined = Vec::with_capacity(prefix.len() + alt.len() + suffix.len());
+        combined.extend_from_slice(prefix);
+        combined.extend_from_slice(alt);
+        combined.extend_from_slice(suffix);
+        out.extend(brace_expand(&combined, noescape));
+    }
+    out
+}
+
 /// Expand a glob pattern and invoke `errfunc` on directory traversal errors.
 ///
 /// The handler receives the path that failed and the raw OS errno. Returning
@@ -152,6 +243,17 @@ pub fn glob_expand_with_error_handler<F>(
 where
     F: FnMut(&[u8], i32) -> bool,
 {
+    glob_expand_dyn(pattern, flags, &mut errfunc)
+}
+
+// Non-generic core taking the error handler via dynamic dispatch so the
+// GLOB_BRACE recursion (and glob_recursive) do not blow the monomorphization
+// recursion limit by nesting `&mut F` ever deeper.
+fn glob_expand_dyn(
+    pattern: &[u8],
+    flags: i32,
+    errfunc: &mut dyn FnMut(&[u8], i32) -> bool,
+) -> Result<GlobResult, i32> {
     // Find the pattern up to first null byte.
     let pat_len = pattern
         .iter()
@@ -161,6 +263,37 @@ where
 
     if pat.is_empty() {
         return Err(GLOB_NOMATCH);
+    }
+
+    // GLOB_BRACE: expand `{a,b,...}` alternations before globbing. Each expansion
+    // is globbed independently and the per-expansion result batches are
+    // concatenated in expansion order (no global re-sort, no de-duplication),
+    // matching glibc. On a total no-match, GLOB_NOCHECK returns the original
+    // (un-expanded) pattern. Done before tilde expansion so each expansion gets
+    // its own tilde handling, exactly like glibc.
+    if flags & GLOB_BRACE != 0 {
+        let noescape = flags & GLOB_NOESCAPE != 0;
+        let expansions = brace_expand(pat, noescape);
+        if expansions.len() > 1 || expansions[0].as_slice() != pat {
+            let inner_flags = flags & !(GLOB_BRACE | GLOB_NOCHECK | GLOB_APPEND);
+            let mut combined: Vec<Vec<u8>> = Vec::new();
+            for sub in &expansions {
+                match glob_expand_dyn(sub, inner_flags, errfunc) {
+                    Ok(res) => combined.extend(res.paths),
+                    Err(GLOB_NOMATCH) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            if combined.is_empty() {
+                if flags & GLOB_NOCHECK != 0 {
+                    return Ok(GlobResult {
+                        paths: vec![pat.to_vec()],
+                    });
+                }
+                return Err(GLOB_NOMATCH);
+            }
+            return Ok(GlobResult { paths: combined });
+        }
     }
 
     // Handle tilde expansion
@@ -192,7 +325,7 @@ where
     }
 
     let mut results = Vec::new();
-    glob_recursive(b"", pat, flags, &mut results, &mut errfunc)?;
+    glob_recursive(b"", pat, flags, &mut results, errfunc)?;
 
     if results.is_empty() {
         if flags & GLOB_NOCHECK != 0 {
@@ -226,16 +359,13 @@ where
 /// (`resolved + name + "/" + rest`) and re-ran `split_pattern` on the whole
 /// string, which let a literal `*` in a resolved directory name match
 /// outer-level siblings and could recurse without progress.
-fn glob_recursive<F>(
+fn glob_recursive(
     resolved_prefix: &[u8],
     pattern: &[u8],
     flags: i32,
     results: &mut Vec<Vec<u8>>,
-    errfunc: &mut F,
-) -> Result<(), i32>
-where
-    F: FnMut(&[u8], i32) -> bool,
-{
+    errfunc: &mut dyn FnMut(&[u8], i32) -> bool,
+) -> Result<(), i32> {
     let noescape = flags & GLOB_NOESCAPE != 0;
     let (dir_prefix, tail) = split_pattern(pattern, noescape);
 

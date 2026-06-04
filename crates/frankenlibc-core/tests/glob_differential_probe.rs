@@ -9,7 +9,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use frankenlibc_core::string::glob::{GLOB_MARK, GLOB_NOCHECK, GLOB_NOMATCH, glob_expand};
+use frankenlibc_core::string::glob::{
+    GLOB_BRACE, GLOB_MARK, GLOB_NOCHECK, GLOB_NOMATCH, glob_expand,
+};
 
 fn make_tree() -> PathBuf {
     let mut dir = std::env::temp_dir();
@@ -86,6 +88,61 @@ fn glob_differential_battery() {
     assert!(
         diffs.is_empty(),
         "glob diverges from glibc in {} case(s):\n{}",
+        diffs.len(),
+        diffs.join("\n")
+    );
+}
+
+fn make_brace_tree() -> PathBuf {
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("fl_glob_brace_{}_{:p}", std::process::id(), &dir as *const _));
+    fs::create_dir_all(&dir).unwrap();
+    for f in [
+        "a1b", "a2b", "a3b", "ac", "ad", "bc", "bd", "abe", "ace", "ade", "abc", "x", "xfoo",
+        "file.c", "file.h", "p", "q", "1", "2", "3",
+    ] {
+        fs::write(dir.join(f), b"").unwrap();
+    }
+    dir
+}
+
+/// GLOB_BRACE differential vs glibc: comma alternation, cartesian product,
+/// nesting, empty alternatives, single-element ({x}->x) and empty ({}->"")
+/// braces, batch-concatenation order (no global sort), no de-duplication, no
+/// numeric-range support ({1..3} is literal), and GLOB_NOCHECK fallback to the
+/// original brace pattern. glibc reference captured from a C GLOB_BRACE probe.
+#[test]
+fn glob_brace_differential_battery() {
+    let dir = make_brace_tree();
+
+    let cases: &[(&str, i32, &str)] = &[
+        ("a{1,2,3}b", GLOB_BRACE, "0: a1b a2b a3b"),
+        ("{a,b}{c,d}", GLOB_BRACE, "0: ac ad bc bd"),
+        ("a{b,{c,d}}e", GLOB_BRACE, "0: abe ace ade"),
+        ("x{,foo}", GLOB_BRACE, "0: x xfoo"),
+        ("a{b}c", GLOB_BRACE, "0: abc"),
+        ("a{}c", GLOB_BRACE, "0: ac"),
+        ("file.{c,h}", GLOB_BRACE, "0: file.c file.h"),
+        ("{q,p}", GLOB_BRACE, "0: q p"),       // batch order, NOT sorted
+        ("{a,a}c", GLOB_BRACE, "0: ac ac"),    // no de-duplication
+        ("{1..3}", GLOB_BRACE, &format!("{GLOB_NOMATCH}")), // ranges unsupported -> literal, no match
+        ("zz{x,y}", GLOB_BRACE, &format!("{GLOB_NOMATCH}")),
+        ("zz{x,y}", GLOB_BRACE | GLOB_NOCHECK, "0: zz{x,y}"), // original pattern on total no-match
+    ];
+
+    let mut diffs = Vec::new();
+    for (relpat, flags, expected) in cases {
+        let got = run(&dir, relpat, *flags);
+        if got != *expected {
+            diffs.push(format!("glob({relpat:?}, 0x{flags:x}): frankenlibc={got:?} glibc={expected:?}"));
+        }
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(
+        diffs.is_empty(),
+        "GLOB_BRACE diverges from glibc in {} case(s):\n{}",
         diffs.len(),
         diffs.join("\n")
     );
