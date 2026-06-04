@@ -510,7 +510,7 @@ impl StdioStream {
     ///
     /// Caller is responsible for flushing `flush_data` and advancing the
     /// logical offset by the number of bytes accepted for this call.
-    pub fn buffer_write(&mut self, data: &[u8]) -> Option<WriteResult> {
+    pub fn buffer_write<'a>(&mut self, data: &'a [u8]) -> Option<WriteResult<'a>> {
         if !self.open_flags.writable {
             self.flags.error = true;
             return None;

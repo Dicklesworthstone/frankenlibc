@@ -10,6 +10,8 @@
 //! Monotonic state tracking prevents illegal mode transitions after I/O
 //! has occurred (POSIX: setvbuf must be called before any I/O).
 
+use std::borrow::Cow;
+
 /// Default buffer size (POSIX BUFSIZ).
 pub const BUFSIZ: usize = 8192;
 
@@ -138,7 +140,7 @@ impl StreamBuffer {
     /// (may be empty if buffering absorbs them) and the bytes actually buffered.
     ///
     /// Caller must flush the returned flush slice to the underlying fd.
-    pub fn write(&mut self, data: &[u8]) -> WriteResult {
+    pub fn write<'a>(&mut self, data: &'a [u8]) -> WriteResult<'a> {
         self.io_started = true;
 
         match self.mode {
@@ -147,7 +149,7 @@ impl StreamBuffer {
                 WriteResult {
                     buffered: 0,
                     flush_needed: true,
-                    flush_data: data.to_vec(),
+                    flush_data: Cow::Borrowed(data),
                     flushed_from_buffer: 0,
                 }
             }
@@ -230,7 +232,7 @@ impl StreamBuffer {
     // Internal
     // -----------------------------------------------------------------------
 
-    fn write_full(&mut self, data: &[u8]) -> WriteResult {
+    fn write_full<'a>(&mut self, data: &'a [u8]) -> WriteResult<'a> {
         let remaining = self.data.len().saturating_sub(self.write_len);
         if data.len() <= remaining {
             // Fits entirely in the buffer.
@@ -239,31 +241,36 @@ impl StreamBuffer {
             WriteResult {
                 buffered: data.len(),
                 flush_needed: false,
-                flush_data: Vec::new(),
+                flush_data: Cow::Borrowed(&[]),
                 flushed_from_buffer: 0,
             }
         } else {
             // Buffer is full — flush existing + overflow.
             let flushed_from_buffer = self.write_len;
-            let mut flush = Vec::with_capacity(self.write_len + data.len());
-            flush.extend_from_slice(&self.data[..self.write_len]);
-            flush.extend_from_slice(data);
+            let flush_data = if flushed_from_buffer == 0 {
+                Cow::Borrowed(data)
+            } else {
+                let mut flush = Vec::with_capacity(self.write_len + data.len());
+                flush.extend_from_slice(&self.data[..self.write_len]);
+                flush.extend_from_slice(data);
+                Cow::Owned(flush)
+            };
             self.write_len = 0;
             WriteResult {
                 buffered: 0,
                 flush_needed: true,
-                flush_data: flush,
+                flush_data,
                 flushed_from_buffer,
             }
         }
     }
 
-    fn write_line(&mut self, data: &[u8]) -> WriteResult {
+    fn write_line<'a>(&mut self, data: &'a [u8]) -> WriteResult<'a> {
         if self.write_len == 0 && data.last().copied() == Some(b'\n') {
             return WriteResult {
                 buffered: 0,
                 flush_needed: true,
-                flush_data: data.to_vec(),
+                flush_data: Cow::Borrowed(data),
                 flushed_from_buffer: 0,
             };
         }
@@ -284,9 +291,14 @@ impl StreamBuffer {
 
                 // Flush everything up to and including the last newline.
                 let flushed_from_buffer = self.write_len;
-                let mut flush = Vec::with_capacity(self.write_len + flush_end);
-                flush.extend_from_slice(&self.data[..self.write_len]);
-                flush.extend_from_slice(&data[..flush_end]);
+                let flush_data = if flushed_from_buffer == 0 {
+                    Cow::Borrowed(&data[..flush_end])
+                } else {
+                    let mut flush = Vec::with_capacity(self.write_len + flush_end);
+                    flush.extend_from_slice(&self.data[..self.write_len]);
+                    flush.extend_from_slice(&data[..flush_end]);
+                    Cow::Owned(flush)
+                };
                 self.write_len = 0;
 
                 // Buffer the remainder after the newline.
@@ -296,7 +308,7 @@ impl StreamBuffer {
                 WriteResult {
                     buffered: remainder.len(),
                     flush_needed: true,
-                    flush_data: flush,
+                    flush_data,
                     flushed_from_buffer,
                 }
             }
@@ -310,13 +322,13 @@ impl StreamBuffer {
 
 /// Result of a buffered write operation.
 #[derive(Debug)]
-pub struct WriteResult {
+pub struct WriteResult<'a> {
     /// How many bytes were retained in the buffer.
     pub buffered: usize,
     /// Whether the caller must write `flush_data` to the fd now.
     pub flush_needed: bool,
     /// Bytes that must be flushed to the fd.
-    pub flush_data: Vec<u8>,
+    pub flush_data: Cow<'a, [u8]>,
     /// Bytes in `flush_data` that came from previous buffered writes.
     pub flushed_from_buffer: usize,
 }
@@ -360,7 +372,7 @@ mod tests {
         let _ = buf.write(b"abcd");
         let result = buf.write(b"efghijklmn");
         assert!(result.flush_needed);
-        assert_eq!(&result.flush_data, b"abcdefghijklmn");
+        assert_eq!(result.flush_data.as_ref(), b"abcdefghijklmn");
     }
 
     #[test]
@@ -368,7 +380,7 @@ mod tests {
         let mut buf = StreamBuffer::new(BufMode::Line, 64);
         let result = buf.write(b"hello\nworld");
         assert!(result.flush_needed);
-        assert_eq!(&result.flush_data, b"hello\n");
+        assert_eq!(result.flush_data.as_ref(), b"hello\n");
         assert_eq!(buf.pending_write_data(), b"world");
     }
 
@@ -379,7 +391,7 @@ mod tests {
         assert!(result.flush_needed);
         assert_eq!(result.buffered, 0);
         assert_eq!(result.flushed_from_buffer, 0);
-        assert_eq!(&result.flush_data, b"metric=value status=ok\n");
+        assert_eq!(result.flush_data.as_ref(), b"metric=value status=ok\n");
         assert!(buf.pending_write_data().is_empty());
     }
 
@@ -396,7 +408,7 @@ mod tests {
         let mut buf = StreamBuffer::unbuffered();
         let result = buf.write(b"hello");
         assert!(result.flush_needed);
-        assert_eq!(&result.flush_data, b"hello");
+        assert_eq!(result.flush_data.as_ref(), b"hello");
         assert_eq!(result.buffered, 0);
     }
 
@@ -515,7 +527,7 @@ mod tests {
             match last_nl {
                 Some(index) => {
                     prop_assert!(result.flush_needed);
-                    prop_assert_eq!(&result.flush_data, &data[..=index]);
+                    prop_assert_eq!(result.flush_data.as_ref(), &data[..=index]);
                     prop_assert_eq!(buf.pending_write_data(), &data[index + 1..]);
                 }
                 None => {
@@ -535,7 +547,7 @@ mod tests {
 
             prop_assert!(result.flush_needed);
             prop_assert_eq!(result.buffered, 0);
-            prop_assert_eq!(result.flush_data, data);
+            prop_assert_eq!(result.flush_data.as_ref(), data.as_slice());
         }
     }
 }
