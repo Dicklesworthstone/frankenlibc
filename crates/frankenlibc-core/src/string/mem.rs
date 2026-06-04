@@ -174,6 +174,24 @@ fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
 }
 
 #[inline(always)]
+fn byte_mask_simd_32(chunk: &[u8], byte: u8) -> u64 {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    Simd::<u8, SIMD_LANES>::from_slice(chunk)
+        .simd_eq(Simd::splat(byte))
+        .to_bitmask()
+}
+
+#[inline(always)]
+fn first_byte_simd_32(chunk: &[u8], byte: u8) -> Option<usize> {
+    let mask = byte_mask_simd_32(chunk, byte);
+    if mask == 0 {
+        None
+    } else {
+        Some(mask.trailing_zeros() as usize)
+    }
+}
+
+#[inline(always)]
 fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
     debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
     let needle = Simd::splat(byte);
@@ -189,22 +207,15 @@ fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
 #[inline(always)]
 fn has_byte_memchr_folded(block: &[u8], byte: u8) -> bool {
     debug_assert_eq!(block.len(), MEMCHR_FOLD_BYTES);
-    let needle = Simd::splat(byte);
-    let p0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]).simd_eq(needle);
-    let p1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]).simd_eq(needle);
-    let p2 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]).simd_eq(needle);
-    let p3 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_LANES * 4]).simd_eq(needle);
-    let p4 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 4..SIMD_LANES * 5]).simd_eq(needle);
-    let p5 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 5..SIMD_LANES * 6]).simd_eq(needle);
-    let p6 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 6..SIMD_LANES * 7]).simd_eq(needle);
-    let p7 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 7..MEMCHR_FOLD_BYTES])
-        .simd_eq(needle);
-    (p0 | p1 | p2 | p3 | p4 | p5 | p6 | p7).any()
+    (byte_mask_simd_32(&block[..SIMD_LANES], byte)
+        | byte_mask_simd_32(&block[SIMD_LANES..SIMD_LANES * 2], byte)
+        | byte_mask_simd_32(&block[SIMD_LANES * 2..SIMD_LANES * 3], byte)
+        | byte_mask_simd_32(&block[SIMD_LANES * 3..SIMD_LANES * 4], byte)
+        | byte_mask_simd_32(&block[SIMD_LANES * 4..SIMD_LANES * 5], byte)
+        | byte_mask_simd_32(&block[SIMD_LANES * 5..SIMD_LANES * 6], byte)
+        | byte_mask_simd_32(&block[SIMD_LANES * 6..SIMD_LANES * 7], byte)
+        | byte_mask_simd_32(&block[SIMD_LANES * 7..MEMCHR_FOLD_BYTES], byte))
+        != 0
 }
 
 #[inline]
@@ -238,9 +249,7 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     for block in simd_blocks.by_ref() {
         if has_byte_memchr_folded(block, needle) {
             for (panel_index, chunk) in block.chunks_exact(SIMD_LANES).enumerate() {
-                if has_byte_simd_32(chunk, needle)
-                    && let Some(j) = chunk.iter().position(|&b| b == needle)
-                {
+                if let Some(j) = first_byte_simd_32(chunk, needle) {
                     return Some(simd_base + panel_index * SIMD_LANES + j);
                 }
             }
@@ -252,9 +261,7 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let mut simd_chunks = hs.chunks_exact(SIMD_LANES);
 
     for chunk in simd_chunks.by_ref() {
-        if has_byte_simd_32(chunk, needle)
-            && let Some(j) = chunk.iter().position(|&b| b == needle)
-        {
+        if let Some(j) = first_byte_simd_32(chunk, needle) {
             return Some(simd_base + j);
         }
         simd_base += SIMD_LANES;
@@ -497,8 +504,7 @@ fn two_way_search_impl<const ICASE: bool>(hay: &[u8], ndl: &[u8]) -> Option<usiz
     // general, non-periodic case, which Two-Way handles correctly.
     let suffix = (ms + 1) as usize;
     let periodic = (0..suffix).all(|i| {
-        ndl.get(p as usize + i).map(|&b| fold_case::<ICASE>(b))
-            == Some(fold_case::<ICASE>(ndl[i]))
+        ndl.get(p as usize + i).map(|&b| fold_case::<ICASE>(b)) == Some(fold_case::<ICASE>(ndl[i]))
     });
     let mem0: isize = if periodic {
         li - p
@@ -525,7 +531,11 @@ fn two_way_search_impl<const ICASE: bool>(hay: &[u8], ndl: &[u8]) -> Option<usiz
         }
         let skip = l - shift[last as usize];
         if skip != 0 {
-            pos += if (skip as isize) < mem { mem as usize } else { skip };
+            pos += if (skip as isize) < mem {
+                mem as usize
+            } else {
+                skip
+            };
             mem = 0;
             continue;
         }
@@ -702,8 +712,12 @@ mod tests {
             let alpha = 1 + (next() % 4) as u8; // alphabet size 1..=4
             let hlen = (next() % 64) as usize;
             let nlen = 1 + (next() % 8) as usize;
-            let hay: Vec<u8> = (0..hlen).map(|_| b'a' + (next() % alpha as u64) as u8).collect();
-            let ndl: Vec<u8> = (0..nlen).map(|_| b'a' + (next() % alpha as u64) as u8).collect();
+            let hay: Vec<u8> = (0..hlen)
+                .map(|_| b'a' + (next() % alpha as u64) as u8)
+                .collect();
+            let ndl: Vec<u8> = (0..nlen)
+                .map(|_| b'a' + (next() % alpha as u64) as u8)
+                .collect();
             let got = memmem(&hay, hay.len(), &ndl, ndl.len());
             let want = memmem_naive(&hay, &ndl);
             assert_eq!(got, want, "memmem mismatch hay={hay:?} ndl={ndl:?}");
@@ -1041,6 +1055,50 @@ mod tests {
     // Verified against glibc via scripts/c_probes/probe_string_edge.c
 
     #[test]
+    fn memchr_golden_output_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut cases: Vec<(Vec<u8>, u8, usize)> = vec![
+            (Vec::new(), 0, 0),
+            (b"abc".to_vec(), b'a', 0),
+            (b"abc".to_vec(), b'a', 1),
+            (b"abc".to_vec(), b'b', 1),
+            (b"abc".to_vec(), b'b', 2),
+            (b"abc".to_vec(), b'z', 99),
+            (vec![b'a'; 4096], b'z', 4096),
+            (vec![b'a'; 4096], b'z', 2048),
+        ];
+        for pos in [0usize, 1, 7, 8, 31, 32, 63, 64, 127, 128, 255, 256, 4095] {
+            let mut hay = vec![b'a'; 4096];
+            hay[pos] = b'z';
+            cases.push((hay, b'z', 4096));
+        }
+
+        let mut hasher = Sha256::new();
+        for (hay, needle, n) in cases {
+            hasher.update((hay.len() as u64).to_le_bytes());
+            hasher.update((n as u64).to_le_bytes());
+            hasher.update([needle]);
+            match memchr(&hay, needle, n) {
+                Some(index) => {
+                    hasher.update([1]);
+                    hasher.update((index as u64).to_le_bytes());
+                }
+                None => hasher.update([0]),
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "04930b6afad5d9eb3047ad0fd21c4db13061e93ee506bcf740787790f8ae3500",
+            "memchr golden output corpus changed"
+        );
+    }
+
+    #[test]
     fn glibc_memchr_n_zero_returns_none() {
         // memchr("hello", 'h', 0) = NULL even though 'h' is at position 0
         assert_eq!(memchr(b"hello", b'h', 0), None);
@@ -1186,7 +1244,9 @@ mod tests {
         // Deterministic LCG corpus across several alphabets and lengths.
         let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
         let mut next = || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (state >> 33) as u32
         };
 
@@ -1262,12 +1322,24 @@ mod tests {
         let naive_typ = time(2_000, || naive_memmem(&hay, &ndl_typ));
         let tw_typ = time(2_000, || memmem(&hay, hay.len(), &ndl_typ, ndl_typ.len()));
 
-        eprintln!("memmem adversarial: naive={naive_adv:.0}ns two_way={tw_adv:.0}ns score={:.1}x", naive_adv / tw_adv);
-        eprintln!("memmem typical:     naive={naive_typ:.0}ns two_way={tw_typ:.0}ns score={:.2}x", naive_typ / tw_typ);
+        eprintln!(
+            "memmem adversarial: naive={naive_adv:.0}ns two_way={tw_adv:.0}ns score={:.1}x",
+            naive_adv / tw_adv
+        );
+        eprintln!(
+            "memmem typical:     naive={naive_typ:.0}ns two_way={tw_typ:.0}ns score={:.2}x",
+            naive_typ / tw_typ
+        );
 
         // The complexity-class win must be enormous on the adversarial case
         // and must not regress the typical case.
-        assert!(naive_adv / tw_adv >= 2.0, "adversarial Score must clear 2.0");
-        assert!(tw_typ <= naive_typ * 1.5, "typical case must not regress materially");
+        assert!(
+            naive_adv / tw_adv >= 2.0,
+            "adversarial Score must clear 2.0"
+        );
+        assert!(
+            tw_typ <= naive_typ * 1.5,
+            "typical case must not regress materially"
+        );
     }
 }
