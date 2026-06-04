@@ -118,7 +118,12 @@ impl StreamBuffer {
         } else {
             size.max(1)
         };
-        self.data = vec![0u8; cap];
+        if cap <= self.data.capacity() {
+            self.data.resize(cap, 0);
+            self.data.fill(0);
+        } else {
+            self.data = vec![0u8; cap];
+        }
         self.read_pos = 0;
         self.read_filled = 0;
         self.write_len = 0;
@@ -423,6 +428,21 @@ mod tests {
         assert!(buf.set_mode(BufMode::Line, 128));
         assert_eq!(buf.mode(), BufMode::Line);
         assert_eq!(buf.capacity(), 128);
+    }
+
+    #[test]
+    fn test_set_mode_reuses_existing_allocation_when_capacity_fits() {
+        let mut buf = StreamBuffer::new(BufMode::Full, 64);
+        let original_ptr = buf.data.as_ptr();
+
+        assert!(buf.set_mode(BufMode::Line, 32));
+
+        assert_eq!(buf.mode(), BufMode::Line);
+        assert_eq!(buf.capacity(), 32);
+        assert_eq!(buf.data.as_ptr(), original_ptr);
+        assert_eq!(buf.readable(), 0);
+        assert!(buf.pending_write_data().is_empty());
+        assert!(buf.data.iter().all(|byte| *byte == 0));
     }
 
     #[test]
