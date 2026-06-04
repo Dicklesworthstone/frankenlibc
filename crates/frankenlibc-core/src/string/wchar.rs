@@ -269,6 +269,57 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
     Some(di)
 }
 
+/// Length of the leading plain-ASCII run of `src`: the count of bytes `b` with
+/// `0 < b < 0x80`, stopping at the first NUL or byte `>= 0x80`. SIMD-scanned a
+/// vector at a time. Identical to counting those bytes one at a time.
+pub fn ascii_prefix_len(src: &[u8]) -> usize {
+    const LANES: usize = 16;
+    let zero = Simd::<u8, LANES>::splat(0);
+    let ascii_max = Simd::<u8, LANES>::splat(0x80);
+    let mut k = 0usize;
+    while k + LANES <= src.len() {
+        let bytes: [u8; LANES] = src[k..k + LANES].try_into().unwrap();
+        let chunk = Simd::<u8, LANES>::from_array(bytes);
+        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+            break;
+        }
+        k += LANES;
+    }
+    while k < src.len() && src[k] != 0 && src[k] < 0x80 {
+        k += 1;
+    }
+    k
+}
+
+/// Widen the leading plain-ASCII run of `src` (bytes `0 < b < 0x80`, no NUL)
+/// into `dest` as codepoints, a SIMD vector at a time, bounded by `dest.len()`.
+/// Returns the number of chars converted (= bytes consumed = `dest` slots
+/// filled); stops at the first NUL, non-ASCII lead byte, or a full `dest`.
+/// Byte-for-byte identical to converting those chars one at a time via
+/// [`mbtowc`] — the same lever `mbstowcs` uses, exposed so the streaming
+/// `mbsrtowcs` can fast-forward its ASCII runs.
+pub fn mbs_ascii_prefix(dest: &mut [u32], src: &[u8]) -> usize {
+    const LANES: usize = 16;
+    let zero = Simd::<u8, LANES>::splat(0);
+    let ascii_max = Simd::<u8, LANES>::splat(0x80);
+    let mut k = 0usize;
+    while k + LANES <= src.len() && k + LANES <= dest.len() {
+        let bytes: [u8; LANES] = src[k..k + LANES].try_into().unwrap();
+        let chunk = Simd::<u8, LANES>::from_array(bytes);
+        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+            break;
+        }
+        let widened = Simd::<u32, LANES>::from_array(bytes.map(|b| b as u32));
+        widened.copy_to_slice(&mut dest[k..k + LANES]);
+        k += LANES;
+    }
+    while k < src.len() && k < dest.len() && src[k] != 0 && src[k] < 0x80 {
+        dest[k] = src[k] as u32;
+        k += 1;
+    }
+    k
+}
+
 /// Convert a wide character string to a multibyte string (UTF-8).
 ///
 /// Returns the number of bytes written (not including NUL terminator), or
@@ -707,6 +758,47 @@ mod tests {
                 let rb = wcstombs_scalar_reference(&mut b, src);
                 assert_eq!(ra, rb, "return mismatch: src={src:x?} cap={cap}");
                 assert_eq!(a, b, "dest mismatch: src={src:x?} cap={cap}");
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_prefix_helpers_match_scalar() {
+        // Scalar references: leading-ASCII run length, and the widen of it.
+        fn ref_len(src: &[u8]) -> usize {
+            let mut k = 0;
+            while k < src.len() && src[k] != 0 && src[k] < 0x80 {
+                k += 1;
+            }
+            k
+        }
+        // Varied corpus: ASCII around the 16-lane boundary, embedded NUL at each
+        // offset, ASCII interrupted by a high byte at each offset, empty.
+        let mut corpus: Vec<Vec<u8>> = Vec::new();
+        for len in 0..80usize {
+            corpus.push((0..len).map(|i| b'a' + (i % 26) as u8).collect());
+        }
+        for len in 1..40usize {
+            for pos in 0..len {
+                let mut v: Vec<u8> = (0..len).map(|_| b'x').collect();
+                v[pos] = 0;
+                corpus.push(v.clone());
+                v[pos] = 0xC3; // non-ASCII lead byte
+                corpus.push(v);
+            }
+        }
+        for src in &corpus {
+            let want_len = ref_len(src);
+            assert_eq!(ascii_prefix_len(src), want_len, "ascii_prefix_len {src:?}");
+            // mbs_ascii_prefix: bounded by dest len; verify for several dest caps.
+            for cap in [0usize, 1, 7, 16, 17, 40, 100] {
+                let mut dest = vec![0u32; cap];
+                let k = mbs_ascii_prefix(&mut dest, src);
+                let expect_k = want_len.min(cap);
+                assert_eq!(k, expect_k, "mbs_ascii_prefix k {src:?} cap={cap}");
+                for j in 0..k {
+                    assert_eq!(dest[j], src[j] as u32, "widen {src:?} j={j}");
+                }
             }
         }
     }

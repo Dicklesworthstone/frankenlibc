@@ -2123,6 +2123,11 @@ pub unsafe extern "C" fn mbsrtowcs(
         let mut i = 0usize;
         let mut count = 0usize;
         while i < src_bytes.len() {
+            // SIMD fast-forward the leading ASCII run (each ASCII byte is one
+            // wide char), then resolve the NUL / multibyte boundary scalar-side.
+            let k = wchar_core::ascii_prefix_len(&src_bytes[i..]);
+            i += k;
+            count += k;
             if src_bytes[i] == 0 {
                 return count;
             }
@@ -2146,6 +2151,12 @@ pub unsafe extern "C" fn mbsrtowcs(
     let mut i = 0usize;
     let mut written = 0usize;
     while i < src_bytes.len() {
+        // SIMD fast-forward: widen the leading ASCII run straight into `dst`,
+        // a vector at a time, then resolve the NUL / dest-full / multibyte
+        // boundary with the unchanged scalar logic below.
+        let k = wchar_core::mbs_ascii_prefix(&mut dst_slice[written..], &src_bytes[i..]);
+        i += k;
+        written += k;
         if src_bytes[i] == 0 {
             if written < dst_slice.len() {
                 dst_slice[written] = 0;
