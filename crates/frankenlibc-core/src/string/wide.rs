@@ -562,52 +562,138 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
 ///
 /// Equivalent to C `wcsstr`. Returns the index of the start of the substring,
 /// or `None` if not found.
+/// Pure Two-Way (Crochemore–Perrin) substring search over wide chars: O(n+m)
+/// time, O(1) space, leftmost match. The byte `memmem` Two-Way additionally
+/// uses a 256-entry Horspool/byteset skip, which cannot apply to the 2^32 wide
+/// alphabet, so this is the unaugmented core. Used by `wcsstr` to bound its
+/// first-char-probe O(n*m) pathology. `ndl` is non-empty and `ndl.len() <=
+/// hay.len()`. Returns the algorithm-independent leftmost match offset, so it
+/// is output-equivalent to the naive scan.
+fn two_way_search_wide(hay: &[u32], ndl: &[u32]) -> Option<usize> {
+    let l = ndl.len();
+    let li = l as isize;
+
+    // Maximal suffix under "<=" (reverse=false) and ">=" (reverse=true); the
+    // later critical position with the global period `p`.
+    let max_suffix = |reverse: bool| -> (isize, isize) {
+        let mut ip: isize = -1;
+        let mut jp: isize = 0;
+        let mut k: isize = 1;
+        let mut p: isize = 1;
+        while jp + k < li {
+            let a = ndl[(ip + k) as usize];
+            let b = ndl[(jp + k) as usize];
+            let take = if reverse { a < b } else { a > b };
+            if a == b {
+                if k == p {
+                    jp += p;
+                    k = 1;
+                } else {
+                    k += 1;
+                }
+            } else if take {
+                jp += k;
+                k = 1;
+                p = jp - ip;
+            } else {
+                ip = jp;
+                jp += 1;
+                k = 1;
+                p = 1;
+            }
+        }
+        (ip, p)
+    };
+
+    let (ms_le, p0) = max_suffix(false);
+    let (ms_ge, p_ge) = max_suffix(true);
+    let (ms, mut p) = if ms_ge > ms_le {
+        (ms_ge, p_ge)
+    } else {
+        (ms_le, p0)
+    };
+
+    let suffix = (ms + 1) as usize;
+    let periodic = (0..suffix).all(|i| ndl.get(p as usize + i) == Some(&ndl[i]));
+    let mem0: isize = if periodic {
+        li - p
+    } else {
+        p = core::cmp::max(ms, li - ms - 1) + 1;
+        0
+    };
+
+    let mut mem: isize = 0;
+    let mut pos: usize = 0;
+    loop {
+        if pos + l > hay.len() {
+            return None;
+        }
+
+        // Right factor: compare from the critical position rightward.
+        let mut k = (ms + 1) as usize;
+        while k < l && ndl[k] == hay[pos + k] {
+            k += 1;
+        }
+        if k < l {
+            pos += (k as isize - ms) as usize;
+            mem = 0;
+            continue;
+        }
+
+        // Left factor: compare the head down to the remembered prefix.
+        let mut j = ms + 1;
+        while j > mem && ndl[(j - 1) as usize] == hay[pos + (j - 1) as usize] {
+            j -= 1;
+        }
+        if j <= mem {
+            return Some(pos);
+        }
+        pos += p as usize;
+        mem = mem0;
+    }
+}
+
 pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     let needle_len = wcslen(needle);
-
     if needle_len == 0 {
         return Some(0);
     }
-
     let needle = &needle[..needle_len];
+    let h_len = wcslen(haystack);
+    let hay = &haystack[..h_len];
+    if needle_len > h_len {
+        return None;
+    }
     let first = needle[0];
 
+    // Fast path: jump to each first-char candidate via the SIMD `find_wide_or_nul`
+    // scan and verify the full needle there. To keep the O(n+m) worst case, bail
+    // to the pure Two-Way once cumulative failed-candidate work exceeds the
+    // haystack length — so a common needle first char (e.g. L"aaaa…b" over an
+    // 'a' run, which previously made every position a candidate: O(n*m)) cannot
+    // degrade. Both paths return the leftmost match. `wcslen` bounds both
+    // operands before their terminating NUL, preserving wide-string semantics.
     let mut start = 0usize;
-    while start < haystack.len() {
-        let offset = find_wide_or_nul(&haystack[start..], first);
-        if offset == haystack.len() - start {
-            // Unterminated remainder with no first-char candidate and no NUL.
-            return None;
+    let mut miss_work = 0usize;
+    while start + needle_len <= hay.len() {
+        let scan = &hay[start..];
+        let offset = find_wide_or_nul(scan, first);
+        if offset == scan.len() {
+            return None; // first char does not occur again → no match
         }
-
-        let i = start + offset;
-        let ch = haystack[i];
-        if ch == 0 {
-            return None;
+        let cand = start + offset;
+        if cand + needle_len > hay.len() {
+            return None; // not enough room left for the needle
         }
-        // ch == first
-        if i + needle_len > haystack.len() {
-            return None;
+        if hay[cand..cand + needle_len] == *needle {
+            return Some(cand);
         }
-
-        let mut matched = true;
-        for j in 1..needle_len {
-            let candidate = haystack[i + j];
-            if candidate == 0 {
-                return None;
-            }
-            if candidate != needle[j] {
-                matched = false;
-                break;
-            }
+        miss_work += needle_len;
+        start = cand + 1;
+        if miss_work > hay.len() {
+            return two_way_search_wide(&hay[start..], needle).map(|m| m + start);
         }
-        if matched {
-            return Some(i);
-        }
-
-        start = i + 1;
     }
-
     None
 }
 
@@ -1592,6 +1678,63 @@ mod tests {
         let haystack = [b'A' as u32, b'Z' as u32, b'Q' as u32, 0];
         let needle = [b'Z' as u32, 0, b'Q' as u32];
         assert_eq!(wcsstr(&haystack, &needle), Some(1));
+    }
+
+    // Isomorphism: the work-counter-gated probe AND the pure Two-Way bail must
+    // both equal a trivial NUL-bounded window search — including the common
+    // first-char stress that forces the Two-Way bail.
+    #[test]
+    fn wcsstr_matches_naive_reference_incl_two_way_bail() {
+        fn naive(haystack: &[u32], needle: &[u32]) -> Option<usize> {
+            let h = &haystack[..haystack.iter().position(|&c| c == 0).unwrap_or(haystack.len())];
+            let n = &needle[..needle.iter().position(|&c| c == 0).unwrap_or(needle.len())];
+            if n.is_empty() {
+                return Some(0);
+            }
+            if n.len() > h.len() {
+                return None;
+            }
+            (0..=h.len() - n.len()).find(|&i| &h[i..i + n.len()] == n)
+        }
+        let a = b'a' as u32;
+        let b = b'b' as u32;
+        // Long common-first-char run (forces miss_work > hay.len() -> Two-Way).
+        let mut stress: Vec<u32> = vec![a; 300];
+        let mut stress_hit = stress.clone();
+        stress_hit.extend_from_slice(&[a, a, a, b]);
+        stress.push(0);
+        stress_hit.push(0);
+        let mut long_needle: Vec<u32> = vec![a; 64];
+        long_needle.push(b);
+        long_needle.push(0);
+
+        let haystacks: &[&[u32]] = &[
+            &[0],
+            &[a, 0],
+            &[a, b, a, b, a, b, a, b, a, 0],
+            &stress,
+            &stress_hit,
+            &[a, b, 0, a, b, b, 0], // embedded NUL bounds the haystack
+        ];
+        let needles: &[&[u32]] = &[
+            &[0],
+            &[a, 0],
+            &[b, 0],
+            &[a, a, a, a, b, 0], // common first char, mostly absent
+            &[a, a, a, b, 0],
+            &[a, b, a, b, 0],
+            &[b, b, 0], // only past an embedded NUL — must NOT match
+            &long_needle, // 64 'a' + 'b' — longer than some haystacks
+        ];
+        for h in haystacks {
+            for n in needles {
+                assert_eq!(
+                    wcsstr(h, n),
+                    naive(h, n),
+                    "wcsstr diverged from naive reference: h={h:?} n={n:?}"
+                );
+            }
+        }
     }
 
     #[test]

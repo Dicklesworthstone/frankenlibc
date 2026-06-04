@@ -1019,12 +1019,61 @@ mod cmath {
     }
 }
 
-// Host glibc `strcasestr` (GNU extension; not bound by the `libc` crate).
+// Host glibc `strcasestr` (GNU extension) and `wcsstr`, not bound by `libc`.
 mod chost {
-    use std::ffi::c_char;
+    use std::ffi::{c_char, c_int};
     unsafe extern "C" {
         pub fn strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char;
+        // wchar_t is c_int (i32) on Linux; bit-compatible with frankenlibc u32.
+        pub fn wcsstr(haystack: *const c_int, needle: *const c_int) -> *mut c_int;
     }
+}
+
+fn bench_wcsstr_absent(c: &mut Criterion) {
+    use frankenlibc_core::string::wcsstr;
+    let mut group = c.benchmark_group("glibc_baseline_wcsstr_absent");
+    // 4096 wide 'a' chars; 32-wide common-first-char absent needle — the
+    // O(n*m)-vs-O(n) wide Two-Way stress case.
+    let mut haystack: Vec<u32> = vec![b'a' as u32; 4096];
+    haystack.push(0);
+    let mut needle: Vec<u32> = vec![b'a' as u32; 31];
+    needle.push(b'b' as u32);
+    needle.push(0);
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "wcsstr_absent",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "wcsstr",
+            workload: "4096-wide 'a' haystack, 32-wide common-first-char absent needle",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/wide.rs",
+        },
+        || {
+            black_box(wcsstr(black_box(&haystack), black_box(&needle)));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "wcsstr_absent",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "wcsstr",
+            workload: "4096-wide 'a' haystack, 32-wide common-first-char absent needle",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/wide.rs",
+        },
+        || {
+            // SAFETY: both buffers are wchar_t (i32) and NUL-terminated.
+            unsafe {
+                black_box(chost::wcsstr(
+                    haystack.as_ptr().cast(),
+                    needle.as_ptr().cast(),
+                ));
+            }
+        },
+    );
+    group.finish();
 }
 
 fn bench_strcasestr_absent(c: &mut Criterion) {
@@ -1331,6 +1380,7 @@ criterion_group! {
         bench_math,
         bench_memmem_absent,
         bench_strstr_absent,
-        bench_strcasestr_absent
+        bench_strcasestr_absent,
+        bench_wcsstr_absent
 }
 criterion_main!(benches);
