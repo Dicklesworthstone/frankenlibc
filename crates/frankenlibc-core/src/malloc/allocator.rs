@@ -154,6 +154,12 @@ pub struct MallocState {
     total_allocated: usize,
     /// Total number of active allocations.
     active_count: usize,
+    /// Minimum severity recorded into `lifecycle_logs`. Events below this level
+    /// are dropped before any record is built, keeping the alloc/free hot path
+    /// free of per-operation log work. Defaults to `Warn` so errors/OOM are
+    /// still captured while the high-frequency `Trace` events are skipped;
+    /// raise verbosity with [`MallocState::set_min_log_level`].
+    min_log_level: AllocatorLogLevel,
 }
 
 impl MallocState {
@@ -175,7 +181,15 @@ impl MallocState {
             initialized: true,
             total_allocated: 0,
             active_count: 0,
+            min_log_level: AllocatorLogLevel::Warn,
         }
+    }
+
+    /// Sets the minimum lifecycle-log severity. Pass
+    /// [`AllocatorLogLevel::Trace`] to capture the full per-operation trace
+    /// (diagnostics / tests); the default of `Warn` keeps the hot path lean.
+    pub fn set_min_log_level(&mut self, level: AllocatorLogLevel) {
+        self.min_log_level = level;
     }
 
     fn next_log_decision_id(&mut self) -> u64 {
@@ -204,6 +218,13 @@ impl MallocState {
         outcome: &'static str,
         details: impl Into<Cow<'static, str>>,
     ) {
+        // Drop sub-threshold events before building/pushing any record — this is
+        // what keeps the malloc/free hot path (all `Trace`) free of per-op log
+        // work at the default `Warn` level. Fieldless enum, declaration order
+        // Trace(0)<Debug<Info<Warn<Error(4).
+        if (level as u8) < (self.min_log_level as u8) {
+            return;
+        }
         let decision_id = self.next_log_decision_id();
         let trace_id = lifecycle_trace_id(symbol, decision_id);
         self.lifecycle_logs.push(AllocatorLogRecord {
@@ -740,6 +761,7 @@ mod tests {
     #[test]
     fn drain_lifecycle_logs_preserves_records_and_retains_buffer() {
         let mut state = MallocState::new();
+        state.set_min_log_level(AllocatorLogLevel::Trace);
         let size = 64;
         let mut next_ptr = 0x2000_0000usize;
 
@@ -789,6 +811,7 @@ mod tests {
     #[test]
     fn hot_cycle_static_lifecycle_details_are_borrowed() {
         let mut state = MallocState::new();
+        state.set_min_log_level(AllocatorLogLevel::Trace);
         let size = 64;
         let mut next_ptr = 0x3000_0000usize;
 
@@ -862,6 +885,7 @@ mod tests {
     #[test]
     fn hot_cycle_lifecycle_record_sha256_is_stable() {
         let mut state = MallocState::new();
+        state.set_min_log_level(AllocatorLogLevel::Trace);
         let size = 64;
         let mut next_ptr = 0x3000_0000usize;
 
@@ -1047,6 +1071,7 @@ mod tests {
     #[test]
     fn free_matches_waiting_consumer_through_elimination() {
         let mut state = MallocState::new();
+        state.set_min_log_level(AllocatorLogLevel::Trace);
         let size = 32;
         let ptr = state.malloc(size, test_alloc).unwrap();
         let elimination = state.elimination_handle();
