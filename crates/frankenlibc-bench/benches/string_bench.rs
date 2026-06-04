@@ -1365,6 +1365,17 @@ fn bench_regex_search(c: &mut Criterion) {
         b.iter(|| black_box(regex_match_bounds_bytes(&compiled_e, black_box(&hay_e), 0)));
     });
     g2.finish();
+
+    // Case-insensitive, first byte absent in either case: the case-folded
+    // first-byte prefilter skips the whole haystack instead of probing the VM
+    // at every position (icase patterns previously got no prefilter at all).
+    let compiled_i = regex_compile(b"needle", REG_EXTENDED | 2).expect("compile"); // 2 = REG_ICASE
+    let mut g3 = c.benchmark_group("regex_search_icase_absent");
+    g3.throughput(Throughput::Bytes(haystack.len() as u64));
+    g3.bench_function(BenchmarkId::new(mode, 4096), |b| {
+        b.iter(|| black_box(regex_match_bounds_bytes(&compiled_i, black_box(&haystack), 0)));
+    });
+    g3.finish();
 }
 
 fn bench_memmem(c: &mut Criterion) {

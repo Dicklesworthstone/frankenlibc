@@ -194,6 +194,26 @@ impl FirstByteSet {
         self.words[index] |= 1u64 << bit;
     }
 
+    /// Add the opposite ASCII case of every letter already in the set, so the
+    /// set is sound as a first-byte prefilter under case-insensitive matching
+    /// (a literal `e` then matches a start byte of `e` *or* `E`).
+    fn fold_ascii_case(mut self) -> Self {
+        if self.any {
+            return self;
+        }
+        for b in b'A'..=b'Z' {
+            if self.contains(b) {
+                self.insert(b + 32);
+            }
+        }
+        for b in b'a'..=b'z' {
+            if self.contains(b) {
+                self.insert(b - 32);
+            }
+        }
+        self
+    }
+
     fn union(self, other: Self) -> Self {
         if self.any || other.any {
             return Self::any();
@@ -1890,12 +1910,20 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
     // byte, and a non-line-start candidate simply fails the anchor in the VM.
     // A >= 2-byte leading literal lets the search jump via SIMD memmem; it
     // supersedes the single-byte set, so the two are mutually exclusive.
-    let (literal_prefix, prefilter) = if icase {
-        (None, None)
-    } else {
+    let (literal_prefix, prefilter) = {
         let analysis = analyze_ast(&ast);
         if analysis.nullable {
             (None, None)
+        } else if icase {
+            // Case-insensitive: the literal-substring jump needs a case-folding
+            // search, so stick to the single-byte set — but fold it so a start
+            // byte of either case is still treated as a candidate (sound).
+            let fb = analysis.first_bytes.fold_ascii_case();
+            if !fb.any && fb.count() > 0 {
+                (None, Some(fb))
+            } else {
+                (None, None)
+            }
         } else {
             let lit = leading_literal_prefix(&ast);
             if lit.len() >= 2 {
@@ -2222,6 +2250,25 @@ mod tests {
             let (matched, subs) = compile_and_submatch(pat, input, REG_EXTENDED);
             let got = if matched { Some(subs[0]) } else { None };
             assert_eq!(got, expected, "pattern {pat:?} on input {input:?}");
+        }
+    }
+
+    #[test]
+    fn icase_first_byte_prefilter_folds_case() {
+        // The case-folded first-byte prefilter must not skip a start whose byte
+        // is the opposite case of the pattern's first literal.
+        let icase = REG_EXTENDED | REG_ICASE;
+        let cases: &[(&str, &str, Option<(i32, i32)>)] = &[
+            ("abc", "xxABCxx", Some((2, 5))),   // upper input, lower pattern
+            ("ABC", "xxabcxx", Some((2, 5))),   // lower input, upper pattern
+            ("abc", "xxAbCxx", Some((2, 5))),   // mixed
+            ("abc", "xxxyzxx", None),           // absent
+            ("a+b", "cccAAAB", Some((3, 7))),   // folded plus-leading
+        ];
+        for &(pat, input, expected) in cases {
+            let (matched, subs) = compile_and_submatch(pat, input, icase);
+            let got = if matched { Some(subs[0]) } else { None };
+            assert_eq!(got, expected, "icase pattern {pat:?} on input {input:?}");
         }
     }
 
