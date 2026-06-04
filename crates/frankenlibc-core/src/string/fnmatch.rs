@@ -214,10 +214,18 @@ pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
     // a pattern with many '*' (e.g. "*a*a*…*b" over an all-'a' text) backtracks
     // EXPONENTIALLY — a denial-of-service hazard. Memoizing a pure recursive
     // function cannot change its result; it only collapses the redundant
-    // re-exploration to polynomial time. The set stays empty (no heap
-    // allocation) for patterns without redundant '*' recursion.
-    let mut failed = std::collections::HashSet::new();
-    fnmatch_inner(pattern, 0, text, 0, flags, true, &mut failed)
+    // re-exploration to polynomial time. A flat (pat+1)x(text+1) boolean table
+    // (O(1) direct indexing) avoids the per-state hashing a HashSet would cost
+    // on every revisit. It is only allocated when the pattern actually contains
+    // a '*' (the sole recursion source); otherwise `stride` is 0, the array is
+    // empty, and the '*' arm never runs.
+    let stride = if pattern.contains(&b'*') {
+        text.len() + 1
+    } else {
+        0
+    };
+    let mut failed = vec![false; (pattern.len() + 1) * stride];
+    fnmatch_inner(pattern, 0, text, 0, flags, true, &mut failed, stride)
 }
 
 fn fnmatch_inner(
@@ -227,7 +235,8 @@ fn fnmatch_inner(
     mut si: usize,
     flags: FnmatchFlags,
     at_start_in: bool,
-    failed: &mut std::collections::HashSet<(usize, usize)>,
+    failed: &mut [bool],
+    stride: usize,
 ) -> bool {
     let pathname = flags.contains(FnmatchFlags::PATHNAME);
     let period = flags.contains(FnmatchFlags::PERIOD);
@@ -317,13 +326,16 @@ fn fnmatch_inner(
                 loop {
                     // Skip states already proven not to match (collapses the
                     // exponential multi-'*' backtracking to polynomial time).
-                    if !failed.contains(&(pi, j)) {
-                        if fnmatch_inner(pat, pi, text, j, flags, false, failed) {
+                    // `stride > 0` here: reaching a '*' implies the pattern has
+                    // one, so the table was allocated.
+                    let idx = pi * stride + j;
+                    if !failed[idx] {
+                        if fnmatch_inner(pat, pi, text, j, flags, false, failed, stride) {
                             return true;
                         }
                         // Entering the matcher at (pi, j) with at_start=false does
                         // not match; record it so a later '*' cannot re-explore it.
-                        failed.insert((pi, j));
+                        failed[idx] = true;
                     }
                     let c = match text.get(j) {
                         None => break,
