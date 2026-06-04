@@ -3,7 +3,7 @@
 //! Implements `<wchar.h>` / `<stdlib.h>` conversion functions assuming UTF-8
 //! encoding. This is appropriate for the "C.UTF-8" / "POSIX.UTF-8" locale.
 
-use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
+use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
 
 /// Unicode "REPLACEMENT CHARACTER" — emitted by [`decode_utf8_lossy`]
 /// for malformed sequences instead of returning an error.
@@ -359,7 +359,10 @@ pub fn wcs_ascii_prefix(dest: &mut [u8], src: &[u32]) -> usize {
         if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
             break;
         }
-        let bytes = Simd::<u8, LANES>::from_array(wchars.map(|w| w as u8));
+        // Lane-wise truncating SIMD cast (u32 -> u8, keeping the low byte) packs
+        // the whole vector at once. Identical to `w as u8` per lane, but lowers
+        // to a vector pack instead of 16 scalar truncations + an array rebuild.
+        let bytes = chunk.cast::<u8>();
         bytes.copy_to_slice(&mut dest[k..k + LANES]);
         k += LANES;
     }
@@ -396,7 +399,10 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
             break;
         }
         // Narrow each ASCII codepoint to its single output byte.
-        let bytes = Simd::<u8, LANES>::from_array(wchars.map(|w| w as u8));
+        // Lane-wise truncating SIMD cast (u32 -> u8, keeping the low byte) packs
+        // the whole vector at once. Identical to `w as u8` per lane, but lowers
+        // to a vector pack instead of 16 scalar truncations + an array rebuild.
+        let bytes = chunk.cast::<u8>();
         bytes.copy_to_slice(&mut dest[di..di + LANES]);
         si += LANES;
         di += LANES;
