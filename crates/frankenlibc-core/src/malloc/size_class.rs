@@ -106,20 +106,48 @@ pub fn size_class_index(
     SizeClassIndex::new(index, caller)
 }
 
+/// Number of 16-byte granules spanning `1..=MAX_SMALL_SIZE`. Every size class is
+/// a multiple of 16, so all sizes in a granule `((g*16)+1 ..= (g+1)*16]` share a
+/// bin — letting a granule-indexed table resolve the bin in O(1).
+const SMALL_BIN_LUT_LEN: usize = MAX_SMALL_SIZE >> 4;
+
+/// Precomputed `granule -> bin index` table, built at compile time from
+/// [`SIZE_TABLE`] so the hot path needs no per-call search.
+static SMALL_BIN_LUT: [u8; SMALL_BIN_LUT_LEN] = build_small_bin_lut();
+
+const fn build_small_bin_lut() -> [u8; SMALL_BIN_LUT_LEN] {
+    let mut lut = [0u8; SMALL_BIN_LUT_LEN];
+    let mut g = 0;
+    while g < SMALL_BIN_LUT_LEN {
+        // Largest size in granule g; the smallest class >= it covers the whole
+        // granule because every class boundary is a multiple of 16.
+        let size = (g + 1) * 16;
+        let mut i = 0;
+        while i < NUM_SIZE_CLASSES {
+            if size <= SIZE_TABLE[i] {
+                lut[g] = i as u8;
+                break;
+            }
+            i += 1;
+        }
+        g += 1;
+    }
+    lut
+}
+
 /// Computes the bounded bin index for a small allocation.
+///
+/// O(1) granule-table lookup (see [`SMALL_BIN_LUT`]) — byte-for-byte identical
+/// to the smallest-class-`>=`-size search it replaced, since each granule maps
+/// to exactly one class.
 pub fn small_bin_index(size: usize) -> Option<SizeClassIndex> {
     let size = size.max(MIN_SIZE);
     if size > MAX_SMALL_SIZE {
         return None;
     }
-    // Linear scan is fine for 32 entries; a real allocator would use
-    // a lookup table indexed by (size >> 4) or similar.
-    for (i, &class_size) in SIZE_TABLE.iter().enumerate() {
-        if size <= class_size {
-            return Some(BoundedIndex(i));
-        }
-    }
-    None
+    // size in 16..=MAX_SMALL_SIZE => granule in 0..SMALL_BIN_LUT_LEN.
+    let granule = (size - 1) >> 4;
+    Some(BoundedIndex(SMALL_BIN_LUT[granule] as usize))
 }
 
 /// Computes the bin index for a given allocation size.
@@ -169,6 +197,40 @@ mod tests {
     use super::*;
 
     const BOUNDS_AUDIT_JSON: &str = include_str!(env!("FRANKENLIBC_CORE_BOUNDS_AUDIT_PATH"));
+
+    // Reference: the original O(32) linear smallest-class->=-size scan.
+    fn small_bin_index_linear(size: usize) -> Option<usize> {
+        let size = size.max(MIN_SIZE);
+        if size > MAX_SMALL_SIZE {
+            return None;
+        }
+        for (i, &class_size) in SIZE_TABLE.iter().enumerate() {
+            if size <= class_size {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn small_bin_index_lut_isomorphic_to_linear_scan() {
+        // Exhaustive over every input the small path can see, plus a few above.
+        for size in 0..=(MAX_SMALL_SIZE + 64) {
+            let lut = small_bin_index(size).map(SizeClassIndex::get);
+            let lin = small_bin_index_linear(size);
+            assert_eq!(lut, lin, "small_bin_index mismatch at size={size}");
+        }
+        // And the bin actually fits the request (class_size >= requested).
+        for size in 1..=MAX_SMALL_SIZE {
+            let idx = small_bin_index(size).expect("small");
+            assert!(
+                size_for_index(idx) >= size,
+                "bin {} (size {}) too small for request {size}",
+                idx.get(),
+                size_for_index(idx)
+            );
+        }
+    }
 
     #[test]
     fn test_bin_index_min() {

@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use frankenlibc_core::malloc::size_class::SizeClassIndex;
+use frankenlibc_core::malloc::size_class::{SizeClassIndex, small_bin_index};
 
 const FLAT_SLOTS: usize = 128;
 const FC_OP_NONE: usize = 0;
@@ -407,6 +407,56 @@ fn bench_bounded_index_overhead(c: &mut Criterion) {
         })
     });
 
+    group.finish();
+}
+
+// Size-class lookup: the malloc hot path maps a request size to a bin on every
+// allocation. Compares the shipped O(1) granule LUT (small_bin_index) against an
+// inline copy of the original O(32) linear scan, in the SAME bench run so the
+// A/B shares one worker (cross-invocation rch speeds vary ~2x).
+fn bench_size_class_lookup(c: &mut Criterion) {
+    // Mirror of the in-crate SIZE_TABLE (private), for the linear baseline.
+    const SIZE_TABLE: [usize; 32] = [
+        16, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 288, 320, 352, 384, 448, 512, 640,
+        768, 896, 1024, 1280, 1536, 2048, 2560, 3072, 4096, 8192, 16384, 24576, 32768,
+    ];
+    fn linear(size: usize) -> usize {
+        let size = size.max(16);
+        if size > 32768 {
+            return 32;
+        }
+        for (i, &cs) in SIZE_TABLE.iter().enumerate() {
+            if size <= cs {
+                return i;
+            }
+        }
+        32
+    }
+    // A spread of request sizes biased toward the larger classes (where the
+    // linear scan does the most comparisons) but covering the whole range.
+    let sizes: [usize; 16] = [
+        8, 24, 100, 200, 300, 500, 900, 1500, 2000, 3000, 5000, 9000, 17000, 25000, 30000, 32768,
+    ];
+
+    let mut group = c.benchmark_group("size_class_lookup");
+    group.bench_function("lut", |b| {
+        b.iter(|| {
+            let mut acc = 0usize;
+            for &s in &sizes {
+                acc += small_bin_index(black_box(s)).map_or(32, |i| i.get());
+            }
+            black_box(acc)
+        })
+    });
+    group.bench_function("linear_scan", |b| {
+        b.iter(|| {
+            let mut acc = 0usize;
+            for &s in &sizes {
+                acc += linear(black_box(s));
+            }
+            black_box(acc)
+        })
+    });
     group.finish();
 }
 
@@ -914,6 +964,7 @@ criterion_group!(
     bench_alloc_free_cycle,
     bench_alloc_burst,
     bench_bounded_index_overhead,
+    bench_size_class_lookup,
     bench_flat_combining_vs_lock_contention
 );
 criterion_main!(benches);
