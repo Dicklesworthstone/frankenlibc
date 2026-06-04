@@ -209,7 +209,15 @@ fn parse_bracket_subexpr(
 /// flags. Returns `true` if the entire `text` matches (modulo
 /// [`FnmatchFlags::LEADING_DIR`]).
 pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
-    fnmatch_inner(pattern, 0, text, 0, flags, true)
+    // `failed` memoizes (pat_index, text_index) states already proven not to
+    // match when a '*' re-enters the matcher (always at_start=false). Without it
+    // a pattern with many '*' (e.g. "*a*a*…*b" over an all-'a' text) backtracks
+    // EXPONENTIALLY — a denial-of-service hazard. Memoizing a pure recursive
+    // function cannot change its result; it only collapses the redundant
+    // re-exploration to polynomial time. The set stays empty (no heap
+    // allocation) for patterns without redundant '*' recursion.
+    let mut failed = std::collections::HashSet::new();
+    fnmatch_inner(pattern, 0, text, 0, flags, true, &mut failed)
 }
 
 fn fnmatch_inner(
@@ -219,6 +227,7 @@ fn fnmatch_inner(
     mut si: usize,
     flags: FnmatchFlags,
     at_start_in: bool,
+    failed: &mut std::collections::HashSet<(usize, usize)>,
 ) -> bool {
     let pathname = flags.contains(FnmatchFlags::PATHNAME);
     let period = flags.contains(FnmatchFlags::PERIOD);
@@ -306,8 +315,15 @@ fn fnmatch_inner(
                 // increasingly long prefixes of the text.
                 let mut j = si;
                 loop {
-                    if fnmatch_inner(pat, pi, text, j, flags, false) {
-                        return true;
+                    // Skip states already proven not to match (collapses the
+                    // exponential multi-'*' backtracking to polynomial time).
+                    if !failed.contains(&(pi, j)) {
+                        if fnmatch_inner(pat, pi, text, j, flags, false, failed) {
+                            return true;
+                        }
+                        // Entering the matcher at (pi, j) with at_start=false does
+                        // not match; record it so a later '*' cannot re-explore it.
+                        failed.insert((pi, j));
                     }
                     let c = match text.get(j) {
                         None => break,
@@ -505,6 +521,26 @@ mod tests {
 
     fn m(p: &str, t: &str, f: FnmatchFlags) -> bool {
         fnmatch_match(p.as_bytes(), t.as_bytes(), f)
+    }
+
+    // Memoization correctness + anti-DoS: multi-'*' patterns that would explode
+    // exponentially under naive backtracking must return the right answer (and
+    // do so quickly). Each of these would hang the pre-memoization matcher.
+    #[test]
+    fn multi_star_backtracking_is_bounded_and_correct() {
+        // 20 stars over 60 'a' with a trailing 'b' absent -> no match.
+        let pat = "*a".repeat(20) + "*b";
+        let text = "a".repeat(60);
+        assert!(!m(&pat, &text, FnmatchFlags::NONE));
+        // Same shape but the needle is satisfiable (no trailing literal) -> match.
+        let pat_ok = "*a".repeat(20) + "*";
+        assert!(m(&pat_ok, &text, FnmatchFlags::NONE));
+        // Mixed '*' and '?' with a final mismatch.
+        let pat_q = "*a?".repeat(15) + "*z";
+        assert!(!m(&pat_q, &text, FnmatchFlags::NONE));
+        // Exact-fit alternating stars that DO match.
+        assert!(m("*a*b*c*", "xxaxxbxxcxx", FnmatchFlags::NONE));
+        assert!(!m("*a*b*c*d", "xxaxxbxxcxx", FnmatchFlags::NONE));
     }
 
     #[test]

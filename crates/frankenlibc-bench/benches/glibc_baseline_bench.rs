@@ -1029,6 +1029,57 @@ mod chost {
     }
 }
 
+fn bench_fnmatch_adversarial(c: &mut Criterion) {
+    use frankenlibc_core::string::fnmatch::{FnmatchFlags, fnmatch_match};
+    let mut group = c.benchmark_group("glibc_baseline_fnmatch_adversarial");
+    // Multi-star pattern that triggers exponential backtracking in a naive
+    // recursive matcher: "*a*a*...*b" vs an all-'a' text with no 'b'.
+    let pattern = b"*a*a*a*a*a*a*b"; // 6 stars
+    let pattern_c = b"*a*a*a*a*a*a*b\0";
+    let text = b"aaaaaaaaaaaaaaaaaa"; // 18 a, no b
+    let text_c = b"aaaaaaaaaaaaaaaaaa\0";
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "fnmatch_adversarial",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "fnmatch",
+            workload: "6-star pattern vs 18-char no-match (exponential-backtrack stress)",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/fnmatch.rs",
+        },
+        || {
+            black_box(fnmatch_match(
+                black_box(pattern),
+                black_box(text),
+                FnmatchFlags::NONE,
+            ));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "fnmatch_adversarial",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "fnmatch",
+            workload: "6-star pattern vs 18-char no-match (exponential-backtrack stress)",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/fnmatch.rs",
+        },
+        || {
+            // SAFETY: both are NUL-terminated C strings; flags=0.
+            unsafe {
+                black_box(libc::fnmatch(
+                    pattern_c.as_ptr().cast(),
+                    text_c.as_ptr().cast(),
+                    0,
+                ));
+            }
+        },
+    );
+    group.finish();
+}
+
 fn bench_wcsstr_absent(c: &mut Criterion) {
     use frankenlibc_core::string::wcsstr;
     let mut group = c.benchmark_group("glibc_baseline_wcsstr_absent");
@@ -1381,6 +1432,7 @@ criterion_group! {
         bench_memmem_absent,
         bench_strstr_absent,
         bench_strcasestr_absent,
-        bench_wcsstr_absent
+        bench_wcsstr_absent,
+        bench_fnmatch_adversarial
 }
 criterion_main!(benches);
