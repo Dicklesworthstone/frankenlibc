@@ -1260,6 +1260,19 @@ impl<'a> PikeVm<'a> {
         let mut visited = vec![0u64; self.nfa.len()];
         let mut generation = 0u64;
 
+        // For large inputs, a single forward membership pass rules out a match
+        // in O(n*m) instead of re-simulating from every start (O(n^2)) when
+        // nothing matches — the worst case for `.`/`*`-leading patterns no
+        // prefilter can prune. On a match it early-exits and we fall through to
+        // the exact leftmost-longest search below. Sound: any_match reuses
+        // add_thread, so it has no false negatives (never skips a real match).
+        const PRESCAN_MIN_LEN: usize = 256;
+        if input_len > PRESCAN_MIN_LEN
+            && !self.any_match(notbol, noteol, &mut visited, &mut generation)
+        {
+            return None;
+        }
+
         // Literal-prefix fast path: a match can only begin where the leading
         // literal occurs, so jump straight to each occurrence with SIMD memmem
         // instead of probing every start. Leftmost preserved (memmem scans L->R).
@@ -1298,6 +1311,79 @@ impl<'a> PikeVm<'a> {
             }
         }
         None
+    }
+
+    /// Membership-only single forward pass: does ANY match exist? Seeds a
+    /// start-thread at every position (so a match may begin anywhere) and
+    /// accepts on the first reachable `Accept`. Reuses `add_thread`, so its
+    /// epsilon-closure and anchor handling are byte-identical to the real
+    /// search — guaranteeing no false negatives (it never reports "no match"
+    /// when one exists). Slots are irrelevant here, so a dummy is carried.
+    fn any_match(
+        &self,
+        notbol: bool,
+        noteol: bool,
+        visited: &mut [u64],
+        generation: &mut u64,
+    ) -> bool {
+        let input_len = self.input.len();
+        let dummy = vec![-1i32; self.num_slots];
+        let mut current: Vec<Thread> = Vec::new();
+        let mut next: Vec<Thread> = Vec::new();
+
+        // Seed the start-thread at position 0 (its own closure generation).
+        *generation += 1;
+        self.add_thread(
+            &mut current,
+            Thread { pc: 0, slots: dummy.clone() },
+            0,
+            notbol,
+            noteol,
+            visited,
+            *generation,
+        );
+
+        let mut sp = 0;
+        loop {
+            *generation += 1;
+            let step_gen = *generation;
+            for t in current.drain(..) {
+                if t.pc >= self.nfa.len() {
+                    continue;
+                }
+                match &self.nfa[t.pc] {
+                    NfaInstr::Accept => return true,
+                    NfaInstr::Match(mk) if self.matches(mk, sp, notbol, noteol) => {
+                        self.add_thread(
+                            &mut next,
+                            Thread { pc: t.pc + 1, slots: t.slots },
+                            sp + 1,
+                            notbol,
+                            noteol,
+                            visited,
+                            step_gen,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if sp >= input_len {
+                return false;
+            }
+            sp += 1;
+            // Seed a fresh start-thread at the new position into the same set.
+            self.add_thread(
+                &mut next,
+                Thread { pc: 0, slots: dummy.clone() },
+                sp,
+                notbol,
+                noteol,
+                visited,
+                step_gen,
+            );
+            core::mem::swap(&mut current, &mut next);
+            next.clear();
+        }
     }
 
     fn run_from(
@@ -2333,6 +2419,29 @@ mod tests {
             let (matched, subs) = compile_and_submatch(pat, input, icase);
             let got = if matched { Some(subs[0]) } else { None };
             assert_eq!(got, expected, "icase pattern {pat:?} on input {input:?}");
+        }
+    }
+
+    #[test]
+    fn membership_prescan_preserves_results_on_large_inputs() {
+        // Inputs > the prescan threshold (256) so the single-pass membership
+        // guard fires. `.`/`*`-leading patterns have no prefilter, so this is
+        // exactly the path the prescan must keep correct: no-match returns None
+        // in one pass; a real match (incl. at the very end) still falls through
+        // to the exact search and reports identical bounds.
+        let big = 600usize;
+        let a_run: String = core::iter::repeat_n('a', big).collect();
+        let cases: &[(&str, String, Option<(i32, i32)>)] = &[
+            (".*x", a_run.clone(), None),                        // no-match, prescan rules out
+            (".*x", format!("{a_run}x"), Some((0, big as i32 + 1))), // match at end
+            ("a*z", a_run.clone(), None),                        // greedy no-match
+            ("[bc]+", a_run.clone(), None),                      // class, none present
+            ("a", format!("{}a{}", "b".repeat(300), "b".repeat(300)), Some((300, 301))), // match mid
+        ];
+        for (pat, input, expected) in cases {
+            let (matched, subs) = compile_and_submatch(pat, input, REG_EXTENDED);
+            let got = if matched { Some(subs[0]) } else { None };
+            assert_eq!(got, *expected, "prescan pattern {pat:?} on len-{} input", input.len());
         }
     }
 
