@@ -26,6 +26,10 @@ name = "string_bench"
 harness = false
 
 [[bench]]
+name = "wchar_bench"
+harness = false
+
+[[bench]]
 name = "malloc_bench"
 harness = false
 

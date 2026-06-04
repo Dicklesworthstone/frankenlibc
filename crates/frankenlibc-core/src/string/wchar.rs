@@ -3,6 +3,8 @@
 //! Implements `<wchar.h>` / `<stdlib.h>` conversion functions assuming UTF-8
 //! encoding. This is appropriate for the "C.UTF-8" / "POSIX.UTF-8" locale.
 
+use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
+
 /// Unicode "REPLACEMENT CHARACTER" — emitted by [`decode_utf8_lossy`]
 /// for malformed sequences instead of returning an error.
 pub const REPLACEMENT_CODEPOINT: u32 = 0xFFFD;
@@ -219,6 +221,33 @@ pub fn mblen(s: &[u8]) -> Option<usize> {
 pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
     let mut si = 0usize;
     let mut di = 0usize;
+
+    // SIMD ASCII fast path. The overwhelming majority of multibyte text is
+    // plain ASCII, where every byte b (0 < b < 0x80) widens to the codepoint
+    // `b as u32` — exactly what `mbtowc` returns for a 1-byte sequence. Convert
+    // whole ASCII runs a vector at a time, and bail to the scalar loop the
+    // instant a chunk contains a NUL terminator or a non-ASCII lead byte, so
+    // every terminator / multibyte / error path stays in the unchanged scalar
+    // code below. Output is therefore byte-for-byte identical to the pure
+    // scalar conversion.
+    const LANES: usize = 16;
+    let zero = Simd::<u8, LANES>::splat(0);
+    let ascii_max = Simd::<u8, LANES>::splat(0x80);
+    while si + LANES <= src.len() && di + LANES <= dest.len() {
+        let bytes: [u8; LANES] = src[si..si + LANES].try_into().unwrap();
+        let chunk = Simd::<u8, LANES>::from_array(bytes);
+        // Any NUL (terminator) or any byte >= 0x80 (multibyte lead) ends the run.
+        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+            break;
+        }
+        // Zero-extend each ASCII byte to its u32 codepoint; LLVM lowers the
+        // `as u32` map to a vector widening (e.g. vpmovzxbd).
+        let widened = Simd::<u32, LANES>::from_array(bytes.map(|b| b as u32));
+        widened.copy_to_slice(&mut dest[di..di + LANES]);
+        si += LANES;
+        di += LANES;
+    }
+
     while si < src.len() {
         if src[si] == 0 {
             // NUL terminator
@@ -559,6 +588,79 @@ pub fn wcwidth(wc: u32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pure scalar reference: the original mbstowcs loop, with no SIMD fast path.
+    // Used to prove the vectorised mbstowcs is byte-for-byte isomorphic.
+    fn mbstowcs_scalar_reference(dest: &mut [u32], src: &[u8]) -> Option<usize> {
+        let mut si = 0usize;
+        let mut di = 0usize;
+        while si < src.len() {
+            if src[si] == 0 {
+                if di < dest.len() {
+                    dest[di] = 0;
+                }
+                return Some(di);
+            }
+            let (wc, n) = mbtowc(&src[si..])?;
+            if di < dest.len() {
+                dest[di] = wc;
+            } else {
+                return Some(di);
+            }
+            si += n;
+            di += 1;
+        }
+        Some(di)
+    }
+
+    #[test]
+    fn mbstowcs_simd_isomorphic_to_scalar() {
+        // Build a varied corpus: pure ASCII of every length around the 16-lane
+        // boundary, ASCII with embedded NUL at each offset, ASCII interrupted by
+        // multibyte sequences at each offset, and pseudo-random byte soup
+        // (exercises invalid sequences -> both must agree on None or count).
+        let mut corpus: Vec<Vec<u8>> = Vec::new();
+        for len in 0..80usize {
+            corpus.push((0..len).map(|i| b'a' + (i % 26) as u8).collect());
+        }
+        // ASCII with a NUL planted at every offset up to 40.
+        for pos in 0..40usize {
+            let mut v: Vec<u8> = (0..40).map(|i| b'A' + (i % 26) as u8).collect();
+            v[pos] = 0;
+            corpus.push(v);
+        }
+        // ASCII run then a 3-byte multibyte char (€ = E2 82 AC) at each offset.
+        for pos in 0..40usize {
+            let mut v: Vec<u8> = (0..40).map(|_| b'x').collect();
+            v.splice(pos..pos, [0xE2, 0x82, 0xAC]);
+            corpus.push(v);
+        }
+        // Multibyte-heavy and mixed (snowman ☃ = E2 98 83, é = C3 A9).
+        corpus.push(b"caf\xc3\xa9 \xe2\x98\x83 \xe2\x82\xac done".to_vec());
+        // Pseudo-random soup (LCG) including high bytes / invalid sequences.
+        let mut state: u64 = 0x1234_5678_9ABC_DEF0;
+        for _ in 0..2000 {
+            let len = (state % 70) as usize;
+            let mut v = Vec::with_capacity(len);
+            for _ in 0..len {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                v.push((state >> 33) as u8);
+            }
+            corpus.push(v);
+        }
+
+        // Sweep several destination capacities, including exact and truncating.
+        for src in &corpus {
+            for &cap in &[0usize, 1, 7, 15, 16, 17, 33, 128] {
+                let mut a = vec![0xDEAD_BEEFu32; cap];
+                let mut b = vec![0xDEAD_BEEFu32; cap];
+                let ra = mbstowcs(&mut a, src);
+                let rb = mbstowcs_scalar_reference(&mut b, src);
+                assert_eq!(ra, rb, "return mismatch: src={src:02x?} cap={cap}");
+                assert_eq!(a, b, "dest mismatch: src={src:02x?} cap={cap}");
+            }
+        }
+    }
 
     #[test]
     fn ascii_roundtrip() {
