@@ -1380,6 +1380,21 @@ fn bench_regex_search(c: &mut Criterion) {
     // icase, common first byte (all 'E'), rare full literal: the case-folded
     // single-byte set {e,E} cannot skip, but the icase literal jump (strcasestr)
     // finds no "errors" and returns after one scan.
+    // Large epsilon-closure per step: an optional chain `a?a?...a?b` keeps ~N
+    // states live at each position, stressing the thread-set dedup. On all-'a'
+    // input the trailing 'b' never matches, so the VM runs the full closure at
+    // each start — O(m^2) per step with the old linear-scan dedup, O(m) with the
+    // gen-stamped one.
+    let chain: Vec<u8> = b"a?".repeat(40).into_iter().chain(*b"b").collect();
+    let hay_chain = vec![b'a'; 512];
+    let compiled_chain = regex_compile(&chain, REG_EXTENDED).expect("compile");
+    let mut g5 = c.benchmark_group("regex_thread_closure");
+    g5.throughput(Throughput::Bytes(hay_chain.len() as u64));
+    g5.bench_function(BenchmarkId::new(mode, 512), |b| {
+        b.iter(|| black_box(regex_match_bounds_bytes(&compiled_chain, black_box(&hay_chain), 0)));
+    });
+    g5.finish();
+
     let hay_e_upper = vec![b'E'; 4096];
     let compiled_il = regex_compile(b"errors", REG_EXTENDED | 2).expect("compile");
     let mut g4 = c.benchmark_group("regex_search_icase_common_first_byte");

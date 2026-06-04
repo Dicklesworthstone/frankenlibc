@@ -1253,6 +1253,13 @@ impl<'a> PikeVm<'a> {
         let noteol = self.eflags & REG_NOTEOL != 0;
         let input_len = self.input.len();
 
+        // Closure-dedup scratch shared across every run_from in this execute:
+        // `visited[pc] == generation` means "already added in the set being built".
+        // `generation` is monotonic (never reset) so a fresh per-build value never
+        // collides with a stale stamp — letting us reuse one allocation.
+        let mut visited = vec![0u64; self.nfa.len()];
+        let mut generation = 0u64;
+
         // Literal-prefix fast path: a match can only begin where the leading
         // literal occurs, so jump straight to each occurrence with SIMD memmem
         // instead of probing every start. Leftmost preserved (memmem scans L->R).
@@ -1265,7 +1272,9 @@ impl<'a> PikeVm<'a> {
                 let start = from + off;
                 let mut slots = vec![-1i32; self.num_slots];
                 slots[0] = start as i32;
-                if let Some(matched_slots) = self.run_from(start, &slots, notbol, noteol) {
+                if let Some(matched_slots) =
+                    self.run_from(start, &slots, notbol, noteol, &mut visited, &mut generation)
+                {
                     return Some(matched_slots);
                 }
                 from = start + 1;
@@ -1282,7 +1291,9 @@ impl<'a> PikeVm<'a> {
             }
             let mut slots = vec![-1i32; self.num_slots];
             slots[0] = start as i32; // group 0 start
-            if let Some(matched_slots) = self.run_from(start, &slots, notbol, noteol) {
+            if let Some(matched_slots) =
+                self.run_from(start, &slots, notbol, noteol, &mut visited, &mut generation)
+            {
                 return Some(matched_slots);
             }
         }
@@ -1295,22 +1306,28 @@ impl<'a> PikeVm<'a> {
         initial_slots: &[i32],
         notbol: bool,
         noteol: bool,
+        visited: &mut [u64],
+        generation: &mut u64,
     ) -> Option<Vec<i32>> {
         let mut current: Vec<Thread> = Vec::new();
         let mut next: Vec<Thread> = Vec::new();
         let mut best: Option<Vec<i32>> = None;
 
-        // Add initial thread
+        // Add initial thread (its own closure generation).
         let init_thread = Thread {
             pc: 0,
             slots: initial_slots.to_vec(),
         };
-        self.add_thread(&mut current, init_thread, start, notbol, noteol);
+        *generation += 1;
+        self.add_thread(&mut current, init_thread, start, notbol, noteol, visited, *generation);
 
         let input_len = self.input.len();
         let mut sp = start;
 
         loop {
+            // Each step builds the `next` set in a fresh closure generation.
+            *generation += 1;
+            let step_gen = *generation;
             // Process all current threads
             for t in current.drain(..) {
                 if t.pc >= self.nfa.len() {
@@ -1322,7 +1339,7 @@ impl<'a> PikeVm<'a> {
                             pc: t.pc + 1,
                             slots: t.slots,
                         };
-                        self.add_thread(&mut next, new_t, sp + 1, notbol, noteol);
+                        self.add_thread(&mut next, new_t, sp + 1, notbol, noteol, visited, step_gen);
                     }
                     NfaInstr::Match(_) => {}
                     NfaInstr::Accept => {
@@ -1368,10 +1385,12 @@ impl<'a> PikeVm<'a> {
         sp: usize,
         notbol: bool,
         noteol: bool,
+        visited: &mut [u64],
+        generation: u64,
     ) {
         // Depth-limited wrapper to prevent stack overflow on deeply nested
         // alternations or pathological Jump chains.
-        self.add_thread_inner(threads, t, sp, notbol, noteol, 0);
+        self.add_thread_inner(threads, t, sp, notbol, noteol, 0, visited, generation);
     }
 
     /// Maximum epsilon-closure recursion depth. This bounds the stack usage
@@ -1388,15 +1407,23 @@ impl<'a> PikeVm<'a> {
         notbol: bool,
         noteol: bool,
         depth: usize,
+        visited: &mut [u64],
+        generation: u64,
     ) {
         if depth > Self::ADD_THREAD_MAX_DEPTH || t.pc >= self.nfa.len() {
             return;
         }
 
-        // Avoid duplicate threads at same PC (thread priority: first wins for POSIX)
-        if threads.iter().any(|existing| existing.pc == t.pc) {
+        // Avoid revisiting the same PC during this closure (thread priority:
+        // first wins for POSIX). `visited[pc] == generation` marks "already added in
+        // the set currently being built"; `generation` is monotonic across the whole
+        // execute(), so a stale stamp from an earlier set never collides. This
+        // is an O(1) replacement for the prior O(set-size) linear scan and also
+        // dedups epsilon PCs, preventing redundant closure re-walks.
+        if visited[t.pc] == generation {
             return;
         }
+        visited[t.pc] = generation;
 
         match &self.nfa[t.pc] {
             NfaInstr::Split(a, b) => {
@@ -1408,15 +1435,15 @@ impl<'a> PikeVm<'a> {
                     pc: *b,
                     slots: t.slots,
                 };
-                self.add_thread_inner(threads, t1, sp, notbol, noteol, depth + 1);
-                self.add_thread_inner(threads, t2, sp, notbol, noteol, depth + 1);
+                self.add_thread_inner(threads, t1, sp, notbol, noteol, depth + 1, visited, generation);
+                self.add_thread_inner(threads, t2, sp, notbol, noteol, depth + 1, visited, generation);
             }
             NfaInstr::Jump(target) => {
                 let new_t = Thread {
                     pc: *target,
                     slots: t.slots,
                 };
-                self.add_thread_inner(threads, new_t, sp, notbol, noteol, depth + 1);
+                self.add_thread_inner(threads, new_t, sp, notbol, noteol, depth + 1, visited, generation);
             }
             NfaInstr::Save(slot) => {
                 let mut new_slots = t.slots;
@@ -1425,7 +1452,7 @@ impl<'a> PikeVm<'a> {
                     pc: t.pc + 1,
                     slots: new_slots,
                 };
-                self.add_thread_inner(threads, new_t, sp, notbol, noteol, depth + 1);
+                self.add_thread_inner(threads, new_t, sp, notbol, noteol, depth + 1, visited, generation);
             }
             NfaInstr::Match(mk) => {
                 // For anchors, check inline so we don't waste a simulation step
@@ -1436,7 +1463,16 @@ impl<'a> PikeVm<'a> {
                                 pc: t.pc + 1,
                                 slots: t.slots,
                             };
-                            self.add_thread_inner(threads, new_t, sp, notbol, noteol, depth + 1);
+                            self.add_thread_inner(
+                                threads,
+                                new_t,
+                                sp,
+                                notbol,
+                                noteol,
+                                depth + 1,
+                                visited,
+                                generation,
+                            );
                         }
                     }
                     MatchKind::AnchorEnd { newline } => {
@@ -1445,7 +1481,16 @@ impl<'a> PikeVm<'a> {
                                 pc: t.pc + 1,
                                 slots: t.slots,
                             };
-                            self.add_thread_inner(threads, new_t, sp, notbol, noteol, depth + 1);
+                            self.add_thread_inner(
+                                threads,
+                                new_t,
+                                sp,
+                                notbol,
+                                noteol,
+                                depth + 1,
+                                visited,
+                                generation,
+                            );
                         }
                     }
                     _ => {
