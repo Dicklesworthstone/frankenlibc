@@ -323,6 +323,18 @@ fn leading_literal_prefix(ast: &Ast) -> Vec<u8> {
     }
 }
 
+/// Find the leftmost occurrence of `needle` in `haystack`, case-insensitively
+/// (ASCII) when `icase`. Backs the regex literal-prefix jump: SIMD `memmem` for
+/// the case-sensitive path, SIMD-folded `strcasestr` for the case-insensitive
+/// one (both match the engine's ASCII-only case folding exactly).
+fn find_literal(haystack: &[u8], needle: &[u8], icase: bool) -> Option<usize> {
+    if icase {
+        crate::string::str::strcasestr(haystack, needle)
+    } else {
+        crate::string::mem::memmem(haystack, haystack.len(), needle, needle.len())
+    }
+}
+
 fn analyze_ast(ast: &Ast) -> AstAnalysis {
     match ast {
         Ast::Literal(byte) => AstAnalysis::linear(false, FirstByteSet::singleton(*byte)),
@@ -1189,6 +1201,9 @@ struct PikeVm<'a> {
     eflags: i32,
     prefilter: Option<FirstByteSet>,
     literal_prefix: Option<&'a [u8]>,
+    /// When true, the literal-prefix jump uses a case-insensitive substring
+    /// search (the regex itself matches case-insensitively).
+    literal_icase: bool,
 }
 
 /// Thread state in Pike VM
@@ -1206,6 +1221,7 @@ impl<'a> PikeVm<'a> {
         eflags: i32,
         prefilter: Option<FirstByteSet>,
         literal_prefix: Option<&'a [u8]>,
+        literal_icase: bool,
     ) -> Self {
         Self {
             nfa,
@@ -1214,6 +1230,7 @@ impl<'a> PikeVm<'a> {
             eflags,
             prefilter,
             literal_prefix,
+            literal_icase,
         }
     }
 
@@ -1242,9 +1259,7 @@ impl<'a> PikeVm<'a> {
         if let Some(lit) = self.literal_prefix {
             let mut from = 0;
             while from + lit.len() <= input_len {
-                let Some(off) =
-                    crate::string::mem::memmem(&self.input[from..], input_len - from, lit, lit.len())
-                else {
+                let Some(off) = find_literal(&self.input[from..], lit, self.literal_icase) else {
                     return None;
                 };
                 let start = from + off;
@@ -1580,9 +1595,7 @@ impl<'a> BacktrackVm<'a> {
             let input_len = self.input.len();
             let mut from = 0;
             while from + lit.len() <= input_len {
-                let Some(off) =
-                    crate::string::mem::memmem(&self.input[from..], input_len - from, lit, lit.len())
-                else {
+                let Some(off) = find_literal(&self.input[from..], lit, self.icase) else {
                     return None;
                 };
                 let start = from + off;
@@ -1915,14 +1928,19 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         if analysis.nullable {
             (None, None)
         } else if icase {
-            // Case-insensitive: the literal-substring jump needs a case-folding
-            // search, so stick to the single-byte set — but fold it so a start
-            // byte of either case is still treated as a candidate (sound).
-            let fb = analysis.first_bytes.fold_ascii_case();
-            if !fb.any && fb.count() > 0 {
-                (None, Some(fb))
+            // Case-insensitive: a >= 2-byte leading literal can still be jumped
+            // to with a case-folding search (strcasestr); otherwise fold the
+            // single-byte set so a start byte of either case stays a candidate.
+            let lit = leading_literal_prefix(&ast);
+            if lit.len() >= 2 {
+                (Some(lit), None)
             } else {
-                (None, None)
+                let fb = analysis.first_bytes.fold_ascii_case();
+                if !fb.any && fb.count() > 0 {
+                    (None, Some(fb))
+                } else {
+                    (None, None)
+                }
             }
         } else {
             let lit = leading_literal_prefix(&ast);
@@ -2065,6 +2083,7 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
         eflags,
         compiled.prefilter,
         compiled.literal_prefix.as_deref(),
+        compiled.icase,
     );
 
     vm.execute()

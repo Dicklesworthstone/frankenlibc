@@ -1376,6 +1376,18 @@ fn bench_regex_search(c: &mut Criterion) {
         b.iter(|| black_box(regex_match_bounds_bytes(&compiled_i, black_box(&haystack), 0)));
     });
     g3.finish();
+
+    // icase, common first byte (all 'E'), rare full literal: the case-folded
+    // single-byte set {e,E} cannot skip, but the icase literal jump (strcasestr)
+    // finds no "errors" and returns after one scan.
+    let hay_e_upper = vec![b'E'; 4096];
+    let compiled_il = regex_compile(b"errors", REG_EXTENDED | 2).expect("compile");
+    let mut g4 = c.benchmark_group("regex_search_icase_common_first_byte");
+    g4.throughput(Throughput::Bytes(hay_e_upper.len() as u64));
+    g4.bench_function(BenchmarkId::new(mode, 4096), |b| {
+        b.iter(|| black_box(regex_match_bounds_bytes(&compiled_il, black_box(&hay_e_upper), 0)));
+    });
+    g4.finish();
 }
 
 fn bench_memmem(c: &mut Criterion) {
