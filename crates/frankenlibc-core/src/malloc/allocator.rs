@@ -48,6 +48,29 @@ impl AllocatorTraceId {
             decision_id,
         }
     }
+
+    fn eq_legacy_str(self, other: &str) -> bool {
+        let Some(rest) = other.strip_prefix(TRACE_ID_PREFIX) else {
+            return false;
+        };
+        let Some(rest) = rest.strip_prefix(self.symbol) else {
+            return false;
+        };
+        let Some(hex) = rest.strip_prefix(TRACE_ID_SEPARATOR) else {
+            return false;
+        };
+        let bytes = hex.as_bytes();
+        if bytes.len() != 16 {
+            return false;
+        }
+        for (idx, shift) in (0..16).rev().map(|n| n * 4).enumerate() {
+            let digit = ((self.decision_id >> shift) & 0x0f) as usize;
+            if bytes[idx] != LOWER_HEX[digit] {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl fmt::Debug for AllocatorTraceId {
@@ -69,13 +92,13 @@ impl fmt::Display for AllocatorTraceId {
 
 impl PartialEq<String> for AllocatorTraceId {
     fn eq(&self, other: &String) -> bool {
-        self.to_string() == *other
+        self.eq_legacy_str(other.as_str())
     }
 }
 
 impl PartialEq<&str> for AllocatorTraceId {
     fn eq(&self, other: &&str) -> bool {
-        self.to_string() == *other
+        self.eq_legacy_str(other)
     }
 }
 
