@@ -1131,6 +1131,58 @@ fn bench_fnmatch_bracket(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_fnmatch_pathname(c: &mut Criterion) {
+    use frankenlibc_core::string::fnmatch::{FnmatchFlags, fnmatch_match};
+    let mut group = c.benchmark_group("glibc_baseline_fnmatch_pathname");
+    // Multi-star pattern under FNM_PATHNAME (the path-matching flag) — exercises
+    // the flag-aware iterative matcher vs the old recursive path. No '/' in the
+    // text so the '*' backtracks freely within the component.
+    let pattern = b"*a*a*a*a*a*a*b"; // 6 stars
+    let pattern_c = b"*a*a*a*a*a*a*b\0";
+    let text = b"aaaaaaaaaaaaaaaaaa"; // 18 a, no b
+    let text_c = b"aaaaaaaaaaaaaaaaaa\0";
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "fnmatch_pathname",
+            impl_label: "frankenlibc_core",
+            api_family: "string",
+            symbol: "fnmatch",
+            workload: "6-star PATHNAME pattern vs 18-char no-match",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/fnmatch.rs",
+        },
+        || {
+            black_box(fnmatch_match(
+                black_box(pattern),
+                black_box(text),
+                FnmatchFlags::PATHNAME,
+            ));
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "fnmatch_pathname",
+            impl_label: "host_glibc",
+            api_family: "string",
+            symbol: "fnmatch",
+            workload: "6-star PATHNAME pattern vs 18-char no-match",
+            parity_proof_ref: "crates/frankenlibc-core/src/string/fnmatch.rs",
+        },
+        || {
+            // SAFETY: both are NUL-terminated C strings; FNM_PATHNAME flag.
+            unsafe {
+                black_box(libc::fnmatch(
+                    pattern_c.as_ptr().cast(),
+                    text_c.as_ptr().cast(),
+                    libc::FNM_PATHNAME,
+                ));
+            }
+        },
+    );
+    group.finish();
+}
+
 fn bench_wcsstr_absent(c: &mut Criterion) {
     use frankenlibc_core::string::wcsstr;
     let mut group = c.benchmark_group("glibc_baseline_wcsstr_absent");
@@ -1485,6 +1537,7 @@ criterion_group! {
         bench_strcasestr_absent,
         bench_wcsstr_absent,
         bench_fnmatch_adversarial,
-        bench_fnmatch_bracket
+        bench_fnmatch_bracket,
+        bench_fnmatch_pathname
 }
 criterion_main!(benches);

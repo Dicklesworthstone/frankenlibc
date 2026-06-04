@@ -219,7 +219,7 @@ fn parse_bracket_subexpr(
 /// CASEFOLD); reuses the shared `parse_bracket_subexpr` for `[:class:]` /
 /// `[.x.]` / `[=x=]`, so only the range/literal membership is local logic. The
 /// `None => break` arms are unreachable given a `Terminated` bracket.
-fn bracket_match_one(pat: &[u8], pi0: usize, c: u8, noescape: bool) -> (bool, usize) {
+fn bracket_match_one(pat: &[u8], pi0: usize, c: u8, noescape: bool, casefold: bool) -> (bool, usize) {
     let mut pi = pi0 + 1; // skip '['
     let negated = matches!(pat.get(pi), Some(&b'!') | Some(&b'^'));
     if negated {
@@ -240,7 +240,7 @@ fn bracket_match_one(pat: &[u8], pi0: usize, c: u8, noescape: bool) -> (bool, us
         if bc == b'['
             && let Some(&kind) = pat.get(pi + 1)
             && matches!(kind, b':' | b'.' | b'=')
-            && let Some((next_pi, member)) = parse_bracket_subexpr(pat, pi, kind, c, false)
+            && let Some((next_pi, member)) = parse_bracket_subexpr(pat, pi, kind, c, casefold)
         {
             if member {
                 matched = true;
@@ -274,11 +274,23 @@ fn bracket_match_one(pat: &[u8], pi0: usize, c: u8, noescape: bool) -> (bool, us
                 }
             }
             pi += 1;
-            if c >= low && c <= high {
+            let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
+            if casefold {
+                for r_ch in low..=high {
+                    if test_ch == r_ch.to_ascii_lowercase() {
+                        matched = true;
+                        break;
+                    }
+                }
+            } else if test_ch >= low && test_ch <= high {
                 matched = true;
             }
-        } else if c == low {
-            matched = true;
+        } else {
+            let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
+            let low_cmp = if casefold { low.to_ascii_lowercase() } else { low };
+            if test_ch == low_cmp {
+                matched = true;
+            }
         }
     }
     pi += 1; // skip ']'
@@ -288,12 +300,29 @@ fn bracket_match_one(pat: &[u8], pi0: usize, c: u8, noescape: bool) -> (bool, us
     (matched, pi)
 }
 
-fn fnmatch_simple(pat: &[u8], text: &[u8], noescape: bool) -> bool {
+fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
+    let pathname = flags.contains(FnmatchFlags::PATHNAME);
+    let period = flags.contains(FnmatchFlags::PERIOD);
+    let casefold = flags.contains(FnmatchFlags::CASEFOLD);
+    let noescape = flags.contains(FnmatchFlags::NOESCAPE);
+    let leading_dir = flags.contains(FnmatchFlags::LEADING_DIR);
+
+    let eq = |a: u8, b: u8| if casefold { a.eq_ignore_ascii_case(&b) } else { a == b };
+    // Is `text[si]` a leading '.' that PERIOD requires be matched literally
+    // (never by '*'/'?'/'[')? True at text start, or — under PATHNAME — right
+    // after a '/'.
+    let lp_blocked = |si: usize| -> bool {
+        period
+            && text.get(si) == Some(&b'.')
+            && (si == 0 || (pathname && si >= 1 && text.get(si - 1) == Some(&b'/')))
+    };
+
     let mut pi = 0usize;
     let mut si = 0usize;
     let mut star: Option<(usize, usize)> = None; // (pat index after the '*' run, text index when seen)
 
     while si < text.len() {
+        let c = text[si];
         let mut advanced = false;
         if pi < pat.len() {
             match pat[pi] {
@@ -301,14 +330,17 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], noescape: bool) -> bool {
                     while pi < pat.len() && pat[pi] == b'*' {
                         pi += 1;
                     }
+                    // '*' cannot match a leading '.' under PERIOD.
+                    if lp_blocked(si) {
+                        return false;
+                    }
                     star = Some((pi, si));
                     continue;
                 }
                 b'\\' if !noescape => {
-                    // `\X` matches the literal X; a trailing `\` matches nothing
-                    // (the general matcher returns false there too).
+                    // `\X` matches the literal X; a trailing `\` matches nothing.
                     if let Some(&esc) = pat.get(pi + 1)
-                        && esc == text[si]
+                        && eq(c, esc)
                     {
                         pi += 2;
                         si += 1;
@@ -316,47 +348,61 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], noescape: bool) -> bool {
                     }
                 }
                 b'?' => {
-                    pi += 1;
-                    si += 1;
-                    advanced = true;
+                    // '?' matches any one byte except '/' under PATHNAME and
+                    // except a leading '.' under PERIOD.
+                    if !(pathname && c == b'/') && !lp_blocked(si) {
+                        pi += 1;
+                        si += 1;
+                        advanced = true;
+                    }
                 }
-                b'[' => match classify_bracket(pat, pi, noescape) {
-                    BracketShape::Terminated => {
-                        let (m, next_pi) = bracket_match_one(pat, pi, text[si], noescape);
-                        if m {
-                            pi = next_pi;
-                            si += 1;
-                            advanced = true;
+                b'[' => {
+                    if !(pathname && c == b'/') && !lp_blocked(si) {
+                        match classify_bracket(pat, pi, noescape) {
+                            BracketShape::Terminated => {
+                                let (m, next_pi) = bracket_match_one(pat, pi, c, noescape, casefold);
+                                if m {
+                                    pi = next_pi;
+                                    si += 1;
+                                    advanced = true;
+                                }
+                            }
+                            BracketShape::LiteralFallback => {
+                                if eq(c, b'[') {
+                                    pi += 1;
+                                    si += 1;
+                                    advanced = true;
+                                }
+                            }
+                            // Malformed bracket: this fixed pattern position can
+                            // never match (general matcher returns false too).
+                            BracketShape::Invalid => {}
                         }
                     }
-                    BracketShape::LiteralFallback => {
-                        if text[si] == b'[' {
-                            pi += 1;
-                            si += 1;
-                            advanced = true;
-                        }
-                    }
-                    // Malformed bracket: this fixed pattern position can never
-                    // match (the general matcher returns false here too), so we
-                    // leave `advanced` false and let the backtrack/fail path run.
-                    BracketShape::Invalid => {}
-                },
+                }
                 lit => {
-                    if lit == text[si] {
+                    if eq(c, lit) {
                         pi += 1;
                         si += 1;
                         advanced = true;
                     }
                 }
             }
+        } else if leading_dir && c == b'/' {
+            // Pattern consumed and the text remainder begins at a '/':
+            // FNM_LEADING_DIR accepts the directory prefix.
+            return true;
         }
         if advanced {
             continue;
         }
         // Mismatch (or pattern exhausted with text left): let the last '*' eat
-        // one more text byte. With no remembered star, there is no match.
+        // one more text byte. Under PATHNAME a '*' cannot consume '/'.
         match star {
             Some((spi, ssi)) => {
+                if pathname && text[ssi] == b'/' {
+                    return false;
+                }
                 si = ssi + 1;
                 pi = spi;
                 star = Some((spi, ssi + 1));
@@ -377,35 +423,14 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], noescape: bool) -> bool {
 /// flags. Returns `true` if the entire `text` matches (modulo
 /// [`FnmatchFlags::LEADING_DIR`]).
 pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
-    // Fast path: bracket-free patterns under flags with no positional
-    // constraints (only NOESCAPE permitted) take the iterative single-backtrack
-    // matcher — O(n*m), no recursion/memo. This is the dominant glob-component
-    // case (NONE / NOESCAPE) and reaches glibc-class speed; everything else
-    // (brackets, PATHNAME, PERIOD, CASEFOLD, LEADING_DIR) keeps the general
-    // recursive matcher below.
-    let only_noescape = (flags.bits() & !FnmatchFlags::NOESCAPE.bits()) == 0;
-    if only_noescape {
-        return fnmatch_simple(pattern, text, flags.contains(FnmatchFlags::NOESCAPE));
-    }
-    // `failed` memoizes (pat_index, text_index) states already proven not to
-    // match when a '*' re-enters the matcher (always at_start=false). Without it
-    // a pattern with many '*' (e.g. "*a*a*…*b" over an all-'a' text) backtracks
-    // EXPONENTIALLY — a denial-of-service hazard. Memoizing a pure recursive
-    // function cannot change its result; it only collapses the redundant
-    // re-exploration to polynomial time. A flat (pat+1)x(text+1) boolean table
-    // (O(1) direct indexing) avoids the per-state hashing a HashSet would cost
-    // on every revisit. It is only allocated when the pattern actually contains
-    // a '*' (the sole recursion source); otherwise `stride` is 0, the array is
-    // empty, and the '*' arm never runs.
-    let stride = if pattern.contains(&b'*') {
-        text.len() + 1
-    } else {
-        0
-    };
-    let mut failed = vec![false; (pattern.len() + 1) * stride];
-    fnmatch_inner(pattern, 0, text, 0, flags, true, &mut failed, stride)
+    // The iterative single-backtrack matcher (`fnmatch_simple`) now handles ALL
+    // flags in O(n*m) time / O(1) space — no recursion, no memo, no exponential
+    // blow-up — and is faster than glibc. The recursive `fnmatch_inner` below is
+    // retained only as the differential-test oracle (`#[cfg(test)]`).
+    fnmatch_simple(pattern, text, flags)
 }
 
+#[cfg(test)]
 fn fnmatch_inner(
     pat: &[u8],
     mut pi: usize,
@@ -733,10 +758,12 @@ mod tests {
         assert!(!m("*a*b*c*d", "xxaxxbxxcxx", FnmatchFlags::NONE));
     }
 
-    // Exhaustive isomorphism: the simple iterative fast path must equal the
-    // general recursive matcher for EVERY short bracket-free pattern (over
-    // a/b/*/?/\) and text (over a/b), under both NONE and NOESCAPE — the exact
-    // input class the fast path is gated to.
+    // Exhaustive isomorphism: the iterative `fnmatch_simple` (now the sole
+    // production matcher) must equal the recursive oracle `fnmatch_inner` for
+    // EVERY short pattern over {a,A,*,?,\,[,],-,!,.,/} x text over {a,A,b,.,/}
+    // x ALL 32 flag-bit combinations (PATHNAME/NOESCAPE/PERIOD/LEADING_DIR/
+    // CASEFOLD). The alphabet includes '/' and '.' to exercise PATHNAME and
+    // PERIOD interactions and 'A'/'a' for CASEFOLD.
     #[test]
     fn simple_fast_path_matches_general() {
         fn general(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
@@ -751,26 +778,24 @@ mod tests {
                 idx /= alpha.len();
             }
         }
-        let pat_alpha = [b'a', b'b', b'*', b'?', b'\\', b'[', b']', b'-', b'!'];
-        let txt_alpha = [b'a', b'b'];
+        let pat_alpha = [
+            b'a', b'A', b'*', b'?', b'\\', b'[', b']', b'-', b'!', b'.', b'/',
+        ];
+        let txt_alpha = [b'a', b'A', b'b', b'.', b'/'];
         let mut pat = Vec::new();
         let mut txt = Vec::new();
-        for &noescape in &[false, true] {
-            let flags = if noescape {
-                FnmatchFlags::NOESCAPE
-            } else {
-                FnmatchFlags::NONE
-            };
-            for plen in 0..=4usize {
+        for fbits in 0u32..32 {
+            let flags = FnmatchFlags::from_bits(fbits);
+            for plen in 0..=3usize {
                 for pidx in 0..pat_alpha.len().pow(plen as u32) {
                     build_bytes(&pat_alpha, plen, pidx, &mut pat);
-                    for tlen in 0..=4usize {
+                    for tlen in 0..=3usize {
                         for tidx in 0..txt_alpha.len().pow(tlen as u32) {
                             build_bytes(&txt_alpha, tlen, tidx, &mut txt);
                             assert_eq!(
-                                fnmatch_simple(&pat, &txt, noescape),
+                                fnmatch_simple(&pat, &txt, flags),
                                 general(&pat, &txt, flags),
-                                "fnmatch_simple({pat:?}, {txt:?}, noescape={noescape}) != general"
+                                "fnmatch_simple({pat:?}, {txt:?}, flags={fbits:#x}) != general"
                             );
                         }
                     }
