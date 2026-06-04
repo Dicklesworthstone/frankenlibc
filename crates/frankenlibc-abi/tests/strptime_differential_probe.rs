@@ -117,3 +117,69 @@ fn strptime_differential_battery() {
         diffs.join("\n")
     );
 }
+
+fn run_z(input: &str) -> String {
+    let mut ib = input.as_bytes().to_vec();
+    ib.push(0);
+    let fb = b"%z\0";
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let r = unsafe {
+        time_abi::strptime(
+            ib.as_ptr() as *const c_char,
+            fb.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
+    if r.is_null() {
+        return "0".to_string();
+    }
+    let consumed = (r as usize) - (ib.as_ptr() as usize);
+    format!("1 {} {}", consumed, tm.tm_gmtoff)
+}
+
+/// %z is a glibc extension with intricate rules; test consumed bytes + the
+/// resulting tm_gmtoff against glibc (captured from a C probe).
+#[test]
+fn strptime_z_differential_battery() {
+    let cases: &[&str] = &[
+        "+0530", "+05:30", "+05", "+05:", "-0800", "+5", "Z", "+0560", "+1200",
+        "-1259", "GMT", "+053012", "+2500", "z", "+1799", "+05 30",
+    ];
+    // glibc reference: "matched consumed gmtoff" (or "0").
+    let glibc: &[&str] = &[
+        "1 5 19800",
+        "1 6 19800",
+        "1 3 18000",
+        "1 3 18000",
+        "1 5 -28800",
+        "0",
+        "1 1 0",
+        "0",
+        "1 5 43200",
+        "1 5 -46740",
+        "0",
+        "1 5 19800",
+        "1 5 90000",
+        "0",
+        "0",
+        "1 3 18000",
+    ];
+    assert_eq!(cases.len(), glibc.len(), "battery length mismatch");
+
+    let mut diffs = Vec::new();
+    for (i, &input) in cases.iter().enumerate() {
+        let got = run_z(input);
+        if got != glibc[i] {
+            diffs.push(format!(
+                "case {i}: input={input:?} -> frankenlibc={got:?} glibc={:?}",
+                glibc[i]
+            ));
+        }
+    }
+    assert!(
+        diffs.is_empty(),
+        "strptime %z diverges from glibc in {} case(s):\n{}",
+        diffs.len(),
+        diffs.join("\n")
+    );
+}

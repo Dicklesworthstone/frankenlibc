@@ -1447,34 +1447,65 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'z' => {
-                    // Timezone offset: +HHMM, -HHMM, or +HH:MM, -HH:MM
-                    let sign = match input.get(si).copied() {
-                        Some(b'+') => 1i32,
-                        Some(b'-') => -1i32,
-                        _ => return std::ptr::null_mut(),
-                    };
-                    si += 1;
-                    // Parse hours (2 digits)
-                    if let Some((hh, new_si)) = parse_digits(input, si, 2) {
-                        si = new_si;
-                        // Optional colon
-                        if input.get(si).copied() == Some(b':') {
-                            si += 1;
-                        }
-                        // Parse minutes (2 digits)
-                        if let Some((mm, new_si2)) = parse_digits(input, si, 2) {
-                            si = new_si2;
-                            // Store in tm_gmtoff if available (glibc extension)
-                            #[cfg(target_os = "linux")]
-                            unsafe {
-                                (*tm).tm_gmtoff = sign as i64 * (hh as i64 * 3600 + mm as i64 * 60);
-                            }
-                            let _ = (sign, hh, mm); // silence unused warnings on non-Linux
-                        } else {
-                            return std::ptr::null_mut();
+                    // Timezone offset, matching glibc strptime exactly:
+                    //   'Z'                 -> UTC (offset 0), consumes 1 byte
+                    //   [+-]HH[[:]MM]       -> HH is EXACTLY two digits; MM is
+                    //                          optional, exactly two digits, and
+                    //                          validated < 60. A ':' before MM is
+                    //                          only consumed when two minute digits
+                    //                          actually follow. Hours are not
+                    //                          range-validated. Leading whitespace
+                    //                          was already skipped by the dispatch.
+                    // Lowercase 'z' and named zones (GMT/UTC) are NOT accepted.
+                    if input.get(si).copied() == Some(b'Z') {
+                        si += 1;
+                        #[cfg(target_os = "linux")]
+                        unsafe {
+                            (*tm).tm_gmtoff = 0;
                         }
                     } else {
-                        return std::ptr::null_mut();
+                        let sign: i64 = match input.get(si).copied() {
+                            Some(b'+') => 1,
+                            Some(b'-') => -1,
+                            _ => return std::ptr::null_mut(),
+                        };
+                        // Exactly two hour digits.
+                        let (Some(h0), Some(h1)) =
+                            (input.get(si + 1).copied(), input.get(si + 2).copied())
+                        else {
+                            return std::ptr::null_mut();
+                        };
+                        if !h0.is_ascii_digit() || !h1.is_ascii_digit() {
+                            return std::ptr::null_mut();
+                        }
+                        let hh = ((h0 - b'0') as i64) * 10 + (h1 - b'0') as i64;
+                        let mut end = si + 3;
+
+                        // Optional minutes: optional ':' then exactly two digits.
+                        let mm_start = if input.get(end).copied() == Some(b':') {
+                            end + 1
+                        } else {
+                            end
+                        };
+                        let mut mm = 0i64;
+                        if let (Some(m0), Some(m1)) =
+                            (input.get(mm_start).copied(), input.get(mm_start + 1).copied())
+                            && m0.is_ascii_digit()
+                            && m1.is_ascii_digit()
+                        {
+                            mm = ((m0 - b'0') as i64) * 10 + (m1 - b'0') as i64;
+                            if mm >= 60 {
+                                return std::ptr::null_mut();
+                            }
+                            end = mm_start + 2;
+                        }
+
+                        #[cfg(target_os = "linux")]
+                        unsafe {
+                            (*tm).tm_gmtoff = sign * (hh * 3600 + mm * 60);
+                        }
+                        let _ = (sign, hh); // silence unused warnings on non-Linux
+                        si = end;
                     }
                 }
                 _ => {
