@@ -3,6 +3,7 @@
 //! Implements `<iconv.h>` functions for converting between character encodings.
 
 use crate::errno;
+use std::simd::{Simd, cmp::SimdPartialOrd};
 
 /// Core iconv error code: output buffer has insufficient capacity.
 pub const ICONV_E2BIG: i32 = errno::E2BIG;
@@ -8380,6 +8381,44 @@ fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// True for encodings where every byte `0x00..=0x7F` both decodes to the
+/// codepoint of the same value and re-encodes back to that same single byte —
+/// i.e. the ASCII range is a 1:1 byte-identity passthrough. Verified against
+/// the decode_char/encode_char arms: UTF-8 (b<0x80 -> char b -> 1 byte),
+/// US-ASCII, and Latin-1 (cp<=0xFF -> byte cp, so cp<0x80 is identity). All
+/// other codecs (UTF-16/32, KOI8, CP125x, ...) are excluded.
+fn ascii_transparent(enc: Encoding) -> bool {
+    matches!(enc, Encoding::Utf8 | Encoding::Ascii | Encoding::Latin1)
+}
+
+/// Length of the leading run of ASCII bytes (`< 0x80`) in `s`, found with a
+/// 32-lane SIMD scan. Used by the iconv fast path to bulk-copy ASCII runs
+/// between ASCII-transparent encodings instead of dispatching decode_char /
+/// encode_char per byte.
+fn leading_ascii_len(s: &[u8]) -> usize {
+    const LANES: usize = 32;
+    let hi = Simd::<u8, LANES>::splat(0x80);
+    let mut i = 0;
+    while i + LANES <= s.len() {
+        let chunk = Simd::<u8, LANES>::from_slice(&s[i..i + LANES]);
+        if chunk.simd_ge(hi).any() {
+            for k in 0..LANES {
+                if s[i + k] >= 0x80 {
+                    return i + k;
+                }
+            }
+        }
+        i += LANES;
+    }
+    while i < s.len() {
+        if s[i] >= 0x80 {
+            return i;
+        }
+        i += 1;
+    }
+    s.len()
+}
+
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
@@ -8863,7 +8902,32 @@ pub fn iconv(
         cd.emit_bom = false;
     }
 
+    // When both endpoints are ASCII-transparent, any byte < 0x80 converts to
+    // itself, so leading ASCII runs can be bulk-copied with a SIMD scan instead
+    // of a per-byte decode_char/encode_char round trip. Non-ASCII bytes, errors,
+    // and E2BIG all fall through to the unchanged scalar loop, so the result is
+    // byte-for-byte identical.
+    let fast_ascii = ascii_transparent(cd.from) && ascii_transparent(cd.to);
+
     while in_pos < input.len() {
+        if fast_ascii {
+            let avail = outbuf.len() - out_pos;
+            if avail > 0 {
+                let run = leading_ascii_len(&input[in_pos..]).min(avail);
+                if run > 0 {
+                    outbuf[out_pos..out_pos + run]
+                        .copy_from_slice(&input[in_pos..in_pos + run]);
+                    in_pos += run;
+                    out_pos += run;
+                    if in_pos >= input.len() {
+                        break;
+                    }
+                    // Next byte is >= 0x80 (scalar decodes it) or the output is
+                    // full (scalar encode returns E2BIG at this exact position).
+                }
+            }
+        }
+
         let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
             Ok(v) => v,
             Err(DecodeError::Incomplete) => {
@@ -8921,6 +8985,130 @@ pub fn iconv_close(_cd: IconvDescriptor) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pure scalar reference: the iconv conversion loop WITHOUT the SIMD ASCII
+    // fast path, so the fast path can be proven byte-for-byte isomorphic.
+    fn iconv_scalar_ref(
+        from: Encoding,
+        to: Encoding,
+        input: &[u8],
+        outbuf: &mut [u8],
+    ) -> Result<IconvResult, IconvError> {
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    return Err(IconvError {
+                        code: ICONV_EINVAL,
+                        in_consumed: in_pos,
+                        out_written: out_pos,
+                    });
+                }
+                Err(DecodeError::Invalid) => {
+                    return Err(IconvError {
+                        code: ICONV_EILSEQ,
+                        in_consumed: in_pos,
+                        out_written: out_pos,
+                    });
+                }
+            };
+            let written = match encode_char(to, ch, &mut outbuf[out_pos..]) {
+                Ok(v) => v,
+                Err(EncodeError::NoSpace) => {
+                    return Err(IconvError {
+                        code: ICONV_E2BIG,
+                        in_consumed: in_pos,
+                        out_written: out_pos,
+                    });
+                }
+                Err(EncodeError::Unrepresentable) => {
+                    return Err(IconvError {
+                        code: ICONV_EILSEQ,
+                        in_consumed: in_pos,
+                        out_written: out_pos,
+                    });
+                }
+            };
+            in_pos += consumed;
+            out_pos += written;
+        }
+        Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        })
+    }
+
+    // Normalise a conversion outcome to (code, in_consumed, out_written, bytes)
+    // for exact comparison. code = None on success, Some(errno) on error.
+    fn normalize(
+        r: &Result<IconvResult, IconvError>,
+        out: &[u8],
+    ) -> (Option<i32>, usize, usize, Vec<u8>) {
+        match r {
+            Ok(v) => (None, v.in_consumed, v.out_written, out[..v.out_written].to_vec()),
+            Err(e) => (Some(e.code), e.in_consumed, e.out_written, out[..e.out_written].to_vec()),
+        }
+    }
+
+    #[test]
+    fn iconv_ascii_fast_path_isomorphic_to_scalar() {
+        let names: &[&[u8]] = &[b"UTF-8", b"US-ASCII", b"ISO-8859-1"];
+
+        // Corpus: ASCII of every length around the 32-lane boundary, ASCII with
+        // a high byte planted at each offset, NUL-laden ASCII, valid multibyte
+        // UTF-8, and pseudo-random byte soup (invalid sequences for UTF-8 src).
+        let mut corpus: Vec<Vec<u8>> = Vec::new();
+        for len in 0..96usize {
+            corpus.push((0..len).map(|i| 0x20 + (i % 0x5F) as u8).collect());
+        }
+        for pos in 0..70usize {
+            let mut v: Vec<u8> = (0..70).map(|_| b'k').collect();
+            v[pos] = 0xC3; // high byte
+            corpus.push(v);
+        }
+        for pos in 0..40usize {
+            let mut v: Vec<u8> = (0..40).map(|i| (i % 128) as u8).collect();
+            v[pos] = 0;
+            corpus.push(v);
+        }
+        corpus.push("héllo wörld €☃ end".as_bytes().to_vec());
+        let mut state: u64 = 0x0BAD_C0DE_1234_5678;
+        for _ in 0..3000 {
+            let len = (state % 80) as usize;
+            let mut v = Vec::with_capacity(len);
+            for _ in 0..len {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                v.push((state >> 40) as u8);
+            }
+            corpus.push(v);
+        }
+
+        for &fname in names {
+            for &tname in names {
+                let mut probe = iconv_open(tname, fname).expect("codec");
+                let from_enc = probe.from;
+                let to_enc = probe.to;
+                for src in &corpus {
+                    for &cap in &[0usize, 1, 8, 31, 32, 33, 64, 200] {
+                        let mut a = vec![0x7Eu8; cap];
+                        let mut b = vec![0x7Eu8; cap];
+                        let mut cd = iconv_open(tname, fname).expect("codec");
+                        let ra = iconv(&mut cd, Some(src), &mut a);
+                        let rb = iconv_scalar_ref(from_enc, to_enc, src, &mut b);
+                        assert_eq!(
+                            normalize(&ra, &a),
+                            normalize(&rb, &b),
+                            "iconv {fname:?}->{tname:?} mismatch on src={src:02x?} cap={cap}"
+                        );
+                    }
+                }
+                let _ = &mut probe;
+            }
+        }
+    }
 
     type IconvVector<'a> = (&'a [u8], &'a [u8], &'a [u8], &'a [u8]);
 

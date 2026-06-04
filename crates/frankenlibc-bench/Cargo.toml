@@ -30,6 +30,10 @@ name = "wchar_bench"
 harness = false
 
 [[bench]]
+name = "iconv_bench"
+harness = false
+
+[[bench]]
 name = "malloc_bench"
 harness = false
 
