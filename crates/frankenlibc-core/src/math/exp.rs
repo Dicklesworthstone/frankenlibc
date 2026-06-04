@@ -55,6 +55,24 @@ fn powi_squaring(base: f64, n: i64) -> f64 {
     if n < 0 { 1.0 / result } else { result }
 }
 
+/// `base` raised to a small half-integer exponent via `base^n * sqrt(base)`.
+/// The caller only reaches this for strictly positive finite bases, so libm's
+/// negative/zero/special-case semantics remain on the general path.
+#[inline]
+fn pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
+    if !(base > 0.0 && base.is_finite() && exponent.is_finite()) {
+        return None;
+    }
+
+    let shifted = exponent - 0.5;
+    let n = shifted as i64;
+    if n as f64 == shifted && n.unsigned_abs() <= POWI_MAX_EXP {
+        Some(powi_squaring(base, n) * base.sqrt())
+    } else {
+        None
+    }
+}
+
 /// Largest |integer exponent| handled by the fast path. Each squaring/multiply
 /// adds at most ~0.5 ULP; capping the magnitude here keeps the result within
 /// the 4-ULP-vs-glibc contract (verified by `pow_integer_fast_path_within_4_ulps`).
@@ -75,6 +93,9 @@ pub fn pow(base: f64, exponent: f64) -> f64 {
         }
         if exponent == 0.5 && base >= 0.0 {
             return base.sqrt();
+        }
+        if let Some(result) = pow_half_integer_fast_path(base, exponent) {
+            return result;
         }
     }
     libm::pow(base, exponent)
@@ -125,8 +146,27 @@ mod tests {
         // wide spread of finite bases incl. negatives, zeros, sub/huge, and verify
         // every result is within 4 ULP of the host glibc pow (f64::powf).
         let bases = [
-            0.0, -0.0, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 3.14159, -3.14159, 1.785, 1e-3, -1e-3, 1e6,
-            -1e6, 1e150, 1e-150, 123.456, -123.456, 0.999_999, 1.000_001,
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            2.0,
+            -2.0,
+            0.5,
+            -0.5,
+            std::f64::consts::PI,
+            -std::f64::consts::PI,
+            1.785,
+            1e-3,
+            -1e-3,
+            1e6,
+            -1e6,
+            1e150,
+            1e-150,
+            123.456,
+            -123.456,
+            0.999_999,
+            1.000_001,
         ];
         for &base in &bases {
             for n in -(POWI_MAX_EXP as i64)..=(POWI_MAX_EXP as i64) {
@@ -147,6 +187,71 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn pow_half_integer_fast_path_within_4_ulps() {
+        let bases = [
+            1e-6,
+            1e-3,
+            0.5,
+            0.999_999,
+            1.0,
+            1.000_001,
+            1.785,
+            2.0,
+            2.5,
+            std::f64::consts::PI,
+            123.456,
+            1e6,
+        ];
+        for &base in &bases {
+            for n in -(POWI_MAX_EXP as i64)..=(POWI_MAX_EXP as i64) {
+                let exponent = n as f64 + 0.5;
+                let got = pow(base, exponent);
+                let want = base.powf(exponent);
+                assert!(
+                    within_ulps(got, want, 4),
+                    "pow({base}, {exponent}) = {got:?} but glibc = {want:?} (>4 ULP)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn golden_pow_half_integer_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let bases = [
+            1e-6,
+            1e-3,
+            0.5,
+            0.999_999,
+            1.0,
+            1.000_001,
+            1.785,
+            2.0,
+            2.5,
+            std::f64::consts::PI,
+            123.456,
+            1e6,
+        ];
+        let exponents = [-7.5, -2.5, -0.5, 0.5, 1.5, 2.5, 4.5, 8.5];
+        let mut hasher = Sha256::new();
+        for &base in &bases {
+            for &exponent in &exponents {
+                hasher.update(pow(base, exponent).to_bits().to_le_bytes());
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "5d10fe8318e0cba5afc8a3260fa342ca472bf559ead08bc67b82ae3a307e3a61",
+            "pow half-integer golden corpus hash drifted"
+        );
     }
 
     #[test]
