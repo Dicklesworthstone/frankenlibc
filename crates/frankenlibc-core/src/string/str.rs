@@ -918,48 +918,22 @@ pub fn strnstr(haystack: &[u8], needle: &[u8], n: usize) -> Option<usize> {
         return Some(0);
     }
 
+    // strnstr searches only the NUL-terminated, `n`-bounded prefix of the
+    // haystack: characters after a '\0' (or past `n`) are not searched. Resolve
+    // that prefix length once, then delegate to `memmem` — which carries the
+    // dual-anchor first+last byte prefilter and the O(n+m) Two-Way bailout.
+    //
+    // This replaces the previous first-byte-only scan, which had NO bailout: a
+    // common-first-byte needle over a long run (e.g. "aaaa…b" in an 'a' run)
+    // made every position a candidate, i.e. O(n·m) — a quadratic-blowup DoS.
+    // The search region is byte-for-byte the same NUL-free, `n`-bounded prefix,
+    // so leftmost-match and all bound/NUL semantics are preserved exactly.
     let limit = n.min(haystack.len());
-    if n_len > limit {
+    let hay_end = strnlen(haystack, limit);
+    if n_len > hay_end {
         return None;
     }
-
-    let needle = &needle[..n_len];
-    let first = needle[0];
-
-    let mut start = 0usize;
-    while start < limit {
-        let offset = find_byte_or_nul(&haystack[start..limit], first);
-        if offset == limit - start {
-            return None;
-        }
-
-        let i = start + offset;
-        let byte = haystack[i];
-        if byte == 0 {
-            return None;
-        }
-        if i + n_len > limit {
-            return None;
-        }
-
-        let mut matched = true;
-        for j in 1..n_len {
-            let candidate = haystack[i + j];
-            if candidate == 0 {
-                return None;
-            }
-            if candidate != needle[j] {
-                matched = false;
-                break;
-            }
-        }
-        if matched {
-            return Some(i);
-        }
-        start = i + 1;
-    }
-
-    None
+    super::mem::memmem(haystack, hay_end, &needle[..n_len], n_len)
 }
 
 /// Case-insensitive comparison of two NUL-terminated byte strings.
@@ -2086,6 +2060,71 @@ mod tests {
     #[test]
     fn test_strnstr_unterminated_haystack_match_within_bound() {
         assert_eq!(strnstr(b"xabcGARBAGE", b"abc\0", 4), Some(1));
+    }
+
+    /// Byte-for-byte O(n·m) reference: scan the NUL-terminated, `n`-bounded
+    /// prefix for the leftmost full needle match. Independent of the delegated
+    /// `memmem` path, so it pins strnstr's contract under the dual-anchor fix.
+    fn strnstr_naive(haystack: &[u8], needle: &[u8], n: usize) -> Option<usize> {
+        let n_len = needle.iter().position(|&b| b == 0).unwrap_or(needle.len());
+        if n_len == 0 {
+            return Some(0);
+        }
+        let limit = n.min(haystack.len());
+        let end = haystack[..limit]
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(limit);
+        if n_len > end {
+            return None;
+        }
+        (0..=end - n_len).find(|&i| haystack[i..i + n_len] == needle[..n_len])
+    }
+
+    #[test]
+    fn strnstr_matches_naive_on_adversarial_corpus() {
+        // Includes the common-first-byte "aaaa…b" needle over an 'a' run — the
+        // exact O(n·m) blow-up the old first-byte-only scan suffered (no Two-Way
+        // bailout). Delegating to memmem fixes the complexity; outputs must stay
+        // identical to the naive reference across bounds and NUL positions.
+        let mut a_run = vec![b'a'; 512];
+        a_run.push(0);
+        let mut a_run_b = vec![b'a'; 300];
+        a_run_b.extend_from_slice(b"aaab"); // present late, common first byte
+        a_run_b.push(0);
+        let haystacks: &[&[u8]] = &[
+            b"hello world\0",
+            b"abc\0def\0",
+            b"aaaaZQ",
+            b"xabcGARBAGE",
+            &a_run,
+            &a_run_b,
+            b"\0",
+            b"mississippi\0",
+        ];
+        let needles: &[&[u8]] = &[
+            b"world\0",
+            b"def\0",
+            b"ZQ\0",
+            b"abc\0",
+            b"aaaaaaaaaaaaaaaab\0", // 15 a + b: absent, common first byte
+            b"aaab\0",
+            b"a\0",
+            b"\0",
+            b"issi\0",
+            b"ppi\0",
+        ];
+        for &h in haystacks {
+            for &needle in needles {
+                for n in [0usize, 1, 3, 4, 16, 300, 304, 512, 600, 4096] {
+                    assert_eq!(
+                        strnstr(h, needle, n),
+                        strnstr_naive(h, needle, n),
+                        "strnstr divergence: haystack={h:?} needle={needle:?} n={n}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
