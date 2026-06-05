@@ -860,3 +860,73 @@ fn diff_snprintf_int_fuzz() {
         render_divs(&divs)
     );
 }
+
+// ===========================================================================
+// sscanf scanset %[...] differential vs glibc.
+//
+// Scansets have intricate rules — ranges (a-z), negation (^), the literal-`]`-
+// first convention (%[]] matches `]`), literal `-` at the edges, and width caps
+// — and had no differential coverage. Compares matched string + return count.
+// ===========================================================================
+
+#[test]
+fn diff_sscanf_scanset() {
+    // (input, format-with-%[...])
+    let cases: &[(&[u8], &[u8])] = &[
+        (b"abcabcx\0", b"%[abc]\0"),
+        (b"hello xyz\0", b"%[^xyz]\0"),
+        (b"abcZ\0", b"%[a-z]\0"),
+        (b"]]]a\0", b"%[]]\0"),     // ] as first char is a literal member
+        (b"abc]def\0", b"%[^]]\0"), // ^ then literal ] => negated set {]}
+        (b"123abc\0", b"%[0-9]\0"),
+        (b"-12+3x\0", b"%[-+0-9]\0"), // - as first char is literal
+        (b"aa-bb\0", b"%[a-]\0"),     // - as last char is literal
+        (b"12345\0", b"%3[0-9]\0"),   // width cap
+        (b"abc\0", b"%[0-9]\0"),      // no match -> count 0
+        (b"Hello123\0", b"%[A-Za-z]\0"),
+        (b"   lead\0", b"%[a-z ]\0"), // leading spaces are part of the set here
+        (b"\0", b"%[a-z]\0"),         // empty input
+    ];
+    let mut divs = Vec::new();
+    for (input, fmt) in cases {
+        // Generous buffers; scanf NUL-terminates the matched run.
+        let mut buf_fl = vec![0u8; 64];
+        let mut buf_lc = vec![0u8; 64];
+        let n_fl = unsafe {
+            fl::sscanf(
+                input.as_ptr() as *const c_char,
+                fmt.as_ptr() as *const c_char,
+                buf_fl.as_mut_ptr() as *mut c_char,
+            )
+        };
+        let n_lc = unsafe {
+            libc::sscanf(
+                input.as_ptr() as *const c_char,
+                fmt.as_ptr() as *const c_char,
+                buf_lc.as_mut_ptr() as *mut c_char,
+            )
+        };
+        let s_fl = buf_used(&buf_fl);
+        let s_lc = buf_used(&buf_lc);
+        // Output buffer is only meaningful when a field matched.
+        let out_differs = (n_fl >= 1 || n_lc >= 1) && s_fl != s_lc;
+        if n_fl != n_lc || out_differs {
+            divs.push(Divergence {
+                function: "sscanf",
+                case: format!(
+                    "input={:?} fmt={:?}",
+                    String::from_utf8_lossy(&input[..input.len() - 1]),
+                    String::from_utf8_lossy(&fmt[..fmt.len() - 1])
+                ),
+                field: "count/matched",
+                frankenlibc: format!("n={n_fl} {:?}", String::from_utf8_lossy(s_fl)),
+                glibc: format!("n={n_lc} {:?}", String::from_utf8_lossy(s_lc)),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "sscanf scanset divergences:\n{}",
+        render_divs(&divs)
+    );
+}
