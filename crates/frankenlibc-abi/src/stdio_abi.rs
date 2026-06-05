@@ -128,6 +128,40 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
 }
 
+/// Read a NUL-terminated wide string (`wchar_t*`, `u32` on Linux x86_64) and
+/// encode it as UTF-8 (the C.UTF-8 multibyte form), taking at most `limit` WIDE
+/// characters when provided. Used to render `%ls` — whose precision counts wide
+/// characters, not bytes, so truncation must happen before UTF-8 encoding.
+/// Returns `(utf8_bytes, wide_char_count)`.
+unsafe fn wide_cstr_to_utf8(ptr: *const u32, limit: Option<usize>) -> (Vec<u8>, usize) {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    loop {
+        if let Some(n) = limit {
+            if i >= n {
+                break;
+            }
+        }
+        // SAFETY: caller guarantees a NUL-terminated wide string; we stop at the
+        // terminator (and at `limit` wide chars when set).
+        let wc = unsafe { *ptr.add(i) };
+        if wc == 0 {
+            break;
+        }
+        match char::from_u32(wc) {
+            Some(c) => {
+                let mut b = [0u8; 4];
+                out.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
+            }
+            // Invalid wide char (surrogate / > U+10FFFF): glibc would error the
+            // whole call; we stop the conversion here (rare in practice).
+            None => break,
+        }
+        i += 1;
+    }
+    (out, i)
+}
+
 /// Runtime-dispatch state for stream/syscall policy lookups.
 /// Seek/Close rows are reserved for upcoming policy-routing of those operations.
 #[allow(dead_code)]
@@ -3327,6 +3361,29 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                         let ptr = raw as usize as *const u8;
                         if ptr.is_null() {
                             format_str(b"(null)", &resolved_spec, &mut buf);
+                        } else if matches!(resolved_spec.length, LengthMod::L) {
+                            // `%ls`: the argument is a `wchar_t*`, NOT a `char*`.
+                            // Reading it narrow yields garbage (a 4-byte wchar is
+                            // seen as one byte + a NUL). Read it as a wide string,
+                            // honour the wide-character precision, UTF-8 encode,
+                            // then apply width with precision already consumed.
+                            let limit = match resolved_spec.precision {
+                                Precision::Fixed(n) => Some(n),
+                                _ => None,
+                            };
+                            let (utf8, wide_count) =
+                                unsafe { wide_cstr_to_utf8(ptr as *const u32, limit) };
+                            let mut width_spec = resolved_spec;
+                            width_spec.precision = Precision::None;
+                            // Field width counts wide characters, but `format_str`
+                            // pads to a BYTE width — inflate it by the extra bytes
+                            // the multibyte encoding added so the padding lands on
+                            // wide-character boundaries.
+                            if let Width::Fixed(w) = width_spec.width {
+                                let extra = utf8.len().saturating_sub(wide_count);
+                                width_spec.width = Width::Fixed(w + extra);
+                            }
+                            format_str(&utf8, &width_spec, &mut buf);
                         } else {
                             let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
                             format_str(s_bytes, &resolved_spec, &mut buf);
