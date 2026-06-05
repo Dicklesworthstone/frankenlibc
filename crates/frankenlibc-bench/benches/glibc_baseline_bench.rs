@@ -1032,12 +1032,21 @@ mod cmath {
         pub fn tan(x: f64) -> f64;
         pub fn atan(x: f64) -> f64;
         pub fn asinh(x: f64) -> f64;
+        #[allow(dead_code)]
         pub fn acosh(x: f64) -> f64;
+        #[allow(dead_code)]
         pub fn atanh(x: f64) -> f64;
         pub fn erf(x: f64) -> f64;
         pub fn erfc(x: f64) -> f64;
         pub fn tgamma(x: f64) -> f64;
         pub fn lgamma(x: f64) -> f64;
+        pub fn coshf(x: f32) -> f32;
+        pub fn sinhf(x: f32) -> f32;
+        pub fn tanhf(x: f32) -> f32;
+        pub fn exp10f(x: f32) -> f32;
+        pub fn log10f(x: f32) -> f32;
+        pub fn expm1f(x: f32) -> f32;
+        pub fn log2f(x: f32) -> f32;
     }
 }
 
@@ -1592,18 +1601,78 @@ fn bench_math(c: &mut Criterion) {
         math::tanh,
         cmath::tanh
     );
-    pair!("log10", "log10", "log10(x) x in [0.5,2.5)", math::log10, cmath::log10);
-    pair!("exp10", "exp10", "exp10(x) x in [0.5,2.5)", math::exp10, cmath::exp10);
-    pair!("expm1", "expm1", "expm1(x) x in [0.5,2.5)", math::expm1, cmath::expm1);
-    pair!("log1p", "log1p", "log1p(x) x in [0.5,2.5)", math::log1p, cmath::log1p);
-    pair!("cbrt", "cbrt", "cbrt(x) x in [0.5,2.5)", math::cbrt, cmath::cbrt);
+    pair!(
+        "log10",
+        "log10",
+        "log10(x) x in [0.5,2.5)",
+        math::log10,
+        cmath::log10
+    );
+    pair!(
+        "exp10",
+        "exp10",
+        "exp10(x) x in [0.5,2.5)",
+        math::exp10,
+        cmath::exp10
+    );
+    pair!(
+        "expm1",
+        "expm1",
+        "expm1(x) x in [0.5,2.5)",
+        math::expm1,
+        cmath::expm1
+    );
+    pair!(
+        "log1p",
+        "log1p",
+        "log1p(x) x in [0.5,2.5)",
+        math::log1p,
+        cmath::log1p
+    );
+    pair!(
+        "cbrt",
+        "cbrt",
+        "cbrt(x) x in [0.5,2.5)",
+        math::cbrt,
+        cmath::cbrt
+    );
     pair!("tan", "tan", "tan(x) x in [0.5,2.5)", math::tan, cmath::tan);
-    pair!("atan", "atan", "atan(x) x in [0.5,2.5)", math::atan, cmath::atan);
-    pair!("asinh", "asinh", "asinh(x) x in [0.5,2.5)", math::asinh, cmath::asinh);
+    pair!(
+        "atan",
+        "atan",
+        "atan(x) x in [0.5,2.5)",
+        math::atan,
+        cmath::atan
+    );
+    pair!(
+        "asinh",
+        "asinh",
+        "asinh(x) x in [0.5,2.5)",
+        math::asinh,
+        cmath::asinh
+    );
     pair!("erf", "erf", "erf(x) x in [0.5,2.5)", math::erf, cmath::erf);
-    pair!("erfc", "erfc", "erfc(x) x in [0.5,2.5)", math::erfc, cmath::erfc);
-    pair!("tgamma", "tgamma", "tgamma(x) x in [0.5,2.5)", math::tgamma, cmath::tgamma);
-    pair!("lgamma", "lgamma", "lgamma(x) x in [0.5,2.5)", math::lgamma, cmath::lgamma);
+    pair!(
+        "erfc",
+        "erfc",
+        "erfc(x) x in [0.5,2.5)",
+        math::erfc,
+        cmath::erfc
+    );
+    pair!(
+        "tgamma",
+        "tgamma",
+        "tgamma(x) x in [0.5,2.5)",
+        math::tgamma,
+        cmath::tgamma
+    );
+    pair!(
+        "lgamma",
+        "lgamma",
+        "lgamma(x) x in [0.5,2.5)",
+        math::lgamma,
+        cmath::lgamma
+    );
 
     // pow is binary — bench it explicitly (exponent 2.5, varying base).
     bench_op(
@@ -1788,6 +1857,57 @@ fn bench_math(c: &mut Criterion) {
     }
     powf_pair!("powf_int", "powf(x,3) x in [0.5,2.5)", 3.0f32);
     powf_pair!("powf_irrational", "powf(x,1.337) x in [0.5,2.5)", 1.337f32);
+
+    macro_rules! f32_pair {
+        ($id:expr, $sym:expr, $franken:expr, $glibc:expr) => {{
+            bench_op(
+                &mut group,
+                BenchMeta {
+                    profile_id: $id,
+                    impl_label: "frankenlibc_core",
+                    api_family: "math",
+                    symbol: $sym,
+                    workload: concat!($sym, "(x) x in [0.5,2.5)"),
+                    parity_proof_ref: "crates/frankenlibc-core/src/math/float32.rs",
+                },
+                || {
+                    let mut acc = 0.0_f32;
+                    for &x in &inputs_f32 {
+                        let f: fn(f32) -> f32 = $franken;
+                        acc += f(black_box(x));
+                    }
+                    black_box(acc);
+                },
+            );
+            bench_op(
+                &mut group,
+                BenchMeta {
+                    profile_id: $id,
+                    impl_label: "host_glibc",
+                    api_family: "math",
+                    symbol: $sym,
+                    workload: concat!($sym, "(x) x in [0.5,2.5)"),
+                    parity_proof_ref: "crates/frankenlibc-core/src/math/float32.rs",
+                },
+                || {
+                    let mut acc = 0.0_f32;
+                    for &x in &inputs_f32 {
+                        let g: unsafe extern "C" fn(f32) -> f32 = $glibc;
+                        // SAFETY: plain libm call on a finite f32 input.
+                        acc += unsafe { g(black_box(x)) };
+                    }
+                    black_box(acc);
+                },
+            );
+        }};
+    }
+    f32_pair!("coshf", "coshf", math::coshf, cmath::coshf);
+    f32_pair!("sinhf", "sinhf", math::sinhf, cmath::sinhf);
+    f32_pair!("tanhf", "tanhf", math::tanhf, cmath::tanhf);
+    f32_pair!("exp10f", "exp10f", math::exp10f, cmath::exp10f);
+    f32_pair!("log10f", "log10f", math::log10f, cmath::log10f);
+    f32_pair!("expm1f", "expm1f", math::expm1f, cmath::expm1f);
+    f32_pair!("log2f", "log2f", math::log2f, cmath::log2f);
 
     // expf medium fast path (exp2f-based) vs old libm::expf vs glibc.
     bench_op(

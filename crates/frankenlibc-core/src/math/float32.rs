@@ -461,7 +461,14 @@ pub fn exp10f(x: f32) -> f32 {
     if x.is_finite() && x == x.trunc() && (-10.0..=10.0).contains(&x) {
         return 10.0_f32.powi(x as i32);
     }
-    libm::expf(x * core::f32::consts::LN_10)
+    // 10^x = 2^(x·log2 10), evaluated entirely in f64 via the fast exp2 kernel
+    // (the slow libm::expf this replaced ran ~1.3x behind glibc). f64 carries
+    // 29 extra bits, so the single trailing f64→f32 rounding is essentially
+    // correct (far inside 4 ULP) with no extended-precision constant or range
+    // gate: f64 never overflows across the entire finite f32 domain, and the
+    // cast maps f64 over/underflow to f32 inf/0 exactly as glibc does. Verified
+    // by conformance_diff_math::diff_exp10f_within_4_ulps.
+    (libm::exp2(x as f64 * core::f64::consts::LOG2_10)) as f32
 }
 
 /// Bessel function of the first kind, order 0 (f32 variant).
@@ -898,6 +905,25 @@ mod tests {
         assert_eq!(exp10f(3.0), 1000.0);
         // Non-integer exponents take the transcendental path.
         assert!((exp10f(0.5) - 10.0_f32.sqrt()).abs() < 1e-3);
+        // f64-intermediate exp2 path stays within 4 ULP of the libm reference
+        // across the finite f32 domain (the live glibc proof is in
+        // conformance_diff_math::diff_exp10f_within_4_ulps).
+        let mut worst = 0i64;
+        let mut x = -44.0_f32;
+        while x <= 38.0 {
+            if x != x.trunc() {
+                let (got, want) = (exp10f(x), libm::exp10f(x));
+                if got.is_finite() && want.is_finite() {
+                    let u = (got.to_bits() as i64 - want.to_bits() as i64).abs();
+                    worst = worst.max(u);
+                    assert!(u <= 4, "exp10f({x}) = {got:?} vs {want:?} ({u} ULP)");
+                }
+            }
+            x += 0.0011;
+        }
+        assert!(exp10f(40.0).is_infinite());
+        assert_eq!(exp10f(-50.0), 0.0);
+        println!("exp10f worst ULP = {worst}");
     }
 
     #[test]

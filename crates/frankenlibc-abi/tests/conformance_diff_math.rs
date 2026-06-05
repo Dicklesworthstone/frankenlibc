@@ -43,6 +43,7 @@ unsafe extern "C" {
     fn log10(x: f64) -> f64;
     fn pow(x: f64, y: f64) -> f64;
     fn exp10(x: f64) -> f64;
+    fn exp10f(x: f32) -> f32;
     fn sinh(x: f64) -> f64;
     fn cosh(x: f64) -> f64;
     fn tanh(x: f64) -> f64;
@@ -840,8 +841,20 @@ fn diff_exp10_within_4_ulps() {
     }
     // Exact and edge inputs (incl. integers >22 that skip the powi path).
     for &x in &[
-        0.0, 1.0, 7.0, 22.0, -22.0, 23.0, 30.0, 40.0, 50.0, -30.0, -50.0, f64::INFINITY,
-        f64::NEG_INFINITY, f64::NAN,
+        0.0,
+        1.0,
+        7.0,
+        22.0,
+        -22.0,
+        23.0,
+        30.0,
+        40.0,
+        50.0,
+        -30.0,
+        -50.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
     ] {
         compare_f64(
             &mut divs,
@@ -857,6 +870,59 @@ fn diff_exp10_within_4_ulps() {
         "exp10 divergences ({} of many):\n{}",
         divs.len(),
         render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_exp10f_within_4_ulps() {
+    // exp10f routes 10^x = 2^(x·log2 10) through an f64 exp2 then rounds once to
+    // f32 — must stay within 4 ULP of glibc across the full finite f32 domain.
+    fn f32_ulps(a: f32, b: f32) -> i64 {
+        if a.is_nan() && b.is_nan() {
+            return 0; // any NaN matches any NaN for a math result
+        }
+        if a == b {
+            return 0;
+        }
+        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            return i64::MAX;
+        }
+        (a.to_bits() as i64 - b.to_bits() as i64).abs()
+    }
+    let mut worst = 0i64;
+    let mut bad = Vec::new();
+    let mut x = -44.0_f32;
+    while x <= 39.0 {
+        let (got, want) = (unsafe { fl::exp10f(x) }, unsafe { exp10f(x) });
+        let u = f32_ulps(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!("exp10f({x}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+        x += 0.0007;
+    }
+    for &x in &[
+        0.0_f32,
+        1.0,
+        7.0,
+        15.0,
+        20.0,
+        38.0,
+        -38.0,
+        40.0,
+        -50.0,
+        f32::NAN,
+    ] {
+        let (got, want) = (unsafe { fl::exp10f(x) }, unsafe { exp10f(x) });
+        let u = f32_ulps(got, want);
+        if u > 4 {
+            bad.push(format!("exp10f({x}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "exp10f divergences (worst {worst}):\n{}",
+        bad.join("\n")
     );
 }
 
