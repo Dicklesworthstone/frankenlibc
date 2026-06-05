@@ -300,6 +300,57 @@ fn bench_strcmp_256_equal(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_strtol(c: &mut Criterion) {
+    use frankenlibc_core::stdlib::conversion::strtol;
+    for (label, s) in &[
+        ("strtol_long", &b"123456789012345678\0"[..]),
+        ("strtol_short", &b"42\0"[..]),
+    ] {
+        let mut group = c.benchmark_group(format!("glibc_baseline_{label}"));
+        let bytes = s.to_vec();
+        // parity check
+        let (fl_v, _) = strtol(&bytes, 10);
+        let glibc_v = unsafe { libc::strtol(bytes.as_ptr().cast(), std::ptr::null_mut(), 10) };
+        assert_eq!(fl_v, glibc_v as i64, "{label} parity");
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: label,
+                impl_label: "frankenlibc_core",
+                api_family: "stdlib",
+                symbol: "strtol",
+                workload: "base-10 decimal parse",
+                parity_proof_ref: "crates/frankenlibc-core/src/stdlib/conversion.rs",
+            },
+            || {
+                black_box(strtol(black_box(&bytes), 10));
+            },
+        );
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: label,
+                impl_label: "host_glibc",
+                api_family: "stdlib",
+                symbol: "strtol",
+                workload: "base-10 decimal parse",
+                parity_proof_ref: "crates/frankenlibc-core/src/stdlib/conversion.rs",
+            },
+            || {
+                // SAFETY: NUL-terminated input, null endptr is allowed.
+                unsafe {
+                    black_box(libc::strtol(
+                        black_box(bytes.as_ptr().cast()),
+                        std::ptr::null_mut(),
+                        10,
+                    ));
+                }
+            },
+        );
+        group.finish();
+    }
+}
+
 fn bench_memcmp(c: &mut Criterion) {
     for &n in &[16usize, 256, 4096] {
         let mut group = c.benchmark_group(format!("glibc_baseline_memcmp_{n}"));
@@ -2087,6 +2138,7 @@ criterion_group! {
         bench_strlen_4096,
         bench_strcmp_256_equal,
         bench_memcmp,
+        bench_strtol,
         bench_malloc_free_64,
         bench_malloc_free_256,
         bench_malloc_free_large,

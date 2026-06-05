@@ -105,9 +105,6 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
     } else {
         9_223_372_036_854_775_807u64
     };
-    let cutoff = abs_max / effective_base;
-    let cutlim = abs_max % effective_base;
-
     let mut acc: u64 = 0;
     let mut any_digits = false;
     let mut overflow = false;
@@ -131,10 +128,15 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
             continue;
         }
 
-        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
-            overflow = true;
-        } else {
-            acc = acc * effective_base + (digit as u64);
+        // Exact overflow detection without a per-call `abs_max / base` division
+        // (the old cutoff/cutlim form): `acc*base + digit > abs_max` iff the
+        // checked arithmetic wraps u64 OR the result exceeds `abs_max`.
+        match acc
+            .checked_mul(effective_base)
+            .and_then(|a| a.checked_add(digit as u64))
+        {
+            Some(v) if v <= abs_max => acc = v,
+            _ => overflow = true,
         }
         i += 1;
     }
@@ -236,8 +238,7 @@ pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
         return (0, 0, ConversionStatus::InvalidBase);
     }
 
-    let cutoff = u64::MAX / effective_base;
-    let cutlim = u64::MAX % effective_base;
+    let limit = u64::MAX;
 
     let mut acc: u64 = 0;
     let mut any_digits = false;
@@ -261,10 +262,14 @@ pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
             continue;
         }
 
-        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
-            overflow = true;
-        } else {
-            acc = acc * effective_base + (digit as u64);
+        // Exact overflow detection via checked arithmetic — no per-call
+        // `limit / base` division (the old cutoff/cutlim form).
+        match acc
+            .checked_mul(effective_base)
+            .and_then(|a| a.checked_add(digit as u64))
+        {
+            Some(v) if v <= limit => acc = v,
+            _ => overflow = true,
         }
         i += 1;
     }
@@ -485,8 +490,7 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
     } else {
         9_223_372_036_854_775_807u64
     };
-    let cutoff = abs_max / effective_base;
-    let cutlim = abs_max % effective_base;
+    let limit = abs_max;
 
     let mut acc = 0u64;
     let mut any_digits = false;
@@ -506,10 +510,14 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
             continue;
         }
 
-        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
-            overflow = true;
-        } else {
-            acc = acc * effective_base + digit as u64;
+        // Exact overflow detection via checked arithmetic — no per-call
+        // `limit / base` division (the old cutoff/cutlim form).
+        match acc
+            .checked_mul(effective_base)
+            .and_then(|a| a.checked_add(digit as u64))
+        {
+            Some(v) if v <= limit => acc = v,
+            _ => overflow = true,
         }
         i += 1;
     }
@@ -588,8 +596,7 @@ pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
         return (0, 0, ConversionStatus::InvalidBase);
     }
 
-    let cutoff = u64::MAX / effective_base;
-    let cutlim = u64::MAX % effective_base;
+    let limit = u64::MAX;
 
     let mut acc = 0u64;
     let mut any_digits = false;
@@ -609,10 +616,14 @@ pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
             continue;
         }
 
-        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
-            overflow = true;
-        } else {
-            acc = acc * effective_base + digit as u64;
+        // Exact overflow detection via checked arithmetic — no per-call
+        // `limit / base` division (the old cutoff/cutlim form).
+        match acc
+            .checked_mul(effective_base)
+            .and_then(|a| a.checked_add(digit as u64))
+        {
+            Some(v) if v <= limit => acc = v,
+            _ => overflow = true,
         }
         i += 1;
     }
