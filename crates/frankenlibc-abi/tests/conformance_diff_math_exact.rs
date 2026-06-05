@@ -30,6 +30,10 @@ unsafe extern "C" {
     fn significand(x: f64) -> f64;
     fn lround(x: f64) -> c_long;
     fn lrint(x: f64) -> c_long;
+    fn llround(x: f64) -> i64;
+    fn llrint(x: f64) -> i64;
+    fn lroundf(x: f32) -> c_long;
+    fn lrintf(x: f32) -> c_long;
 }
 
 /// Bit-equality with NaN-vs-NaN treated as equal (payloads may differ and are
@@ -141,23 +145,42 @@ fn diff_math_exact_unary_and_binary_vs_glibc() {
         }
     }
 
-    // lround / lrint return long. Only compare REPRESENTABLE inputs: for
-    // out-of-range / NaN / Inf the result is undefined (glibc returns the x86
-    // `cvttsd2si` integer-indefinite 0x8000…0); that UB-adjacent case is a
-    // separate concern, not asserted here.
+    // lround / lrint return long. Compared over the WHOLE corpus — including
+    // out-of-range / NaN / Inf, where glibc returns the x86 cvt(t)sd2si
+    // integer-indefinite (i64::MIN). FrankenLibC matches this exactly.
     for &x in &xs {
-        if !x.is_finite() || x.abs() >= 9.0e18 {
-            continue;
-        }
         let a = unsafe { fl::lround(x) };
         let b = unsafe { lround(x) };
         if a != b {
-            div.push(format!("  lround({:e}): fl={} glibc={}", x, a, b));
+            div.push(format!("  lround({x:e}): fl={a} glibc={b}"));
         }
         let a = unsafe { fl::lrint(x) };
         let b = unsafe { lrint(x) };
         if a != b {
-            div.push(format!("  lrint({:e}): fl={} glibc={}", x, a, b));
+            div.push(format!("  lrint({x:e}): fl={a} glibc={b}"));
+        }
+        // ll* variants are identical on LP64 but exercise separate fl wrappers.
+        if unsafe { fl::llround(x) } != unsafe { llround(x) } {
+            div.push(format!("  llround({x:e}) diverges"));
+        }
+        if unsafe { fl::llrint(x) } != unsafe { llrint(x) } {
+            div.push(format!("  llrint({x:e}) diverges"));
+        }
+        // f32 path (cvt(t)ss2si): widen the corpus value to f32 and compare.
+        let xf = x as f32;
+        if unsafe { fl::lroundf(xf) } != unsafe { lroundf(xf) } {
+            div.push(format!(
+                "  lroundf({xf:e}): fl={} glibc={}",
+                unsafe { fl::lroundf(xf) },
+                unsafe { lroundf(xf) }
+            ));
+        }
+        if unsafe { fl::lrintf(xf) } != unsafe { lrintf(xf) } {
+            div.push(format!(
+                "  lrintf({xf:e}): fl={} glibc={}",
+                unsafe { fl::lrintf(xf) },
+                unsafe { lrintf(xf) }
+            ));
         }
     }
 

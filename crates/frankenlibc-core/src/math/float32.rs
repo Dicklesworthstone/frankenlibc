@@ -207,24 +207,28 @@ pub fn fmaf(x: f32, y: f32, z: f32) -> f32 {
 
 // --- Rounding / conversion ---
 
+// f32 conversions share glibc's x86 `cvt(t)ss2si` out-of-range / NaN semantics
+// (integer-indefinite i64::MIN), the same as the f64 path. The rounded f32 is
+// widened to f64 exactly before the range check. See
+// `crate::math::float::round_to_i64_x86`.
 #[inline]
 pub fn lrintf(x: f32) -> i64 {
-    libm::rintf(x) as i64
+    crate::math::float::round_to_i64_x86(libm::rintf(x) as f64)
 }
 
 #[inline]
 pub fn llrintf(x: f32) -> i64 {
-    libm::rintf(x) as i64
+    crate::math::float::round_to_i64_x86(libm::rintf(x) as f64)
 }
 
 #[inline]
 pub fn lroundf(x: f32) -> i64 {
-    libm::roundf(x) as i64
+    crate::math::float::round_to_i64_x86(libm::roundf(x) as f64)
 }
 
 #[inline]
 pub fn llroundf(x: f32) -> i64 {
-    libm::roundf(x) as i64
+    crate::math::float::round_to_i64_x86(libm::roundf(x) as f64)
 }
 
 // --- Float decomposition ---

@@ -70,28 +70,49 @@ pub fn nearbyint(x: f64) -> f64 {
     libm::rint(x)
 }
 
+/// Convert an already-rounded `f64` to `i64` with glibc's x86 semantics.
+///
+/// glibc's `lrint`/`lround`/`llrint`/`llround` compile to the x86
+/// `cvt(t)sd2si` instruction, which returns the "integer indefinite"
+/// (`i64::MIN`, `0x8000_0000_0000_0000`) for NaN, the infinities, and any value
+/// outside `[-2^63, 2^63)`. Rust's `as i64` instead SATURATES (NaN → 0,
+/// +∞ → `i64::MAX`, large negative → `i64::MIN`), which diverges from glibc on
+/// the out-of-range / non-finite inputs. Route conversions through this helper
+/// to preserve byte-for-byte parity (verified against host glibc in
+/// `conformance_diff_math_exact`).
+#[inline]
+pub(crate) fn round_to_i64_x86(r: f64) -> i64 {
+    // 2^63 is exactly representable; values >= it (and < -2^63) overflow i64.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if r.is_nan() || r >= TWO_POW_63 || r < -TWO_POW_63 {
+        i64::MIN
+    } else {
+        r as i64
+    }
+}
+
 /// Round to nearest integer, return as `i64`.
 #[inline]
 pub fn lrint(x: f64) -> i64 {
-    libm::rint(x) as i64
+    round_to_i64_x86(libm::rint(x))
 }
 
 /// Round to nearest integer, return as `i64`.
 #[inline]
 pub fn llrint(x: f64) -> i64 {
-    libm::rint(x) as i64
+    round_to_i64_x86(libm::rint(x))
 }
 
 /// Round to nearest integer (away from zero), return as `i64`.
 #[inline]
 pub fn lround(x: f64) -> i64 {
-    libm::round(x) as i64
+    round_to_i64_x86(libm::round(x))
 }
 
 /// Round to nearest integer (away from zero), return as `i64`.
 #[inline]
 pub fn llround(x: f64) -> i64 {
-    libm::round(x) as i64
+    round_to_i64_x86(libm::round(x))
 }
 
 /// Multiply `x` by 2^`exp`.
@@ -798,6 +819,31 @@ mod tests {
         assert_eq!(lround(-2.5), -3);
         assert_eq!(llround(2.5), 3);
         assert_eq!(llround(-2.5), -3);
+    }
+
+    #[test]
+    fn lrint_lround_out_of_range_match_x86_indefinite() {
+        // glibc (x86 cvt(t)sd2si) returns i64::MIN for NaN, ±Inf, and any value
+        // outside [-2^63, 2^63). Rust's `as i64` would saturate (NaN->0,
+        // +inf->i64::MAX); verify we match glibc instead.
+        const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+        for &f in &[lrint as fn(f64) -> i64, llrint, lround, llround] {
+            assert_eq!(f(f64::NAN), i64::MIN);
+            assert_eq!(f(f64::INFINITY), i64::MIN);
+            assert_eq!(f(f64::NEG_INFINITY), i64::MIN);
+            assert_eq!(f(TWO_POW_63), i64::MIN); // 2^63 overflows
+            assert_eq!(f(1e300), i64::MIN);
+            assert_eq!(f(-1e300), i64::MIN);
+            // In-range boundaries stay exact.
+            assert_eq!(f(9_223_372_036_854_773_760.0), 9_223_372_036_854_773_760); // 2^63 - 2048
+            assert_eq!(f(-TWO_POW_63), i64::MIN); // -2^63 is representable (== i64::MIN)
+            assert_eq!(f(0.0), 0);
+        }
+        // f32 path shares the same semantics.
+        assert_eq!(crate::math::float32::lrintf(f32::NAN), i64::MIN);
+        assert_eq!(crate::math::float32::lroundf(f32::INFINITY), i64::MIN);
+        assert_eq!(crate::math::float32::lroundf(1e30), i64::MIN); // 1e30 > 2^63
+        assert_eq!(crate::math::float32::lroundf(100.5), 101);
     }
 
     #[test]
