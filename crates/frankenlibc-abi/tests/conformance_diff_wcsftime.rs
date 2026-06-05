@@ -17,6 +17,7 @@ unsafe extern "C" {
         format: *const libc::wchar_t,
         tm: *const libc::tm,
     ) -> usize;
+    fn tzset();
 }
 
 fn make_fixed_tm() -> libc::tm {
@@ -171,4 +172,58 @@ fn wcsftime_diff_coverage_report() {
     );
     let _ = CString::new("dummy").unwrap();
     let _ = std::ptr::null::<c_void>();
+}
+
+// ===========================================================================
+// Dense daily week-specifier fuzz vs glibc wcsftime.
+//
+// The fixed cases omit %V (ISO week) entirely. The ISO week 52/53/01 year
+// boundary is the classic strftime/wcsftime bug site, so sweep every day from
+// 1990 through 2039 and compare a combined week-specifier format byte-for-byte
+// against host glibc wcsftime.
+// ===========================================================================
+
+use std::sync::Mutex;
+
+static TZ_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn diff_wcsftime_week_specifiers_dense() {
+    let _g = TZ_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Pin UTC so gmtime_r / wcsftime agree on the broken-down fields.
+    unsafe {
+        std::env::set_var("TZ", "UTC0");
+        tzset();
+    }
+
+    const BASE: i64 = 631_152_000; // 1990-01-01 00:00:00 UTC
+    const DAYS: i64 = 50 * 366;
+    let fmt = "%G %V %g %u %U %W %j %a %Y %m %d";
+
+    let mut fails = Vec::new();
+    for day in 0..DAYS {
+        let epoch = BASE + day * 86_400;
+        let mut tm = make_fixed_tm();
+        unsafe { libc::gmtime_r(&epoch, &mut tm) };
+        let (fl, lc) = render_both(fmt, &tm);
+        if fl != lc {
+            fails.push(format!(
+                "  {:04}-{:02}-{:02}: fl={:?} glibc={:?}",
+                tm.tm_year + 1900,
+                tm.tm_mon + 1,
+                tm.tm_mday,
+                ws_to_string(&fl),
+                ws_to_string(&lc),
+            ));
+            if fails.len() >= 12 {
+                break;
+            }
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "wcsftime week-specifier divergences ({} shown):\n{}",
+        fails.len(),
+        fails.join("\n")
+    );
 }
