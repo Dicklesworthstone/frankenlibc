@@ -660,6 +660,15 @@ pub fn bcmp(a: &[u8], b: &[u8], n: usize) -> i32 {
     let a = &a[..count];
     let b = &b[..count];
 
+    if count < SIMD_LANES {
+        for (x, y) in a.iter().zip(b.iter()) {
+            if x != y {
+                return 1;
+            }
+        }
+        return 0;
+    }
+
     // Equality-only SIMD scan: fold 128-byte blocks, then 32-byte panels, then
     // the byte tail. Unlike memcmp, bcmp never reports ordering, so the first
     // differing block can return `1` immediately without resolving which byte.
@@ -978,6 +987,25 @@ mod tests {
     #[test]
     fn test_bcmp_not_equal() {
         assert_ne!(bcmp(b"abc", b"abd", 3), 0);
+    }
+
+    #[test]
+    fn test_bcmp_sub_simd_gate_matches_equality_contract() {
+        for len in 0..SIMD_LANES {
+            let mut left = vec![0xA5; len];
+            let mut right = left.clone();
+            assert_eq!(bcmp(&left, &right, len), 0);
+
+            for pos in 0..len {
+                right[pos] ^= 0xFF;
+                assert_eq!(bcmp(&left, &right, len), 1);
+                right[pos] = left[pos];
+            }
+
+            left.push(0x11);
+            right.push(0x22);
+            assert_eq!(bcmp(&left, &right, len), 0);
+        }
     }
 
     #[test]
