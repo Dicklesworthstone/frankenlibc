@@ -964,3 +964,156 @@ fn string_diff_coverage_report() {
         total,
     );
 }
+
+// ===========================================================================
+// Dual-anchor adversarial differential fuzz (strstr / strcasestr / memmem)
+//
+// The fixed case tables above use short, generic inputs that never exercise the
+// dual-anchor first+last byte prefilter, its O(n+m) Two-Way bailout, the leftmost
+// resolution across many last-byte hits, or the wide SIMD block paths (>256/512
+// bytes). These deterministic fuzzers generate long haystacks over a tiny
+// alphabet — so partial matches, common-first/absent-last needles, and bailout
+// triggers occur constantly — and assert byte-for-byte agreement with glibc.
+// ===========================================================================
+
+struct XorShift64(u64);
+
+impl XorShift64 {
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+    fn below(&mut self, n: usize) -> usize {
+        if n == 0 {
+            0
+        } else {
+            (self.next_u64() % n as u64) as usize
+        }
+    }
+    fn pick(&mut self, alphabet: &[u8]) -> u8 {
+        alphabet[self.below(alphabet.len())]
+    }
+}
+
+#[test]
+fn diff_strstr_dual_anchor_fuzz() {
+    // No NUL in the alphabet: the whole generated C string is searchable.
+    const ALPHABET: &[u8] = b"abc";
+    let mut rng = XorShift64(0x9E3779B97F4A7C15);
+    let mut divs = Vec::new();
+    for _ in 0..6000 {
+        let hlen = rng.below(700);
+        let nlen = rng.below(40);
+        let hay: Vec<u8> = (0..hlen).map(|_| rng.pick(ALPHABET)).collect();
+        let ndl: Vec<u8> = (0..nlen).map(|_| rng.pick(ALPHABET)).collect();
+        let hbuf = cstr(&hay);
+        let nbuf = cstr(&ndl);
+        let hp = hbuf.as_ptr() as *const c_char;
+        let np = nbuf.as_ptr() as *const c_char;
+        let fo = offset_or_none(hp, unsafe { fl::strstr(hp, np) });
+        let lo = offset_or_none(hp, unsafe { libc::strstr(hp, np) });
+        if fo != lo {
+            divs.push(Divergence {
+                function: "strstr",
+                case: format!("(hay={hay:?}, ndl={ndl:?})"),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+            if divs.len() >= 8 {
+                break;
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strstr dual-anchor divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_strcasestr_dual_anchor_fuzz() {
+    // Mixed case so the folded first/last anchors and folded full compare run.
+    const ALPHABET: &[u8] = b"aAbBc";
+    let mut rng = XorShift64(0xD1B54A32D192ED03);
+    let mut divs = Vec::new();
+    for _ in 0..6000 {
+        let hlen = rng.below(700);
+        let nlen = rng.below(40);
+        let hay: Vec<u8> = (0..hlen).map(|_| rng.pick(ALPHABET)).collect();
+        let ndl: Vec<u8> = (0..nlen).map(|_| rng.pick(ALPHABET)).collect();
+        let hbuf = cstr(&hay);
+        let nbuf = cstr(&ndl);
+        let hp = hbuf.as_ptr() as *const c_char;
+        let np = nbuf.as_ptr() as *const c_char;
+        let fo = offset_or_none(hp, unsafe { fl::strcasestr(hp, np) });
+        let lo = offset_or_none(hp, unsafe { libc_strcasestr(hp, np) });
+        if fo != lo {
+            divs.push(Divergence {
+                function: "strcasestr",
+                case: format!("(hay={hay:?}, ndl={ndl:?})"),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+            if divs.len() >= 8 {
+                break;
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strcasestr dual-anchor divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_memmem_dual_anchor_fuzz() {
+    // Embedded NUL permitted (memmem is binary-safe), exercising the dual-anchor
+    // over arbitrary byte content including the NUL the C-string paths can't carry.
+    const ALPHABET: &[u8] = &[0u8, b'a', b'b'];
+    let mut rng = XorShift64(0x2545F4914F6CDD1D);
+    let mut divs = Vec::new();
+    for _ in 0..6000 {
+        let hlen = rng.below(700);
+        let nlen = rng.below(40);
+        let hay: Vec<u8> = (0..hlen).map(|_| rng.pick(ALPHABET)).collect();
+        let ndl: Vec<u8> = (0..nlen).map(|_| rng.pick(ALPHABET)).collect();
+        // Back even zero-length operands with a real (unused) byte so the
+        // pointers are valid; the length argument controls what is read.
+        let hbuf = if hay.is_empty() {
+            vec![0u8]
+        } else {
+            hay.clone()
+        };
+        let nbuf = if ndl.is_empty() {
+            vec![0u8]
+        } else {
+            ndl.clone()
+        };
+        let hp = hbuf.as_ptr().cast::<c_void>();
+        let np = nbuf.as_ptr().cast::<c_void>();
+        let fo = offset_void_or_none(hbuf.as_ptr(), unsafe { fl::memmem(hp, hlen, np, nlen) });
+        let lo = offset_void_or_none(hbuf.as_ptr(), unsafe { libc_memmem(hp, hlen, np, nlen) });
+        if fo != lo {
+            divs.push(Divergence {
+                function: "memmem",
+                case: format!("(hay={hay:?}, hlen={hlen}, ndl={ndl:?}, nlen={nlen})"),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+            if divs.len() >= 8 {
+                break;
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "memmem dual-anchor divergences:\n{}",
+        render_divs(&divs)
+    );
+}
