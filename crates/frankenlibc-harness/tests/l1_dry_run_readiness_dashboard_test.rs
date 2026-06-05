@@ -5202,7 +5202,7 @@ fn claim_reconciliation_rows_are_explicit() -> TestResult {
         ),
         (
             "claim-reconciliation-ground-truth-implemented",
-            ("ground_truth.Implemented", json!(2391)),
+            ("ground_truth.Implemented", json!(2395)),
         ),
         (
             "claim-reconciliation-ground-truth-callthrough-zero",

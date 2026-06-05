@@ -408,8 +408,10 @@ def validate_table_checksums(paths: dict[str, Path], errors: list[str], rows: li
     pack = load_json(paths["iconv_table_pack"], "iconv table pack", errors)
     checksums = load_json(paths["iconv_table_checksums"], "iconv table checksums", errors)
     tables = require_list(pack.get("included_codec_tables"), "iconv_table_pack.included_codec_tables", errors)
-    if len(tables) != 4:
-        errors.append(f"iconv table pack must contain exactly four tables, got {len(tables)}")
+    if len(tables) < len(REQUIRED_ICONV_CODECS):
+        errors.append(
+            f"iconv table pack must contain at least the required bootstrap tables, got {len(tables)}"
+        )
     for table in tables:
         if not isinstance(table, dict):
             errors.append("iconv table row must be an object")
@@ -432,8 +434,17 @@ def validate_table_checksums(paths: dict[str, Path], errors: list[str], rows: li
 
     codec_digests = require_dict(checksums.get("codec_table_sha256"), "iconv_table_checksums.codec_table_sha256", errors)
     codec_names = {table.get("canonical") for table in tables if isinstance(table, dict)}
-    if REQUIRED_ICONV_CODECS != codec_names:
-        errors.append(f"iconv table codecs must be {sorted(REQUIRED_ICONV_CODECS)}, got {sorted(str(name) for name in codec_names)}")
+    if not REQUIRED_ICONV_CODECS.issubset(codec_names):
+        errors.append(
+            f"iconv table codecs must include {sorted(REQUIRED_ICONV_CODECS)}, got {sorted(str(name) for name in codec_names)}"
+        )
+    codec_digest_names = set(codec_digests)
+    if codec_digest_names != codec_names:
+        errors.append(
+            "iconv checksum manifest codec set must match table pack codec set: "
+            f"missing={sorted(str(name) for name in codec_names - codec_digest_names)} "
+            f"extra={sorted(str(name) for name in codec_digest_names - codec_names)}"
+        )
     for table in tables:
         if isinstance(table, dict):
             canonical = table.get("canonical")

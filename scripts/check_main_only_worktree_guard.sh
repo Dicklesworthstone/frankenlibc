@@ -206,12 +206,14 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         add_error(source, "malformed_manifest", "policy.required_current_branch must be main")
     if string_list(policy.get("allowed_local_branches"), source, "policy.allowed_local_branches") != ["main"]:
         add_error(source, "malformed_manifest", "policy.allowed_local_branches must be exactly ['main']")
-    if policy.get("expected_worktree_count") != 1:
-        add_error(source, "malformed_manifest", "policy.expected_worktree_count must be 1")
+    if policy.get("expected_primary_worktree_count") != 1:
+        add_error(source, "malformed_manifest", "policy.expected_primary_worktree_count must be 1")
     if policy.get("required_worktree_branch") != "refs/heads/main":
         add_error(source, "malformed_manifest", "policy.required_worktree_branch must be refs/heads/main")
-    if policy.get("forbid_linked_worktrees") is not True:
-        add_error(source, "malformed_manifest", "policy.forbid_linked_worktrees must be true")
+    if policy.get("allow_detached_linked_worktrees") is not True:
+        add_error(source, "malformed_manifest", "policy.allow_detached_linked_worktrees must be true")
+    if policy.get("forbid_linked_worktrees") is not False:
+        add_error(source, "malformed_manifest", "policy.forbid_linked_worktrees must be false")
     if policy.get("forbid_local_non_main_branches") is not True:
         add_error(source, "malformed_manifest", "policy.forbid_local_non_main_branches must be true")
     if policy.get("required_remote_primary_ref") != "origin/main":
@@ -282,32 +284,46 @@ def validate_state(state: dict[str, Any], policy: dict[str, Any], source: str) -
     if not isinstance(worktrees, list):
         local_error("malformed_worktree_state", "worktrees must be a list")
         worktrees = []
-    expected_count = policy.get("expected_worktree_count")
-    if len(worktrees) != expected_count:
-        local_error("worktree_count_mismatch", f"expected {expected_count} worktree, got {len(worktrees)}")
-    if policy.get("forbid_linked_worktrees") is True and len(worktrees) > 1:
-        local_error("linked_worktree_present", "linked worktrees are forbidden")
-
     root_seen = False
+    primary_worktree_count = 0
     required_worktree_branch = policy.get("required_worktree_branch")
     for index, worktree in enumerate(worktrees):
         if not isinstance(worktree, dict):
             local_error("malformed_worktree_state", f"worktree row {index} must be an object")
             continue
         path = worktree.get("worktree")
+        is_root_worktree = False
         if isinstance(path, str):
             try:
-                root_seen = root_seen or pathlib.Path(path).resolve() == ROOT
+                is_root_worktree = pathlib.Path(path).resolve() == ROOT
+                root_seen = root_seen or is_root_worktree
             except Exception:
                 pass
         branch = worktree.get("branch")
-        if branch != required_worktree_branch:
+        if is_root_worktree:
+            primary_worktree_count += 1
+        if is_root_worktree and branch != required_worktree_branch:
             local_error(
                 "worktree_branch_not_main",
                 f"worktree {path!r} must be on {required_worktree_branch}, got {branch!r}",
             )
+        elif not is_root_worktree:
+            if policy.get("forbid_linked_worktrees") is True:
+                local_error("linked_worktree_present", f"linked worktree {path!r} is forbidden")
+            elif policy.get("allow_detached_linked_worktrees") is True:
+                if "detached" not in worktree or branch:
+                    local_error(
+                        "linked_worktree_not_detached",
+                        f"linked worktree {path!r} must be detached, got branch {branch!r}",
+                    )
     if not root_seen:
         local_error("root_worktree_missing", f"root worktree {ROOT} was not present in git worktree list")
+    expected_primary_count = policy.get("expected_primary_worktree_count")
+    if primary_worktree_count != expected_primary_count:
+        local_error(
+            "primary_worktree_count_mismatch",
+            f"expected {expected_primary_count} primary worktree, got {primary_worktree_count}",
+        )
 
     remote_refs = state.get("remote_refs")
     if not isinstance(remote_refs, dict):

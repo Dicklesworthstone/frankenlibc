@@ -136,9 +136,9 @@ fn manifest_binds_live_docs_generation_evidence() -> TestResult {
         Some("2026-06-03T21:45:00Z")
     );
     assert_eq!(snapshot["total_exported"].as_u64(), Some(4119));
-    assert_eq!(snapshot["counts"]["implemented"].as_u64(), Some(2391));
+    assert_eq!(snapshot["counts"]["implemented"].as_u64(), Some(2395));
     assert_eq!(snapshot["counts"]["raw_syscall"].as_u64(), Some(414));
-    assert_eq!(snapshot["counts"]["wraps_host_libc"].as_u64(), Some(1314));
+    assert_eq!(snapshot["counts"]["wraps_host_libc"].as_u64(), Some(1310));
     assert_eq!(snapshot["counts"]["stub"].as_u64(), Some(0));
 
     let reality = load_json(&root.join("tests/conformance/reality_report.v1.json"))?;

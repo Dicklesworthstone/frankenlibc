@@ -141,12 +141,20 @@ fn manifest_declares_main_only_policy_and_report_contract() -> TestResult {
         serde_json::json!(["main"])
     );
     assert_eq!(
-        manifest["policy"]["expected_worktree_count"].as_u64(),
+        manifest["policy"]["expected_primary_worktree_count"].as_u64(),
         Some(1)
     );
     assert_eq!(
         manifest["policy"]["required_worktree_branch"].as_str(),
         Some("refs/heads/main")
+    );
+    assert_eq!(
+        manifest["policy"]["allow_detached_linked_worktrees"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        manifest["policy"]["forbid_linked_worktrees"].as_bool(),
+        Some(false)
     );
     assert_eq!(
         manifest["policy"]["require_legacy_mirror_sync"].as_bool(),
@@ -214,11 +222,31 @@ fn checker_reports_current_main_only_state_and_synced_mirror() -> TestResult {
         report["current_state"]["remote_refs"]["origin/main"],
         report["current_state"]["remote_refs"]["origin/master"]
     );
+    let worktrees = json_array(&report["current_state"], "worktrees")?;
+    let root_text = root.to_string_lossy();
+    let primary: Vec<_> = worktrees
+        .iter()
+        .filter(|worktree| worktree["worktree"].as_str() == Some(root_text.as_ref()))
+        .collect();
     assert_eq!(
-        json_array(&report["current_state"], "worktrees")?.len(),
+        primary.len(),
         1,
-        "current checkout must expose exactly one worktree"
+        "current checkout must expose exactly one primary root worktree"
     );
+    assert_eq!(primary[0]["branch"].as_str(), Some("refs/heads/main"));
+    for worktree in worktrees
+        .iter()
+        .filter(|worktree| worktree["worktree"].as_str() != Some(root_text.as_ref()))
+    {
+        assert!(
+            worktree.get("detached").is_some(),
+            "linked worktree must be detached: {worktree:?}"
+        );
+        assert!(
+            worktree.get("branch").is_none(),
+            "linked worktree must not be on a branch: {worktree:?}"
+        );
+    }
     assert!(json_array(&report, "errors")?.is_empty());
     assert!(json_array(&report, "contract_errors")?.is_empty());
 

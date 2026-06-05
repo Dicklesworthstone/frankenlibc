@@ -143,7 +143,7 @@ fn contract_anchors_mode_semantics_matrix_completion_debt() -> TestResult {
     );
     assert_eq!(
         manifest["matrix_expectations"]["total_heals_call_sites"].as_u64(),
-        Some(139)
+        Some(141)
     );
     for reference in manifest["implementation_refs"]
         .as_array()
@@ -228,7 +228,7 @@ fn checker_accepts_contract_and_emits_telemetry() -> TestResult {
     assert_eq!(report["source_count"].as_u64(), Some(7));
     assert_eq!(report["binding_count"].as_u64(), Some(3));
     assert_eq!(report["family_count"].as_u64(), Some(20));
-    assert_eq!(report["total_heals_call_sites"].as_u64(), Some(139));
+    assert_eq!(report["total_heals_call_sites"].as_u64(), Some(141));
     let events = read_log_events(&out_dir.join("events.jsonl"))?;
     assert!(events.contains("mode_semantics_matrix.source_artifacts_validated"));
     assert!(events.contains("mode_semantics_matrix.matrix_expectations_validated"));

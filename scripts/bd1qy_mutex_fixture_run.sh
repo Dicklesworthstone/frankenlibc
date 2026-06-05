@@ -44,7 +44,17 @@ run_cargo() {
   fi
 }
 
-LIB_CANDIDATES=(
+LIB_CANDIDATES=()
+if [[ -n "${FRANKENLIBC_LIB:-}" ]]; then
+  LIB_CANDIDATES+=("${FRANKENLIBC_LIB}")
+fi
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  LIB_CANDIDATES+=(
+    "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
+    "${CARGO_TARGET_DIR}/debug/libfrankenlibc_abi.so"
+  )
+fi
+LIB_CANDIDATES+=(
   "${ROOT}/target/release/libfrankenlibc_abi.so"
   "${ROOT}/target/debug/libfrankenlibc_abi.so"
   "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"

@@ -247,10 +247,10 @@ fn contract_binds_architecture_migration_state_sources() -> TestResult {
         .get("support_matrix_summary")
         .ok_or_else(|| test_error("support_matrix_summary missing"))?;
     assert_eq!(support_summary["total_exported"].as_u64(), Some(4119));
-    assert_eq!(support_summary["native_surface_pct"].as_f64(), Some(68.1));
+    assert_eq!(support_summary["native_surface_pct"].as_f64(), Some(68.2));
     assert_eq!(
         support_summary["host_callthrough_surface_pct"].as_f64(),
-        Some(31.9)
+        Some(31.8)
     );
 
     let claim_summary = contract

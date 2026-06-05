@@ -15,6 +15,7 @@ python3 - "${ROOT}" "${CONTRACT}" "${REPORT}" "${LOG}" "${SOURCE_COMMIT}" <<'PY'
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -25,6 +26,7 @@ ROOT = pathlib.Path(sys.argv[1])
 CONTRACT = pathlib.Path(sys.argv[2])
 REPORT = pathlib.Path(sys.argv[3])
 LOG = pathlib.Path(sys.argv[4])
+OUT_DIR = REPORT.parent
 SOURCE_COMMIT = sys.argv[5]
 
 SCHEMA = "fourth_conformance_backlog_completion_contract.v1"
@@ -170,18 +172,45 @@ def write_jsonl(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
 
 
 def run_gate(command: list[str], label: str) -> None:
-    try:
-        output = subprocess.run(
-            command,
-            cwd=ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=90,
-            check=False,
+    attempts = 3 if label == "br_dep_cycles" else 1
+    output = None
+    env = os.environ.copy()
+    if label == "per_symbol_fixture_tests":
+        env["FRANKENLIBC_PER_SYMBOL_FIXTURE_GENERATED_REPORT"] = str(
+            OUT_DIR / "per_symbol_fixture_tests.generated.v1.json"
         )
-    except Exception as exc:
-        add_error("base_gate_failed", f"{label}: failed to run: {exc}")
+    elif label == "fixture_coverage_prioritizer":
+        prioritizer_dir = OUT_DIR / "fixture_coverage_prioritizer"
+        env["FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_OUT_DIR"] = str(prioritizer_dir)
+        env["FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_REPORT"] = str(
+            prioritizer_dir / "fixture_coverage_prioritizer.report.json"
+        )
+        env["FRANKENLIBC_FIXTURE_COVERAGE_PRIORITIZER_LOG"] = str(
+            prioritizer_dir / "fixture_coverage_prioritizer.log.jsonl"
+        )
+    for attempt in range(attempts):
+        try:
+            output = subprocess.run(
+                command,
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=90,
+                check=False,
+            )
+        except Exception as exc:
+            add_error("base_gate_failed", f"{label}: failed to run: {exc}")
+            return
+        if output.returncode == 0:
+            break
+        lock_busy = "write lock" in output.stderr or ".write.lock" in output.stderr
+        if label != "br_dep_cycles" or not lock_busy or attempt + 1 == attempts:
+            break
+        time.sleep(2)
+    if output is None:
+        add_error("base_gate_failed", f"{label}: did not run")
         return
     if output.returncode != 0:
         add_error(

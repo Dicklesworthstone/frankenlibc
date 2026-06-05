@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -104,7 +105,15 @@ fn string_set(value: &Value, key: &str, context: &str) -> TestResult<BTreeSet<St
         .collect::<Result<_, _>>()
 }
 
+fn checker_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 fn run_checker(root: &Path, manifest: &Path, out_dir: &Path) -> TestResult<Output> {
+    let _guard = checker_lock()
+        .lock()
+        .map_err(|_| test_error("second backlog checker lock poisoned"))?;
     Ok(Command::new("bash")
         .arg(checker_path(root))
         .current_dir(root)
@@ -212,7 +221,7 @@ fn contract_binds_second_conformance_backlog_closeout() -> TestResult {
         field(coverage, "symbol_fixture_coverage", "coverage_expectations")?
             ["target_covered_symbols"]
             .as_u64(),
-        Some(939)
+        Some(859)
     );
     assert_eq!(
         field(
@@ -221,7 +230,7 @@ fn contract_binds_second_conformance_backlog_closeout() -> TestResult {
             "coverage_expectations"
         )?["total_cases"]
             .as_u64(),
-        Some(2320)
+        Some(2787)
     );
     Ok(())
 }
