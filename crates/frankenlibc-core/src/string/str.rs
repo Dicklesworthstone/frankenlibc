@@ -241,7 +241,15 @@ fn equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
     debug_assert_eq!(right.len(), SIMD_LANES);
     let left_lanes = Simd::<u8, SIMD_LANES>::from_slice(left);
     let right_lanes = Simd::<u8, SIMD_LANES>::from_slice(right);
-    left_lanes.simd_eq(right_lanes).all() && !left_lanes.simd_eq(Simd::splat(0)).any()
+    // Continue only if every lane is equal AND non-NUL. Fuse the "differs" and
+    // "is-NUL" lane masks so a SINGLE horizontal reduction (`.any()`) gates the
+    // loop, instead of two (`.all()` for equality + `.any()` for NUL). On equal
+    // inputs — the hot path — the prior form always ran both reductions; glibc's
+    // hand-tuned strcmp likewise issues one test per 32-byte step. Logically
+    // identical: `eq.all() && !nul.any()` ⇔ `!((!eq) | nul).any()`.
+    let differs = left_lanes.simd_ne(right_lanes);
+    let is_nul = left_lanes.simd_eq(Simd::splat(0));
+    !(differs | is_nul).any()
 }
 
 /// Branchless ASCII A-Z -> a-z fold of a 32-byte panel, exactly matching
@@ -1673,6 +1681,67 @@ mod tests {
         assert_eq!(strnlen(b"hello\0", 3), 3);
         assert_eq!(strnlen(b"\0", 5), 0);
         assert_eq!(strnlen(b"abc", 8), 3);
+    }
+
+    /// Differential isomorphism guard for the 32-byte SIMD `strcmp` panel
+    /// (`equal_and_no_nul_simd_32`): a deterministic xorshift fuzz drives long,
+    /// mostly-equal pairs with NULs and diffs at varied offsets — exercising the
+    /// vectorized loop, the aligned word loop, and the byte tail — and asserts
+    /// the full `i32` result (not just its sign) matches a trivial scalar
+    /// reference that mirrors C-string semantics (index past slice end = NUL).
+    #[test]
+    fn prop_strcmp_simd_matches_scalar_reference() {
+        fn scalar_ref(s1: &[u8], s2: &[u8]) -> i32 {
+            let mut i = 0;
+            loop {
+                let a = if i < s1.len() { s1[i] } else { 0 };
+                let b = if i < s2.len() { s2[i] } else { 0 };
+                if a != b {
+                    return a as i32 - b as i32;
+                }
+                if a == 0 {
+                    return 0;
+                }
+                i += 1;
+            }
+        }
+
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        for _ in 0..200_000 {
+            let len = (next() % 200) as usize;
+            // Build a shared base so most pairs share a long equal prefix,
+            // forcing the SIMD panel to run to completion before diverging.
+            let mut a: Vec<u8> = (0..len).map(|_| (next() as u8) | 1).collect();
+            let mut b = a.clone();
+            // Sprinkle divergences / embedded NULs at random offsets.
+            for buf in [&mut a, &mut b] {
+                if len > 0 && next() % 3 == 0 {
+                    let pos = (next() as usize) % len;
+                    buf[pos] = (next() as u8) | 1; // keep non-NUL unless chosen below
+                }
+                if len > 0 && next() % 4 == 0 {
+                    let pos = (next() as usize) % len;
+                    buf[pos] = 0; // embedded NUL terminator
+                }
+            }
+            // Half the pairs get an explicit trailing NUL (C-string form).
+            if next() % 2 == 0 {
+                a.push(0);
+                b.push(0);
+            }
+            assert_eq!(
+                strcmp(&a, &b),
+                scalar_ref(&a, &b),
+                "strcmp mismatch a={a:?} b={b:?}"
+            );
+        }
     }
 
     #[test]
