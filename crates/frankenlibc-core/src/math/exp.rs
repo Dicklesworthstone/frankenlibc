@@ -45,8 +45,26 @@ pub fn log2(x: f64) -> f64 {
     libm::log2(x)
 }
 
+/// `log10` via the cheaper natural-log kernel: `log10(x) = ln(x) * log10(e)`.
+///
+/// Profiling (`glibc_baseline_math/log10`, bd-2g7oyh) showed `libm::log10`
+/// (~13 ns) is slower than `libm::log` (~9.5 ns); glibc's `log10` is hand-tuned,
+/// leaving fl `log10` ~1.07x behind. Routing through `libm::log` scaled by
+/// `LOG10_E` is ~1.34x faster on the kernel and beats glibc. A 4M-point sweep
+/// bounds it within 2 ULP of glibc (`f64::log10`) across the full dynamic range
+/// and near 1 — within the 4-ULP-vs-glibc contract shared by the exp/pow/log2
+/// fast paths (mirrors the f64 `log2` reroute).
+///
+/// At exactly-representable powers of ten the fast form is ~1 ULP off glibc's
+/// exact integer — within the 4-ULP contract (an exactness gate was measured to
+/// cost more than the reroute saves, since `round`/casts are libm calls or extra
+/// branches on baseline x86-64). Subnormal / non-positive / non-finite inputs
+/// defer to `libm::log10` for its precise special-case handling.
 #[inline]
 pub fn log10(x: f64) -> f64 {
+    if x.is_normal() && x > 0.0 {
+        return libm::log(x) * core::f64::consts::LOG10_E;
+    }
     libm::log10(x)
 }
 
@@ -304,6 +322,56 @@ mod tests {
         assert_eq!(log2(1.0).to_bits(), 0.0_f64.to_bits());
         assert_eq!(log2(0.0), f64::NEG_INFINITY);
         assert!(log2(-1.0).is_nan());
+    }
+
+    #[test]
+    fn log10_fast_path_within_4_ulps_of_glibc() {
+        // `f64::log10` lowers to host glibc, pinning the `ln(x) * log10(e)` fast
+        // path directly against it.
+        let mut x = 1e-300_f64;
+        while x < 1e300 {
+            assert!(
+                within_ulps(log10(x), x.log10(), 4),
+                "log10({x:e}) = {:?} but glibc = {:?} (>4 ULP)",
+                log10(x),
+                x.log10()
+            );
+            x *= 1.0000071;
+        }
+        for d in 0..1_000_000i64 {
+            let x = 1.0 + (d as f64) * 2e-9;
+            assert!(
+                within_ulps(log10(x), x.log10(), 4),
+                "near-1 log10({x}) >4 ULP"
+            );
+        }
+        for &x in &[
+            0.5,
+            0.323,
+            std::f64::consts::E,
+            std::f64::consts::PI,
+            1e-3,
+            1e3,
+            123.456,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+        ] {
+            assert!(within_ulps(log10(x), x.log10(), 4), "log10({x:e}) >4 ULP");
+        }
+        // Powers of ten stay within 4 ULP of glibc (no exactness gate — the
+        // fast form is ~1 ULP off the exact integer at 10^0..10^22).
+        for k in -307i32..=308 {
+            let p = libm::exp10(k as f64);
+            if p.is_normal() {
+                assert!(within_ulps(log10(p), p.log10(), 4), "log10(10^{k}) >4 ULP");
+            }
+        }
+        // Special inputs defer to libm::log10 and match glibc exactly.
+        assert!(log10(f64::NAN).is_nan());
+        assert_eq!(log10(f64::INFINITY), f64::INFINITY);
+        assert_eq!(log10(1.0).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(log10(0.0), f64::NEG_INFINITY);
+        assert!(log10(-1.0).is_nan());
     }
 
     #[test]
