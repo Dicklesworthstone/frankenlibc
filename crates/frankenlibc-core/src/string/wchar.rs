@@ -497,8 +497,8 @@ pub fn iswprint(wc: u32) -> bool {
 ///
 /// Mirrors glibc semantics:
 /// - 1:1 mappings: return the uppercase char
-/// - 1:N where N > 1 and all are base letters (ß → SS, ﬀ → FF): return unchanged
-/// - 1:N where base letter + combining marks: return the base letter (drop marks)
+/// - 1:N full-case expansion (ß → SS, ﬀ → FF, ǰ → J̌): glibc's single-char
+///   `towupper` has no simple mapping for these and returns them unchanged.
 ///
 /// This matches glibc's `towupper(3)` in UTF-8 locales.
 pub fn towupper(wc: u32) -> u32 {
@@ -510,16 +510,13 @@ pub fn towupper(wc: u32) -> u32 {
         return wc;
     };
     match iter.next() {
-        None => first as u32, // 1:1 mapping
-        Some(second) => {
-            // Multi-char expansion. Glibc drops combining marks but keeps
-            // unchanged if all chars are base letters (like ß → SS).
-            if is_combining_mark(second) {
-                first as u32
-            } else {
-                wc
-            }
-        }
+        None => first as u32, // 1:1 simple mapping
+        // Multi-character full-case expansion (e.g. ß→SS, ǰ→J̌): glibc's
+        // single-character `towupper` has no simple mapping for these and
+        // returns the character UNCHANGED — it never drops combining marks
+        // (an earlier `combining → base letter` heuristic wrongly turned ǰ
+        // into 'J', U+1E96 into 'H', etc.).
+        Some(_) => wc,
     }
 }
 
@@ -527,6 +524,13 @@ pub fn towupper(wc: u32) -> u32 {
 ///
 /// Same multi-char-fold rule as [`towupper`].
 pub fn towlower(wc: u32) -> u32 {
+    // U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE has a *simple* lowercase
+    // mapping to 'i' (U+0069) in UnicodeData, but Rust's full mapping expands
+    // it to "i" + U+0307 (combining dot above). glibc's single-char `towlower`
+    // uses the simple mapping, so special-case it to match.
+    if wc == 0x0130 {
+        return 0x0069;
+    }
     let Some(c) = char::from_u32(wc) else {
         return wc;
     };
@@ -536,32 +540,10 @@ pub fn towlower(wc: u32) -> u32 {
     };
     match iter.next() {
         None => first as u32,
-        Some(second) => {
-            if is_combining_mark(second) {
-                first as u32
-            } else {
-                wc
-            }
-        }
+        // Multi-character full-case expansion (with no simple mapping): glibc
+        // returns it unchanged.
+        Some(_) => wc,
     }
-}
-
-/// Check if a character is a Unicode combining mark (Mn, Mc, or Me category).
-fn is_combining_mark(c: char) -> bool {
-    let cp = c as u32;
-    // Combining Diacritical Marks (0300–036F)
-    // Combining Diacritical Marks Extended (1AB0–1AFF)
-    // Combining Diacritical Marks Supplement (1DC0–1DFF)
-    // Combining Diacritical Marks for Symbols (20D0–20FF)
-    // Combining Half Marks (FE20–FE2F)
-    matches!(
-        cp,
-        0x0300..=0x036F
-            | 0x1AB0..=0x1AFF
-            | 0x1DC0..=0x1DFF
-            | 0x20D0..=0x20FF
-            | 0xFE20..=0xFE2F
-    )
 }
 
 /// Compute display width of a wide character (simplified, glibc-aligned).
@@ -844,7 +826,11 @@ mod tests {
         }
         for src in &corpus {
             let want_len = ref_len(src);
-            assert_eq!(wcs_ascii_prefix_len(src), want_len, "wcs_ascii_prefix_len {src:?}");
+            assert_eq!(
+                wcs_ascii_prefix_len(src),
+                want_len,
+                "wcs_ascii_prefix_len {src:?}"
+            );
             for cap in [0usize, 1, 7, 16, 17, 40, 100] {
                 let mut dest = vec![0u8; cap];
                 let k = wcs_ascii_prefix(&mut dest, src);

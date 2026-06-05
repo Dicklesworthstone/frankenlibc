@@ -436,3 +436,39 @@ fn wctype_diff_coverage_report() {
         "{{\"family\":\"wctype.h\",\"reference\":\"glibc\",\"functions\":14,\"divergences\":0}}",
     );
 }
+
+// ===========================================================================
+// Regression: a code point whose FULL case mapping is multi-character must be
+// returned UNCHANGED by single-char towupper/towlower (matching glibc's simple
+// mapping), NOT folded to a base letter by dropping combining marks. An earlier
+// `combining-mark -> base` heuristic wrongly mapped U+01F0 (ǰ) -> 'J',
+// U+1E96 (ẖ) -> 'H', etc. The remaining simple-vs-full and Unicode-version
+// table mismatches (e.g. U+1F80 -> U+1F88, Medefaidrin) are tracked in
+// bd-2g7oyh.150 and need glibc's exact simple-mapping table.
+// ===========================================================================
+
+#[test]
+fn diff_towupper_multichar_returns_unchanged() {
+    let utf8 = c"C.UTF-8";
+    unsafe { libc::setlocale(libc::LC_CTYPE, utf8.as_ptr()) };
+    // Code points whose full uppercase is base+combining: glibc keeps them as-is.
+    const UP_UNCHANGED: &[u32] = &[
+        0x01F0, 0x0390, 0x03B0, 0x1E96, 0x1E97, 0x1E98, 0x1E99, 0x1E9A, 0x1F50, 0x1F52, 0x1F54,
+        0x1F56,
+    ];
+    let mut divs = Vec::new();
+    for &cp in UP_UNCHANGED {
+        let fu = unsafe { fl::towupper(cp) };
+        let gu = unsafe { towupper(cp) };
+        if fu != gu || fu != cp {
+            divs.push(format!(
+                "  towupper(U+{cp:04X}): fl=U+{fu:04X} glibc=U+{gu:04X} (expected unchanged)"
+            ));
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "towupper multi-char divergences vs glibc:\n{}",
+        divs.join("\n")
+    );
+}
