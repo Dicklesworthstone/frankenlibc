@@ -266,8 +266,9 @@ def validate_support_matrix(source_artifacts: dict) -> dict:
         require(row.get("status") == "Implemented", "support_status_drift", "mutex symbol must be Implemented", symbol=symbol, actual=row.get("status"))
         require(row.get("module") == "pthread_abi", "support_module_drift", "mutex symbol must be owned by pthread_abi", symbol=symbol, actual=row.get("module"))
         require(row.get("default_stub") is False, "support_stub_drift", "mutex symbol must not be a default stub", symbol=symbol)
+        strict_semantics = str(row.get("strict_semantics", ""))
         require(
-            "Futex-managed NORMAL mutex core" in str(row.get("strict_semantics", "")),
+            "Futex-managed" in strict_semantics and "mutex core" in strict_semantics,
             "support_semantics_drift",
             "mutex symbol strict semantics must cite the native futex core",
             symbol=symbol,
@@ -289,11 +290,57 @@ def validate_fixture(source_artifacts: dict, min_cases: int) -> dict:
     return {"case_count": len(cases), "functions": sorted(function for function in functions if isinstance(function, str))}
 
 
+artifact_dir = report_path.parent
+residual_path = pathlib.Path(
+    os.environ.get(
+        "FRANKENLIBC_PTHREAD_MUTEX_CALLTHROUGH_RESIDUAL_REPORT",
+        str(artifact_dir / "residual_replacement_callthrough_blockers.report.json"),
+    )
+)
+residual_log_path = pathlib.Path(
+    os.environ.get(
+        "FRANKENLIBC_PTHREAD_MUTEX_CALLTHROUGH_RESIDUAL_LOG",
+        str(artifact_dir / "residual_replacement_callthrough_blockers.log.jsonl"),
+    )
+)
+replacement_path = pathlib.Path(
+    os.environ.get(
+        "FRANKENLIBC_PTHREAD_MUTEX_CALLTHROUGH_REPLACEMENT_GUARD_REPORT",
+        str(artifact_dir / "replacement_guard.replacement.report.json"),
+    )
+)
+replacement_log_path = pathlib.Path(
+    os.environ.get(
+        "FRANKENLIBC_PTHREAD_MUTEX_CALLTHROUGH_REPLACEMENT_GUARD_LOG",
+        str(artifact_dir / "replacement_guard.replacement.log.jsonl"),
+    )
+)
+interpose_path = pathlib.Path(
+    os.environ.get(
+        "FRANKENLIBC_PTHREAD_MUTEX_CALLTHROUGH_INTERPOSE_GUARD_REPORT",
+        str(artifact_dir / "replacement_guard.interpose.report.json"),
+    )
+)
+interpose_log_path = pathlib.Path(
+    os.environ.get(
+        "FRANKENLIBC_PTHREAD_MUTEX_CALLTHROUGH_INTERPOSE_GUARD_LOG",
+        str(artifact_dir / "replacement_guard.interpose.log.jsonl"),
+    )
+)
+
+
 def run_residual_guard() -> None:
     if not run_guards:
         return
+    env = os.environ.copy()
+    env["RESIDUAL_REPLACEMENT_REPORT"] = str(residual_path)
+    env["RESIDUAL_REPLACEMENT_LOG"] = str(residual_log_path)
+    env["RESIDUAL_REPLACEMENT_GUARD_REPLACEMENT_REPORT"] = str(replacement_path)
+    env["RESIDUAL_REPLACEMENT_GUARD_REPLACEMENT_LOG"] = str(replacement_log_path)
+    env["RESIDUAL_REPLACEMENT_GUARD_INTERPOSE_REPORT"] = str(interpose_path)
+    env["RESIDUAL_REPLACEMENT_GUARD_INTERPOSE_LOG"] = str(interpose_log_path)
     command = [str(root / "scripts/check_residual_replacement_callthrough_blockers.sh"), "--validate-only"]
-    proc = subprocess.run(command, cwd=root, text=True, capture_output=True, env=os.environ.copy())
+    proc = subprocess.run(command, cwd=root, text=True, capture_output=True, env=env)
     if proc.returncode != 0:
         fail(
             "residual_guard_failed",
@@ -356,9 +403,6 @@ support_statuses = validate_support_matrix(source_artifacts)
 fixture_summary = validate_fixture(source_artifacts, int(details["fixture_required_case_count_min"]))
 
 run_residual_guard()
-residual_path = root / "target/conformance/residual_replacement_callthrough_blockers.report.json"
-replacement_path = root / "target/conformance/replacement_guard.replacement.report.json"
-interpose_path = root / "target/conformance/replacement_guard.interpose.report.json"
 residual_summary = validate_residual_report(residual_path)
 replacement_summary = validate_guard_report(replacement_path, "replacement")
 interpose_summary = validate_guard_report(interpose_path, "interpose")

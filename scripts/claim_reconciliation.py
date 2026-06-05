@@ -869,6 +869,23 @@ def check_readme_replacement_smoke_claims(findings, readme_text, replacement, sm
         "hardened-mode e2e smoke" in blockers and "incomplete" in blockers
     )
 
+    summary = smoke_summary.get("summary", {}) if smoke_summary else {}
+    modes = smoke_summary.get("modes", {}) if smoke_summary else {}
+    smoke_modes_green = (
+        summary.get("fails", 0) == 0
+        and modes.get("strict", {}).get("status") == "green"
+        and modes.get("hardened", {}).get("status") == "green"
+    )
+    curated_green_phrase = (
+        "curated preload smoke battery is green in both strict and hardened modes"
+    )
+    curated_green_hit = curated_green_phrase in readme_lower
+    curated_green_skip_qualified = (
+        curated_green_hit
+        and "optional skips" in readme_lower
+        and "tracked separately from failures" in readme_lower
+    )
+
     positive_hits = []
     if "latest broad preload smoke run is **fully green**" in readme_lower:
         positive_hits.append("broad smoke marked fully green")
@@ -876,7 +893,7 @@ def check_readme_replacement_smoke_claims(findings, readme_text, replacement, sm
         positive_hits.append("paired strict+hardened smoke marked complete")
     if "green strict + hardened smoke runs" in readme_lower:
         positive_hits.append("strict+hardened smoke marked green")
-    if "curated preload smoke battery is green in both strict and hardened modes" in readme_lower:
+    if curated_green_hit and (not smoke_modes_green or not curated_green_skip_qualified):
         positive_hits.append("curated strict+hardened smoke marked green")
 
     negative_hits = []
@@ -901,7 +918,6 @@ def check_readme_replacement_smoke_claims(findings, readme_text, replacement, sm
         })
 
     if positive_hits and smoke_summary:
-        summary = smoke_summary.get("summary", {})
         total_cases = summary.get("total_cases", 0)
         passes = summary.get("passes", 0)
         fails = summary.get("fails", 0)

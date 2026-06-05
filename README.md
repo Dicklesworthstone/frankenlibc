@@ -225,7 +225,7 @@ Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1
 |---|---|
 | Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/usr/bin/wc` |
 
-The checked curated preload smoke battery has 60 pass / 0 fail / 4 optional skips across strict and hardened modes. This is a curated workload signal, not broad production workload readiness; non-curated workload stability and release-claim closure for L2/L3 replacement levels remain active work. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.
+The checked curated preload smoke battery has 60 pass / 0 fail / 4 optional skips across strict and hardened modes. The checked curated preload smoke battery is green in both strict and hardened modes, with optional skips tracked separately from failures. This is a curated workload signal, not broad production workload readiness; non-curated workload stability and release-claim closure for L2/L3 replacement levels remain active work. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.
 
 ---
 
@@ -1371,8 +1371,8 @@ FrankenLibC is deliberately staged.
 
 The symbol taxonomy is what makes this staged model legible:
 
-- `Implemented` + `RawSyscall` apply to **both** artifacts (interpose and replace)
-- `WrapsHostLibc` + `GlibcCallThrough` + `Stub` would apply to interpose only
+- `Implemented` + `RawSyscall` symbols apply to both artifacts.
+- `WrapsHostLibc` + `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
 
 As of 2026-06-03 the classified surface is 68.2% native: 2,395 `Implemented` plus 414 `RawSyscall` rows. The remaining 1,310 `WrapsHostLibc` rows are explicit host-backed interpose scope, and the path to L2 and L3 requires eliminating those host-backed rows in addition to closing support-matrix promotion-evidence gaps, semantic-overlay gaps, packaging contracts, and the broader hard-parts work.
 
@@ -1667,7 +1667,8 @@ That sequence mirrors how the project itself works: claimed surface → ABI boun
 - Planned standalone replace artifact: `libfrankenlibc_replace.so` (L2/L3 milestone)
 - Interpose deployment: `LD_PRELOAD=target/release/libfrankenlibc_abi.so <program>`
 - Hardened interpose: `FRANKENLIBC_MODE=hardened LD_PRELOAD=… <program>`
-- `Implemented` + `RawSyscall` symbols apply to **both** artifacts (interpose and replace)
+- `Implemented` + `RawSyscall` symbols apply to both artifacts.
+- `WrapsHostLibc` + `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
 
 Release-claim coherence is enforced by `scripts/check_release_gate.sh` and the L1 dashboard freshness gate.
 

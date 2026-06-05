@@ -86,7 +86,7 @@ EXPECTED_TEST_REFS = {
     ("tsd_test", "tsd", "tsd_isolated_across_concurrent_threads"),
     ("tsd_test", "tsd", "tsd_destructor_runs_on_thread_exit"),
     ("tsd_test", "tsd", "key_delete_twice_is_einval"),
-    ("thread_lifecycle_test", "thread_lifecycle", "pthread_create_join_roundtrip_uses_default_native_routing"),
+    ("thread_lifecycle_test", "thread_lifecycle", "pthread_create_join_roundtrip_uses_default_host_routing"),
     ("thread_lifecycle_test", "thread_lifecycle", "pthread_join_and_detach_unknown_thread_are_esrch"),
     ("thread_lifecycle_test", "thread_lifecycle", "pthread_create_join_parallel_batch_stress"),
     ("thread_lifecycle_test", "thread_lifecycle", "pthread_detach_makes_subsequent_join_fail_with_esrch"),

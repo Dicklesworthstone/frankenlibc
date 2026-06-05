@@ -4,9 +4,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTRACT="${RESIDUAL_REPLACEMENT_CONTRACT:-${ROOT}/tests/conformance/residual_replacement_callthrough_blockers.v1.json}"
-OUT_DIR="${ROOT}/target/conformance"
-REPORT="${OUT_DIR}/residual_replacement_callthrough_blockers.report.json"
-LOG="${OUT_DIR}/residual_replacement_callthrough_blockers.log.jsonl"
+OUT_DIR="${RESIDUAL_REPLACEMENT_OUT_DIR:-${ROOT}/target/conformance}"
+REPORT="${RESIDUAL_REPLACEMENT_REPORT:-${OUT_DIR}/residual_replacement_callthrough_blockers.report.json}"
+LOG="${RESIDUAL_REPLACEMENT_LOG:-${OUT_DIR}/residual_replacement_callthrough_blockers.log.jsonl}"
 REPLACEMENT_REPORT="${RESIDUAL_REPLACEMENT_GUARD_REPLACEMENT_REPORT:-${OUT_DIR}/replacement_guard.replacement.report.json}"
 REPLACEMENT_LOG="${RESIDUAL_REPLACEMENT_GUARD_REPLACEMENT_LOG:-${OUT_DIR}/replacement_guard.replacement.log.jsonl}"
 INTERPOSE_REPORT="${RESIDUAL_REPLACEMENT_GUARD_INTERPOSE_REPORT:-${OUT_DIR}/replacement_guard.interpose.report.json}"

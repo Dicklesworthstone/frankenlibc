@@ -91,7 +91,7 @@ EXPECTED_TELEMETRY_FIELDS = {
     "failure_signature",
 }
 EXPECTED_UNIT_REFS = {
-    ("abi_lifecycle_test", "pthread_create_join_roundtrip_uses_default_native_routing"),
+    ("abi_lifecycle_test", "pthread_create_join_roundtrip_uses_default_host_routing"),
     ("abi_lifecycle_test", "pthread_join_and_detach_unknown_thread_are_esrch"),
     ("abi_lifecycle_test", "pthread_detach_makes_subsequent_join_fail_with_esrch"),
     ("abi_lifecycle_test", "pthread_join_then_reuse_handle_is_esrch"),

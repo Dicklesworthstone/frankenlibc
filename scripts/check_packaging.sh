@@ -222,8 +222,8 @@ replace_ready = assessment.get('replace_ready', 0)
 if replace_ready != impl_count:
     errors.append(f'replace_ready: spec={replace_ready} should be {impl_count}')
 
-# replace_blocked = GlibcCallThrough + Stub
-blocked_count = counts.get('GlibcCallThrough', 0) + counts.get('Stub', 0)
+# replace_blocked = WrapsHostLibc + GlibcCallThrough + Stub
+blocked_count = counts.get('WrapsHostLibc', 0) + counts.get('GlibcCallThrough', 0) + counts.get('Stub', 0)
 replace_blocked = assessment.get('replace_blocked', 0)
 if replace_blocked != blocked_count:
     errors.append(f'replace_blocked: spec={replace_blocked} should be {blocked_count}')
@@ -269,13 +269,17 @@ errors = []
 replace = spec.get('artifacts', {}).get('replace', {})
 blockers = replace.get('blockers', {})
 
-# Count actual WrapsHostLibc + GlibcCallThrough by module
-ct_by_mod = {}
+# Count actual replacement blockers by module
+wraps_by_mod = {}
+glibc_by_mod = {}
 for sym in matrix.get('symbols', []):
     status = sym.get('status')
-    if status in ('WrapsHostLibc', 'GlibcCallThrough'):
+    if status == 'WrapsHostLibc':
         m = sym.get('module', 'unknown')
-        ct_by_mod[m] = ct_by_mod.get(m, 0) + 1
+        wraps_by_mod[m] = wraps_by_mod.get(m, 0) + 1
+    elif status == 'GlibcCallThrough':
+        m = sym.get('module', 'unknown')
+        glibc_by_mod[m] = glibc_by_mod.get(m, 0) + 1
 
 # Count actual Stub by module
 stub_by_mod = {}
@@ -287,22 +291,22 @@ for sym in matrix.get('symbols', []):
 # Check WrapsHostLibc breakdown
 wraps_claimed = blockers.get('WrapsHostLibc_remaining', {})
 for m, claimed in wraps_claimed.items():
-    actual = ct_by_mod.get(m, 0)
+    actual = wraps_by_mod.get(m, 0)
     if claimed != actual:
         errors.append(f'WrapsHostLibc_remaining.{m}: spec={claimed} matrix={actual}')
 
-for m, actual in ct_by_mod.items():
+for m, actual in wraps_by_mod.items():
     if m not in wraps_claimed:
         errors.append(f'WrapsHostLibc_remaining missing {m} ({actual} symbols)')
 
 # Check callthrough breakdown
 ct_claimed = blockers.get('GlibcCallThrough_remaining', {})
 for m, claimed in ct_claimed.items():
-    actual = ct_by_mod.get(m, 0)
+    actual = glibc_by_mod.get(m, 0)
     if claimed != actual:
         errors.append(f'GlibcCallThrough_remaining.{m}: spec={claimed} matrix={actual}')
 
-for m, actual in ct_by_mod.items():
+for m, actual in glibc_by_mod.items():
     if m not in ct_claimed:
         errors.append(f'GlibcCallThrough_remaining missing {m} ({actual} symbols)')
 
@@ -319,7 +323,7 @@ for m, actual in stub_by_mod.items():
 
 # Check total
 total_claimed = blockers.get('total_symbols_to_migrate', 0)
-total_actual = sum(ct_by_mod.values()) + sum(stub_by_mod.values())
+total_actual = sum(wraps_by_mod.values()) + sum(glibc_by_mod.values()) + sum(stub_by_mod.values())
 if total_claimed != total_actual:
     errors.append(f'total_symbols_to_migrate: spec={total_claimed} actual={total_actual}')
 

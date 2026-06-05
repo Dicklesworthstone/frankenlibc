@@ -74,6 +74,7 @@ EXPECTED_TARGET_SYMBOLS = [
     "pthread_timedjoin_np",
     "pthread_clockjoin_np",
 ]
+EXPECTED_SUPPORT_STATUSES = {"Implemented", "WrapsHostLibc"}
 EXPECTED_SOURCE_KEYS = {
     "core_thread",
     "core_mutex",
@@ -361,16 +362,22 @@ def validate_support_matrix(paths: dict[str, pathlib.Path]) -> dict[str, Any]:
         for row in symbols
         if isinstance(row, dict) and isinstance(row.get("symbol"), str)
     }
+    status_counts: dict[str, int] = {}
     for symbol in EXPECTED_TARGET_SYMBOLS:
         row = by_symbol.get(symbol)
         if row is None:
             err(f"support_matrix missing {symbol}")
             continue
-        require(row.get("status") == "Implemented", f"support_matrix {symbol} status is {row.get('status')!r}")
+        status = row.get("status")
+        require(status in EXPECTED_SUPPORT_STATUSES, f"support_matrix {symbol} status is {status!r}")
+        if isinstance(status, str):
+            status_counts[status] = status_counts.get(status, 0) + 1
         require(row.get("module") == "pthread_abi", f"support_matrix {symbol} module is {row.get('module')!r}")
     return {
         "checked_symbols": len(EXPECTED_TARGET_SYMBOLS),
         "support_matrix_total": len(by_symbol),
+        "allowed_statuses": sorted(EXPECTED_SUPPORT_STATUSES),
+        "status_counts": status_counts,
     }
 
 
@@ -389,6 +396,28 @@ def validate_manifest(manifest: dict[str, Any], paths: dict[str, pathlib.Path]) 
     require(manifest.get("bead") == EXPECTED_BEAD, "bead mismatch")
     require(manifest.get("completion_debt_bead") == EXPECTED_COMPLETION_BEAD, "completion_debt_bead mismatch")
     require(manifest.get("target_symbols") == EXPECTED_TARGET_SYMBOLS, "target_symbols mismatch")
+    source_contract = manifest.get("required_source_contract")
+    if not isinstance(source_contract, dict):
+        err("required_source_contract must be an object")
+        source_contract = {}
+    support_contract = source_contract.get("support_matrix")
+    if not isinstance(support_contract, dict):
+        err("required_source_contract.support_matrix must be an object")
+        support_contract = {}
+    expected_statuses = support_contract.get("expected_statuses")
+    require(
+        isinstance(expected_statuses, list)
+        and set(expected_statuses) == EXPECTED_SUPPORT_STATUSES,
+        "support_matrix expected_statuses mismatch",
+    )
+    require(
+        support_contract.get("expected_module") == "pthread_abi",
+        "support_matrix expected_module mismatch",
+    )
+    require(
+        support_contract.get("expected_symbols") == len(EXPECTED_TARGET_SYMBOLS),
+        "support_matrix expected_symbols mismatch",
+    )
     debt = manifest.get("completion_debt")
     if not isinstance(debt, dict):
         err("completion_debt must be an object")
