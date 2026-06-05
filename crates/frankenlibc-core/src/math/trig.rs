@@ -40,8 +40,27 @@ pub fn sinh(x: f64) -> f64 {
     libm::sinh(x)
 }
 
+/// `cosh(x) = (eˣ + e⁻ˣ)/2`, evaluated as `(t + 1/t)/2` with a single
+/// `exp` call (`t = exp(x)`, `e⁻ˣ = 1/t`).
+///
+/// Profiling (`glibc_baseline_math/cosh`) showed `libm::cosh` (~13.5 ns) is
+/// ~1.4x slower than glibc's `cosh` (~9.6 ns), while our `exp` (exp2-based
+/// fast path) is ~0.66x glibc's — so one `exp` + reciprocal reaches parity.
+/// Unlike `sinh`, `cosh` is a *sum* of positive terms with no catastrophic
+/// cancellation anywhere, so the only error source is `exp`'s own (the fast
+/// path is ≤4 ULP on `[-5,5]`, libm-exact outside); the result stays within
+/// the 4-ULP-vs-glibc math contract (verified by `cosh_fast_path_within_4_ulps`).
+///
+/// `|x| >= 700` defers to `libm::cosh`: there `exp(x)` would overflow to `inf`
+/// while `cosh(x)` is still finite in the band `(709.78, 710.47]` (cosh
+/// overflows later than exp), so the naive form would wrongly return `inf`.
+/// 700 sits safely below the `exp` overflow threshold (`exp(700) ≈ 1e304`).
 #[inline]
 pub fn cosh(x: f64) -> f64 {
+    if x.abs() < 700.0 {
+        let t = crate::math::exp(x);
+        return (t + 1.0 / t) * 0.5;
+    }
     libm::cosh(x)
 }
 
@@ -89,6 +108,48 @@ mod tests {
     fn approx_eq(lhs: f64, rhs: f64, abs_tol: f64, rel_tol: f64) -> bool {
         let diff = (lhs - rhs).abs();
         diff <= abs_tol.max(rel_tol * lhs.abs().max(rhs.abs()))
+    }
+
+    /// 4-ULP comparison against the host glibc (`f64::cosh` lowers to glibc).
+    fn within_ulps(a: f64, b: f64, ulps: u64) -> bool {
+        if a == b {
+            return true;
+        }
+        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            return false;
+        }
+        let ab = a.to_bits() as i64;
+        let bb = b.to_bits() as i64;
+        (ab - bb).unsigned_abs() <= ulps
+    }
+
+    #[test]
+    fn cosh_fast_path_within_4_ulps() {
+        // Sweep densely across the fast-exp window [-5,5] and beyond, plus the
+        // overflow edge. `f64::cosh` is the host glibc oracle.
+        let mut worst = 0u64;
+        let mut x = -30.0_f64;
+        while x <= 30.0 {
+            let got = cosh(x);
+            let want = x.cosh();
+            let u = if got == want {
+                0
+            } else {
+                (got.to_bits() as i64 - want.to_bits() as i64).unsigned_abs()
+            };
+            worst = worst.max(u);
+            assert!(
+                within_ulps(got, want, 4),
+                "cosh({x}) = {got:?} vs glibc {want:?} ({u} ULP)"
+            );
+            x += 0.0001;
+        }
+        // Special points: 0 exact, overflow -> inf, even symmetry.
+        assert_eq!(cosh(0.0), 1.0);
+        assert_eq!(cosh(800.0), f64::INFINITY);
+        assert_eq!(cosh(-800.0), f64::INFINITY);
+        assert!(within_ulps(cosh(710.4), 710.4_f64.cosh(), 4));
+        println!("cosh worst ULP = {worst}");
     }
 
     #[test]

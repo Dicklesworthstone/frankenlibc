@@ -1021,7 +1021,9 @@ mod cmath {
         pub fn pow(x: f64, y: f64) -> f64;
         pub fn powf(x: f32, y: f32) -> f32;
         pub fn expf(x: f32) -> f32;
-        pub fn atan2(y: f64, x: f64) -> f64;
+        pub fn sinh(x: f64) -> f64;
+        pub fn cosh(x: f64) -> f64;
+        pub fn tanh(x: f64) -> f64;
     }
 }
 
@@ -1554,6 +1556,27 @@ fn bench_math(c: &mut Criterion) {
         "exp2(x) x in [0.5,2.5)",
         math::exp2,
         cmath::exp2
+    );
+    pair!(
+        "sinh",
+        "sinh",
+        "sinh(x) x in [0.5,2.5)",
+        math::sinh,
+        cmath::sinh
+    );
+    pair!(
+        "cosh",
+        "cosh",
+        "cosh(x) x in [0.5,2.5)",
+        math::cosh,
+        cmath::cosh
+    );
+    pair!(
+        "tanh",
+        "tanh",
+        "tanh(x) x in [0.5,2.5)",
+        math::tanh,
+        cmath::tanh
     );
 
     // pow is binary — bench it explicitly (exponent 2.5, varying base).
