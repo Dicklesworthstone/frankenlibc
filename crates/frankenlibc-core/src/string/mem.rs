@@ -59,13 +59,7 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let a = &a[..count];
     let b = &b[..count];
 
-    if count == MEMCMP_EXACT_256_BYTES
-        && !ne_simd_folded_128(&a[..SIMD_FOLD_BYTES], &b[..SIMD_FOLD_BYTES])
-        && !ne_simd_folded_128(
-            &a[SIMD_FOLD_BYTES..MEMCMP_EXACT_256_BYTES],
-            &b[SIMD_FOLD_BYTES..MEMCMP_EXACT_256_BYTES],
-        )
-    {
+    if count == MEMCMP_EXACT_256_BYTES && !ne_simd_folded_256(a, b) {
         return core::cmp::Ordering::Equal;
     }
 
@@ -136,6 +130,33 @@ fn ne_simd_folded_128(a: &[u8], b: &[u8]) -> bool {
     (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
 }
 
+/// True iff any byte differs across the exact 256-byte equality hot path.
+/// Uses four 64-byte panels and one horizontal reduction; callers still use the
+/// ordered resolver for every non-equal case, so first-difference semantics are
+/// unchanged.
+#[inline(always)]
+fn ne_simd_folded_256(a: &[u8], b: &[u8]) -> bool {
+    debug_assert_eq!(a.len(), MEMCMP_EXACT_256_BYTES);
+    debug_assert_eq!(b.len(), MEMCMP_EXACT_256_BYTES);
+    let a0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[..MEMCMP_WIDE_LANES]);
+    let b0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[..MEMCMP_WIDE_LANES]);
+    let a1 =
+        Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[MEMCMP_WIDE_LANES..MEMCMP_WIDE_LANES * 2]);
+    let b1 =
+        Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[MEMCMP_WIDE_LANES..MEMCMP_WIDE_LANES * 2]);
+    let a2 =
+        Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[MEMCMP_WIDE_LANES * 2..MEMCMP_WIDE_LANES * 3]);
+    let b2 =
+        Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[MEMCMP_WIDE_LANES * 2..MEMCMP_WIDE_LANES * 3]);
+    let a3 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
+        &a[MEMCMP_WIDE_LANES * 3..MEMCMP_EXACT_256_BYTES],
+    );
+    let b3 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
+        &b[MEMCMP_WIDE_LANES * 3..MEMCMP_EXACT_256_BYTES],
+    );
+    (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
+}
+
 #[inline]
 fn u64_from_chunk(chunk: &[u8]) -> u64 {
     let mut bytes = [0u8; 8];
@@ -146,6 +167,7 @@ fn u64_from_chunk(chunk: &[u8]) -> u64 {
 /// SWAR word size (8 bytes), matching the `chunks_exact(8)` scans in this module.
 const WORD: usize = size_of::<u64>();
 const SIMD_LANES: usize = 32;
+const MEMCMP_WIDE_LANES: usize = 64;
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
 const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
@@ -913,6 +935,23 @@ mod tests {
             memcmp(b"abcdefgh\xfftail", b"abcdefgh\x00tail", 13),
             core::cmp::Ordering::Greater
         );
+    }
+
+    #[test]
+    fn test_memcmp_exact_256_equal_certificate_guard() {
+        let a = vec![0x41; 256];
+        let mut b = a.clone();
+        assert_eq!(memcmp(&a, &b, 256), core::cmp::Ordering::Equal);
+
+        for index in [0usize, 63, 64, 127, 128, 191, 192, 255] {
+            b[index] = 0x42;
+            assert_eq!(
+                memcmp(&a, &b, 256),
+                core::cmp::Ordering::Less,
+                "difference at index {index}"
+            );
+            b[index] = 0x41;
+        }
     }
 
     #[test]
