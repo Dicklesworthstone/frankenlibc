@@ -442,9 +442,10 @@ fn wctype_diff_coverage_report() {
 // returned UNCHANGED by single-char towupper/towlower (matching glibc's simple
 // mapping), NOT folded to a base letter by dropping combining marks. An earlier
 // `combining-mark -> base` heuristic wrongly mapped U+01F0 (ǰ) -> 'J',
-// U+1E96 (ẖ) -> 'H', etc. The remaining simple-vs-full and Unicode-version
-// table mismatches (e.g. U+1F80 -> U+1F88, Medefaidrin) are tracked in
-// bd-2g7oyh.150 and need glibc's exact simple-mapping table.
+// U+1E96 (ẖ) -> 'H', etc. The simple-vs-full and Unicode-version table
+// mismatches (e.g. U+1F80 -> U+1F88, Medefaidrin) are now handled by the
+// override tables in wchar.rs and exhaustively guarded by
+// `diff_towupper_towlower_full_codepoint_sweep` below.
 // ===========================================================================
 
 #[test]
@@ -470,5 +471,39 @@ fn diff_towupper_multichar_returns_unchanged() {
         divs.is_empty(),
         "towupper multi-char divergences vs glibc:\n{}",
         divs.join("\n")
+    );
+}
+
+// Full-codepoint differential sweep (bd-2g7oyh.150): fl::towupper / fl::towlower
+// must agree with host glibc on EVERY assigned code point. This guards the
+// simple-vs-full mapping override table and the Unicode-version-skew no-op set
+// in frankenlibc-core's wchar.rs. The first 12 divergences (if any) are shown.
+#[test]
+fn diff_towupper_towlower_full_codepoint_sweep() {
+    let utf8 = c"C.UTF-8";
+    unsafe { libc::setlocale(libc::LC_CTYPE, utf8.as_ptr()) };
+    let mut divs: Vec<String> = Vec::new();
+    for cp in 0u32..=0x10FFFF {
+        if (0xD800..=0xDFFF).contains(&cp) {
+            continue; // surrogates are not valid scalar values
+        }
+        let (fu, gu) = unsafe { (fl::towupper(cp), towupper(cp)) };
+        if fu != gu {
+            divs.push(format!(
+                "  towupper(U+{cp:04X}): fl=U+{fu:04X} glibc=U+{gu:04X}"
+            ));
+        }
+        let (fl_, gl) = unsafe { (fl::towlower(cp), towlower(cp)) };
+        if fl_ != gl {
+            divs.push(format!(
+                "  towlower(U+{cp:04X}): fl=U+{fl_:04X} glibc=U+{gl:04X}"
+            ));
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "{} towupper/towlower divergences vs host glibc (first 12 shown):\n{}",
+        divs.len(),
+        divs.iter().take(12).cloned().collect::<Vec<_>>().join("\n")
     );
 }
