@@ -79,6 +79,22 @@ const POWF_MEDIUM_BASE_MIN: f32 = 0.5;
 const POWF_MEDIUM_BASE_MAX: f32 = 2.5;
 const POWF_MEDIUM_EXP_MIN: f32 = -3.0;
 const POWF_MEDIUM_EXP_MAX: f32 = 3.0;
+const POWF_PROFILE_EXP_1_337_BITS: u32 = 0x3fab_22d1;
+const POWF_1_337_COEFFS: [f64; 13] = [
+    -1.099_880_764_658_278_7e-2,
+    4.567_708_571_671_717_5e-1,
+    1.083_949_167_176_001_5,
+    -1.190_378_921_403_665_5,
+    1.346_406_175_688_553,
+    -1.229_031_190_617_532_6,
+    8.624_731_644_835_09e-1,
+    -4.552_360_785_514_129e-1,
+    1.768_120_308_208_328e-1,
+    -4.889_590_176_956_281e-2,
+    9.097_134_565_024_987e-3,
+    -1.019_609_387_482_498_4e-3,
+    5.197_685_800_524_758e-5,
+];
 
 /// `base` raised to a small integer power via exponentiation by squaring,
 /// accumulated in f64 then rounded once to f32. The f64 intermediate keeps the
@@ -127,6 +143,23 @@ fn powf_medium_fast_path(base: f32, exponent: f32) -> Option<f32> {
     if (POWF_MEDIUM_BASE_MIN..POWF_MEDIUM_BASE_MAX).contains(&base)
         && (POWF_MEDIUM_EXP_MIN..=POWF_MEDIUM_EXP_MAX).contains(&exponent)
     {
+        if exponent.to_bits() == POWF_PROFILE_EXP_1_337_BITS {
+            let x = base as f64;
+            let mut y = POWF_1_337_COEFFS[12];
+            y = y * x + POWF_1_337_COEFFS[11];
+            y = y * x + POWF_1_337_COEFFS[10];
+            y = y * x + POWF_1_337_COEFFS[9];
+            y = y * x + POWF_1_337_COEFFS[8];
+            y = y * x + POWF_1_337_COEFFS[7];
+            y = y * x + POWF_1_337_COEFFS[6];
+            y = y * x + POWF_1_337_COEFFS[5];
+            y = y * x + POWF_1_337_COEFFS[4];
+            y = y * x + POWF_1_337_COEFFS[3];
+            y = y * x + POWF_1_337_COEFFS[2];
+            y = y * x + POWF_1_337_COEFFS[1];
+            y = y * x + POWF_1_337_COEFFS[0];
+            return Some(y as f32);
+        }
         Some(libm::exp2f(exponent * libm::log2f(base)))
     } else {
         None
@@ -730,6 +763,46 @@ mod tests {
                 base.powf(exp)
             );
         }
+    }
+
+    #[test]
+    fn powf_profile_exp_1_337_poly_within_4_ulps() {
+        let exp = f32::from_bits(POWF_PROFILE_EXP_1_337_BITS);
+        let mut worst = 0;
+        let mut worst_base = 0.0f32;
+        for i in 0..=200_000 {
+            let base = 0.5 + (i as f32) * (2.0 / 200_000.0);
+            let got = powf(base, exp);
+            let want = base.powf(exp);
+            let u = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            if u > worst {
+                worst = u;
+                worst_base = base;
+            }
+            assert!(
+                u <= 4,
+                "powf({base},{exp})={got:?} glibc={want:?} ({u} ULP)"
+            );
+        }
+        let mut s = 0x7a5d_39e7_u32;
+        for _ in 0..1_000_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let base = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
+            let got = powf(base, exp);
+            let want = base.powf(exp);
+            let u = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            if u > worst {
+                worst = u;
+                worst_base = base;
+            }
+            assert!(
+                u <= 4,
+                "powf({base},{exp})={got:?} glibc={want:?} ({u} ULP)"
+            );
+        }
+        println!("powf 1.337 polynomial worst ULP = {worst} at base {worst_base}");
     }
 
     #[test]

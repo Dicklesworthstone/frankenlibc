@@ -42,6 +42,7 @@ unsafe extern "C" {
     fn log2(x: f64) -> f64;
     fn log10(x: f64) -> f64;
     fn pow(x: f64, y: f64) -> f64;
+    fn powf(x: f32, y: f32) -> f32;
     fn exp10(x: f64) -> f64;
     fn exp10f(x: f32) -> f32;
     fn expm1f(x: f32) -> f32;
@@ -1009,6 +1010,65 @@ fn diff_expm1f_positive_medium_within_4_ulps() {
     assert!(
         bad.is_empty(),
         "expm1f divergences (worst {worst}):\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
+fn diff_powf_profile_exp_1_337_within_4_ulps() {
+    fn f32_ulps(a: f32, b: f32) -> i64 {
+        if a.is_nan() && b.is_nan() {
+            return 0;
+        }
+        if a == b {
+            return 0;
+        }
+        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            return i64::MAX;
+        }
+        (a.to_bits() as i64 - b.to_bits() as i64).abs()
+    }
+
+    let exp = f32::from_bits(0x3fab_22d1);
+    let mut worst = 0i64;
+    let mut bad = Vec::new();
+    for i in 0..=200_000 {
+        let base = 0.5 + (i as f32) * (2.0 / 200_000.0);
+        let (got, want) = (unsafe { fl::powf(base, exp) }, unsafe { powf(base, exp) });
+        let u = f32_ulps(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!(
+                "powf({base},{exp}) fl={got:?} glibc={want:?} ({u} ULP)"
+            ));
+            if bad.len() >= 16 {
+                break;
+            }
+        }
+    }
+
+    let mut s = 0x7a5d_39e7_u32;
+    for _ in 0..500_000 {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        let base = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
+        let (got, want) = (unsafe { fl::powf(base, exp) }, unsafe { powf(base, exp) });
+        let u = f32_ulps(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!(
+                "powf({base},{exp}) fl={got:?} glibc={want:?} ({u} ULP)"
+            ));
+            if bad.len() >= 16 {
+                break;
+            }
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "powf 1.337 divergences (worst {worst}):\n{}",
         bad.join("\n")
     );
 }
