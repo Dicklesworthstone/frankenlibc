@@ -1195,10 +1195,54 @@ pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         return None;
     }
     let first = needle[0].to_ascii_lowercase();
+    let last = needle[n_len - 1].to_ascii_lowercase();
+
+    // Dual-anchor fast path: a match at `start` requires BOTH the case-folded
+    // first byte at `start` and the case-folded last byte at `start + n_len - 1`.
+    // When the folded first byte is common (e.g. icase "aAaA…aB" over a mixed
+    // 'a'/'A' run) but the folded last byte is rare/absent, anchoring the SIMD
+    // scan on the last byte collapses the search to a single pass — the
+    // first-byte-only scan below makes every position a candidate (O(n*m)). We
+    // scan for the folded last byte; each hit confirms the folded first byte and
+    // a full case-insensitive compare. Only valid when `first != last`; otherwise
+    // the anchors coincide and we use the first-byte scan. The O(n+m) Two-Way
+    // bailout and leftmost-match semantics are preserved (last-byte hits are
+    // visited left to right, so candidate starts increase monotonically).
+    if first != last {
+        let mut anchor = n_len - 1;
+        let mut miss_work = 0usize;
+        while anchor < hay.len() {
+            let scan = &hay[anchor..];
+            let offset = find_ascii_folded_byte_or_nul(scan, last);
+            if offset == scan.len() {
+                return None; // folded last byte never recurs → no match
+            }
+            let last_pos = anchor + offset;
+            let cand = last_pos - (n_len - 1);
+            if hay[cand].eq_ignore_ascii_case(&needle[0]) {
+                let mut matched = true;
+                for j in 1..n_len {
+                    if !hay[cand + j].eq_ignore_ascii_case(&needle[j]) {
+                        matched = false;
+                        break;
+                    }
+                }
+                if matched {
+                    return Some(cand);
+                }
+                miss_work += n_len;
+            }
+            anchor = last_pos + 1;
+            if miss_work > hay.len() {
+                return super::mem::two_way_search_icase(&hay[cand..], needle).map(|m| m + cand);
+            }
+        }
+        return None;
+    }
 
     // Fast path: jump to each case-folded first-byte candidate and verify with
     // an ASCII case-insensitive compare. To keep the O(n+m) worst case against
-    // a common needle first byte (e.g. icase "aaaa…b" over an 'a' run, which
+    // a common needle first byte (e.g. icase "aaaa…a" over an 'a' run, which
     // previously made every position a candidate — O(n*m)), bail to a
     // case-insensitive Two-Way once cumulative failed-candidate work exceeds the
     // haystack length, mirroring `memmem`'s gated fallback. Both paths return
