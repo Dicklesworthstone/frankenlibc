@@ -1663,3 +1663,137 @@ fn stdlib_numeric_diff_coverage_report() {
         total,
     );
 }
+
+// ===========================================================================
+// strtol / strtoul fuzz across ALL bases 2..=36 vs glibc.
+//
+// The fixed cases only lightly exercise bases 16 and 36. This round-trips random
+// and boundary values formatted in every base and compares return value, ERANGE,
+// and endptr offset — catching base-N conversion and overflow-clamp edge bugs.
+// ===========================================================================
+
+struct StrtoXs(u64);
+impl StrtoXs {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+}
+
+fn fmt_base(mut n: u128, base: u32, neg: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    if n == 0 {
+        out.push(b'0');
+    }
+    while n > 0 {
+        let d = (n % base as u128) as u32;
+        out.push(std::char::from_digit(d, base).unwrap() as u8);
+        n /= base as u128;
+    }
+    if neg {
+        out.push(b'-');
+    }
+    out.reverse();
+    out
+}
+
+fn check_strtol(input: &[u8], base: c_int, divs: &mut Vec<Divergence>) {
+    let buf = cstr(input);
+    let p = buf.as_ptr() as *const c_char;
+    let mut fe: *mut c_char = ptr::null_mut();
+    let mut le: *mut c_char = ptr::null_mut();
+    unsafe { clear_errno_both() };
+    let fv = unsafe { fl::strtol(p, &mut fe, base) } as i64;
+    let ferr = unsafe { read_fl_errno() };
+    unsafe { clear_errno_both() };
+    let lv = unsafe { libc::strtol(p, &mut le, base) };
+    let lerr = unsafe { read_lc_errno() };
+    let fo = unsafe { (fe as *const c_char).offset_from(p) };
+    let lo = unsafe { (le as *const c_char).offset_from(p) };
+    if fv != lv || (ferr == libc::ERANGE) != (lerr == libc::ERANGE) || fo != lo {
+        divs.push(Divergence {
+            function: "strtol",
+            case: format!("input={:?} base={base}", String::from_utf8_lossy(input)),
+            field: "ret/erange/end",
+            frankenlibc: format!("v={fv} erange={} off={fo}", ferr == libc::ERANGE),
+            glibc: format!("v={lv} erange={} off={lo}", lerr == libc::ERANGE),
+        });
+    }
+}
+
+fn check_strtoul(input: &[u8], base: c_int, divs: &mut Vec<Divergence>) {
+    let buf = cstr(input);
+    let p = buf.as_ptr() as *const c_char;
+    let mut fe: *mut c_char = ptr::null_mut();
+    let mut le: *mut c_char = ptr::null_mut();
+    unsafe { clear_errno_both() };
+    let fv = unsafe { fl::strtoul(p, &mut fe, base) } as u64;
+    let ferr = unsafe { read_fl_errno() };
+    unsafe { clear_errno_both() };
+    let lv = unsafe { libc::strtoul(p, &mut le, base) } as u64;
+    let lerr = unsafe { read_lc_errno() };
+    let fo = unsafe { (fe as *const c_char).offset_from(p) };
+    let lo = unsafe { (le as *const c_char).offset_from(p) };
+    if fv != lv || (ferr == libc::ERANGE) != (lerr == libc::ERANGE) || fo != lo {
+        divs.push(Divergence {
+            function: "strtoul",
+            case: format!("input={:?} base={base}", String::from_utf8_lossy(input)),
+            field: "ret/erange/end",
+            frankenlibc: format!("v={fv} erange={} off={fo}", ferr == libc::ERANGE),
+            glibc: format!("v={lv} erange={} off={lo}", lerr == libc::ERANGE),
+        });
+    }
+}
+
+#[test]
+fn diff_strtol_strtoul_all_bases_fuzz() {
+    let mut rng = StrtoXs(0x9E3779B97F4A7C15);
+    let mut divs = Vec::new();
+
+    // Boundary values: tested in EVERY base (overflow-clamp per base).
+    let signed_bounds: &[i64] = &[0, 1, -1, i64::MAX, i64::MIN, i64::MAX - 1, i64::MIN + 1];
+    let unsigned_bounds: &[u128] = &[
+        0,
+        1,
+        u64::MAX as u128,
+        u64::MAX as u128 - 1,
+        (u64::MAX as u128) + 1,
+    ];
+    for base in 2u32..=36 {
+        for &v in signed_bounds {
+            let s = fmt_base((v as i128).unsigned_abs(), base, v < 0);
+            check_strtol(&s, base as c_int, &mut divs);
+        }
+        for &u in unsigned_bounds {
+            let s = fmt_base(u, base, false);
+            check_strtoul(&s, base as c_int, &mut divs);
+        }
+        // Unsigned wrap of negatives: glibc negates after parse.
+        check_strtoul(b"-1", base as c_int, &mut divs);
+        check_strtoul(b"-100", base as c_int, &mut divs);
+    }
+
+    // Random values in a random base each.
+    for _ in 0..1500 {
+        let base = 2 + (rng.next() % 35) as u32;
+        let v = rng.next() as i64;
+        let s = fmt_base((v as i128).unsigned_abs(), base, v < 0);
+        check_strtol(&s, base as c_int, &mut divs);
+        let u = rng.next() as u128;
+        let su = fmt_base(u, base, false);
+        check_strtoul(&su, base as c_int, &mut divs);
+        if divs.len() >= 20 {
+            break;
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "strtol/strtoul base-fuzz divergences:\n{}",
+        render_divs(&divs)
+    );
+}
