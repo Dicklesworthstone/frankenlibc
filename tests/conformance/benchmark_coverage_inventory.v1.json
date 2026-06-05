@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.1",
-  "generated_at_utc": "2026-06-05T02:32:03Z",
-  "source_commit": "a983714b",
+  "generated_at_utc": "2026-06-05T03:36:02Z",
+  "source_commit": "58fb38e3",
   "purpose": "Inventory current benchmark coverage for ported hot paths and membrane gates before optimization work advances.",
   "inputs": {
     "support_matrix": "support_matrix.json",
