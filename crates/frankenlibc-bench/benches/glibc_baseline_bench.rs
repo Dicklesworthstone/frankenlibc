@@ -349,15 +349,17 @@ fn bench_scanf(c: &mut Criterion) {
 
 fn bench_strtol(c: &mut Criterion) {
     use frankenlibc_core::stdlib::conversion::strtol;
-    for (label, s) in &[
-        ("strtol_long", &b"123456789012345678\0"[..]),
-        ("strtol_short", &b"42\0"[..]),
+    for (label, s, base) in &[
+        ("strtol_long", &b"123456789012345678\0"[..], 10i32),
+        ("strtol_short", &b"42\0"[..], 10),
+        ("strtol_hex_long", &b"1a2b3c4d5e6f7a8b\0"[..], 16),
     ] {
+        let base = *base;
         let mut group = c.benchmark_group(format!("glibc_baseline_{label}"));
         let bytes = s.to_vec();
         // parity check
-        let (fl_v, _) = strtol(&bytes, 10);
-        let glibc_v = unsafe { libc::strtol(bytes.as_ptr().cast(), std::ptr::null_mut(), 10) };
+        let (fl_v, _) = strtol(&bytes, base);
+        let glibc_v = unsafe { libc::strtol(bytes.as_ptr().cast(), std::ptr::null_mut(), base) };
         assert_eq!(fl_v, glibc_v as i64, "{label} parity");
         bench_op(
             &mut group,
@@ -370,7 +372,7 @@ fn bench_strtol(c: &mut Criterion) {
                 parity_proof_ref: "crates/frankenlibc-core/src/stdlib/conversion.rs",
             },
             || {
-                black_box(strtol(black_box(&bytes), 10));
+                black_box(strtol(black_box(&bytes), base));
             },
         );
         bench_op(
@@ -389,7 +391,7 @@ fn bench_strtol(c: &mut Criterion) {
                     black_box(libc::strtol(
                         black_box(bytes.as_ptr().cast()),
                         std::ptr::null_mut(),
-                        10,
+                        base,
                     ));
                 }
             },

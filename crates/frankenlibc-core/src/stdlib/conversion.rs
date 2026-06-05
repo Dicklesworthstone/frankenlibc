@@ -58,6 +58,39 @@ pub(crate) fn parse_eight_digits(word: u64) -> u32 {
     (lo.wrapping_add(hi) >> 32) as u32
 }
 
+/// Parse 8 ASCII hex digits packed in a little-endian word, returning their
+/// 32-bit value, or `None` if any byte is not `[0-9A-Fa-f]`. The low byte is the
+/// most-significant digit (leftmost source char). Letters are lowercased, each
+/// byte decoded to a nibble, and validity checked two ways: no nibble may be
+/// `>= 16` (rejects `g..z`), and re-encoding the nibble must reproduce the
+/// lowercased input (rejects the `0x3a..0x60` gap, e.g. `:` decodes to nibble 10
+/// but is not hex). Verified exhaustively by `swar_parse_eight_hex_matches_scalar`.
+#[inline]
+pub(crate) fn parse_eight_hex(word: u64) -> Option<u32> {
+    let lw = word | 0x2020_2020_2020_2020; // lowercase letters; digits unchanged
+    let is_letter = (lw >> 6) & 0x0101_0101_0101_0101; // bit6 set on 'a'..='z'
+    let nibbles = (lw & 0x0F0F_0F0F_0F0F_0F0F).wrapping_add(is_letter.wrapping_mul(9));
+    if nibbles & 0xF0F0_F0F0_F0F0_F0F0 != 0 {
+        return None; // some nibble >= 16
+    }
+    let ge10 = (nibbles.wrapping_add(0x0606_0606_0606_0606) >> 4) & 0x0101_0101_0101_0101;
+    let reenc = nibbles
+        .wrapping_add(0x3030_3030_3030_3030)
+        .wrapping_add(ge10.wrapping_mul(0x27));
+    if reenc != lw {
+        return None; // a non-hex byte decoded into a valid nibble
+    }
+    // Combine: fold adjacent nibble-lanes into byte values, then pack the four
+    // even lanes (the two-hex-digit bytes) big-endian.
+    let paired = (nibbles << 4) | (nibbles >> 8);
+    let m = paired & 0x00FF_00FF_00FF_00FF;
+    let b0 = (m & 0xFF) as u32;
+    let b1 = (m >> 16 & 0xFF) as u32;
+    let b2 = (m >> 32 & 0xFF) as u32;
+    let b3 = (m >> 48 & 0xFF) as u32;
+    Some((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)
+}
+
 pub fn atoi(s: &[u8]) -> i32 {
     let (val, _, _) = strtol_impl(s, 10);
     // POSIX SUSv4: atoi(str) ≡ (int) strtol(str, NULL, 10). The cast
@@ -158,6 +191,26 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
                 match acc
                     .checked_mul(100_000_000)
                     .and_then(|a| a.checked_add(parsed))
+                {
+                    Some(v) if v <= abs_max => acc = v,
+                    _ => overflow = true,
+                }
+            }
+            i += 8;
+        }
+    } else if effective_base == 16 {
+        // SWAR hex: consume 8 hex digits (32 bits) per step. `acc·16^8 + parse8`
+        // equals eight scalar iterations; overflow flags and keeps consuming.
+        while i + 8 <= len {
+            let word = u64::from_le_bytes(s[i..i + 8].try_into().unwrap());
+            let Some(parsed) = parse_eight_hex(word) else {
+                break;
+            };
+            any_digits = true;
+            if !overflow {
+                match acc
+                    .checked_mul(0x1_0000_0000)
+                    .and_then(|a| a.checked_add(parsed as u64))
                 {
                     Some(v) if v <= abs_max => acc = v,
                     _ => overflow = true,
@@ -1042,6 +1095,137 @@ mod tests {
                     "byte {bad:#x} at {p} wrongly accepted"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn swar_parse_eight_hex_matches_scalar() {
+        // Positional weights: a single hex digit at position p (0 = leftmost)
+        // contributes its nibble << 4*(7-p).
+        for p in 0..8u32 {
+            for d in 0..16u8 {
+                let ch = if d < 10 { b'0' + d } else { b'a' + (d - 10) };
+                let mut chars = [b'0'; 8];
+                chars[p as usize] = ch;
+                let word = u64::from_le_bytes(chars);
+                let got = parse_eight_hex(word).expect("valid hex");
+                assert_eq!(got, (d as u32) << (4 * (7 - p)), "hex {ch} at pos {p}");
+                // uppercase form decodes identically
+                let upper = if d < 10 { ch } else { b'A' + (d - 10) };
+                let mut uchars = [b'0'; 8];
+                uchars[p as usize] = upper;
+                assert_eq!(parse_eight_hex(u64::from_le_bytes(uchars)), Some(got));
+            }
+        }
+        // 5M random 32-bit values: format as 8 hex digits, SWAR-parse, compare.
+        let mut st: u64 = 0x0f1e_2d3c_4b5a_6978;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        for _ in 0..5_000_000 {
+            let n = next() as u32;
+            let s = format!("{n:08x}");
+            let word = u64::from_le_bytes(s.as_bytes().try_into().unwrap());
+            assert_eq!(parse_eight_hex(word), Some(n), "hex parse {s}");
+        }
+        // Reject a non-hex byte at every lane (incl. the 0x3a..0x60 gap chars).
+        for p in 0..8usize {
+            for &bad in &[b'/', b':', b'@', b'g', b'G', b' ', b'\0', 0x80, b'`'] {
+                let mut chars = [b'a'; 8];
+                chars[p] = bad;
+                assert_eq!(
+                    parse_eight_hex(u64::from_le_bytes(chars)),
+                    None,
+                    "byte {bad:#x} at {p} wrongly accepted"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn swar_strtol_hex_matches_scalar_reference() {
+        // Independent scalar reference for strtol base 16 (no 0x prefix consumed
+        // here — feed raw hex digits) to pin the SWAR hex fast path.
+        fn scalar_ref(s: &[u8]) -> (i64, usize, ConversionStatus) {
+            let mut i = 0;
+            while i < s.len() && is_c_space(s[i]) {
+                i += 1;
+            }
+            let mut neg = false;
+            if i < s.len() && (s[i] == b'+' || s[i] == b'-') {
+                neg = s[i] == b'-';
+                i += 1;
+            }
+            let abs_max = if neg {
+                9_223_372_036_854_775_808u64
+            } else {
+                9_223_372_036_854_775_807u64
+            };
+            let (mut acc, mut any, mut ovf) = (0u64, false, false);
+            while i < s.len() {
+                let d = match s[i] {
+                    c @ b'0'..=b'9' => (c - b'0') as u64,
+                    c @ b'a'..=b'f' => (c - b'a' + 10) as u64,
+                    c @ b'A'..=b'F' => (c - b'A' + 10) as u64,
+                    _ => break,
+                };
+                any = true;
+                if !ovf {
+                    match acc.checked_mul(16).and_then(|a| a.checked_add(d)) {
+                        Some(v) if v <= abs_max => acc = v,
+                        _ => ovf = true,
+                    }
+                }
+                i += 1;
+            }
+            if !any {
+                return (0, 0, ConversionStatus::Success);
+            }
+            if ovf {
+                return if neg {
+                    (i64::MIN, i, ConversionStatus::Underflow)
+                } else {
+                    (i64::MAX, i, ConversionStatus::Overflow)
+                };
+            }
+            let v = if neg {
+                (acc as i64).wrapping_neg()
+            } else {
+                acc as i64
+            };
+            (v, i, ConversionStatus::Success)
+        }
+        let mut st: u64 = 0xcafe_f00d_dead_beef;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        let hexset = b"0123456789abcdefABCDEF";
+        for _ in 0..1_000_000 {
+            let len = (next() % 22) as usize;
+            let mut buf = Vec::with_capacity(len + 2);
+            match next() % 4 {
+                0 => buf.push(b'-'),
+                1 => buf.push(b'+'),
+                _ => {}
+            }
+            for _ in 0..len {
+                buf.push(hexset[(next() % 22) as usize]);
+            }
+            if next() % 3 == 0 {
+                buf.push(b"xyz @"[(next() % 5) as usize]);
+            }
+            assert_eq!(
+                strtol_impl(&buf, 16),
+                scalar_ref(&buf),
+                "strtol(16) divergence on {:?}",
+                String::from_utf8_lossy(&buf)
+            );
         }
     }
 
