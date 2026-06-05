@@ -1731,7 +1731,11 @@ pub unsafe extern "C" fn wctomb(s: *mut u8, wc: u32) -> c_int {
     if s.is_null() {
         return 0; // stateless encoding
     }
-    // MB_CUR_MAX for UTF-8 is 6 (glibc's RFC 2279 form).
+    // glibc's UTF-8 MB_CUR_MAX is 6 (a historical size), so callers size the
+    // destination for up to 6 bytes — but the codec itself is RFC 3629, i.e.
+    // `wchar_core::wctomb` rejects surrogates and code points above U+10FFFF and
+    // never emits more than 4 bytes (verified against glibc in
+    // tests/conformance_diff_mbtowc_wctomb.rs).
     let buf = unsafe { std::slice::from_raw_parts_mut(s, 6) };
     match wchar_core::wctomb(wc, buf) {
         Some(n) => n as c_int,
