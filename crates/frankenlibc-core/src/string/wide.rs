@@ -35,6 +35,11 @@ const WIDE_MEMBER_REPEAT_MIN_LEN: usize = WIDE_COMPARE_UNROLL_LANES * 8;
 const WIDE_CASE_REPEAT_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
 const WIDE_CASE_REPEAT_MIN_LEN: usize = WIDE_CASE_REPEAT_LANES * 4;
 
+/// Minimum bounded exact compare length before paying for a no-NUL-needed
+/// equality preflight.
+const WIDE_EQUAL_PREFIX_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
+const WIDE_EQUAL_PREFIX_MIN_LEN: usize = WIDE_EQUAL_PREFIX_LANES * 4;
+
 /// Number of `u32` wide characters searched per forward `wmemchr` panel.
 const WIDE_MEMCHR_SIMD_LANES: usize = 16;
 
@@ -152,6 +157,32 @@ fn repeated_case_pair_equal_and_no_nul_wide_long(a: &[u32], b: &[u32]) -> bool {
     let av = Simd::<u32, WIDE_CASE_REPEAT_LANES>::from_slice(a);
     let bv = Simd::<u32, WIDE_CASE_REPEAT_LANES>::from_slice(b);
     av.simd_eq(Simd::splat(first_a)).all() && bv.simd_eq(Simd::splat(first_b)).all()
+}
+
+/// Returns `true` when the first `n` wide code units are exactly equal.
+/// `wcsncmp` can return zero immediately in that case, even when a shared NUL
+/// appears before `n`; any mismatch falls back to the existing scalar resolver
+/// to preserve the first-difference ordering.
+#[inline(always)]
+fn equal_prefix_wide(a: &[u32], b: &[u32], n: usize) -> bool {
+    debug_assert!(n <= a.len());
+    debug_assert!(n <= b.len());
+
+    let mut i = 0;
+    while i + WIDE_EQUAL_PREFIX_LANES <= n {
+        let av =
+            Simd::<u32, WIDE_EQUAL_PREFIX_LANES>::from_slice(&a[i..i + WIDE_EQUAL_PREFIX_LANES]);
+        let bv =
+            Simd::<u32, WIDE_EQUAL_PREFIX_LANES>::from_slice(&b[i..i + WIDE_EQUAL_PREFIX_LANES]);
+        if !av.simd_eq(bv).all() {
+            return false;
+        }
+        i += WIDE_EQUAL_PREFIX_LANES;
+    }
+    a[i..n]
+        .iter()
+        .zip(&b[i..n])
+        .all(|(left, right)| left == right)
 }
 
 #[inline(always)]
@@ -439,6 +470,13 @@ pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     // index and out-of-range (logical NUL) bytes, identical to the scalar scan.
     let bounded = n.min(s1.len()).min(s2.len());
     let mut i = 0;
+    if n >= WIDE_EQUAL_PREFIX_MIN_LEN
+        && n <= s1.len()
+        && n <= s2.len()
+        && equal_prefix_wide(s1, s2, n)
+    {
+        return 0;
+    }
     while i + WIDE_COMPARE_UNROLL_LANES <= bounded {
         if !equal_and_no_nul_wide_unrolled(
             &s1[i..i + WIDE_COMPARE_UNROLL_LANES],
@@ -1526,6 +1564,22 @@ mod tests {
         assert_eq!(wcsncmp(&[65, 66, 67, 0], &[65, 66, 68, 0], 2), 0);
         // "ABC" vs "ABD", n=3 => less
         assert!(wcsncmp(&[65, 66, 67, 0], &[65, 66, 68, 0], 3) < 0);
+    }
+
+    #[test]
+    fn test_wcsncmp_equal_prefix_preflight_preserves_bounds_and_order() {
+        let mut left = vec![b'Z' as u32; WIDE_EQUAL_PREFIX_MIN_LEN + WIDE_EQUAL_PREFIX_LANES];
+        let mut right = left.clone();
+        left.push(0);
+        right.push(0);
+
+        assert_eq!(wcsncmp(&left, &right, WIDE_EQUAL_PREFIX_MIN_LEN), 0);
+
+        let diverge = WIDE_EQUAL_PREFIX_MIN_LEN + 3;
+        left[diverge] = b'A' as u32;
+        right[diverge] = b'B' as u32;
+        assert_eq!(wcsncmp(&left, &right, diverge), 0);
+        assert!(wcsncmp(&left, &right, diverge + 1) < 0);
     }
 
     #[test]
