@@ -68,7 +68,7 @@ fn diff_swprintf_wide_string() {
     check_ls("%-10ls|", "hi", &mut divs);
     check_ls("%5.3ls", "hello", &mut divs);
     // NOTE: %S (SVID alias for %ls) is not yet recognized by the format parser
-    // (treated as literal); tracked in bd-2g7oyh.137, not exercised here.
+    // (treated as literal); tracked in bd-2g7oyh.140, not exercised here.
     // Multibyte wide strings — precision must count WIDE chars, not UTF-8 bytes.
     check_ls("%.3ls", "héllo", &mut divs); // -> "hél" (3 wide), NOT byte-cut "hé"
     check_ls("%.2ls", "αβγδ", &mut divs); // -> "αβ"

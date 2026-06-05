@@ -1356,8 +1356,14 @@ fn wcrtomb_encodes_ascii_and_reports_invalid() {
     assert_eq!(n, 1);
     assert_eq!(out[0] as u8, b'A');
 
+    // Reject a genuinely invalid wide char. NOTE: U+110000 is NOT a valid
+    // rejection target here — this host's glibc UTF-8 encoder is RFC 2279
+    // (MB_CUR_MAX 6) and encodes code points up to U+7FFFFFFF, so it returns a
+    // 4-byte sequence for U+110000 (matched by wchar_core::wctomb and verified
+    // in conformance_diff_mbtowc_wctomb.rs). A UTF-16 surrogate, however, is
+    // invalid under both RFC 2279 and RFC 3629 and is rejected by both.
     set_errno(0);
-    let invalid = unsafe { wcrtomb(out.as_mut_ptr(), 0x110000_i32, std::ptr::null_mut()) };
+    let invalid = unsafe { wcrtomb(out.as_mut_ptr(), 0xD800_i32, std::ptr::null_mut()) };
     assert_eq!(invalid, usize::MAX);
     assert_eq!(errno_value(), libc::EILSEQ);
 }
