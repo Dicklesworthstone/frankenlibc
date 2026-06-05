@@ -26,6 +26,38 @@ const fn is_c_space(b: u8) -> bool {
     b == b' ' || (b >= b'\t' && b <= b'\r')
 }
 
+/// True iff all 8 bytes of a little-endian-loaded word are ASCII digits
+/// `'0'..='9'`. SWAR test (simdjson `is_made_of_eight_digits_fast`): a byte `c`
+/// is a digit iff `(c & 0xF0) | ((c + 6) & 0xF0) >> 4 == 0x33` — `c & 0xF0` is
+/// `0x30` for `0x30..=0x3F`, and `c + 6` only keeps the high nibble at `0x30`
+/// (so `>>4 == 3`) for `0x30..=0x39`, excluding `':'..='?'`.
+#[inline]
+fn is_eight_digits(word: u64) -> bool {
+    ((word & 0xF0F0_F0F0_F0F0_F0F0)
+        | ((word.wrapping_add(0x0606_0606_0606_0606) & 0xF0F0_F0F0_F0F0_F0F0) >> 4))
+        == 0x3333_3333_3333_3333
+}
+
+/// Parse 8 ASCII decimal digits packed in a little-endian word into their
+/// integer value (the classic Lemire/fast_float SWAR `parse_eight_digits`).
+/// Caller must have validated the 8 bytes via [`is_eight_digits`]. `word`'s low
+/// byte is the most-significant digit (i.e. the leftmost source character), so
+/// the result is `d0·10^7 + d1·10^6 + … + d7`. Verified exhaustively against the
+/// scalar reference by `swar_parse_eight_matches_scalar`.
+#[inline]
+fn parse_eight_digits(word: u64) -> u32 {
+    const MASK: u64 = 0x0000_00FF_0000_00FF;
+    const MUL1: u64 = 0x000F_4240_0000_0064; // 100 + (1_000_000 << 32)
+    const MUL2: u64 = 0x0000_2710_0000_0001; // 1   + (10_000   << 32)
+    let val = word.wrapping_sub(0x3030_3030_3030_3030);
+    // Fold each pair of adjacent digit-bytes into a 2-digit value at the even
+    // byte lanes: lane k becomes 10·d_k + d_{k+1} (max 99, no carry).
+    let val = val.wrapping_mul(10).wrapping_add(val >> 8);
+    let lo = (val & MASK).wrapping_mul(MUL1);
+    let hi = (val >> 16 & MASK).wrapping_mul(MUL2);
+    (lo.wrapping_add(hi) >> 32) as u32
+}
+
 pub fn atoi(s: &[u8]) -> i32 {
     let (val, _, _) = strtol_impl(s, 10);
     // POSIX SUSv4: atoi(str) ≡ (int) strtol(str, NULL, 10). The cast
@@ -108,6 +140,32 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
     let mut acc: u64 = 0;
     let mut any_digits = false;
     let mut overflow = false;
+
+    // SWAR fast path (base 10): consume 8 decimal digits per step. `acc·10^8 +
+    // parse8` is exactly what eight scalar iterations compute; on overflow we
+    // flag and keep consuming (digit-exact end position), matching the scalar
+    // tail. Only the *detection point* of an overflow can differ, which is
+    // invisible: glibc returns LONG_MAX/MIN past all consumed digits either way.
+    if effective_base == 10 {
+        while i + 8 <= len {
+            let word = u64::from_le_bytes(s[i..i + 8].try_into().unwrap());
+            if !is_eight_digits(word) {
+                break;
+            }
+            any_digits = true;
+            if !overflow {
+                let parsed = parse_eight_digits(word) as u64;
+                match acc
+                    .checked_mul(100_000_000)
+                    .and_then(|a| a.checked_add(parsed))
+                {
+                    Some(v) if v <= abs_max => acc = v,
+                    _ => overflow = true,
+                }
+            }
+            i += 8;
+        }
+    }
 
     while i < len {
         let c = s[i];
@@ -917,6 +975,135 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
+
+    #[test]
+    fn swar_parse_eight_matches_scalar() {
+        // Positional weights: a single digit d at position p (0 = leftmost /
+        // most significant) must contribute d * 10^(7-p).
+        for p in 0..8u32 {
+            for d in 0..10u8 {
+                let mut chars = [b'0'; 8];
+                chars[p as usize] = b'0' + d;
+                let word = u64::from_le_bytes(chars);
+                assert!(is_eight_digits(word));
+                let got = parse_eight_digits(word);
+                let want = d as u32 * 10u32.pow(7 - p);
+                assert_eq!(got, want, "digit {d} at pos {p}");
+            }
+        }
+        // Deterministic xorshift fuzz over 5M random 8-digit values; the SWAR
+        // parse must equal the value whose decimal rendering produced the chars.
+        let mut st: u64 = 0x1234_5678_9abc_def1;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        for _ in 0..5_000_000 {
+            let n = (next() % 100_000_000) as u32; // 0..=99_999_999
+            let s = format!("{n:08}");
+            let word = u64::from_le_bytes(s.as_bytes().try_into().unwrap());
+            assert!(is_eight_digits(word), "is_eight_digits failed for {s}");
+            assert_eq!(parse_eight_digits(word), n, "parse mismatch for {s}");
+        }
+        // is_eight_digits rejects non-digits at every position.
+        for p in 0..8usize {
+            for &bad in &[b'/', b':', b' ', b'a', b'\0', 0x80] {
+                let mut chars = [b'5'; 8];
+                chars[p] = bad;
+                assert!(
+                    !is_eight_digits(u64::from_le_bytes(chars)),
+                    "byte {bad:#x} at {p} wrongly accepted"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn swar_strtol_matches_scalar_reference() {
+        // Scalar reference strtol(base 10) — the algorithm-independent oracle the
+        // SWAR fast path must match bit-for-bit (value, consumed, status).
+        fn scalar_ref(s: &[u8]) -> (i64, usize, ConversionStatus) {
+            let mut i = 0;
+            while i < s.len() && is_c_space(s[i]) {
+                i += 1;
+            }
+            let mut neg = false;
+            if i < s.len() && (s[i] == b'+' || s[i] == b'-') {
+                neg = s[i] == b'-';
+                i += 1;
+            }
+            let abs_max = if neg {
+                9_223_372_036_854_775_808u64
+            } else {
+                9_223_372_036_854_775_807u64
+            };
+            let (mut acc, mut any, mut ovf) = (0u64, false, false);
+            while i < s.len() {
+                let d = match s[i] {
+                    c @ b'0'..=b'9' => (c - b'0') as u64,
+                    _ => break,
+                };
+                any = true;
+                if !ovf {
+                    match acc.checked_mul(10).and_then(|a| a.checked_add(d)) {
+                        Some(v) if v <= abs_max => acc = v,
+                        _ => ovf = true,
+                    }
+                }
+                i += 1;
+            }
+            if !any {
+                return (0, 0, ConversionStatus::Success);
+            }
+            if ovf {
+                return if neg {
+                    (i64::MIN, i, ConversionStatus::Underflow)
+                } else {
+                    (i64::MAX, i, ConversionStatus::Overflow)
+                };
+            }
+            let v = if neg {
+                (acc as i64).wrapping_neg()
+            } else {
+                acc as i64
+            };
+            (v, i, ConversionStatus::Success)
+        }
+
+        let mut st: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        // Build varied-length decimal strings (incl. leading zeros, signs,
+        // overflow-length 20+ digit runs, trailing non-digits) and compare the
+        // SWAR-enabled strtol_impl to the scalar oracle.
+        for _ in 0..1_000_000 {
+            let len = (next() % 25) as usize;
+            let mut buf = Vec::with_capacity(len + 2);
+            match next() % 4 {
+                0 => buf.push(b'-'),
+                1 => buf.push(b'+'),
+                _ => {}
+            }
+            for _ in 0..len {
+                buf.push(b'0' + (next() % 10) as u8);
+            }
+            if next() % 3 == 0 {
+                buf.push(b"xyz @"[(next() % 5) as usize]);
+            }
+            assert_eq!(
+                strtol_impl(&buf, 10),
+                scalar_ref(&buf),
+                "strtol divergence on {:?}",
+                String::from_utf8_lossy(&buf)
+            );
+        }
+    }
 
     fn property_proptest_config(default_cases: u32) -> ProptestConfig {
         let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
