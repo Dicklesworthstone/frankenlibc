@@ -20,6 +20,8 @@ const HOT_CERT_64_REQUEST_SIZE: usize = 64;
 const HOT_CERT_64_CLASS_SIZE: usize = 64;
 const HOT_CERT_64_VALUE: i64 = 150_000;
 const HOT_CERT_64_DETAILS: &str = "requested_size=64;mapped_class_size=64;cert_value=150000";
+const SIZE_CLASS_CERT_MAX_REQUEST: usize = 64 * 1024;
+const SIZE_CLASS_CERT_MAX_WASTE_RATIO_PPM: u64 = 900_000;
 
 /// Allocator lifecycle log level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -367,36 +369,39 @@ impl MallocState {
         let bin_usize = bin.get();
         let class_size = size_class::size_for_index(bin);
         let class_membership_valid = class_size >= size && class_size > 0;
-        let size_class_cert_value =
-            size_class_certificate_value(size, class_size, class_membership_valid);
-
         // The size-class certificate is diagnostic only (the allocation proceeds
-        // regardless of the value). Its detail string is a per-call `format!`
-        // heap allocation — wasteful when the row would be dropped by the log
-        // gate. Build the details + record only when the chosen level actually
-        // passes the threshold; the result is byte-for-byte identical to always
-        // calling record_lifecycle (which drops sub-threshold rows anyway), but
-        // no longer allocates a string inside every (non-64) malloc.
-        let cert_level = if size_class_cert_value >= 0 {
-            AllocatorLogLevel::Trace
-        } else {
-            AllocatorLogLevel::Warn
-        };
-        if (cert_level as u8) >= (self.min_log_level as u8) {
-            self.record_lifecycle(
-                cert_level,
-                "malloc",
-                "size_class_certificate",
-                None,
-                Some(size),
-                Some(bin_usize),
-                if size_class_cert_value >= 0 {
-                    "certificate_pass"
-                } else {
-                    "certificate_violation"
-                },
-                size_class_certificate_details(size, class_size, size_class_cert_value),
-            );
+        // regardless of the value). Under the default Warn log level, successful
+        // certificate rows are dropped; avoid evaluating the SOS polynomial on
+        // that hot path. Trace mode still records the byte-identical certificate,
+        // and cheap violation prechecks preserve Warn rows for bad mappings.
+        let trace_certificate_enabled =
+            (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8);
+        if trace_certificate_enabled
+            || size_class_certificate_may_violate(size, class_size, class_membership_valid)
+        {
+            let size_class_cert_value =
+                size_class_certificate_value(size, class_size, class_membership_valid);
+            let cert_level = if size_class_cert_value >= 0 {
+                AllocatorLogLevel::Trace
+            } else {
+                AllocatorLogLevel::Warn
+            };
+            if (cert_level as u8) >= (self.min_log_level as u8) {
+                self.record_lifecycle(
+                    cert_level,
+                    "malloc",
+                    "size_class_certificate",
+                    None,
+                    Some(size),
+                    Some(bin_usize),
+                    if size_class_cert_value >= 0 {
+                        "certificate_pass"
+                    } else {
+                        "certificate_violation"
+                    },
+                    size_class_certificate_details(size, class_size, size_class_cert_value),
+                );
+            }
         }
 
         // Try thread cache first
@@ -688,6 +693,26 @@ fn size_class_certificate_value(
     }
 }
 
+#[inline]
+fn size_class_certificate_may_violate(
+    size: usize,
+    class_size: usize,
+    class_membership_valid: bool,
+) -> bool {
+    if !class_membership_valid || class_size == 0 || class_size > SIZE_CLASS_CERT_MAX_REQUEST {
+        return true;
+    }
+    let normalized_size = size.clamp(size_class::MIN_SIZE, SIZE_CLASS_CERT_MAX_REQUEST);
+    if class_size < normalized_size {
+        return true;
+    }
+    let waste = (class_size - normalized_size) as u64;
+    if waste == 0 {
+        return false;
+    }
+    waste.saturating_mul(1_000_000) / (normalized_size as u64) > SIZE_CLASS_CERT_MAX_WASTE_RATIO_PPM
+}
+
 fn write_fixed_lower_hex_u64(out: &mut impl fmt::Write, value: u64) -> fmt::Result {
     for shift in (0..16).rev().map(|n| n * 4) {
         let digit = ((value >> shift) & 0x0f) as usize;
@@ -927,6 +952,40 @@ mod tests {
             size_class_certificate_value(HOT_CERT_64_REQUEST_SIZE, HOT_CERT_64_CLASS_SIZE, false),
             evaluate_size_class_barrier(HOT_CERT_64_REQUEST_SIZE, HOT_CERT_64_CLASS_SIZE, false)
         );
+    }
+
+    #[test]
+    fn size_class_certificate_skip_gate_keeps_violation_paths() {
+        assert!(!size_class_certificate_may_violate(64, 64, true));
+        assert!(!size_class_certificate_may_violate(17, 32, true));
+        assert!(size_class_certificate_may_violate(17, 256, true));
+        assert!(size_class_certificate_may_violate(128, 130, false));
+        assert!(size_class_certificate_may_violate(
+            64,
+            SIZE_CLASS_CERT_MAX_REQUEST + 1,
+            true
+        ));
+    }
+
+    #[test]
+    fn size_class_certificate_skip_gate_matches_current_table() {
+        let mut current_table_mappings_that_force_evaluation = 0usize;
+        for size in 1..=size_class::MAX_SMALL_SIZE {
+            let bin = size_class::small_bin_index(size).expect("small allocation size");
+            let class_size = size_class::size_for_index(bin);
+            let may_violate = size_class_certificate_may_violate(size, class_size, true);
+            let certificate_value = size_class_certificate_value(size, class_size, true);
+
+            if may_violate {
+                current_table_mappings_that_force_evaluation += 1;
+            } else {
+                assert!(
+                    certificate_value >= 0,
+                    "skipped mapping must be certificate-safe: size={size}, class_size={class_size}"
+                );
+            }
+        }
+        assert!(current_table_mappings_that_force_evaluation > 0);
     }
 
     #[test]
