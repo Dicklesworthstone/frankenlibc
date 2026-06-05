@@ -536,6 +536,54 @@ fn bench_memcmp(c: &mut Criterion) {
         );
         group.finish();
     }
+
+    // scanf %llx: SWAR hex fast path in scan_int.
+    {
+        use frankenlibc_core::stdio::scanf::{parse_scanf_format, scan_input};
+        let dirs = parse_scanf_format(b"%llx");
+        let input = b"1a2b3c4d5e6f7a8b".to_vec();
+        let mut group = c.benchmark_group("glibc_baseline_scanf_hex_long");
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "scanf_hex_long",
+                impl_label: "frankenlibc_core",
+                api_family: "stdio",
+                symbol: "sscanf",
+                workload: "%llx of a 16-hex-digit value",
+                parity_proof_ref: "crates/frankenlibc-core/src/stdio/scanf.rs",
+            },
+            || {
+                black_box(scan_input(black_box(&input), &dirs));
+            },
+        );
+        let cinput = b"1a2b3c4d5e6f7a8b\0".to_vec();
+        let cfmt = b"%llx\0";
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "scanf_hex_long",
+                impl_label: "host_glibc",
+                api_family: "stdio",
+                symbol: "sscanf",
+                workload: "%llx of a 16-hex-digit value",
+                parity_proof_ref: "crates/frankenlibc-core/src/stdio/scanf.rs",
+            },
+            || {
+                let mut out: libc::c_ulonglong = 0;
+                // SAFETY: NUL-terminated input/format, one %llx -> one ull out.
+                unsafe {
+                    black_box(libc::sscanf(
+                        black_box(cinput.as_ptr().cast()),
+                        cfmt.as_ptr().cast(),
+                        &mut out as *mut libc::c_ulonglong,
+                    ));
+                }
+                black_box(out);
+            },
+        );
+        group.finish();
+    }
 }
 
 fn bench_malloc_free_64(c: &mut Criterion) {

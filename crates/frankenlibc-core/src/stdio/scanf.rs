@@ -710,6 +710,29 @@ fn scan_int(
             i += 8;
             chars_read += 8;
         }
+    } else if base == 16 {
+        // SWAR hex: 8 hex digits (32 bits) per step (parse_eight_hex), width-gated.
+        while i + 8 <= input.len() && chars_read + 8 <= max_chars {
+            let word = u64::from_le_bytes(input[i..i + 8].try_into().unwrap());
+            let Some(parsed) = crate::stdlib::conversion::parse_eight_hex(word) else {
+                break;
+            };
+            any_digit = true;
+            if !overflowed {
+                match val
+                    .checked_mul(0x1_0000_0000)
+                    .and_then(|v| v.checked_add(parsed as u64))
+                {
+                    Some(next) => val = next,
+                    None => {
+                        val = u64::MAX;
+                        overflowed = true;
+                    }
+                }
+            }
+            i += 8;
+            chars_read += 8;
+        }
     }
 
     while i < input.len() && chars_read < max_chars {
@@ -830,6 +853,29 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
                 match val
                     .checked_mul(100_000_000)
                     .and_then(|v| v.checked_add(parsed))
+                {
+                    Some(next) => val = next,
+                    None => {
+                        val = u64::MAX;
+                        overflowed = true;
+                    }
+                }
+            }
+            i += 8;
+            chars_read += 8;
+        }
+    } else if base == 16 {
+        // SWAR hex: 8 hex digits (32 bits) per step (parse_eight_hex), width-gated.
+        while i + 8 <= input.len() && chars_read + 8 <= max_chars {
+            let word = u64::from_le_bytes(input[i..i + 8].try_into().unwrap());
+            let Some(parsed) = crate::stdlib::conversion::parse_eight_hex(word) else {
+                break;
+            };
+            any_digit = true;
+            if !overflowed {
+                match val
+                    .checked_mul(0x1_0000_0000)
+                    .and_then(|v| v.checked_add(parsed as u64))
                 {
                     Some(next) => val = next,
                     None => {
@@ -1412,6 +1458,38 @@ mod tests {
             let text = std::str::from_utf8(&s).unwrap();
             let want = text.parse::<i64>().unwrap_or(i64::MAX); // overflow clamps
             assert_eq!(got, want, "scan %lld of {text} = {got} want {want}");
+        }
+    }
+
+    #[test]
+    fn swar_scan_long_hex_matches_std() {
+        // Drive the SWAR hex fast path (lengths >= 8) through scan_input("%llx")
+        // and compare to std hex parse; overflow clamps to u64::MAX.
+        let llx = parse_scanf_format(b"%llx");
+        let hexset = b"0123456789abcdefABCDEF";
+        let mut st: u64 = 0x0123_4567_89ab_cdef;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        for _ in 0..200_000 {
+            let ndigits = 8 + (next() % 11) as usize; // 8..=18 hex digits
+            let mut s = Vec::with_capacity(ndigits);
+            // first digit non-zero
+            s.push(b"123456789abcdefABCDEF"[(next() % 21) as usize]);
+            for _ in 1..ndigits {
+                s.push(hexset[(next() % 22) as usize]);
+            }
+            let res = scan_input(&s, &llx);
+            let got = match res.values.first() {
+                Some(ScanValue::UnsignedInt(v)) => *v,
+                other => panic!("unexpected scan value {other:?} for {s:?}"),
+            };
+            let text = std::str::from_utf8(&s).unwrap();
+            let want = u64::from_str_radix(text, 16).unwrap_or(u64::MAX);
+            assert_eq!(got, want, "scan %llx of {text} = {got} want {want}");
         }
     }
 
