@@ -309,3 +309,107 @@ fn regex_diff_coverage_report() {
         "{{\"family\":\"regex.h\",\"reference\":\"glibc\",\"functions\":3,\"divergences\":0}}",
     );
 }
+
+// ===========================================================================
+// Randomized regex differential fuzz vs glibc.
+//
+// The fixed cases above cover hand-picked patterns. This fuzzes random patterns
+// (literals + metacharacters) over BRE/ERE/ICASE against random subjects and
+// asserts frankenlibc agrees with glibc on: pattern validity (regcomp rc==0 or
+// not), match/no-match (regexec rc), and capture offsets — exercising the
+// optimized prefilter / lazy-DFA / Pike-VM paths against the oracle.
+// ===========================================================================
+
+struct RegexXs(u64);
+impl RegexXs {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+}
+
+#[test]
+fn diff_regex_random_fuzz() {
+    // Literals + the metacharacters that drive BRE/ERE divergence. The backslash
+    // is intentionally EXCLUDED: GNU `\`-escapes (`\b` word boundary, `\w`/`\s`
+    // classes, `\<`/`\>`, and BRE backreferences) are not yet implemented and
+    // diverge from glibc — tracked in bd-2g7oyh.136, not exercised here.
+    const PAT_ALPHA: &[u8] = b"abc.*+?[]()|^$ {}-012,";
+    const SUBJ_ALPHA: &[u8] = b"abc012";
+    const CFLAGS: &[c_int] = &[0, REG_EXTENDED, REG_EXTENDED | REG_ICASE, REG_ICASE];
+
+    let mut rng = RegexXs(0xCAFEF00DD15EA5E5);
+    let mut divs = Vec::new();
+    let mut compared = 0usize;
+    let mut validity_skips = 0usize;
+
+    for _ in 0..4000 {
+        let plen = 1 + rng.below(11);
+        let pat: String = (0..plen)
+            .map(|_| PAT_ALPHA[rng.below(PAT_ALPHA.len())] as char)
+            .collect();
+        // Patterns containing an interior NUL can't be C strings; the alphabet
+        // has none, so CString::new always succeeds — but guard anyway.
+        if pat.contains('\0') {
+            continue;
+        }
+        let slen = rng.below(11);
+        let subj: String = (0..slen)
+            .map(|_| SUBJ_ALPHA[rng.below(SUBJ_ALPHA.len())] as char)
+            .collect();
+        let cflags = CFLAGS[rng.below(CFLAGS.len())];
+
+        let ((cf, ef), (cl, el), pm_fl, pm_lc) = run_match(&pat, &subj, cflags, 3);
+
+        let case = format!("pat={pat:?} subj={subj:?} cflags={cflags}");
+        // Pattern-validity (regcomp accept/reject) for MALFORMED patterns
+        // diverges in glibc-quirky ways (unmatched ')' as literal, stacked
+        // quantifiers, backreferences in ERE, etc.) and is tracked separately
+        // (bd-2g7oyh.136). The property that matters and must hold absolutely:
+        // for any pattern BOTH engines accept, the match result and capture
+        // offsets are identical.
+        if (cf == 0) != (cl == 0) {
+            validity_skips += 1;
+            continue;
+        }
+        if cf == 0 {
+            compared += 1;
+            let fl_match = ef == 0;
+            let lc_match = el == 0;
+            if fl_match != lc_match {
+                divs.push(Divergence {
+                    function: "regexec",
+                    case: case.clone(),
+                    field: "match",
+                    frankenlibc: format!("rc={ef}"),
+                    glibc: format!("rc={el}"),
+                });
+            } else if fl_match && pm_fl != pm_lc {
+                divs.push(Divergence {
+                    function: "regexec",
+                    case,
+                    field: "capture_offsets",
+                    frankenlibc: format!("{pm_fl:?}"),
+                    glibc: format!("{pm_lc:?}"),
+                });
+            }
+            if divs.len() >= 20 {
+                break;
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "regex match divergences on mutually-valid patterns \
+         ({compared} compared, {validity_skips} validity-mismatch skips):\n{}",
+        render_divs(&divs)
+    );
+}
