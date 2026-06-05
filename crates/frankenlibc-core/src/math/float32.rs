@@ -193,8 +193,21 @@ pub fn powf(base: f32, exponent: f32) -> f32 {
 
 // --- Hyperbolic ---
 
+const SINHF_FAST_ABS_MIN: f32 = 0.5;
+const SINHF_FAST_ABS_MAX: f32 = 2.5;
+
 #[inline]
 pub fn sinhf(x: f32) -> f32 {
+    // sinh(x) = (e^x - e^-x)/2 = (u - 1/u)/2, u = e^x. For |x| >= 0.5 the two
+    // terms differ enough that the subtraction loses <1 bit, so evaluating in f64
+    // with our fast `exp` (whose [-5,5] fast path covers x here) and rounding
+    // once replaces libm::sinhf's dedicated polynomial. The identity is odd, so
+    // it serves negative x directly. Near-0 (cancellation) and large/non-finite x
+    // defer to libm. Mirrors the f64 `cosh` one-exp reroute and `tanhf`.
+    if (SINHF_FAST_ABS_MIN..=SINHF_FAST_ABS_MAX).contains(&x.abs()) {
+        let u = crate::math::exp::exp(x as f64);
+        return ((u - 1.0 / u) * 0.5) as f32;
+    }
     libm::sinhf(x)
 }
 
@@ -709,6 +722,31 @@ mod tests {
             );
         }
         assert!(expf(f32::NAN).is_nan());
+    }
+
+    #[test]
+    fn sinhf_fast_path_within_4_ulps() {
+        fn ulpf(a: f32, b: f32) -> i64 {
+            if a == b {
+                0
+            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+                i64::MAX
+            } else {
+                (a.to_bits() as i64 - b.to_bits() as i64).abs()
+            }
+        }
+        let mut worst = 0i64;
+        let mut worst_x = 0.0f32;
+        let mut x = -2.5f32;
+        while x <= 2.5 {
+            let u = ulpf(sinhf(x), libm::sinhf(x));
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            x += 0.0005;
+        }
+        assert!(worst <= 4, "sinhf fast path worst {worst} ULP at x={worst_x}");
     }
 
     #[test]
