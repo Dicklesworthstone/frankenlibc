@@ -92,5 +92,10 @@ harness = false
 required-features = ["abi-bench"]
 
 [[bench]]
+name = "stdio_glibc_baseline_bench"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
 name = "resolv_parsers_bench"
 harness = false
