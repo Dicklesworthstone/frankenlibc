@@ -59,6 +59,16 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let a = &a[..count];
     let b = &b[..count];
 
+    if count == MEMCMP_EXACT_256_BYTES
+        && !ne_simd_folded_128(&a[..SIMD_FOLD_BYTES], &b[..SIMD_FOLD_BYTES])
+        && !ne_simd_folded_128(
+            &a[SIMD_FOLD_BYTES..MEMCMP_EXACT_256_BYTES],
+            &b[SIMD_FOLD_BYTES..MEMCMP_EXACT_256_BYTES],
+        )
+    {
+        return core::cmp::Ordering::Equal;
+    }
+
     // Index-based scan (mirrors the parity-class `strcmp` loop, which is faster
     // than the equivalent `chunks_exact().zip()` form): fold four 32-byte panels
     // into one equality probe per 128-byte block; an equal block is skipped
@@ -138,6 +148,7 @@ const WORD: usize = size_of::<u64>();
 const SIMD_LANES: usize = 32;
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
+const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
 const MEMCHR_FOLD_PANELS: usize = 8;
 const MEMCHR_FOLD_BYTES: usize = SIMD_LANES * MEMCHR_FOLD_PANELS;
 
