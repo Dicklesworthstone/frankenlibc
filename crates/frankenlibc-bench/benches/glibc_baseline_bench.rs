@@ -444,6 +444,52 @@ fn bench_strtol(c: &mut Criterion) {
         );
         group.finish();
     }
+
+    // strtoul base-16 (hex) SWAR fast path (bd-76y0j3 follow-up).
+    {
+        use frankenlibc_core::stdlib::conversion::strtoul;
+        let bytes = b"1a2b3c4d5e6f7a8b\0".to_vec();
+        let (fl_v, _) = strtoul(&bytes, 16);
+        let glibc_v = unsafe { libc::strtoul(bytes.as_ptr().cast(), std::ptr::null_mut(), 16) };
+        assert_eq!(fl_v, glibc_v as u64, "strtoul_hex_long parity");
+        let mut group = c.benchmark_group("glibc_baseline_strtoul_hex_long");
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "strtoul_hex_long",
+                impl_label: "frankenlibc_core",
+                api_family: "stdlib",
+                symbol: "strtoul",
+                workload: "base-16 hex parse",
+                parity_proof_ref: "crates/frankenlibc-core/src/stdlib/conversion.rs",
+            },
+            || {
+                black_box(strtoul(black_box(&bytes), 16));
+            },
+        );
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "strtoul_hex_long",
+                impl_label: "host_glibc",
+                api_family: "stdlib",
+                symbol: "strtoul",
+                workload: "base-16 hex parse",
+                parity_proof_ref: "crates/frankenlibc-core/src/stdlib/conversion.rs",
+            },
+            || {
+                // SAFETY: NUL-terminated input, null endptr is allowed.
+                unsafe {
+                    black_box(libc::strtoul(
+                        black_box(bytes.as_ptr().cast()),
+                        std::ptr::null_mut(),
+                        16,
+                    ));
+                }
+            },
+        );
+        group.finish();
+    }
 }
 
 fn bench_memcmp(c: &mut Criterion) {
