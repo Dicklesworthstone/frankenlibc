@@ -20,16 +20,16 @@ existing resolver path.
 Baseline command:
 
 ```text
-RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env FRANKENLIBC_BENCH_PIN=1 cargo bench -p frankenlibc-bench --bench string_bench -- wcsncmp_equal --sample-size 50 --measurement-time 3 --warm-up-time 1
+RCH_PREFERRED_WORKER=ts2 RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_bd_2g7oyh_130_baseline FRANKENLIBC_BENCH_PIN=1 cargo bench -p frankenlibc-bench --bench string_bench -- wcsncmp_equal --sample-size 50 --measurement-time 3 --warm-up-time 1 --noplot
 ```
 
-Baseline on `ts1` before edit:
+Baseline on `ts2` before edit, Criterion median estimates:
 
-- 16: p50 2.143 ns, p95 7.500, p99 30.000, mean 4.896
-- 64: p50 4.269 ns, p95 6.250, p99 25.000, mean 5.551
-- 256: p50 15.862 ns, p95 33.178, p99 70.500, mean 23.111
-- 1024: p50 59.367 ns, p95 73.281, p99 87.995, mean 62.543
-- 4096: p50 381.880 ns, p95 432.118, p99 546.106, mean 382.112
+- 16: median 3.079 ns
+- 64: median 6.890 ns
+- 256: median 24.691 ns
+- 1024: median 94.095 ns
+- 4096: median 403.349 ns
 
 Post command:
 
@@ -37,27 +37,26 @@ Post command:
 RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- env FRANKENLIBC_BENCH_PIN=1 cargo bench -p frankenlibc-bench --bench string_bench -- wcsncmp_equal --sample-size 50 --measurement-time 3 --warm-up-time 1
 ```
 
-Post on `ts2`:
+Post on `ts2`, Criterion median estimates:
 
-- 16: p50 4.221 ns, p95 7.833, p99 25.000, mean 6.062
-- 64: p50 7.683 ns, p95 12.500, p99 40.000, mean 10.190
-- 256: p50 18.187 ns, p95 21.156, p99 45.000, mean 20.901
-- 1024: p50 66.715 ns, p95 74.673, p99 371.000, mean 79.623
-- 4096: p50 282.963 ns, p95 308.000, p99 335.500, mean 290.609
+- 16: median 4.225 ns
+- 64: median 7.664 ns
+- 256: median 14.972 ns
+- 1024: median 66.568 ns
+- 4096: median 281.179 ns
 
-Confirmation post on `ts2`:
+The 16/64 rows regress because the exact-prefix preflight is gated at
+`n >= 256`; the accepted target is the long equal-prefix workload.
 
-- 16: p50 4.225 ns, p95 6.875, p99 25.500, mean 6.225
-- 64: p50 7.672 ns, p95 9.375, p99 30.000, mean 9.540
-- 256: p50 15.500 ns, p95 19.826, p99 45.000, mean 18.636
-- 1024: p50 66.611 ns, p95 76.733, p99 95.000, mean 70.139
-- 4096: p50 281.183 ns, p95 290.500, p99 486.195, mean 290.449
+Same-worker `ts2` speedups:
+
+- 256: 24.691 ns -> 14.972 ns, 1.65x faster
+- 1024: 94.095 ns -> 66.568 ns, 1.41x faster
+- 4096: 403.349 ns -> 281.179 ns, 1.43x faster
 
 Accepted ratio against handoff `ts2` target:
 
-- p50: 400.358 ns -> 281.183 ns, 1.42x faster
-- p95: 418.250 ns -> 290.500 ns, 1.44x faster
-- mean: 405.623 ns -> 290.449 ns, 1.40x faster
+- median: 400.358 ns -> 281.179 ns, 1.42x faster
 
 Score: (Impact 4 * Confidence 4) / Effort 2 = 8.0.
 
@@ -126,3 +125,25 @@ Failed on pre-existing crate-wide lints in `string/regex.rs`,
 `string/fnmatch.rs`, `stdlib/sort.rs`, `string/str.rs`, plus older
 question-mark lints in `string/wide.rs` outside this measured lever. Those were
 not folded into this perf commit to preserve the one-lever scope.
+
+An all-targets clippy pass with the observed pre-existing lint classes allowed
+passed on `ts2`:
+
+```text
+cargo clippy -p frankenlibc-core --all-targets -- -D warnings \
+  -A clippy::question_mark \
+  -A clippy::too_many_arguments \
+  -A clippy::collapsible_if \
+  -A clippy::unnecessary_cast \
+  -A clippy::byte_char_slices \
+  -A clippy::type_complexity \
+  -A clippy::unnecessary_min_or_max \
+  -A clippy::manual_repeat_n \
+  -A clippy::approx_constant \
+  -A clippy::manual_memcpy \
+  -A clippy::needless_range_loop
+```
+
+`cargo fmt -p frankenlibc-core --check` is also blocked by unrelated formatting
+drift across `iconv`, `fnmatch`, `str`, `wchar`, and differential probe tests.
+The touched file passed `rustfmt --edition 2024 --check`.
