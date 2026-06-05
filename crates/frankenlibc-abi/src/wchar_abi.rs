@@ -2563,15 +2563,42 @@ macro_rules! wscanf_write_one {
                     *ptr = *v as f32;
                 }
             },
-            ScanValue::Char(bytes) => {
-                let ptr = $args.next_arg::<*mut u8>();
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
-            }
-            ScanValue::String(bytes) => {
-                let ptr = $args.next_arg::<*mut c_char>();
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
-                *ptr.add(bytes.len()) = 0;
-            }
+            ScanValue::Char(bytes) => match $spec.length {
+                // `%lc`: the destination is a `wchar_t*`. Decode the matched
+                // narrow (UTF-8) bytes back to wide characters; no NUL (like %c).
+                LengthMod::L => {
+                    let ptr = $args.next_arg::<*mut libc::wchar_t>();
+                    let mut i = 0isize;
+                    for ch in String::from_utf8_lossy(bytes).chars() {
+                        *ptr.offset(i) = ch as u32 as libc::wchar_t;
+                        i += 1;
+                    }
+                }
+                _ => {
+                    let ptr = $args.next_arg::<*mut u8>();
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+                }
+            },
+            ScanValue::String(bytes) => match $spec.length {
+                // `%ls`: the destination is a `wchar_t*`. Decode the matched
+                // narrow (UTF-8) token to wide characters and NUL-terminate.
+                // (Writing the raw narrow bytes left a `wchar_t` array of
+                // mangled half-characters.)
+                LengthMod::L => {
+                    let ptr = $args.next_arg::<*mut libc::wchar_t>();
+                    let mut i = 0isize;
+                    for ch in String::from_utf8_lossy(bytes).chars() {
+                        *ptr.offset(i) = ch as u32 as libc::wchar_t;
+                        i += 1;
+                    }
+                    *ptr.offset(i) = 0;
+                }
+                _ => {
+                    let ptr = $args.next_arg::<*mut c_char>();
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
+                    *ptr.add(bytes.len()) = 0;
+                }
+            },
             ScanValue::CharsConsumed(n) => match $spec.length {
                 LengthMod::Hh => {
                     let ptr = $args.next_arg::<*mut i8>();
