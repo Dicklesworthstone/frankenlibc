@@ -1013,9 +1013,11 @@ fn bench_strpbrk_absent(c: &mut Criterion) {
 mod cmath {
     unsafe extern "C" {
         pub fn exp(x: f64) -> f64;
+        pub fn exp2(x: f64) -> f64;
         pub fn sin(x: f64) -> f64;
         pub fn cos(x: f64) -> f64;
         pub fn log(x: f64) -> f64;
+        pub fn log2(x: f64) -> f64;
         pub fn pow(x: f64, y: f64) -> f64;
         pub fn atan2(y: f64, x: f64) -> f64;
     }
@@ -1534,6 +1536,23 @@ fn bench_math(c: &mut Criterion) {
     pair!("sin", "sin", "sin(x) x in [0.5,2.5)", math::sin, cmath::sin);
     pair!("cos", "cos", "cos(x) x in [0.5,2.5)", math::cos, cmath::cos);
     pair!("log", "log", "log(x) x in [0.5,2.5)", math::log, cmath::log);
+    // log2/exp2 components of the pow fast path: profiling (bd-2g7oyh.116)
+    // showed pow's gap lives in log2 (~12.9ns) — 2.3x the cost of exp2 (~5.7ns)
+    // — so these standalone head-to-heads track the real pow bottleneck.
+    pair!(
+        "log2",
+        "log2",
+        "log2(x) x in [0.5,2.5)",
+        math::log2,
+        cmath::log2
+    );
+    pair!(
+        "exp2",
+        "exp2",
+        "exp2(x) x in [0.5,2.5)",
+        math::exp2,
+        cmath::exp2
+    );
 
     // pow is binary — bench it explicitly (exponent 2.5, varying base).
     bench_op(
