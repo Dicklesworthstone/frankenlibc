@@ -622,6 +622,17 @@ pub fn mempcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 /// or `None` if `c` was not found within `n` bytes.
 pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
     let count = n.min(dest.len()).min(src.len());
+
+    if count < SIMD_LANES {
+        for i in 0..count {
+            dest[i] = src[i];
+            if src[i] == c {
+                return Some(i + 1);
+            }
+        }
+        return None;
+    }
+
     // Locate `c` with the SIMD memchr scan, then copy the resulting prefix in
     // one bulk move (lowered to the memcpy intrinsic) instead of a byte loop.
     // Behaviour is identical: if `c` occurs at index `p < count`, bytes
@@ -963,6 +974,35 @@ mod tests {
         let result = memccpy(&mut dest, src, b' ', 10);
         assert_eq!(result, None);
         assert_eq!(&dest[..10], b"helloworld");
+    }
+
+    #[test]
+    fn test_memccpy_sub_simd_gate_matches_copy_until_contract() {
+        for len in 0..SIMD_LANES {
+            let mut src = vec![0x51; len];
+            let mut dest = vec![0xA7; len + 1];
+            assert_eq!(memccpy(&mut dest, &src, 0x42, len), None);
+            assert_eq!(&dest[..len], &src[..]);
+            assert_eq!(dest[len], 0xA7);
+
+            for pos in 0..len {
+                src[pos] = 0x42;
+                dest.fill(0xA7);
+
+                assert_eq!(memccpy(&mut dest, &src, 0x42, len), Some(pos + 1));
+                assert_eq!(&dest[..=pos], &src[..=pos]);
+                assert!(dest[pos + 1..].iter().all(|byte| *byte == 0xA7));
+
+                src[pos] = 0x51;
+            }
+
+            if len > 0 {
+                dest.fill(0xA7);
+                assert_eq!(memccpy(&mut dest, &src, 0x42, len - 1), None);
+                assert_eq!(&dest[..len - 1], &src[..len - 1]);
+                assert_eq!(dest[len - 1], 0xA7);
+            }
+        }
     }
 
     #[test]
