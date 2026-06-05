@@ -707,10 +707,47 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
         return None;
     }
 
+    let last = needle[needle_len - 1];
+
+    // Dual-anchor fast path: a match at `start` requires both the first needle
+    // char at `start` *and* the last needle char at `start + needle_len - 1`.
+    // When the first char is common (e.g. L"aaaa…b" over an 'a' run) but the
+    // last char is rare/absent, anchoring on the last char collapses the search
+    // to a single SIMD pass — the previous first-char-only scan made every
+    // position a candidate (O(n*m)). We anchor on the last char so its
+    // (typically rarer) occurrences drive the scan; for each hit we confirm the
+    // first char and full needle. Only valid when `first != last`; otherwise the
+    // two anchors coincide and we fall back to the first-char scan below.
+    if first != last {
+        // The earliest possible match starts at `first_pos`, so its last-char
+        // anchor sits at `first_pos + needle_len - 1`. `hay` has no interior NUL
+        // (truncated by `wcslen`), so `find_wide_or_nul` resolves the last char.
+        let mut anchor = first_pos + needle_len - 1;
+        let mut miss_work = 0usize;
+        while anchor < hay.len() {
+            let scan = &hay[anchor..];
+            let offset = find_wide_or_nul(scan, last);
+            if offset == scan.len() {
+                return None; // last char never recurs → no match
+            }
+            let last_pos = anchor + offset;
+            let start = last_pos - (needle_len - 1);
+            if hay[start] == first && hay[start..start + needle_len] == *needle {
+                return Some(start);
+            }
+            miss_work += needle_len;
+            anchor = last_pos + 1;
+            if miss_work > hay.len() {
+                return two_way_search_wide(&hay[start..], needle).map(|m| m + start);
+            }
+        }
+        return None;
+    }
+
     // Fast path: jump to each first-char candidate via the SIMD `find_wide_or_nul`
     // scan and verify the full needle there. To keep the O(n+m) worst case, bail
     // to the pure Two-Way once cumulative failed-candidate work exceeds the
-    // haystack length — so a common needle first char (e.g. L"aaaa…b" over an
+    // haystack length — so a common needle first char (e.g. L"aaaa…a" over an
     // 'a' run, which previously made every position a candidate: O(n*m)) cannot
     // degrade. Both paths return the leftmost match. `wcslen` bounds both
     // operands before their terminating NUL, preserving wide-string semantics.
