@@ -1575,34 +1575,13 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     // imprecision at exact powers of ten). Falls back to the log10 estimate only
     // if the parse unexpectedly fails.
     let rounded_e = alloc::format!("{:.*e}", p - 1, value);
-    let exp = rounded_e
-        .rsplit('e')
-        .next()
-        .and_then(|s| s.parse::<i32>().ok())
-        .unwrap_or_else(|| value.log10().floor() as i32);
-    // C11 7.21.6.1 para 8: use %e style iff exp < -4 OR exp >= precision;
-    // otherwise %f. The lower bound is -4 (not -1): e.g. 0.0001234 has
-    // exp = -4 and precision = 6, so it must render as "0.0001234".
-    let use_f_style = exp >= -4 && exp < p as i32;
-    if use_f_style {
-        // Use %f style.
-        let frac_digits = (p as i32 - 1 - exp).max(0) as usize;
-        let mut s = alloc::format!("{:.prec$}", value, prec = frac_digits);
-        // Rounding can push the integer part up a decade (e.g. 999999.5
-        // with precision 6 rounds to 1000000, which now has 7 digits and
-        // violates the precision contract). Glibc switches to %e style
-        // in that case (bd-ju24y). Detect by counting the integer-part
-        // digits of the rendered value.
-        let int_digits = match s.bytes().position(|b| b == b'.') {
-            Some(dot) => dot,
-            None => s.len(),
-        };
-        if int_digits > p {
-            // Fall through to %e style below.
-        } else {
+    let Some((mantissa, exp)) = split_scientific(&rounded_e) else {
+        let exp = value.log10().floor() as i32;
+        let use_f_style = exp >= -4 && exp < p as i32;
+        if use_f_style {
+            let frac_digits = (p as i32 - 1 - exp).max(0) as usize;
+            let mut s = alloc::format!("{:.prec$}", value, prec = frac_digits);
             if alt_form {
-                // C11 7.21.6.1: `#` requires the result to always contain a
-                // decimal point — append one when precision yielded none.
                 if !s.contains('.') {
                     s.push('.');
                 }
@@ -1611,19 +1590,93 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
             }
             return s;
         }
-    }
-    // Use %e style.
-    let mut s = format_e(value, p.saturating_sub(1), uppercase, alt_form);
-    if !alt_form {
-        // Strip trailing zeros from the mantissa part (before 'e'/'E').
-        if let Some(e_pos) = s.bytes().position(|b| b == b'e' || b == b'E') {
+        let mut s = format_e(value, p.saturating_sub(1), uppercase, alt_form);
+        if !alt_form && let Some(e_pos) = s.bytes().position(|b| b == b'e' || b == b'E') {
             let mut mantissa = s[..e_pos].to_string();
             strip_trailing_zeros(&mut mantissa);
             let exp_part = &s[e_pos..];
             s = alloc::format!("{mantissa}{exp_part}");
         }
+        return s;
+    };
+    // C11 7.21.6.1 para 8: use %e style iff exp < -4 OR exp >= precision;
+    // otherwise %f. The lower bound is -4 (not -1): e.g. 0.0001234 has
+    // exp = -4 and precision = 6, so it must render as "0.0001234".
+    let use_f_style = exp >= -4 && exp < p as i32;
+    if use_f_style {
+        return format_g_fixed_from_scientific(mantissa, exp, alt_form);
+    }
+
+    format_g_exp_from_scientific(mantissa, exp, uppercase, alt_form)
+}
+
+fn split_scientific(raw: &str) -> Option<(&str, i32)> {
+    let e_pos = raw.bytes().position(|b| b == b'e')?;
+    let exp = raw[e_pos + 1..].parse::<i32>().ok()?;
+    Some((&raw[..e_pos], exp))
+}
+
+fn format_g_fixed_from_scientific(mantissa: &str, exp: i32, alt_form: bool) -> String {
+    let negative = mantissa.as_bytes().first().copied() == Some(b'-');
+    let mantissa_digits = if negative { &mantissa[1..] } else { mantissa };
+    let digits = mantissa_digits.bytes().filter(|&b| b != b'.');
+    let digit_count = digits.clone().count();
+    let decimal_pos = exp + 1;
+    let mut s = String::with_capacity(
+        digit_count + decimal_pos.unsigned_abs() as usize + 2 + usize::from(negative),
+    );
+    if negative {
+        s.push('-');
+    }
+
+    if decimal_pos <= 0 {
+        s.push('0');
+        s.push('.');
+        for _ in 0..decimal_pos.unsigned_abs() {
+            s.push('0');
+        }
+        for digit in digits {
+            s.push(digit as char);
+        }
+    } else {
+        let decimal_pos = decimal_pos as usize;
+        for (idx, digit) in digits.enumerate() {
+            if idx == decimal_pos {
+                s.push('.');
+            }
+            s.push(digit as char);
+        }
+        for _ in digit_count..decimal_pos {
+            s.push('0');
+        }
+    }
+
+    if alt_form {
+        if !s.contains('.') {
+            s.push('.');
+        }
+    } else {
+        strip_trailing_zeros(&mut s);
     }
     s
+}
+
+fn format_g_exp_from_scientific(
+    mantissa: &str,
+    exp: i32,
+    uppercase: bool,
+    alt_form: bool,
+) -> String {
+    let e_char = if uppercase { 'E' } else { 'e' };
+    let mut mantissa = mantissa.to_string();
+    if !alt_form {
+        strip_trailing_zeros(&mut mantissa);
+    } else if !mantissa.contains('.') {
+        mantissa.push('.');
+    }
+    let sign = if exp < 0 { '-' } else { '+' };
+    let abs_exp = exp.unsigned_abs();
+    alloc::format!("{mantissa}{e_char}{sign}{abs_exp:02}")
 }
 
 /// `%a` / `%A` formatting: hexadecimal floating-point.
@@ -1867,7 +1920,11 @@ mod tests {
             // render_digits(base=10) must dispatch to the same bytes.
             let mut viad = [0u8; 64];
             let nd = render_digits(v, 10, false, &mut viad);
-            assert_eq!(&viad[64 - nd..], &lut[64 - nl..], "render_digits(10) mismatch for {v}");
+            assert_eq!(
+                &viad[64 - nd..],
+                &lut[64 - nl..],
+                "render_digits(10) mismatch for {v}"
+            );
         }
     }
 
@@ -2811,6 +2868,16 @@ mod tests {
         assert_eq!(format_g(9999.5, 6, false, false), "9999.5");
         // Uppercase variant.
         assert_eq!(format_g(999999.5, 6, true, false), "1E+06");
+    }
+
+    #[test]
+    fn test_g_scientific_reuse_preserves_fixed_style_boundaries() {
+        assert_eq!(format_g(12345.678901, 6, false, false), "12345.7");
+        assert_eq!(format_g(-12345.678901, 6, false, false), "-12345.7");
+        assert_eq!(format_g(12345.678901, 6, false, true), "12345.7");
+        assert_eq!(format_g(0.0001234, 6, false, false), "0.0001234");
+        assert_eq!(format_g(0.0001234, 6, false, true), "0.000123400");
+        assert_eq!(format_g(100.0, 3, false, true), "100.");
     }
 
     // Regression for the %e digit-accuracy bug: the mantissa was recomputed
