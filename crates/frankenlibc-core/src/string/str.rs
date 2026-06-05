@@ -311,7 +311,7 @@ pub fn strlen(s: &[u8]) -> usize {
 /// - otherwise `maxlen` (or `s.len()` when the slice is shorter)
 pub fn strnlen(s: &[u8], maxlen: usize) -> usize {
     let limit = maxlen.min(s.len());
-    s.iter().take(limit).position(|&b| b == 0).unwrap_or(limit)
+    strlen(&s[..limit])
 }
 
 /// Compares two NUL-terminated byte strings lexicographically.
@@ -1512,6 +1512,29 @@ mod tests {
     }
 
     #[test]
+    fn test_strnlen_matches_bounded_scalar_reference() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"\0",
+            b"abc",
+            b"abc\0def",
+            b"\0abc",
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0tail",
+        ];
+
+        for s in cases {
+            for maxlen in 0..=80 {
+                let limit = maxlen.min(s.len());
+                let expected = s[..limit]
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(limit);
+                assert_eq!(strnlen(s, maxlen), expected);
+            }
+        }
+    }
+
+    #[test]
     fn test_strncmp_basic() {
         assert_eq!(strncmp(b"abcdef\0", b"abcxyz\0", 3), 0);
         assert!(strncmp(b"abcdef\0", b"abcxyz\0", 4) < 0);
@@ -2125,6 +2148,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn strnstr_golden_corpus_sha256() {
+        let nul = |mut bytes: Vec<u8>| {
+            bytes.push(0);
+            bytes
+        };
+
+        let mut cases: Vec<(Vec<u8>, Vec<u8>, usize)> = vec![
+            (nul(b"".to_vec()), nul(b"".to_vec()), 0),
+            (nul(b"abc".to_vec()), nul(b"".to_vec()), 0),
+            (nul(b"hello world".to_vec()), nul(b"world".to_vec()), 11),
+            (nul(b"hello world".to_vec()), nul(b"world".to_vec()), 10),
+            (nul(b"hello world".to_vec()), nul(b"world".to_vec()), 1024),
+            (nul(b"abc\0def".to_vec()), nul(b"def".to_vec()), 100),
+            (b"aaaaZQ".to_vec(), nul(b"ZQ".to_vec()), 4),
+            (b"xabcGARBAGE".to_vec(), nul(b"abc".to_vec()), 4),
+            (nul(b"aaaa".to_vec()), nul(b"aaa".to_vec()), 4),
+            (nul(b"aaaa".to_vec()), nul(b"aaa".to_vec()), 2),
+            (nul(b"abcabc".to_vec()), nul(b"abc".to_vec()), 6),
+            (nul(b"xabcabc".to_vec()), nul(b"abc".to_vec()), 7),
+            (nul(b"mississippi".to_vec()), nul(b"issi".to_vec()), 11),
+            (nul(b"mississippi".to_vec()), nul(b"ppi".to_vec()), 8),
+            (
+                nul(vec![b'a'; 512]),
+                nul(b"aaaaaaaaaaaaaaaab".to_vec()),
+                512,
+            ),
+        ];
+        let mut late = vec![b'a'; 300];
+        late.extend_from_slice(b"aaab\0");
+        cases.push((late, nul(b"aaab".to_vec()), 304));
+        for size in [16usize, 64, 256, 1024, 4096] {
+            let mut haystack = vec![b'A'; size];
+            haystack.push(0);
+            cases.push((haystack, nul(b"ZQ".to_vec()), size));
+        }
+
+        let mut hasher = Sha256::new();
+        let mut line = String::new();
+        for (idx, (haystack, needle, bound)) in cases.iter().enumerate() {
+            let result = strnstr(haystack, needle, *bound);
+            line.clear();
+            let result_field = result
+                .map(|offset| offset.to_string())
+                .unwrap_or_else(|| String::from("none"));
+            line.push_str(&format!("{idx};{result_field}\n"));
+            hasher.update(line.as_bytes());
+        }
+        let digest_hex: String = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(
+            digest_hex, "84555952f755c0ff071a2b064db484fb74e838c180632c105f9b034f0e9bafa7",
+            "strnstr golden corpus hash drifted"
+        );
     }
 
     #[test]

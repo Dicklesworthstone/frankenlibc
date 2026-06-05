@@ -292,13 +292,19 @@ mod string_properties {
             prop_assert_eq!(result, expected);
         }
 
-        /// strnlen is bounded: strnlen(s, maxlen) <= maxlen
+        /// strnlen matches the scalar bounded first-NUL reference.
         #[test]
         fn prop_strnlen_bounded(
             data in proptest::collection::vec(any::<u8>(), 0..128),
             maxlen in 0usize..256
         ) {
             let result = strnlen(&data, maxlen);
+            let limit = maxlen.min(data.len());
+            let expected = data[..limit]
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(limit);
+            prop_assert_eq!(result, expected);
             prop_assert!(result <= maxlen);
             prop_assert!(result <= data.len());
         }
