@@ -302,6 +302,31 @@ pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
     let mut any_digits = false;
     let mut overflow = false;
 
+    // SWAR fast path (base 10): 8 decimal digits per step via the same
+    // exhaustively-verified helpers as strtol_impl. `acc·10^8 + parse8` equals
+    // eight scalar iterations; overflow flags and keeps consuming (digit-exact
+    // end), matching the scalar tail.
+    if effective_base == 10 {
+        while i + 8 <= len {
+            let word = u64::from_le_bytes(s[i..i + 8].try_into().unwrap());
+            if !is_eight_digits(word) {
+                break;
+            }
+            any_digits = true;
+            if !overflow {
+                let parsed = parse_eight_digits(word) as u64;
+                match acc
+                    .checked_mul(100_000_000)
+                    .and_then(|a| a.checked_add(parsed))
+                {
+                    Some(v) if v <= limit => acc = v,
+                    _ => overflow = true,
+                }
+            }
+            i += 8;
+        }
+    }
+
     while i < len {
         let c = s[i];
         let digit = match c {
@@ -1100,6 +1125,81 @@ mod tests {
                 strtol_impl(&buf, 10),
                 scalar_ref(&buf),
                 "strtol divergence on {:?}",
+                String::from_utf8_lossy(&buf)
+            );
+        }
+    }
+
+    #[test]
+    fn swar_strtoul_matches_scalar_reference() {
+        // Independent scalar oracle for unsigned base-10 strtoul (sign negates
+        // via wrapping_neg, overflow -> u64::MAX, end position digit-exact).
+        fn scalar_ref(s: &[u8]) -> (u64, usize, ConversionStatus) {
+            let mut i = 0;
+            while i < s.len() && is_c_space(s[i]) {
+                i += 1;
+            }
+            if i == s.len() {
+                return (0, 0, ConversionStatus::Success);
+            }
+            let mut neg = false;
+            if s[i] == b'+' || s[i] == b'-' {
+                neg = s[i] == b'-';
+                i += 1;
+            }
+            let (mut acc, mut any, mut ovf) = (0u64, false, false);
+            while i < s.len() {
+                let d = match s[i] {
+                    c @ b'0'..=b'9' => (c - b'0') as u64,
+                    _ => break,
+                };
+                any = true;
+                if !ovf {
+                    match acc.checked_mul(10).and_then(|a| a.checked_add(d)) {
+                        Some(v) => acc = v,
+                        None => ovf = true,
+                    }
+                }
+                i += 1;
+            }
+            if !any {
+                return (0, 0, ConversionStatus::Success);
+            }
+            if ovf {
+                return (u64::MAX, i, ConversionStatus::Overflow);
+            }
+            (
+                if neg { acc.wrapping_neg() } else { acc },
+                i,
+                ConversionStatus::Success,
+            )
+        }
+
+        let mut st: u64 = 0xd1b5_4a32_d192_ed03;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        for _ in 0..1_000_000 {
+            let len = (next() % 25) as usize;
+            let mut buf = Vec::with_capacity(len + 2);
+            match next() % 4 {
+                0 => buf.push(b'-'),
+                1 => buf.push(b'+'),
+                _ => {}
+            }
+            for _ in 0..len {
+                buf.push(b'0' + (next() % 10) as u8);
+            }
+            if next() % 3 == 0 {
+                buf.push(b"xyz @"[(next() % 5) as usize]);
+            }
+            assert_eq!(
+                strtoul_impl(&buf, 10),
+                scalar_ref(&buf),
+                "strtoul divergence on {:?}",
                 String::from_utf8_lossy(&buf)
             );
         }
