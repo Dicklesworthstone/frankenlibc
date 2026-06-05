@@ -300,6 +300,53 @@ fn bench_strcmp_256_equal(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_scanf(c: &mut Criterion) {
+    use frankenlibc_core::stdio::scanf::{parse_scanf_format, scan_input};
+    let dirs = parse_scanf_format(b"%lld");
+    let input = b"123456789012345678".to_vec();
+    let mut group = c.benchmark_group("glibc_baseline_scanf_long");
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "scanf_long",
+            impl_label: "frankenlibc_core",
+            api_family: "stdio",
+            symbol: "sscanf",
+            workload: "%lld of an 18-digit decimal",
+            parity_proof_ref: "crates/frankenlibc-core/src/stdio/scanf.rs",
+        },
+        || {
+            black_box(scan_input(black_box(&input), &dirs));
+        },
+    );
+    let cinput = b"123456789012345678\0".to_vec();
+    let cfmt = b"%lld\0";
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "scanf_long",
+            impl_label: "host_glibc",
+            api_family: "stdio",
+            symbol: "sscanf",
+            workload: "%lld of an 18-digit decimal",
+            parity_proof_ref: "crates/frankenlibc-core/src/stdio/scanf.rs",
+        },
+        || {
+            let mut out: libc::c_longlong = 0;
+            // SAFETY: NUL-terminated input/format, one %lld -> one long long out.
+            unsafe {
+                black_box(libc::sscanf(
+                    black_box(cinput.as_ptr().cast()),
+                    cfmt.as_ptr().cast(),
+                    &mut out as *mut libc::c_longlong,
+                ));
+            }
+            black_box(out);
+        },
+    );
+    group.finish();
+}
+
 fn bench_strtol(c: &mut Criterion) {
     use frankenlibc_core::stdlib::conversion::strtol;
     for (label, s) in &[
@@ -2185,6 +2232,7 @@ criterion_group! {
         bench_strcmp_256_equal,
         bench_memcmp,
         bench_strtol,
+        bench_scanf,
         bench_malloc_free_64,
         bench_malloc_free_256,
         bench_malloc_free_large,

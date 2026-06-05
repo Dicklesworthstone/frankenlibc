@@ -32,7 +32,7 @@ const fn is_c_space(b: u8) -> bool {
 /// `0x30` for `0x30..=0x3F`, and `c + 6` only keeps the high nibble at `0x30`
 /// (so `>>4 == 3`) for `0x30..=0x39`, excluding `':'..='?'`.
 #[inline]
-fn is_eight_digits(word: u64) -> bool {
+pub(crate) fn is_eight_digits(word: u64) -> bool {
     ((word & 0xF0F0_F0F0_F0F0_F0F0)
         | ((word.wrapping_add(0x0606_0606_0606_0606) & 0xF0F0_F0F0_F0F0_F0F0) >> 4))
         == 0x3333_3333_3333_3333
@@ -45,7 +45,7 @@ fn is_eight_digits(word: u64) -> bool {
 /// the result is `d0·10^7 + d1·10^6 + … + d7`. Verified exhaustively against the
 /// scalar reference by `swar_parse_eight_matches_scalar`.
 #[inline]
-fn parse_eight_digits(word: u64) -> u32 {
+pub(crate) fn parse_eight_digits(word: u64) -> u32 {
     const MASK: u64 = 0x0000_00FF_0000_00FF;
     const MUL1: u64 = 0x000F_4240_0000_0064; // 100 + (1_000_000 << 32)
     const MUL2: u64 = 0x0000_2710_0000_0001; // 1   + (10_000   << 32)

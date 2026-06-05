@@ -681,6 +681,37 @@ fn scan_int(
     let mut val: u64 = 0;
     let mut overflowed = false;
     let mut any_digit = false;
+
+    // SWAR fast path (base 10): consume 8 decimal digits per step via the same
+    // exhaustively-verified helpers as strtol. Gated so the 8-digit block fits
+    // both the input and the remaining field width; `val·10^8 + parse8` equals
+    // eight scalar iterations (overflow saturates val to u64::MAX and keeps
+    // consuming, identical to the scalar tail below).
+    if base == 10 {
+        while i + 8 <= input.len() && chars_read + 8 <= max_chars {
+            let word = u64::from_le_bytes(input[i..i + 8].try_into().unwrap());
+            if !crate::stdlib::conversion::is_eight_digits(word) {
+                break;
+            }
+            any_digit = true;
+            if !overflowed {
+                let parsed = crate::stdlib::conversion::parse_eight_digits(word) as u64;
+                match val
+                    .checked_mul(100_000_000)
+                    .and_then(|v| v.checked_add(parsed))
+                {
+                    Some(next) => val = next,
+                    None => {
+                        val = u64::MAX;
+                        overflowed = true;
+                    }
+                }
+            }
+            i += 8;
+            chars_read += 8;
+        }
+    }
+
     while i < input.len() && chars_read < max_chars {
         let d = match digit_value(input[i], base) {
             Some(d) => d,
@@ -781,6 +812,37 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
     let mut val: u64 = 0;
     let mut overflowed = false;
     let mut any_digit = false;
+
+    // SWAR fast path (base 10): consume 8 decimal digits per step via the same
+    // exhaustively-verified helpers as strtol. Gated so the 8-digit block fits
+    // both the input and the remaining field width; `val·10^8 + parse8` equals
+    // eight scalar iterations (overflow saturates val to u64::MAX and keeps
+    // consuming, identical to the scalar tail below).
+    if base == 10 {
+        while i + 8 <= input.len() && chars_read + 8 <= max_chars {
+            let word = u64::from_le_bytes(input[i..i + 8].try_into().unwrap());
+            if !crate::stdlib::conversion::is_eight_digits(word) {
+                break;
+            }
+            any_digit = true;
+            if !overflowed {
+                let parsed = crate::stdlib::conversion::parse_eight_digits(word) as u64;
+                match val
+                    .checked_mul(100_000_000)
+                    .and_then(|v| v.checked_add(parsed))
+                {
+                    Some(next) => val = next,
+                    None => {
+                        val = u64::MAX;
+                        overflowed = true;
+                    }
+                }
+            }
+            i += 8;
+            chars_read += 8;
+        }
+    }
+
     while i < input.len() && chars_read < max_chars {
         let d = match digit_value(input[i], base) {
             Some(d) => d,
@@ -1319,6 +1381,38 @@ mod tests {
         let result = scan_input(b"42", &dirs);
         assert_eq!(result.count, 1);
         assert!(matches!(result.values[0], ScanValue::SignedInt(42)));
+    }
+
+    #[test]
+    fn swar_scan_long_decimal_matches_std() {
+        // Drive the SWAR 8-digit fast path (lengths >= 8) through the real
+        // scan_input("%lld") entry point and compare to std::parse ground truth;
+        // overflow must clamp to i64::MAX (scan_int saturation semantics).
+        let lld = parse_scanf_format(b"%lld");
+        let mut st: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        for _ in 0..200_000 {
+            let ndigits = 8 + (next() % 13) as usize; // 8..=20 digits
+            let mut s = Vec::with_capacity(ndigits + 1);
+            // first digit non-zero to avoid leading-zero ambiguity in the oracle
+            s.push(b'1' + (next() % 9) as u8);
+            for _ in 1..ndigits {
+                s.push(b'0' + (next() % 10) as u8);
+            }
+            let res = scan_input(&s, &lld);
+            let got = match res.values.first() {
+                Some(ScanValue::SignedInt(v)) => *v,
+                other => panic!("unexpected scan value {other:?} for {s:?}"),
+            };
+            let text = std::str::from_utf8(&s).unwrap();
+            let want = text.parse::<i64>().unwrap_or(i64::MAX); // overflow clamps
+            assert_eq!(got, want, "scan %lld of {text} = {got} want {want}");
+        }
     }
 
     #[test]
