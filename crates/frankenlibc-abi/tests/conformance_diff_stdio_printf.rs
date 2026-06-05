@@ -502,3 +502,144 @@ fn stdio_printf_diff_coverage_report() {
         "{{\"family\":\"stdio.h printf+scanf\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",
     );
 }
+
+// ===========================================================================
+// Randomized float-format differential fuzz vs glibc snprintf.
+//
+// diff_snprintf_float_specifiers above uses ~17 fixed cases. Float formatting
+// (%f/%e/%g/%a, rounding, precision, exponent, subnormals, specials) is the most
+// bug-prone printf area, so this deterministically fuzzes diverse doubles across
+// flags x widths x precisions x conversions and asserts byte-for-byte agreement
+// with host glibc snprintf (return value AND output).
+// ===========================================================================
+
+struct PrintfXorShift64(u64);
+impl PrintfXorShift64 {
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() % n as u64) as usize
+    }
+}
+
+fn build_float_fmt(flag: &str, width: Option<u32>, prec: Option<u32>, conv: u8) -> Vec<u8> {
+    let mut s = String::from("%");
+    s.push_str(flag);
+    if let Some(w) = width {
+        s.push_str(&w.to_string());
+    }
+    if let Some(p) = prec {
+        s.push('.');
+        s.push_str(&p.to_string());
+    }
+    s.push(conv as char);
+    let mut v = s.into_bytes();
+    v.push(0);
+    v
+}
+
+#[test]
+fn diff_snprintf_float_fuzz() {
+    let mut rng = PrintfXorShift64(0x243F6A8885A308D3);
+
+    // Diverse value pool: specials, subnormals, exact boundaries, plus randoms.
+    let mut values: Vec<f64> = vec![
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        2.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+        f64::MIN,
+        f64::MAX,
+        f64::MIN_POSITIVE,
+        f64::from_bits(1),               // smallest subnormal
+        f64::from_bits(0x000F_FFFF_FFFF_FFFF), // largest subnormal
+        9.999_999_999_999_999e0,
+        1.0 - f64::EPSILON / 2.0,        // rounding boundary
+        0.1,
+        0.3,
+        123_456_789.987_654_3,
+        1e-300,
+        1e300,
+    ];
+    for _ in 0..1500 {
+        // Random finite-ish double: sign * (1+frac) * 2^exp across the range.
+        let bits = rng.next_u64();
+        let sign = if bits & 1 == 0 { 1.0 } else { -1.0 };
+        let frac = (rng.next_u64() >> 11) as f64 / (1u64 << 53) as f64;
+        let exp = (rng.below(700) as i32) - 350;
+        let v = sign * (1.0 + frac) * 2f64.powi(exp);
+        if v.is_finite() {
+            values.push(v);
+        }
+    }
+
+    const FLAGS: &[&str] = &["", "#", "0", "+", " ", "-", "+#", "-#"];
+    const CONVS: &[u8] = &[b'f', b'e', b'E', b'g', b'G', b'a', b'A'];
+    const PRECS: &[Option<u32>] = &[None, Some(0), Some(1), Some(2), Some(6), Some(13), Some(25)];
+    const WIDTHS: &[Option<u32>] = &[None, Some(0), Some(12), Some(30)];
+
+    let mut divs = Vec::new();
+    'outer: for &val in &values {
+        for _ in 0..12 {
+            let flag = FLAGS[rng.below(FLAGS.len())];
+            let conv = CONVS[rng.below(CONVS.len())];
+            let prec = PRECS[rng.below(PRECS.len())];
+            let width = WIDTHS[rng.below(WIDTHS.len())];
+            let fmt = build_float_fmt(flag, width, prec, conv);
+
+            let mut buf_fl = vec![0u8; 4096];
+            let mut buf_lc = vec![0u8; 4096];
+            let n_fl = unsafe {
+                fl::snprintf(
+                    buf_fl.as_mut_ptr() as *mut c_char,
+                    buf_fl.len(),
+                    fmt.as_ptr() as *const c_char,
+                    val,
+                )
+            };
+            let n_lc = unsafe {
+                libc::snprintf(
+                    buf_lc.as_mut_ptr() as *mut c_char,
+                    buf_lc.len(),
+                    fmt.as_ptr() as *const c_char,
+                    val,
+                )
+            };
+            let s_fl = buf_used(&buf_fl);
+            let s_lc = buf_used(&buf_lc);
+            if n_fl != n_lc || s_fl != s_lc {
+                divs.push(Divergence {
+                    function: "snprintf",
+                    case: format!(
+                        "(fmt={:?}, val={val:?} bits={:#018x})",
+                        String::from_utf8_lossy(&fmt[..fmt.len() - 1]),
+                        val.to_bits()
+                    ),
+                    field: "rc/output",
+                    frankenlibc: format!("rc={n_fl} {:?}", String::from_utf8_lossy(s_fl)),
+                    glibc: format!("rc={n_lc} {:?}", String::from_utf8_lossy(s_lc)),
+                });
+                if divs.len() >= 12 {
+                    break 'outer;
+                }
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "snprintf float fuzz divergences:\n{}",
+        render_divs(&divs)
+    );
+}

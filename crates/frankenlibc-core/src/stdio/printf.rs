@@ -1554,7 +1554,22 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
         return "0".into();
     }
 
-    let exp = value.log10().floor() as i32;
+    // Decimal exponent AFTER rounding to `p` significant digits. The naive
+    // `value.log10().floor()` gives the *pre-rounding* exponent, but C requires
+    // the exponent the value would have in %e style — i.e. after rounding to `p`
+    // significant digits. Rounding can carry into the next decade (0.0976 with
+    // p=1 -> "0.1", exponent -2 -> -1; 999999.5 with p=6 -> "1e+06",
+    // exponent 5 -> 6), which changes both the %g style choice and the %f
+    // fractional-digit count. Reading the exponent off a correctly-rounded `{:e}`
+    // rendering is exact post-rounding (and also avoids `log10()` floating-point
+    // imprecision at exact powers of ten). Falls back to the log10 estimate only
+    // if the parse unexpectedly fails.
+    let rounded_e = alloc::format!("{:.*e}", p - 1, value);
+    let exp = rounded_e
+        .rsplit('e')
+        .next()
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or_else(|| value.log10().floor() as i32);
     // C11 7.21.6.1 para 8: use %e style iff exp < -4 OR exp >= precision;
     // otherwise %f. The lower bound is -4 (not -1): e.g. 0.0001234 has
     // exp = -4 and precision = 6, so it must render as "0.0001234".
