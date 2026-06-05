@@ -1112,3 +1112,74 @@ fn time_diff_coverage_report() {
         total,
     );
 }
+
+// ===========================================================================
+// strftime week-number dense daily fuzz vs glibc.
+//
+// diff_strftime_cases uses a fixed epoch list and its format list omits %V
+// (ISO week) entirely — yet %V/%G/%g at year boundaries (the ISO week 52/53/01
+// transitions) are the classic strftime bug site. This sweeps EVERY day from
+// 1990 through 2039 and compares a combined week-specifier format against glibc
+// byte-for-byte, so any off-by-one in iso_week / %U / %W is caught.
+// ===========================================================================
+
+#[test]
+fn diff_strftime_week_specifiers_dense() {
+    // Combined format exercising every week/year/day specifier per day.
+    let fmt = b"%G %V %g %u %U %W %j %a %Y %m %d\0";
+    let fmt_p = fmt.as_ptr() as *const c_char;
+    // 1990-01-01 00:00:00 UTC = 631152000; 50 years of daily steps.
+    const BASE: i64 = 631_152_000;
+    const DAYS: i64 = 50 * 366;
+
+    let mut divs = Vec::new();
+    with_utc(|| {
+        for day in 0..DAYS {
+            let epoch = BASE + day * 86_400;
+            let mut tm_buf = empty_tm();
+            let _ = unsafe { libc::gmtime_r(&epoch, &mut tm_buf) };
+
+            let mut fl_buf = vec![0u8; 128];
+            let mut lc_buf = vec![0u8; 128];
+            let fl_n = unsafe {
+                fl::strftime(
+                    fl_buf.as_mut_ptr() as *mut c_char,
+                    fl_buf.len(),
+                    fmt_p,
+                    &tm_buf,
+                )
+            };
+            let lc_n = unsafe {
+                libc::strftime(
+                    lc_buf.as_mut_ptr() as *mut c_char,
+                    lc_buf.len(),
+                    fmt_p,
+                    &tm_buf,
+                )
+            };
+            if fl_n != lc_n || fl_buf[..fl_n] != lc_buf[..lc_n] {
+                divs.push(Divergence {
+                    function: "strftime",
+                    case: format!(
+                        "epoch={epoch} ({:04}-{:02}-{:02})",
+                        tm_buf.tm_year + 1900,
+                        tm_buf.tm_mon + 1,
+                        tm_buf.tm_mday
+                    ),
+                    field: "week-specifiers",
+                    frankenlibc: String::from_utf8_lossy(&fl_buf[..fl_n]).into_owned(),
+                    glibc: String::from_utf8_lossy(&lc_buf[..lc_n]).into_owned(),
+                });
+                if divs.len() >= 15 {
+                    break;
+                }
+            }
+        }
+    });
+    assert!(
+        divs.is_empty(),
+        "strftime week-specifier divergences ({} shown):\n{}",
+        divs.len(),
+        render_divs(&divs)
+    );
+}
