@@ -1797,6 +1797,66 @@ fn bench_math(c: &mut Criterion) {
         },
     );
 
+    // exp(f64) over [-4,4]: this range is mostly OUTSIDE the old [0.5,2.5) gate,
+    // so the old fast path covered almost none of it (fell to slow libm::exp).
+    // The widened [-5,5] gate now fast-paths it all.
+    let inputs_wide: Vec<f64> = (0..64).map(|k| -4.0 + (k as f64) * 0.125).collect();
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "exp_wide",
+            impl_label: "frankenlibc_core",
+            api_family: "math",
+            symbol: "exp",
+            workload: "exp(x) x in [-4,4]",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/exp.rs",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs_wide {
+                acc += math::exp(black_box(x));
+            }
+            black_box(acc);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "exp_wide",
+            impl_label: "frankenlibc_old_libm",
+            api_family: "math",
+            symbol: "exp",
+            workload: "exp(x) x in [-4,4]",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/exp.rs",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs_wide {
+                acc += libm::exp(black_box(x));
+            }
+            black_box(acc);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "exp_wide",
+            impl_label: "host_glibc",
+            api_family: "math",
+            symbol: "exp",
+            workload: "exp(x) x in [-4,4]",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/exp.rs",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs_wide {
+                // SAFETY: plain libm call on finite f64 inputs.
+                acc += unsafe { cmath::exp(black_box(x)) };
+            }
+            black_box(acc);
+        },
+    );
+
     group.finish();
 }
 

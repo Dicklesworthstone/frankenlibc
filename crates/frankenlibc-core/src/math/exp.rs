@@ -43,12 +43,21 @@ const EXP_MEDIUM_MAX: f64 = 2.5;
 const POW_MEDIUM_EXP_MIN: f64 = -3.0;
 const POW_MEDIUM_EXP_MAX: f64 = 3.0;
 
-/// Fast path for the profiled finite medium interval using the existing exp2
-/// kernel's range reduction. Values outside this bounded interval retain the
-/// previous libm::exp behavior bit-for-bit.
+/// Range over which `exp(x) = exp2(x * log2e)` stays within 4 ULP of glibc.
+/// The error is dominated by the rounding of the `x*log2e` product (~0.5*|x|
+/// ULP after exp2 amplification), so it stays <=4 ULP up to |x| = 5 and jumps
+/// to ~7 ULP by |x| = 6 (measured by a 2M-point sweep). libm::exp2 is markedly
+/// cheaper than libm::exp, so this covers the common decay/softmax ranges that
+/// previously fell to the slower libm::exp path. Note this is the EXP argument
+/// range, distinct from the [`EXP_MEDIUM_MIN`]/[`EXP_MEDIUM_MAX`] pow-base gate.
+const EXP_FAST_MIN: f64 = -5.0;
+const EXP_FAST_MAX: f64 = 5.0;
+
+/// Fast path for the finite `[-5, 5]` interval via the exp2 kernel. Values
+/// outside it retain the previous libm::exp behavior bit-for-bit.
 #[inline]
 fn exp_medium_exp2_fast_path(x: f64) -> Option<f64> {
-    if (EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&x) {
+    if (EXP_FAST_MIN..=EXP_FAST_MAX).contains(&x) {
         Some(libm::exp2(x * std::f64::consts::LOG2_E))
     } else {
         None
@@ -399,16 +408,29 @@ mod tests {
     #[test]
     fn exp_medium_exp2_fast_path_within_4_ulps() {
         let mut inputs = vec![
-            EXP_MEDIUM_MIN,
+            EXP_FAST_MIN,
+            EXP_FAST_MAX,
+            -4.999,
+            -2.5,
+            -1.0,
+            -0.25,
+            0.0,
             0.500_000_000_000_000_1,
             std::f64::consts::LN_2,
             1.0,
             std::f64::consts::SQRT_2,
             2.0,
             2.468_75,
-            EXP_MEDIUM_MAX - f64::EPSILON,
+            4.999,
         ];
-        inputs.extend((0..64).map(|k| 0.5 + (k as f64) * 0.031_25));
+        // Dense deterministic sweep across the whole [-5, 5] fast-path interval.
+        let mut s = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..1_000_000 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            inputs.push(-5.0 + (s >> 11) as f64 * (10.0 / (1u64 << 53) as f64));
+        }
 
         for x in inputs {
             let got = exp(x);
@@ -422,13 +444,14 @@ mod tests {
 
     #[test]
     fn exp_medium_exp2_fast_path_preserves_fallback_cases() {
+        // Outside [-5, 5] exp must stay bit-identical to libm::exp.
         let cases = [
             f64::NEG_INFINITY,
             -20.0,
-            -1.0,
-            0.0,
-            EXP_MEDIUM_MIN - f64::EPSILON,
-            EXP_MEDIUM_MAX,
+            -6.0,
+            -5.000_000_000_000_001,
+            5.000_000_000_000_001,
+            6.0,
             20.0,
             f64::INFINITY,
         ];
@@ -468,7 +491,7 @@ mod tests {
             .map(|x| format!("{x:02x}"))
             .collect();
         assert_eq!(
-            digest, "e43bc9b2b3385417dc6560ef3544112eeac1993aaf03b43d6d9a3035373e331d",
+            digest, "e44a16c130577d30811cc63a179ce65cdc2c0451958b238918a77aa165c1a2be",
             "exp medium exp2 golden corpus hash drifted"
         );
     }
