@@ -34,6 +34,193 @@ unsafe extern "C" {
     fn llrint(x: f64) -> i64;
     fn lroundf(x: f32) -> c_long;
     fn lrintf(x: f32) -> c_long;
+    // f32 exact-result variants.
+    fn truncf(x: f32) -> f32;
+    fn rintf(x: f32) -> f32;
+    fn nearbyintf(x: f32) -> f32;
+    fn roundf(x: f32) -> f32;
+    fn logbf(x: f32) -> f32;
+    fn ilogbf(x: f32) -> c_int;
+    fn significandf(x: f32) -> f32;
+    fn nextafterf(x: f32, y: f32) -> f32;
+    fn scalbnf(x: f32, n: c_int) -> f32;
+    fn remainderf(x: f32, y: f32) -> f32;
+    fn modff(x: f32, iptr: *mut f32) -> f32;
+    fn frexpf(x: f32, e: *mut c_int) -> f32;
+    fn ldexpf(x: f32, n: c_int) -> f32;
+}
+
+fn feq32(a: f32, b: f32) -> bool {
+    (a.is_nan() && b.is_nan()) || a.to_bits() == b.to_bits()
+}
+
+/// Adversarial f32 corpus mirroring the f64 one.
+fn corpus_f32() -> Vec<f32> {
+    let mut v: Vec<f32> = vec![
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        -0.5,
+        1.5,
+        -1.5,
+        2.5,
+        -2.5,
+        3.5,
+        -3.5,
+        0.25,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        f32::MIN_POSITIVE,
+        f32::MIN_POSITIVE / 2.0,
+        1.401_298_5e-45, // smallest positive subnormal
+        f32::MAX,
+        f32::MIN,
+        8388608.0,  // 2^23
+        8388609.0,  // 2^23 + 1
+        16777216.0, // 2^24
+        -8388608.5,
+        0.499_999_97,
+        0.500_000_06,
+        123456.789,
+        1e30,
+        1e-30,
+        std::f32::consts::PI,
+    ];
+    let mut s: u32 = 0x9abc_def1;
+    for _ in 0..6000 {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        v.push(f32::from_bits(s));
+    }
+    v
+}
+
+#[test]
+fn diff_math_exact_f32_vs_glibc() {
+    let xs = corpus_f32();
+    let mut div: Vec<String> = Vec::new();
+
+    macro_rules! chk1 {
+        ($name:literal, $fl:path, $g:ident) => {
+            for &x in &xs {
+                let a = unsafe { $fl(x) };
+                let b = unsafe { $g(x) };
+                if !feq32(a, b) {
+                    div.push(format!(
+                        "  {}(0x{:08x} {:e}): fl=0x{:08x} glibc=0x{:08x}",
+                        $name,
+                        x.to_bits(),
+                        x,
+                        a.to_bits(),
+                        b.to_bits()
+                    ));
+                }
+            }
+        };
+    }
+
+    chk1!("truncf", fl::truncf, truncf);
+    chk1!("rintf", fl::rintf, rintf);
+    chk1!("nearbyintf", fl::nearbyintf, nearbyintf);
+    chk1!("roundf", fl::roundf, roundf);
+    chk1!("logbf", fl::logbf, logbf);
+    chk1!("significandf", fl::significandf, significandf);
+
+    for &x in &xs {
+        if unsafe { fl::ilogbf(x) } != unsafe { ilogbf(x) } {
+            div.push(format!(
+                "  ilogbf(0x{:08x} {:e}): fl={} glibc={}",
+                x.to_bits(),
+                x,
+                unsafe { fl::ilogbf(x) },
+                unsafe { ilogbf(x) }
+            ));
+        }
+    }
+
+    let ys = &xs[..xs.len().min(64)];
+    for &x in &xs {
+        for &y in ys {
+            let a = unsafe { fl::nextafterf(x, y) };
+            let b = unsafe { nextafterf(x, y) };
+            if !feq32(a, b) {
+                div.push(format!("  nextafterf({x:e},{y:e}): fl={a:e} glibc={b:e}"));
+            }
+            let a = unsafe { fl::remainderf(x, y) };
+            let b = unsafe { remainderf(x, y) };
+            if !feq32(a, b) {
+                div.push(format!(
+                    "  remainderf({x:e},{y:e}): fl=0x{:08x} glibc=0x{:08x}",
+                    a.to_bits(),
+                    b.to_bits()
+                ));
+            }
+        }
+    }
+
+    let ns: [c_int; 9] = [0, 1, -1, 23, -23, 127, -127, 150, -150];
+    for &x in &xs {
+        for &n in &ns {
+            let a = unsafe { fl::scalbnf(x, n) };
+            let b = unsafe { scalbnf(x, n) };
+            if !feq32(a, b) {
+                div.push(format!("  scalbnf({x:e},{n}): fl={a:e} glibc={b:e}"));
+            }
+            let a = unsafe { fl::ldexpf(x, n) };
+            let b = unsafe { ldexpf(x, n) };
+            if !feq32(a, b) {
+                div.push(format!("  ldexpf({x:e},{n}): fl={a:e} glibc={b:e}"));
+            }
+        }
+    }
+
+    for &x in &xs {
+        let (mut ia, mut ib) = (0.0f32, 0.0f32);
+        let a = unsafe { fl::modff(x, &mut ia) };
+        let b = unsafe { modff(x, &mut ib) };
+        if !feq32(a, b) || !feq32(ia, ib) {
+            div.push(format!(
+                "  modff({x:e}): fl=(f=0x{:08x},i=0x{:08x}) glibc=(f=0x{:08x},i=0x{:08x})",
+                a.to_bits(),
+                ia.to_bits(),
+                b.to_bits(),
+                ib.to_bits()
+            ));
+        }
+        let (mut ea, mut eb): (c_int, c_int) = (0, 0);
+        let a = unsafe { fl::frexpf(x, &mut ea) };
+        let b = unsafe { frexpf(x, &mut eb) };
+        if !feq32(a, b) || (a != 0.0 && a.is_finite() && ea != eb) {
+            div.push(format!(
+                "  frexpf({x:e}): fl=(0x{:08x},e={ea}) glibc=(0x{:08x},e={eb})",
+                a.to_bits(),
+                b.to_bits()
+            ));
+        }
+    }
+
+    use std::collections::BTreeMap;
+    let mut hist: BTreeMap<&str, usize> = BTreeMap::new();
+    for d in &div {
+        *hist
+            .entry(d.trim_start().split('(').next().unwrap_or("?"))
+            .or_default() += 1;
+    }
+    let summary: String = hist.iter().map(|(k, n)| format!("  {k}: {n}\n")).collect();
+    let examples: String = div.iter().take(30).cloned().collect::<Vec<_>>().join("\n");
+    assert!(
+        div.is_empty(),
+        "{} f32 exact-math divergences vs glibc.\nHISTOGRAM:\n{}EXAMPLES:\n{}",
+        div.len(),
+        summary,
+        examples
+    );
 }
 
 /// Bit-equality with NaN-vs-NaN treated as equal (payloads may differ and are
