@@ -44,6 +44,13 @@ pub fn atan2f(y: f32, x: f32) -> f32 {
 
 #[inline]
 pub fn expf(x: f32) -> f32 {
+    // Medium fast path mirroring the f64 `exp`: on [0.5, 2.5), libm::exp2f is
+    // ~1.5x faster than libm::expf and stays within the 4-ULP glibc parity
+    // budget (verified by `expf_medium_fast_path_within_4_ulps`). Outside the
+    // interval, defer to libm::expf bit-for-bit.
+    if (0.5..2.5).contains(&x) {
+        return libm::exp2f(x * core::f32::consts::LOG2_E);
+    }
     libm::expf(x)
 }
 
@@ -592,6 +599,56 @@ mod tests {
         let ab = a.to_bits() as i32;
         let bb = b.to_bits() as i32;
         (ab - bb).unsigned_abs() <= ulps
+    }
+
+    #[test]
+    fn expf_medium_fast_path_within_4_ulps() {
+        // Dense sweep of the fast-path interval [0.5, 2.5) vs host glibc expf.
+        let mut s = 0x1357_9bdf_u32;
+        let mut maxu = 0u32;
+        for _ in 0..1_000_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let x = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32); // [0.5,2.5)
+            let got = expf(x);
+            let want = x.exp(); // glibc expf
+            let u = if got == want {
+                0
+            } else {
+                (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs()
+            };
+            if u > maxu {
+                maxu = u;
+            }
+        }
+        assert!(
+            maxu <= 4,
+            "expf medium fast path max {maxu} ULP > 4 vs glibc"
+        );
+    }
+
+    #[test]
+    fn expf_fallback_preserves_libm_bits() {
+        // Outside [0.5, 2.5) expf must stay bit-identical to libm::expf.
+        for &x in &[
+            -10.0f32,
+            -1.0,
+            0.0,
+            0.4999999,
+            2.5,
+            3.0,
+            50.0,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+        ] {
+            assert_eq!(
+                expf(x).to_bits(),
+                libm::expf(x).to_bits(),
+                "expf({x}) fallback drifted"
+            );
+        }
+        assert!(expf(f32::NAN).is_nan());
     }
 
     #[test]

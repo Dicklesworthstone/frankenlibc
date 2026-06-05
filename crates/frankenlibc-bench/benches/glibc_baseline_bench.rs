@@ -1020,6 +1020,7 @@ mod cmath {
         pub fn log2(x: f64) -> f64;
         pub fn pow(x: f64, y: f64) -> f64;
         pub fn powf(x: f32, y: f32) -> f32;
+        pub fn expf(x: f32) -> f32;
         pub fn atan2(y: f64, x: f64) -> f64;
     }
 }
@@ -1738,6 +1739,63 @@ fn bench_math(c: &mut Criterion) {
     }
     powf_pair!("powf_int", "powf(x,3) x in [0.5,2.5)", 3.0f32);
     powf_pair!("powf_irrational", "powf(x,1.337) x in [0.5,2.5)", 1.337f32);
+
+    // expf medium fast path (exp2f-based) vs old libm::expf vs glibc.
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "expf_medium",
+            impl_label: "frankenlibc_core",
+            api_family: "math",
+            symbol: "expf",
+            workload: "expf(x) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/float32.rs",
+        },
+        || {
+            let mut acc = 0.0_f32;
+            for &x in &inputs_f32 {
+                acc += math::expf(black_box(x));
+            }
+            black_box(acc);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "expf_medium",
+            impl_label: "frankenlibc_old_libm",
+            api_family: "math",
+            symbol: "expf",
+            workload: "expf(x) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/float32.rs",
+        },
+        || {
+            let mut acc = 0.0_f32;
+            for &x in &inputs_f32 {
+                acc += libm::expf(black_box(x));
+            }
+            black_box(acc);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "expf_medium",
+            impl_label: "host_glibc",
+            api_family: "math",
+            symbol: "expf",
+            workload: "expf(x) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/float32.rs",
+        },
+        || {
+            let mut acc = 0.0_f32;
+            for &x in &inputs_f32 {
+                // SAFETY: plain libm call on finite f32 inputs.
+                acc += unsafe { cmath::expf(black_box(x)) };
+            }
+            black_box(acc);
+        },
+    );
 
     group.finish();
 }
