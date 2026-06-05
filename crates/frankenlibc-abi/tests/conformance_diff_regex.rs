@@ -413,3 +413,75 @@ fn diff_regex_random_fuzz() {
         render_divs(&divs)
     );
 }
+
+// ===========================================================================
+// GNU word-boundary assertions \b \B \< \> vs glibc (bd-2g7oyh.136).
+// ===========================================================================
+
+#[test]
+fn diff_regex_word_boundaries() {
+    // (pattern, subject, cflags)
+    let cases: &[(&str, &str, c_int)] = &[
+        // \b — word boundary
+        (r"\bword\b", "a word here", 0),
+        (r"\bword\b", "swordfish", 0), // no boundary inside "sword"/"word"
+        (r"\bcat", "the cat sat", REG_EXTENDED),
+        (r"cat\b", "bobcat", REG_EXTENDED),
+        (r"\b", "  hi", 0), // boundary before 'h'
+        (r"\b", "   ", 0),  // no word char -> no boundary
+        (r"\bab*\b", "x abb y", REG_EXTENDED),
+        (r"foo\bbar", "foobar", 0), // never a boundary between two word chars
+        (r"\b123\b", "a 123 b", REG_EXTENDED),
+        (r"\b_id\b", "the _id field", 0), // underscore is a word char
+        // \B — NON-boundary
+        (r"\Bell\B", "hello", 0),
+        (r"\Bcat", "the cat", REG_EXTENDED), // 'cat' is at a boundary -> no match
+        (r"er\B", "verexx", REG_EXTENDED),
+        // \< start-of-word, \> end-of-word
+        (r"\<cat", "the cat", 0),
+        (r"\<cat", "bobcat", 0),
+        (r"cat\>", "bobcat", 0),
+        (r"cat\>", "category", 0),
+        (r"\<word\>", "a word now", REG_EXTENDED),
+        // boundaries interacting with anchors / case-fold
+        (r"\bWORD\b", "a word here", REG_ICASE),
+        (r"a\b.", "a b", REG_EXTENDED),
+    ];
+    let mut divs = Vec::new();
+    for (pat, subj, cflags) in cases {
+        let ((cf, ef), (cl, el), pm_fl, pm_lc) = run_match(pat, subj, *cflags, 2);
+        let case = format!("pat={pat:?} subj={subj:?} cflags={cflags}");
+        if (cf == 0) != (cl == 0) {
+            divs.push(Divergence {
+                function: "regcomp",
+                case,
+                field: "compile_ok",
+                frankenlibc: format!("rc={cf}"),
+                glibc: format!("rc={cl}"),
+            });
+        } else if cf == 0 {
+            if (ef == 0) != (el == 0) {
+                divs.push(Divergence {
+                    function: "regexec",
+                    case,
+                    field: "match",
+                    frankenlibc: format!("rc={ef}"),
+                    glibc: format!("rc={el}"),
+                });
+            } else if ef == 0 && pm_fl != pm_lc {
+                divs.push(Divergence {
+                    function: "regexec",
+                    case,
+                    field: "offsets",
+                    frankenlibc: format!("{pm_fl:?}"),
+                    glibc: format!("{pm_lc:?}"),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "regex word-boundary divergences:\n{}",
+        render_divs(&divs)
+    );
+}

@@ -100,6 +100,20 @@ enum Ast {
 enum AnchorKind {
     Start,
     End,
+    /// GNU `\b` (word boundary) / `\B` (non-boundary) zero-width assertions.
+    WordBoundary {
+        negate: bool,
+    },
+    /// GNU `\<` — match at the start of a word.
+    WordStart,
+    /// GNU `\>` — match at the end of a word.
+    WordEnd,
+}
+
+/// A byte is a "word" character for `\b`/`\<`/`\>`/`\w`: `[A-Za-z0-9_]`.
+#[inline]
+fn regex_is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +540,14 @@ enum MatchKind {
     AnchorEnd {
         newline: bool,
     },
+    /// GNU `\b` / `\B` word-boundary assertion (zero-width).
+    WordBoundary {
+        negate: bool,
+    },
+    /// GNU `\<` — start-of-word assertion (zero-width).
+    WordStart,
+    /// GNU `\>` — end-of-word assertion (zero-width).
+    WordEnd,
 }
 
 // ---------------------------------------------------------------------------
@@ -946,6 +968,25 @@ impl<'a> Parser<'a> {
                         }
                         Ok(Ast::BackRef(idx))
                     }
+                    // GNU word-boundary assertions (zero-width), valid in both
+                    // BRE and ERE — matching glibc. Previously these fell through
+                    // to the literal case (`\b` matched a literal 'b').
+                    Some(b'b') => {
+                        self.advance();
+                        Ok(Ast::Anchor(AnchorKind::WordBoundary { negate: false }))
+                    }
+                    Some(b'B') => {
+                        self.advance();
+                        Ok(Ast::Anchor(AnchorKind::WordBoundary { negate: true }))
+                    }
+                    Some(b'<') => {
+                        self.advance();
+                        Ok(Ast::Anchor(AnchorKind::WordStart))
+                    }
+                    Some(b'>') => {
+                        self.advance();
+                        Ok(Ast::Anchor(AnchorKind::WordEnd))
+                    }
                     Some(ch) => {
                         self.advance();
                         // Escaped metacharacter becomes literal
@@ -1129,6 +1170,15 @@ impl Compiler {
                 self.emit(NfaInstr::Match(MatchKind::AnchorEnd {
                     newline: self.compile_newline,
                 }));
+            }
+            Ast::Anchor(AnchorKind::WordBoundary { negate }) => {
+                self.emit(NfaInstr::Match(MatchKind::WordBoundary { negate: *negate }));
+            }
+            Ast::Anchor(AnchorKind::WordStart) => {
+                self.emit(NfaInstr::Match(MatchKind::WordStart));
+            }
+            Ast::Anchor(AnchorKind::WordEnd) => {
+                self.emit(NfaInstr::Match(MatchKind::WordEnd));
             }
             Ast::Concat(items) => {
                 for item in items {
@@ -1335,7 +1385,10 @@ impl<'a> PikeVm<'a> {
         *generation += 1;
         self.add_thread(
             &mut current,
-            Thread { pc: 0, slots: dummy.clone() },
+            Thread {
+                pc: 0,
+                slots: dummy.clone(),
+            },
             0,
             notbol,
             noteol,
@@ -1356,7 +1409,10 @@ impl<'a> PikeVm<'a> {
                     NfaInstr::Match(mk) if self.matches(mk, sp, notbol, noteol) => {
                         self.add_thread(
                             &mut next,
-                            Thread { pc: t.pc + 1, slots: t.slots },
+                            Thread {
+                                pc: t.pc + 1,
+                                slots: t.slots,
+                            },
                             sp + 1,
                             notbol,
                             noteol,
@@ -1374,7 +1430,10 @@ impl<'a> PikeVm<'a> {
             // Seed a fresh start-thread at the new position into the same set.
             self.add_thread(
                 &mut next,
-                Thread { pc: 0, slots: dummy.clone() },
+                Thread {
+                    pc: 0,
+                    slots: dummy.clone(),
+                },
                 sp,
                 notbol,
                 noteol,
@@ -1405,7 +1464,15 @@ impl<'a> PikeVm<'a> {
             slots: initial_slots.to_vec(),
         };
         *generation += 1;
-        self.add_thread(&mut current, init_thread, start, notbol, noteol, visited, *generation);
+        self.add_thread(
+            &mut current,
+            init_thread,
+            start,
+            notbol,
+            noteol,
+            visited,
+            *generation,
+        );
 
         let input_len = self.input.len();
         let mut sp = start;
@@ -1425,7 +1492,15 @@ impl<'a> PikeVm<'a> {
                             pc: t.pc + 1,
                             slots: t.slots,
                         };
-                        self.add_thread(&mut next, new_t, sp + 1, notbol, noteol, visited, step_gen);
+                        self.add_thread(
+                            &mut next,
+                            new_t,
+                            sp + 1,
+                            notbol,
+                            noteol,
+                            visited,
+                            step_gen,
+                        );
                     }
                     NfaInstr::Match(_) => {}
                     NfaInstr::Accept => {
@@ -1521,15 +1596,42 @@ impl<'a> PikeVm<'a> {
                     pc: *b,
                     slots: t.slots,
                 };
-                self.add_thread_inner(threads, t1, sp, notbol, noteol, depth + 1, visited, generation);
-                self.add_thread_inner(threads, t2, sp, notbol, noteol, depth + 1, visited, generation);
+                self.add_thread_inner(
+                    threads,
+                    t1,
+                    sp,
+                    notbol,
+                    noteol,
+                    depth + 1,
+                    visited,
+                    generation,
+                );
+                self.add_thread_inner(
+                    threads,
+                    t2,
+                    sp,
+                    notbol,
+                    noteol,
+                    depth + 1,
+                    visited,
+                    generation,
+                );
             }
             NfaInstr::Jump(target) => {
                 let new_t = Thread {
                     pc: *target,
                     slots: t.slots,
                 };
-                self.add_thread_inner(threads, new_t, sp, notbol, noteol, depth + 1, visited, generation);
+                self.add_thread_inner(
+                    threads,
+                    new_t,
+                    sp,
+                    notbol,
+                    noteol,
+                    depth + 1,
+                    visited,
+                    generation,
+                );
             }
             NfaInstr::Save(slot) => {
                 let mut new_slots = t.slots;
@@ -1538,7 +1640,16 @@ impl<'a> PikeVm<'a> {
                     pc: t.pc + 1,
                     slots: new_slots,
                 };
-                self.add_thread_inner(threads, new_t, sp, notbol, noteol, depth + 1, visited, generation);
+                self.add_thread_inner(
+                    threads,
+                    new_t,
+                    sp,
+                    notbol,
+                    noteol,
+                    depth + 1,
+                    visited,
+                    generation,
+                );
             }
             NfaInstr::Match(mk) => {
                 // For anchors, check inline so we don't waste a simulation step
@@ -1563,6 +1674,24 @@ impl<'a> PikeVm<'a> {
                     }
                     MatchKind::AnchorEnd { newline } => {
                         if self.check_anchor_end(sp, noteol, *newline) {
+                            let new_t = Thread {
+                                pc: t.pc + 1,
+                                slots: t.slots,
+                            };
+                            self.add_thread_inner(
+                                threads,
+                                new_t,
+                                sp,
+                                notbol,
+                                noteol,
+                                depth + 1,
+                                visited,
+                                generation,
+                            );
+                        }
+                    }
+                    MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd => {
+                        if self.check_word_assertion(mk, sp) {
                             let new_t = Thread {
                                 pc: t.pc + 1,
                                 slots: t.slots,
@@ -1610,6 +1739,20 @@ impl<'a> PikeVm<'a> {
         false
     }
 
+    /// Evaluate a GNU word assertion at byte position `sp`. A position straddles
+    /// a "left" char (`input[sp-1]`, absent at the text start) and a "right" char
+    /// (`input[sp]`, absent at the text end); text edges count as non-word.
+    fn check_word_assertion(&self, mk: &MatchKind, sp: usize) -> bool {
+        let left = sp > 0 && regex_is_word_byte(self.input[sp - 1]);
+        let right = sp < self.input.len() && regex_is_word_byte(self.input[sp]);
+        match mk {
+            MatchKind::WordBoundary { negate } => (left != right) != *negate,
+            MatchKind::WordStart => !left && right,
+            MatchKind::WordEnd => left && !right,
+            _ => false,
+        }
+    }
+
     fn matches(&self, mk: &MatchKind, sp: usize, _notbol: bool, _noteol: bool) -> bool {
         if sp >= self.input.len() {
             return false;
@@ -1645,8 +1788,12 @@ impl<'a> PikeVm<'a> {
                 }
                 if *negated { !found } else { found }
             }
-            // Anchors are handled in add_thread, not here
-            MatchKind::AnchorStart { .. } | MatchKind::AnchorEnd { .. } => false,
+            // Zero-width assertions are handled in add_thread, not here.
+            MatchKind::AnchorStart { .. }
+            | MatchKind::AnchorEnd { .. }
+            | MatchKind::WordBoundary { .. }
+            | MatchKind::WordStart
+            | MatchKind::WordEnd => false,
         }
     }
 }
@@ -1804,6 +1951,17 @@ impl<'a> BacktrackVm<'a> {
             }
             Ast::Anchor(AnchorKind::End) => {
                 if self.check_anchor_end(pos) {
+                    vec![BacktrackState { pos, slots }]
+                } else {
+                    Vec::new()
+                }
+            }
+            Ast::Anchor(
+                kind @ (AnchorKind::WordBoundary { .. }
+                | AnchorKind::WordStart
+                | AnchorKind::WordEnd),
+            ) => {
+                if self.check_word_assertion(*kind, pos) {
                     vec![BacktrackState { pos, slots }]
                 } else {
                     Vec::new()
@@ -1994,6 +2152,19 @@ impl<'a> BacktrackVm<'a> {
             return !noteol;
         }
         self.newline && pos < self.input.len() && self.input[pos] == b'\n'
+    }
+
+    /// GNU word assertion (`\b`/`\B`/`\<`/`\>`) at `pos`; text edges count as
+    /// non-word. Mirrors the Pike-VM evaluation for the backtracking path.
+    fn check_word_assertion(&self, kind: AnchorKind, pos: usize) -> bool {
+        let left = pos > 0 && regex_is_word_byte(self.input[pos - 1]);
+        let right = pos < self.input.len() && regex_is_word_byte(self.input[pos]);
+        match kind {
+            AnchorKind::WordBoundary { negate } => (left != right) != negate,
+            AnchorKind::WordStart => !left && right,
+            AnchorKind::WordEnd => left && !right,
+            _ => false,
+        }
     }
 
     fn push_state(out: &mut Vec<BacktrackState>, state: BacktrackState) {
@@ -2387,14 +2558,14 @@ mod tests {
         // identical to a full scan: match at start / middle / not-at-all, plus
         // char-class / plus / negated-class / backref leading bytes.
         let cases: &[(&str, &str, Option<(i32, i32)>)] = &[
-            ("abc", "abcxx", Some((0, 3))),     // at start
-            ("abc", "xxabcxx", Some((2, 5))),   // skip to candidate in the middle
-            ("abc", "xxxxxxxx", None),          // absent -> skip everything
-            ("abc", "ababcab", Some((2, 5))),   // false candidate at 0, real at 2
-            ("[xy]z", "aazbxz", Some((4, 6))),  // char-class first byte
-            ("a+b", "cccaaab", Some((3, 7))),   // plus-leading
+            ("abc", "abcxx", Some((0, 3))),      // at start
+            ("abc", "xxabcxx", Some((2, 5))),    // skip to candidate in the middle
+            ("abc", "xxxxxxxx", None),           // absent -> skip everything
+            ("abc", "ababcab", Some((2, 5))),    // false candidate at 0, real at 2
+            ("[xy]z", "aazbxz", Some((4, 6))),   // char-class first byte
+            ("a+b", "cccaaab", Some((3, 7))),    // plus-leading
             ("[^abc]d", "xxbdyd", Some((4, 6))), // negated class (prefilter=any)
-            ("xyz", "", None),                  // empty input
+            ("xyz", "", None),                   // empty input
         ];
         for &(pat, input, expected) in cases {
             let (matched, subs) = compile_and_submatch(pat, input, REG_EXTENDED);
@@ -2409,11 +2580,11 @@ mod tests {
         // is the opposite case of the pattern's first literal.
         let icase = REG_EXTENDED | REG_ICASE;
         let cases: &[(&str, &str, Option<(i32, i32)>)] = &[
-            ("abc", "xxABCxx", Some((2, 5))),   // upper input, lower pattern
-            ("ABC", "xxabcxx", Some((2, 5))),   // lower input, upper pattern
-            ("abc", "xxAbCxx", Some((2, 5))),   // mixed
-            ("abc", "xxxyzxx", None),           // absent
-            ("a+b", "cccAAAB", Some((3, 7))),   // folded plus-leading
+            ("abc", "xxABCxx", Some((2, 5))), // upper input, lower pattern
+            ("ABC", "xxabcxx", Some((2, 5))), // lower input, upper pattern
+            ("abc", "xxAbCxx", Some((2, 5))), // mixed
+            ("abc", "xxxyzxx", None),         // absent
+            ("a+b", "cccAAAB", Some((3, 7))), // folded plus-leading
         ];
         for &(pat, input, expected) in cases {
             let (matched, subs) = compile_and_submatch(pat, input, icase);
@@ -2432,16 +2603,25 @@ mod tests {
         let big = 600usize;
         let a_run: String = core::iter::repeat_n('a', big).collect();
         let cases: &[(&str, String, Option<(i32, i32)>)] = &[
-            (".*x", a_run.clone(), None),                        // no-match, prescan rules out
+            (".*x", a_run.clone(), None), // no-match, prescan rules out
             (".*x", format!("{a_run}x"), Some((0, big as i32 + 1))), // match at end
-            ("a*z", a_run.clone(), None),                        // greedy no-match
-            ("[bc]+", a_run.clone(), None),                      // class, none present
-            ("a", format!("{}a{}", "b".repeat(300), "b".repeat(300)), Some((300, 301))), // match mid
+            ("a*z", a_run.clone(), None), // greedy no-match
+            ("[bc]+", a_run.clone(), None), // class, none present
+            (
+                "a",
+                format!("{}a{}", "b".repeat(300), "b".repeat(300)),
+                Some((300, 301)),
+            ), // match mid
         ];
         for (pat, input, expected) in cases {
             let (matched, subs) = compile_and_submatch(pat, input, REG_EXTENDED);
             let got = if matched { Some(subs[0]) } else { None };
-            assert_eq!(got, *expected, "prescan pattern {pat:?} on len-{} input", input.len());
+            assert_eq!(
+                got,
+                *expected,
+                "prescan pattern {pat:?} on len-{} input",
+                input.len()
+            );
         }
     }
 
