@@ -4,7 +4,7 @@
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
 Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).
-Reality snapshot: total_exported=4119, implemented=2391, raw_syscall=414, wraps_host_libc=1314, glibc_call_through=0, stub=0.
+Reality snapshot: total_exported=4119, implemented=2395, raw_syscall=414, wraps_host_libc=1310, glibc_call_through=0, stub=0.
 Counts below reflect the checked-in support matrix symbol rows and will change as matrix drift fixes land. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; `Stub: 0` means zero support-taxonomy rows with status `Stub`, not zero no-op/fallback/bootstrap contracts in the codebase.
 Regenerate deterministically with:
 
@@ -15,9 +15,9 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 ```
 
 Current exported ABI surface is **4119 symbols**, classified as:
-- `Implemented`: 2391
+- `Implemented`: 2395
 - `RawSyscall`: 414
-- `WrapsHostLibc`: 1314
+- `WrapsHostLibc`: 1310
 - `GlibcCallThrough`: 0
 - `Stub`: 0
 
