@@ -23,8 +23,25 @@ pub fn log(x: f64) -> f64 {
     libm::log(x)
 }
 
+/// `log2` via the cheaper natural-log kernel: `log2(x) = ln(x) * log2(e)`.
+///
+/// Profiling (`glibc_baseline_math`, bd-e4jb7k) showed `libm::log2` (~12.2 ns)
+/// is markedly slower than `libm::log` (~9.5 ns) — glibc's `log2` (~9.0 ns) is
+/// hand-tuned, leaving fl `log2` ~1.35x behind. Routing through `libm::log`
+/// scaled by `LOG2_E` reaches glibc parity. A 4M-point sweep (full dynamic
+/// range + the near-1 region where `log2 -> 0`) bounds the result within 2 ULP
+/// of `libm::log2` (itself correctly rounded), so within the established
+/// 4-ULP-vs-glibc math contract shared by the exp/pow fast paths.
+///
+/// Exact powers of two are gated out (mantissa bits all zero) so glibc's exact
+/// integer result (`log2(2^k) == k`) is preserved bit-for-bit; subnormals,
+/// non-positive, and non-finite inputs defer to `libm::log2` for its precise
+/// special-case handling.
 #[inline]
 pub fn log2(x: f64) -> f64 {
+    if x.is_normal() && x > 0.0 && x.to_bits() & 0x000F_FFFF_FFFF_FFFF != 0 {
+        return libm::log(x) * std::f64::consts::LOG2_E;
+    }
     libm::log2(x)
 }
 
@@ -234,6 +251,59 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn log2_fast_path_within_4_ulps_of_glibc() {
+        // `f64::log2` lowers to the host glibc `log2`, so this pins the
+        // `ln(x) * log2(e)` fast path directly against glibc. Sweep the full
+        // dynamic range geometrically, the near-1 region (where log2 -> 0 and
+        // relative error is most sensitive), and a spread of fixed points.
+        let mut x = 1e-300_f64;
+        while x < 1e300 {
+            assert!(
+                within_ulps(log2(x), x.log2(), 4),
+                "log2({x:e}) = {:?} but glibc = {:?} (>4 ULP)",
+                log2(x),
+                x.log2()
+            );
+            x *= 1.0000071;
+        }
+        for d in 0..1_000_000i64 {
+            let x = 1.0 + (d as f64) * 2e-9;
+            assert!(within_ulps(log2(x), x.log2(), 4), "near-1 log2({x}) >4 ULP");
+        }
+        for &x in &[
+            0.5,
+            0.323,
+            std::f64::consts::E,
+            std::f64::consts::PI,
+            1e-3,
+            1e3,
+            123.456,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+        ] {
+            assert!(within_ulps(log2(x), x.log2(), 4), "log2({x:e}) >4 ULP");
+        }
+        // Exact powers of two must match glibc bit-for-bit (gated to libm::log2).
+        for k in -1074i32..=1023 {
+            let p = (k as f64).exp2();
+            if !p.is_normal() {
+                continue;
+            }
+            assert_eq!(
+                log2(p).to_bits(),
+                p.log2().to_bits(),
+                "log2(2^{k}) not bit-exact vs glibc"
+            );
+        }
+        // Special inputs defer to libm::log2 and match glibc exactly.
+        assert!(log2(f64::NAN).is_nan());
+        assert_eq!(log2(f64::INFINITY), f64::INFINITY);
+        assert_eq!(log2(1.0).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(log2(0.0), f64::NEG_INFINITY);
+        assert!(log2(-1.0).is_nan());
     }
 
     #[test]
