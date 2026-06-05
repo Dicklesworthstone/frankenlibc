@@ -1019,6 +1019,7 @@ mod cmath {
         pub fn log(x: f64) -> f64;
         pub fn log2(x: f64) -> f64;
         pub fn pow(x: f64, y: f64) -> f64;
+        pub fn powf(x: f32, y: f32) -> f32;
         pub fn atan2(y: f64, x: f64) -> f64;
     }
 }
@@ -1671,6 +1672,72 @@ fn bench_math(c: &mut Criterion) {
             black_box(acc);
         },
     );
+
+    // powf (f32): the fast paths added in float32.rs mirror the f64 `pow` ones.
+    // Integer exponent (x^3) exercises the exp-by-squaring fast path; the
+    // irrational exponent exercises the medium exp2f/log2f fast path.
+    let inputs_f32: Vec<f32> = (0..64).map(|k| 0.5 + (k as f32) * 0.031_25).collect();
+    macro_rules! powf_pair {
+        ($id:expr, $work:expr, $y:expr) => {{
+            bench_op(
+                &mut group,
+                BenchMeta {
+                    profile_id: $id,
+                    impl_label: "frankenlibc_core",
+                    api_family: "math",
+                    symbol: "powf",
+                    workload: $work,
+                    parity_proof_ref: "crates/frankenlibc-core/src/math/float32.rs",
+                },
+                || {
+                    let mut acc = 0.0_f32;
+                    for &x in &inputs_f32 {
+                        acc += math::powf(black_box(x), black_box($y));
+                    }
+                    black_box(acc);
+                },
+            );
+            bench_op(
+                &mut group,
+                BenchMeta {
+                    profile_id: $id,
+                    impl_label: "frankenlibc_old_libm",
+                    api_family: "math",
+                    symbol: "powf",
+                    workload: $work,
+                    parity_proof_ref: "crates/frankenlibc-core/src/math/float32.rs",
+                },
+                || {
+                    let mut acc = 0.0_f32;
+                    for &x in &inputs_f32 {
+                        acc += libm::powf(black_box(x), black_box($y));
+                    }
+                    black_box(acc);
+                },
+            );
+            bench_op(
+                &mut group,
+                BenchMeta {
+                    profile_id: $id,
+                    impl_label: "host_glibc",
+                    api_family: "math",
+                    symbol: "powf",
+                    workload: $work,
+                    parity_proof_ref: "crates/frankenlibc-core/src/math/float32.rs",
+                },
+                || {
+                    let mut acc = 0.0_f32;
+                    for &x in &inputs_f32 {
+                        // SAFETY: plain libm call on finite f32 inputs.
+                        acc += unsafe { cmath::powf(black_box(x), black_box($y)) };
+                    }
+                    black_box(acc);
+                },
+            );
+        }};
+    }
+    powf_pair!("powf_int", "powf(x,3) x in [0.5,2.5)", 3.0f32);
+    powf_pair!("powf_irrational", "powf(x,1.337) x in [0.5,2.5)", 1.337f32);
 
     group.finish();
 }

@@ -20,6 +20,7 @@ frankenlibc-abi = { workspace = true, optional = true }
 [dev-dependencies]
 criterion = { workspace = true }
 libc = { workspace = true }
+libm = "0.2.16"
 
 [[bench]]
 name = "string_bench"

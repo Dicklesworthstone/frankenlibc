@@ -62,8 +62,90 @@ pub fn log10f(x: f32) -> f32 {
     libm::log10f(x)
 }
 
+/// Largest |integer exponent| handled by the powf fast path. Mirrors the f64
+/// `pow` bound; verified within 4 ULP of glibc `powf` by
+/// `powf_fast_paths_within_4_ulps`.
+const POWF_MAX_EXP: u32 = 8;
+const POWF_MEDIUM_BASE_MIN: f32 = 0.5;
+const POWF_MEDIUM_BASE_MAX: f32 = 2.5;
+const POWF_MEDIUM_EXP_MIN: f32 = -3.0;
+const POWF_MEDIUM_EXP_MAX: f32 = 3.0;
+
+/// `base` raised to a small integer power via exponentiation by squaring,
+/// accumulated in f64 then rounded once to f32. The f64 intermediate keeps the
+/// result within ~0.5 ULP (f32 squaring would accumulate >4 ULP by |n|=8) AND
+/// avoids spurious f32 overflow when the true result is representable — e.g.
+/// powf(1e6, -7) = 1e-42: (1e6)^7 overflows f32 but is fine in f64, and the
+/// reciprocal casts down to the correct subnormal.
+#[inline]
+fn powi_squaringf(base: f32, n: i32) -> f64 {
+    let mut result = 1.0_f64;
+    let mut b = base as f64;
+    let mut e = n.unsigned_abs();
+    while e > 0 {
+        if e & 1 == 1 {
+            result *= b;
+        }
+        e >>= 1;
+        if e > 0 {
+            b *= b;
+        }
+    }
+    if n < 0 { 1.0 / result } else { result }
+}
+
+/// `base^(n+0.5)` via `base^n * sqrt(base)` for small `n`, positive finite base.
+#[inline]
+fn powf_half_integer_fast_path(base: f32, exponent: f32) -> Option<f32> {
+    if !(base > 0.0 && base.is_finite() && exponent.is_finite()) {
+        return None;
+    }
+    let shifted = exponent - 0.5;
+    let n = shifted as i32;
+    if n as f32 == shifted && n.unsigned_abs() <= POWF_MAX_EXP {
+        // base^n * sqrt(base), accumulated in f64 then rounded once.
+        Some((powi_squaringf(base, n) * (base as f64).sqrt()) as f32)
+    } else {
+        None
+    }
+}
+
+/// Medium positive-base / bounded-exponent fast path: `exp2f(y*log2f(x))`,
+/// bypassing libm::powf's full general classifier. Gated to the domain proven
+/// within 4 ULP of glibc.
+#[inline]
+fn powf_medium_fast_path(base: f32, exponent: f32) -> Option<f32> {
+    if (POWF_MEDIUM_BASE_MIN..POWF_MEDIUM_BASE_MAX).contains(&base)
+        && (POWF_MEDIUM_EXP_MIN..=POWF_MEDIUM_EXP_MAX).contains(&exponent)
+    {
+        Some(libm::exp2f(exponent * libm::log2f(base)))
+    } else {
+        None
+    }
+}
+
 #[inline]
 pub fn powf(base: f32, exponent: f32) -> f32 {
+    // Fast paths mirroring the f64 `pow`: libm::powf always routes through its
+    // general log/exp classifier; small integer exponents (and y==0.5) via
+    // exponentiation by squaring are far faster and, bounded to small
+    // magnitudes / the medium base-exponent box, stay within the 4-ULP glibc
+    // parity contract. Everything else defers to libm for exact IEEE semantics.
+    if base.is_finite() && exponent.is_finite() {
+        let n = exponent as i32;
+        if n as f32 == exponent && n.unsigned_abs() <= POWF_MAX_EXP {
+            return powi_squaringf(base, n) as f32;
+        }
+        if exponent == 0.5 && base >= 0.0 {
+            return base.sqrt();
+        }
+        if let Some(result) = powf_half_integer_fast_path(base, exponent) {
+            return result;
+        }
+        if let Some(result) = powf_medium_fast_path(base, exponent) {
+            return result;
+        }
+    }
     libm::powf(base, exponent)
 }
 
@@ -497,6 +579,111 @@ pub fn significandf(x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ULP distance for f32 with matching-sign requirement (mirrors the f64
+    /// `within_ulps`). `f32::powf` resolves to host glibc `powf`.
+    fn within_ulps_f32(a: f32, b: f32, ulps: u32) -> bool {
+        if a == b {
+            return true;
+        }
+        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            return false;
+        }
+        let ab = a.to_bits() as i32;
+        let bb = b.to_bits() as i32;
+        (ab - bb).unsigned_abs() <= ulps
+    }
+
+    #[test]
+    fn powf_fast_paths_within_4_ulps() {
+        let bases = [
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.0,
+            2.0,
+            -2.0,
+            0.5,
+            -0.5,
+            std::f32::consts::PI,
+            1.785,
+            1e-3,
+            1e6,
+            123.456,
+            0.999_999,
+            1.000_001,
+            0.6,
+            1.5,
+            2.49,
+            0.51,
+        ];
+        // Integer exponents in the gated range, plus 0.5 and half-integers.
+        for &base in &bases {
+            for n in -(POWF_MAX_EXP as i32)..=(POWF_MAX_EXP as i32) {
+                let e = n as f32;
+                assert!(
+                    within_ulps_f32(powf(base, e), base.powf(e), 4),
+                    "powf({base},{e})={} glibc={}",
+                    powf(base, e),
+                    base.powf(e)
+                );
+            }
+            if base >= 0.0 {
+                assert!(within_ulps_f32(powf(base, 0.5), base.powf(0.5), 4));
+                for n in -(POWF_MAX_EXP as i32)..=(POWF_MAX_EXP as i32) {
+                    let e = n as f32 + 0.5;
+                    assert!(
+                        within_ulps_f32(powf(base, e), base.powf(e), 4),
+                        "powf({base},{e})={} glibc={}",
+                        powf(base, e),
+                        base.powf(e)
+                    );
+                }
+            }
+        }
+        // Medium path: deterministic sweep of base in [0.5,2.5) x exp in [-3,3].
+        let mut s = 0x9e37_79b9_u32;
+        for _ in 0..500_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let base = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let exp = -3.0 + (s >> 9) as f32 * (6.0 / (1u32 << 23) as f32);
+            assert!(
+                within_ulps_f32(powf(base, exp), base.powf(exp), 4),
+                "powf({base},{exp})={} glibc={} (>4 ULP)",
+                powf(base, exp),
+                base.powf(exp)
+            );
+        }
+    }
+
+    #[test]
+    fn powf_fallback_preserves_libm_bits() {
+        // Out-of-gate / special cases must stay bit-identical to libm::powf.
+        let cases = [
+            (f32::NEG_INFINITY, 1.337f32),
+            (-2.0, 1.337),
+            (0.0, 1.337),
+            (0.25, 1.337), // base < 0.5, irrational exp
+            (4.0, 1.337),  // base >= 2.5, irrational exp
+            (f32::INFINITY, 0.3),
+            (10.0, 9.0), // |n| > POWF_MAX_EXP
+            (1.5, 9.5),  // half-integer with |n| > POWF_MAX_EXP
+        ];
+        for (b, e) in cases {
+            assert_eq!(
+                powf(b, e).to_bits(),
+                libm::powf(b, e).to_bits(),
+                "powf({b},{e}) fallback drifted from libm"
+            );
+        }
+        assert!(powf(f32::NAN, 1.337).is_nan());
+        assert!(powf(1.5, f32::NAN).is_nan());
+    }
 
     #[test]
     fn trig_sanity() {
