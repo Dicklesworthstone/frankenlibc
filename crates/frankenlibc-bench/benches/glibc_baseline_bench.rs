@@ -1024,6 +1024,20 @@ mod cmath {
         pub fn sinh(x: f64) -> f64;
         pub fn cosh(x: f64) -> f64;
         pub fn tanh(x: f64) -> f64;
+        pub fn log10(x: f64) -> f64;
+        pub fn exp10(x: f64) -> f64;
+        pub fn expm1(x: f64) -> f64;
+        pub fn log1p(x: f64) -> f64;
+        pub fn cbrt(x: f64) -> f64;
+        pub fn tan(x: f64) -> f64;
+        pub fn atan(x: f64) -> f64;
+        pub fn asinh(x: f64) -> f64;
+        pub fn acosh(x: f64) -> f64;
+        pub fn atanh(x: f64) -> f64;
+        pub fn erf(x: f64) -> f64;
+        pub fn erfc(x: f64) -> f64;
+        pub fn tgamma(x: f64) -> f64;
+        pub fn lgamma(x: f64) -> f64;
     }
 }
 
@@ -1578,6 +1592,18 @@ fn bench_math(c: &mut Criterion) {
         math::tanh,
         cmath::tanh
     );
+    pair!("log10", "log10", "log10(x) x in [0.5,2.5)", math::log10, cmath::log10);
+    pair!("exp10", "exp10", "exp10(x) x in [0.5,2.5)", math::exp10, cmath::exp10);
+    pair!("expm1", "expm1", "expm1(x) x in [0.5,2.5)", math::expm1, cmath::expm1);
+    pair!("log1p", "log1p", "log1p(x) x in [0.5,2.5)", math::log1p, cmath::log1p);
+    pair!("cbrt", "cbrt", "cbrt(x) x in [0.5,2.5)", math::cbrt, cmath::cbrt);
+    pair!("tan", "tan", "tan(x) x in [0.5,2.5)", math::tan, cmath::tan);
+    pair!("atan", "atan", "atan(x) x in [0.5,2.5)", math::atan, cmath::atan);
+    pair!("asinh", "asinh", "asinh(x) x in [0.5,2.5)", math::asinh, cmath::asinh);
+    pair!("erf", "erf", "erf(x) x in [0.5,2.5)", math::erf, cmath::erf);
+    pair!("erfc", "erfc", "erfc(x) x in [0.5,2.5)", math::erfc, cmath::erfc);
+    pair!("tgamma", "tgamma", "tgamma(x) x in [0.5,2.5)", math::tgamma, cmath::tgamma);
+    pair!("lgamma", "lgamma", "lgamma(x) x in [0.5,2.5)", math::lgamma, cmath::lgamma);
 
     // pow is binary — bench it explicitly (exponent 2.5, varying base).
     bench_op(

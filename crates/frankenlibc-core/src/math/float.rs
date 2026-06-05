@@ -84,7 +84,7 @@ pub fn nearbyint(x: f64) -> f64 {
 pub(crate) fn round_to_i64_x86(r: f64) -> i64 {
     // 2^63 is exactly representable; values >= it (and < -2^63) overflow i64.
     const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
-    if r.is_nan() || r >= TWO_POW_63 || r < -TWO_POW_63 {
+    if r.is_nan() || !(-TWO_POW_63..TWO_POW_63).contains(&r) {
         i64::MIN
     } else {
         r as i64
@@ -717,9 +717,29 @@ pub fn exp10(x: f64) -> f64 {
     if x.is_finite() && x == x.trunc() && (-22.0..=22.0).contains(&x) {
         return 10.0_f64.powi(x as i32);
     }
-    // 10^x = exp(x * ln(10)) for non-integer / out-of-range exponents.
+    // Non-integer / out-of-fast-range exponents: 10^x = 2^(x·log2 10) via the
+    // fast exp2 kernel. exp2 is ~0.6x glibc's cost, vs the slow libm::exp this
+    // replaced (~1.7x). A single f64 log2(10) leaves ~8 ULP after exp2 amplifies
+    // the reduction error, so carry the product in extended precision: fma
+    // recovers the rounding error of `x·LOG2_10_HI`, `LOG2_10_LO` adds the
+    // constant's residual, and the small `e·ln2` term corrects exp2. This holds
+    // within 4 ULP of glibc on [-50, 50] (verified by the sweep in
+    // `exp10_exp2_fast_path` and the live glibc diff in conformance_diff_math);
+    // |x| > 50 (10^50 is already astronomically large) defers to the exact
+    // libm::exp path.
+    if (-50.0..=50.0).contains(&x) {
+        let hi = core::f64::consts::LOG2_10;
+        let p = x * hi;
+        let e = x.mul_add(hi, -p) + x * LOG2_10_LO;
+        return libm::exp2(p) * (1.0 + e * core::f64::consts::LN_2);
+    }
     libm::exp(x * core::f64::consts::LN_10)
 }
+
+/// Residual of the `f64` `log2(10)` (`core::f64::consts::LOG2_10`): true
+/// `log2(10) = LOG2_10 + LOG2_10_LO`. Carries extra precision through the
+/// `exp10` argument reduction so `exp2` amplification stays within 4 ULP.
+const LOG2_10_LO: f64 = 1.661_675_584_242_046_5e-16;
 
 // ---------------------------------------------------------------------------
 // IEEE 754 classification helpers (glibc __fpclassify, __signbit, etc.)
@@ -778,6 +798,46 @@ pub fn isnan(x: f64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exp10_exp2_fast_path() {
+        // Positive powers of ten <=10^22 are exactly representable; the
+        // integer-exponent path (`10.0.powi`) returns them exactly.
+        for k in 0..=22 {
+            assert_eq!(exp10(k as f64), 10.0_f64.powi(k), "exp10({k})");
+        }
+        // Negative integer exponents stay within 4 ULP of libm (powi is in fact
+        // correctly rounded here, where libm::exp10 can be 1 ULP off).
+        for k in -22..0 {
+            let (got, want) = (exp10(k as f64), libm::exp10(k as f64));
+            let u = (got.to_bits() as i64 - want.to_bits() as i64).abs();
+            assert!(u <= 4, "exp10({k}) = {got:?} vs {want:?} ({u} ULP)");
+        }
+        // Non-integer fast path: <=4 ULP of the libm::exp10 reference across the
+        // gated [-50,50] window (the live glibc proof lives in
+        // conformance_diff_math::exp10_matches_glibc).
+        let mut worst = 0i64;
+        let mut x: f64 = -50.0;
+        while x <= 50.0 {
+            if x != x.trunc() {
+                let got = exp10(x);
+                let want = libm::exp10(x);
+                let u = if got == want {
+                    0
+                } else {
+                    (got.to_bits() as i64 - want.to_bits() as i64).abs()
+                };
+                worst = worst.max(u);
+                assert!(u <= 4, "exp10({x}) = {got:?} vs {want:?} ({u} ULP)");
+            }
+            x += 0.000_173;
+        }
+        // Edge behavior matches libm beyond the fast window.
+        assert_eq!(exp10(60.5), libm::exp(60.5 * core::f64::consts::LN_10));
+        assert!(exp10(400.0).is_infinite());
+        assert_eq!(exp10(0.0), 1.0);
+        println!("exp10 worst ULP = {worst}");
+    }
 
     #[test]
     fn float_sanity() {

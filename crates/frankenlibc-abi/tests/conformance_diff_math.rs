@@ -42,6 +42,7 @@ unsafe extern "C" {
     fn log2(x: f64) -> f64;
     fn log10(x: f64) -> f64;
     fn pow(x: f64, y: f64) -> f64;
+    fn exp10(x: f64) -> f64;
     fn sinh(x: f64) -> f64;
     fn cosh(x: f64) -> f64;
     fn tanh(x: f64) -> f64;
@@ -815,6 +816,46 @@ fn diff_exp_log_pow_within_4_ulps() {
     assert!(
         divs.is_empty(),
         "exp/log/pow divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_exp10_within_4_ulps() {
+    // exp10's exp2-based fast path (10^x = 2^(x·log2 10), compensated reduction)
+    // must stay within 4 ULP of glibc across the gated [-50,50] window, the
+    // integer-exponent path, and the out-of-range fallback.
+    let mut divs = Vec::new();
+    let mut x = -50.0_f64;
+    while x <= 50.0 {
+        compare_f64(
+            &mut divs,
+            "exp10",
+            format!("{x:?}"),
+            unsafe { fl::exp10(x) },
+            unsafe { exp10(x) },
+            4,
+        );
+        x += 0.0007; // ~143k samples across the fast window
+    }
+    // Exact and edge inputs (incl. integers >22 that skip the powi path).
+    for &x in &[
+        0.0, 1.0, 7.0, 22.0, -22.0, 23.0, 30.0, 40.0, 50.0, -30.0, -50.0, f64::INFINITY,
+        f64::NEG_INFINITY, f64::NAN,
+    ] {
+        compare_f64(
+            &mut divs,
+            "exp10",
+            format!("{x:?}"),
+            unsafe { fl::exp10(x) },
+            unsafe { exp10(x) },
+            4,
+        );
+    }
+    assert!(
+        divs.is_empty(),
+        "exp10 divergences ({} of many):\n{}",
+        divs.len(),
         render_divs(&divs)
     );
 }
