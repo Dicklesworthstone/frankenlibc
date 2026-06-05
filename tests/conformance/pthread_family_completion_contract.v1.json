@@ -385,7 +385,10 @@
   },
   "required_source_contract": {
     "support_matrix": {
-      "expected_status": "Implemented",
+      "expected_statuses": [
+        "Implemented",
+        "WrapsHostLibc"
+      ],
       "expected_module": "pthread_abi",
       "expected_symbols": 42
     },

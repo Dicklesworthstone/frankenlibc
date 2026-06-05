@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.4",
-  "generated_at": "2026-06-05T04:37:38Z",
+  "generated_at": "2026-06-05T17:33:22Z",
   "validation_hash": "cd5006306d360ef8",
   "summary": {
     "target": "fuzz_membrane",

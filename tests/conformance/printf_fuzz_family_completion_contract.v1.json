@@ -54,9 +54,9 @@
       "kind": "fuzz_target",
       "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs",
       "required_line_refs": [
-        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:223",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:222",
         "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:234",
-        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:547"
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:548"
       ],
       "required_needles": [
         "fuzz_asprintf_matches_snprintf",
@@ -204,9 +204,9 @@
         "fuzz_percent_n_abi"
       ],
       "evidence_line_refs": [
-        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:223",
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:222",
         "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:234",
-        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:547"
+        "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs:548"
       ],
       "corpus": {
         "path": "crates/frankenlibc-fuzz/corpus/fuzz_printf",

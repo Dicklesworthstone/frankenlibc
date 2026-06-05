@@ -66,11 +66,11 @@
         ]
       },
       {
-        "id": "doc-audit-blocks-l1-overclaim-while-current-level-is-l0",
+        "id": "doc-audit-validates-current-level-claim-policy",
         "path": "crates/frankenlibc-harness/tests/replacement_claim_doc_audit_test.rs",
         "required_text": [
           "stale_source_commit_policy_blocks_replacement_claim_text",
-          "no_forbidden_overclaim_phrase_appears_in_any_doc_while_current_level_l0",
+          "replacement_claim_phrases_match_current_level_policy",
           "audit_pins_l1_dry_run_dashboard_as_consuming_gate",
           "replacement_levels.json"
         ]
@@ -94,7 +94,7 @@
         "path": "crates/frankenlibc-harness/tests/replacement_claim_doc_audit_test.rs",
         "required_test_refs": [
           "stale_source_commit_policy_blocks_replacement_claim_text",
-          "no_forbidden_overclaim_phrase_appears_in_any_doc_while_current_level_l0",
+          "replacement_claim_phrases_match_current_level_policy",
           "audit_pins_l1_dry_run_dashboard_as_consuming_gate"
         ]
       },
@@ -225,7 +225,7 @@
       "kind": "conformance",
       "required_test_refs": [
         "claim_drift_guard_consistent_with_readme_and_release_policy",
-        "no_forbidden_overclaim_phrase_appears_in_any_doc_while_current_level_l0",
+        "replacement_claim_phrases_match_current_level_policy",
         "checker_validates_existing_l1_gate_artifacts"
       ],
       "required_commands": [

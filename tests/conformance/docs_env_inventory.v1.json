@@ -25,12 +25,12 @@
           "snippet": "| `FRANKENLIBC_BENCH_PIN` | `0` | Benchmark-only CPU pinning control |"
         },
         {
-          "line": 2854,
+          "line": 2855,
           "path": "README.md",
           "snippet": "**Membrane overhead per call.** Criterion benches in `crates/frankenlibc-bench/` measure the validation-pipeline cost. Target: < 20 ns strict, < 200 ns hardened. Current numbers on a tuned x86_64 host with `cpupower frequency-set --governor performance` and `FRANKENLIBC_BENCH_PIN=1` typically come in well inside budget."
         },
         {
-          "line": 3687,
+          "line": 3688,
           "path": "README.md",
           "snippet": "- **Pinning**: `FRANKENLIBC_BENCH_PIN=1` sets the `taskset` mask to pin benches to specific CPUs, avoiding cross-CPU jitter."
         }
@@ -89,7 +89,7 @@
           "snippet": "| `FRANKENLIBC_E2E_SEED` | `42` | Deterministic seed for E2E workflows |"
         },
         {
-          "line": 3288,
+          "line": 3289,
           "path": "README.md",
           "snippet": "1. **Fixed RNG seeds** for any randomized path that goes through tests. `FRANKENLIBC_E2E_SEED=42` is the default."
         }
@@ -229,22 +229,22 @@
           "snippet": "FRANKENLIBC_LOG=/tmp/franken.jsonl \\"
         },
         {
-          "line": 2185,
+          "line": 2186,
           "path": "README.md",
           "snippet": "| `tracing` | Structured runtime logging (gated by `FRANKENLIBC_LOG`) |"
         },
         {
-          "line": 2224,
+          "line": 2225,
           "path": "README.md",
           "snippet": "You have a production Linux fleet and want to layer some safety or observability on glibc-linked binaries without rebuilding them. Build `libfrankenlibc_abi.so`, deploy via your existing config-management tool, and start with `FRANKENLIBC_MODE=strict` on non-critical workloads. The structured runtime log (`FRANKENLIBC_LOG`) gives you JSONL evidence of every membrane decision. Promote to hardened on suspect workloads once you have baseline data."
         },
         {
-          "line": 2364,
+          "line": 2365,
           "path": "README.md",
           "snippet": "Most of the `FRANKENLIBC_*` vars exist for *gates*, not runtime behavior. The runtime-relevant knobs are essentially just `FRANKENLIBC_MODE` and `FRANKENLIBC_LOG`. The rest configure Gentoo hooks, perf budget enforcement, closure gates, E2E test harnesses, and packaging flows. They are listed in [Configuration](#configuration) above for completeness."
         },
         {
-          "line": 3815,
+          "line": 3816,
           "path": "README.md",
           "snippet": "3. **`FRANKENLIBC_LOG` JSONL stream**: when set, each decision is written to the configured path with the same record shape, suitable for `tail -f` or `jq` post-processing."
         }
@@ -265,7 +265,7 @@
           "snippet": "| `FRANKENLIBC_LOG_DIR` | `/var/log/frankenlibc/portage` | Gentoo hook directory root for generated logs |"
         },
         {
-          "line": 2297,
+          "line": 2298,
           "path": "README.md",
           "snippet": "- `FRANKENLIBC_LOG_DIR` (default `/var/log/frankenlibc/portage`) collects structured per-build evidence"
         }
@@ -397,32 +397,32 @@
           "snippet": "- Hardened interpose: `FRANKENLIBC_MODE=hardened LD_PRELOAD=\u2026 <program>`"
         },
         {
-          "line": 1952,
+          "line": 1953,
           "path": "README.md",
           "snippet": "`FRANKENLIBC_MODE` parsing accepts: `hardened`, `repair`, `tsm`, `full` \u2192 `HARDENED`. Anything else (including unset, malformed, or unrecognized) \u2192 `STRICT`. The conservative default is intentional: a misconfigured environment never silently grants more authority to the membrane."
         },
         {
-          "line": 2224,
+          "line": 2225,
           "path": "README.md",
           "snippet": "You have a production Linux fleet and want to layer some safety or observability on glibc-linked binaries without rebuilding them. Build `libfrankenlibc_abi.so`, deploy via your existing config-management tool, and start with `FRANKENLIBC_MODE=strict` on non-critical workloads. The structured runtime log (`FRANKENLIBC_LOG`) gives you JSONL evidence of every membrane decision. Promote to hardened on suspect workloads once you have baseline data."
         },
         {
-          "line": 2364,
+          "line": 2365,
           "path": "README.md",
           "snippet": "Most of the `FRANKENLIBC_*` vars exist for *gates*, not runtime behavior. The runtime-relevant knobs are essentially just `FRANKENLIBC_MODE` and `FRANKENLIBC_LOG`. The rest configure Gentoo hooks, perf budget enforcement, closure gates, E2E test harnesses, and packaging flows. They are listed in [Configuration](#configuration) above for completeness."
         },
         {
-          "line": 2980,
+          "line": 2981,
           "path": "README.md",
           "snippet": "When the very first membrane call lands, it discovers `state == UNRESOLVED`. It CAS's `UNRESOLVED \u2192 RESOLVING`, reads `FRANKENLIBC_MODE` from the environment, parses it, and CAS's to the terminal state. *During* that window, any reentrant call (e.g., from `getenv` itself, which might be needed for the mode lookup) sees `RESOLVING` and returns a safe passthrough decision. The terminal state, once reached, is read with a single `Relaxed` atomic load: invisible cost on the steady-state hot path."
         },
         {
-          "line": 3481,
+          "line": 3482,
           "path": "README.md",
           "snippet": "c. Mode resolution: read FRANKENLIBC_MODE."
         },
         {
-          "line": 3484,
+          "line": 3485,
           "path": "README.md",
           "snippet": "- getenv(\"FRANKENLIBC_MODE\") \u2014 this itself may need the"
         }
@@ -454,7 +454,7 @@
           "snippet": "| `FRANKENLIBC_PACKAGE_BLOCKLIST` | `sys-libs/glibc sys-apps/shadow` | Blocks `LD_PRELOAD` injection for sensitive Gentoo packages |"
         },
         {
-          "line": 2295,
+          "line": 2296,
           "path": "README.md",
           "snippet": "- `FRANKENLIBC_PACKAGE_BLOCKLIST` (default `sys-libs/glibc sys-apps/shadow`) prevents preload during sensitive package builds where the host libc itself is being rebuilt"
         }
@@ -497,7 +497,7 @@
           "snippet": "`scripts/check_perf_baseline.sh` and `scripts/check_perf_regression_gate.sh` enforce a budget against rolling baselines. `FRANKENLIBC_PERF_MAX_REGRESSION_PCT` (default 15%) sets the allowed regression headroom. Overloaded hosts are detected and skipped via `FRANKENLIBC_PERF_MAX_LOAD_FACTOR` (default 0.85) to keep perf evidence trustworthy."
         },
         {
-          "line": 3692,
+          "line": 3693,
           "path": "README.md",
           "snippet": "- **Skip on overloaded host**: `FRANKENLIBC_PERF_SKIP_OVERLOADED=1` causes the gate to abstain if `loadavg/cpus > FRANKENLIBC_PERF_MAX_LOAD_FACTOR` (default 0.85). This keeps the evidence trustworthy \u2014 a perf run on a busy host generates noise, not signal."
         }
@@ -518,12 +518,12 @@
           "snippet": "`scripts/check_perf_baseline.sh` and `scripts/check_perf_regression_gate.sh` enforce a budget against rolling baselines. `FRANKENLIBC_PERF_MAX_REGRESSION_PCT` (default 15%) sets the allowed regression headroom. Overloaded hosts are detected and skipped via `FRANKENLIBC_PERF_MAX_LOAD_FACTOR` (default 0.85) to keep perf evidence trustworthy."
         },
         {
-          "line": 2864,
+          "line": 2865,
           "path": "README.md",
           "snippet": "**Perf budget enforcement.** `scripts/check_perf_regression_gate.sh` compares the current run against rolling baselines stored in `scripts/perf_baseline.json` (with the schema spec at `tests/conformance/perf_baseline_spec.json`). `FRANKENLIBC_PERF_MAX_REGRESSION_PCT=15` is the default budget. Overloaded hosts (load average > 0.85 \u00d7 CPU count) get skipped via `FRANKENLIBC_PERF_SKIP_OVERLOADED=1` to keep the evidence trustworthy."
         },
         {
-          "line": 3691,
+          "line": 3692,
           "path": "README.md",
           "snippet": "- **Comparison vs baseline**: `scripts/check_perf_regression_gate.sh` compares the run against `scripts/perf_baseline.json`. A regression beyond `FRANKENLIBC_PERF_MAX_REGRESSION_PCT` (default 15%) fails the gate."
         }
@@ -539,12 +539,12 @@
           "snippet": "| `FRANKENLIBC_PERF_SKIP_OVERLOADED` | `1` | Skips perf gate on overloaded hosts |"
         },
         {
-          "line": 2864,
+          "line": 2865,
           "path": "README.md",
           "snippet": "**Perf budget enforcement.** `scripts/check_perf_regression_gate.sh` compares the current run against rolling baselines stored in `scripts/perf_baseline.json` (with the schema spec at `tests/conformance/perf_baseline_spec.json`). `FRANKENLIBC_PERF_MAX_REGRESSION_PCT=15` is the default budget. Overloaded hosts (load average > 0.85 \u00d7 CPU count) get skipped via `FRANKENLIBC_PERF_SKIP_OVERLOADED=1` to keep the evidence trustworthy."
         },
         {
-          "line": 3692,
+          "line": 3693,
           "path": "README.md",
           "snippet": "- **Skip on overloaded host**: `FRANKENLIBC_PERF_SKIP_OVERLOADED=1` causes the gate to abstain if `loadavg/cpus > FRANKENLIBC_PERF_MAX_LOAD_FACTOR` (default 0.85). This keeps the evidence trustworthy \u2014 a perf run on a busy host generates noise, not signal."
         }
@@ -587,7 +587,7 @@
           "snippet": "| `FRANKENLIBC_PHASE_ALLOWLIST` | `src_test pkg_test` | Limits which Gentoo phases activate FrankenLibC |"
         },
         {
-          "line": 2294,
+          "line": 2295,
           "path": "README.md",
           "snippet": "- `FRANKENLIBC_PHASE_ALLOWLIST` (default `src_test pkg_test`) limits which ebuild phases get the preload"
         }
@@ -608,7 +608,7 @@
           "snippet": "| `FRANKENLIBC_PORTAGE_ENABLE` | `1` | Global kill-switch for Gentoo Portage hooks |"
         },
         {
-          "line": 2293,
+          "line": 2294,
           "path": "README.md",
           "snippet": "- `FRANKENLIBC_PORTAGE_ENABLE` (default `1`) is the kill switch"
         }
@@ -629,7 +629,7 @@
           "snippet": "| `FRANKENLIBC_PORTAGE_LOG` | `/tmp/frankenlibc-portage-hooks.log` | Gentoo hook decision log path |"
         },
         {
-          "line": 2298,
+          "line": 2299,
           "path": "README.md",
           "snippet": "- `FRANKENLIBC_PORTAGE_LOG` records hook decisions for debugging"
         }
@@ -687,7 +687,7 @@
           "snippet": "| `FRANKENLIBC_SKIP_STATIC` | `1` | Skips preload during static-libs Gentoo builds |"
         },
         {
-          "line": 2296,
+          "line": 2297,
           "path": "README.md",
           "snippet": "- `FRANKENLIBC_SKIP_STATIC` (default `1`) skips preload when static-only libs are being built"
         }
@@ -724,12 +724,12 @@
           "snippet": "| `FRANKENLIBC_STARTUP_PHASE0` | `0` | Startup path gate for the phase-0 `__libc_start_main` flow |"
         },
         {
-          "line": 2984,
+          "line": 2985,
           "path": "README.md",
           "snippet": "`FRANKENLIBC_STARTUP_PHASE0` env var and the corresponding atomic flag let the membrane recognize when it's still in `__libc_start_main`'s validation envelope and apply different validation policy (essentially: pass through trivial calls, only validate suspicious ones). This avoids a \"membrane wants to instrument printf to log its decision, but printf needs the allocator, which the membrane is currently validating\" recursion."
         },
         {
-          "line": 3478,
+          "line": 3479,
           "path": "README.md",
           "snippet": "a. Check FRANKENLIBC_STARTUP_PHASE0 atomic flag \u2192 false initially."
         }

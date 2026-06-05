@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.1",
-  "generated_at_utc": "2026-06-05T03:36:02Z",
-  "source_commit": "58fb38e3",
+  "generated_at_utc": "2026-06-05T17:52:23Z",
+  "source_commit": "320c749b",
   "purpose": "Inventory current benchmark coverage for ported hot paths and membrane gates before optimization work advances.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -22,7 +22,7 @@
     "support_matrix": "a05fd669599458bf41f6e7b489431e4b723ede0f8d934e7352478a470549506f",
     "user_workload_acceptance_matrix": "e1522428db6fb6f63c2a51cab24ec930cdcd52e8efdbe128794600d5e0336910",
     "workload_matrix": "04f77e974c045a0016ffbe5abd7e602a94b44291c57084400751524acbc5b9ca",
-    "bench_targets": "e40462d783e4875a33d2d6c708255d1ad0de18c7e3322df7c2fed3c1ff9d643f"
+    "bench_targets": "92e3fb8165117a8779da69429c61df4089431db14ffdbea45116434fa60509c0"
   },
   "required_log_fields": [
     "trace_id",
@@ -42187,5 +42187,5 @@
     "target_report": "target/conformance/benchmark_coverage_inventory.report.json",
     "target_log": "target/conformance/benchmark_coverage_inventory.log.jsonl"
   },
-  "artifact_hash": "7b40288534288bffb4a770796319508fde87cf0134bd92c63bc7f3b1f47afe83"
+  "artifact_hash": "00d5f25287835b84a1a8ac29bfdfea4002badec6c89001ca8d7657895c283767"
 }

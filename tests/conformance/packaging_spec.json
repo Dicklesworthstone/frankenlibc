@@ -35,7 +35,7 @@
     "replace": {
       "name": "Replace",
       "artifact_name": "libfrankenlibc_replace.so",
-      "description": "Planned standalone replacement library with zero host glibc dependency. The current matrix is replacement-clean, but the dedicated shipped replacement artifact and deployment story are still pending.",
+      "description": "Planned standalone replacement library with zero host glibc dependency. The current matrix still has host-backed L1 interpose rows; the dedicated replacement artifact remains blocked until those rows migrate.",
       "build_command": "cargo build -p frankenlibc-abi --release --features=standalone",
       "output_path": "target/release/libfrankenlibc_replace.so",
       "deployment": "Direct link as system libc or LD_PRELOAD (no host glibc call-throughs)",
@@ -59,10 +59,39 @@
       "crate_type": "cdylib",
       "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
       "guarantee": "All exported symbols are self-contained. Zero host glibc dependency. Every symbol either runs native Rust code or issues raw Linux syscalls.",
-      "status": "matrix_ready_artifact_pending",
+      "status": "blocked_by_host_backed_rows",
       "blockers": {
-        "total_symbols_to_migrate": 0,
-        "WrapsHostLibc_remaining": {},
+        "total_symbols_to_migrate": 1310,
+        "WrapsHostLibc_remaining": {
+          "c11threads_abi": 9,
+          "dirent_abi": 7,
+          "dlfcn_abi": 6,
+          "err_abi": 12,
+          "fortify_abi": 53,
+          "glibc_internal_abi": 209,
+          "grp_abi": 3,
+          "inet_abi": 8,
+          "io_abi": 1,
+          "io_internal_abi": 63,
+          "isoc_abi": 3,
+          "malloc_abi": 11,
+          "math_abi": 509,
+          "process_abi": 3,
+          "pthread_abi": 28,
+          "pwd_abi": 8,
+          "resolv_abi": 5,
+          "rpc_abi": 26,
+          "search_abi": 1,
+          "setjmp_abi": 4,
+          "signal_abi": 9,
+          "startup_abi": 4,
+          "stdio_abi": 116,
+          "stdlib_abi": 60,
+          "string_abi": 36,
+          "time_abi": 6,
+          "unistd_abi": 56,
+          "wchar_abi": 54
+        },
         "GlibcCallThrough_remaining": {},
         "Stub_remaining": {},
         "milestone_beads": [
@@ -108,17 +137,17 @@
   "current_assessment": {
     "total_symbols": 4119,
     "interpose_ready": 4119,
-    "replace_ready": 4119,
-    "replace_blocked": 0,
+    "replace_ready": 2809,
+    "replace_blocked": 1310,
     "symbol_distribution": {
-      "Implemented": 3705,
+      "Implemented": 2395,
       "RawSyscall": 414,
-      "WrapsHostLibc": 0,
+      "WrapsHostLibc": 1310,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "interpose_pct": 100,
-    "replace_pct": 100
+    "replace_pct": 68.2
   },
   "naming_convention": {
     "interpose": {
@@ -162,6 +191,6 @@
   },
   "matrix_applicability": {
     "description": "Every symbol in support_matrix.json applies to the Interpose artifact. Only Implemented and RawSyscall symbols apply to the Replace artifact.",
-    "rule": "If status in (Implemented, RawSyscall) \u2192 applies to both. If status in (GlibcCallThrough, Stub) \u2192 Interpose only."
+    "rule": "If status in (Implemented, RawSyscall) \u2192 applies to both. If status in (WrapsHostLibc, GlibcCallThrough, Stub) \u2192 Interpose only."
   }
 }

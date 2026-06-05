@@ -58,19 +58,19 @@
     {
       "kind": "abi_source_callthrough_scan",
       "path": "crates/frankenlibc-abi/build.rs",
-      "line": 727,
+      "line": 737,
       "anchor": "scan_call_throughs"
     },
     {
       "kind": "standalone_build_failure_message",
       "path": "crates/frankenlibc-abi/build.rs",
-      "line": 763,
+      "line": 774,
       "anchor": "standalone feature requires a replacement-clean ABI"
     },
     {
       "kind": "standalone_feature_gate_entry",
       "path": "crates/frankenlibc-abi/build.rs",
-      "line": 827,
+      "line": 838,
       "anchor": "if standalone_enabled"
     },
     {

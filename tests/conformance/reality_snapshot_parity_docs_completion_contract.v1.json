@@ -15,12 +15,12 @@
     "completion_harness_test": "crates/frankenlibc-harness/tests/reality_snapshot_parity_docs_completion_contract_test.rs"
   },
   "expected_reality_snapshot": {
-    "generated_at_utc": "2026-02-18T04:49:26Z",
+    "generated_at_utc": "2026-06-03T21:45:00Z",
     "total_exported": 4119,
     "counts": {
-      "implemented": 3705,
+      "implemented": 2395,
       "raw_syscall": 414,
-      "wraps_host_libc": 0,
+      "wraps_host_libc": 1310,
       "glibc_call_through": 0,
       "stub": 0
     }
@@ -37,11 +37,10 @@
         "id": "readme",
         "path": "README.md",
         "required_text": [
-          "Current source of truth: `tests/conformance/reality_report.v1.json`.",
-          "Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).",
-          "Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, wraps_host_libc=0, glibc_call_through=0, stub=0.",
+          "Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).",
+          "Reality snapshot: total_exported=4119, implemented=2395, raw_syscall=414, wraps_host_libc=1310, glibc_call_through=0, stub=0.",
           "Total currently classified exports: **4119**.",
-          "Current native coverage (`Implemented + RawSyscall`): **100.0%**.",
+          "Native coverage = `Implemented + RawSyscall`; host-backed L1 interpose = `WrapsHostLibc + GlibcCallThrough`",
           "cargo run -p frankenlibc-harness --bin harness -- reality-report",
           "--support-matrix support_matrix.json"
         ]
@@ -50,12 +49,12 @@
         "id": "feature_parity",
         "path": "FEATURE_PARITY.md",
         "required_text": [
-          "Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).",
-          "Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, glibc_call_through=0, stub=0.",
+          "Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).",
+          "Reality snapshot: total_exported=4119, implemented=2395, raw_syscall=414, wraps_host_libc=1310, glibc_call_through=0, stub=0.",
           "Current exported ABI surface is **4119 symbols**, classified as:",
-          "- `Implemented`: 3705",
+          "- `Implemented`: 2395",
           "- `RawSyscall`: 414",
-          "- `WrapsHostLibc`: 0",
+          "- `WrapsHostLibc`: 1310",
           "- `GlibcCallThrough`: 0",
           "- `Stub`: 0",
           "cargo run -p frankenlibc-harness --bin harness -- reality-report",
@@ -76,8 +75,8 @@
         "id": "readme-pins-reality-source-counts-and-command",
         "path": "README.md",
         "required_text": [
-          "Current source of truth: `tests/conformance/reality_report.v1.json`.",
-          "Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, wraps_host_libc=0, glibc_call_through=0, stub=0.",
+          "Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).",
+          "Reality snapshot: total_exported=4119, implemented=2395, raw_syscall=414, wraps_host_libc=1310, glibc_call_through=0, stub=0.",
           "cargo run -p frankenlibc-harness --bin harness -- reality-report",
           "--support-matrix support_matrix.json"
         ]
@@ -86,8 +85,8 @@
         "id": "feature-parity-pins-reality-source-counts-and-command",
         "path": "FEATURE_PARITY.md",
         "required_text": [
-          "Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).",
-          "Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, glibc_call_through=0, stub=0.",
+          "Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-06-03T21:45:00Z`).",
+          "Reality snapshot: total_exported=4119, implemented=2395, raw_syscall=414, wraps_host_libc=1310, glibc_call_through=0, stub=0.",
           "Current exported ABI surface is **4119 symbols**, classified as:",
           "--output tests/conformance/reality_report.v1.json"
         ]

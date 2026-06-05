@@ -352,8 +352,8 @@
       "wchar_abi": 22
     },
     "strict_hotpath_by_status": {
-      "Implemented": 112,
-      "WrapsHostLibc": 40
+      "Implemented": 114,
+      "WrapsHostLibc": 38
     },
     "benchmark_coverage": {
       "internal_benches": [
@@ -746,7 +746,7 @@
       {
         "symbol": "pthread_mutex_lock",
         "module": "pthread_abi",
-        "status": "WrapsHostLibc"
+        "status": "Implemented"
       },
       {
         "symbol": "pthread_mutex_trylock",
@@ -756,7 +756,7 @@
       {
         "symbol": "pthread_mutex_unlock",
         "module": "pthread_abi",
-        "status": "WrapsHostLibc"
+        "status": "Implemented"
       },
       {
         "symbol": "pthread_rwlock_destroy",

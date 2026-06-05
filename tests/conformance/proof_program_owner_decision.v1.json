@@ -55,22 +55,22 @@
   "source_refs": [
     {
       "path": "FEATURE_PARITY.md",
-      "line": 242,
+      "line": 245,
       "must_contain": "no machine-checked formal proof artifacts are committed yet"
     },
     {
       "path": "FEATURE_PARITY.md",
-      "line": 298,
+      "line": 301,
       "must_contain": "machine-checked formal proof artifacts (Lean/Coq/SMT) are not committed yet"
     },
     {
       "path": "README.md",
-      "line": 1268,
+      "line": 1270,
       "must_contain": "not completed machine-checked proof artifacts"
     },
     {
       "path": "README.md",
-      "line": 4001,
+      "line": 4004,
       "must_contain": "no machine-checked proof artifacts yet"
     }
   ],

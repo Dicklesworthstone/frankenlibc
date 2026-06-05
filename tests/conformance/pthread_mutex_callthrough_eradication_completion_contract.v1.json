@@ -139,16 +139,16 @@
       "kind": "conformance",
       "next_audit_threshold": 900,
       "implementation_refs": [
-        "support_matrix.json:10171",
-        "support_matrix.json:10180",
-        "support_matrix.json:10189",
-        "support_matrix.json:10207",
-        "support_matrix.json:10216",
-        "crates/frankenlibc-abi/src/pthread_abi.rs:2257",
-        "crates/frankenlibc-abi/src/pthread_abi.rs:2318",
-        "crates/frankenlibc-abi/src/pthread_abi.rs:2357",
-        "crates/frankenlibc-abi/src/pthread_abi.rs:2428",
-        "crates/frankenlibc-abi/src/pthread_abi.rs:2498"
+        "support_matrix.json:10235",
+        "support_matrix.json:10244",
+        "support_matrix.json:10253",
+        "support_matrix.json:10271",
+        "support_matrix.json:10280",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2391",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2451",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2491",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2562",
+        "crates/frankenlibc-abi/src/pthread_abi.rs:2632"
       ],
       "test_refs": [
         "tests/conformance/fixtures/pthread_mutex.json:10",

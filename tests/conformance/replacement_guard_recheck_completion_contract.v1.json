@@ -21,7 +21,7 @@
       "id": "replacement_levels",
       "kind": "conformance_artifact",
       "path": "tests/conformance/replacement_levels.json",
-      "evidence": "Replacement level contract and current L0 status used by level gates."
+      "evidence": "Replacement level contract and current L1 status used by level gates."
     },
     {
       "id": "host_dependency_inventory",
@@ -88,7 +88,7 @@
       "interpose_allowed_count": 0,
       "replacement_forbidden_count": 0,
       "replacement_level_count": 4,
-      "current_level": "L0"
+      "current_level": "L1"
     },
     "required_guard_modes": [
       {

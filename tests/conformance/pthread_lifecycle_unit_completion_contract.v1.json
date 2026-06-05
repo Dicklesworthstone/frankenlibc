@@ -280,7 +280,7 @@
         {
           "artifact": "thread_lifecycle_test",
           "family": "thread_lifecycle",
-          "name": "pthread_create_join_roundtrip_uses_default_native_routing",
+          "name": "pthread_create_join_roundtrip_uses_default_host_routing",
           "covers": [
             "create/join return value round-trip"
           ]

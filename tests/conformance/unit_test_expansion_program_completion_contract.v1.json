@@ -35,7 +35,7 @@
       "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs:159",
       "crates/frankenlibc-harness/tests/unit_test_closure_packs_test.rs:261",
       "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs:162",
-      "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs:263",
+      "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs:265",
       "crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs:299",
       "crates/frankenlibc-abi/tests/pthread_cond_core_test.rs:45",
       "crates/frankenlibc-abi/tests/pthread_cond_core_test.rs:171",
@@ -119,7 +119,7 @@
         },
         {
           "source": "pthread_thread_lifecycle_test",
-          "name": "pthread_create_join_roundtrip_uses_default_native_routing"
+          "name": "pthread_create_join_roundtrip_uses_default_host_routing"
         },
         {
           "source": "pthread_thread_lifecycle_test",

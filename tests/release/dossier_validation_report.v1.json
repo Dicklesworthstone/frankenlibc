@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-05-11T11:04:17Z",
+  "generated_at": "2026-06-05T17:45:27Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -27,8 +27,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
-      "size_bytes": 993484,
+      "sha256": "a05fd669599458bf41f6e7b489431e4b723ede0f8d934e7352478a470549506f",
+      "size_bytes": 1002803,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -39,8 +39,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "a1c81d05ba2e33e4d91eb44a3a710637945a03e229b8fecfb5e270dd132328f1",
-      "size_bytes": 252,
+      "sha256": "76344c5815acfbe3971d337e05ff6d58e462b821c7874b8dbe85c8a4ba370ada",
+      "size_bytes": 255,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -63,7 +63,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "fb1e60d2f5a0641ffcf2d23f4dd2615cae63c82a651cc392d172df33c8c3a671",
+      "sha256": "ec8625f8f978c9c727a71735e7ebc226d222d99d39690410a86135c4b3e2416e",
       "size_bytes": 819,
       "status": "VALID",
       "schema_valid": true,
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "3f706d1cc148bc9c52ff4be404f31113519c1e1f3d306b1ccbf80baec2d23981",
+      "sha256": "8a2d3cc2e6172d89eb2fcd794ac78c86d0f7de3515e14442d6b9fd5b47f099e1",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -87,8 +87,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "8887da6abc1f8b12cf57612992cb7dfc80a917f64950b83fe28df28d626b5c3b",
-      "size_bytes": 12690,
+      "sha256": "656aca0db32c7ba02ef42951fca3aad4ce4454883bc13566235eb894a39282d1",
+      "size_bytes": 15137,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -123,8 +123,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "3706b64c2d29259d690ce61a418eac0e631c3144367392b6d08ec760ef6907b2",
-      "size_bytes": 35306,
+      "sha256": "dbbccf9ff1b21f05572366e5a342963a0955541d7704b019d174927595a5c7db",
+      "size_bytes": 41324,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "f7a3377443082cf885fb2d33452140055080f190bd78e1bf0be289e20c10c152",
+      "sha256": "336a5bb3b8b2bac69017da89dc1738b4c00a45ad3550b2f12f06d24e5eb64c56",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -171,8 +171,8 @@
       "kind": "report",
       "required": true,
       "critical": false,
-      "sha256": "6211103403e9d2cd527fa7f3ea462218b82cb66cc260d43e7aae10d9e6dcec64",
-      "size_bytes": 1844233,
+      "sha256": "f07a4bfbcff20cd6f0b9c4bcf206ba6f22a1b4cb8a20c9856c3fa35970176cf3",
+      "size_bytes": 1839017,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -200,8 +200,8 @@
       "kind": "manifest",
       "required": true,
       "critical": true,
-      "sha256": "eadec0e4063ebc841ae8d11fd8f6580b554b06cbc14d81c17328a6f6e22305f1",
-      "size_bytes": 14269,
+      "sha256": "fb97a5e1be501a557d102b549694736cdd77d0003b42062e731b392a6f8d086b",
+      "size_bytes": 15368,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -210,13 +210,13 @@
   "integrity_index": {
     "support_matrix": {
       "path": "support_matrix.json",
-      "sha256": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
-      "size_bytes": 993484
+      "sha256": "a05fd669599458bf41f6e7b489431e4b723ede0f8d934e7352478a470549506f",
+      "size_bytes": 1002803
     },
     "reality_report": {
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "a1c81d05ba2e33e4d91eb44a3a710637945a03e229b8fecfb5e270dd132328f1",
-      "size_bytes": 252
+      "sha256": "76344c5815acfbe3971d337e05ff6d58e462b821c7874b8dbe85c8a4ba370ada",
+      "size_bytes": 255
     },
     "conformance_coverage": {
       "path": "tests/conformance/conformance_coverage_baseline.v1.json",
@@ -225,18 +225,18 @@
     },
     "claim_reconciliation": {
       "path": "tests/conformance/claim_reconciliation_report.v1.json",
-      "sha256": "fb1e60d2f5a0641ffcf2d23f4dd2615cae63c82a651cc392d172df33c8c3a671",
+      "sha256": "ec8625f8f978c9c727a71735e7ebc226d222d99d39690410a86135c4b3e2416e",
       "size_bytes": 819
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "3f706d1cc148bc9c52ff4be404f31113519c1e1f3d306b1ccbf80baec2d23981",
+      "sha256": "8a2d3cc2e6172d89eb2fcd794ac78c86d0f7de3515e14442d6b9fd5b47f099e1",
       "size_bytes": 5609
     },
     "replacement_levels": {
       "path": "tests/conformance/replacement_levels.json",
-      "sha256": "8887da6abc1f8b12cf57612992cb7dfc80a917f64950b83fe28df28d626b5c3b",
-      "size_bytes": 12690
+      "sha256": "656aca0db32c7ba02ef42951fca3aad4ce4454883bc13566235eb894a39282d1",
+      "size_bytes": 15137
     },
     "opportunity_matrix": {
       "path": "tests/conformance/opportunity_matrix.json",
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "3706b64c2d29259d690ce61a418eac0e631c3144367392b6d08ec760ef6907b2",
-      "size_bytes": 35306
+      "sha256": "dbbccf9ff1b21f05572366e5a342963a0955541d7704b019d174927595a5c7db",
+      "size_bytes": 41324
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "f7a3377443082cf885fb2d33452140055080f190bd78e1bf0be289e20c10c152",
+      "sha256": "336a5bb3b8b2bac69017da89dc1738b4c00a45ad3550b2f12f06d24e5eb64c56",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -270,13 +270,13 @@
     },
     "symbol_fixture_coverage": {
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "6211103403e9d2cd527fa7f3ea462218b82cb66cc260d43e7aae10d9e6dcec64",
-      "size_bytes": 1844233
+      "sha256": "f07a4bfbcff20cd6f0b9c4bcf206ba6f22a1b4cb8a20c9856c3fa35970176cf3",
+      "size_bytes": 1839017
     },
     "closure_contract": {
       "path": "tests/conformance/closure_contract.v1.json",
-      "sha256": "eadec0e4063ebc841ae8d11fd8f6580b554b06cbc14d81c17328a6f6e22305f1",
-      "size_bytes": 14269
+      "sha256": "fb97a5e1be501a557d102b549694736cdd77d0003b42062e731b392a6f8d086b",
+      "size_bytes": 15368
     }
   },
   "release_notes_hook": {
@@ -288,113 +288,117 @@
     },
     "entries": [
       {
-        "id": "bd-33xi.1",
-        "title": "[completion-debt] Integration: real-world application testing",
+        "id": "bd-2g7oyh.157",
+        "title": "[perf] mem.rs safe-Rust memory primitive pass",
         "issue_type": "task",
-        "priority": 0,
-        "closed_at": "2026-05-11T10:54:07.232283792Z",
-        "closed_by": "WildForest",
+        "priority": 1,
+        "closed_at": "2026-06-05T16:34:28.188572222Z",
+        "closed_by": "BlackThrush",
         "labels": [
-          "audit-debt",
-          "audit-pass-2026-05-10"
+          "no-gaps",
+          "perf",
+          "string"
         ],
-        "close_reason": "Implemented and validated the real-world application testing completion contract for bd-33xi. Implementation evidence: - tests/conformance/real_world_application_testing_completion_contract.v1.json:2\u2026"
+        "close_reason": "Rejected/restored: memmove #[inline(always)] passed behavior proof but regressed same-worker ts2 focused benchmark p50 59.188->62.522 ns/op, mean 61.808->66.450; score 0.0. Artifact: tests/artifacts/\u2026"
       },
       {
-        "id": "bd-33p.3.1",
-        "title": "[completion-debt] Evidence compliance gate: schema + artifact index + failure-injection tests",
+        "id": "bd-4scbmf",
+        "title": "[perf][no-gaps] malloc small/med 1.2-1.36x slower than glibc \u2014 structural (safety+observability bookkeeping), needs leaner thread-cache/arena redesign",
         "issue_type": "task",
-        "priority": 0,
-        "closed_at": "2026-05-11T10:32:14.199655923Z",
-        "closed_by": "WildForest",
-        "labels": [
-          "audit-debt",
-          "audit-pass-2026-05-10"
-        ],
-        "close_reason": "Implemented and validated the evidence-compliance gate completion contract. Implementation evidence: - tests/conformance/evidence_compliance_gate_completion_contract.v1.json:52 binds tests.unit.prima\u2026"
+        "priority": 2,
+        "closed_at": "2026-06-05T16:07:17.445235849Z",
+        "closed_by": "BlackThrush",
+        "labels": [],
+        "close_reason": "Rejected measured allocator micro/near-structure levers: fixed array magazine and hot-slot did not clear Score>=2.0; production-only elimination compile-out stayed noisy under RCH worker/source churn\u2026"
       },
       {
-        "id": "bd-32e.6.1",
-        "title": "[completion-debt] TSM: E2E tests - full pipeline integration under load",
-        "issue_type": "task",
-        "priority": 0,
-        "closed_at": "2026-05-11T10:20:00.619846951Z",
-        "closed_by": "WildForest",
-        "labels": [
-          "audit-debt",
-          "audit-pass-2026-05-10"
-        ],
-        "close_reason": "Implemented and validated the TSM full-pipeline under-load completion contract. Implementation evidence: - tests/conformance/tsm_full_pipeline_load_completion_contract.v1.json:49 binds the missing un\u2026"
+        "id": "bd-keug4v",
+        "title": "lround/lrint/llround/llrint: out-of-range/NaN/Inf return INT_MAX/0, glibc returns x86 cvttsd2si indefinite (INT64_MIN)",
+        "issue_type": "bug",
+        "priority": 4,
+        "closed_at": "2026-06-05T07:50:35.215856813Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "Fixed in d59d2a59: round_to_i64_x86 returns i64::MIN for NaN/Inf/|r|>=2^63 matching glibc x86 cvtsd2si indefinite; all 8 lrint/lround/ll*/f32 wrappers; conformance harness now asserts full out-of-ran\u2026"
       },
       {
-        "id": "bd-2vv.9.1",
-        "title": "[completion-debt] Full symbol-universe normalization + support classification pipeline",
+        "id": "bd-2g7oyh.156",
+        "title": "[perf] printf_g manual scientific exponent parser",
         "issue_type": "task",
-        "priority": 0,
-        "closed_at": "2026-05-11T10:06:04.117158251Z",
-        "closed_by": "WildForest",
+        "priority": 1,
+        "closed_at": "2026-06-05T07:49:03.749332419Z",
+        "closed_by": "BlackThrush",
         "labels": [
-          "audit-debt",
-          "audit-pass-2026-05-10"
+          "alien-artifact",
+          "no-gaps",
+          "perf",
+          "printf",
+          "stdio"
         ],
-        "close_reason": "Implemented and validated full symbol-universe normalization completion evidence. Implementation evidence: - scripts/generate_symbol_universe_normalization.py:38 maps all current support-matrix modul\u2026"
+        "close_reason": "Closed no-code after focused RCH baseline. Fresh broad ts2 row showed a small printf_g_6 gap, but focused RCH on ts1 with sample-size 50 showed no active p50 gap: FrankenLibC p50 129.150 ns/op vs hos\u2026"
       },
       {
-        "id": "bd-2vv.16.1",
-        "title": "[completion-debt] bd-2vv subtask: resync reality_report/docs to current support_matrix universe",
-        "issue_type": "task",
-        "priority": 0,
-        "closed_at": "2026-05-11T09:45:19.017688340Z",
-        "closed_by": "WildForest",
-        "labels": [
-          "audit-debt",
-          "audit-pass-2026-05-10"
-        ],
-        "close_reason": "Implemented support-matrix universe docs completion conformance binding for missing tests.conformance.primary. Evidence refs: tests/conformance/support_matrix_universe_docs_completion_contract.v1.jso\u2026"
+        "id": "bd-urij76",
+        "title": "remquo/remquof: *quo stored full quotient instead of glibc's reduced low-3-bits (C99 n=3)",
+        "issue_type": "bug",
+        "priority": 2,
+        "closed_at": "2026-06-05T07:39:12.682389877Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "Fixed in 225c275b: mask quo to low 3 bits with sign (C99 n=3) for remquo+remquof; found via new conformance_diff_math_exact harness (3445 divergences\u21920). Filed lround/lrint out-of-range UB-adjacent g\u2026"
       },
       {
-        "id": "bd-2vv.13.1",
-        "title": "[completion-debt] bd-2vv subtask: reality snapshot + parity docs synchronization",
+        "id": "bd-2g7oyh.155",
+        "title": "[perf] malloc large single-entry fast slot",
         "issue_type": "task",
-        "priority": 0,
-        "closed_at": "2026-05-11T09:36:57.934058074Z",
-        "closed_by": "WildForest",
+        "priority": 1,
+        "closed_at": "2026-06-05T07:38:22.412345930Z",
+        "closed_by": "BlackThrush",
         "labels": [
-          "audit-debt",
-          "audit-pass-2026-05-10"
+          "alien-graveyard",
+          "allocator",
+          "malloc",
+          "no-gaps",
+          "perf"
         ],
-        "close_reason": "Implemented reality snapshot docs completion conformance binding for missing tests.conformance.primary. Evidence refs: tests/conformance/reality_snapshot_parity_docs_completion_contract.v1.json:7 sou\u2026"
+        "close_reason": "Kept in commit b5f99f36. RCH criterion same-worker ts2 malloc_free_large improved p50 40.849 -> 13.166 ns/op and mean 44.323 -> 14.252 ns/op (Score 9.0). Behavior proof passed: RCH cargo test -p fran\u2026"
       },
       {
-        "id": "bd-2k6b.1",
-        "title": "[completion-debt] bd-rqn subtask: Runtime-math module classification matrix (production vs research) with rationale",
+        "id": "bd-2g7oyh.154",
+        "title": "[perf] memmove fixed-array copy kernel",
         "issue_type": "task",
-        "priority": 0,
-        "closed_at": "2026-05-11T09:24:23.860453742Z",
-        "closed_by": "WildForest",
+        "priority": 1,
+        "closed_at": "2026-06-05T07:25:03.909470746Z",
+        "closed_by": "BlackThrush",
         "labels": [
-          "audit-debt",
-          "audit-pass-2026-05-10"
+          "alien-graveyard",
+          "memmove",
+          "no-gaps",
+          "perf",
+          "string"
         ],
-        "close_reason": "Implemented runtime-math classification matrix completion binding for missing tests.unit.primary. Evidence refs: tests/conformance/runtime_math_classification_matrix_completion_contract.v1.json:7 sou\u2026"
+        "close_reason": "Rejected: safe fixed-array [u8;64] memmove copy kernel preserved behavior but regressed same-worker RCH ts2. Focused baseline Franken memmove_4096 p50 64.095ns mean 66.804ns vs host p50 54.942ns mean\u2026"
       },
       {
-        "id": "bd-2hh.1.1",
-        "title": "[completion-debt] Conformance: Fixture capture pipeline (per-ABI-family golden fixtures)",
+        "id": "bd-2g7oyh.153",
+        "title": "[perf] memchr register-pressure 128-byte fold",
         "issue_type": "task",
-        "priority": 0,
-        "closed_at": "2026-05-11T09:07:07.811478981Z",
-        "closed_by": "WildForest",
+        "priority": 1,
+        "closed_at": "2026-06-05T07:15:14.259464754Z",
+        "closed_by": "BlackThrush",
         "labels": [
-          "audit-debt",
-          "audit-pass-2026-05-10"
+          "alien-graveyard",
+          "memchr",
+          "no-gaps",
+          "perf",
+          "string"
         ],
-        "close_reason": "Implemented fixture capture pipeline completion binding. Evidence refs: tests/conformance/fixture_capture_pipeline_completion_contract.v1.json:7 source artifacts, :141 required unit/e2e/golden/confor\u2026"
+        "close_reason": "Rejected: same-worker ts2 128-byte register-pressure memchr fold preserved behavior but failed keep gate. Baseline Franken memchr_absent p50 34.136ns mean 45.646ns vs host p50 29.775ns mean 32.025ns.\u2026"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-33xi.1` [completion-debt] Integration: real-world application testing (task, closed 2026-05-11T10:54:07.232283792Z)\n  Implemented and validated the real-world application testing completion contract for bd-33xi. Implementation evidence: - tests/conformance/real_world_application_testing_completion_contract.v1.json:2\u2026\n- `bd-33p.3.1` [completion-debt] Evidence compliance gate: schema + artifact index + failure-injection tests (task, closed 2026-05-11T10:32:14.199655923Z)\n  Implemented and validated the evidence-compliance gate completion contract. Implementation evidence: - tests/conformance/evidence_compliance_gate_completion_contract.v1.json:52 binds tests.unit.prima\u2026\n- `bd-32e.6.1` [completion-debt] TSM: E2E tests - full pipeline integration under load (task, closed 2026-05-11T10:20:00.619846951Z)\n  Implemented and validated the TSM full-pipeline under-load completion contract. Implementation evidence: - tests/conformance/tsm_full_pipeline_load_completion_contract.v1.json:49 binds the missing un\u2026\n- `bd-2vv.9.1` [completion-debt] Full symbol-universe normalization + support classification pipeline (task, closed 2026-05-11T10:06:04.117158251Z)\n  Implemented and validated full symbol-universe normalization completion evidence. Implementation evidence: - scripts/generate_symbol_universe_normalization.py:38 maps all current support-matrix modul\u2026\n- `bd-2vv.16.1` [completion-debt] bd-2vv subtask: resync reality_report/docs to current support_matrix universe (task, closed 2026-05-11T09:45:19.017688340Z)\n  Implemented support-matrix universe docs completion conformance binding for missing tests.conformance.primary. Evidence refs: tests/conformance/support_matrix_universe_docs_completion_contract.v1.jso\u2026\n- `bd-2vv.13.1` [completion-debt] bd-2vv subtask: reality snapshot + parity docs synchronization (task, closed 2026-05-11T09:36:57.934058074Z)\n  Implemented reality snapshot docs completion conformance binding for missing tests.conformance.primary. Evidence refs: tests/conformance/reality_snapshot_parity_docs_completion_contract.v1.json:7 sou\u2026\n- `bd-2k6b.1` [completion-debt] bd-rqn subtask: Runtime-math module classification matrix (production vs research) with rationale (task, closed 2026-05-11T09:24:23.860453742Z)\n  Implemented runtime-math classification matrix completion binding for missing tests.unit.primary. Evidence refs: tests/conformance/runtime_math_classification_matrix_completion_contract.v1.json:7 sou\u2026\n- `bd-2hh.1.1` [completion-debt] Conformance: Fixture capture pipeline (per-ABI-family golden fixtures) (task, closed 2026-05-11T09:07:07.811478981Z)\n  Implemented fixture capture pipeline completion binding. Evidence refs: tests/conformance/fixture_capture_pipeline_completion_contract.v1.json:7 source artifacts, :141 required unit/e2e/golden/confor\u2026",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-2g7oyh.157` [perf] mem.rs safe-Rust memory primitive pass (task, closed 2026-06-05T16:34:28.188572222Z)\n  Rejected/restored: memmove #[inline(always)] passed behavior proof but regressed same-worker ts2 focused benchmark p50 59.188->62.522 ns/op, mean 61.808->66.450; score 0.0. Artifact: tests/artifacts/\u2026\n- `bd-4scbmf` [perf][no-gaps] malloc small/med 1.2-1.36x slower than glibc \u2014 structural (safety+observability bookkeeping), needs leaner thread-cache/arena redesign (task, closed 2026-06-05T16:07:17.445235849Z)\n  Rejected measured allocator micro/near-structure levers: fixed array magazine and hot-slot did not clear Score>=2.0; production-only elimination compile-out stayed noisy under RCH worker/source churn\u2026\n- `bd-keug4v` lround/lrint/llround/llrint: out-of-range/NaN/Inf return INT_MAX/0, glibc returns x86 cvttsd2si indefinite (INT64_MIN) (bug, closed 2026-06-05T07:50:35.215856813Z)\n  Fixed in d59d2a59: round_to_i64_x86 returns i64::MIN for NaN/Inf/|r|>=2^63 matching glibc x86 cvtsd2si indefinite; all 8 lrint/lround/ll*/f32 wrappers; conformance harness now asserts full out-of-ran\u2026\n- `bd-2g7oyh.156` [perf] printf_g manual scientific exponent parser (task, closed 2026-06-05T07:49:03.749332419Z)\n  Closed no-code after focused RCH baseline. Fresh broad ts2 row showed a small printf_g_6 gap, but focused RCH on ts1 with sample-size 50 showed no active p50 gap: FrankenLibC p50 129.150 ns/op vs hos\u2026\n- `bd-urij76` remquo/remquof: *quo stored full quotient instead of glibc's reduced low-3-bits (C99 n=3) (bug, closed 2026-06-05T07:39:12.682389877Z)\n  Fixed in 225c275b: mask quo to low 3 bits with sign (C99 n=3) for remquo+remquof; found via new conformance_diff_math_exact harness (3445 divergences\u21920). Filed lround/lrint out-of-range UB-adjacent g\u2026\n- `bd-2g7oyh.155` [perf] malloc large single-entry fast slot (task, closed 2026-06-05T07:38:22.412345930Z)\n  Kept in commit b5f99f36. RCH criterion same-worker ts2 malloc_free_large improved p50 40.849 -> 13.166 ns/op and mean 44.323 -> 14.252 ns/op (Score 9.0). Behavior proof passed: RCH cargo test -p fran\u2026\n- `bd-2g7oyh.154` [perf] memmove fixed-array copy kernel (task, closed 2026-06-05T07:25:03.909470746Z)\n  Rejected: safe fixed-array [u8;64] memmove copy kernel preserved behavior but regressed same-worker RCH ts2. Focused baseline Franken memmove_4096 p50 64.095ns mean 66.804ns vs host p50 54.942ns mean\u2026\n- `bd-2g7oyh.153` [perf] memchr register-pressure 128-byte fold (task, closed 2026-06-05T07:15:14.259464754Z)\n  Rejected: same-worker ts2 128-byte register-pressure memchr fold preserved behavior but failed keep gate. Baseline Franken memchr_absent p50 34.136ns mean 45.646ns vs host p50 29.775ns mean 32.025ns.\u2026",
     "summary": {
-      "closed_total": 1992,
+      "closed_total": 6222,
       "selected": 8,
       "invalid_rows": 0
     }

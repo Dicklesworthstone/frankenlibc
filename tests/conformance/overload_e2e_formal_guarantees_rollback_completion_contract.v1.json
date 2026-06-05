@@ -114,13 +114,13 @@
     {
       "kind": "perf_gate_overload_skip",
       "path": "scripts/perf_gate.sh",
-      "line": 67,
+      "line": 97,
       "anchor": "should_skip_overloaded"
     },
     {
       "kind": "perf_gate_auto_throttle_report",
       "path": "scripts/perf_gate.sh",
-      "line": 677,
+      "line": 720,
       "anchor": "write_report \"auto_throttled\""
     },
     {

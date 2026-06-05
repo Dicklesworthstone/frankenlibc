@@ -55,7 +55,8 @@
     },
     "required_implementation_anchors": [
       "Formatting argument out of range",
-      "precision.min(65_535)",
+      "MAX_FLOAT_PRECISION: usize = 65_535",
+      "precision.min(MAX_FLOAT_PRECISION)",
       "format_float_does_not_panic_on_huge_precision",
       "format_float_still_honors_precision_up_to_cap",
       "65_536usize",

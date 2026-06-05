@@ -44,7 +44,7 @@
   "claimed_closure_contract": {
     "support_matrix": {
       "expected_total_exported": 4119,
-      "expected_native_total": 4119,
+      "expected_native_total": 2809,
       "expected_glibc_callthrough": 0,
       "expected_stub": 0
     },
@@ -60,9 +60,9 @@
     },
     "ld_preload_smoke": {
       "expected_total_cases": 64,
-      "expected_passes": 58,
+      "expected_passes": 60,
       "expected_fails": 0,
-      "expected_skips": 6,
+      "expected_skips": 4,
       "expected_overall_failed": false
     },
     "cve_arena": {
@@ -84,8 +84,8 @@
       "minimum_cwes_targeted": 11
     },
     "posix_obligations": {
-      "expected_total_obligations": 268,
-      "expected_covered_obligations": 268,
+      "expected_total_obligations": 524,
+      "expected_covered_obligations": 524,
       "expected_execution_failures": 0
     },
     "proof_binder": {

@@ -111,13 +111,13 @@
       },
       "current_assessment": {
         "total_symbols": 4119,
-        "implemented": 3705,
+        "implemented": 2395,
         "raw_syscall": 414,
-        "callthrough": 0,
+        "callthrough": 1310,
         "stub": 0,
-        "implemented_pct": 90,
+        "implemented_pct": 58,
         "raw_syscall_pct": 10,
-        "callthrough_pct": 0,
+        "callthrough_pct": 32,
         "stub_pct": 0
       }
     },
@@ -129,17 +129,17 @@
         "status_validated": 4119,
         "status_invalid": 0,
         "status_valid_pct": 100.0,
-        "fixture_linked": 1160,
-        "fixture_unlinked": 2959
+        "fixture_linked": 1164,
+        "fixture_unlinked": 2955
       },
       "status_counts": {
-        "Implemented": 3705,
+        "Implemented": 2395,
         "RawSyscall": 414,
-        "WrapsHostLibc": 0,
+        "WrapsHostLibc": 1310,
         "GlibcCallThrough": 0,
         "Stub": 0
       },
-      "native_coverage_pct": 100.0
+      "native_coverage_pct": 68.2
     },
     "release_dossier": {
       "schema_version": "v1",

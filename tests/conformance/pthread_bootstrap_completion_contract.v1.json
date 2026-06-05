@@ -79,7 +79,7 @@
       "required_test_refs": [
         {
           "artifact": "abi_lifecycle_test",
-          "name": "pthread_create_join_roundtrip_uses_default_native_routing",
+          "name": "pthread_create_join_roundtrip_uses_default_host_routing",
           "covers": [
             "pthread_create publishes a joinable handle",
             "pthread_join returns the child result"
@@ -115,7 +115,7 @@
         }
       ],
       "required_commands": [
-        "rch exec -- cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_create_join_roundtrip_uses_default_native_routing -- --nocapture",
+        "rch exec -- cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_create_join_roundtrip_uses_default_host_routing -- --nocapture",
         "rch exec -- cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_detach_makes_subsequent_join_fail_with_esrch -- --nocapture",
         "rch exec -- cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_join_then_reuse_handle_is_esrch -- --nocapture"
       ]
