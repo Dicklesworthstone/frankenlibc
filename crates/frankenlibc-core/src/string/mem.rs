@@ -837,6 +837,40 @@ mod tests {
     }
 
     #[test]
+    fn small_memcmp_matches_scalar() {
+        // The branchless 1..=16 byte fast path must match a byte-wise scalar
+        // reference (== std slice Ordering) for every length and a difference at
+        // every position. Deterministic xorshift fuzz with small alphabets to
+        // make differences and equal prefixes both frequent.
+        let mut st: u64 = 0x84a2_f00d_1234_9e7b;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        for _ in 0..2_000_000 {
+            let n = (next() % 17) as usize; // 0..=16
+            let mut a: Vec<u8> = (0..n).map(|_| (next() % 4) as u8).collect();
+            let mut b = a.clone();
+            // Optionally perturb b at a random position (and sometimes a too).
+            if n > 0 && next() % 2 == 0 {
+                let p = (next() as usize) % n;
+                b[p] = (next() % 4) as u8;
+            }
+            if n > 0 && next() % 4 == 0 {
+                let p = (next() as usize) % n;
+                a[p] = (next() % 4) as u8;
+            }
+            assert_eq!(
+                memcmp(&a, &b, n),
+                a[..n].cmp(&b[..n]),
+                "memcmp mismatch a={a:?} b={b:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_memcmp_less() {
         assert_eq!(memcmp(b"abc", b"abd", 3), core::cmp::Ordering::Less);
     }
