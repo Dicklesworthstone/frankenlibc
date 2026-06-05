@@ -327,7 +327,7 @@ fn has_non_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) 
         | lanes.simd_eq(Simd::splat(b1))
         | lanes.simd_eq(Simd::splat(b2))
         | lanes.simd_eq(Simd::splat(b3));
-    lanes.simd_eq(Simd::splat(0)).any() || !member.all()
+    (lanes.simd_eq(Simd::splat(0)) | !member).any()
 }
 
 #[inline(always)]
