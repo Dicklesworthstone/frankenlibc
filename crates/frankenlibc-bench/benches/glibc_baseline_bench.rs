@@ -12,8 +12,8 @@ use frankenlibc_core::stdio::printf::{
     FormatSegment, FormatSpec, format_float, parse_format_string,
 };
 use frankenlibc_core::string::{
-    memchr, memcpy, memmem, memmove, memset, strchr, strcmp, strcpy, strlen, strncasecmp, strncmp,
-    strpbrk, strrchr, strspn, strstr,
+    memchr, memcmp, memcpy, memmem, memmove, memset, strchr, strcmp, strcpy, strlen, strncasecmp,
+    strncmp, strpbrk, strrchr, strspn, strstr,
 };
 
 #[derive(Default)]
@@ -298,6 +298,52 @@ fn bench_strcmp_256_equal(c: &mut Criterion) {
     );
 
     group.finish();
+}
+
+fn bench_memcmp(c: &mut Criterion) {
+    for &n in &[16usize, 256, 4096] {
+        let mut group = c.benchmark_group(format!("glibc_baseline_memcmp_{n}"));
+        group.throughput(Throughput::Bytes(n as u64));
+        let a = vec![b'Q'; n];
+        let b = vec![b'Q'; n];
+        assert_eq!(memcmp(&a, &b, n), core::cmp::Ordering::Equal);
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "memcmp",
+                impl_label: "frankenlibc_core",
+                api_family: "string",
+                symbol: "memcmp",
+                workload: "equal N-byte buffers",
+                parity_proof_ref: "crates/frankenlibc-core/src/string/mem.rs",
+            },
+            || {
+                black_box(memcmp(black_box(&a), black_box(&b), n));
+            },
+        );
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "memcmp",
+                impl_label: "host_glibc",
+                api_family: "string",
+                symbol: "memcmp",
+                workload: "equal N-byte buffers",
+                parity_proof_ref: "crates/frankenlibc-core/src/string/mem.rs",
+            },
+            || {
+                // SAFETY: both buffers are n bytes.
+                unsafe {
+                    black_box(libc::memcmp(
+                        black_box(a.as_ptr().cast()),
+                        black_box(b.as_ptr().cast()),
+                        n,
+                    ));
+                }
+            },
+        );
+        group.finish();
+    }
 }
 
 fn bench_malloc_free_64(c: &mut Criterion) {
@@ -2040,6 +2086,7 @@ criterion_group! {
         bench_memset_4096,
         bench_strlen_4096,
         bench_strcmp_256_equal,
+        bench_memcmp,
         bench_malloc_free_64,
         bench_malloc_free_256,
         bench_malloc_free_large,

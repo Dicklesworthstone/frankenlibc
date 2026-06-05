@@ -59,50 +59,42 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let a = &a[..count];
     let b = &b[..count];
 
-    // Fast path: fold four 32-byte panels into one equality probe. Blocks that
-    // are byte-for-byte equal are skipped wholesale; the first block with any
-    // difference is then resolved in panel order and finally byte order, so the
-    // global first-difference sign is preserved exactly.
-    let mut a_blocks = a.chunks_exact(SIMD_FOLD_BYTES);
-    let mut b_blocks = b.chunks_exact(SIMD_FOLD_BYTES);
-    for (a_block, b_block) in a_blocks.by_ref().zip(b_blocks.by_ref()) {
-        if ne_simd_folded_128(a_block, b_block) {
-            let mut a_panels = a_block.chunks_exact(SIMD_LANES);
-            let mut b_panels = b_block.chunks_exact(SIMD_LANES);
-            for (a_chunk, b_chunk) in a_panels.by_ref().zip(b_panels.by_ref()) {
-                if !eq_simd_32(a_chunk, b_chunk) {
-                    return compare_bytes(a_chunk, b_chunk);
+    // Index-based scan (mirrors the parity-class `strcmp` loop, which is faster
+    // than the equivalent `chunks_exact().zip()` form): fold four 32-byte panels
+    // into one equality probe per 128-byte block; an equal block is skipped
+    // wholesale, and the first block holding any difference is resolved in
+    // 32-byte panel order then byte order, preserving the exact first-difference
+    // sign.
+    let mut i = 0;
+    while i + SIMD_FOLD_BYTES <= count {
+        if ne_simd_folded_128(&a[i..i + SIMD_FOLD_BYTES], &b[i..i + SIMD_FOLD_BYTES]) {
+            while i + SIMD_LANES <= count {
+                if !eq_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
+                    return compare_bytes(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]);
                 }
+                i += SIMD_LANES;
             }
         }
+        i += SIMD_FOLD_BYTES;
     }
 
-    // Remainder: scan 32-byte panels for a full-equality match. `a` and `b`
-    // share `count`, so both iterators yield the same number of panels and an
-    // identical-length remainder.
-    let a = a_blocks.remainder();
-    let b = b_blocks.remainder();
-    let mut a_simd = a.chunks_exact(SIMD_LANES);
-    let mut b_simd = b.chunks_exact(SIMD_LANES);
-    for (a_chunk, b_chunk) in a_simd.by_ref().zip(b_simd.by_ref()) {
-        if !eq_simd_32(a_chunk, b_chunk) {
-            return compare_bytes(a_chunk, b_chunk);
+    // Remaining 32-byte panels.
+    while i + SIMD_LANES <= count {
+        if !eq_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
+            return compare_bytes(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]);
         }
+        i += SIMD_LANES;
     }
 
     // Tail: the sub-32B remainder, scanned 8 bytes at a time then byte-wise.
-    let a = a_simd.remainder();
-    let b = b_simd.remainder();
-    let mut a_chunks = a.chunks_exact(WORD);
-    let mut b_chunks = b.chunks_exact(WORD);
-
-    for (a_chunk, b_chunk) in a_chunks.by_ref().zip(b_chunks.by_ref()) {
-        if u64_from_chunk(a_chunk) != u64_from_chunk(b_chunk) {
-            return compare_bytes(a_chunk, b_chunk);
+    while i + WORD <= count {
+        if u64_from_chunk(&a[i..i + WORD]) != u64_from_chunk(&b[i..i + WORD]) {
+            return compare_bytes(&a[i..i + WORD], &b[i..i + WORD]);
         }
+        i += WORD;
     }
 
-    compare_bytes(a_chunks.remainder(), b_chunks.remainder())
+    compare_bytes(&a[i..], &b[i..])
 }
 
 /// True iff the two 32-byte panels are byte-for-byte equal. Safe portable SIMD
