@@ -6,7 +6,9 @@
 //! interaction, and INT64_MIN / UINT64_MAX. glibc reference captured from a C
 //! snprintf probe (using ll length so the full 64-bit value is formatted).
 
-use frankenlibc_core::stdio::printf::{FormatSegment, format_signed, format_unsigned, parse_format_string};
+use frankenlibc_core::stdio::printf::{
+    FormatSegment, format_signed, format_unsigned, parse_format_string,
+};
 
 fn spec_of(fmt: &str) -> frankenlibc_core::stdio::printf::FormatSpec {
     parse_format_string(fmt.as_bytes())

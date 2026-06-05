@@ -17,7 +17,10 @@ fn run(c: &Case) -> String {
         Ok(c) => c,
         Err(_) => return "ERR".to_string(),
     };
-    let mut m = [RegMatch { rm_so: -1, rm_eo: -1 }; 16];
+    let mut m = [RegMatch {
+        rm_so: -1,
+        rm_eo: -1,
+    }; 16];
     let r = regex_exec(&compiled, c.input.as_bytes(), &mut m, 0);
     if r != 0 {
         return "NOMATCH".to_string();
@@ -32,7 +35,11 @@ fn run(c: &Case) -> String {
 fn regex_capture_differential_battery() {
     macro_rules! c {
         ($p:expr, $n:expr, $i:expr) => {
-            Case { pat: $p, ngroups: $n, input: $i }
+            Case {
+                pat: $p,
+                ngroups: $n,
+                input: $i,
+            }
         };
     }
     let cases = [
@@ -70,7 +77,10 @@ fn regex_capture_differential_battery() {
     for (i, c) in cases.iter().enumerate() {
         let got = run(c);
         if got != glibc[i] {
-            diffs.push(format!("case {i}: pat={:?} in={:?} -> frankenlibc={got:?} glibc={:?}", c.pat, c.input, glibc[i]));
+            diffs.push(format!(
+                "case {i}: pat={:?} in={:?} -> frankenlibc={got:?} glibc={:?}",
+                c.pat, c.input, glibc[i]
+            ));
         }
     }
     assert!(

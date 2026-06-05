@@ -45,18 +45,24 @@ fn printf_hexfloat_differential_battery() {
     for (fmt, val, expected) in cases {
         let got = render(fmt, *val);
         if got != *expected {
-            diffs.push(format!("printf({fmt:?}, {val:?}) -> frankenlibc={got:?} glibc={expected:?}"));
+            diffs.push(format!(
+                "printf({fmt:?}, {val:?}) -> frankenlibc={got:?} glibc={expected:?}"
+            ));
         }
     }
 
     // inf/nan: compare loosely (sign/payload unspecified by the standard).
     let inf = render("%a", f64::INFINITY);
     if inf != "inf" {
-        diffs.push(format!("printf(\"%a\", inf) -> frankenlibc={inf:?} glibc=\"inf\""));
+        diffs.push(format!(
+            "printf(\"%a\", inf) -> frankenlibc={inf:?} glibc=\"inf\""
+        ));
     }
     let nan = render("%a", f64::NAN);
     if !nan.contains("nan") {
-        diffs.push(format!("printf(\"%a\", nan) -> frankenlibc={nan:?} (expected to contain \"nan\")"));
+        diffs.push(format!(
+            "printf(\"%a\", nan) -> frankenlibc={nan:?} (expected to contain \"nan\")"
+        ));
     }
 
     assert!(

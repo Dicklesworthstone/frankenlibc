@@ -15,7 +15,7 @@ fn deep_nesting_returns_nospace_not_stack_overflow() {
     let n = 50_000usize;
     let mut pat = vec![b'{'; n];
     pat.push(b'x');
-    pat.extend(std::iter::repeat(b'}').take(n));
+    pat.extend(std::iter::repeat_n(b'}', n));
     let got = glob_expand(&pat, GLOB_BRACE | GLOB_NOCHECK).err();
     assert_eq!(
         got,

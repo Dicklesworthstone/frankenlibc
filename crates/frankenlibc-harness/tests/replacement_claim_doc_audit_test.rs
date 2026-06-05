@@ -250,25 +250,80 @@ fn stale_source_commit_policy_blocks_replacement_claim_text() -> TestResult {
     Ok(())
 }
 
+fn l1_promotion_evidence_is_complete(levels: &Value) -> TestResult {
+    ensure_eq(
+        levels["release_tag_policy"]["current_release_level"].as_str(),
+        Some("L1"),
+        "release_tag_policy.current_release_level",
+    )?;
+    let l1 = as_array(&levels["levels"], "levels")?
+        .iter()
+        .find(|entry| entry["level"].as_str() == Some("L1"))
+        .ok_or_else(|| test_error("replacement_levels.json must include L1 entry"))?;
+    ensure_eq(l1["status"].as_str(), Some("achieved"), "levels.L1.status")?;
+    ensure_eq(
+        l1["host_glibc_required"].as_bool(),
+        Some(true),
+        "levels.L1.host_glibc_required",
+    )?;
+    ensure(
+        as_str(&l1["description"], "levels.L1.description")?
+            .contains("not a standalone replacement claim"),
+        "levels.L1.description must preserve non-standalone claim boundary",
+    )?;
+    ensure(
+        as_array(&l1["blockers"], "levels.L1.blockers")?.is_empty(),
+        "levels.L1.blockers must be empty before L1 doc phrases are allowed",
+    )?;
+    let objective_gate = &l1["objective_gate"];
+    ensure_eq(
+        objective_gate["status"].as_str(),
+        Some("pass"),
+        "levels.L1.objective_gate.status",
+    )?;
+    let obligation_ids: Vec<&str> = as_array(
+        &objective_gate["obligations"],
+        "levels.L1.objective_gate.obligations",
+    )?
+    .iter()
+    .map(|obligation| obligation["id"].as_str().unwrap_or_default())
+    .collect();
+    for required in [
+        "stub_free_taxonomy",
+        "callthrough_pct_within_l1_bound",
+        "implemented_pct_meets_l1_floor",
+        "hardened_smoke_battery",
+        "claim_reconciliation_clean",
+        "perf_budget_alignment",
+        "promotion_claim_control",
+        "crt_startup_tls_proof_matrix",
+    ] {
+        ensure(
+            obligation_ids.contains(&required),
+            format!("levels.L1.objective_gate.obligations missing {required}"),
+        )?;
+    }
+    for obligation in as_array(
+        &objective_gate["obligations"],
+        "levels.L1.objective_gate.obligations",
+    )? {
+        ensure_eq(
+            obligation["outcome"].as_str(),
+            Some("pass"),
+            format!(
+                "levels.L1.objective_gate.obligation.{}",
+                obligation["id"].as_str().unwrap_or("<unknown>")
+            ),
+        )?;
+    }
+    Ok(())
+}
+
 #[test]
-fn no_forbidden_overclaim_phrase_appears_in_any_doc_while_current_level_l0() -> TestResult {
+fn replacement_claim_phrases_match_current_level_policy() -> TestResult {
     let audit = load_json(&audit_path())?;
     let levels = load_json(&workspace_root().join("tests/conformance/replacement_levels.json"))?;
     let current_level = as_str(&levels["current_level"], "current_level")?;
-
-    // Audit only fires while current_level is L0 (the only state we ever
-    // expect to ship for the foreseeable future). When the project later
-    // promotes to L1, the audit's intent is to STOP gating these phrases —
-    // a future maintainer must explicitly relax this test along with the
-    // promotion. Until then, any forbidden phrase in any cited doc is a
-    // hard fail.
-    if current_level != "L0" {
-        // Soft pass with explicit assertion that promotion shouldn't go
-        // unnoticed: future change to L1+ must update this test.
-        return Err(test_error(format!(
-            "current_level={current_level} (no longer L0); update replacement_claim_doc_audit_test.rs to encode L1-promoted-state semantics before relaxing this gate"
-        )));
-    }
 
     let doc_paths: Vec<String> = as_array(&audit["subject"]["doc_paths"], "subject.doc_paths")?
         .iter()
@@ -280,6 +335,31 @@ fn no_forbidden_overclaim_phrase_appears_in_any_doc_while_current_level_l0() -> 
         ensure(abs.exists(), format!("doc_path_missing: {path}"))?;
         let lower = read_text(&abs)?.to_lowercase();
         doc_contents.push((path.clone(), lower));
+    }
+
+    if current_level == "L1" {
+        l1_promotion_evidence_is_complete(&levels)?;
+        for entry in as_array(
+            &audit["forbidden_phrases_unless_l1_promoted"],
+            "forbidden_phrases_unless_l1_promoted",
+        )? {
+            let phrase_id = as_str(&entry["phrase_id"], "entry.phrase_id")?;
+            match as_str(&entry["phrase_kind"], "entry.phrase_kind")? {
+                "case_insensitive_substring" | "case_insensitive_substring_unless_disclaimed" => {}
+                other => {
+                    return Err(test_error(format!(
+                        "phrase {phrase_id}: unsupported phrase_kind {other}"
+                    )));
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    if current_level != "L0" {
+        return Err(test_error(format!(
+            "current_level={current_level}; update replacement_claim_doc_audit_test.rs before relaxing L2/L3 claim semantics"
+        )));
     }
 
     for entry in as_array(

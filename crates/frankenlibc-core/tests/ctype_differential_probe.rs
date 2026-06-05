@@ -78,10 +78,18 @@ fn ctype_differential_full_range() {
             }
         }
         if to_upper(c) != r_toupper(c) {
-            diffs.push(format!("toupper(0x{c:02x}): frankenlibc=0x{:02x} glibc=0x{:02x}", to_upper(c), r_toupper(c)));
+            diffs.push(format!(
+                "toupper(0x{c:02x}): frankenlibc=0x{:02x} glibc=0x{:02x}",
+                to_upper(c),
+                r_toupper(c)
+            ));
         }
         if to_lower(c) != r_tolower(c) {
-            diffs.push(format!("tolower(0x{c:02x}): frankenlibc=0x{:02x} glibc=0x{:02x}", to_lower(c), r_tolower(c)));
+            diffs.push(format!(
+                "tolower(0x{c:02x}): frankenlibc=0x{:02x} glibc=0x{:02x}",
+                to_lower(c),
+                r_tolower(c)
+            ));
         }
     }
     assert!(

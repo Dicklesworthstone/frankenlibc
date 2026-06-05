@@ -9,8 +9,7 @@
 //! used glibc's. The comparison is therefore behaviour-level, not value-level.
 
 use frankenlibc_core::string::regex::{
-    REG_EXTENDED, REG_ICASE, REG_NEWLINE, REG_NOTBOL, REG_NOTEOL, regex_compile,
-    regex_match_bounds,
+    REG_EXTENDED, REG_ICASE, REG_NEWLINE, REG_NOTBOL, REG_NOTEOL, regex_compile, regex_match_bounds,
 };
 
 struct Case {
@@ -55,7 +54,15 @@ fn run(c: &Case) -> String {
 fn regex_differential_battery() {
     macro_rules! c {
         ($pat:expr, $ere:expr, $icase:expr, $nl:expr, $nb:expr, $ne:expr, $in:expr) => {
-            Case { pat: $pat, ere: $ere, icase: $icase, newline: $nl, notbol: $nb, noteol: $ne, input: $in }
+            Case {
+                pat: $pat,
+                ere: $ere,
+                icase: $icase,
+                newline: $nl,
+                notbol: $nb,
+                noteol: $ne,
+                input: $in,
+            }
         };
     }
     let cases = [
@@ -91,9 +98,9 @@ fn regex_differential_battery() {
     ];
 
     let glibc = [
-        "-1 -1", "1 4", "0 2", "0 4", "0 0", "0 3", "3 6", "0 5", "0 3", "0 5",
-        "0 6", "-1 -1", "1 3", "0 3", "0 0", "0 2", "0 4", "1 4", "0 1", "0 6",
-        "2 3", "3 6", "0 3", "-1 -1", "-1 -1", "0 3", "0 0", "1 2", "2 8",
+        "-1 -1", "1 4", "0 2", "0 4", "0 0", "0 3", "3 6", "0 5", "0 3", "0 5", "0 6", "-1 -1",
+        "1 3", "0 3", "0 0", "0 2", "0 4", "1 4", "0 1", "0 6", "2 3", "3 6", "0 3", "-1 -1",
+        "-1 -1", "0 3", "0 0", "1 2", "2 8",
     ];
 
     assert_eq!(cases.len(), glibc.len(), "battery length mismatch");

@@ -53,13 +53,17 @@ fn bench_iconv_utf8_to_koi8r(c: &mut Criterion) {
     let mut group = c.benchmark_group("iconv_utf8_to_koi8r");
     group.throughput(Throughput::Bytes(ascii.len() as u64));
     let mut dest = vec![0u8; ascii.len() * 2 + 8];
-    group.bench_with_input(BenchmarkId::from_parameter("ascii_1k"), &ascii[..], |b, input| {
-        let mut cd = iconv_open(b"KOI8-R", b"UTF-8").expect("codec");
-        b.iter(|| {
-            let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
-            black_box(r.is_ok());
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::from_parameter("ascii_1k"),
+        &ascii[..],
+        |b, input| {
+            let mut cd = iconv_open(b"KOI8-R", b"UTF-8").expect("codec");
+            b.iter(|| {
+                let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
+                black_box(r.is_ok());
+            });
+        },
+    );
     group.finish();
 }
 
@@ -72,13 +76,17 @@ fn bench_iconv_cp1251_to_koi8r(c: &mut Criterion) {
     let mut group = c.benchmark_group("iconv_cp1251_to_koi8r");
     group.throughput(Throughput::Bytes(cyrillic.len() as u64));
     let mut dest = vec![0u8; cyrillic.len() * 2 + 8];
-    group.bench_with_input(BenchmarkId::from_parameter("cyrillic_1k"), &cyrillic[..], |b, input| {
-        let mut cd = iconv_open(b"KOI8-R", b"CP1251").expect("codec");
-        b.iter(|| {
-            let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
-            black_box(r.is_ok());
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::from_parameter("cyrillic_1k"),
+        &cyrillic[..],
+        |b, input| {
+            let mut cd = iconv_open(b"KOI8-R", b"CP1251").expect("codec");
+            b.iter(|| {
+                let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
+                black_box(r.is_ok());
+            });
+        },
+    );
     group.finish();
 }
 
@@ -95,13 +103,17 @@ fn bench_iconv_utf8_cyrillic_to_koi8r(c: &mut Criterion) {
     let mut group = c.benchmark_group("iconv_utf8_cyrillic_to_koi8r");
     group.throughput(Throughput::Bytes(utf8.len() as u64));
     let mut dest = vec![0u8; utf8.len() + 8];
-    group.bench_with_input(BenchmarkId::from_parameter("cyrillic_1k"), &utf8[..], |b, input| {
-        let mut cd = iconv_open(b"KOI8-R", b"UTF-8").expect("codec");
-        b.iter(|| {
-            let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
-            black_box(r.is_ok());
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::from_parameter("cyrillic_1k"),
+        &utf8[..],
+        |b, input| {
+            let mut cd = iconv_open(b"KOI8-R", b"UTF-8").expect("codec");
+            b.iter(|| {
+                let r = iconv(&mut cd, Some(black_box(input)), black_box(&mut dest));
+                black_box(r.is_ok());
+            });
+        },
+    );
     group.finish();
 }
 

@@ -1314,6 +1314,17 @@ struct Thread {
     slots: Vec<i32>,
 }
 
+#[derive(Clone, Copy)]
+struct VmAnchors {
+    notbol: bool,
+    noteol: bool,
+}
+
+struct ClosureState<'a> {
+    visited: &'a mut [u64],
+    generation: u64,
+}
+
 impl<'a> PikeVm<'a> {
     fn new(
         nfa: &'a [NfaInstr],
@@ -1380,9 +1391,7 @@ impl<'a> PikeVm<'a> {
         if let Some(lit) = self.literal_prefix {
             let mut from = 0;
             while from + lit.len() <= input_len {
-                let Some(off) = find_literal(&self.input[from..], lit, self.literal_icase) else {
-                    return None;
-                };
+                let off = find_literal(&self.input[from..], lit, self.literal_icase)?;
                 let start = from + off;
                 let mut slots = vec![-1i32; self.num_slots];
                 slots[0] = start as i32;
@@ -1431,9 +1440,15 @@ impl<'a> PikeVm<'a> {
         let dummy = vec![-1i32; self.num_slots];
         let mut current: Vec<Thread> = Vec::new();
         let mut next: Vec<Thread> = Vec::new();
+        let anchors = VmAnchors { notbol, noteol };
+        let mut closure = ClosureState {
+            visited,
+            generation: 0,
+        };
 
         // Seed the start-thread at position 0 (its own closure generation).
         *generation += 1;
+        closure.generation = *generation;
         self.add_thread(
             &mut current,
             Thread {
@@ -1441,16 +1456,14 @@ impl<'a> PikeVm<'a> {
                 slots: dummy.clone(),
             },
             0,
-            notbol,
-            noteol,
-            visited,
-            *generation,
+            anchors,
+            &mut closure,
         );
 
         let mut sp = 0;
         loop {
             *generation += 1;
-            let step_gen = *generation;
+            closure.generation = *generation;
             for t in current.drain(..) {
                 if t.pc >= self.nfa.len() {
                     continue;
@@ -1465,10 +1478,8 @@ impl<'a> PikeVm<'a> {
                                 slots: t.slots,
                             },
                             sp + 1,
-                            notbol,
-                            noteol,
-                            visited,
-                            step_gen,
+                            anchors,
+                            &mut closure,
                         );
                     }
                     _ => {}
@@ -1486,10 +1497,8 @@ impl<'a> PikeVm<'a> {
                     slots: dummy.clone(),
                 },
                 sp,
-                notbol,
-                noteol,
-                visited,
-                step_gen,
+                anchors,
+                &mut closure,
             );
             core::mem::swap(&mut current, &mut next);
             next.clear();
@@ -1508,6 +1517,11 @@ impl<'a> PikeVm<'a> {
         let mut current: Vec<Thread> = Vec::new();
         let mut next: Vec<Thread> = Vec::new();
         let mut best: Option<Vec<i32>> = None;
+        let anchors = VmAnchors { notbol, noteol };
+        let mut closure = ClosureState {
+            visited,
+            generation: 0,
+        };
 
         // Add initial thread (its own closure generation).
         let init_thread = Thread {
@@ -1515,15 +1529,8 @@ impl<'a> PikeVm<'a> {
             slots: initial_slots.to_vec(),
         };
         *generation += 1;
-        self.add_thread(
-            &mut current,
-            init_thread,
-            start,
-            notbol,
-            noteol,
-            visited,
-            *generation,
-        );
+        closure.generation = *generation;
+        self.add_thread(&mut current, init_thread, start, anchors, &mut closure);
 
         let input_len = self.input.len();
         let mut sp = start;
@@ -1531,7 +1538,7 @@ impl<'a> PikeVm<'a> {
         loop {
             // Each step builds the `next` set in a fresh closure generation.
             *generation += 1;
-            let step_gen = *generation;
+            closure.generation = *generation;
             // Process all current threads
             for t in current.drain(..) {
                 if t.pc >= self.nfa.len() {
@@ -1543,15 +1550,7 @@ impl<'a> PikeVm<'a> {
                             pc: t.pc + 1,
                             slots: t.slots,
                         };
-                        self.add_thread(
-                            &mut next,
-                            new_t,
-                            sp + 1,
-                            notbol,
-                            noteol,
-                            visited,
-                            step_gen,
-                        );
+                        self.add_thread(&mut next, new_t, sp + 1, anchors, &mut closure);
                     }
                     NfaInstr::Match(_) => {}
                     NfaInstr::Accept => {
@@ -1595,14 +1594,12 @@ impl<'a> PikeVm<'a> {
         threads: &mut Vec<Thread>,
         t: Thread,
         sp: usize,
-        notbol: bool,
-        noteol: bool,
-        visited: &mut [u64],
-        generation: u64,
+        anchors: VmAnchors,
+        closure: &mut ClosureState<'_>,
     ) {
         // Depth-limited wrapper to prevent stack overflow on deeply nested
         // alternations or pathological Jump chains.
-        self.add_thread_inner(threads, t, sp, notbol, noteol, 0, visited, generation);
+        self.add_thread_inner(threads, t, sp, anchors, 0, closure);
     }
 
     /// Maximum epsilon-closure recursion depth. This bounds the stack usage
@@ -1616,11 +1613,9 @@ impl<'a> PikeVm<'a> {
         threads: &mut Vec<Thread>,
         t: Thread,
         sp: usize,
-        notbol: bool,
-        noteol: bool,
+        anchors: VmAnchors,
         depth: usize,
-        visited: &mut [u64],
-        generation: u64,
+        closure: &mut ClosureState<'_>,
     ) {
         if depth > Self::ADD_THREAD_MAX_DEPTH || t.pc >= self.nfa.len() {
             return;
@@ -1632,10 +1627,10 @@ impl<'a> PikeVm<'a> {
         // execute(), so a stale stamp from an earlier set never collides. This
         // is an O(1) replacement for the prior O(set-size) linear scan and also
         // dedups epsilon PCs, preventing redundant closure re-walks.
-        if visited[t.pc] == generation {
+        if closure.visited[t.pc] == closure.generation {
             return;
         }
-        visited[t.pc] = generation;
+        closure.visited[t.pc] = closure.generation;
 
         match &self.nfa[t.pc] {
             NfaInstr::Split(a, b) => {
@@ -1647,42 +1642,15 @@ impl<'a> PikeVm<'a> {
                     pc: *b,
                     slots: t.slots,
                 };
-                self.add_thread_inner(
-                    threads,
-                    t1,
-                    sp,
-                    notbol,
-                    noteol,
-                    depth + 1,
-                    visited,
-                    generation,
-                );
-                self.add_thread_inner(
-                    threads,
-                    t2,
-                    sp,
-                    notbol,
-                    noteol,
-                    depth + 1,
-                    visited,
-                    generation,
-                );
+                self.add_thread_inner(threads, t1, sp, anchors, depth + 1, closure);
+                self.add_thread_inner(threads, t2, sp, anchors, depth + 1, closure);
             }
             NfaInstr::Jump(target) => {
                 let new_t = Thread {
                     pc: *target,
                     slots: t.slots,
                 };
-                self.add_thread_inner(
-                    threads,
-                    new_t,
-                    sp,
-                    notbol,
-                    noteol,
-                    depth + 1,
-                    visited,
-                    generation,
-                );
+                self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
             }
             NfaInstr::Save(slot) => {
                 let mut new_slots = t.slots;
@@ -1691,54 +1659,27 @@ impl<'a> PikeVm<'a> {
                     pc: t.pc + 1,
                     slots: new_slots,
                 };
-                self.add_thread_inner(
-                    threads,
-                    new_t,
-                    sp,
-                    notbol,
-                    noteol,
-                    depth + 1,
-                    visited,
-                    generation,
-                );
+                self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
             }
             NfaInstr::Match(mk) => {
                 // For anchors, check inline so we don't waste a simulation step
                 match mk {
                     MatchKind::AnchorStart { newline } => {
-                        if self.check_anchor_start(sp, notbol, *newline) {
+                        if self.check_anchor_start(sp, anchors.notbol, *newline) {
                             let new_t = Thread {
                                 pc: t.pc + 1,
                                 slots: t.slots,
                             };
-                            self.add_thread_inner(
-                                threads,
-                                new_t,
-                                sp,
-                                notbol,
-                                noteol,
-                                depth + 1,
-                                visited,
-                                generation,
-                            );
+                            self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
                         }
                     }
                     MatchKind::AnchorEnd { newline } => {
-                        if self.check_anchor_end(sp, noteol, *newline) {
+                        if self.check_anchor_end(sp, anchors.noteol, *newline) {
                             let new_t = Thread {
                                 pc: t.pc + 1,
                                 slots: t.slots,
                             };
-                            self.add_thread_inner(
-                                threads,
-                                new_t,
-                                sp,
-                                notbol,
-                                noteol,
-                                depth + 1,
-                                visited,
-                                generation,
-                            );
+                            self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
                         }
                     }
                     MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd => {
@@ -1747,16 +1688,7 @@ impl<'a> PikeVm<'a> {
                                 pc: t.pc + 1,
                                 slots: t.slots,
                             };
-                            self.add_thread_inner(
-                                threads,
-                                new_t,
-                                sp,
-                                notbol,
-                                noteol,
-                                depth + 1,
-                                visited,
-                                generation,
-                            );
+                            self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
                         }
                     }
                     _ => {
@@ -1876,29 +1808,31 @@ struct BacktrackVm<'a> {
     literal_prefix: Option<&'a [u8]>,
 }
 
+struct BacktrackConfig<'a> {
+    ast: &'a Ast,
+    input: &'a [u8],
+    num_slots: usize,
+    icase: bool,
+    newline: bool,
+    eflags: i32,
+    prefilter: Option<FirstByteSet>,
+    literal_prefix: Option<&'a [u8]>,
+}
+
 impl<'a> BacktrackVm<'a> {
     const MAX_DEPTH: usize = 512;
     const MAX_STATES: usize = 4096;
 
-    fn new(
-        ast: &'a Ast,
-        input: &'a [u8],
-        num_slots: usize,
-        icase: bool,
-        newline: bool,
-        eflags: i32,
-        prefilter: Option<FirstByteSet>,
-        literal_prefix: Option<&'a [u8]>,
-    ) -> Self {
+    fn new(config: BacktrackConfig<'a>) -> Self {
         Self {
-            ast,
-            input,
-            num_slots,
-            icase,
-            newline,
-            eflags,
-            prefilter,
-            literal_prefix,
+            ast: config.ast,
+            input: config.input,
+            num_slots: config.num_slots,
+            icase: config.icase,
+            newline: config.newline,
+            eflags: config.eflags,
+            prefilter: config.prefilter,
+            literal_prefix: config.literal_prefix,
         }
     }
 
@@ -1924,9 +1858,7 @@ impl<'a> BacktrackVm<'a> {
             let input_len = self.input.len();
             let mut from = 0;
             while from + lit.len() <= input_len {
-                let Some(off) = find_literal(&self.input[from..], lit, self.icase) else {
-                    return None;
-                };
+                let off = find_literal(&self.input[from..], lit, self.icase)?;
                 let start = from + off;
                 if let Some(slots) = self.try_start(start) {
                     return Some(slots);
@@ -1939,10 +1871,10 @@ impl<'a> BacktrackVm<'a> {
         for start in 0..=self.input.len() {
             // Prefilter: skip starts whose byte cannot begin a match, avoiding
             // the full backtracking attempt below (the O(n*m)-per-start cost).
-            if let Some(fb) = self.prefilter {
-                if start >= self.input.len() || !fb.contains(self.input[start]) {
-                    continue;
-                }
+            if let Some(fb) = self.prefilter
+                && (start >= self.input.len() || !fb.contains(self.input[start]))
+            {
+                continue;
             }
             if let Some(slots) = self.try_start(start) {
                 return Some(slots);
@@ -2416,16 +2348,16 @@ fn regex_exec_cstring_slots(
 fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> Option<Vec<i32>> {
     let num_slots = compiled.num_slots();
     if let Some(ast) = compiled.backtrack_ast.as_ref() {
-        let vm = BacktrackVm::new(
+        let vm = BacktrackVm::new(BacktrackConfig {
             ast,
             input,
             num_slots,
-            compiled.icase,
-            compiled.newline,
+            icase: compiled.icase,
+            newline: compiled.newline,
             eflags,
-            compiled.prefilter,
-            compiled.literal_prefix.as_deref(),
-        );
+            prefilter: compiled.prefilter,
+            literal_prefix: compiled.literal_prefix.as_deref(),
+        });
         return vm.execute();
     }
 
@@ -2470,6 +2402,10 @@ pub fn regex_error(errcode: i32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type MatchBounds = Option<(i32, i32)>;
+    type BorrowedRegexCase<'a> = (&'a str, &'a str, MatchBounds);
+    type OwnedRegexCase<'a> = (&'a str, String, MatchBounds);
 
     fn compile_and_match(pattern: &str, input: &str, cflags: i32) -> bool {
         let compiled = regex_compile(pattern.as_bytes(), cflags).unwrap();
@@ -2608,7 +2544,7 @@ mod tests {
         // prefilter skips non-candidate starts. The whole-match offsets must be
         // identical to a full scan: match at start / middle / not-at-all, plus
         // char-class / plus / negated-class / backref leading bytes.
-        let cases: &[(&str, &str, Option<(i32, i32)>)] = &[
+        let cases: &[BorrowedRegexCase<'_>] = &[
             ("abc", "abcxx", Some((0, 3))),      // at start
             ("abc", "xxabcxx", Some((2, 5))),    // skip to candidate in the middle
             ("abc", "xxxxxxxx", None),           // absent -> skip everything
@@ -2630,7 +2566,7 @@ mod tests {
         // The case-folded first-byte prefilter must not skip a start whose byte
         // is the opposite case of the pattern's first literal.
         let icase = REG_EXTENDED | REG_ICASE;
-        let cases: &[(&str, &str, Option<(i32, i32)>)] = &[
+        let cases: &[BorrowedRegexCase<'_>] = &[
             ("abc", "xxABCxx", Some((2, 5))), // upper input, lower pattern
             ("ABC", "xxabcxx", Some((2, 5))), // lower input, upper pattern
             ("abc", "xxAbCxx", Some((2, 5))), // mixed
@@ -2653,7 +2589,7 @@ mod tests {
         // to the exact search and reports identical bounds.
         let big = 600usize;
         let a_run: String = core::iter::repeat_n('a', big).collect();
-        let cases: &[(&str, String, Option<(i32, i32)>)] = &[
+        let cases: &[OwnedRegexCase<'_>] = &[
             (".*x", a_run.clone(), None), // no-match, prescan rules out
             (".*x", format!("{a_run}x"), Some((0, big as i32 + 1))), // match at end
             ("a*z", a_run.clone(), None), // greedy no-match

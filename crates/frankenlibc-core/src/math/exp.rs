@@ -670,7 +670,10 @@ mod tests {
             }
             x += 0.0001;
         }
-        assert!(worst <= 4, "expm1 fast path worst {worst} ULP at x={worst_x}");
+        assert!(
+            worst <= 4,
+            "expm1 fast path worst {worst} ULP at x={worst_x}"
+        );
     }
 
     #[test]

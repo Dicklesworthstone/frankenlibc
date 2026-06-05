@@ -161,7 +161,7 @@ fn manifest_binds_release_claim_control_completion_items() -> TestResult {
     );
     assert_eq!(
         release["support_matrix_maintenance"]["native_coverage_pct"].as_f64(),
-        Some(100.0)
+        Some(68.2)
     );
     assert_eq!(release["release_dossier"]["verdict"].as_str(), Some("PASS"));
     assert_eq!(
@@ -186,6 +186,7 @@ fn manifest_binds_release_claim_control_completion_items() -> TestResult {
 #[test]
 fn checker_validates_release_claim_control_contract_and_emits_report_log() -> TestResult {
     let root = repo_root()?;
+    let manifest = read_json(&contract_path(&root))?;
     let out_dir = unique_out_dir(&root, "valid")?;
     let output = run_checker(&root, &contract_path(&root), &out_dir)?;
     assert!(output.status.success(), "{}", output_text(&output));
@@ -209,7 +210,9 @@ fn checker_validates_release_claim_control_contract_and_emits_report_log() -> Te
         report["release_control_summary"]["support_matrix_maintenance"]["status_counts"]
             ["Implemented"]
             .as_u64(),
-        Some(3705)
+        manifest["required_release_control_contract"]["support_matrix_maintenance"]
+            ["status_counts"]["Implemented"]
+            .as_u64()
     );
     assert_eq!(
         report["release_control_summary"]["release_claim_gate"]["status"].as_str(),

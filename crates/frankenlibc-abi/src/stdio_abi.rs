@@ -137,10 +137,10 @@ unsafe fn wide_cstr_to_utf8(ptr: *const u32, limit: Option<usize>) -> (Vec<u8>, 
     let mut out = Vec::new();
     let mut i = 0usize;
     loop {
-        if let Some(n) = limit {
-            if i >= n {
-                break;
-            }
+        if let Some(n) = limit
+            && i >= n
+        {
+            break;
         }
         // SAFETY: caller guarantees a NUL-terminated wide string; we stop at the
         // terminator (and at `limit` wide chars when set).

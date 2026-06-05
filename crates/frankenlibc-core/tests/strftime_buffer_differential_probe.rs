@@ -25,7 +25,7 @@ fn t0() -> BrokenDownTime {
 
 fn run(fmt: &str, maxsize: usize) -> String {
     let bd = t0();
-    let mut buf = vec![b'#'; maxsize.max(0)];
+    let mut buf = vec![b'#'; maxsize];
     let n = format_strftime(fmt.as_bytes(), &bd, &mut buf);
     if n > 0 {
         format!("{n}:{}", String::from_utf8_lossy(&buf[..n]))
@@ -62,7 +62,9 @@ fn strftime_buffer_truncation_differential() {
     for (fmt, maxsize, expected) in cases {
         let got = run(fmt, *maxsize);
         if got != *expected {
-            diffs.push(format!("strftime({fmt:?}, max={maxsize}): frankenlibc={got:?} glibc={expected:?}"));
+            diffs.push(format!(
+                "strftime({fmt:?}, max={maxsize}): frankenlibc={got:?} glibc={expected:?}"
+            ));
         }
     }
     assert!(

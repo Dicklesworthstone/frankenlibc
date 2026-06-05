@@ -534,9 +534,7 @@ pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
         return (len < s.len()).then_some(len);
     }
 
-    if wmemchr(s, c, s.len()).is_none() {
-        return None;
-    }
+    wmemchr(s, c, s.len())?;
 
     let pos = find_wide_or_nul_long(s, c);
     (pos < s.len() && s[pos] == c).then_some(pos)
@@ -556,9 +554,7 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
         return Some(s.len());
     }
 
-    if wmemrchr(s, c, s.len()).is_none() {
-        return None;
-    }
+    wmemrchr(s, c, s.len())?;
 
     let mut last = None;
     if s.len() >= WIDE_FIND_LONG_SIMD_LANES {
@@ -730,9 +726,7 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     }
     let needle = &needle[..needle_len];
     let first = needle[0];
-    if wmemchr(haystack, first, haystack.len()).is_none() {
-        return None;
-    }
+    wmemchr(haystack, first, haystack.len())?;
 
     let first_pos = find_wide_or_nul_long(haystack, first);
     if first_pos == haystack.len() || haystack[first_pos] == 0 {

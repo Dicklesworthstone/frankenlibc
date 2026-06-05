@@ -124,8 +124,7 @@ fn every_target_family_has_threshold_record() {
             continue;
         }
         assert!(
-            zero_target.contains(family_id)
-                && row["decision"].as_str() == Some("not_applicable"),
+            zero_target.contains(family_id) && row["decision"].as_str() == Some("not_applicable"),
             "extra threshold record must be zero-target not_applicable: {family_id}"
         );
     }

@@ -214,7 +214,12 @@ fn gate_emits_current_manifest_pass_report_and_log() {
         report["checks"]["artifact_freshness"].as_str(),
         Some("pass")
     );
-    assert!(report["errors"].as_array().expect("errors array").is_empty());
+    assert!(
+        report["errors"]
+            .as_array()
+            .expect("errors array")
+            .is_empty()
+    );
     assert!(
         report["stale_artifacts"]
             .as_array()

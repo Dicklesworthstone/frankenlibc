@@ -586,7 +586,7 @@ fn diff_snprintf_float_fuzz() {
     }
 
     const FLAGS: &[&str] = &["", "#", "0", "+", " ", "-", "+#", "-#"];
-    const CONVS: &[u8] = &[b'f', b'e', b'E', b'g', b'G', b'a', b'A'];
+    const CONVS: &[u8] = b"feEgGaA";
     const PRECS: &[Option<u32>] = &[None, Some(0), Some(1), Some(2), Some(6), Some(13), Some(25)];
     const WIDTHS: &[Option<u32>] = &[None, Some(0), Some(12), Some(30)];
 
@@ -804,7 +804,7 @@ fn diff_snprintf_int_fuzz() {
     const FLAGS: &[&str] = &[
         "", "#", "0", "+", " ", "-", "+#", "-#", "0+", " #", "-0", "+ ",
     ];
-    const CONVS: &[u8] = &[b'd', b'i', b'u', b'x', b'X', b'o'];
+    const CONVS: &[u8] = b"diuxXo";
     const PRECS: &[Option<u32>] = &[None, Some(0), Some(1), Some(5), Some(10)];
     const WIDTHS: &[Option<u32>] = &[None, Some(0), Some(8), Some(12)];
 

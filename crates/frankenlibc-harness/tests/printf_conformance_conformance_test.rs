@@ -286,15 +286,15 @@ fn printf_conformance_covers_special_values() -> Result<(), String> {
 
 /// Cases where FrankenLibC's fixture output is correct, but the host
 /// oracle path cannot yet push an x86_64 `long double` through Rust's
-/// C-variadic boundary and currently observes `nan`.
+/// C-variadic boundary and reports an explicit oracle gap.
 const HOST_LONG_DOUBLE_ORACLE_GAPS: &[&str] = &["sprintf_Lf_basic", "sprintf_Le_basic"];
 
 fn case_has_host_long_double_oracle_gap(name: &str) -> bool {
     HOST_LONG_DOUBLE_ORACLE_GAPS.contains(&name)
 }
 
-fn host_output_is_nan(value: &str) -> bool {
-    matches!(value, "nan" | "-nan")
+fn host_output_is_explicit_long_double_oracle_gap(value: &str) -> bool {
+    matches!(value, "UNSUPPORTED_HOST_ORACLE" | "nan" | "-nan")
 }
 
 #[test]
@@ -441,8 +441,8 @@ fn printf_long_double_host_oracle_gap_is_explicit_in_process() -> Result<(), Str
             case.name
         );
         assert!(
-            host_output_is_nan(&result.host_output),
-            "host long-double oracle should expose a malformed varargs NaN for {}: host={}, impl={}",
+            host_output_is_explicit_long_double_oracle_gap(&result.host_output),
+            "host long-double oracle should expose an explicit varargs gap for {}: host={}, impl={}",
             case.name,
             result.host_output,
             result.impl_output
@@ -479,8 +479,8 @@ fn printf_long_double_host_oracle_gap_is_explicit_via_harness_matrix() -> Result
             case.name
         );
         assert!(
-            host_output_is_nan(&result.host_output),
-            "host long-double oracle should expose a malformed varargs NaN via harness for {}: host={}, impl={}",
+            host_output_is_explicit_long_double_oracle_gap(&result.host_output),
+            "host long-double oracle should expose an explicit varargs gap via harness for {}: host={}, impl={}",
             case.name,
             result.host_output,
             result.impl_output

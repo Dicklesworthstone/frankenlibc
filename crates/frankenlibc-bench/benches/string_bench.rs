@@ -7,12 +7,9 @@ use std::time::{Duration, Instant};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::string::{
     bcmp, memccpy, memchr, memcmp, memcpy, memmem, strcasecmp, strcasestr, strchr, strchrnul,
-    strcmp,
-    strcspn,
-    strlen,
-    strncasecmp, strncmp,
-    strnstr, strpbrk, strrchr, strsep, strspn, strstr, wcscasecmp, wcschr, wcscmp, wcslen,
-    wcsncasecmp, wcsncmp, wcsnlen, wcsrchr, wcsspn, wcsstr, wmemchr, wmemcmp, wmemrchr,
+    strcmp, strcspn, strlen, strncasecmp, strncmp, strnstr, strpbrk, strrchr, strsep, strspn,
+    strstr, wcscasecmp, wcschr, wcscmp, wcslen, wcsncasecmp, wcsncmp, wcsnlen, wcsrchr, wcsspn,
+    wcsstr, wmemchr, wmemcmp, wmemrchr,
 };
 
 #[derive(Default)]
@@ -282,32 +279,44 @@ fn bench_strncasecmp_equal(c: &mut Criterion) {
         }
 
         let simd_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/simd"), size), &size, |b, _| {
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(strncasecmp(&left, &right, n));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                simd_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        simd_stats.borrow().report(mode, &format!("strncasecmp_simd_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/simd"), size),
+            &size,
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(strncasecmp(&left, &right, n));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    simd_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        simd_stats
+            .borrow()
+            .report(mode, &format!("strncasecmp_simd_{size}"));
 
         let scalar_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/scalar"), size), &size, |b, _| {
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(scalar_ref_strncasecmp(&left, &right, n));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                scalar_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        scalar_stats.borrow().report(mode, &format!("strncasecmp_scalar_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/scalar"), size),
+            &size,
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(scalar_ref_strncasecmp(&left, &right, n));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    scalar_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        scalar_stats
+            .borrow()
+            .report(mode, &format!("strncasecmp_scalar_{size}"));
     }
     group.finish();
 }
@@ -349,32 +358,44 @@ fn bench_bcmp_equal(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         let simd_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/simd"), size), &size, |bb, _| {
-            bb.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(bcmp(&a, &b, size));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                simd_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        simd_stats.borrow().report(mode, &format!("bcmp_simd_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/simd"), size),
+            &size,
+            |bb, _| {
+                bb.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(bcmp(&a, &b, size));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    simd_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        simd_stats
+            .borrow()
+            .report(mode, &format!("bcmp_simd_{size}"));
 
         let scalar_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/scalar"), size), &size, |bb, _| {
-            bb.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(scalar_ref_bcmp(&a, &b, size));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                scalar_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        scalar_stats.borrow().report(mode, &format!("bcmp_scalar_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/scalar"), size),
+            &size,
+            |bb, _| {
+                bb.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(scalar_ref_bcmp(&a, &b, size));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    scalar_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        scalar_stats
+            .borrow()
+            .report(mode, &format!("bcmp_scalar_{size}"));
     }
     group.finish();
 }
@@ -390,34 +411,46 @@ fn bench_memccpy_absent(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         let simd_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/simd"), size), &size, |b, _| {
-            let mut dst = vec![0u8; size];
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(memccpy(&mut dst, &src, 0, size));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                simd_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        simd_stats.borrow().report(mode, &format!("memccpy_simd_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/simd"), size),
+            &size,
+            |b, _| {
+                let mut dst = vec![0u8; size];
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(memccpy(&mut dst, &src, 0, size));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    simd_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        simd_stats
+            .borrow()
+            .report(mode, &format!("memccpy_simd_{size}"));
 
         let scalar_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/scalar"), size), &size, |b, _| {
-            let mut dst = vec![0u8; size];
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(scalar_ref_memccpy(&mut dst, &src, 0, size));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                scalar_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        scalar_stats.borrow().report(mode, &format!("memccpy_scalar_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/scalar"), size),
+            &size,
+            |b, _| {
+                let mut dst = vec![0u8; size];
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(scalar_ref_memccpy(&mut dst, &src, 0, size));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    scalar_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        scalar_stats
+            .borrow()
+            .report(mode, &format!("memccpy_scalar_{size}"));
     }
     group.finish();
 }
@@ -991,8 +1024,8 @@ fn bench_wmemcmp_equal(c: &mut Criterion) {
     let mut group = c.benchmark_group("wmemcmp_equal");
 
     for &size in sizes {
-        let left = vec![0x5A as u32; size];
-        let right = vec![0x5A as u32; size];
+        let left = vec![0x5A_u32; size];
+        let right = vec![0x5A_u32; size];
         let bench_label = format!("wmemcmp_equal_{size}");
         group.throughput(Throughput::Bytes(
             (size * std::mem::size_of::<u32>()) as u64,
@@ -1025,13 +1058,15 @@ fn bench_wcsncmp_equal(c: &mut Criterion) {
     let mut group = c.benchmark_group("wcsncmp_equal");
 
     for &size in sizes {
-        let mut left = vec![0x5A as u32; size];
-        let mut right = vec![0x5A as u32; size];
+        let mut left = vec![0x5A_u32; size];
+        let mut right = vec![0x5A_u32; size];
         left.push(0);
         right.push(0);
         let n = size;
         let bench_label = format!("wcsncmp_equal_{size}");
-        group.throughput(Throughput::Bytes((size * std::mem::size_of::<u32>()) as u64));
+        group.throughput(Throughput::Bytes(
+            (size * std::mem::size_of::<u32>()) as u64,
+        ));
 
         for _ in 0..10_000 {
             black_box(wcsncmp(&left, &right, n));
@@ -1060,7 +1095,11 @@ fn bench_wcsncmp_equal(c: &mut Criterion) {
 fn scalar_ref_wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     #[inline]
     fn lower(c: u32) -> u32 {
-        if (0x41..=0x5A).contains(&c) { c + 0x20 } else { c }
+        if (0x41..=0x5A).contains(&c) {
+            c + 0x20
+        } else {
+            c
+        }
     }
     let mut i = 0;
     while i < n {
@@ -1092,7 +1131,9 @@ fn bench_wcsncasecmp_equal(c: &mut Criterion) {
         left.push(0);
         right.push(0);
         let n = size;
-        group.throughput(Throughput::Bytes((size * std::mem::size_of::<u32>()) as u64));
+        group.throughput(Throughput::Bytes(
+            (size * std::mem::size_of::<u32>()) as u64,
+        ));
 
         for _ in 0..10_000 {
             black_box(wcsncasecmp(&left, &right, n));
@@ -1101,33 +1142,45 @@ fn bench_wcsncasecmp_equal(c: &mut Criterion) {
 
         // SIMD impl.
         let simd_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/simd"), size), &size, |b, _| {
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(wcsncasecmp(&left, &right, n));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                simd_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        simd_stats.borrow().report(mode, &format!("wcsncasecmp_simd_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/simd"), size),
+            &size,
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(wcsncasecmp(&left, &right, n));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    simd_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        simd_stats
+            .borrow()
+            .report(mode, &format!("wcsncasecmp_simd_{size}"));
 
         // Scalar reference (pre-SIMD baseline).
         let scalar_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/scalar"), size), &size, |b, _| {
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(scalar_ref_wcsncasecmp(&left, &right, n));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                scalar_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        scalar_stats.borrow().report(mode, &format!("wcsncasecmp_scalar_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/scalar"), size),
+            &size,
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(scalar_ref_wcsncasecmp(&left, &right, n));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    scalar_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        scalar_stats
+            .borrow()
+            .report(mode, &format!("wcsncasecmp_scalar_{size}"));
     }
     group.finish();
 }
@@ -1156,39 +1209,53 @@ fn bench_wcsspn_full(c: &mut Criterion) {
     for &size in sizes {
         let mut s = vec![b'1' as u32; size];
         s.push(0);
-        group.throughput(Throughput::Bytes((size * std::mem::size_of::<u32>()) as u64));
+        group.throughput(Throughput::Bytes(
+            (size * std::mem::size_of::<u32>()) as u64,
+        ));
 
         for _ in 0..10_000 {
             black_box(wcsspn(&s, &accept));
         }
 
         let simd_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/simd"), size), &size, |b, _| {
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(wcsspn(&s, &accept));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                simd_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        simd_stats.borrow().report(mode, &format!("wcsspn_simd_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/simd"), size),
+            &size,
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(wcsspn(&s, &accept));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    simd_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        simd_stats
+            .borrow()
+            .report(mode, &format!("wcsspn_simd_{size}"));
 
         let scalar_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/scalar"), size), &size, |b, _| {
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(scalar_ref_wcsspn(&s, &accept));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                scalar_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        scalar_stats.borrow().report(mode, &format!("wcsspn_scalar_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/scalar"), size),
+            &size,
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(scalar_ref_wcsspn(&s, &accept));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    scalar_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        scalar_stats
+            .borrow()
+            .report(mode, &format!("wcsspn_scalar_{size}"));
     }
     group.finish();
 }
@@ -1207,35 +1274,49 @@ fn bench_wcsnlen_full(c: &mut Criterion) {
     for &size in sizes {
         // No NUL within maxlen: the whole prefix is scanned (the win case).
         let s = vec![b'x' as u32; size];
-        group.throughput(Throughput::Bytes((size * std::mem::size_of::<u32>()) as u64));
+        group.throughput(Throughput::Bytes(
+            (size * std::mem::size_of::<u32>()) as u64,
+        ));
 
         let simd_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/simd"), size), &size, |b, _| {
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(wcsnlen(&s, size));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                simd_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        simd_stats.borrow().report(mode, &format!("wcsnlen_simd_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/simd"), size),
+            &size,
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(wcsnlen(&s, size));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    simd_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        simd_stats
+            .borrow()
+            .report(mode, &format!("wcsnlen_simd_{size}"));
 
         let scalar_stats = RefCell::new(BenchStats::default());
-        group.bench_with_input(BenchmarkId::new(format!("{mode}/scalar"), size), &size, |b, _| {
-            b.iter_custom(|iters| {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    black_box(scalar_ref_wcsnlen(&s, size));
-                }
-                let dur = start.elapsed().max(Duration::from_nanos(1));
-                scalar_stats.borrow_mut().record(iters, dur);
-                dur
-            });
-        });
-        scalar_stats.borrow().report(mode, &format!("wcsnlen_scalar_{size}"));
+        group.bench_with_input(
+            BenchmarkId::new(format!("{mode}/scalar"), size),
+            &size,
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(scalar_ref_wcsnlen(&s, size));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    scalar_stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        scalar_stats
+            .borrow()
+            .report(mode, &format!("wcsnlen_scalar_{size}"));
     }
     group.finish();
 }
@@ -1373,7 +1454,13 @@ fn bench_regex_search(c: &mut Criterion) {
     let mut g3 = c.benchmark_group("regex_search_icase_absent");
     g3.throughput(Throughput::Bytes(haystack.len() as u64));
     g3.bench_function(BenchmarkId::new(mode, 4096), |b| {
-        b.iter(|| black_box(regex_match_bounds_bytes(&compiled_i, black_box(&haystack), 0)));
+        b.iter(|| {
+            black_box(regex_match_bounds_bytes(
+                &compiled_i,
+                black_box(&haystack),
+                0,
+            ))
+        });
     });
     g3.finish();
 
@@ -1391,7 +1478,13 @@ fn bench_regex_search(c: &mut Criterion) {
     let mut g5 = c.benchmark_group("regex_thread_closure");
     g5.throughput(Throughput::Bytes(hay_chain.len() as u64));
     g5.bench_function(BenchmarkId::new(mode, 512), |b| {
-        b.iter(|| black_box(regex_match_bounds_bytes(&compiled_chain, black_box(&hay_chain), 0)));
+        b.iter(|| {
+            black_box(regex_match_bounds_bytes(
+                &compiled_chain,
+                black_box(&hay_chain),
+                0,
+            ))
+        });
     });
     g5.finish();
 
@@ -1400,7 +1493,13 @@ fn bench_regex_search(c: &mut Criterion) {
     let mut g4 = c.benchmark_group("regex_search_icase_common_first_byte");
     g4.throughput(Throughput::Bytes(hay_e_upper.len() as u64));
     g4.bench_function(BenchmarkId::new(mode, 4096), |b| {
-        b.iter(|| black_box(regex_match_bounds_bytes(&compiled_il, black_box(&hay_e_upper), 0)));
+        b.iter(|| {
+            black_box(regex_match_bounds_bytes(
+                &compiled_il,
+                black_box(&hay_e_upper),
+                0,
+            ))
+        });
     });
     g4.finish();
 }
@@ -1423,7 +1522,14 @@ fn bench_memmem(c: &mut Criterion) {
     for &(name, ndl) in cases {
         group.throughput(Throughput::Bytes(hay.len() as u64));
         group.bench_with_input(BenchmarkId::new(mode, name), &name, |b, _| {
-            b.iter(|| black_box(memmem(black_box(&hay), hay.len(), black_box(ndl), ndl.len())));
+            b.iter(|| {
+                black_box(memmem(
+                    black_box(&hay),
+                    hay.len(),
+                    black_box(ndl),
+                    ndl.len(),
+                ))
+            });
         });
     }
     group.finish();

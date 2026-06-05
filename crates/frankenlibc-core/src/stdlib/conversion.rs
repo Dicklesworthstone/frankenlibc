@@ -1379,7 +1379,7 @@ mod tests {
                 ConversionStatus::Success,
             )
         }
-        let mut st: u64 = 0xfeed_face_8badf00d;
+        let mut st: u64 = 0xfeed_face_8bad_f00d;
         let mut next = || {
             st ^= st << 13;
             st ^= st >> 7;

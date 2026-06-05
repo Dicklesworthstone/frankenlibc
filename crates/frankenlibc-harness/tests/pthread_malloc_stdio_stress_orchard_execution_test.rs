@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
@@ -65,6 +66,12 @@ const REQUIRED_FAILURE_SIGNATURES: &[&str] = &[
     "missing_counter_field",
 ];
 
+struct OrchardRun {
+    output: Output,
+    report: PathBuf,
+    log: PathBuf,
+}
+
 fn test_error(message: impl Into<String>) -> Box<dyn Error> {
     std::io::Error::other(message.into()).into()
 }
@@ -105,12 +112,17 @@ fn runner_path(root: &Path) -> PathBuf {
     root.join("scripts/run_pthread_malloc_stdio_stress_orchard.sh")
 }
 
-fn report_path(root: &Path) -> PathBuf {
-    root.join("target/conformance/stress_orchard/pthread_malloc_stdio_stress_orchard.report.json")
-}
-
-fn log_path(root: &Path) -> PathBuf {
-    root.join("target/conformance/stress_orchard/pthread_malloc_stdio_stress_orchard.log.jsonl")
+fn unique_out_dir(root: &Path, label: &str) -> TestResult<PathBuf> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| test_error(format!("system time before UNIX_EPOCH: {err}")))?
+        .as_nanos();
+    let dir = root
+        .join("target/conformance/stress_orchard_execution_tests")
+        .join(format!("{label}-{stamp}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| test_error(format!("{} mkdir failed: {err}", dir.display())))?;
+    Ok(dir)
 }
 
 fn load_json(path: &Path) -> TestResult<Value> {
@@ -227,12 +239,23 @@ fn required_tier_label(value: &str) -> TestResult<&'static str> {
         .ok_or_else(|| test_error("unknown tier in evidence row"))
 }
 
-fn run_orchard(root: &Path) -> TestResult<std::process::Output> {
-    Command::new("bash")
+fn run_orchard(root: &Path, label: &str) -> TestResult<OrchardRun> {
+    let out_dir = unique_out_dir(root, label)?;
+    let report = out_dir.join("pthread_malloc_stdio_stress_orchard.report.json");
+    let log = out_dir.join("pthread_malloc_stdio_stress_orchard.log.jsonl");
+    let output = Command::new("bash")
         .arg(runner_path(root))
         .current_dir(root)
+        .env("FLC_STRESS_ORCHARD_OUT_DIR", &out_dir)
+        .env("FLC_STRESS_ORCHARD_REPORT", &report)
+        .env("FLC_STRESS_ORCHARD_LOG", &log)
         .output()
-        .map_err(|err| test_error(format!("failed to run stress orchard runner: {err}")))
+        .map_err(|err| test_error(format!("failed to run stress orchard runner: {err}")))?;
+    Ok(OrchardRun {
+        output,
+        report,
+        log,
+    })
 }
 
 fn run_orchard_with_manifest(
@@ -324,17 +347,17 @@ fn manifest_points_to_runner_freshness_and_skip_contract() -> TestResult {
 #[test]
 fn runner_passes_and_emits_current_smoke_and_normal_jsonl_evidence() -> TestResult {
     let root = workspace_root();
-    let output = run_orchard(&root)?;
+    let run = run_orchard(&root, "pass")?;
     ensure(
-        output.status.success(),
+        run.output.status.success(),
         format!(
             "stress orchard runner failed\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&run.output.stdout),
+            String::from_utf8_lossy(&run.output.stderr)
         ),
     )?;
 
-    let report = load_json(&report_path(&root))?;
+    let report = load_json(&run.report)?;
     ensure_eq(
         string_field(&report, "status", "report")?,
         "pass",
@@ -432,7 +455,7 @@ fn runner_passes_and_emits_current_smoke_and_normal_jsonl_evidence() -> TestResu
         )?;
     }
 
-    let log = std::fs::read_to_string(log_path(&root))
+    let log = std::fs::read_to_string(&run.log)
         .map_err(|err| test_error(format!("log should be readable: {err}")))?;
     let mut row_count = 0usize;
     let mut modes_by_scenario: BTreeMap<&'static str, BTreeSet<&'static str>> = BTreeMap::new();
@@ -671,12 +694,12 @@ fn runner_fails_closed_for_missing_counter_field() -> TestResult {
 #[test]
 fn runner_summary_declares_required_failure_signatures() -> TestResult {
     let root = workspace_root();
-    let output = run_orchard(&root)?;
+    let run = run_orchard(&root, "summary")?;
     ensure(
-        output.status.success(),
+        run.output.status.success(),
         "stress orchard runner should pass before summary inspection",
     )?;
-    let report = load_json(&report_path(&root))?;
+    let report = load_json(&run.report)?;
     let summary = field(&report, "summary", "report")?;
     let signatures = as_array(
         field(summary, "negative_failure_signatures", "report.summary")?,

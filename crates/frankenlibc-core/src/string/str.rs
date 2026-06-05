@@ -45,6 +45,7 @@ fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
 /// halved reduction count, so four is the sweet spot.)
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
+const STRCMP_EXACT_256_LEN: usize = STRLEN_BLOCK + 1;
 
 /// True if any of the 128 bytes in `block` equal `byte` or NUL. OR's the four
 /// 32-byte panels' hit masks and reduces once.
@@ -276,6 +277,27 @@ fn equal_and_no_nul_simd_folded(left: &[u8], right: &[u8]) -> bool {
     !acc.any()
 }
 
+#[inline(always)]
+fn strcmp_exact_256_equal_nul_terminated(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != STRCMP_EXACT_256_LEN
+        || right.len() != STRCMP_EXACT_256_LEN
+        || left[STRLEN_BLOCK] != 0
+        || right[STRLEN_BLOCK] != 0
+    {
+        return false;
+    }
+
+    let z = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
+    let mut acc = Mask::<i8, STRLEN_SIMD_LANES>::splat(false);
+    for k in 0..4 {
+        let lo = k * STRLEN_SIMD_LANES;
+        let l = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&left[lo..lo + STRLEN_SIMD_LANES]);
+        let r = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&right[lo..lo + STRLEN_SIMD_LANES]);
+        acc |= l.simd_ne(r) | l.simd_eq(z);
+    }
+    !acc.any()
+}
+
 /// Branchless ASCII A-Z -> a-z fold of a 32-byte panel, exactly matching
 /// `u8::to_ascii_lowercase` (only bytes in `b'A'..=b'Z'` are shifted by `0x20`;
 /// everything else, including NUL, is unchanged).
@@ -438,6 +460,10 @@ pub fn strnlen(s: &[u8], maxlen: usize) -> usize {
 #[allow(unsafe_code)]
 pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
     const WORD_SIZE: usize = size_of::<usize>();
+
+    if strcmp_exact_256_equal_nul_terminated(s1, s2) {
+        return 0;
+    }
 
     let mut i = 0;
 
@@ -1667,6 +1693,47 @@ mod tests {
     fn test_strcmp_prefix() {
         assert!(strcmp(b"ab\0", b"abc\0") < 0);
         assert!(strcmp(b"abc\0", b"ab\0") > 0);
+    }
+
+    #[test]
+    fn test_strcmp_exact_256_certificate_guard() {
+        let mut left = vec![b'Q'; 256];
+        let mut right = vec![b'Q'; 256];
+        left.push(0);
+        right.push(0);
+        assert!(strcmp_exact_256_equal_nul_terminated(&left, &right));
+        assert_eq!(strcmp(&left, &right), 0);
+
+        for pos in [0usize, 127, 128, 255] {
+            right[pos] = b'R';
+            assert!(!strcmp_exact_256_equal_nul_terminated(&left, &right));
+            assert_eq!(strcmp(&left, &right), (b'Q' as i32) - (b'R' as i32));
+            right[pos] = b'Q';
+        }
+
+        left[80] = 0;
+        right[80] = 0;
+        left[160] = b'A';
+        right[160] = b'Z';
+        assert!(!strcmp_exact_256_equal_nul_terminated(&left, &right));
+        assert_eq!(strcmp(&left, &right), 0);
+
+        left[80] = b'Q';
+        right[80] = b'Q';
+        left[160] = b'Q';
+        right[160] = b'Q';
+        left[256] = b'X';
+        assert!(!strcmp_exact_256_equal_nul_terminated(&left, &right));
+        assert_eq!(strcmp(&left, &right), b'X' as i32);
+
+        right[256] = b'X';
+        assert!(!strcmp_exact_256_equal_nul_terminated(&left, &right));
+        assert_eq!(strcmp(&left, &right), 0);
+
+        left.truncate(256);
+        right.truncate(256);
+        assert!(!strcmp_exact_256_equal_nul_terminated(&left, &right));
+        assert_eq!(strcmp(&left, &right), 0);
     }
 
     #[test]

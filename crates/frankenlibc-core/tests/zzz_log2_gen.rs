@@ -17,7 +17,7 @@
 const N: usize = 128;
 
 // ln(2) and 1/ln(2) as double-double constants.
-const LN2_HI: f64 = 0.6931471805599453;
+const LN2_HI: f64 = std::f64::consts::LN_2;
 const LN2_LO: f64 = 2.3190468138462996e-17;
 
 #[inline]
@@ -98,9 +98,9 @@ fn zzz_log2_gen_validate() {
     }
     // Sanity: logc_hi must match the oracle log2(c) to <=1 ULP.
     let mut maxtab = 0i64;
-    for k in 0..=N {
+    for (k, &log_hi) in logc_hi.iter().enumerate() {
         let c = 1.0 + (k as f64) / (N as f64);
-        let d = (logc_hi[k].to_bits() as i64 - c.log2().to_bits() as i64).abs();
+        let d = (log_hi.to_bits() as i64 - c.log2().to_bits() as i64).abs();
         if d > maxtab {
             maxtab = d;
         }

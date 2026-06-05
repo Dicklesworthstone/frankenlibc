@@ -203,6 +203,8 @@ fn checker_validates_current_tracker_health_and_emits_telemetry() -> TestResult 
             "no-db status for bd-yaiw.1 drifted",
             "issues JSONL missing required id bd-yaiw",
             "issues JSONL missing required id bd-yaiw.1",
+            "sync dirty_count drifted",
+            "sync db_newer drifted",
         ];
         let generic_doctor_gap =
             "br doctor --json must report ok=true or only accepted degraded recovery artifacts";
@@ -211,9 +213,11 @@ fn checker_validates_current_tracker_health_and_emits_telemetry() -> TestResult 
             .ok_or("failure report must include errors array")?;
         assert!(!errors.is_empty(), "{}", output_text(&output));
         let has_specific_worker_tracker_gap = errors.iter().any(|error| {
-            error
-                .as_str()
-                .is_some_and(|error| allowed_worker_tracker_gap.iter().any(|fragment| error.contains(fragment)))
+            error.as_str().is_some_and(|error| {
+                allowed_worker_tracker_gap
+                    .iter()
+                    .any(|fragment| error.contains(fragment))
+            })
         });
         for error in errors {
             let error = error.as_str().ok_or("failure error must be string")?;

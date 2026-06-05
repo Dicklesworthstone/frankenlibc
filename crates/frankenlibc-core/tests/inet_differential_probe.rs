@@ -32,18 +32,58 @@ fn ntop(af: i32, bytes: &[u8]) -> String {
 #[test]
 fn inet_pton_differential_battery() {
     let v4: &[&str] = &[
-        "1.2.3.4", "0.0.0.0", "255.255.255.255", "127.0.0.1", "1.2.3.256", "1.2.3",
-        "1.2.3.4.5", "01.2.3.4", "1.2.3.04", " 1.2.3.4", "1.2.3.4 ", "256.1.1.1",
-        "1..2.3", "", "1.2.3.4x", "0x1.2.3.4",
+        "1.2.3.4",
+        "0.0.0.0",
+        "255.255.255.255",
+        "127.0.0.1",
+        "1.2.3.256",
+        "1.2.3",
+        "1.2.3.4.5",
+        "01.2.3.4",
+        "1.2.3.04",
+        " 1.2.3.4",
+        "1.2.3.4 ",
+        "256.1.1.1",
+        "1..2.3",
+        "",
+        "1.2.3.4x",
+        "0x1.2.3.4",
     ];
     let v4_glibc: &[&str] = &[
-        "1 01020304", "1 00000000", "1 ffffffff", "1 7f000001", "0", "0", "0", "0",
-        "0", "0", "0", "0", "0", "0", "0", "0",
+        "1 01020304",
+        "1 00000000",
+        "1 ffffffff",
+        "1 7f000001",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
     ];
     let v6: &[&str] = &[
-        "::1", "::", "1::", "2001:db8::1", "::ffff:1.2.3.4", "::g", "1:2:3:4:5:6:7:8",
-        "1:2:3:4:5:6:7:8:9", "1::2::3", "12345::", "::ffff:1.2.3.256", "2001:db8:::1",
-        "fe80::1", "0:0:0:0:0:0:0:0", ":::", "abcd:ef01:2345:6789:abcd:ef01:2345:6789",
+        "::1",
+        "::",
+        "1::",
+        "2001:db8::1",
+        "::ffff:1.2.3.4",
+        "::g",
+        "1:2:3:4:5:6:7:8",
+        "1:2:3:4:5:6:7:8:9",
+        "1::2::3",
+        "12345::",
+        "::ffff:1.2.3.256",
+        "2001:db8:::1",
+        "fe80::1",
+        "0:0:0:0:0:0:0:0",
+        ":::",
+        "abcd:ef01:2345:6789:abcd:ef01:2345:6789",
     ];
     let v6_glibc: &[&str] = &[
         "1 00000000000000000000000000000001",
@@ -68,13 +108,19 @@ fn inet_pton_differential_battery() {
     for (i, &s) in v4.iter().enumerate() {
         let got = pton(AF_INET, s);
         if got != v4_glibc[i] {
-            diffs.push(format!("pton4 {s:?}: frankenlibc={got:?} glibc={:?}", v4_glibc[i]));
+            diffs.push(format!(
+                "pton4 {s:?}: frankenlibc={got:?} glibc={:?}",
+                v4_glibc[i]
+            ));
         }
     }
     for (i, &s) in v6.iter().enumerate() {
         let got = pton(AF_INET6, s);
         if got != v6_glibc[i] {
-            diffs.push(format!("pton6 {s:?}: frankenlibc={got:?} glibc={:?}", v6_glibc[i]));
+            diffs.push(format!(
+                "pton6 {s:?}: frankenlibc={got:?} glibc={:?}",
+                v6_glibc[i]
+            ));
         }
     }
     assert!(
@@ -92,24 +138,53 @@ fn inet_ntop_differential_battery() {
         (AF_INET, vec![1, 2, 3, 4], "1.2.3.4"),
         (AF_INET, vec![255, 255, 255, 255], "255.255.255.255"),
         (AF_INET, vec![0, 0, 0, 0], "0.0.0.0"),
-        (AF_INET6, {
-            let mut b = vec![0u8; 16];
-            b[15] = 1;
-            b
-        }, "::1"),
+        (
+            AF_INET6,
+            {
+                let mut b = vec![0u8; 16];
+                b[15] = 1;
+                b
+            },
+            "::1",
+        ),
         (AF_INET6, vec![0u8; 16], "::"),
-        (AF_INET6, vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], "2001:db8::1"),
-        (AF_INET6, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 1, 2, 3, 4], "::ffff:1.2.3.4"),
-        (AF_INET6, vec![0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0], "1:0:2:0:3:0:4:0"),
-        (AF_INET6, vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0], "0:1::2:0"),
-        (AF_INET6, vec![0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89], "abcd:ef01:2345:6789:abcd:ef01:2345:6789"),
+        (
+            AF_INET6,
+            vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            "2001:db8::1",
+        ),
+        (
+            AF_INET6,
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 1, 2, 3, 4],
+            "::ffff:1.2.3.4",
+        ),
+        (
+            AF_INET6,
+            vec![0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0],
+            "1:0:2:0:3:0:4:0",
+        ),
+        (
+            AF_INET6,
+            vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0],
+            "0:1::2:0",
+        ),
+        (
+            AF_INET6,
+            vec![
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45,
+                0x67, 0x89,
+            ],
+            "abcd:ef01:2345:6789:abcd:ef01:2345:6789",
+        ),
     ];
 
     let mut diffs = Vec::new();
     for (af, bytes, expected) in cases {
         let got = ntop(*af, bytes);
         if got != *expected {
-            diffs.push(format!("ntop af={af} {bytes:02x?}: frankenlibc={got:?} glibc={expected:?}"));
+            diffs.push(format!(
+                "ntop af={af} {bytes:02x?}: frankenlibc={got:?} glibc={expected:?}"
+            ));
         }
     }
     assert!(

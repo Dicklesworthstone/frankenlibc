@@ -915,7 +915,9 @@ fn readme_smoke_claims_do_not_outrun_replacement_level_blockers() {
             "README must not claim strict+hardened smoke is green while the checked smoke artifact is red"
         );
         assert!(
-            !readme.contains("curated preload smoke battery is green in both strict and hardened modes"),
+            !readme.contains(
+                "curated preload smoke battery is green in both strict and hardened modes"
+            ),
             "README must not claim curated smoke is green while the checked smoke artifact is red"
         );
     }

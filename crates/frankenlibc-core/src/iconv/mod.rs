@@ -9077,8 +9077,7 @@ pub fn iconv(
             if avail > 0 {
                 let run = leading_ascii_len(&input[in_pos..]).min(avail);
                 if run > 0 {
-                    outbuf[out_pos..out_pos + run]
-                        .copy_from_slice(&input[in_pos..in_pos + run]);
+                    outbuf[out_pos..out_pos + run].copy_from_slice(&input[in_pos..in_pos + run]);
                     in_pos += run;
                     out_pos += run;
                     if in_pos >= input.len() {
@@ -9228,8 +9227,18 @@ mod tests {
         out: &[u8],
     ) -> (Option<i32>, usize, usize, Vec<u8>) {
         match r {
-            Ok(v) => (None, v.in_consumed, v.out_written, out[..v.out_written].to_vec()),
-            Err(e) => (Some(e.code), e.in_consumed, e.out_written, out[..e.out_written].to_vec()),
+            Ok(v) => (
+                None,
+                v.in_consumed,
+                v.out_written,
+                out[..v.out_written].to_vec(),
+            ),
+            Err(e) => (
+                Some(e.code),
+                e.in_consumed,
+                e.out_written,
+                out[..e.out_written].to_vec(),
+            ),
         }
     }
 
@@ -9238,13 +9247,7 @@ mod tests {
         // Include single-byte legacy codepages (KOI8-R, CP1251) whose low half is
         // ASCII: the probe-cached fast path now applies to them too, so the
         // reference must still match across these pairs and their non-ASCII bytes.
-        let names: &[&[u8]] = &[
-            b"UTF-8",
-            b"US-ASCII",
-            b"ISO-8859-1",
-            b"KOI8-R",
-            b"CP1251",
-        ];
+        let names: &[&[u8]] = &[b"UTF-8", b"US-ASCII", b"ISO-8859-1", b"KOI8-R", b"CP1251"];
 
         // The probe must ENABLE the fast path for single-byte codepages whose
         // low half is ASCII (both directions, incl. codepage<->codepage)...
@@ -9258,18 +9261,58 @@ mod tests {
 
         // The byte->byte translation table exists exactly for single-byte ->
         // single-byte pairs, and is absent when either side is multibyte.
-        assert!(iconv_open(b"CP1251", b"KOI8-R").unwrap().sb_translation.is_some());
-        assert!(iconv_open(b"ISO-8859-1", b"KOI8-R").unwrap().sb_translation.is_some());
-        assert!(iconv_open(b"KOI8-R", b"UTF-8").unwrap().sb_translation.is_none());
-        assert!(iconv_open(b"UTF-8", b"KOI8-R").unwrap().sb_translation.is_none());
+        assert!(
+            iconv_open(b"CP1251", b"KOI8-R")
+                .unwrap()
+                .sb_translation
+                .is_some()
+        );
+        assert!(
+            iconv_open(b"ISO-8859-1", b"KOI8-R")
+                .unwrap()
+                .sb_translation
+                .is_some()
+        );
+        assert!(
+            iconv_open(b"KOI8-R", b"UTF-8")
+                .unwrap()
+                .sb_translation
+                .is_none()
+        );
+        assert!(
+            iconv_open(b"UTF-8", b"KOI8-R")
+                .unwrap()
+                .sb_translation
+                .is_none()
+        );
 
         // The codepoint->byte reverse map exists whenever `to` is single-byte
         // (incl. UTF-8 -> single-byte, where there is no byte->byte LUT), and is
         // absent when `to` is multibyte.
-        assert!(iconv_open(b"KOI8-R", b"UTF-8").unwrap().to_reverse.is_some());
-        assert!(iconv_open(b"CP1251", b"UTF-8").unwrap().to_reverse.is_some());
-        assert!(iconv_open(b"UTF-8", b"KOI8-R").unwrap().to_reverse.is_none());
-        assert!(iconv_open(b"UTF-16LE", b"UTF-8").unwrap().to_reverse.is_none());
+        assert!(
+            iconv_open(b"KOI8-R", b"UTF-8")
+                .unwrap()
+                .to_reverse
+                .is_some()
+        );
+        assert!(
+            iconv_open(b"CP1251", b"UTF-8")
+                .unwrap()
+                .to_reverse
+                .is_some()
+        );
+        assert!(
+            iconv_open(b"UTF-8", b"KOI8-R")
+                .unwrap()
+                .to_reverse
+                .is_none()
+        );
+        assert!(
+            iconv_open(b"UTF-16LE", b"UTF-8")
+                .unwrap()
+                .to_reverse
+                .is_none()
+        );
 
         // Corpus: ASCII of every length around the 32-lane boundary, ASCII with
         // a high byte planted at each offset, NUL-laden ASCII, valid multibyte

@@ -127,11 +127,21 @@ fn gate_script_emits_logs_and_reports() {
             .is_some_and(|owners| !owners.is_empty()),
         "dashboard should expose per-owner totals"
     );
+    let status_counts = report["dashboard"]["status_counts"]
+        .as_object()
+        .expect("dashboard should expose status totals");
     assert!(
-        report["dashboard"]["status_counts"]
-            .as_object()
-            .is_some_and(|statuses| statuses.contains_key("in_progress")),
-        "dashboard should expose in_progress totals"
+        !status_counts.is_empty(),
+        "dashboard should expose status totals"
+    );
+    let status_total: u64 = status_counts
+        .values()
+        .map(|count| count.as_u64().expect("status total should be a number"))
+        .sum();
+    assert_eq!(
+        Some(status_total),
+        report["dashboard"]["total_obligations"].as_u64(),
+        "dashboard status totals should sum to total obligations"
     );
 
     assert_eq!(binder_report["summary"]["failed"].as_u64(), Some(0));

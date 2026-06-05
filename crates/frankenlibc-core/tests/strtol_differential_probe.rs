@@ -98,7 +98,10 @@ fn strtol_differential_battery() {
     let mut diffs = Vec::new();
     for (i, &(s, base)) in cases.iter().enumerate() {
         let (val, consumed, status) = strtol_impl(s.as_bytes(), base);
-        let erange = matches!(status, ConversionStatus::Overflow | ConversionStatus::Underflow);
+        let erange = matches!(
+            status,
+            ConversionStatus::Overflow | ConversionStatus::Underflow
+        );
         let erange_n = if erange { 1u8 } else { 0u8 };
         let (gv, gc, ge) = glibc[i];
         if val != gv || consumed != gc || erange_n != ge {

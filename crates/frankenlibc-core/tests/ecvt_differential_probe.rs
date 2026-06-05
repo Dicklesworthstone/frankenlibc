@@ -8,11 +8,19 @@ use frankenlibc_core::stdlib::ecvt::{ecvt, fcvt, gcvt};
 
 fn e(v: f64, nd: i32) -> String {
     let (digits, decpt, sign) = ecvt(v, nd);
-    format!("[{}] decpt={decpt} sign={}", String::from_utf8_lossy(&digits), sign as i32)
+    format!(
+        "[{}] decpt={decpt} sign={}",
+        String::from_utf8_lossy(&digits),
+        sign as i32
+    )
 }
 fn f(v: f64, nd: i32) -> String {
     let (digits, decpt, sign) = fcvt(v, nd);
-    format!("[{}] decpt={decpt} sign={}", String::from_utf8_lossy(&digits), sign as i32)
+    format!(
+        "[{}] decpt={decpt} sign={}",
+        String::from_utf8_lossy(&digits),
+        sign as i32
+    )
 }
 fn g(v: f64, nd: i32) -> String {
     let mut buf = vec![0u8; 64];
@@ -31,7 +39,11 @@ fn ecvt_fcvt_gcvt_differential_battery() {
 
     // ecvt
     chk("ecvt(123.456,5)", e(123.456, 5), "[12346] decpt=3 sign=0");
-    chk("ecvt(0.0001234,3)", e(0.0001234, 3), "[123] decpt=-3 sign=0");
+    chk(
+        "ecvt(0.0001234,3)",
+        e(0.0001234, 3),
+        "[123] decpt=-3 sign=0",
+    );
     chk("ecvt(-12.34,4)", e(-12.34, 4), "[1234] decpt=2 sign=1");
     chk("ecvt(0.0,5)", e(0.0, 5), "[00000] decpt=1 sign=0");
     chk("ecvt(2.5,1)", e(2.5, 1), "[2] decpt=1 sign=0");
@@ -61,7 +73,7 @@ fn ecvt_fcvt_gcvt_differential_battery() {
     chk("gcvt(100000,6)", g(100000.0, 6), "[100000]");
     chk("gcvt(1000000,6)", g(1000000.0, 6), "[1e+06]");
     chk("gcvt(-0.0,4)", g(-0.0, 4), "[-0]");
-    chk("gcvt(3.14159,3)", g(3.14159, 3), "[3.14]");
+    chk("gcvt(3.14159,3)", g(314_159.0 / 100_000.0, 3), "[3.14]");
 
     assert!(
         diffs.is_empty(),

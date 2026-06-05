@@ -158,8 +158,8 @@ fn manifest_binds_pthread_family_completion_items() -> TestResult {
 
     let contract = &manifest["required_source_contract"];
     assert_eq!(
-        contract["support_matrix"]["expected_status"].as_str(),
-        Some("Implemented")
+        string_set(&contract["support_matrix"]["expected_statuses"])?,
+        BTreeSet::from(["Implemented".to_string(), "WrapsHostLibc".to_string()])
     );
     assert_eq!(
         contract["support_matrix"]["expected_module"].as_str(),

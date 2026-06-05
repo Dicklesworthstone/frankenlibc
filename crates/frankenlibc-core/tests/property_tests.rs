@@ -436,9 +436,7 @@ mod string_properties {
                 // Force a shared prefix on half the pairs to exercise long equal runs.
                 if (la + lb) % 2 == 0 {
                     let shared = la.min(lb);
-                    for k in 0..shared {
-                        b[k] = a[k];
-                    }
+                    b[..shared].copy_from_slice(&a[..shared]);
                 }
                 a.push(0);
                 b.push(0);
@@ -465,8 +463,8 @@ mod string_properties {
     /// 32-byte panel/tail boundary are exercised. Pins exact behavior.
     #[test]
     fn golden_strcasecmp_corpus_sha256() {
-        use sha2::{Digest, Sha256};
         use frankenlibc_core::string::str::{strcasecmp, strncasecmp};
+        use sha2::{Digest, Sha256};
 
         let mut state: u64 = 0x84A4_5C9E_1B7D_2F03;
         let mut next = || {
@@ -542,9 +540,7 @@ mod string_properties {
                 let mut b: Vec<u8> = (0..lb).map(|_| next()).collect();
                 if (la + lb) % 2 == 0 {
                     let shared = la.min(lb);
-                    for k in 0..shared {
-                        b[k] = a[k];
-                    }
+                    b[..shared].copy_from_slice(&a[..shared]);
                 }
 
                 for n in [0usize, 1, 8, 31, 32, 33, 64, 127, 128, 129, 256] {
@@ -636,8 +632,8 @@ mod string_properties {
                 let shared = la.min(lb);
                 let mut b = vec![0u8; lb];
                 b[..shared].copy_from_slice(&a[..shared]);
-                for k in shared..lb {
-                    b[k] = next();
+                for slot in b.iter_mut().take(lb).skip(shared) {
+                    *slot = next();
                 }
                 for &flip in &[0usize, 31, 32, 63, 64, 127, 128] {
                     let mut bf = b.clone();
@@ -712,7 +708,11 @@ mod wide_properties {
     }
 
     fn ascii_lower(c: u32) -> u32 {
-        if (0x41..=0x5A).contains(&c) { c + 0x20 } else { c }
+        if (0x41..=0x5A).contains(&c) {
+            c + 0x20
+        } else {
+            c
+        }
     }
 
     // Reference: exact scalar wcsncasecmp the SIMD version replaced.
@@ -906,9 +906,7 @@ mod wide_properties {
                 let mut b: Vec<u32> = (0..lb).map(|_| next()).collect();
                 if (la + lb) % 2 == 0 {
                     let shared = la.min(lb);
-                    for k in 0..shared {
-                        b[k] = a[k];
-                    }
+                    b[..shared].copy_from_slice(&a[..shared]);
                 }
                 a.push(0);
                 b.push(0);

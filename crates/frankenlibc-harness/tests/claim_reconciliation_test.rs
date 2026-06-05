@@ -226,7 +226,7 @@ fn claim_reconciliation_detects_replacement_level_smoke_drift_and_routes_owner()
         &mutated_levels_path,
         serde_json::to_string_pretty(&levels).expect("mutated levels should serialize"),
     )
-        .expect("failed to write mutated replacement_levels.json");
+    .expect("failed to write mutated replacement_levels.json");
 
     let output = Command::new("python3")
         .arg(&script)
@@ -297,10 +297,10 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
     let readme_src = repo_root.join("README.md");
     let mutated_readme_path = unique_temp_path("claim-reconciliation-readme-smoke.md");
 
-        let mutated_readme = std::fs::read_to_string(&readme_src)
+    let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
         .replace(
-            "The checked curated preload smoke battery has 60 pass / 0 fail / 4 optional skips across strict and hardened modes. This is a curated workload signal, not broad production workload readiness; non-curated workload stability and release-claim closure for L2/L3 replacement levels remain active work. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.",
+            "The checked curated preload smoke battery has 60 pass / 0 fail / 4 optional skips across strict and hardened modes. The checked curated preload smoke battery is green in both strict and hardened modes, with optional skips tracked separately from failures. This is a curated workload signal, not broad production workload readiness; non-curated workload stability and release-claim closure for L2/L3 replacement levels remain active work. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.",
             "The latest broad preload smoke run is **fully green** and both strict and hardened modes pass all workloads.",
         );
     assert_ne!(

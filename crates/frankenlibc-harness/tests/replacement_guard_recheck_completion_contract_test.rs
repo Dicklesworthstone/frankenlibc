@@ -246,7 +246,7 @@ fn contract_binds_replacement_guard_recheck_sources() -> TestResult {
     assert_eq!(profile["total_call_throughs"].as_u64(), Some(0));
     assert_eq!(profile["fixture_count"].as_u64(), Some(0));
     assert_eq!(profile["replacement_level_count"].as_u64(), Some(4));
-    assert_eq!(profile["current_level"].as_str(), Some("L0"));
+    assert_eq!(profile["current_level"].as_str(), Some("L1"));
     Ok(())
 }
 

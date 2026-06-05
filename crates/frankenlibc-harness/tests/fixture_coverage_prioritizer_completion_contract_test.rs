@@ -268,8 +268,10 @@ fn checker_accepts_fixture_coverage_prioritizer_completion_contract() -> TestRes
     let out_dir = unique_output_dir(&root, "fixture-coverage-prioritizer-check")?;
     let output = run_checker(&root, &manifest_path(&root), &out_dir)?;
     expect_checker_success(&output)?;
-    assert!(String::from_utf8_lossy(&output.stdout)
-        .contains("PASS fixture coverage prioritizer completion contract"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("PASS fixture coverage prioritizer completion contract")
+    );
 
     let report = load_json(&checker_report(&out_dir))?;
     assert_eq!(
@@ -304,8 +306,10 @@ fn checker_emits_structured_fixture_coverage_telemetry() -> TestResult {
     }
     for row in &events {
         assert_eq!(string_field(row, "bead_id", "event")?, "bd-bp8fl.4.1.1");
-        assert!(string_field(row, "trace_id", "event")?
-            .starts_with("bd-bp8fl.4.1.1::fixture-coverage-prioritizer::completion::v1::"));
+        assert!(
+            string_field(row, "trace_id", "event")?
+                .starts_with("bd-bp8fl.4.1.1::fixture-coverage-prioritizer::completion::v1::")
+        );
     }
     Ok(())
 }

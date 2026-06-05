@@ -71,10 +71,25 @@ fn math_special_value_differential_battery() {
     check("atan2_1_0", atan2(1.0, 0.0), "3ff921fb54442d18", &mut d);
     check("atan2_n1_0", atan2(-1.0, 0.0), "bff921fb54442d18", &mut d);
     check("atan2_inf_inf", atan2(inf, inf), "3fe921fb54442d18", &mut d);
-    check("atan2_inf_ninf", atan2(inf, ninf), "4002d97c7f3321d2", &mut d);
+    check(
+        "atan2_inf_ninf",
+        atan2(inf, ninf),
+        "4002d97c7f3321d2",
+        &mut d,
+    );
 
-    check("copysign_3_n0", copysign(3.0, -0.0), "c008000000000000", &mut d);
-    check("copysign_3_n1", copysign(3.0, -1.0), "c008000000000000", &mut d);
+    check(
+        "copysign_3_n0",
+        copysign(3.0, -0.0),
+        "c008000000000000",
+        &mut d,
+    );
+    check(
+        "copysign_3_n1",
+        copysign(3.0, -1.0),
+        "c008000000000000",
+        &mut d,
+    );
 
     check("cbrt_n8", cbrt(-8.0), "c000000000000000", &mut d);
     check("cbrt_n0", cbrt(-0.0), "8000000000000000", &mut d);
@@ -84,11 +99,36 @@ fn math_special_value_differential_battery() {
     check("hypot_inf_nan", hypot(inf, nan), "7ff0000000000000", &mut d);
     check("hypot_nan_inf", hypot(nan, inf), "7ff0000000000000", &mut d);
 
-    check("nextafter_1_2", nextafter(1.0, 2.0), "3ff0000000000001", &mut d);
-    check("nextafter_0_1", nextafter(0.0, 1.0), "0000000000000001", &mut d);
-    check("nextafter_0_n1", nextafter(0.0, -1.0), "8000000000000001", &mut d);
-    check("nextafter_1_1", nextafter(1.0, 1.0), "3ff0000000000000", &mut d);
-    check("nextafter_inf_0", nextafter(inf, 0.0), "7fefffffffffffff", &mut d);
+    check(
+        "nextafter_1_2",
+        nextafter(1.0, 2.0),
+        "3ff0000000000001",
+        &mut d,
+    );
+    check(
+        "nextafter_0_1",
+        nextafter(0.0, 1.0),
+        "0000000000000001",
+        &mut d,
+    );
+    check(
+        "nextafter_0_n1",
+        nextafter(0.0, -1.0),
+        "8000000000000001",
+        &mut d,
+    );
+    check(
+        "nextafter_1_1",
+        nextafter(1.0, 1.0),
+        "3ff0000000000000",
+        &mut d,
+    );
+    check(
+        "nextafter_inf_0",
+        nextafter(inf, 0.0),
+        "7fefffffffffffff",
+        &mut d,
+    );
 
     check("log_1", log(1.0), "0000000000000000", &mut d);
     check("log_0", log(0.0), "fff0000000000000", &mut d);

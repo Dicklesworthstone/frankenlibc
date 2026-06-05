@@ -77,7 +77,7 @@ fn corpus_f32() -> Vec<f32> {
         f32::NAN,
         f32::MIN_POSITIVE,
         f32::MIN_POSITIVE / 2.0,
-        1.401_298_5e-45, // smallest positive subnormal
+        f32::from_bits(1), // smallest positive subnormal
         f32::MAX,
         f32::MIN,
         8388608.0,  // 2^23
@@ -86,7 +86,7 @@ fn corpus_f32() -> Vec<f32> {
         -8388608.5,
         0.499_999_97,
         0.500_000_06,
-        123456.789,
+        123_456.79,
         1e30,
         1e-30,
         std::f32::consts::PI,

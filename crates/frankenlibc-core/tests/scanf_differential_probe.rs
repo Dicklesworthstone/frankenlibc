@@ -12,7 +12,11 @@ fn run(fmt: &str, input: &str) -> String {
     let r = scan_input(input.as_bytes(), &dirs);
     // Map to the C sscanf return convention: EOF (-1) when an input failure
     // occurs before any assignment, otherwise the assignment count.
-    let ret = if r.count == 0 && r.input_failure { -1 } else { r.count };
+    let ret = if r.count == 0 && r.input_failure {
+        -1
+    } else {
+        r.count
+    };
     let mut s = format!("{ret}");
     for v in &r.values {
         match v {

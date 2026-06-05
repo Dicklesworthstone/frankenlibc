@@ -22,6 +22,7 @@ pub fn erf(x: f64) -> f64 {
 // old libm path's 68.7 ns (2.3x) and glibc parity (~27 ns), at 0 ULP vs exact
 // factorials / ≤2 ULP vs the closed-form Γ(n+½) reference. Coefficients are
 // Moshier's public-domain Cephes `gamma.c` values, verbatim.
+#[allow(clippy::excessive_precision)]
 const TGAMMA_P: [f64; 7] = [
     1.601_195_224_767_518_614_07e-4,
     1.191_351_470_065_863_849_13e-3,
@@ -31,6 +32,7 @@ const TGAMMA_P: [f64; 7] = [
     4.942_148_268_014_971_007_53e-1,
     9.999_999_999_999_999_967_96e-1,
 ];
+#[allow(clippy::excessive_precision)]
 const TGAMMA_Q: [f64; 8] = [
     -2.315_818_733_241_201_298_19e-5,
     5.396_055_804_933_033_978_42e-4,
@@ -106,9 +108,9 @@ mod tgamma_lanczos_research {
     //! lanczos13m53), which must be generated offline at high precision
     //! (Godfrey's matrix method evaluated in dd, or copied from a published
     //! table). With 4-ULP coefficients, this dd-Lanczos runtime (~45 ns: dd sum
-    //! + f64 pow + f64 exp) would already be ~2.5x faster than our libm and
-    //! near glibc parity; a minimax poly on [1,2] (fit to a dd oracle, not
-    //! libm — fitting to libm's ~1-2 ULP noise overfits to 50+ ULP by degree 20)
+    //! plus f64 pow and f64 exp) would already be ~2.5x faster than our libm and
+    //! near glibc parity; a minimax poly on [1,2] (fit to a dd oracle, not libm
+    //! — fitting to libm's ~1-2 ULP noise overfits to 50+ ULP by degree 20)
     //! would be ~4x faster than glibc.
 
     fn two_sum(a: f64, b: f64) -> (f64, f64) {
@@ -129,10 +131,11 @@ mod tgamma_lanczos_research {
     }
 
     const G: f64 = 7.0;
+    #[allow(clippy::excessive_precision)]
     const LC: [f64; 9] = [
         0.999_999_999_999_809_93,
         676.520_368_121_885_1,
-        -1259.139_216_722_402_8,
+        -1_259.139_216_722_402_8,
         771.323_428_777_653_13,
         -176.615_029_162_140_59,
         12.507_343_278_686_905,

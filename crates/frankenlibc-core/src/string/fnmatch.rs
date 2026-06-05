@@ -219,7 +219,13 @@ fn parse_bracket_subexpr(
 /// CASEFOLD); reuses the shared `parse_bracket_subexpr` for `[:class:]` /
 /// `[.x.]` / `[=x=]`, so only the range/literal membership is local logic. The
 /// `None => break` arms are unreachable given a `Terminated` bracket.
-fn bracket_match_one(pat: &[u8], pi0: usize, c: u8, noescape: bool, casefold: bool) -> (bool, usize) {
+fn bracket_match_one(
+    pat: &[u8],
+    pi0: usize,
+    c: u8,
+    noescape: bool,
+    casefold: bool,
+) -> (bool, usize) {
     let mut pi = pi0 + 1; // skip '['
     let negated = matches!(pat.get(pi), Some(&b'!') | Some(&b'^'));
     if negated {
@@ -287,7 +293,11 @@ fn bracket_match_one(pat: &[u8], pi0: usize, c: u8, noescape: bool, casefold: bo
             }
         } else {
             let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
-            let low_cmp = if casefold { low.to_ascii_lowercase() } else { low };
+            let low_cmp = if casefold {
+                low.to_ascii_lowercase()
+            } else {
+                low
+            };
             if test_ch == low_cmp {
                 matched = true;
             }
@@ -307,7 +317,13 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
     let noescape = flags.contains(FnmatchFlags::NOESCAPE);
     let leading_dir = flags.contains(FnmatchFlags::LEADING_DIR);
 
-    let eq = |a: u8, b: u8| if casefold { a.eq_ignore_ascii_case(&b) } else { a == b };
+    let eq = |a: u8, b: u8| {
+        if casefold {
+            a.eq_ignore_ascii_case(&b)
+        } else {
+            a == b
+        }
+    };
     // Is `text[si]` a leading '.' that PERIOD requires be matched literally
     // (never by '*'/'?'/'[')? True at text start, or — under PATHNAME — right
     // after a '/'.
@@ -360,7 +376,8 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
                     if !(pathname && c == b'/') && !lp_blocked(si) {
                         match classify_bracket(pat, pi, noescape) {
                             BracketShape::Terminated => {
-                                let (m, next_pi) = bracket_match_one(pat, pi, c, noescape, casefold);
+                                let (m, next_pi) =
+                                    bracket_match_one(pat, pi, c, noescape, casefold);
                                 if m {
                                     pi = next_pi;
                                     si += 1;
@@ -431,16 +448,22 @@ pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
 }
 
 #[cfg(test)]
+struct FnmatchOracleCtx<'a> {
+    flags: FnmatchFlags,
+    failed: &'a mut [bool],
+    stride: usize,
+}
+
+#[cfg(test)]
 fn fnmatch_inner(
     pat: &[u8],
     mut pi: usize,
     text: &[u8],
     mut si: usize,
-    flags: FnmatchFlags,
     at_start_in: bool,
-    failed: &mut [bool],
-    stride: usize,
+    ctx: &mut FnmatchOracleCtx<'_>,
 ) -> bool {
+    let flags = ctx.flags;
     let pathname = flags.contains(FnmatchFlags::PATHNAME);
     let period = flags.contains(FnmatchFlags::PERIOD);
     let noescape = flags.contains(FnmatchFlags::NOESCAPE);
@@ -531,14 +554,14 @@ fn fnmatch_inner(
                     // exponential multi-'*' backtracking to polynomial time).
                     // `stride > 0` here: reaching a '*' implies the pattern has
                     // one, so the table was allocated.
-                    let idx = pi * stride + j;
-                    if !failed[idx] {
-                        if fnmatch_inner(pat, pi, text, j, flags, false, failed, stride) {
+                    let idx = pi * ctx.stride + j;
+                    if !ctx.failed[idx] {
+                        if fnmatch_inner(pat, pi, text, j, false, ctx) {
                             return true;
                         }
                         // Entering the matcher at (pi, j) with at_start=false does
                         // not match; record it so a later '*' cannot re-explore it.
-                        failed[idx] = true;
+                        ctx.failed[idx] = true;
                     }
                     let c = match text.get(j) {
                         None => break,
@@ -767,9 +790,18 @@ mod tests {
     #[test]
     fn simple_fast_path_matches_general() {
         fn general(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
-            let stride = if pat.contains(&b'*') { text.len() + 1 } else { 0 };
+            let stride = if pat.contains(&b'*') {
+                text.len() + 1
+            } else {
+                0
+            };
             let mut failed = vec![false; (pat.len() + 1) * stride];
-            fnmatch_inner(pat, 0, text, 0, flags, true, &mut failed, stride)
+            let mut ctx = FnmatchOracleCtx {
+                flags,
+                failed: &mut failed,
+                stride,
+            };
+            fnmatch_inner(pat, 0, text, 0, true, &mut ctx)
         }
         fn build_bytes(alpha: &[u8], len: usize, mut idx: usize, out: &mut Vec<u8>) {
             out.clear();
@@ -778,10 +810,8 @@ mod tests {
                 idx /= alpha.len();
             }
         }
-        let pat_alpha = [
-            b'a', b'A', b'*', b'?', b'\\', b'[', b']', b'-', b'!', b'.', b'/',
-        ];
-        let txt_alpha = [b'a', b'A', b'b', b'.', b'/'];
+        let pat_alpha = *b"aA*?\\[]-!./";
+        let txt_alpha = *b"aAb./";
         let mut pat = Vec::new();
         let mut txt = Vec::new();
         for fbits in 0u32..32 {

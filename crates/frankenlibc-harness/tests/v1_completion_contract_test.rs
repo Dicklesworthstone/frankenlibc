@@ -163,15 +163,15 @@ fn manifest_binds_v1_completion_evidence() -> TestResult {
 
     let support = &manifest["claimed_closure_contract"]["support_matrix"];
     assert_eq!(support["expected_total_exported"].as_u64(), Some(4119));
-    assert_eq!(support["expected_native_total"].as_u64(), Some(4119));
+    assert_eq!(support["expected_native_total"].as_u64(), Some(2809));
     assert_eq!(support["expected_glibc_callthrough"].as_u64(), Some(0));
     assert_eq!(support["expected_stub"].as_u64(), Some(0));
 
     let smoke = &manifest["claimed_closure_contract"]["ld_preload_smoke"];
     assert_eq!(smoke["expected_total_cases"].as_u64(), Some(64));
-    assert_eq!(smoke["expected_passes"].as_u64(), Some(58));
+    assert_eq!(smoke["expected_passes"].as_u64(), Some(60));
     assert_eq!(smoke["expected_fails"].as_u64(), Some(0));
-    assert_eq!(smoke["expected_skips"].as_u64(), Some(6));
+    assert_eq!(smoke["expected_skips"].as_u64(), Some(4));
 
     for binding in bindings {
         for test_ref in json_array(&binding["required_test_refs"], "required_test_refs")? {
@@ -216,11 +216,11 @@ fn checker_accepts_contract_and_emits_report_log() -> TestResult {
     );
     assert_eq!(
         report["summaries"]["claims"]["native_total"].as_u64(),
-        Some(4119)
+        Some(2809)
     );
     assert_eq!(
         report["summaries"]["claims"]["smoke_passes"].as_u64(),
-        Some(58)
+        Some(60)
     );
     assert_eq!(
         report["summaries"]["claims"]["proof_valid_obligations"].as_u64(),

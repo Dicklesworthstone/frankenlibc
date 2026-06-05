@@ -114,7 +114,8 @@ fn fake_cases(canonical: &Value) -> Vec<Value> {
             .expect("canonical perf_failures") as usize;
         let strict_parity_failures = canonical["modes"][mode]["strict_parity_failures"]
             .as_u64()
-            .expect("canonical strict_parity_failures") as usize;
+            .expect("canonical strict_parity_failures")
+            as usize;
         let valgrind_failures = canonical["modes"][mode]["valgrind_failures"]
             .as_u64()
             .expect("canonical valgrind_failures") as usize;

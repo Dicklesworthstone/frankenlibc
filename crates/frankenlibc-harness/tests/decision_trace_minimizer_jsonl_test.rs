@@ -180,10 +180,9 @@ fn round_trip_preserves_summary_fields_for_divergence_input() -> TestResult {
 fn parser_rejects_missing_required_field_with_kind_label() -> TestResult {
     let bad = r#"{"replay_command":"x","source_commit":"y"}"#;
     match parse_minimized_trace_jsonl(bad) {
-        Err(MinimizerSerError::MissingField(name)) => require(
-            name == "kind",
-            format!("expected `kind`; got {name}"),
-        ),
+        Err(MinimizerSerError::MissingField(name)) => {
+            require(name == "kind", format!("expected `kind`; got {name}"))
+        }
         other => Err(format!("expected MissingField; got {other:?}")),
     }
 }

@@ -746,7 +746,10 @@ mod tests {
             }
             x += 0.0005;
         }
-        assert!(worst <= 4, "sinhf fast path worst {worst} ULP at x={worst_x}");
+        assert!(
+            worst <= 4,
+            "sinhf fast path worst {worst} ULP at x={worst_x}"
+        );
     }
 
     #[test]
@@ -771,7 +774,10 @@ mod tests {
             }
             x += 0.0005;
         }
-        assert!(worst <= 4, "tanhf fast path worst {worst} ULP at x={worst_x}");
+        assert!(
+            worst <= 4,
+            "tanhf fast path worst {worst} ULP at x={worst_x}"
+        );
     }
 
     #[test]

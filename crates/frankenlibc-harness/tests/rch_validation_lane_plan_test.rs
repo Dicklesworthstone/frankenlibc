@@ -67,6 +67,49 @@ fn write_json(path: &Path, value: &Value) -> TestResult {
         .map_err(|err| test_error(format!("{} write failed: {err}", path.display())))
 }
 
+fn repo_relative(root: &Path, path: &Path) -> TestResult<String> {
+    Ok(path
+        .strip_prefix(root)
+        .map_err(|err| {
+            test_error(format!(
+                "{} should be inside workspace root {}: {err}",
+                path.display(),
+                root.display()
+            ))
+        })?
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
+fn adjusted_manifest(
+    root: &Path,
+    out_dir: &Path,
+    manifest_override: Option<&Path>,
+    report: &Path,
+    log: &Path,
+) -> TestResult<PathBuf> {
+    let source = manifest_override
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join("tests/conformance/rch_validation_lane_plan.v1.json"));
+    let mut manifest = load_json(&source)?;
+    let report_contract = manifest
+        .get_mut("report_contract")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| test_error("manifest.report_contract must be an object"))?;
+    report_contract.insert(
+        "output_path".to_owned(),
+        Value::String(repo_relative(root, report)?),
+    );
+    report_contract.insert(
+        "log_path".to_owned(),
+        Value::String(repo_relative(root, log)?),
+    );
+
+    let path = out_dir.join("manifest.json");
+    write_json(&path, &manifest)?;
+    Ok(path)
+}
+
 fn string_field<'a>(value: &'a Value, key: &str, context: &str) -> TestResult<&'a str> {
     value
         .get(key)
@@ -117,15 +160,14 @@ fn run_checker(
     let out_dir = unique_dir(root, label)?;
     let report = out_dir.join("report.json");
     let log = out_dir.join("log.jsonl");
+    let manifest = adjusted_manifest(root, &out_dir, manifest_override, &report, &log)?;
     let mut command = Command::new(root.join("scripts/check_rch_validation_lane_plan.sh"));
     command
         .arg("--validate-only")
         .current_dir(root)
         .env("RCH_VALIDATION_LANE_PLAN_REPORT", &report)
-        .env("RCH_VALIDATION_LANE_PLAN_LOG", &log);
-    if let Some(path) = manifest_override {
-        command.env("RCH_VALIDATION_LANE_PLAN_MANIFEST", path);
-    }
+        .env("RCH_VALIDATION_LANE_PLAN_LOG", &log)
+        .env("RCH_VALIDATION_LANE_PLAN_MANIFEST", &manifest);
     let output = command
         .output()
         .map_err(|err| test_error(format!("failed to run rch validation lane checker: {err}")))?;

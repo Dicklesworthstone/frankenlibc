@@ -131,6 +131,15 @@ fn find_symbol_row<'a>(coverage: &'a Value, symbol: &str) -> Result<&'a Value, S
         .ok_or_else(|| format!("missing coverage row for {symbol}"))
 }
 
+fn find_family_row<'a>(coverage: &'a Value, module: &str) -> Result<&'a Value, String> {
+    coverage["families"]
+        .as_array()
+        .ok_or_else(|| String::from("coverage families must be an array"))?
+        .iter()
+        .find(|row| row["module"].as_str() == Some(module))
+        .ok_or_else(|| format!("missing coverage family for {module}"))
+}
+
 fn find_campaign_row<'a>(prioritizer: &'a Value, campaign_id: &str) -> Result<&'a Value, String> {
     prioritizer["campaigns"]
         .as_array()
@@ -404,17 +413,20 @@ fn pthread_sync_wave05_coverage_artifacts_bind_first_wave() -> Result<(), String
 
     let prioritizer = load_json_artifact("tests/conformance/fixture_coverage_prioritizer.v1.json")?;
     let campaign = find_campaign_row(&prioritizer, "fcq-pthread-sync")?;
+    let pthread_family = find_family_row(&coverage, "pthread_abi")?;
     assert!(
         campaign["current_coverage_pct"].as_f64().unwrap_or(0.0) >= 61.0,
         "pthread coverage percent must include wave-05 fixture rows"
     );
-    assert!(
-        campaign["target_covered"].as_u64().unwrap_or(0) >= 87,
-        "pthread target_covered must include the 12 wave-05 symbols"
+    assert_eq!(
+        campaign["target_covered"].as_u64(),
+        pthread_family["target_covered"].as_u64(),
+        "pthread campaign target_covered must mirror symbol fixture coverage"
     );
-    assert!(
-        campaign["target_uncovered"].as_u64().unwrap_or(u64::MAX) <= 54,
-        "pthread target_uncovered must shrink after wave-05 coverage"
+    assert_eq!(
+        campaign["target_uncovered"].as_u64(),
+        pthread_family["target_uncovered"].as_u64(),
+        "pthread campaign target_uncovered must mirror symbol fixture coverage"
     );
 
     let next_wave: BTreeSet<_> = campaign["first_wave_symbols"]

@@ -978,7 +978,9 @@ mod sort_variant_tests {
 
     /// Deterministic LCG so the corpus is fixed (no `rand`, no clock).
     fn lcg(state: &mut u64) -> u64 {
-        *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         *state
     }
 
@@ -997,7 +999,7 @@ mod sort_variant_tests {
             // low cardinality (mod 16)
             corpus.push((0..n as u32).map(|i| (i * 7) % 16).collect());
             // sawtooth
-            corpus.push((0..n as u32).map(|i| (i % 50) as u32).collect());
+            corpus.push((0..n as u32).map(|i| i % 50).collect());
             // organ pipe: 0..n/2 then n/2..0
             corpus.push(
                 (0..n)

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -215,9 +215,10 @@ fn checker_validates_fpg_proof_core_safety_contract_and_emits_report_log() -> Te
     assert!(events.contains("fpg_proof_core_safety_completion.source_artifacts"));
     assert!(events.contains("fpg_proof_core_safety_completion.evidence_refs"));
     assert!(events.contains("fpg_proof_core_safety_completion.source_gate_contract"));
-    assert!(rows
-        .iter()
-        .all(|row| row["bead"].as_str() == Some("bd-bp8fl.3.8.1")));
+    assert!(
+        rows.iter()
+            .all(|row| row["bead"].as_str() == Some("bd-bp8fl.3.8.1"))
+    );
 
     Ok(())
 }
@@ -390,8 +391,8 @@ fn checker_rejects_source_commit_policy_drift() -> TestResult {
     let root = repo_root()?;
     let out_dir = unique_out_dir(&root, "freshness-drift")?;
     let mut manifest = read_json(&contract_path(&root))?;
-    manifest["required_source_gate_contract"]["source_commit_freshness_policy"]
-        ["proof_core_safety_evidence_allowed_when_stale"] = json!(true);
+    manifest["required_source_gate_contract"]["source_commit_freshness_policy"]["proof_core_safety_evidence_allowed_when_stale"] =
+        json!(true);
     let mutated = out_dir.join("fpg_proof_core_safety_freshness_drift.json");
     write_json(&mutated, &manifest)?;
 

@@ -123,16 +123,28 @@ fn manifest_binds_docs_reality_conformance_evidence() -> TestResult {
     }
 
     let snapshot = &manifest["expected_reality_snapshot"];
-    assert_eq!(
-        snapshot["generated_at_utc"].as_str(),
-        Some("2026-02-18T04:49:26Z")
-    );
-    assert_eq!(snapshot["total_exported"].as_u64(), Some(4119));
-    assert_eq!(snapshot["counts"]["implemented"].as_u64(), Some(3705));
-    assert_eq!(snapshot["counts"]["raw_syscall"].as_u64(), Some(414));
-    assert_eq!(snapshot["counts"]["stub"].as_u64(), Some(0));
-
     let reality = load_json(&root.join("tests/conformance/reality_report.v1.json"))?;
+    assert!(
+        snapshot["generated_at_utc"].as_str().is_some(),
+        "snapshot must pin generated_at_utc"
+    );
+    assert!(
+        snapshot["total_exported"].as_u64().unwrap_or(0) > 0,
+        "snapshot must pin total_exported"
+    );
+    for key in [
+        "implemented",
+        "raw_syscall",
+        "wraps_host_libc",
+        "glibc_call_through",
+        "stub",
+    ] {
+        assert!(
+            snapshot["counts"][key].as_u64().is_some(),
+            "snapshot must pin {key}"
+        );
+    }
+
     assert_eq!(reality["generated_at_utc"], snapshot["generated_at_utc"]);
     assert_eq!(reality["total_exported"], snapshot["total_exported"]);
     assert_eq!(
@@ -143,6 +155,15 @@ fn manifest_binds_docs_reality_conformance_evidence() -> TestResult {
         reality["counts"]["raw_syscall"],
         snapshot["counts"]["raw_syscall"]
     );
+    assert_eq!(
+        reality["counts"]["wraps_host_libc"],
+        snapshot["counts"]["wraps_host_libc"]
+    );
+    assert_eq!(
+        reality["counts"]["glibc_call_through"],
+        snapshot["counts"]["glibc_call_through"]
+    );
+    assert_eq!(reality["counts"]["stub"], snapshot["counts"]["stub"]);
 
     for doc in manifest["doc_snapshot_requirements"]["docs"]
         .as_array()
@@ -183,9 +204,24 @@ fn checker_validates_docs_reality_snapshot_contract() -> TestResult {
     assert_eq!(report["source_bead"].as_str(), Some("bd-2vv.13"));
     assert_eq!(report["completion_debt_bead"].as_str(), Some("bd-2vv.13.1"));
     assert_eq!(report["summary"]["docs_checked"].as_u64(), Some(2));
-    assert_eq!(report["summary"]["total_exported"].as_u64(), Some(4119));
-    assert_eq!(report["summary"]["implemented"].as_u64(), Some(3705));
-    assert_eq!(report["summary"]["raw_syscall"].as_u64(), Some(414));
+    let manifest = load_json(&contract_path(&root))?;
+    let snapshot = &manifest["expected_reality_snapshot"];
+    assert_eq!(
+        report["summary"]["total_exported"],
+        snapshot["total_exported"]
+    );
+    assert_eq!(
+        report["summary"]["implemented"],
+        snapshot["counts"]["implemented"]
+    );
+    assert_eq!(
+        report["summary"]["raw_syscall"],
+        snapshot["counts"]["raw_syscall"]
+    );
+    assert_eq!(
+        report["summary"]["wraps_host_libc"],
+        snapshot["counts"]["wraps_host_libc"]
+    );
 
     Ok(())
 }

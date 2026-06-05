@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use frankenlibc_core::string::glob::{
-    glob_expand, GLOB_BRACE, GLOB_MARK, GLOB_NOCHECK, GLOB_NOMATCH,
+    GLOB_BRACE, GLOB_MARK, GLOB_NOCHECK, GLOB_NOMATCH, glob_expand,
 };
 
 fn make_tree() -> PathBuf {
