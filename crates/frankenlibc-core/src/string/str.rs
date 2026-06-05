@@ -252,6 +252,30 @@ fn equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
     !(differs | is_nul).any()
 }
 
+/// True iff all `SIMD_FOLD_BYTES` (128) bytes are byte-for-byte equal AND
+/// NUL-free. OR's the four 32-byte panels' `(differs | is_nul)` masks and
+/// reduces once, instead of one `.any()` per 32-byte panel. glibc's
+/// `strcmp_avx2` likewise issues a single combined movemask+test per 128-byte
+/// (4×VEC) step; this matches that reduction cadence. A `false` result means
+/// the 128-byte window contains a divergence or terminator, so the caller's
+/// 32-byte loop (and scalar tail) re-scans from the same offset and resolves
+/// the exact index — logically identical to a flat per-32B scan:
+/// `∀panels (eq.all() && !nul.any())` ⇔ `!(⋃panels (differs | nul)).any()`.
+#[inline(always)]
+fn equal_and_no_nul_simd_folded(left: &[u8], right: &[u8]) -> bool {
+    debug_assert_eq!(left.len(), SIMD_FOLD_BYTES);
+    debug_assert_eq!(right.len(), SIMD_FOLD_BYTES);
+    let z = Simd::<u8, SIMD_LANES>::splat(0);
+    let mut acc = Mask::<i8, SIMD_LANES>::splat(false);
+    for k in 0..SIMD_FOLD_PANELS {
+        let lo = k * SIMD_LANES;
+        let l = Simd::<u8, SIMD_LANES>::from_slice(&left[lo..lo + SIMD_LANES]);
+        let r = Simd::<u8, SIMD_LANES>::from_slice(&right[lo..lo + SIMD_LANES]);
+        acc |= l.simd_ne(r) | l.simd_eq(z);
+    }
+    !acc.any()
+}
+
 /// Branchless ASCII A-Z -> a-z fold of a 32-byte panel, exactly matching
 /// `u8::to_ascii_lowercase` (only bytes in `b'A'..=b'Z'` are shifted by `0x20`;
 /// everything else, including NUL, is unchanged).
@@ -435,6 +459,18 @@ pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
             }
             i += 1;
         }
+    }
+
+    // Stride 128-byte (4×32) folded blocks first: a single horizontal reduction
+    // gates each block instead of one per 32-byte panel, amortizing the movemask
+    // cost 4× on long equal prefixes (matching glibc's strcmp_avx2 4×VEC loop).
+    // A block that returns false falls through to the 32-byte loop below, which
+    // re-scans from the same `i` and stops at the exact diverging panel.
+    while i + SIMD_FOLD_BYTES <= s1.len() && i + SIMD_FOLD_BYTES <= s2.len() {
+        if !equal_and_no_nul_simd_folded(&s1[i..i + SIMD_FOLD_BYTES], &s2[i..i + SIMD_FOLD_BYTES]) {
+            break;
+        }
+        i += SIMD_FOLD_BYTES;
     }
 
     while i + SIMD_LANES <= s1.len() && i + SIMD_LANES <= s2.len() {
@@ -1683,10 +1719,13 @@ mod tests {
         assert_eq!(strnlen(b"abc", 8), 3);
     }
 
-    /// Differential isomorphism guard for the 32-byte SIMD `strcmp` panel
-    /// (`equal_and_no_nul_simd_32`): a deterministic xorshift fuzz drives long,
-    /// mostly-equal pairs with NULs and diffs at varied offsets — exercising the
-    /// vectorized loop, the aligned word loop, and the byte tail — and asserts
+    /// Differential isomorphism guard for the SIMD `strcmp` panels — both the
+    /// 128-byte folded block (`equal_and_no_nul_simd_folded`, lengths >128) and
+    /// the 32-byte panel (`equal_and_no_nul_simd_32`): a deterministic xorshift
+    /// fuzz drives long, mostly-equal pairs with NULs and diffs at varied offsets
+    /// (lengths up to 200, straddling the 128-byte block boundary) — exercising
+    /// the folded loop, the vectorized loop, the aligned word loop, and the byte
+    /// tail — and asserts
     /// the full `i32` result (not just its sign) matches a trivial scalar
     /// reference that mirrors C-string semantics (index past slice end = NUL).
     #[test]
@@ -2012,8 +2051,8 @@ mod tests {
                     // Vary fill/interloper membership so both directions get
                     // non-trivial scans: 'a' is in every set, 'x' in none,
                     // 'm'/'5' in some.
-                    for &fill in &[b'a', b'x', b'm', b'5'] {
-                        for &interloper in &[b'Z', b'a', b'5', b'm'] {
+                    for &fill in b"axm5" {
+                        for &interloper in b"Za5m" {
                             let mut s = vec![fill; len];
                             if stop_pos < len {
                                 s[stop_pos] = interloper;
