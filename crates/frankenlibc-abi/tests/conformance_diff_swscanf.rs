@@ -51,9 +51,10 @@ fn diff_swscanf_wide_string() {
         ("  spaced", "%ls"),
         ("héllo rest", "%ls"), // multibyte wide token (whole token, no width)
         ("日本語 x", "%ls"),
-        ("abcdef", "%3ls"), // ASCII width caps at 3 wide chars
-                            // NOTE: %S (SVID alias) and multibyte %Nls width need the scanf format
-                            // parser / wide-aware width — tracked in bd-2g7oyh.146.
+        ("abcdef", "%3ls"),   // ASCII width caps at 3 wide chars
+        ("token rest", "%S"), // SVID alias for %ls
+        ("café x", "%S"),     // multibyte whole token via %S
+                              // NOTE: multibyte %Nls width (wide-char-aware) still tracked in bd-2g7oyh.146.
     ];
     let mut fails = Vec::new();
     for (input, fmt) in cases {
@@ -80,9 +81,9 @@ fn diff_swscanf_wide_string() {
 
 #[test]
 fn diff_swscanf_wide_char() {
-    // ASCII %lc is fixed here; multibyte %lc and %C (SVID) need the scanf core
-    // to read one WIDE char (not one byte) — tracked in bd-2g7oyh.146.
-    let cases: &[(&str, &str)] = &[("Axyz", "%lc"), ("Z 9", "%lc")];
+    // ASCII %lc / %C work; multibyte %lc/%C need the scanf core to read one
+    // WIDE char (not one byte) — tracked in bd-2g7oyh.146.
+    let cases: &[(&str, &str)] = &[("Axyz", "%lc"), ("Z 9", "%lc"), ("Qrs", "%C")];
     let mut fails = Vec::new();
     for (input, fmt) in cases {
         let inp = w(input);

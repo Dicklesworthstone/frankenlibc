@@ -433,7 +433,20 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 spec.conversion = b'[';
                 spec.scanset = Some(ScanSet { negated, chars });
             } else {
-                spec.conversion = fmt[i];
+                // `%S` and `%C` are SVID aliases for `%ls` and `%lc` (wide
+                // string / wide char): normalise to (s|c, length `L`) so they
+                // route through the string/char paths with wide handling.
+                spec.conversion = match fmt[i] {
+                    b'S' => {
+                        spec.length = LengthMod::L;
+                        b's'
+                    }
+                    b'C' => {
+                        spec.length = LengthMod::L;
+                        b'c'
+                    }
+                    other => other,
+                };
                 i += 1;
             }
 
