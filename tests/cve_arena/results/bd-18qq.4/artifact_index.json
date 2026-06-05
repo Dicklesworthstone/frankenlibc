@@ -3,12 +3,12 @@
     {
       "kind": "trace",
       "path": "tests/cve_arena/results/bd-18qq.4/trace.jsonl",
-      "sha256": "1015aeedead8b0acf08e819efa3dfc3c1219c99977cb5716f8f383b54a437aad"
+      "sha256": "bec1e679868328de809a06579e6617db3b069ea1463e9a3a06edfad912b3a599"
     },
     {
       "kind": "report",
       "path": "tests/cve_arena/results/bd-18qq.4/uaf_adversarial_detection.v1.json",
-      "sha256": "fb19527302075b8b0b5c8a3b26149ead640eb3232da55cb962cc8e37d8b4e6a1"
+      "sha256": "b8dc0b3ce821dc853384019efb49d151c1b1d86d741e312da5867b973257be6d"
     }
   ],
   "bead_id": "bd-18qq.4",

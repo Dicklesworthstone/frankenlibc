@@ -107,12 +107,12 @@
     },
     {
       "campaign_id": "fcq-pthread-sync",
-      "current_coverage_pct": 63.3,
+      "current_coverage_pct": 64.6,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 74.31,
+      "expected_coverage_after_first_wave_pct": 75.22,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "pthread_condattr_init",
@@ -153,8 +153,8 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "pthread lifecycle, mutex, condvar, TLS keys, cancellation, and GNU extensions",
-      "target_covered": 69,
-      "target_total": 109,
+      "target_covered": 73,
+      "target_total": 113,
       "target_uncovered": 40,
       "title": "pthread synchronization and cancellation fixture wave",
       "workload_domains": [

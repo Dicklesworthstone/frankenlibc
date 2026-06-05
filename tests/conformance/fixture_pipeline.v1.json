@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-06-04T20:05:04Z",
+  "generated_at": "2026-06-05T02:40:31Z",
   "summary": {
     "total_fixture_files": 127,
     "total_fixture_cases": 2792,
     "unique_symbols_in_fixtures": 1182,
-    "implemented_symbols": 2805,
-    "symbols_with_fixtures": 853,
+    "implemented_symbols": 2809,
+    "symbols_with_fixtures": 857,
     "symbols_at_threshold": 6,
-    "symbols_below_threshold": 2799,
+    "symbols_below_threshold": 2803,
     "symbols_with_zero_fixtures": 1952,
-    "coverage_pct": 30.4,
+    "coverage_pct": 30.5,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
     "min_cases_threshold": 10,
@@ -200,11 +200,11 @@
     },
     {
       "module": "pthread_abi",
-      "total_symbols": 109,
-      "covered_symbols": 69,
+      "total_symbols": 113,
+      "covered_symbols": 73,
       "at_threshold": 0,
-      "total_cases": 158,
-      "coverage_pct": 63.3,
+      "total_cases": 164,
+      "coverage_pct": 64.6,
       "threshold_pct": 0.0
     },
     {
@@ -3147,7 +3147,23 @@
       "gap": 8
     },
     {
+      "symbol": "__pthread_mutex_lock",
+      "module": "pthread_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__pthread_mutex_trylock",
+      "module": "pthread_abi",
+      "status": "Implemented",
+      "fixture_cases": 1,
+      "meets_threshold": false,
+      "gap": 9
+    },
+    {
+      "symbol": "__pthread_mutex_unlock",
       "module": "pthread_abi",
       "status": "Implemented",
       "fixture_cases": 1,
@@ -16123,6 +16139,14 @@
       "gap": 8
     },
     {
+      "symbol": "pthread_mutex_lock",
+      "module": "pthread_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "pthread_mutex_setprioceiling",
       "module": "glibc_internal_abi",
       "status": "Implemented",
@@ -16137,6 +16161,14 @@
       "fixture_cases": 2,
       "meets_threshold": false,
       "gap": 8
+    },
+    {
+      "symbol": "pthread_mutex_unlock",
+      "module": "pthread_abi",
+      "status": "Implemented",
+      "fixture_cases": 1,
+      "meets_threshold": false,
+      "gap": 9
     },
     {
       "symbol": "pthread_mutexattr_destroy",

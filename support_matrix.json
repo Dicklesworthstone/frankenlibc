@@ -10251,10 +10251,10 @@
     },
     {
       "symbol": "pthread_mutex_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
+      "strict_semantics": "Futex-managed NORMAL/ERRORCHECK/RECURSIVE mutex core with lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
       "hardened_semantics": "Same futex-managed core with deterministic spin/wait/wake telemetry and identical errno contract",
       "default_stub": false
     },
@@ -10278,10 +10278,10 @@
     },
     {
       "symbol": "pthread_mutex_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
+      "strict_semantics": "Futex-managed NORMAL/ERRORCHECK/RECURSIVE mutex core with lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
       "hardened_semantics": "Same futex-managed core with deterministic spin/wait/wake telemetry and identical errno contract",
       "default_stub": false
     },
@@ -18152,10 +18152,10 @@
     },
     {
       "symbol": "__pthread_mutex_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
+      "strict_semantics": "Alias to the futex-managed pthread_mutex_lock implementation"
     },
     {
       "symbol": "__pthread_mutex_trylock",
@@ -18165,10 +18165,10 @@
     },
     {
       "symbol": "__pthread_mutex_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
+      "strict_semantics": "Alias to the futex-managed pthread_mutex_unlock implementation"
     },
     {
       "symbol": "__pthread_mutexattr_destroy",
@@ -33171,22 +33171,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2391,
+    "implemented": 2395,
     "raw_syscall": 414,
-    "wraps_host_libc": 1314,
+    "wraps_host_libc": 1310,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 2391,
+  "implemented": 2395,
   "raw_syscall": 414,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 2391,
+    "implemented": 2395,
     "raw_syscall": 414,
     "glibc_call_through": 0,
     "stub": 0,
-    "wraps_host_libc": 1314
+    "wraps_host_libc": 1310
   },
-  "wraps_host_libc": 1314
+  "wraps_host_libc": 1310
 }

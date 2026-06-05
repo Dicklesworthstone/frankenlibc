@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-06-04T12:59:02Z",
+  "generated_at": "2026-06-04T21:30:23Z",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -11,31 +11,31 @@
     "fixture_linked": 1164,
     "fixture_unlinked": 2955,
     "fixture_coverage_pct": 28.3,
-    "total_warnings": 20
+    "total_warnings": 24
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 2391,
+      "Implemented": 2395,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1314,
+      "WrapsHostLibc": 1310,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 58.0,
+      "Implemented": 58.1,
       "RawSyscall": 10.1,
-      "WrapsHostLibc": 31.9,
+      "WrapsHostLibc": 31.8,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 68.1
+    "native_coverage_pct": 68.2
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
     "baseline_loaded": true,
     "baseline_symbol_map_loaded": true,
-    "promotion_proof_manifest_path": "/data/projects/frankenlibc/tests/conformance/math_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/err_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/locale_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/iconv_locale_bootstrap_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/search_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/resolv_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/dirent_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/grp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_gshadow_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/inet_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/setjmp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/c11threads_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/stdio_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/wchar_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/string_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/fortify_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/unistd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json",
+    "promotion_proof_manifest_path": "/data/projects/frankenlibc/tests/conformance/math_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/err_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/locale_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/iconv_locale_bootstrap_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/search_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/resolv_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/dirent_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/grp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pwd_gshadow_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/inet_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/setjmp_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/pthread_mutex_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/c11threads_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/stdio_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/wchar_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/string_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/fortify_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/unistd_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json:/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json",
     "promotion_proof_manifest_paths": [
       "/data/projects/frankenlibc/tests/conformance/math_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/err_abi_promotion_tranche.v1.json",
@@ -49,6 +49,7 @@
       "/data/projects/frankenlibc/tests/conformance/pwd_gshadow_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/inet_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/setjmp_abi_promotion_tranche.v1.json",
+      "/data/projects/frankenlibc/tests/conformance/pthread_mutex_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/c11threads_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/stdio_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/wchar_abi_promotion_tranche.v1.json",
@@ -58,7 +59,7 @@
       "/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"
     ],
-    "promotion_proof_symbol_count": 251,
+    "promotion_proof_symbol_count": 255,
     "promotion_triage_manifest_path": "target/conformance/support_matrix_promotion_triage.v1.json",
     "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
@@ -544,6 +545,19 @@
           "yn"
         ]
       },
+      "pthread_abi": {
+        "strict_hardened_symbol_count": 4,
+        "required_modes": [
+          "strict",
+          "hardened"
+        ],
+        "symbols": [
+          "__pthread_mutex_lock",
+          "__pthread_mutex_unlock",
+          "pthread_mutex_lock",
+          "pthread_mutex_unlock"
+        ]
+      },
       "pwd_abi": {
         "strict_hardened_symbol_count": 3,
         "required_modes": [
@@ -750,16 +764,16 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 2391,
-      "fixture_linked": 693
+      "count": 2395,
+      "fixture_linked": 697
     },
     "RawSyscall": {
       "count": 414,
       "fixture_linked": 160
     },
     "WrapsHostLibc": {
-      "count": 1314,
-      "fixture_linked": 311
+      "count": 1310,
+      "fixture_linked": 307
     }
   },
   "module_coverage": {
@@ -1536,9 +1550,9 @@
     "__pthread_keys": "Implemented",
     "__pthread_mutex_destroy": "Implemented",
     "__pthread_mutex_init": "Implemented",
-    "__pthread_mutex_lock": "WrapsHostLibc",
+    "__pthread_mutex_lock": "Implemented",
     "__pthread_mutex_trylock": "Implemented",
-    "__pthread_mutex_unlock": "WrapsHostLibc",
+    "__pthread_mutex_unlock": "Implemented",
     "__pthread_mutexattr_destroy": "Implemented",
     "__pthread_mutexattr_init": "Implemented",
     "__pthread_mutexattr_settype": "Implemented",
@@ -3927,11 +3941,11 @@
     "pthread_mutex_destroy": "Implemented",
     "pthread_mutex_getprioceiling": "Implemented",
     "pthread_mutex_init": "Implemented",
-    "pthread_mutex_lock": "WrapsHostLibc",
+    "pthread_mutex_lock": "Implemented",
     "pthread_mutex_setprioceiling": "Implemented",
     "pthread_mutex_timedlock": "WrapsHostLibc",
     "pthread_mutex_trylock": "Implemented",
-    "pthread_mutex_unlock": "WrapsHostLibc",
+    "pthread_mutex_unlock": "Implemented",
     "pthread_mutexattr_destroy": "Implemented",
     "pthread_mutexattr_getkind_np": "Implemented",
     "pthread_mutexattr_getprioceiling": "Implemented",
@@ -6011,6 +6025,32 @@
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
     },
     {
+      "symbol": "pthread_mutex_lock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "pthread_mutex_unlock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "putwc",
       "status": "WrapsHostLibc",
       "module": "unistd_abi",
@@ -7400,6 +7440,32 @@
       "issue_class": "alternate_pattern_unresolved",
       "scanner_bucket": "generated_or_alias_pattern",
       "actionable_next_step": "teach scanner the local macro/alias pattern or classify as scanner-unknown"
+    },
+    {
+      "symbol": "__pthread_mutex_lock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__pthread_mutex_unlock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "__realloc_hook",

@@ -2,7 +2,7 @@
   "schema_version": "abi_loader_reentrancy_lock_census.v1",
   "manifest_id": "abi-loader-reentrancy-lock-census",
   "bead": "bd-esbow",
-  "source_commit": "0839ba9b782a60dbff91a5bd576654b60b4e3773",
+  "source_commit": "f5af69ea70d2eb0bdc077a57e97cc41a33a4ae69",
   "source_commit_freshness": {
     "require_no_scan_root_changes_since_source_commit": true,
     "failure_reason": "Refresh this manifest whenever ABI/startup source roots add, remove, or move loader-reentrancy primitives."

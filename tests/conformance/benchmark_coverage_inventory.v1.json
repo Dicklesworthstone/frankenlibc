@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.8.1",
-  "generated_at_utc": "2026-06-04T19:59:57Z",
-  "source_commit": "b895b839",
+  "generated_at_utc": "2026-06-05T02:32:03Z",
+  "source_commit": "a983714b",
   "purpose": "Inventory current benchmark coverage for ported hot paths and membrane gates before optimization work advances.",
   "inputs": {
     "support_matrix": "support_matrix.json",
@@ -19,10 +19,10 @@
   "input_digests": {
     "perf_baseline": "2e5d1aaaf442a4a6380a8c8ef851ff340974f71210b4041b8399021a308af28d",
     "perf_baseline_spec": "6a7fced48f32a9c9ee38a5a8654f408c1a56a034bac6e5fc484d98c39b2af6b3",
-    "support_matrix": "c42b23db90394bf94a852670f5b18b04e925338671850ed47486c2e434b7e4c3",
+    "support_matrix": "a05fd669599458bf41f6e7b489431e4b723ede0f8d934e7352478a470549506f",
     "user_workload_acceptance_matrix": "e1522428db6fb6f63c2a51cab24ec930cdcd52e8efdbe128794600d5e0336910",
     "workload_matrix": "04f77e974c045a0016ffbe5abd7e602a94b44291c57084400751524acbc5b9ca",
-    "bench_targets": "baff4bd3da11172e9e1fd4a4d9eb28b5d4d58f40df824bf7511b1cacf3941c41"
+    "bench_targets": "e40462d783e4875a33d2d6c708255d1ad0de18c7e3322df7c2fed3c1ff9d643f"
   },
   "required_log_fields": [
     "trace_id",
@@ -66,15 +66,15 @@
   "summary": {
     "family_count": 7,
     "required_family_count": 6,
-    "actual_bench_target_count": 17,
+    "actual_bench_target_count": 18,
     "mapped_bench_target_count": 9,
-    "unmapped_bench_target_count": 8,
-    "hot_symbol_count_in_scope": 321,
-    "inventory_row_count": 670,
+    "unmapped_bench_target_count": 9,
+    "hot_symbol_count_in_scope": 323,
+    "inventory_row_count": 674,
     "covered_inventory_row_count": 36,
-    "missing_inventory_row_count": 634,
+    "missing_inventory_row_count": 638,
     "missing_owner_row_count": 0,
-    "inventory_row_coverage_pct": 5.37,
+    "inventory_row_coverage_pct": 5.34,
     "fully_baselined_families": [
       "string",
       "malloc",
@@ -282,8 +282,8 @@
         "pthread_abi",
         "c11threads_abi"
       ],
-      "support_symbol_count": 125,
-      "hot_symbol_count": 15,
+      "support_symbol_count": 129,
+      "hot_symbol_count": 17,
       "hot_symbol_sample": [
         "mtx_trylock",
         "thrd_current",
@@ -296,7 +296,7 @@
         "pthread_equal",
         "pthread_mutex_destroy",
         "pthread_mutex_init",
-        "pthread_mutex_trylock"
+        "pthread_mutex_lock"
       ],
       "bench_files": [
         {
@@ -2233,6 +2233,70 @@
       "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_init:hardened"
     },
     {
+      "row_id": "pthread:hardened:pthread_mutex_lock",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_lock",
+      "crate/module": "pthread_abi",
+      "current_benchmark": {
+        "benchmark_id": "pthread/<missing-spec-suite>",
+        "bench_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "bench_exists": true,
+        "mode_aware": true,
+        "spec_suite": null,
+        "spec_benchmark": null
+      },
+      "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-rust",
+      "user_workload_exposure": {
+        "workload_count": 4,
+        "critical_symbol_workload_count": 3,
+        "user_workload_count": 4,
+        "top_priority_impacts": [
+          "critical",
+          "high",
+          "medium"
+        ],
+        "workload_ids": [
+          "wl-002",
+          "wl-003",
+          "wl-005",
+          "wl-010"
+        ],
+        "user_workload_ids": [
+          "uwm-language-runtime",
+          "uwm-threaded-service",
+          "uwm-allocator-stress",
+          "uwm-performance-hotpaths"
+        ],
+        "artifact_refs": [
+          "tests/conformance/workload_matrix.json",
+          "tests/conformance/user_workload_acceptance_matrix.v1.json"
+        ]
+      },
+      "baseline_artifact": {
+        "path": "scripts/perf_baseline.json",
+        "suite_id": null,
+        "benchmark_name": null,
+        "runtime_mode": "hardened",
+        "present": false,
+        "p50_ns_op": null
+      },
+      "owner_bead": "bd-bp8fl.8.3",
+      "benchmark_id": "pthread/<missing-spec-suite>",
+      "coverage_state": "gap",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "support_matrix.json",
+        "tests/conformance/condvar_perf_validation.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/thread_hotpath_optimization.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_lock:hardened"
+    },
+    {
       "row_id": "pthread:hardened:pthread_mutex_trylock",
       "api_family": "pthread",
       "symbol": "pthread_mutex_trylock",
@@ -2295,6 +2359,70 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_trylock:hardened"
+    },
+    {
+      "row_id": "pthread:hardened:pthread_mutex_unlock",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_unlock",
+      "crate/module": "pthread_abi",
+      "current_benchmark": {
+        "benchmark_id": "pthread/<missing-spec-suite>",
+        "bench_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "bench_exists": true,
+        "mode_aware": true,
+        "spec_suite": null,
+        "spec_benchmark": null
+      },
+      "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1-native-rust",
+      "user_workload_exposure": {
+        "workload_count": 4,
+        "critical_symbol_workload_count": 0,
+        "user_workload_count": 4,
+        "top_priority_impacts": [
+          "critical",
+          "high",
+          "medium"
+        ],
+        "workload_ids": [
+          "wl-002",
+          "wl-003",
+          "wl-005",
+          "wl-010"
+        ],
+        "user_workload_ids": [
+          "uwm-language-runtime",
+          "uwm-threaded-service",
+          "uwm-allocator-stress",
+          "uwm-performance-hotpaths"
+        ],
+        "artifact_refs": [
+          "tests/conformance/workload_matrix.json",
+          "tests/conformance/user_workload_acceptance_matrix.v1.json"
+        ]
+      },
+      "baseline_artifact": {
+        "path": "scripts/perf_baseline.json",
+        "suite_id": null,
+        "benchmark_name": null,
+        "runtime_mode": "hardened",
+        "present": false,
+        "p50_ns_op": null
+      },
+      "owner_bead": "bd-bp8fl.8.3",
+      "benchmark_id": "pthread/<missing-spec-suite>",
+      "coverage_state": "gap",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "support_matrix.json",
+        "tests/conformance/condvar_perf_validation.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/thread_hotpath_optimization.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_unlock:hardened"
     },
     {
       "row_id": "pthread:hardened:pthread_rwlock_destroy",
@@ -3157,6 +3285,70 @@
       "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_init:strict"
     },
     {
+      "row_id": "pthread:strict:pthread_mutex_lock",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_lock",
+      "crate/module": "pthread_abi",
+      "current_benchmark": {
+        "benchmark_id": "pthread/<missing-spec-suite>",
+        "bench_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "bench_exists": true,
+        "mode_aware": true,
+        "spec_suite": null,
+        "spec_benchmark": null
+      },
+      "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
+      "runtime_mode": "strict",
+      "replacement_level": "L1-native-rust",
+      "user_workload_exposure": {
+        "workload_count": 4,
+        "critical_symbol_workload_count": 3,
+        "user_workload_count": 4,
+        "top_priority_impacts": [
+          "critical",
+          "high",
+          "medium"
+        ],
+        "workload_ids": [
+          "wl-002",
+          "wl-003",
+          "wl-005",
+          "wl-010"
+        ],
+        "user_workload_ids": [
+          "uwm-language-runtime",
+          "uwm-threaded-service",
+          "uwm-allocator-stress",
+          "uwm-performance-hotpaths"
+        ],
+        "artifact_refs": [
+          "tests/conformance/workload_matrix.json",
+          "tests/conformance/user_workload_acceptance_matrix.v1.json"
+        ]
+      },
+      "baseline_artifact": {
+        "path": "scripts/perf_baseline.json",
+        "suite_id": null,
+        "benchmark_name": null,
+        "runtime_mode": "strict",
+        "present": false,
+        "p50_ns_op": null
+      },
+      "owner_bead": "bd-bp8fl.8.3",
+      "benchmark_id": "pthread/<missing-spec-suite>",
+      "coverage_state": "gap",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "support_matrix.json",
+        "tests/conformance/condvar_perf_validation.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/thread_hotpath_optimization.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_lock:strict"
+    },
+    {
       "row_id": "pthread:strict:pthread_mutex_trylock",
       "api_family": "pthread",
       "symbol": "pthread_mutex_trylock",
@@ -3219,6 +3411,70 @@
         "tests/conformance/workload_matrix.json"
       ],
       "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_trylock:strict"
+    },
+    {
+      "row_id": "pthread:strict:pthread_mutex_unlock",
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_unlock",
+      "crate/module": "pthread_abi",
+      "current_benchmark": {
+        "benchmark_id": "pthread/<missing-spec-suite>",
+        "bench_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+        "bench_exists": true,
+        "mode_aware": true,
+        "spec_suite": null,
+        "spec_benchmark": null
+      },
+      "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
+      "runtime_mode": "strict",
+      "replacement_level": "L1-native-rust",
+      "user_workload_exposure": {
+        "workload_count": 4,
+        "critical_symbol_workload_count": 0,
+        "user_workload_count": 4,
+        "top_priority_impacts": [
+          "critical",
+          "high",
+          "medium"
+        ],
+        "workload_ids": [
+          "wl-002",
+          "wl-003",
+          "wl-005",
+          "wl-010"
+        ],
+        "user_workload_ids": [
+          "uwm-language-runtime",
+          "uwm-threaded-service",
+          "uwm-allocator-stress",
+          "uwm-performance-hotpaths"
+        ],
+        "artifact_refs": [
+          "tests/conformance/workload_matrix.json",
+          "tests/conformance/user_workload_acceptance_matrix.v1.json"
+        ]
+      },
+      "baseline_artifact": {
+        "path": "scripts/perf_baseline.json",
+        "suite_id": null,
+        "benchmark_name": null,
+        "runtime_mode": "strict",
+        "present": false,
+        "p50_ns_op": null
+      },
+      "owner_bead": "bd-bp8fl.8.3",
+      "benchmark_id": "pthread/<missing-spec-suite>",
+      "coverage_state": "gap",
+      "artifact_refs": [
+        "crates/frankenlibc-bench/benches",
+        "scripts/perf_baseline.json",
+        "support_matrix.json",
+        "tests/conformance/condvar_perf_validation.v1.json",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/thread_hotpath_optimization.v1.json",
+        "tests/conformance/workload_matrix.json"
+      ],
+      "failure_signature": "missing_perf_baseline_spec_suite:pthread:pthread_mutex_unlock:strict"
     },
     {
       "row_id": "pthread:strict:pthread_rwlock_destroy",
@@ -41496,6 +41752,26 @@
   ],
   "prioritized_hot_paths": [
     {
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_lock",
+      "runtime_mode": "hardened",
+      "benchmark_id": "pthread/<missing-spec-suite>",
+      "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 4,
+      "user_workload_count": 4
+    },
+    {
+      "api_family": "pthread",
+      "symbol": "pthread_mutex_lock",
+      "runtime_mode": "strict",
+      "benchmark_id": "pthread/<missing-spec-suite>",
+      "missing_benchmark_reason": "missing_perf_baseline_spec_suite",
+      "owner_bead": "bd-bp8fl.8.3",
+      "workload_count": 4,
+      "user_workload_count": 4
+    },
+    {
       "api_family": "malloc",
       "symbol": "malloc_usable_size",
       "runtime_mode": "hardened",
@@ -41718,26 +41994,6 @@
     {
       "api_family": "string",
       "symbol": "memcmp",
-      "runtime_mode": "hardened",
-      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
-      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 1
-    },
-    {
-      "api_family": "string",
-      "symbol": "memcmp",
-      "runtime_mode": "strict",
-      "benchmark_id": "string/<missing-symbol-specific-benchmark>",
-      "missing_benchmark_reason": "missing_symbol_specific_benchmark",
-      "owner_bead": "bd-bp8fl.8.3",
-      "workload_count": 10,
-      "user_workload_count": 1
-    },
-    {
-      "api_family": "string",
-      "symbol": "memmem",
       "runtime_mode": "hardened",
       "benchmark_id": "string/<missing-symbol-specific-benchmark>",
       "missing_benchmark_reason": "missing_symbol_specific_benchmark",
@@ -41812,7 +42068,7 @@
       "bench": "glibc_baseline_bench",
       "bench_file": "crates/frankenlibc-bench/benches/glibc_baseline_bench.rs",
       "exists": true,
-      "benchmark_function_count": 20,
+      "benchmark_function_count": 29,
       "emits_structured_marker": true,
       "mentions_strict_or_hardened": false
     },
@@ -41889,6 +42145,14 @@
       "mentions_strict_or_hardened": false
     },
     {
+      "bench": "stdio_glibc_baseline_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/stdio_glibc_baseline_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 2,
+      "emits_structured_marker": false,
+      "mentions_strict_or_hardened": false
+    },
+    {
       "bench": "string_bench",
       "bench_file": "crates/frankenlibc-bench/benches/string_bench.rs",
       "exists": true,
@@ -41913,6 +42177,7 @@
     "iconv_bench",
     "metadata_read_bench",
     "resolv_parsers_bench",
+    "stdio_glibc_baseline_bench",
     "wchar_bench"
   ],
   "closure_evidence": {
@@ -41922,5 +42187,5 @@
     "target_report": "target/conformance/benchmark_coverage_inventory.report.json",
     "target_log": "target/conformance/benchmark_coverage_inventory.log.jsonl"
   },
-  "artifact_hash": "c113e796ed77f913a983b4f09fdd4d7b9b0053da1a858110116459438a78b0a9"
+  "artifact_hash": "7b40288534288bffb4a770796319508fde87cf0134bd92c63bc7f3b1f47afe83"
 }

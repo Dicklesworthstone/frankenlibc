@@ -25,10 +25,10 @@
       "actual": {
         "reality_counts": {
           "glibc_call_through": 0,
-          "implemented": 2391,
+          "implemented": 2395,
           "raw_syscall": 414,
           "stub": 0,
-          "wraps_host_libc": 1314
+          "wraps_host_libc": 1310
         },
         "reality_total": 4119
       },
@@ -36,10 +36,10 @@
       "expected": {
         "support_counts": {
           "glibc_call_through": 0,
-          "implemented": 2391,
+          "implemented": 2395,
           "raw_syscall": 414,
           "stub": 0,
-          "wraps_host_libc": 1314
+          "wraps_host_libc": 1310
         },
         "support_total": 4119
       },
@@ -58,10 +58,10 @@
       "actual": {
         "replacement_counts": {
           "glibc_call_through": 0,
-          "implemented": 2391,
+          "implemented": 2395,
           "raw_syscall": 414,
           "stub": 0,
-          "wraps_host_libc": 1314
+          "wraps_host_libc": 1310
         },
         "replacement_total": 4119
       },
@@ -69,10 +69,10 @@
       "expected": {
         "reality_counts": {
           "glibc_call_through": 0,
-          "implemented": 2391,
+          "implemented": 2395,
           "raw_syscall": 414,
           "stub": 0,
-          "wraps_host_libc": 1314
+          "wraps_host_libc": 1310
         },
         "reality_total": 4119
       },

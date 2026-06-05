@@ -294,8 +294,8 @@
     "expected_fail_count": 37,
     "expected_not_applicable_count": 2,
     "expected_claim_gate_decision": "blocked",
-    "expected_target_total_symbols": 2805,
-    "expected_target_covered_symbols": 855,
+    "expected_target_total_symbols": 2809,
+    "expected_target_covered_symbols": 859,
     "expected_target_uncovered_symbols": 1950,
     "required_record_keys": [
       "family_id",

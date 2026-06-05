@@ -135,7 +135,7 @@
       "family": "Stdio",
       "api_family_enum": "Stdio",
       "module": "stdio_abi",
-      "heals_call_sites": 11,
+      "heals_call_sites": 13,
       "symbols": [
         "fopen",
         "fclose",
@@ -573,7 +573,7 @@
   "summary": {
     "total_families": 20,
     "families_with_healing": 19,
-    "total_heals_call_sites": 139,
+    "total_heals_call_sites": 141,
     "healing_actions": [
       "ClampSize",
       "TruncateWithNull",

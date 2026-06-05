@@ -1931,16 +1931,16 @@
       "severity": "high",
       "severity_score": 4002,
       "status_breakdown": {
-        "Implemented": 109,
-        "WrapsHostLibc": 32
+        "Implemented": 113,
+        "WrapsHostLibc": 28
       },
-      "target_coverage_pct": 63.3,
-      "target_covered": 69,
+      "target_coverage_pct": 64.6,
+      "target_covered": 73,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
-      "target_total": 109,
+      "target_total": 113,
       "target_uncovered": 40,
       "target_uncovered_symbols": [
         "pthread_condattr_init",
@@ -5289,9 +5289,9 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 28.98,
-      "covered": 693,
-      "total": 2391,
+      "coverage_pct": 29.1,
+      "covered": 697,
+      "total": 2395,
       "uncovered": 1698
     },
     "RawSyscall": {
@@ -5301,22 +5301,22 @@
       "uncovered": 252
     },
     "WrapsHostLibc": {
-      "coverage_pct": 23.67,
-      "covered": 311,
-      "total": 1314,
+      "coverage_pct": 23.44,
+      "covered": 307,
+      "total": 1310,
       "uncovered": 1003
     }
   },
   "summary": {
     "coverage_pct": 28.31,
     "covered_exported_symbols": 1166,
-    "target_coverage_pct": 30.48,
-    "target_covered_symbols": 855,
+    "target_coverage_pct": 30.58,
+    "target_covered_symbols": 859,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
-    "target_total_symbols": 2805,
+    "target_total_symbols": 2809,
     "target_uncovered_symbols": 1950,
     "total_exported_symbols": 4119,
     "uncovered_exported_symbols": 2953,
@@ -40637,7 +40637,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__pthread_mutex_lock"
     },
     {
@@ -40681,7 +40681,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "unknown",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__pthread_mutex_unlock"
     },
     {
@@ -42532,7 +42532,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "pthread_mutex_lock"
     },
     {
@@ -42600,7 +42600,7 @@
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "pthread_mutex_unlock"
     },
     {
@@ -74855,7 +74855,7 @@
       "module": "pthread_abi",
       "recommended_bead": "bd-yos",
       "severity": "high",
-      "target_coverage_pct": 63.3,
+      "target_coverage_pct": 64.6,
       "target_uncovered_count": 40,
       "target_uncovered_symbols": [
         "pthread_condattr_init",

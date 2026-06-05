@@ -2687,7 +2687,7 @@
       "row_kind": "claim_control",
       "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
       "field": "ground_truth.Implemented",
-      "expected_value": 2391,
+      "expected_value": 2395,
       "rationale": "The dashboard must expose the implemented-symbol count that underpins README and feature-parity claims."
     },
     {

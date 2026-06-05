@@ -12,9 +12,9 @@
     "generated_at_utc": "2026-06-03T21:45:00Z",
     "total_exported": 4119,
     "counts": {
-      "implemented": 2391,
+      "implemented": 2395,
       "raw_syscall": 414,
-      "wraps_host_libc": 1314,
+      "wraps_host_libc": 1310,
       "glibc_call_through": 0,
       "stub": 0
     }
@@ -54,7 +54,7 @@
             "module": "pthread_abi",
             "status": "Implemented",
             "min_count": 1,
-            "implemented_count": 109,
+            "implemented_count": 113,
             "total_count": 141
           }
         ]

@@ -80,14 +80,14 @@
   "support_matrix_summary": {
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 2391,
+      "Implemented": 2395,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1314,
+      "WrapsHostLibc": 1310,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
-    "native_surface_pct": 68.1,
-    "host_callthrough_surface_pct": 31.9,
+    "native_surface_pct": 68.2,
+    "host_callthrough_surface_pct": 31.8,
     "taxonomy_source": "support_matrix.json"
   },
   "claim_summary": {
@@ -336,9 +336,9 @@
       ],
       "total_symbols": 166,
       "status_counts": {
-        "Implemented": 125,
+        "Implemented": 129,
         "RawSyscall": 0,
-        "WrapsHostLibc": 41,
+        "WrapsHostLibc": 37,
         "GlibcCallThrough": 0,
         "Stub": 0
       },
@@ -523,9 +523,9 @@
     "module_family_count": 9,
     "glossary_term_count": 4,
     "total_symbols": 4119,
-    "implemented": 2391,
+    "implemented": 2395,
     "raw_syscall": 414,
-    "host_backed_status_count": 1314,
+    "host_backed_status_count": 1310,
     "stub_count": 0
   }
 }

@@ -151,10 +151,10 @@
   },
   "coverage_expectations": {
     "symbol_fixture_coverage": {
-      "target_total_symbols": 2805,
-      "target_covered_symbols": 855,
+      "target_total_symbols": 2809,
+      "target_covered_symbols": 859,
       "target_uncovered_symbols": 1950,
-      "target_coverage_pct": 30.48
+      "target_coverage_pct": 30.58
     },
     "per_symbol_fixture_tests": {
       "total_symbols": 4119,
@@ -273,8 +273,8 @@
       {
         "campaign_id": "fcq-pthread-sync",
         "first_wave_symbols": ["pthread_condattr_init", "pthread_condattr_setclock", "pthread_condattr_setpshared", "pthread_getaffinity_np", "pthread_getattr_default_np", "pthread_getconcurrency", "pthread_getcpuclockid", "pthread_getname_np", "pthread_gettid_np", "pthread_kill", "pthread_mutex_consistent", "pthread_mutexattr_destroy"],
-        "current_coverage_pct": 63.3,
-        "target_covered": 69,
+        "current_coverage_pct": 64.6,
+        "target_covered": 73,
         "target_uncovered": 40
       },
       {

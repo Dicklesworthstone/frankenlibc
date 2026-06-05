@@ -2,24 +2,24 @@
   "schema_version": "generated_coverage_freshness_witness.v1",
   "bead_id": "bd-j1u6u.3",
   "trace_id": "bd-j1u6u.3::generated-coverage-freshness::v1",
-  "generated_at_utc": "2026-06-04T17:25:15Z",
-  "source_commit": "a05d680e",
+  "generated_at_utc": "2026-06-04T23:49:12Z",
+  "source_commit": "09ff3684",
   "purpose": "Independent freshness witness for generated conformance coverage artifacts. The checker recomputes source file hashes, fixture corpus counts, symbol counts, uncovered counts, and generator command lines so agents do not need to trust timestamps or intent.",
   "source_files": [
     {
       "id": "symbol_fixture_coverage",
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "49016c700f7baf03ad80785cd7e2ad7c31b9dbb2ea87743ed4eb22d918851f6e"
+      "sha256": "f07a4bfbcff20cd6f0b9c4bcf206ba6f22a1b4cb8a20c9856c3fa35970176cf3"
     },
     {
       "id": "per_symbol_fixture_tests",
       "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
-      "sha256": "e0f19b48e66b0d961d43232c1b6f0b9a9cc64fcd10aff60ee90d66b906533bf7"
+      "sha256": "05ff6df5586967e73b5190bf6d62b77dc8273a6bd9379a94981200a86ee3ad6c"
     },
     {
       "id": "fixture_coverage_prioritizer",
       "path": "tests/conformance/fixture_coverage_prioritizer.v1.json",
-      "sha256": "1c847de1ce35a59ca371b957195979412e03c118b424699e046064cf92d91563"
+      "sha256": "7f5df3790ae9a8593aa6fb46b4d33a001a7dba3640d504a118caeb492e9a427b"
     },
     {
       "id": "executor_dispatch",
@@ -39,10 +39,10 @@
     "execute_fixture_case_mentions": 223
   },
   "symbol_counts": {
-    "target_total_symbols": 2805,
-    "target_covered_symbols": 855,
+    "target_total_symbols": 2809,
+    "target_covered_symbols": 859,
     "target_uncovered_symbols": 1950,
-    "target_coverage_pct": 30.48,
+    "target_coverage_pct": 30.58,
     "symbols_with_fixtures": 1164,
     "symbols_without_fixtures": 2955,
     "total_cases": 2787,

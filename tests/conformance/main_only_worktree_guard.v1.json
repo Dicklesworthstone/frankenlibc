@@ -1,15 +1,16 @@
 {
   "schema_version": "main_only_worktree_guard.v1",
   "bead": "bd-kt64l",
-  "purpose": "No-cargo conformance guard for the repository policy that all FrankenLibC work happens only on local branch main with exactly one Git worktree, while the legacy remote mirror remains synchronized with origin/main.",
+  "purpose": "No-cargo conformance guard for the repository policy that the primary FrankenLibC checkout stays on local branch main, linked validation worktrees stay detached, and the legacy remote mirror remains synchronized with origin/main.",
   "policy": {
     "required_current_branch": "main",
     "allowed_local_branches": [
       "main"
     ],
-    "expected_worktree_count": 1,
+    "expected_primary_worktree_count": 1,
     "required_worktree_branch": "refs/heads/main",
-    "forbid_linked_worktrees": true,
+    "allow_detached_linked_worktrees": true,
+    "forbid_linked_worktrees": false,
     "forbid_local_non_main_branches": true,
     "required_remote_primary_ref": "origin/main",
     "required_legacy_mirror_ref": "origin/master",
@@ -42,7 +43,7 @@
           "branch": "refs/heads/feature/unsafe-worktree"
         }
       },
-      "expected_failure_signature": "worktree_count_mismatch"
+      "expected_failure_signature": "linked_worktree_not_detached"
     },
     {
       "id": "negative_detached_root_worktree",

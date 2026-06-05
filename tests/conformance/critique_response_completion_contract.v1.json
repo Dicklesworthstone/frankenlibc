@@ -68,7 +68,7 @@
       "minimum_classified_symbols": 3980,
       "expected_stub": 0,
       "expected_glibc_call_through": 0,
-      "expected_wraps_host_libc": 1314
+      "expected_wraps_host_libc": 1310
     },
     "stub_census": {
       "summary_path": "stub_census",

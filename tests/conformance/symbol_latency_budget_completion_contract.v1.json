@@ -196,10 +196,10 @@
         "name": "checker_rejects_policy_budget_drift"
       }
     ],
-    "required_symbol_latency_events": [
-      "ci.symbol_latency_budget.pass",
-      "ci.symbol_latency_budget.waived_target_violation"
-    ],
+  "required_symbol_latency_events": [
+    "ci.symbol_latency_budget.pass",
+    "ci.symbol_latency_budget.waived_target_violation"
+  ],
     "required_completion_events": [
       "symbol_latency_budget.source_artifacts_validated",
       "symbol_latency_budget.conformance_binding_validated",

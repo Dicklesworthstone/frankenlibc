@@ -146,33 +146,30 @@
   },
   "coverage_expectations": {
     "symbol_fixture_coverage": {
-      "target_total_symbols": 4119,
-      "target_covered_symbols": 939,
-      "target_uncovered_symbols": 3180,
-      "target_coverage_pct": 22.8
+      "target_total_symbols": 2809,
+      "target_covered_symbols": 859,
+      "target_uncovered_symbols": 1950,
+      "target_coverage_pct": 30.58
     },
     "per_symbol_fixture_tests": {
       "total_symbols": 4119,
-      "symbols_with_fixtures": 937,
-      "total_cases": 2320,
-      "uncovered_action_count": 3182,
+      "symbols_with_fixtures": 1164,
+      "total_cases": 2787,
+      "uncovered_action_count": 1952,
       "total_format_issues": 0
     },
     "fixture_coverage_prioritizer": {
-      "campaign_count": 11,
-      "selected_target_uncovered_symbols": 2826,
-      "all_uncovered_target_symbols": 3180,
-      "total_first_wave_fixture_count": 125,
+      "campaign_count": 8,
+      "selected_target_uncovered_symbols": 1737,
+      "all_uncovered_target_symbols": 1950,
+      "total_first_wave_fixture_count": 88,
       "required_covered_modules": [
         "fortify_abi",
         "glibc_internal_abi",
         "math_abi",
-        "process_abi",
         "pthread_abi",
         "rpc_abi",
-        "signal_abi",
         "stdio_abi",
-        "time_abi",
         "unistd_abi",
         "wchar_abi"
       ]
@@ -195,22 +192,22 @@
       "clnt_sperrno"
     ],
     "expected_next_first_wave_symbols": [
-      "clnt_sperror",
-      "clntraw_create",
-      "clnttcp_create",
-      "clntudp_bufcreate",
-      "clntudp_create",
-      "clntunix_create",
-      "des_setparity",
-      "ecb_crypt",
-      "get_myaddress",
-      "getnetname",
-      "getpublickey",
-      "getrpcport"
+      "getsecretkey",
+      "key_decryptsession",
+      "key_decryptsession_pk",
+      "key_encryptsession",
+      "key_encryptsession_pk",
+      "key_gendes",
+      "key_get_conv",
+      "key_secretkey_is_set",
+      "key_setnet",
+      "key_setsecret",
+      "netname2host",
+      "netname2user"
     ],
-    "expected_current_coverage_pct": 15.09,
-    "expected_target_covered": 24,
-    "expected_target_uncovered": 135
+    "expected_current_coverage_pct": 25.56,
+    "expected_target_covered": 34,
+    "expected_target_uncovered": 99
   },
   "base_gate_commands": [
     "scripts/check_symbol_fixture_coverage.sh",

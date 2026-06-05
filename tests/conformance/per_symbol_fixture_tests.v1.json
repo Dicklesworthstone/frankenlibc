@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-06-04T15:48:32Z",
+  "generated_at": "2026-06-04T23:48:35Z",
   "report_hash": "214df0ee1d41f77d",
   "summary": {
     "total_symbols": 4119,
     "symbols_with_fixtures": 1164,
     "symbols_without_fixtures": 2955,
     "fixture_coverage_pct": 28.3,
-    "implemented_coverage_pct": 29.0,
+    "implemented_coverage_pct": 29.1,
     "total_fixture_files": 127,
     "total_cases": 2787,
     "total_format_issues": 0,
@@ -10490,7 +10490,7 @@
     },
     {
       "symbol": "__pthread_mutex_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10530,7 +10530,7 @@
     },
     {
       "symbol": "__pthread_mutex_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -48282,7 +48282,7 @@
     },
     {
       "symbol": "pthread_mutex_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,
@@ -48349,7 +48349,7 @@
     },
     {
       "symbol": "pthread_mutex_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "has_fixtures": true,

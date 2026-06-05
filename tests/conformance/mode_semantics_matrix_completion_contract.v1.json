@@ -29,7 +29,7 @@
     ],
     "total_families": 20,
     "families_with_healing": 19,
-    "total_heals_call_sites": 139
+    "total_heals_call_sites": 141
   },
   "source_artifacts": [
     {
@@ -41,7 +41,7 @@
         "\"strict\"",
         "\"hardened\"",
         "\"total_families\": 20",
-        "\"total_heals_call_sites\": 139"
+        "\"total_heals_call_sites\": 141"
       ]
     },
     {

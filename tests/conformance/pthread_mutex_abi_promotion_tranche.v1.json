@@ -1,0 +1,151 @@
+{
+  "schema_version": "pthread_mutex_abi_promotion_tranche.v1",
+  "bead": "bd-z84.1",
+  "trace_id": "bd-z84.1-pthread-mutex-abi-promotion-tranche-v1",
+  "description": "Bounded promotion proof for futex-managed pthread mutex ABI symbols whose host-delegation census hits are errno, loader, futex helper, or alias reachability rather than direct host mutex call-through.",
+  "source_artifacts": {
+    "support_matrix": "support_matrix.json",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
+    "abi_source": "crates/frankenlibc-abi/src/pthread_abi.rs",
+    "core_contract": "crates/frankenlibc-core/src/pthread/mutex.rs",
+    "fixture": "tests/conformance/fixtures/pthread_mutex.json",
+    "callthrough_contract": "tests/conformance/pthread_mutex_callthrough_eradication_completion_contract.v1.json",
+    "state_invariants_contract": "tests/conformance/pthread_mutex_state_invariants_completion_contract.v1.json",
+    "futex_core_contract": "tests/conformance/pthread_mutex_futex_core_completion_contract.v1.json"
+  },
+  "test_evidence": [
+    {
+      "crate": "frankenlibc-abi",
+      "test": "pthread_mutex_core_test",
+      "symbols": [
+        "pthread_mutex_lock",
+        "pthread_mutex_unlock"
+      ]
+    },
+    {
+      "crate": "frankenlibc-harness",
+      "test": "pthread_mutex_conformance_test",
+      "modes": [
+        "strict",
+        "hardened"
+      ]
+    },
+    {
+      "script": "scripts/check_pthread_mutex_callthrough_eradication_completion_contract.sh",
+      "required_outcome": "pass"
+    },
+    {
+      "script": "scripts/check_pthread_mutex_futex_core_completion_contract.sh",
+      "required_outcome": "pass"
+    }
+  ],
+  "policy": {
+    "support_matrix_status": "Implemented",
+    "required_modes": [
+      "strict",
+      "hardened"
+    ],
+    "classification": "native-pthread-mutex-futex-core-with-errno-bridge",
+    "accepted_host_symbols": [
+      "<dynamic>",
+      "__errno_location",
+      "bootstrap_host_symbols",
+      "futex_lock_normal",
+      "futex_unlock_normal",
+      "futex_wait_private",
+      "futex_wake_private",
+      "host_errno_location_raw",
+      "load_host_symbol",
+      "pthread_mutex_lock",
+      "pthread_mutex_unlock",
+      "set_abi_errno",
+      "write_host_errno_if_available"
+    ],
+    "accepted_delegation_kinds": [
+      "alias_to_host_delegating_symbol",
+      "cached_host_errno_symbol",
+      "resolve_host_symbol_raw_dynamic"
+    ],
+    "rationale": "pthread_mutex_lock and pthread_mutex_unlock are implemented in pthread_abi.rs with futex-managed mutex state transitions. The census hits for these rows are conservative reachability through errno publishing, loader bootstrap helpers, futex helpers, and __pthread_* aliases; they do not represent delegation of mutex lock or unlock behavior to host libc."
+  },
+  "symbols": [
+    {
+      "symbol": "__pthread_mutex_lock",
+      "module": "pthread_abi",
+      "core_path": "crates/frankenlibc-abi/src/pthread_abi.rs::__pthread_mutex_lock",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "__pthread_mutex_unlock",
+      "module": "pthread_abi",
+      "core_path": "crates/frankenlibc-abi/src/pthread_abi.rs::__pthread_mutex_unlock",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "pthread_mutex_lock",
+      "module": "pthread_abi",
+      "core_path": "crates/frankenlibc-abi/src/pthread_abi.rs::pthread_mutex_lock",
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "pthread_mutex_unlock",
+      "module": "pthread_abi",
+      "core_path": "crates/frankenlibc-abi/src/pthread_abi.rs::pthread_mutex_unlock",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    }
+  ],
+  "summary": {
+    "promoted_symbols": 4,
+    "status": "proven",
+    "census_resolution": "bounded_non_core_bridge_use"
+  }
+}

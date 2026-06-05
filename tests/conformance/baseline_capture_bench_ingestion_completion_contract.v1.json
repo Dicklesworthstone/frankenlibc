@@ -205,10 +205,10 @@
         "name": "checker_rejects_missing_telemetry_event_binding"
       }
     ],
-    "required_symbol_latency_events": [
-      "ci.symbol_latency_budget.pass",
-      "ci.symbol_latency_budget.waived_target_violation"
-    ],
+  "required_symbol_latency_events": [
+    "ci.symbol_latency_budget.pass",
+    "ci.symbol_latency_budget.waived_target_violation"
+  ],
     "required_completion_events": [
       "baseline_capture.source_artifacts_validated",
       "baseline_capture.conformance_binding_validated",
