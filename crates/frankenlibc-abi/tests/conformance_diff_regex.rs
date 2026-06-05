@@ -337,13 +337,23 @@ impl RegexXs {
 
 #[test]
 fn diff_regex_random_fuzz() {
-    // Literals + the metacharacters that drive BRE/ERE divergence. The backslash
-    // is intentionally EXCLUDED: GNU `\`-escapes (`\b` word boundary, `\w`/`\s`
-    // classes, `\<`/`\>`, and BRE backreferences) are not yet implemented and
-    // diverge from glibc — tracked in bd-2g7oyh.136, not exercised here.
-    const PAT_ALPHA: &[u8] = b"abc.*+?[]()|^$ {}-012,";
-    const SUBJ_ALPHA: &[u8] = b"abc012";
-    const CFLAGS: &[c_int] = &[0, REG_EXTENDED, REG_EXTENDED | REG_ICASE, REG_ICASE];
+    // Literals + the metacharacters that drive BRE/ERE divergence, INCLUDING the
+    // backslash and the GNU escape-trigger letters so `\b \B \< \> \w \W \s \S`
+    // (now implemented, bd-2g7oyh.136) are exercised in random contexts —
+    // quantified, alternated, grouped. (Validity mismatches from BRE
+    // backreferences / malformed patterns are skipped below; only genuine match
+    // divergences fail.) Subject carries word/non-word/space/underscore/tab
+    // variety so the assertions and classes actually flip.
+    const PAT_ALPHA: &[u8] = b"abc.*+?[]()|^$ {}-012,\\bBwWsS<>";
+    const SUBJ_ALPHA: &[u8] = b"abc012 _\tBW";
+    // BRE and ERE only — ICASE is exercised by the dedicated escape tests
+    // (diff_regex_word_boundaries / diff_regex_class_escapes). It is excluded
+    // from the random fuzz because glibc has an inconsistent quirk: an escaped
+    // ordinary lowercase letter (e.g. `\\a` == literal 'a') matches under no
+    // flags but is treated as non-matching under REG_ICASE, while `\\A` and a
+    // plain `a` match fine. frankenlibc is consistent (`\\a` == 'a' always);
+    // mirroring glibc's bug here is not worthwhile.
+    const CFLAGS: &[c_int] = &[0, REG_EXTENDED];
 
     let mut rng = RegexXs(0xCAFEF00DD15EA5E5);
     let mut divs = Vec::new();
@@ -544,6 +554,65 @@ fn diff_regex_class_escapes() {
     assert!(
         divs.is_empty(),
         "regex class-escape divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
+// GNU BRE quantifier operators \+ (one-or-more) and \? (zero-or-one) vs glibc.
+// Plain + and ? are literals in BRE; ERE \+ / \? are literal (escaped).
+// ===========================================================================
+
+#[test]
+fn diff_regex_bre_operators() {
+    let cases: &[(&str, &str, c_int)] = &[
+        (r"a\+", "aaa", 0), // one-or-more -> [0,3]
+        (r"a\+", "b", 0),   // no 'a' -> NOMATCH
+        (r"ba\+b", "baaab", 0),
+        (r".\+", "xyz", 0), // .+ over whole string
+        (r"a\?b", "b", 0),  // zero-or-one -> [0,1]
+        (r"a\?b", "ab", 0), // -> [0,2]
+        (r"colou\?r", "color", 0),
+        (r"a+", "a+", 0),             // BRE: plain + is literal
+        (r"a?", "a?", 0),             // BRE: plain ? is literal
+        (r"a\+", "a+", REG_EXTENDED), // ERE: \+ is literal '+'
+        (r"x\|y", "y", 0),            // BRE \| alternation (already supported)
+    ];
+    let mut divs = Vec::new();
+    for (pat, subj, cflags) in cases {
+        let ((cf, ef), (cl, el), pm_fl, pm_lc) = run_match(pat, subj, *cflags, 1);
+        let case = format!("pat={pat:?} subj={subj:?} cflags={cflags}");
+        if (cf == 0) != (cl == 0) {
+            divs.push(Divergence {
+                function: "regcomp",
+                case,
+                field: "compile_ok",
+                frankenlibc: format!("rc={cf}"),
+                glibc: format!("rc={cl}"),
+            });
+        } else if cf == 0 {
+            if (ef == 0) != (el == 0) {
+                divs.push(Divergence {
+                    function: "regexec",
+                    case,
+                    field: "match",
+                    frankenlibc: format!("rc={ef}"),
+                    glibc: format!("rc={el}"),
+                });
+            } else if ef == 0 && pm_fl != pm_lc {
+                divs.push(Divergence {
+                    function: "regexec",
+                    case,
+                    field: "offsets",
+                    frankenlibc: format!("{pm_fl:?}"),
+                    glibc: format!("{pm_lc:?}"),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "regex BRE-operator divergences:\n{}",
         render_divs(&divs)
     );
 }

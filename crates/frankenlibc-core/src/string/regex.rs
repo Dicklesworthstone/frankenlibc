@@ -752,13 +752,33 @@ impl<'a> Parser<'a> {
                     })
                 }
                 _ => {
-                    // Check for \{
-                    if self.pos + 1 < self.pat.len()
-                        && self.pat[self.pos] == b'\\'
-                        && self.pat[self.pos + 1] == b'{'
-                    {
-                        self.pos += 2; // skip \{
-                        self.parse_bre_brace_quantifier(atom)
+                    // BRE GNU quantifier extensions are spelled with a backslash:
+                    // `\{m,n\}`, `\+` (one-or-more), `\?` (zero-or-one). Plain `+`
+                    // and `?` are literals in BRE.
+                    if self.pos + 1 < self.pat.len() && self.pat[self.pos] == b'\\' {
+                        match self.pat[self.pos + 1] {
+                            b'{' => {
+                                self.pos += 2; // skip \{
+                                self.parse_bre_brace_quantifier(atom)
+                            }
+                            b'+' => {
+                                self.pos += 2; // skip \+
+                                Ok(Ast::Repeat {
+                                    inner: Box::new(atom),
+                                    min: 1,
+                                    max: None,
+                                })
+                            }
+                            b'?' => {
+                                self.pos += 2; // skip \?
+                                Ok(Ast::Repeat {
+                                    inner: Box::new(atom),
+                                    min: 0,
+                                    max: Some(1),
+                                })
+                            }
+                            _ => Ok(atom),
+                        }
                     } else {
                         Ok(atom)
                     }
