@@ -202,3 +202,7 @@ tmp.*.ec
 # Beads compliance audit dir (managed by /beads-compliance-and-completion-verification skill)
 /beads_compliance_audit/
 .claude/settings.local.json
+
+# Ephemeral agent/skill scratch (repo-janitor 2026-06-04)
+.skill-loop-progress.md
+.skill-loop-progress-*.md
