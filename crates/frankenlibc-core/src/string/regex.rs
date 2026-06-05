@@ -987,6 +987,37 @@ impl<'a> Parser<'a> {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::WordEnd))
                     }
+                    // GNU character-class escapes (C locale): `\w` == [[:alnum:]_],
+                    // `\s` == [[:space:]], and their negations `\W`/`\S`.
+                    Some(b'w') => {
+                        self.advance();
+                        Ok(Ast::CharClass {
+                            ranges: vec![(b'0', b'9'), (b'A', b'Z'), (b'a', b'z'), (b'_', b'_')],
+                            negated: false,
+                        })
+                    }
+                    Some(b'W') => {
+                        self.advance();
+                        Ok(Ast::CharClass {
+                            ranges: vec![(b'0', b'9'), (b'A', b'Z'), (b'a', b'z'), (b'_', b'_')],
+                            negated: true,
+                        })
+                    }
+                    Some(b's') => {
+                        self.advance();
+                        // [ \t\n\v\f\r] — whitespace bytes 0x09..=0x0D plus space.
+                        Ok(Ast::CharClass {
+                            ranges: vec![(0x09, 0x0D), (b' ', b' ')],
+                            negated: false,
+                        })
+                    }
+                    Some(b'S') => {
+                        self.advance();
+                        Ok(Ast::CharClass {
+                            ranges: vec![(0x09, 0x0D), (b' ', b' ')],
+                            negated: true,
+                        })
+                    }
                     Some(ch) => {
                         self.advance();
                         // Escaped metacharacter becomes literal

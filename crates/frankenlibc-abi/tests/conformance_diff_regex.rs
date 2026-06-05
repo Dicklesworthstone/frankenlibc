@@ -485,3 +485,65 @@ fn diff_regex_word_boundaries() {
         render_divs(&divs)
     );
 }
+
+// ===========================================================================
+// GNU character-class escapes \w \W \s \S vs glibc (bd-2g7oyh.136).
+// ===========================================================================
+
+#[test]
+fn diff_regex_class_escapes() {
+    let cases: &[(&str, &str, c_int)] = &[
+        (r"\w", "  a1_", 0),
+        (r"\w\w\w", "ab cd", REG_EXTENDED),
+        (r"\W", "ab cd", 0), // first non-word = space
+        (r"\W", "abc", 0),   // no non-word -> NOMATCH
+        (r"a\wc", "abc", REG_EXTENDED),
+        (r"a\Wc", "a c", REG_EXTENDED),
+        (r"\w+", "  hello_123 x", REG_EXTENDED),
+        (r"\s", "ab\tcd", 0), // tab is whitespace
+        (r"\s", "abc", 0),    // no whitespace -> NOMATCH
+        (r"\S", "   x", 0),   // first non-space
+        (r"\s\s", "a  b", REG_EXTENDED),
+        (r"_\w_", "x _9_ y", REG_EXTENDED),
+        (r"[\w]", "  a", 0), // class escape inside bracket? (literal in POSIX)
+        (r"\w", "ABC", REG_ICASE),
+        (r"\Bword", "swordfish", REG_EXTENDED),
+    ];
+    let mut divs = Vec::new();
+    for (pat, subj, cflags) in cases {
+        let ((cf, ef), (cl, el), pm_fl, pm_lc) = run_match(pat, subj, *cflags, 1);
+        let case = format!("pat={pat:?} subj={subj:?} cflags={cflags}");
+        if (cf == 0) != (cl == 0) {
+            divs.push(Divergence {
+                function: "regcomp",
+                case,
+                field: "compile_ok",
+                frankenlibc: format!("rc={cf}"),
+                glibc: format!("rc={cl}"),
+            });
+        } else if cf == 0 {
+            if (ef == 0) != (el == 0) {
+                divs.push(Divergence {
+                    function: "regexec",
+                    case,
+                    field: "match",
+                    frankenlibc: format!("rc={ef}"),
+                    glibc: format!("rc={el}"),
+                });
+            } else if ef == 0 && pm_fl != pm_lc {
+                divs.push(Divergence {
+                    function: "regexec",
+                    case,
+                    field: "offsets",
+                    frankenlibc: format!("{pm_fl:?}"),
+                    glibc: format!("{pm_lc:?}"),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "regex class-escape divergences:\n{}",
+        render_divs(&divs)
+    );
+}
