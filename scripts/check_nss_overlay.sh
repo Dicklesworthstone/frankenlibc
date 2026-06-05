@@ -63,6 +63,25 @@ UNSUPPORTED_BACKENDS=(
     "extrausers"
 )
 
+is_accepted_nss_status() {
+    case "$1" in
+        Implemented | RawSyscall | WrapsHostLibc)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+json_array_from_lines() {
+    if [[ $# -eq 0 ]]; then
+        echo "[]"
+    else
+        printf '%s\n' "$@" | jq -R . | jq -s .
+    fi
+}
+
 generate_report() {
     local timestamp
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -80,7 +99,7 @@ generate_report() {
         local status
         status=$(jq -r --arg f "$func" '.symbols[] | select(.symbol == $f) | .status' "$MATRIX" 2>/dev/null || echo "MISSING")
 
-        if [[ "$status" == "Implemented" ]]; then
+        if is_accepted_nss_status "$status"; then
             implemented+=("$func")
         elif [[ "$status" == "MISSING" || -z "$status" ]]; then
             missing+=("$func")
@@ -92,7 +111,7 @@ generate_report() {
         local func_r="${func}_r"
         status=$(jq -r --arg f "$func_r" '.symbols[] | select(.symbol == $f) | .status' "$MATRIX" 2>/dev/null || echo "MISSING")
 
-        if [[ "$status" == "Implemented" ]]; then
+        if is_accepted_nss_status "$status"; then
             implemented+=("$func_r")
         elif [[ "$status" == "MISSING" || -z "$status" ]]; then
             # _r variants are optional for some functions
@@ -104,11 +123,11 @@ generate_report() {
 
     # Build JSON arrays
     local impl_json
-    impl_json=$(printf '%s\n' "${implemented[@]}" | jq -R . | jq -s .)
+    impl_json=$(json_array_from_lines "${implemented[@]}")
     local miss_json
-    miss_json=$(printf '%s\n' "${missing[@]}" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    miss_json=$(json_array_from_lines "${missing[@]}")
     local wrong_json
-    wrong_json=$(printf '%s\n' "${wrong_status[@]}" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    wrong_json=$(json_array_from_lines "${wrong_status[@]}")
     local unsup_json
     unsup_json=$(printf '%s\n' "${UNSUPPORTED_BACKENDS[@]}" | jq -R . | jq -s .)
 
