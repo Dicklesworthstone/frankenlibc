@@ -81,9 +81,14 @@ fn diff_swscanf_wide_string() {
 
 #[test]
 fn diff_swscanf_wide_char() {
-    // ASCII %lc / %C work; multibyte %lc/%C need the scanf core to read one
-    // WIDE char (not one byte) — tracked in bd-2g7oyh.146.
-    let cases: &[(&str, &str)] = &[("Axyz", "%lc"), ("Z 9", "%lc"), ("Qrs", "%C")];
+    let cases: &[(&str, &str)] = &[
+        ("Axyz", "%lc"),
+        ("Z 9", "%lc"),
+        ("Qrs", "%C"),
+        ("éabc", "%lc"), // multibyte wide char -> U+00E9
+        ("中a", "%C"),   // -> U+4E2D
+        ("😀x", "%lc"),  // supplementary plane
+    ];
     let mut fails = Vec::new();
     for (input, fmt) in cases {
         let inp = w(input);

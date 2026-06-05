@@ -1056,10 +1056,40 @@ fn scan_hex_float(
     Some((Some(ScanValue::Float(val)), i))
 }
 
+/// Byte length of the UTF-8 sequence beginning with `b`. Returns 1 for ASCII or
+/// an invalid lead byte so a scan always makes forward progress.
+#[inline]
+fn utf8_seq_len(b: u8) -> usize {
+    match b {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => 1,
+    }
+}
+
 /// Scan character(s) (%c). No whitespace skip. Width = number of chars.
 fn scan_char(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     let n = spec.width.unwrap_or(1);
+    if matches!(spec.length, LengthMod::L) {
+        // `%lc`: the width counts WIDE characters, so read `n` complete UTF-8
+        // sequences from the multibyte input (the caller decodes them back to
+        // wchar_t). Reading `n` raw bytes would split a multibyte character.
+        let mut end = pos;
+        for _ in 0..n {
+            if end >= input.len() {
+                return None;
+            }
+            let next = end.checked_add(utf8_seq_len(input[end]))?;
+            if next > input.len() {
+                return None;
+            }
+            end = next;
+        }
+        return Some((Some(ScanValue::Char(input[pos..end].to_vec())), end));
+    }
     // Guard against pathological widths that overflow pos + n. Under
     // debug_assertions `usize` add panics; in release it wraps and
     // would skip the bounds check below, reading past input. (bd-35vob)
@@ -1079,13 +1109,22 @@ fn scan_string(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Scan
     }
 
     let max_chars = effective_width(spec, usize::MAX);
+    // `%ls` width counts WIDE characters; consume whole UTF-8 sequences so a
+    // bounded `%Nls` never splits a multibyte character. `%s` counts bytes.
+    let wide = matches!(spec.length, LengthMod::L);
     let mut i = pos;
     let mut chars_read = 0usize;
     let mut buf = Vec::new();
 
     while i < input.len() && chars_read < max_chars && !is_c_space(input[i]) {
-        buf.push(input[i]);
-        i += 1;
+        if wide {
+            let next = (i + utf8_seq_len(input[i])).min(input.len());
+            buf.extend_from_slice(&input[i..next]);
+            i = next;
+        } else {
+            buf.push(input[i]);
+            i += 1;
+        }
         chars_read += 1;
     }
 
