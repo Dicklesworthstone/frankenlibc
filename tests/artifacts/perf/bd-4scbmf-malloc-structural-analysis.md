@@ -52,3 +52,43 @@ Target: malloc_free_64 g/fl 0.74 → ~1.0. Multi-hour, soundness-critical
 (allocator core). Coordinate before editing — recently peer-touched
 (b5f99f36 / 8cdfb50c). Files: `crates/frankenlibc-core/src/malloc/{allocator.rs,
 thread_cache.rs}`.
+
+## 2026-06-05 follow-up loop
+
+Baseline (RCH `ts1`, `glibc_baseline_bench malloc_free`, warm-up 1s,
+measurement 2s, sample-size 20):
+
+| profile         | frankenlibc p50 | glibc p50 | fl/glibc |
+|-----------------|-----------------|-----------|----------|
+| malloc_free_64  | 5.956 ns        | 4.993 ns  | 1.19x    |
+| malloc_free_256 | 5.759 ns        | 4.748 ns  | 1.21x    |
+
+Behavior proof used for all attempted allocator/thread-cache levers:
+`RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=summary rch exec -- cargo test -p
+frankenlibc-core malloc:: --lib -- --nocapture --test-threads=1`:
+63/63 passed, including `hot_cycle_lifecycle_record_sha256_is_stable`.
+
+Rejected levers:
+
+- Fixed-capacity per-bin magazine array (`[[usize; 64]; NUM_SIZE_CLASSES]`
+  equivalent): behavior proof passed, but same-worker follow-up did not show a
+  stable keep. `ts2` post rows oscillated from modest normalized improvement
+  (`64` 8.703 vs glibc 7.634; `256` 8.816 vs glibc 7.551) to regression/noise
+  (`64` 9.967 vs glibc 7.973; `256` 9.975 vs glibc 7.651). This repeats the
+  earlier `bd-2g7oyh.48-thread-cache-array` rejection and should not be
+  re-attempted as a plain storage-layout swap.
+- One-entry hot LIFO slot in `MallocState`: behavior proof passed and lifecycle
+  sha256 stayed stable, but the post-change row did not clear the keep gate
+  (`ts2`: `64` 9.117 vs glibc 7.564, `256` 9.285 vs glibc 7.993).
+- Production-only elimination compile-out was investigated because the
+  elimination handle is private in non-test builds. It remained noisy rather
+  than a defensible Score>=2.0 keep under RCH worker churn (`ts2` best p50 ratio
+  around 1.14x for `64`, but `ts1` emitted p50 worsened under outlier shape).
+  Do not count this as a shipped win without a cleaner same-worker A/B harness.
+
+Conclusion: this bead's simple allocator/bookkeeping levers are rejected. The
+next valid no-gaps primitive must replace the data structure, not tune the same
+Vec/magazine path: an intrusive safe-Rust index-linked LIFO/slab for cached
+objects plus deferred/batched hot-path observability counters, with a dedicated
+same-worker A/B harness that prevents RCH source-artifact churn from polluting
+the working tree.
