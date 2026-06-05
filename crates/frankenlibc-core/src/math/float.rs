@@ -584,7 +584,20 @@ pub fn logb(x: f64) -> f64 {
 /// Returns `(remainder, quotient_low_bits)` where quotient retains at least 3 low bits.
 #[inline]
 pub fn remquo(x: f64, y: f64) -> (f64, i32) {
-    libm::remquo(x, y)
+    let (rem, quo) = libm::remquo(x, y);
+    (rem, glibc_remquo_quo(quo))
+}
+
+/// glibc's `remquo`/`remquof` store, per C99, a value whose sign is the sign of
+/// `x/y` and whose magnitude is congruent modulo `2^n` to the integral quotient
+/// — glibc uses `n = 3`, i.e. only the LOW 3 BITS of the quotient magnitude.
+/// `libm` instead returns the full (low-31-bit) signed quotient, so mask it down
+/// to match glibc byte-for-byte. The low 3 bits survive `libm`'s own wrapping,
+/// so masking the returned value is exact even when the true quotient overflows.
+#[inline]
+fn glibc_remquo_quo(quo: i32) -> i32 {
+    let magnitude = (quo.unsigned_abs() & 7) as i32;
+    if quo < 0 { -magnitude } else { magnitude }
 }
 
 /// Compute sine and cosine simultaneously.
@@ -935,6 +948,28 @@ mod tests {
         // 10 / 3 ~ 3.333, nearest integer = 3, remainder = 10 - 3*3 = 1
         assert!((rem - 1.0).abs() < 1e-12);
         assert_eq!(quo & 0x7, 3 & 0x7);
+    }
+
+    #[test]
+    fn remquo_quo_is_glibc_reduced_low_three_bits() {
+        // glibc stores sign(x/y) * (|quotient| & 7) (C99 n=3). Pin the reduced
+        // representative for quotients that exceed 3 bits, including signs.
+        // quotient 8 -> 8 & 7 = 0
+        assert_eq!(remquo(2.0, 0.25).1, 0);
+        // quotient 26 -> 26 & 7 = 2
+        let (_, q) = remquo(1.0, 1.0 / 26.0);
+        assert_eq!(q, 2);
+        // quotient -26 -> sign negative, magnitude 2
+        let (_, q) = remquo(-1.0, 1.0 / 26.0);
+        assert_eq!(q, -2);
+        // quotient 13 -> 13 & 7 = 5; x negative, y negative => x/y positive
+        let (_, q) = remquo(-13.0, -1.0);
+        assert_eq!(q, 5);
+        // Small in-range quotient unaffected.
+        assert_eq!(remquo(7.0, 1.0).1, 7);
+        // f32 path applies the same reduction.
+        assert_eq!(crate::math::float32::remquof(2.0, 0.25).1, 0);
+        assert_eq!(crate::math::float32::remquof(-13.0, -1.0).1, 5);
     }
 
     #[test]

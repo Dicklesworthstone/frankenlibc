@@ -329,7 +329,11 @@ pub fn tgammaf(x: f32) -> f32 {
 /// IEEE remainder with quotient (f32 variant).
 #[inline]
 pub fn remquof(x: f32, y: f32) -> (f32, i32) {
-    libm::remquof(x, y)
+    let (rem, quo) = libm::remquof(x, y);
+    // Match glibc: store only sign(x/y) * (low 3 bits of the quotient
+    // magnitude) — C99 n=3. See `crate::math::float::remquo`.
+    let magnitude = (quo.unsigned_abs() & 7) as i32;
+    (rem, if quo < 0 { -magnitude } else { magnitude })
 }
 
 /// Compute sine and cosine simultaneously (f32 variant).
