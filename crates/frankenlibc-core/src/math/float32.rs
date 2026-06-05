@@ -203,8 +203,21 @@ pub fn coshf(x: f32) -> f32 {
     libm::coshf(x)
 }
 
+const TANHF_FAST_ABS_MIN: f32 = 0.5;
+const TANHF_FAST_ABS_MAX: f32 = 2.5;
+
 #[inline]
 pub fn tanhf(x: f32) -> f32 {
+    // tanh(x) = (e^2x - 1)/(e^2x + 1). For |x| >= 0.5 this form has no
+    // cancellation (the result is bounded away from 0), so evaluating it in f64
+    // — with our fast `exp` whose [-5,5] fast path covers 2x here — and rounding
+    // once gives a correctly-rounded f32 far cheaper than libm::tanhf's
+    // dedicated polynomial. The identity is odd, so it serves negative x with no
+    // special-casing. Near-0 (cancellation) and large/non-finite x defer to libm.
+    if (TANHF_FAST_ABS_MIN..=TANHF_FAST_ABS_MAX).contains(&x.abs()) {
+        let u = crate::math::exp::exp(2.0 * x as f64);
+        return ((u - 1.0) / (u + 1.0)) as f32;
+    }
     libm::tanhf(x)
 }
 
@@ -696,6 +709,31 @@ mod tests {
             );
         }
         assert!(expf(f32::NAN).is_nan());
+    }
+
+    #[test]
+    fn tanhf_fast_path_within_4_ulps() {
+        fn ulpf(a: f32, b: f32) -> i64 {
+            if a == b {
+                0
+            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+                i64::MAX
+            } else {
+                (a.to_bits() as i64 - b.to_bits() as i64).abs()
+            }
+        }
+        let mut worst = 0i64;
+        let mut worst_x = 0.0f32;
+        let mut x = -2.5f32;
+        while x <= 2.5 {
+            let u = ulpf(tanhf(x), libm::tanhf(x));
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            x += 0.0005;
+        }
+        assert!(worst <= 4, "tanhf fast path worst {worst} ULP at x={worst_x}");
     }
 
     #[test]
