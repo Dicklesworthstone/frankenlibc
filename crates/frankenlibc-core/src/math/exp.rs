@@ -13,8 +13,20 @@ pub fn exp2(x: f64) -> f64 {
     libm::exp2(x)
 }
 
+// expm1 exists to avoid the catastrophic cancellation of `exp(x)-1` as x→0.
+// Away from zero there is no cancellation, so on the positive medium band the
+// direct `exp(x)-1` is both accurate (≤3 ULP vs glibc) and far cheaper than
+// libm's dedicated expm1 polynomial — and our `exp` fast path already beats
+// glibc. Mirrors the f32 `expm1f` lever. x<0.5 (incl. the near-0 cancellation
+// region) and large/non-finite x defer to libm for exact semantics.
+const EXPM1_POSITIVE_FAST_MIN: f64 = 0.5;
+const EXPM1_POSITIVE_FAST_MAX: f64 = 2.5;
+
 #[inline]
 pub fn expm1(x: f64) -> f64 {
+    if (EXPM1_POSITIVE_FAST_MIN..=EXPM1_POSITIVE_FAST_MAX).contains(&x) {
+        return exp(x) - 1.0;
+    }
     libm::expm1(x)
 }
 
@@ -632,6 +644,33 @@ mod tests {
             digest, "e44a16c130577d30811cc63a179ce65cdc2c0451958b238918a77aa165c1a2be",
             "exp medium exp2 golden corpus hash drifted"
         );
+    }
+
+    #[test]
+    fn expm1_fast_path_within_4_ulps() {
+        // The positive-band fast path (exp(x)-1) must stay within the 4-ULP math
+        // conformance contract vs the libm expm1 reference across the gated range.
+        fn ulp(a: f64, b: f64) -> i64 {
+            if a == b {
+                0
+            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+                i64::MAX
+            } else {
+                (a.to_bits() as i64 - b.to_bits() as i64).abs()
+            }
+        }
+        let mut worst = 0i64;
+        let mut worst_x = 0.0f64;
+        let mut x = EXPM1_POSITIVE_FAST_MIN;
+        while x <= EXPM1_POSITIVE_FAST_MAX {
+            let u = ulp(expm1(x), libm::expm1(x));
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            x += 0.0001;
+        }
+        assert!(worst <= 4, "expm1 fast path worst {worst} ULP at x={worst_x}");
     }
 
     #[test]
