@@ -839,6 +839,28 @@ fn diff_exp10_within_4_ulps() {
         );
         x += 0.0007; // ~143k samples across the fast window
     }
+    // The |x|>50 fallback tail (libm::exp10) must also stay within 4 ULP — this
+    // is the bd-mrnzim regression guard (the old exp(x·ln10) form was ~168 ULP).
+    let mut x = 50.0_f64;
+    while x <= 307.0 {
+        compare_f64(
+            &mut divs,
+            "exp10",
+            format!("{x:?}"),
+            unsafe { fl::exp10(x) },
+            unsafe { exp10(x) },
+            4,
+        );
+        compare_f64(
+            &mut divs,
+            "exp10",
+            format!("{:?}", -x),
+            unsafe { fl::exp10(-x) },
+            unsafe { exp10(-x) },
+            4,
+        );
+        x += 0.013;
+    }
     // Exact and edge inputs (incl. integers >22 that skip the powi path).
     for &x in &[
         0.0,
@@ -850,6 +872,12 @@ fn diff_exp10_within_4_ulps() {
         30.0,
         40.0,
         50.0,
+        60.5,
+        -80.0,
+        300.0,
+        307.0,
+        -307.0,
+        308.0,
         -30.0,
         -50.0,
         f64::INFINITY,

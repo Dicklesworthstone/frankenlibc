@@ -725,15 +725,17 @@ pub fn exp10(x: f64) -> f64 {
     // constant's residual, and the small `e·ln2` term corrects exp2. This holds
     // within 4 ULP of glibc on [-50, 50] (verified by the sweep in
     // `exp10_exp2_fast_path` and the live glibc diff in conformance_diff_math);
-    // |x| > 50 (10^50 is already astronomically large) defers to the exact
-    // libm::exp path.
+    // |x| > 50 (10^50 is already astronomically large) defers to libm::exp10.
     if (-50.0..=50.0).contains(&x) {
         let hi = core::f64::consts::LOG2_10;
         let p = x * hi;
         let e = x.mul_add(hi, -p) + x * LOG2_10_LO;
         return libm::exp2(p) * (1.0 + e * core::f64::consts::LN_2);
     }
-    libm::exp(x * core::f64::consts::LN_10)
+    // libm::exp10 is correctly rounded here; the previous `exp(x * ln10)` form
+    // double-rounded (product + exp each round) and ran ~168 ULP off glibc on
+    // the rare |x| > 50 tail (bd-mrnzim).
+    libm::exp10(x)
 }
 
 /// Residual of the `f64` `log2(10)` (`core::f64::consts::LOG2_10`): true
@@ -832,8 +834,9 @@ mod tests {
             }
             x += 0.000_173;
         }
-        // Edge behavior matches libm beyond the fast window.
-        assert_eq!(exp10(60.5), libm::exp(60.5 * core::f64::consts::LN_10));
+        // Beyond the fast window the fallback is libm::exp10 (bd-mrnzim: the
+        // old exp(x*ln10) form double-rounded ~168 ULP off glibc).
+        assert_eq!(exp10(60.5), libm::exp10(60.5));
         assert!(exp10(400.0).is_infinite());
         assert_eq!(exp10(0.0), 1.0);
         println!("exp10 worst ULP = {worst}");
