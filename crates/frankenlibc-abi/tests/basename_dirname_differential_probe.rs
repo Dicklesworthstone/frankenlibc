@@ -60,11 +60,15 @@ fn basename_dirname_differential_battery() {
     for (input, exp_base, exp_dir) in cases {
         let base = run_basename(input);
         if base != *exp_base {
-            diffs.push(format!("basename({input:?}): frankenlibc={base:?} glibc={exp_base:?}"));
+            diffs.push(format!(
+                "basename({input:?}): frankenlibc={base:?} glibc={exp_base:?}"
+            ));
         }
         let dir = run_dirname(input);
         if dir != *exp_dir {
-            diffs.push(format!("dirname({input:?}): frankenlibc={dir:?} glibc={exp_dir:?}"));
+            diffs.push(format!(
+                "dirname({input:?}): frankenlibc={dir:?} glibc={exp_dir:?}"
+            ));
         }
     }
     assert!(

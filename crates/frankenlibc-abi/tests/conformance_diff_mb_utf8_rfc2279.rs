@@ -58,14 +58,8 @@ fn diff_mbrtowc(label: &str, bytes: &[u8], n: usize, out: &mut Vec<Div>) {
     // Host glibc.
     let mut g_wc: libc::wchar_t = 0;
     let mut g_state: libc::mbstate_t = unsafe { std::mem::zeroed() };
-    let g_ret = unsafe {
-        host_mbrtowc(
-            &mut g_wc,
-            bytes.as_ptr() as *const c_char,
-            n,
-            &mut g_state,
-        )
-    };
+    let g_ret =
+        unsafe { host_mbrtowc(&mut g_wc, bytes.as_ptr() as *const c_char, n, &mut g_state) };
 
     // frankenlibc.
     let mut f_wc: libc::wchar_t = 0;
@@ -117,7 +111,11 @@ fn mbrtowc_matches_glibc_rfc2279() {
         ("4B U+140000", &[0xF5, 0x80, 0x80, 0x80], 4),
         ("4B max U+1FFFFF", &[0xF7, 0xBF, 0xBF, 0xBF], 4),
         ("5B max U+3FFFFFF", &[0xFB, 0xBF, 0xBF, 0xBF, 0xBF], 5),
-        ("6B max U+7FFFFFFF", &[0xFD, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF], 6),
+        (
+            "6B max U+7FFFFFFF",
+            &[0xFD, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF],
+            6,
+        ),
         ("5B min U+200000", &[0xF8, 0x88, 0x80, 0x80, 0x80], 5),
         ("6B min U+4000000", &[0xFC, 0x84, 0x80, 0x80, 0x80, 0x80], 6),
         // Rejections that must stay rejections:
@@ -143,10 +141,7 @@ fn mbrtowc_matches_glibc_rfc2279() {
         divs.is_empty(),
         "mbrtowc diverged from glibc:\n{}",
         divs.iter()
-            .map(|d| format!(
-                "  {} | {} | fl={} glibc={}",
-                d.case, d.field, d.fl, d.glibc
-            ))
+            .map(|d| format!("  {} | {} | fl={} glibc={}", d.case, d.field, d.fl, d.glibc))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -163,10 +158,7 @@ fn diff_wctomb(label: &str, cp: u32) -> Option<String> {
     let f_ret = unsafe { frankenlibc_abi::wchar_abi::wctomb(f_buf.as_mut_ptr(), cp) };
 
     if g_ret != f_ret as c_int {
-        return Some(format!(
-            "  {} | ret | fl={} glibc={}",
-            label, f_ret, g_ret
-        ));
+        return Some(format!("  {} | ret | fl={} glibc={}", label, f_ret, g_ret));
     }
     if g_ret > 0 {
         let n = g_ret as usize;
@@ -226,8 +218,24 @@ fn mb_wc_round_trip_full_range() {
 
     // Sample across every sequence-length regime plus boundaries.
     let cps: &[u32] = &[
-        0x00, 0x7F, 0x80, 0x7FF, 0x800, 0xFFFF, 0x1_0000, 0x10_FFFF, 0x11_0000, 0x1F_FFFF,
-        0x20_0000, 0x3FF_FFFF, 0x400_0000, 0x7FFF_FFFF, 0x1234, 0xABCDE, 0x1_2345, 0x123_4567,
+        0x00,
+        0x7F,
+        0x80,
+        0x7FF,
+        0x800,
+        0xFFFF,
+        0x1_0000,
+        0x10_FFFF,
+        0x11_0000,
+        0x1F_FFFF,
+        0x20_0000,
+        0x3FF_FFFF,
+        0x400_0000,
+        0x7FFF_FFFF,
+        0x1234,
+        0xABCDE,
+        0x1_2345,
+        0x123_4567,
     ];
 
     for &cp in cps {
@@ -259,5 +267,9 @@ fn mb_wc_round_trip_full_range() {
         }
     }
 
-    assert!(fails.is_empty(), "round-trip failures:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "round-trip failures:\n{}",
+        fails.join("\n")
+    );
 }

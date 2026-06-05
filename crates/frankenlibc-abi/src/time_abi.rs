@@ -1488,9 +1488,10 @@ pub unsafe extern "C" fn strptime(
                             end
                         };
                         let mut mm = 0i64;
-                        if let (Some(m0), Some(m1)) =
-                            (input.get(mm_start).copied(), input.get(mm_start + 1).copied())
-                            && m0.is_ascii_digit()
+                        if let (Some(m0), Some(m1)) = (
+                            input.get(mm_start).copied(),
+                            input.get(mm_start + 1).copied(),
+                        ) && m0.is_ascii_digit()
                             && m1.is_ascii_digit()
                         {
                             mm = ((m0 - b'0') as i64) * 10 + (m1 - b'0') as i64;

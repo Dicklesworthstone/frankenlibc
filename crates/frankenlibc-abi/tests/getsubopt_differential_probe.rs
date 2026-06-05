@@ -36,7 +36,9 @@ fn getsubopt_differential_battery() {
         let vstr = if value.is_null() {
             "(null)".to_string()
         } else {
-            unsafe { CStr::from_ptr(value) }.to_string_lossy().into_owned()
+            unsafe { CStr::from_ptr(value) }
+                .to_string_lossy()
+                .into_owned()
         };
         got.push(format!("ret={r} value={vstr}"));
     }
@@ -55,7 +57,11 @@ fn getsubopt_differential_battery() {
 
     let mut diffs = Vec::new();
     if got.len() != glibc.len() {
-        diffs.push(format!("call count: frankenlibc={} glibc={}", got.len(), glibc.len()));
+        diffs.push(format!(
+            "call count: frankenlibc={} glibc={}",
+            got.len(),
+            glibc.len()
+        ));
     }
     for (i, exp) in glibc.iter().enumerate() {
         match got.get(i) {

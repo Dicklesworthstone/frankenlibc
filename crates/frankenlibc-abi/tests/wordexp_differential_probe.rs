@@ -82,7 +82,9 @@ fn wordexp_differential_battery() {
     for (word, expected) in cases {
         let got = run(word);
         if got != *expected {
-            diffs.push(format!("wordexp({word:?}): frankenlibc={got:?} glibc={expected:?}"));
+            diffs.push(format!(
+                "wordexp({word:?}): frankenlibc={got:?} glibc={expected:?}"
+            ));
         }
     }
     assert!(
