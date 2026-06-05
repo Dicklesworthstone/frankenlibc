@@ -381,6 +381,41 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
     // Two-Way is at least as good. Both paths return the leftmost match, so the
     // result is identical.
     let first = ndl[0];
+    let last = ndl[n_count - 1];
+
+    // Dual-anchor fast path: a match at `cand` requires BOTH the first needle
+    // byte at `cand` and the last needle byte at `cand + n_count - 1`. When the
+    // first byte is common (e.g. "aaaa…b" over an 'a' run) but the last byte is
+    // rare/absent, anchoring the SIMD `memchr` scan on the last byte collapses
+    // the search to a single pass — the first-byte-only scan below makes every
+    // position a candidate (O(n·m) before the Two-Way bailout). We scan for the
+    // last byte; each hit confirms the first byte and a full compare. Only valid
+    // when `first != last`; otherwise the anchors coincide and we use the
+    // first-byte scan. The O(n+m) Two-Way bailout and leftmost-match semantics
+    // are preserved (last-byte hits are visited left to right, so candidate
+    // starts increase monotonically). Mirrors the wide `wcsstr` dual-anchor.
+    if first != last {
+        let mut anchor = n_count - 1;
+        let mut miss_work = 0usize;
+        while anchor < hay.len() {
+            let scan = &hay[anchor..];
+            let Some(off) = memchr(scan, last, scan.len()) else {
+                return None; // last byte never recurs → no match
+            };
+            let last_pos = anchor + off;
+            let cand = last_pos - (n_count - 1);
+            if hay[cand] == first && hay[cand..cand + n_count] == *ndl {
+                return Some(cand);
+            }
+            miss_work += n_count;
+            anchor = last_pos + 1;
+            if miss_work > hay.len() {
+                return two_way_search(&hay[cand..], ndl).map(|m| m + cand);
+            }
+        }
+        return None;
+    }
+
     let mut start = 0usize;
     let mut miss_work = 0usize;
     while start + n_count <= hay.len() {
