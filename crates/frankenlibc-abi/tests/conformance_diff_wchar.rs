@@ -2280,3 +2280,91 @@ fn wchar_diff_coverage_report() {
         "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":39,\"divergences\":0}}",
     );
 }
+
+// ===========================================================================
+// wcsstr dual-anchor adversarial differential fuzz
+//
+// `diff_wcsstr_cases` above uses 6 tiny inputs (<=4 wide chars) that never
+// exercise the wide dual-anchor first+last-char prefilter, its `two_way_search_wide`
+// O(n+m) bailout, leftmost resolution across many last-char hits, or the wide
+// SIMD block scans. This deterministic fuzzer generates long wide haystacks over
+// a tiny alphabet (so partial matches and bailout triggers are constant) and
+// asserts byte-for-byte agreement with host glibc `wcsstr` — locking in the
+// parity of the wcsstr dual-anchor change (a6075ee9) against the real oracle.
+// ===========================================================================
+
+struct WcsstrXorShift64(u64);
+
+impl WcsstrXorShift64 {
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+    fn below(&mut self, n: usize) -> usize {
+        if n == 0 {
+            0
+        } else {
+            (self.next_u64() % n as u64) as usize
+        }
+    }
+}
+
+#[test]
+fn diff_wcsstr_dual_anchor_fuzz() {
+    // Tiny alphabet (no NUL): the whole generated wide string is searchable.
+    const ALPHABET: &[u32] = &['a' as u32, 'b' as u32, 'c' as u32];
+    let mut rng = WcsstrXorShift64(0x106689D45497FDB5);
+    let mut divs = Vec::new();
+    for _ in 0..6000 {
+        let hlen = rng.below(700);
+        let nlen = rng.below(40);
+        let hay: Vec<u32> = (0..hlen)
+            .map(|_| ALPHABET[rng.below(ALPHABET.len())])
+            .collect();
+        let ndl: Vec<u32> = (0..nlen)
+            .map(|_| ALPHABET[rng.below(ALPHABET.len())])
+            .collect();
+        let hb = wcstring(&hay);
+        let nb = wcstring(&ndl);
+        let r_fl = unsafe { fl::wcsstr(hb.as_ptr(), nb.as_ptr()) };
+        let r_lc = unsafe {
+            wcsstr(
+                hb.as_ptr() as *const libc::wchar_t,
+                nb.as_ptr() as *const libc::wchar_t,
+            )
+        };
+        let off_fl = if r_fl.is_null() {
+            -1
+        } else {
+            unsafe { (r_fl as *const u32).offset_from(hb.as_ptr()) }
+        };
+        let off_lc = if r_lc.is_null() {
+            -1
+        } else {
+            unsafe {
+                (r_lc as *const libc::wchar_t).offset_from(hb.as_ptr() as *const libc::wchar_t)
+            }
+        };
+        if off_fl != off_lc {
+            divs.push(Divergence {
+                function: "wcsstr",
+                case: format!("(hay={hay:?}, ndl={ndl:?})"),
+                field: "offset",
+                frankenlibc: format!("{off_fl}"),
+                glibc: format!("{off_lc}"),
+            });
+            if divs.len() >= 8 {
+                break;
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "wcsstr dual-anchor divergences:\n{}",
+        render_divs(&divs)
+    );
+}
