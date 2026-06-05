@@ -3389,6 +3389,29 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             format_str(s_bytes, &resolved_spec, &mut buf);
                         }
                     }
+                } else if resolved_spec.conversion == b'c'
+                    && matches!(resolved_spec.length, LengthMod::L)
+                {
+                    // `%lc` / `%C`: the argument is a `wint_t` wide character, not
+                    // a byte. The default char path would emit only its low byte
+                    // (garbage for non-ASCII); instead UTF-8-encode the code point.
+                    if let Some(raw) = read_arg(value_position, &mut arg_idx) {
+                        let mut utf8 = Vec::new();
+                        if let Some(c) = char::from_u32(raw as u32) {
+                            let mut b = [0u8; 4];
+                            utf8.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
+                        }
+                        // Field width counts wide characters (one here); inflate
+                        // the byte width by the multibyte overhead so padding lands
+                        // on the character boundary. Precision is ignored for %c.
+                        let mut width_spec = resolved_spec;
+                        width_spec.precision = Precision::None;
+                        if let Width::Fixed(w) = width_spec.width {
+                            let extra = utf8.len().saturating_sub(1);
+                            width_spec.width = Width::Fixed(w + extra);
+                        }
+                        format_str(&utf8, &width_spec, &mut buf);
+                    }
                 } else if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                     let _ = resolved_spec.render_value_arg(raw, &mut buf);
                 }

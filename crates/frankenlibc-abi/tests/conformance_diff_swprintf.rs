@@ -67,8 +67,10 @@ fn diff_swprintf_wide_string() {
     check_ls("%10ls|", "hi", &mut divs);
     check_ls("%-10ls|", "hi", &mut divs);
     check_ls("%5.3ls", "hello", &mut divs);
-    // NOTE: %S (SVID alias for %ls) is not yet recognized by the format parser
-    // (treated as literal); tracked in bd-2g7oyh.140, not exercised here.
+    // %S is the SVID alias for %ls.
+    check_ls("%S", "wide", &mut divs);
+    check_ls("%.2S", "héllo", &mut divs);
+    check_ls("%8S|", "ok", &mut divs);
     // Multibyte wide strings — precision must count WIDE chars, not UTF-8 bytes.
     check_ls("%.3ls", "héllo", &mut divs); // -> "hél" (3 wide), NOT byte-cut "hé"
     check_ls("%.2ls", "αβγδ", &mut divs); // -> "αβ"
@@ -116,6 +118,47 @@ fn diff_swprintf_nonascii_literal_and_numeric() {
     assert!(
         divs.is_empty(),
         "swprintf literal/numeric divergences:\n{}",
+        divs.join("\n")
+    );
+}
+
+/// Compare swprintf(fmt, wide_char_arg) between frankenlibc and glibc.
+/// The %lc / %C argument is a `wint_t` (passed as `c_int` in the varargs).
+fn check_lc(fmt: &str, wc: u32, divs: &mut Vec<String>) {
+    let f = wfmt(fmt);
+    let mut fb = vec![0 as Wc; 64];
+    let mut lb = vec![0 as Wc; 64];
+    let fn_ = unsafe { fl::swprintf(fb.as_mut_ptr(), 64, f.as_ptr(), wc as c_int) };
+    let ln_ = unsafe { swprintf(lb.as_mut_ptr(), 64, f.as_ptr(), wc as c_int) };
+    let fs = used(&fb, fn_);
+    let ls = used(&lb, ln_);
+    if fn_ != ln_ || fs != ls {
+        let to_s = |v: &[Wc]| -> String {
+            v.iter()
+                .map(|&c| char::from_u32(c as u32).unwrap_or('?'))
+                .collect()
+        };
+        divs.push(format!(
+            "  swprintf fmt={fmt:?} wc={wc:#x}: fl=(n={fn_}, {:?}) glibc=(n={ln_}, {:?})",
+            to_s(&fs),
+            to_s(&ls)
+        ));
+    }
+}
+
+#[test]
+fn diff_swprintf_wide_char() {
+    let mut divs = Vec::new();
+    check_lc("%lc", 'A' as u32, &mut divs);
+    check_lc("%lc", 0x00E9, &mut divs); // é
+    check_lc("%lc", 0x4E2D, &mut divs); // 中
+    check_lc("%lc", 0x1F600, &mut divs); // 😀
+    check_lc("%5lc|", 'x' as u32, &mut divs);
+    check_lc("%-5lc|", 0x00E9, &mut divs);
+    check_lc("%C", 0x4E2D, &mut divs); // SVID alias
+    assert!(
+        divs.is_empty(),
+        "swprintf %lc divergences:\n{}",
         divs.join("\n")
     );
 }

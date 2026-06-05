@@ -928,8 +928,18 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
     if pos >= len {
         return None;
     }
-    let conversion = fmt[pos];
+    let raw_conversion = fmt[pos];
     pos += 1;
+
+    // `%S` and `%C` are SVID aliases for `%ls` and `%lc` — wide-string and
+    // wide-char conversions. Normalise them to (s|c, length `L`) so they route
+    // through the shared string/char paths with wide handling. An explicit
+    // length modifier on `S`/`C` is meaningless and overridden to `L`.
+    let (conversion, length) = match raw_conversion {
+        b'S' => (b's', LengthMod::L),
+        b'C' => (b'c', LengthMod::L),
+        other => (other, length),
+    };
 
     let route = if conversion == b'm' {
         None
