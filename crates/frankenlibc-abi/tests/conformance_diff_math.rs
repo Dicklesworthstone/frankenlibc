@@ -44,6 +44,7 @@ unsafe extern "C" {
     fn pow(x: f64, y: f64) -> f64;
     fn exp10(x: f64) -> f64;
     fn exp10f(x: f32) -> f32;
+    fn expm1f(x: f32) -> f32;
     fn sinh(x: f64) -> f64;
     fn cosh(x: f64) -> f64;
     fn tanh(x: f64) -> f64;
@@ -950,6 +951,64 @@ fn diff_exp10f_within_4_ulps() {
     assert!(
         bad.is_empty(),
         "exp10f divergences (worst {worst}):\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
+fn diff_expm1f_positive_medium_within_4_ulps() {
+    fn f32_ulps(a: f32, b: f32) -> i64 {
+        if a.is_nan() && b.is_nan() {
+            return 0;
+        }
+        if a == b {
+            return 0;
+        }
+        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            return i64::MAX;
+        }
+        (a.to_bits() as i64 - b.to_bits() as i64).abs()
+    }
+
+    let mut worst = 0i64;
+    let mut bad = Vec::new();
+    let mut s = 0x54a3_31d5_u32;
+    for _ in 0..1_000_000 {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        let x = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
+        let (got, want) = (unsafe { fl::expm1f(x) }, unsafe { expm1f(x) });
+        let u = f32_ulps(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!("expm1f({x}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+
+    for &x in &[
+        -1.0_f32,
+        -0.0,
+        0.0,
+        0.499_999,
+        0.5,
+        2.5,
+        2.500_001,
+        10.0,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+    ] {
+        let (got, want) = (unsafe { fl::expm1f(x) }, unsafe { expm1f(x) });
+        let u = f32_ulps(got, want);
+        if u > 4 {
+            bad.push(format!("expm1f({x:?}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "expm1f divergences (worst {worst}):\n{}",
         bad.join("\n")
     );
 }

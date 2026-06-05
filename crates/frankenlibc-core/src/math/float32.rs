@@ -197,8 +197,14 @@ pub fn exp2f(x: f32) -> f32 {
     libm::exp2f(x)
 }
 
+const EXPM1F_POSITIVE_FAST_MIN: f32 = 0.5;
+const EXPM1F_POSITIVE_FAST_MAX: f32 = 2.5;
+
 #[inline]
 pub fn expm1f(x: f32) -> f32 {
+    if (EXPM1F_POSITIVE_FAST_MIN..=EXPM1F_POSITIVE_FAST_MAX).contains(&x) {
+        return expf(x) - 1.0;
+    }
     libm::expm1f(x)
 }
 
@@ -796,6 +802,51 @@ mod tests {
         assert!((exp2f(3.0) - 8.0).abs() < 1e-5);
         assert!((expm1f(0.0) - 0.0).abs() < 1e-6);
         assert!((log1pf(0.0) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn expm1f_positive_fast_path_within_4_ulps() {
+        let mut s = 0x54a3_31d5_u32;
+        let mut worst = 0u32;
+        for _ in 0..1_000_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let x = EXPM1F_POSITIVE_FAST_MIN
+                + (s >> 9) as f32
+                    * ((EXPM1F_POSITIVE_FAST_MAX - EXPM1F_POSITIVE_FAST_MIN) / (1u32 << 23) as f32);
+            let got = expm1f(x);
+            let want = x.exp_m1();
+            let ulps = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            worst = worst.max(ulps);
+            assert!(
+                ulps <= 4,
+                "expm1f({x}) = {got:?} but glibc = {want:?} ({ulps} ULP)"
+            );
+        }
+        println!("expm1f positive fast path worst ULP = {worst}");
+    }
+
+    #[test]
+    fn expm1f_fallback_preserves_libm_bits() {
+        for &x in &[
+            -5.0f32,
+            -1.0,
+            -0.0,
+            0.0,
+            0.499_999,
+            2.500_001,
+            10.0,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+        ] {
+            assert_eq!(
+                expm1f(x).to_bits(),
+                libm::expm1f(x).to_bits(),
+                "expm1f({x:?}) fallback drifted"
+            );
+        }
+        assert!(expm1f(f32::NAN).is_nan());
     }
 
     #[test]
