@@ -745,10 +745,65 @@ where
     s.len()
 }
 
+#[inline]
+fn contiguous_set_range(set: &[u8], table: &[bool; 256]) -> Option<(u8, u8)> {
+    let mut lo = u8::MAX;
+    let mut hi = 0u8;
+
+    for &byte in set {
+        lo = lo.min(byte);
+        hi = hi.max(byte);
+    }
+
+    if !table[lo as usize..=hi as usize].iter().all(|&member| member) {
+        return None;
+    }
+    Some((lo, hi))
+}
+
+#[inline(always)]
+fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) -> usize {
+    let lower = Simd::<u8, SIMD_LANES>::splat(lo);
+    let upper = Simd::<u8, SIMD_LANES>::splat(hi);
+    let zero = Simd::<u8, SIMD_LANES>::splat(0);
+    let mut chunks = s.chunks_exact(SIMD_LANES);
+    let mut base = 0usize;
+
+    for chunk in chunks.by_ref() {
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+        let member = lanes.simd_ge(lower) & lanes.simd_le(upper);
+        let stop = if stop_in_set {
+            lanes.simd_eq(zero).any() || member.any()
+        } else {
+            !member.all()
+        };
+        if stop {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || (table[byte as usize] == stop_in_set) {
+                    return base + j;
+                }
+            }
+        }
+        base += SIMD_LANES;
+    }
+
+    for (j, &byte) in chunks.remainder().iter().enumerate() {
+        if byte == 0 || (table[byte as usize] == stop_in_set) {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
 /// Dispatches the `strspn`/`strcspn` general path (set size > 4) to a branchless
 /// SIMD multi-compare for sets up to 16 bytes — padding short sets with a real
 /// member — or a scalar `table` scan for larger sets (rare). `set` is non-empty.
 fn span_general(s: &[u8], set: &[u8], table: &[bool; 256], stop_in_set: bool) -> usize {
+    if let Some((lo, hi)) = contiguous_set_range(set, table) {
+        return span_range(s, table, stop_in_set, lo, hi);
+    }
+
     if set.len() <= 8 {
         let mut padded = [set[0]; 8];
         padded[..set.len()].copy_from_slice(set);
@@ -1800,6 +1855,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn span_general_contiguous_range_matches_stop_semantics() {
+        let accept = b"abcdefgh\0";
+
+        let mut full = vec![b'a'; 192];
+        full.push(0);
+        assert_eq!(strspn(&full, accept), 192);
+
+        let mut nonmember = vec![b'h'; 192];
+        nonmember[130] = b'i';
+        nonmember.push(0);
+        assert_eq!(strspn(&nonmember, accept), 130);
+
+        let mut nul_first = vec![b'd'; 192];
+        nul_first[70] = 0;
+        nul_first[120] = b'i';
+        assert_eq!(strspn(&nul_first, accept), 70);
+
+        let mut reject = vec![b'z'; 192];
+        reject[129] = b'c';
+        reject.push(0);
+        assert_eq!(strcspn(&reject, accept), 129);
+        assert_eq!(strpbrk(&reject, accept), Some(129));
     }
 
     #[test]
