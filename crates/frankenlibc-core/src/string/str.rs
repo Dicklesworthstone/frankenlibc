@@ -26,7 +26,6 @@ fn repeated_byte(byte: u8) -> usize {
     usize::from_ne_bytes([byte; size_of::<usize>()])
 }
 
-
 #[inline(always)]
 fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
     debug_assert_eq!(chunk.len(), SIMD_LANES);
@@ -64,7 +63,6 @@ fn has_byte_or_nul_simd_folded(block: &[u8], byte: u8) -> bool {
     let h3 = p3.simd_eq(n) | p3.simd_eq(z);
     (h0 | h1 | h2 | h3).any()
 }
-
 
 #[inline(always)]
 fn has_nul_simd_64(chunk: &[u8]) -> bool {
@@ -125,6 +123,91 @@ fn block_has_nul_512(chunk: &[u8]) -> bool {
         .simd_min(v2.simd_min(v3))
         .simd_min(v4.simd_min(v5).simd_min(v6.simd_min(v7)));
     folded.simd_eq(Simd::splat(0)).any()
+}
+
+#[inline(always)]
+fn copy_nul_panel_scalar(dest: &mut [u8], src: &[u8], offset: usize) -> usize {
+    for j in 0..STRLEN_SIMD_LANES {
+        let index = offset + j;
+        let byte = src[index];
+        dest[index] = byte;
+        if byte == 0 {
+            return index + 1;
+        }
+    }
+    unreachable!("panel is known to contain NUL")
+}
+
+#[inline(always)]
+fn copy_until_nul_512(dest: &mut [u8], src: &[u8]) -> Option<usize> {
+    debug_assert_eq!(dest.len(), STRLEN_NUL_BLOCK);
+    debug_assert_eq!(src.len(), STRLEN_NUL_BLOCK);
+    let z = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
+    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[0..STRLEN_SIMD_LANES]);
+    let v1 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
+    );
+    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4],
+    );
+    let v4 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5],
+    );
+    let v5 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6],
+    );
+    let v6 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7],
+    );
+    let v7 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
+    let folded = v0
+        .simd_min(v1)
+        .simd_min(v2.simd_min(v3))
+        .simd_min(v4.simd_min(v5).simd_min(v6.simd_min(v7)));
+    if !folded.simd_eq(z).any() {
+        v0.copy_to_slice(&mut dest[0..STRLEN_SIMD_LANES]);
+        v1.copy_to_slice(&mut dest[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+        v2.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3]);
+        v3.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4]);
+        v4.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5]);
+        v5.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6]);
+        v6.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7]);
+        v7.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
+        return None;
+    }
+
+    if v0.simd_eq(z).any() {
+        return Some(copy_nul_panel_scalar(dest, src, 0));
+    }
+    v0.copy_to_slice(&mut dest[0..STRLEN_SIMD_LANES]);
+    if v1.simd_eq(z).any() {
+        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES));
+    }
+    v1.copy_to_slice(&mut dest[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    if v2.simd_eq(z).any() {
+        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 2));
+    }
+    v2.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3]);
+    if v3.simd_eq(z).any() {
+        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 3));
+    }
+    v3.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4]);
+    if v4.simd_eq(z).any() {
+        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 4));
+    }
+    v4.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5]);
+    if v5.simd_eq(z).any() {
+        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 5));
+    }
+    v5.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6]);
+    if v6.simd_eq(z).any() {
+        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 6));
+    }
+    v6.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7]);
+    Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 7))
 }
 
 #[inline(always)]
@@ -429,6 +512,29 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 ///
 /// Panics if `dest` is too small to hold the source string plus NUL.
 pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
+    if src.last().copied() == Some(0) && dest.len() >= src.len() {
+        let mut i = 0;
+        while i + STRLEN_NUL_BLOCK <= src.len() {
+            if let Some(copied) = copy_until_nul_512(
+                &mut dest[i..i + STRLEN_NUL_BLOCK],
+                &src[i..i + STRLEN_NUL_BLOCK],
+            ) {
+                return i + copied;
+            }
+            i += STRLEN_NUL_BLOCK;
+        }
+
+        while i < src.len() {
+            let byte = src[i];
+            dest[i] = byte;
+            i += 1;
+            if byte == 0 {
+                return i;
+            }
+        }
+        unreachable!("src.last() is NUL")
+    }
+
     let src_len = strlen(src);
     assert!(
         dest.len() > src_len,
@@ -755,7 +861,10 @@ fn contiguous_set_range(set: &[u8], table: &[bool; 256]) -> Option<(u8, u8)> {
         hi = hi.max(byte);
     }
 
-    if !table[lo as usize..=hi as usize].iter().all(|&member| member) {
+    if !table[lo as usize..=hi as usize]
+        .iter()
+        .all(|&member| member)
+    {
         return None;
     }
     Some((lo, hi))
@@ -1604,6 +1713,32 @@ mod tests {
     }
 
     #[test]
+    fn test_strcpy_fused_path_copies_long_terminated_slice() {
+        let mut src = vec![b'a'; 1024];
+        src.push(0);
+        let mut dst = vec![0xCC; src.len()];
+        let copied = strcpy(&mut dst, &src);
+        assert_eq!(copied, src.len());
+        assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn test_strcpy_stops_at_first_nul_without_touching_trailing_dest() {
+        let mut dst = [0xAA; 16];
+        let copied = strcpy(&mut dst, b"hi\0trailing\0");
+        assert_eq!(copied, 3);
+        assert_eq!(&dst[..3], b"hi\0");
+        assert_eq!(dst[3], 0xAA);
+    }
+
+    #[test]
+    #[should_panic(expected = "strcpy: destination buffer too small")]
+    fn test_strcpy_no_nul_still_panics_without_synthetic_nul_room() {
+        let mut dst = [0u8; 3];
+        strcpy(&mut dst, b"abc");
+    }
+
+    #[test]
     fn test_stpcpy_returns_terminator_index() {
         let mut buf = [0u8; 10];
         let idx = stpcpy(&mut buf, b"hello\0");
@@ -1838,8 +1973,11 @@ mod tests {
                             // strpbrk reuses the same stop-on-member scan, then
                             // maps a NUL/end stop to None and a member to Some.
                             let pb_idx = span_oracle(&s, set, true);
-                            let pb_expected =
-                                if pb_idx < s.len() && s[pb_idx] != 0 { Some(pb_idx) } else { None };
+                            let pb_expected = if pb_idx < s.len() && s[pb_idx] != 0 {
+                                Some(pb_idx)
+                            } else {
+                                None
+                            };
                             assert_eq!(
                                 strpbrk(&s, set),
                                 pb_expected,
@@ -2051,7 +2189,10 @@ mod tests {
     #[test]
     fn strstr_matches_naive_reference() {
         fn naive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-            let h = &haystack[..haystack.iter().position(|&b| b == 0).unwrap_or(haystack.len())];
+            let h = &haystack[..haystack
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(haystack.len())];
             let n = &needle[..needle.iter().position(|&b| b == 0).unwrap_or(needle.len())];
             if n.is_empty() {
                 return Some(0);
@@ -2361,7 +2502,10 @@ mod tests {
     #[test]
     fn strcasestr_matches_naive_icase_reference() {
         fn naive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-            let h = &haystack[..haystack.iter().position(|&b| b == 0).unwrap_or(haystack.len())];
+            let h = &haystack[..haystack
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(haystack.len())];
             let n = &needle[..needle.iter().position(|&b| b == 0).unwrap_or(needle.len())];
             if n.is_empty() {
                 return Some(0);
@@ -2369,8 +2513,7 @@ mod tests {
             if n.len() > h.len() {
                 return None;
             }
-            (0..=h.len() - n.len())
-                .find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
+            (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
         }
         // A long mixed-case 'a'/'A' run with an absent (and a present) suffix —
         // every position is a folded first-byte candidate, forcing the bail.
@@ -2403,7 +2546,7 @@ mod tests {
             b"aaaaaaaaab\0",
             b"AAAAAAAAAB\0",
             b"xyz\0",
-            b"def\0", // only past an embedded NUL — must NOT match
+            b"def\0",             // only past an embedded NUL — must NOT match
             b"hello world fox\0", // longer than some haystacks
         ];
         for h in haystacks {
