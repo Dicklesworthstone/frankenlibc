@@ -175,3 +175,122 @@ fn strftime_differential_battery() {
         diffs.join("\n")
     );
 }
+
+/// Live differential sweep: render every common specifier against the host glibc
+/// `strftime` over a structured calendar sweep (100 years × 12 months × day/week
+/// boundaries), normalizing each date through `timegm`/`gmtime_r` so `tm_wday`
+/// and `tm_yday` are exact. Targets the ISO-week family (`%G/%g/%V` and `%U/%W`)
+/// at year boundaries where week/year ownership flips — the classic divergence.
+#[test]
+#[allow(unsafe_code)] // live FFI to host glibc strftime/timegm/gmtime_r for the oracle
+fn strftime_live_differential_sweep() {
+    #[repr(C)]
+    struct CTm {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: i64,
+        zone: *const u8,
+    }
+    unsafe extern "C" {
+        fn setlocale(category: i32, locale: *const u8) -> *const u8;
+        fn timegm(tm: *mut CTm) -> i64;
+        fn gmtime_r(t: *const i64, tm: *mut CTm) -> *mut CTm;
+        fn strftime(s: *mut u8, max: usize, fmt: *const u8, tm: *const CTm) -> usize;
+    }
+    // LC_ALL == 6 on glibc; the strftime probe is defined for the C locale.
+    unsafe {
+        setlocale(6, b"C\0".as_ptr());
+    }
+
+    // Timezone-independent specifiers only (skip %Z/%z/%s which depend on tm_gmtoff).
+    let specs: &[&str] = &[
+        "%a", "%A", "%b", "%B", "%c", "%C", "%d", "%D", "%e", "%F", "%G", "%g", "%h", "%H",
+        "%I", "%j", "%k", "%l", "%m", "%M", "%n", "%p", "%P", "%r", "%R", "%S", "%T", "%u",
+        "%U", "%V", "%w", "%W", "%x", "%X", "%y", "%Y", "%%", "%G-W%V-%u", "%Y-%j",
+    ];
+
+    let new_tm = || CTm {
+        sec: 0,
+        min: 0,
+        hour: 0,
+        mday: 0,
+        mon: 0,
+        year: 0,
+        wday: 0,
+        yday: 0,
+        isdst: 0,
+        gmtoff: 0,
+        zone: core::ptr::null(),
+    };
+
+    let mut diffs: Vec<String> = Vec::new();
+    let mut checked: u64 = 0;
+    'outer: for year in 1950i32..2050 {
+        for mon in 0i32..12 {
+            for &mday in &[1i32, 2, 3, 4, 5, 6, 7, 15, 27, 28, 29, 30, 31] {
+                let mut tm = new_tm();
+                tm.sec = 30;
+                tm.min = 45;
+                tm.hour = 13;
+                tm.mday = mday;
+                tm.mon = mon;
+                tm.year = year - 1900;
+                let t = unsafe { timegm(&mut tm as *mut CTm) };
+                let mut norm = new_tm();
+                let r = unsafe { gmtime_r(&t as *const i64, &mut norm as *mut CTm) };
+                if r.is_null() {
+                    continue;
+                }
+                let bd = BrokenDownTime {
+                    tm_sec: norm.sec,
+                    tm_min: norm.min,
+                    tm_hour: norm.hour,
+                    tm_mday: norm.mday,
+                    tm_mon: norm.mon,
+                    tm_year: norm.year,
+                    tm_wday: norm.wday,
+                    tm_yday: norm.yday,
+                    tm_isdst: 0,
+                };
+                for &fmt in specs {
+                    let mut gbuf = [0u8; 256];
+                    let mut cfmt = fmt.as_bytes().to_vec();
+                    cfmt.push(0);
+                    let gn = unsafe {
+                        strftime(gbuf.as_mut_ptr(), 256, cfmt.as_ptr(), &norm as *const CTm)
+                    };
+                    let g = String::from_utf8_lossy(&gbuf[..gn]).into_owned();
+                    let f = render(fmt, &bd);
+                    checked += 1;
+                    if f != g {
+                        diffs.push(format!(
+                            "{:04}-{:02}-{:02} (wday={}, yday={}) fmt={fmt:?} -> fl={f:?} glibc={g:?}",
+                            norm.year + 1900,
+                            norm.mon + 1,
+                            norm.mday,
+                            norm.wday,
+                            norm.yday
+                        ));
+                        if diffs.len() >= 40 {
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("strftime live sweep: {checked} comparisons, {} divergence(s)", diffs.len());
+    assert!(
+        diffs.is_empty(),
+        "strftime live-differential divergences ({}):\n{}",
+        diffs.len(),
+        diffs.join("\n")
+    );
+}
