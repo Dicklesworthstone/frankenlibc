@@ -147,3 +147,100 @@ fn math_special_value_differential_battery() {
         d.join("\n")
     );
 }
+
+/// Regression guard: the libm-passthrough error/gamma functions stay within the
+/// 4-ULP-vs-glibc math contract across their ranges. Pins erf/erfc/lgamma against
+/// the host glibc directly (catches any musl-libm drift). Bessel functions are
+/// NOT pinned here — they diverge by 100s-1000s of ULP (see bd-2g7oyh.171 and the
+/// `bessel_glibc_divergence_research` probe below).
+#[test]
+#[allow(unsafe_code)] // host-glibc oracle (-lm is linked by std)
+fn erf_erfc_lgamma_within_4_ulp_of_glibc() {
+    unsafe extern "C" {
+        fn erf(x: f64) -> f64;
+        fn erfc(x: f64) -> f64;
+        fn lgamma(x: f64) -> f64;
+    }
+    fn ulp(a: f64, b: f64) -> i64 {
+        if a == b || (a.is_nan() && b.is_nan()) {
+            0
+        } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            i64::MAX
+        } else {
+            (a.to_bits() as i64 - b.to_bits() as i64).abs()
+        }
+    }
+    let mut worst = (0i64, 0i64, 0i64);
+    let mut x = -6.0f64;
+    while x <= 25.0 {
+        let ue = ulp(frankenlibc_core::math::erf(x), unsafe { erf(x) });
+        let uc = ulp(frankenlibc_core::math::erfc(x), unsafe { erfc(x) });
+        worst.0 = worst.0.max(ue);
+        worst.1 = worst.1.max(uc);
+        if x > 0.0 {
+            let ul = ulp(frankenlibc_core::math::lgamma(x), unsafe { lgamma(x) });
+            worst.2 = worst.2.max(ul);
+        }
+        x += 1e-4;
+    }
+    assert!(
+        worst.0 <= 4 && worst.1 <= 4 && worst.2 <= 4,
+        "passthrough erf/erfc/lgamma drifted >4 ULP vs glibc: erf={} erfc={} lgamma={}",
+        worst.0,
+        worst.1,
+        worst.2
+    );
+}
+
+/// Research probe (ignored): quantifies how far the libm-passthrough Bessel
+/// functions diverge from glibc. fl uses musl libm for j0/j1/jn/y0/y1/yn, which
+/// uses different algorithms than glibc; divergence reaches 1000s of ULP near the
+/// Bessel zeros and for high orders/arguments. Tracks bd-2g7oyh.171. Run with
+/// `--ignored --nocapture` to print the per-function worst ULP.
+#[test]
+#[ignore]
+#[allow(unsafe_code)]
+fn bessel_glibc_divergence_research() {
+    unsafe extern "C" {
+        fn j0(x: f64) -> f64;
+        fn j1(x: f64) -> f64;
+        fn jn(n: i32, x: f64) -> f64;
+        fn y0(x: f64) -> f64;
+        fn y1(x: f64) -> f64;
+        fn yn(n: i32, x: f64) -> f64;
+    }
+    fn ulp(a: f64, b: f64) -> i64 {
+        if a == b || (a.is_nan() && b.is_nan()) {
+            0
+        } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            i64::MAX
+        } else {
+            (a.to_bits() as i64 - b.to_bits() as i64).abs()
+        }
+    }
+    let report = |name: &str, fl: &dyn Fn(f64) -> f64, gl: &dyn Fn(f64) -> f64| {
+        let (mut worst, mut wx, mut over4) = (0i64, 0.0f64, 0u64);
+        let mut x = 0.1f64;
+        while x <= 40.0 {
+            let u = ulp(fl(x), gl(x));
+            if u != i64::MAX {
+                if u > worst {
+                    worst = u;
+                    wx = x;
+                }
+                if u > 4 {
+                    over4 += 1;
+                }
+            }
+            x += 1e-3;
+        }
+        eprintln!("{name:6}: worst {worst} ULP @x={wx:.4}  ({over4} pts >4ULP)");
+    };
+    report("j0", &|x| frankenlibc_core::math::j0(x), &|x| unsafe { j0(x) });
+    report("j1", &|x| frankenlibc_core::math::j1(x), &|x| unsafe { j1(x) });
+    report("y0", &|x| frankenlibc_core::math::y0(x), &|x| unsafe { y0(x) });
+    report("y1", &|x| frankenlibc_core::math::y1(x), &|x| unsafe { y1(x) });
+    report("jn3", &|x| frankenlibc_core::math::jn(3, x), &|x| unsafe { jn(3, x) });
+    report("yn3", &|x| frankenlibc_core::math::yn(3, x), &|x| unsafe { yn(3, x) });
+    report("jn10", &|x| frankenlibc_core::math::jn(10, x), &|x| unsafe { jn(10, x) });
+}
