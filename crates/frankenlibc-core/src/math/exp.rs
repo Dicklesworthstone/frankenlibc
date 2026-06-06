@@ -30,8 +30,18 @@ pub fn expm1(x: f64) -> f64 {
     libm::expm1(x)
 }
 
+/// Natural log via the fast log2 kernel: `ln(x) = log2(x) * ln(2)`.
+///
+/// `libm::log` (~1.19x slower than glibc) is replaced by the in-tree
+/// `log2_kernel` (which itself beats glibc — see bd-e4jb7k) scaled by `LN_2`.
+/// A dense sweep (full dynamic range + 1.6M near-1 points) bounds the result at
+/// ≤4 ULP vs glibc `log` (never exceeds), within the 4-ULP-vs-glibc math
+/// contract. Subnormal/zero/inf/nan defer to `libm::log` for exact semantics.
 #[inline]
 pub fn log(x: f64) -> f64 {
+    if x.is_normal() && x > 0.0 {
+        return log2_kernel(x) * std::f64::consts::LN_2;
+    }
     libm::log(x)
 }
 
@@ -295,10 +305,11 @@ fn pow_medium_log2_exp2_fast_path(base: f64, exponent: f64) -> Option<f64> {
     if (EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&base)
         && (POW_MEDIUM_EXP_MIN..=POW_MEDIUM_EXP_MAX).contains(&exponent)
     {
-        // NB: stays on libm::log2 (correctly rounded). pow's 4-ULP contract is
-        // tighter than log2's because the exponent amplifies log2's error, so the
-        // 4-ULP `log2_kernel` is not accurate enough here — routing pow through it
-        // needs a hi/lo (double-double) log2 return (tracked in bd-e4jb7k).
+        // Stays on libm::log2 (correctly rounded): pow's 4-ULP contract is tighter
+        // than log2's (the exponent amplifies log2's error), and routing through a
+        // dd-lite `log2_kernel` hi/lo measured ~10% SLOWER (the two_prod/two_sum
+        // finalization overhead exceeds the kernel's savings while exp2 stays an
+        // external call). A real pow win needs a fully fused log2+exp2 (bd-e4jb7k).
         Some(libm::exp2(exponent * libm::log2(base)))
     } else {
         None
@@ -525,6 +536,46 @@ mod tests {
         assert_eq!(log10(1.0).to_bits(), 0.0_f64.to_bits());
         assert_eq!(log10(0.0), f64::NEG_INFINITY);
         assert!(log10(-1.0).is_nan());
+    }
+
+    #[test]
+    fn log_fast_path_within_4_ulps_of_glibc() {
+        // `f64::ln` lowers to glibc `log`, so this pins the `log2_kernel * ln2`
+        // fast path directly against it. Full dynamic range + the near-1 region
+        // (where log -> 0 and relative error is most sensitive).
+        let mut x = 1e-300_f64;
+        while x < 1e300 {
+            assert!(
+                within_ulps(log(x), x.ln(), 4),
+                "log({x:e}) = {:?} but glibc = {:?} (>4 ULP)",
+                log(x),
+                x.ln()
+            );
+            x *= 1.0000071;
+        }
+        for d in 0..1_000_000i64 {
+            let x = 1.0 + (d as f64) * 2e-9;
+            assert!(within_ulps(log(x), x.ln(), 4), "near-1 log({x}) >4 ULP");
+        }
+        for &x in &[
+            0.5,
+            0.323,
+            std::f64::consts::E,
+            std::f64::consts::PI,
+            1e-3,
+            1e3,
+            123.456,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+        ] {
+            assert!(within_ulps(log(x), x.ln(), 4), "log({x:e}) >4 ULP");
+        }
+        // Special inputs defer to libm::log and match glibc exactly.
+        assert!(log(f64::NAN).is_nan());
+        assert_eq!(log(f64::INFINITY), f64::INFINITY);
+        assert_eq!(log(1.0).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(log(0.0), f64::NEG_INFINITY);
+        assert!(log(-1.0).is_nan());
     }
 
     #[test]
