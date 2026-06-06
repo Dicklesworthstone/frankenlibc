@@ -15,7 +15,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::errno;
-use frankenlibc_core::stdio::{BufMode, OpenFlags, StdioStream, flags_to_oflags, parse_mode};
+use frankenlibc_core::stdio::{
+    BufMode, OpenFlags, ReadUntil, StdioStream, flags_to_oflags, parse_mode,
+};
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -5683,23 +5685,60 @@ pub unsafe extern "C" fn getdelim(
 
     let delim_byte = delim as u8;
     let mut buf: Vec<u8> = Vec::with_capacity(128);
-    let mut got_delim = false;
-    let mut got_any = false;
 
-    // Read character by character using fgetc.
-    loop {
-        let ch = unsafe { fgetc(stream) };
-        if ch == libc::EOF {
-            break;
-        }
-        got_any = true;
-        buf.push(ch as u8);
-        if ch as u8 == delim_byte {
-            got_delim = true;
-            break;
+    // Read the whole line under a SINGLE registry lock + the policy decision
+    // taken above, scanning the stream buffer for the delimiter with
+    // `read_until_delim` instead of calling `fgetc` (which re-locks the
+    // registry, re-runs the membrane policy, and allocates a 1-byte `Vec`)
+    // once per character. The ABI layer owns the descriptor refill because the
+    // membrane policy and `sys_read_fd` live here.
+    {
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = reg.streams.get_mut(&id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return -1;
+        };
+        loop {
+            match s.read_until_delim(delim_byte, &mut buf) {
+                ReadUntil::Found | ReadUntil::Eof => break,
+                ReadUntil::NeedRefill => {
+                    if s.is_eof() || s.is_error() {
+                        break;
+                    }
+                    if s.buffer_capacity() == 0 {
+                        // Unbuffered fd stream: read a byte directly (matches
+                        // `fgetc`'s capacity-0 path; cannot call `fgetc` while
+                        // holding the registry lock — it would deadlock).
+                        let mut b = [0u8; 1];
+                        let fd = s.fd();
+                        let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
+                        if rc > 0 {
+                            s.set_offset(s.offset().saturating_add(1));
+                            buf.push(b[0]);
+                            if b[0] == delim_byte {
+                                break;
+                            }
+                        } else if rc == 0 {
+                            s.set_eof();
+                            break;
+                        } else {
+                            let e = std::io::Error::last_os_error()
+                                .raw_os_error()
+                                .unwrap_or(0);
+                            if e != errno::EINTR {
+                                s.set_error();
+                            }
+                            break;
+                        }
+                    } else if unsafe { refill_stream(s) } <= 0 {
+                        break;
+                    }
+                }
+            }
         }
     }
 
+    let got_any = !buf.is_empty();
     if !got_any {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
@@ -5735,7 +5774,6 @@ pub unsafe extern "C" fn getdelim(
         *out_buf.add(buf.len()) = 0; // NUL terminate
     }
 
-    let _ = got_delim; // suppress unused warning
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     buf.len() as isize
 }

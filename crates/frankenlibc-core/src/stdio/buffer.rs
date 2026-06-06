@@ -194,6 +194,24 @@ impl StreamBuffer {
         self.read_filled.saturating_sub(self.read_pos)
     }
 
+    /// Peek the readable bytes without consuming them.
+    ///
+    /// Returns the same bytes a subsequent [`read`](Self::read) would, but
+    /// leaves the read cursor untouched so the caller can scan the slice
+    /// (e.g. for a delimiter) and then [`consume`](Self::consume) exactly the
+    /// number of bytes it wants.
+    pub fn peek(&self) -> &[u8] {
+        &self.data[self.read_pos..self.read_filled]
+    }
+
+    /// Advance the read cursor by `n` bytes (clamped to the filled region).
+    ///
+    /// Pairs with [`peek`](Self::peek) for read-until-delimiter scanning.
+    pub fn consume(&mut self, n: usize) {
+        self.io_started = true;
+        self.read_pos = (self.read_pos + n).min(self.read_filled);
+    }
+
     /// Fill the read buffer with data from an external source.
     /// Resets position to 0. Returns the number of bytes accepted.
     pub fn fill(&mut self, data: &[u8]) -> usize {

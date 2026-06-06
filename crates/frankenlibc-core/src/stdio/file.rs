@@ -219,6 +219,39 @@ impl MemBacking {
         }
     }
 
+    /// Peek the remaining readable bytes from the current position without
+    /// advancing it. Pairs with [`consume`](Self::consume) for scanning.
+    pub fn peek(&self) -> &[u8] {
+        match self {
+            MemBacking::Fixed {
+                data,
+                pos,
+                content_end,
+            } => {
+                let start = (*pos).min(*content_end);
+                &data[start..*content_end]
+            }
+            MemBacking::Dynamic { data, pos } => {
+                let start = (*pos).min(data.len());
+                &data[start..]
+            }
+        }
+    }
+
+    /// Advance the read position by `n` bytes (clamped to the readable end).
+    pub fn consume(&mut self, n: usize) {
+        match self {
+            MemBacking::Fixed {
+                pos, content_end, ..
+            } => {
+                *pos = (*pos + n).min(*content_end);
+            }
+            MemBacking::Dynamic { data, pos } => {
+                *pos = (*pos + n).min(data.len());
+            }
+        }
+    }
+
     /// Seek to a new position. `whence`: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
     /// Returns the new position on success, or `None` on invalid seek.
     pub fn seek(&mut self, offset: i64, whence: i32) -> Option<i64> {
@@ -296,6 +329,18 @@ impl MemBacking {
 // ---------------------------------------------------------------------------
 // Stream
 // ---------------------------------------------------------------------------
+
+/// Outcome of one [`StdioStream::read_until_delim`] step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadUntil {
+    /// The delimiter was found and consumed into the output buffer.
+    Found,
+    /// The available buffered data was drained without finding the delimiter;
+    /// an fd-backed caller should refill the buffer before calling again.
+    NeedRefill,
+    /// No more data is available (EOF / memory backing exhausted).
+    Eof,
+}
 
 /// POSIX FILE stream.
 ///
@@ -570,6 +615,80 @@ impl StdioStream {
     /// Number of bytes available for reading without I/O.
     pub fn readable_buffered(&self) -> usize {
         self.ungetc_byte.is_some() as usize + self.buffer.readable()
+    }
+
+    /// Append bytes into `out` up to and including the first occurrence of
+    /// `delim`, consuming exactly that many bytes from the read buffer /
+    /// memory backing — never reading past the delimiter.
+    ///
+    /// This is the bulk primitive behind `getdelim`/`getline`: it lets the ABI
+    /// layer read a whole line under a single registry lock and a single policy
+    /// decision, instead of one `fgetc` (lock + policy decision + 1-byte `Vec`
+    /// allocation) per character. Refilling fd-backed streams from the
+    /// descriptor is left to the caller (signalled by [`ReadUntil::NeedRefill`]),
+    /// because that path lives in the ABI layer alongside the membrane policy.
+    pub fn read_until_delim(&mut self, delim: u8, out: &mut Vec<u8>) -> ReadUntil {
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return ReadUntil::Eof;
+        }
+        self.flags.io_started = true;
+
+        // A pending ungetc byte is logically first (mirrors buffered_read/mem_read).
+        if let Some(b) = self.ungetc_byte.take() {
+            out.push(b);
+            if let Some(ref backing) = self.mem_backing {
+                self.offset = backing.position() as i64;
+            } else {
+                self.advance_offset(1);
+            }
+            if b == delim {
+                return ReadUntil::Found;
+            }
+        }
+
+        if self.mem_backing.is_some() {
+            let backing = self.mem_backing.as_mut().expect("mem_backing present");
+            let rem = backing.peek();
+            if rem.is_empty() {
+                return ReadUntil::Eof;
+            }
+            let outcome = match rem.iter().position(|&b| b == delim) {
+                Some(k) => {
+                    out.extend_from_slice(&rem[..=k]);
+                    backing.consume(k + 1);
+                    ReadUntil::Found
+                }
+                None => {
+                    let n = rem.len();
+                    out.extend_from_slice(rem);
+                    backing.consume(n);
+                    ReadUntil::Eof
+                }
+            };
+            self.offset = backing.position() as i64;
+            outcome
+        } else {
+            let buffered = self.buffer.peek();
+            if buffered.is_empty() {
+                return ReadUntil::NeedRefill;
+            }
+            match buffered.iter().position(|&b| b == delim) {
+                Some(k) => {
+                    out.extend_from_slice(&buffered[..=k]);
+                    self.buffer.consume(k + 1);
+                    self.advance_offset(k + 1);
+                    ReadUntil::Found
+                }
+                None => {
+                    let n = buffered.len();
+                    out.extend_from_slice(buffered);
+                    self.buffer.consume(n);
+                    self.advance_offset(n);
+                    ReadUntil::NeedRefill
+                }
+            }
+        }
     }
 
     /// Fill the read buffer with externally-fetched data.

@@ -18,7 +18,7 @@ pub mod snprintb;
 pub mod vis;
 
 pub use buffer::{BUFSIZ, BufMode, StreamBuffer};
-pub use file::{MemBacking, OpenFlags, StdioStream, flags_to_oflags, parse_mode};
+pub use file::{MemBacking, OpenFlags, ReadUntil, StdioStream, flags_to_oflags, parse_mode};
 pub use printf::{
     FormatArg, FormatFlags, FormatSegment, FormatSpec, LengthMod, Precision, ValueArgKind, Width,
     count_printf_args, format_char, format_float, format_pointer, format_signed, format_str,
