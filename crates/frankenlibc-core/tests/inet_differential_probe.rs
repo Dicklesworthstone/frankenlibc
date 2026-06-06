@@ -194,3 +194,99 @@ fn inet_ntop_differential_battery() {
         diffs.join("\n")
     );
 }
+
+/// Live differential fuzz of `inet_aton` (BSD numbers-and-dots grammar) against
+/// the host glibc `inet_aton`: 1/2/3/4-part forms, decimal/octal/hex octets,
+/// overflow, leading zeros, and trailing junk — the quirky legacy surface that
+/// `inet_pton`'s strict parser deliberately omits. Compares success and the
+/// packed 4-byte (network-order) result over ~26k generated inputs.
+#[test]
+#[allow(unsafe_code)] // host-glibc inet_aton oracle
+fn inet_aton_live_differential_vs_glibc() {
+    use frankenlibc_core::inet::inet_aton as fl_inet_aton;
+    use std::ffi::c_char;
+    unsafe extern "C" {
+        #[link_name = "inet_aton"]
+        fn c_inet_aton(cp: *const c_char, inp: *mut u32) -> i32;
+    }
+
+    // Tokens exercising decimal / octal (leading 0) / hex (0x) / overflow / junk.
+    let tokens: &[&str] = &[
+        "0", "1", "9", "10", "08", "00", "01", "07", "010", "0377", "0400", "0x0", "0xff",
+        "0x100", "127", "128", "255", "256", "65535", "65536", "16777215", "16777216",
+        "4294967295", "4294967296", "", "1a", "0x", "999", "0xFFFFFFFF", "0xG", "+1", "-1",
+    ];
+    // Smaller core for the deeper (3/4-part) cartesian products.
+    let core: &[&str] = &[
+        "0", "1", "08", "010", "0377", "0x0", "0xff", "0x100", "255", "256", "65536",
+        "16777216", "4294967296", "", "999", "0xG",
+    ];
+    let core4: &[&str] = &[
+        "0", "1", "08", "0377", "0xff", "255", "256", "65536", "", "999", "0xG", "0x100",
+    ];
+
+    let mut inputs: Vec<String> = Vec::new();
+    for &a in tokens {
+        inputs.push(a.to_string());
+    }
+    for &a in tokens {
+        for &b in tokens {
+            inputs.push(format!("{a}.{b}"));
+        }
+    }
+    for &a in core {
+        for &b in core {
+            for &c in core {
+                inputs.push(format!("{a}.{b}.{c}"));
+            }
+        }
+    }
+    for &a in core4 {
+        for &b in core4 {
+            for &c in core4 {
+                for &d in core4 {
+                    inputs.push(format!("{a}.{b}.{c}.{d}"));
+                }
+            }
+        }
+    }
+    // Curated quirks: trailing junk/whitespace, empty parts, max forms.
+    for q in [
+        "127.0.0.1", "0177.0.0.1", "0x7f.0.0.1", "127.1", "127.0.1", "2130706433",
+        "0x7f000001", "017700000001", "1.2.3.4 ", " 1.2.3.4", "1.2.3.4\t", "1.2.3.4\n",
+        "1.2.3.4x", "1..2.3", ".1.2.3", "1.2.3.", "1.2.3.4.5", "255.255.255.255",
+        "256.256.256.256", "0.0.0.0", "00.00.00.00", "0x.0x.0x.0x", "1.2.3.4.",
+    ] {
+        inputs.push(q.to_string());
+    }
+
+    let mut diffs: Vec<String> = Vec::new();
+    let mut checked: u64 = 0;
+    for input in &inputs {
+        let mut fl_dst = [0u8; 4];
+        let fl_rc = fl_inet_aton(input.as_bytes(), &mut fl_dst);
+        let mut cstr = input.as_bytes().to_vec();
+        cstr.push(0);
+        let mut g_addr: u32 = 0xDEAD_BEEF;
+        let g_rc = unsafe { c_inet_aton(cstr.as_ptr() as *const c_char, &mut g_addr) };
+        let g_dst = g_addr.to_ne_bytes();
+        let fl_ok = fl_rc == 1;
+        let g_ok = g_rc == 1;
+        checked += 1;
+        if fl_ok != g_ok || (fl_ok && fl_dst != g_dst) {
+            diffs.push(format!(
+                "input={input:?} -> fl=(rc={fl_rc}, {fl_dst:02x?}) glibc=(rc={g_rc}, {g_dst:02x?})"
+            ));
+            if diffs.len() >= 60 {
+                break;
+            }
+        }
+    }
+    eprintln!("inet_aton live diff: {checked} comparisons, {} divergence(s)", diffs.len());
+    assert!(
+        diffs.is_empty(),
+        "inet_aton diverges from glibc in {} case(s):\n{}",
+        diffs.len(),
+        diffs.join("\n")
+    );
+}
