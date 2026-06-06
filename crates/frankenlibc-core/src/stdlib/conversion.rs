@@ -892,25 +892,47 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
         // before the `has_digits` check, so `i - 1` is not reliable there.
         let zero_end = i - 1;
 
-        // Parse integer part of hex significand
-        let mut significand: f64 = 0.0;
-        let mut has_digits = false;
-
-        while i < slice.len() && slice[i].is_ascii_hexdigit() {
-            has_digits = true;
-            significand = significand * 16.0 + hex_digit_val(slice[i]) as f64;
-            i += 1;
-        }
-
-        // Parse fractional part
+        // Parse the hex significand (integer then optional fractional part) into
+        // an exact u128 mantissa rather than an f64 accumulator: the old
+        // `significand * 16.0 + digit` rounded at EVERY step, so a significand
+        // wider than 53 bits (> ~13 hex digits) lost precision and the final
+        // value was off by up to 1 ULP vs glibc. A u128 holds 32 hex digits
+        // (128 bits) exactly; further low digits only set the sticky bit (they
+        // sit below the mantissa LSB). The single rounding then happens in the
+        // correctly-rounded `u128 as f64` conversion below.
+        let mut mantissa: u128 = 0;
+        let mut sticky = false;
+        let mut int_overflow_shift: i32 = 0;
         let mut frac_hex_digits: i32 = 0;
-        if i < slice.len() && slice[i] == b'.' {
-            i += 1;
-            while i < slice.len() && slice[i].is_ascii_hexdigit() {
+        let mut has_digits = false;
+        let mut in_frac = false;
+
+        loop {
+            if i < slice.len() && slice[i].is_ascii_hexdigit() {
                 has_digits = true;
-                frac_hex_digits = frac_hex_digits.saturating_add(1);
-                significand = significand * 16.0 + hex_digit_val(slice[i]) as f64;
+                let d = hex_digit_val(slice[i]) as u128;
+                if mantissa < (1u128 << 124) {
+                    mantissa = (mantissa << 4) | d;
+                    if in_frac {
+                        frac_hex_digits = frac_hex_digits.saturating_add(1);
+                    }
+                } else {
+                    // Mantissa is full; this digit is below the representable
+                    // window. Track it as sticky; an integer-part digit still
+                    // scales the magnitude (×16), a fractional one does not.
+                    if d != 0 {
+                        sticky = true;
+                    }
+                    if !in_frac {
+                        int_overflow_shift = int_overflow_shift.saturating_add(4);
+                    }
+                }
                 i += 1;
+            } else if !in_frac && i < slice.len() && slice[i] == b'.' {
+                in_frac = true;
+                i += 1;
+            } else {
+                break;
             }
         }
 
@@ -954,8 +976,17 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
 
         // Each hex fractional digit shifts by 4 binary positions, so adjust.
         // result = significand * 2^(bin_exp - 4 * frac_hex_digits)
-        let effective_exp = bin_exp.saturating_sub(frac_hex_digits.saturating_mul(4));
-        let val = libm::ldexp(significand, effective_exp);
+        // Fold the sticky bit into the mantissa LSB so the `u128 as f64`
+        // round-to-nearest-even sees that low bits were truncated.
+        if sticky {
+            mantissa |= 1;
+        }
+        let effective_exp = bin_exp
+            .saturating_sub(frac_hex_digits.saturating_mul(4))
+            .saturating_add(int_overflow_shift);
+        // `u128 as f64` is correctly rounded; ldexp by a power of two is exact
+        // for normal results (one total rounding).
+        let val = libm::ldexp(mantissa as f64, effective_exp);
 
         let val = if negative { -val } else { val };
         return (val, i);
