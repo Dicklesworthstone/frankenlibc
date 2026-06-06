@@ -691,6 +691,96 @@ impl StdioStream {
         }
     }
 
+    /// Fill `dst` with bytes up to and including the first `delim`, or until
+    /// `dst` is full — whichever comes first — consuming exactly the bytes
+    /// written. Returns `(bytes_written_this_call, outcome)`.
+    ///
+    /// Zero-allocation, length-bounded sibling of [`read_until_delim`]: the bulk
+    /// primitive behind `fgets`, which previously read one byte at a time via
+    /// `buffered_read(1)` — a 1-byte `Vec` allocation per character. Writes
+    /// straight into the caller's destination (e.g. the C `char*`), so a whole
+    /// line copies with zero heap traffic. fd-backed refill is the caller's job
+    /// (signalled by [`ReadUntil::NeedRefill`]); the caller stops once `dst` is
+    /// full regardless of the outcome.
+    pub fn read_into_slice(&mut self, delim: u8, dst: &mut [u8]) -> (usize, ReadUntil) {
+        if dst.is_empty() {
+            return (0, ReadUntil::NeedRefill);
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return (0, ReadUntil::Eof);
+        }
+        self.flags.io_started = true;
+
+        let mut written = 0usize;
+
+        // A pending ungetc byte is logically first (mirrors buffered_read).
+        if let Some(b) = self.ungetc_byte.take() {
+            dst[written] = b;
+            written += 1;
+            if let Some(ref backing) = self.mem_backing {
+                self.offset = backing.position() as i64;
+            } else {
+                self.advance_offset(1);
+            }
+            if b == delim {
+                return (written, ReadUntil::Found);
+            }
+            if written == dst.len() {
+                return (written, ReadUntil::NeedRefill);
+            }
+        }
+
+        let limit = dst.len() - written;
+
+        if self.mem_backing.is_some() {
+            let backing = self.mem_backing.as_mut().expect("mem_backing present");
+            let rem = backing.peek();
+            let rem_len = rem.len();
+            if rem_len == 0 {
+                return (written, ReadUntil::Eof);
+            }
+            let scan_len = rem_len.min(limit);
+            let (n, found) = match rem[..scan_len].iter().position(|&b| b == delim) {
+                Some(k) => (k + 1, true),
+                None => (scan_len, false),
+            };
+            dst[written..written + n].copy_from_slice(&rem[..n]);
+            backing.consume(n);
+            self.offset = backing.position() as i64;
+            written += n;
+            let outcome = if found {
+                ReadUntil::Found
+            } else if n < rem_len {
+                // Stopped at the destination limit; bytes remain in the backing.
+                ReadUntil::NeedRefill
+            } else {
+                ReadUntil::Eof
+            };
+            (written, outcome)
+        } else {
+            let buffered = self.buffer.peek();
+            if buffered.is_empty() {
+                return (written, ReadUntil::NeedRefill);
+            }
+            let scan_len = buffered.len().min(limit);
+            let (n, found) = match buffered[..scan_len].iter().position(|&b| b == delim) {
+                Some(k) => (k + 1, true),
+                None => (scan_len, false),
+            };
+            dst[written..written + n].copy_from_slice(&buffered[..n]);
+            self.buffer.consume(n);
+            self.advance_offset(n);
+            written += n;
+            let outcome = if found {
+                ReadUntil::Found
+            } else {
+                ReadUntil::NeedRefill
+            };
+            (written, outcome)
+        }
+    }
+
     /// Fill the read buffer with externally-fetched data.
     /// Returns the number of bytes actually buffered.
     pub fn fill_read_buffer(&mut self, data: &[u8]) -> usize {

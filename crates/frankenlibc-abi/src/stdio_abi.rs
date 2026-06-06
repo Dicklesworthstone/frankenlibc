@@ -1923,59 +1923,68 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         return buf;
     }
 
+    // Fill the destination under the SINGLE registry lock + policy decision
+    // taken above, scanning the stream buffer for '\n' with read_into_slice
+    // instead of calling buffered_read(1) — which allocates a 1-byte Vec — once
+    // per character. read_into_slice writes straight into the C buffer (zero
+    // heap traffic); the ABI layer owns descriptor refill since the membrane
+    // policy and sys_read_fd live here.
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
     let mut written = 0usize;
     let mut had_error = false;
     while written < max {
-        // Try one byte from buffer.
-        let data = s.buffered_read(1);
-        let byte = if !data.is_empty() {
-            data[0]
-        } else {
-            if s.is_eof() || s.is_error() {
+        let (n, outcome) = s.read_into_slice(b'\n', &mut dst[written..]);
+        written += n;
+        match outcome {
+            ReadUntil::Found => break,
+            ReadUntil::Eof => {
                 if s.is_error() {
                     had_error = true;
                 }
                 break;
             }
-            if s.buffer_capacity() == 0 {
-                let mut b = [0u8; 1];
-                let fd = s.fd();
-                let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
-                if rc > 0 {
-                    s.set_offset(s.offset().saturating_add(1));
-                    b[0]
-                } else {
-                    if rc == 0 {
-                        s.set_eof();
-                    } else {
-                        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                        if e != errno::EINTR {
-                            s.set_error();
-                            had_error = true;
-                        }
-                    }
+            ReadUntil::NeedRefill => {
+                if written >= max {
                     break;
                 }
-            } else {
-                let rc = unsafe { refill_stream(s) };
-                if rc <= 0 {
+                if s.is_eof() || s.is_error() {
                     if s.is_error() {
                         had_error = true;
                     }
                     break;
                 }
-                let data2 = s.buffered_read(1);
-                if data2.is_empty() {
+                if s.buffer_capacity() == 0 {
+                    // Unbuffered fd stream: read a byte directly (matches the
+                    // capacity-0 path; cannot call fgetc/fgetc under the lock).
+                    let mut b = [0u8; 1];
+                    let fd = s.fd();
+                    let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
+                    if rc > 0 {
+                        s.set_offset(s.offset().saturating_add(1));
+                        dst[written] = b[0];
+                        written += 1;
+                        if b[0] == b'\n' {
+                            break;
+                        }
+                    } else {
+                        if rc == 0 {
+                            s.set_eof();
+                        } else {
+                            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                            if e != errno::EINTR {
+                                s.set_error();
+                                had_error = true;
+                            }
+                        }
+                        break;
+                    }
+                } else if unsafe { refill_stream(s) } <= 0 {
+                    if s.is_error() {
+                        had_error = true;
+                    }
                     break;
                 }
-                data2[0]
             }
-        };
-
-        unsafe { *buf.add(written) = byte as c_char };
-        written += 1;
-        if byte == b'\n' {
-            break;
         }
     }
 
