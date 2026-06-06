@@ -2143,17 +2143,22 @@ pub unsafe extern "C" fn mbsrtowcs(
         let k = wchar_core::mbs_ascii_prefix(&mut dst_slice[written..], &src_bytes[i..]);
         i += k;
         written += k;
-        if src_bytes[i] == 0 {
-            if written < dst_slice.len() {
-                dst_slice[written] = 0;
-            }
-            // SAFETY: src is non-null and points to caller-owned pointer storage.
-            unsafe { *src = std::ptr::null() };
-            return written;
-        }
+        // Destination-full is checked BEFORE the terminating NUL: when exactly
+        // `len` wide chars have been produced and the next source byte is the
+        // NUL, glibc treats the stop as len-limited — it returns the count and
+        // leaves *src pointing AT the NUL (one more call needed), rather than
+        // consuming the NUL and nulling *src. Checking NUL first would wrongly
+        // report completion. (bd-2g7oyh.185)
         if written >= dst_slice.len() {
             // SAFETY: src is non-null and points to caller-owned pointer storage.
             unsafe { *src = src_ptr.add(i) };
+            return written;
+        }
+        if src_bytes[i] == 0 {
+            // Room is guaranteed here (written < len), so store the terminator.
+            dst_slice[written] = 0;
+            // SAFETY: src is non-null and points to caller-owned pointer storage.
+            unsafe { *src = std::ptr::null() };
             return written;
         }
         match wchar_core::mbtowc(&src_bytes[i..]) {
@@ -2163,6 +2168,12 @@ pub unsafe extern "C" fn mbsrtowcs(
                 i += used;
             }
             None => {
+                // *src points at the START of the offending multibyte character
+                // (the POSIX-specified position). glibc's exact byte differs in
+                // a len-dependent, internally-inconsistent way on malformed input
+                // (it reports the breaking byte at len==1 but the char start at
+                // len>=2 for the same input) — FrankenLibC stays consistent and
+                // does not mirror that quirk. (bd-2g7oyh.185)
                 // SAFETY: src is non-null and points to caller-owned pointer storage.
                 unsafe { *src = src_ptr.add(i) };
                 // SAFETY: setting thread-local errno through libc ABI helper.
@@ -2249,6 +2260,15 @@ pub unsafe extern "C" fn wcsrtombs(
         written += k;
         if idx >= src_len {
             break;
+        }
+        // Stop when the destination is already full BEFORE evaluating the next
+        // character: glibc reports the len-limit (return count, *src at the next
+        // char) rather than an EILSEQ from a subsequent un-encodable wchar that
+        // would never have been written anyway. (bd-2g7oyh.185)
+        if written >= dst_slice.len() {
+            // SAFETY: src is non-null and points to caller-owned pointer storage.
+            unsafe { *src = src_ptr.add(idx) };
+            return written;
         }
         let wc = src_slice[idx];
         let mut tmp = [0u8; 6];
