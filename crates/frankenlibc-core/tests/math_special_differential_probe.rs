@@ -330,6 +330,7 @@ fn f32_trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
         fn acoshf(x: f32) -> f32;
         fn atanhf(x: f32) -> f32;
         fn logf(x: f32) -> f32;
+        fn log2f(x: f32) -> f32;
         fn log10f(x: f32) -> f32;
         fn log1pf(x: f32) -> f32;
     }
@@ -372,6 +373,17 @@ fn f32_trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
     scan("acoshf", &|x| m::acoshf(x), &|x| unsafe { acoshf(x) }, 1.0, 50.0, 1e-3);
     scan("atanhf", &|x| m::atanhf(x), &|x| unsafe { atanhf(x) }, -0.999, 0.999, 1e-5);
     scan("logf", &|x| m::logf(x), &|x| unsafe { logf(x) }, 1e-6, 1e6, 7.0);
+    scan("log2f", &|x| m::log2f(x), &|x| unsafe { log2f(x) }, 1e-6, 1e6, 7.0);
     scan("log10f", &|x| m::log10f(x), &|x| unsafe { log10f(x) }, 1e-6, 1e6, 7.0);
     scan("log1pf", &|x| m::log1pf(x), &|x| unsafe { log1pf(x) }, -0.9, 50.0, 1e-4);
+    // Dense near-1 sweep: log(x) -> 0 there, so relative accuracy is most
+    // delicate (the f64 log2 kernel switches to its atanh branch for |x-1|<0.15).
+    // Guards the f64-kernel routing of the f32 log family (logf/log2f/log10f).
+    scan("logf_near1", &|x| m::logf(x), &|x| unsafe { logf(x) }, 0.5, 2.0, 1e-5);
+    scan("log2f_near1", &|x| m::log2f(x), &|x| unsafe { log2f(x) }, 0.5, 2.0, 1e-5);
+    scan("log10f_near1", &|x| m::log10f(x), &|x| unsafe { log10f(x) }, 0.5, 2.0, 1e-5);
+    // Sub-1 and large-magnitude spans to exercise the full exponent range.
+    scan("logf_small", &|x| m::logf(x), &|x| unsafe { logf(x) }, 1e-30, 1e-3, 3e-7);
+    scan("log2f_small", &|x| m::log2f(x), &|x| unsafe { log2f(x) }, 1e-30, 1e-3, 3e-7);
+    scan("log10f_small", &|x| m::log10f(x), &|x| unsafe { log10f(x) }, 1e-30, 1e-3, 3e-7);
 }

@@ -56,6 +56,14 @@ pub fn expf(x: f32) -> f32 {
     libm::expf(x)
 }
 
+// NOTE (perf, 2026-06-06): routing this f32 log family through the in-tree f64
+// `log2_kernel` + single `as f32` rounding (the f64-intermediate lever proven for
+// `exp10f`/`expf`) was measured on ts1 and REJECTED. It is accuracy-clean (≤4 ULP
+// vs glibc) but not a perf win: our f64 `log2` kernel runs ~374–405 ns, which is
+// itself ≥ glibc's native f32 `log2f` (~335–369 ns), so widening to f64 cannot beat
+// glibc here. Normalised against the in-run host control, the route is a
+// wash-to-slight-regression. Keep the direct `libm::*f` passthroughs.
+
 #[inline]
 pub fn logf(x: f32) -> f32 {
     libm::logf(x)
