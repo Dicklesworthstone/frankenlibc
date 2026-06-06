@@ -118,6 +118,12 @@ impl ThreadCache {
         cached
     }
 
+    /// Returns whether this magazine can accept a displaced hot-slot object
+    /// while the caller keeps one object outside the magazine for the same bin.
+    pub(crate) fn can_accept_hot_slot_displacement(&self, index: SizeClassIndex) -> bool {
+        self.magazine(index).objects.len() < MAGAZINE_CAPACITY - 1
+    }
+
     /// Returns the total number of cached objects across all magazines.
     pub fn total_cached(&self) -> usize {
         self.total_cached

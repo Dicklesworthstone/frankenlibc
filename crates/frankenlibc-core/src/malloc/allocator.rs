@@ -157,6 +157,10 @@ pub struct MallocState {
     central_bins: Vec<Vec<usize>>,
     /// Direct handoff array for complementary `free`/`malloc` traffic.
     elimination: Arc<EliminationArray<usize, DEFAULT_ELIMINATION_SLOTS>>,
+    /// One-object front slot per size class before the general thread-cache
+    /// magazine. This preserves LIFO order while avoiding Vec traffic for
+    /// one-live-object malloc/free cycles.
+    thread_cache_hot_slots: [Option<usize>; NUM_SIZE_CLASSES],
     /// Thread cache.
     thread_cache: ThreadCache,
     /// Active large-allocation metadata keyed by backend pointer.
@@ -197,6 +201,7 @@ impl MallocState {
         Self {
             central_bins,
             elimination: Arc::new(EliminationArray::new()),
+            thread_cache_hot_slots: [None; NUM_SIZE_CLASSES],
             thread_cache: ThreadCache::new(),
             large_allocations: LargeAllocator::new(),
             large_fast_active: None,
@@ -454,6 +459,23 @@ impl MallocState {
         }
 
         // Try thread cache first
+        if size != HOT_CERT_64_REQUEST_SIZE
+            && let Some(ptr) = self.thread_cache_hot_slots[bin_usize].take()
+        {
+            self.thread_cache_hits += 1;
+            self.track_allocation(size);
+            self.record_lifecycle(
+                AllocatorLogLevel::Trace,
+                "malloc",
+                "alloc",
+                Some(ptr),
+                Some(size),
+                Some(bin_usize),
+                "success",
+                "path=thread_cache",
+            );
+            return Some(ptr);
+        }
         if let Some(ptr) = self.thread_cache.alloc_index(bin) {
             self.thread_cache_hits += 1;
             self.track_allocation(size);
@@ -627,7 +649,13 @@ impl MallocState {
             }
         }
 
-        if self.thread_cache.dealloc_index(bin, ptr) {
+        let cached = if size == HOT_CERT_64_REQUEST_SIZE {
+            self.thread_cache.dealloc_index(bin, ptr)
+        } else {
+            self.cache_small_object(bin, ptr)
+        };
+
+        if cached {
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "free",
@@ -665,6 +693,26 @@ impl MallocState {
                     "success",
                     "path=backend_release",
                 );
+            }
+        }
+    }
+
+    fn cache_small_object(&mut self, bin: SizeClassIndex, ptr: usize) -> bool {
+        let bin_usize = bin.get();
+        match self.thread_cache_hot_slots[bin_usize] {
+            None => {
+                self.thread_cache_hot_slots[bin_usize] = Some(ptr);
+                true
+            }
+            Some(displaced) => {
+                if self.thread_cache.can_accept_hot_slot_displacement(bin) {
+                    let cached = self.thread_cache.dealloc_index(bin, displaced);
+                    debug_assert!(cached);
+                    self.thread_cache_hot_slots[bin_usize] = Some(ptr);
+                    true
+                } else {
+                    false
+                }
             }
         }
     }
@@ -1114,6 +1162,61 @@ mod tests {
     }
 
     #[test]
+    fn hot_slot_lifecycle_record_sha256_is_stable() {
+        let mut state = MallocState::new();
+        state.set_min_log_level(AllocatorLogLevel::Trace);
+        let size = 256;
+        let mut next_ptr = 0x3100_0000usize;
+
+        let ptr = state
+            .malloc(size, |class_size| {
+                next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                Some(next_ptr)
+            })
+            .unwrap();
+        state.free(ptr, size, |_| {});
+        let _ = state.drain_lifecycle_logs();
+
+        let reused_ptr = state
+            .malloc(size, |class_size| {
+                next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                Some(next_ptr)
+            })
+            .unwrap();
+        state.free(reused_ptr, size, |_| {});
+
+        let mut golden = String::new();
+        for record in state.lifecycle_logs() {
+            writeln!(
+                &mut golden,
+                "{},{},{},{:?},{:?},{:?},{},{},{},{},{},{},{},{},{},{}",
+                record.decision_id,
+                record.trace_id,
+                record.symbol,
+                record.event,
+                record.ptr,
+                record.size,
+                record.bin.map_or(NUM_SIZE_CLASSES, |bin| bin),
+                record.outcome,
+                record.details,
+                record.active_count,
+                record.total_allocated,
+                record.thread_cache_hits,
+                record.thread_cache_misses,
+                record.central_bin_hits,
+                record.spills_to_central,
+                record.cache_hit_rate_permille
+            )
+            .expect("writing lifecycle golden row to String must succeed");
+        }
+
+        assert_eq!(
+            hex_lower(&Sha256::digest(golden.as_bytes())),
+            "eca20f7a00fb7f2dc41fcafde6f1d9f7184f585b492b87616dd9ef07e16e2729"
+        );
+    }
+
+    #[test]
     fn test_large_malloc_registers_backend_pointer_metadata() {
         let mut state = MallocState::new();
         let size = size_class::MAX_SMALL_SIZE + 1;
@@ -1272,6 +1375,76 @@ mod tests {
             })
             .unwrap();
         assert!(ptrs.contains(&new_ptr));
+    }
+
+    #[test]
+    fn thread_cache_hot_slot_preserves_lifo_order_and_capacity() {
+        let mut state = MallocState::new();
+        let size = 256;
+        let bin = size_class::small_bin_index(size).expect("256 byte size class");
+        let mut next_ptr = 0x8000_0000usize;
+        let mut backend_calls = 0usize;
+        let mut ptrs = Vec::new();
+
+        for _ in 0..=crate::malloc::thread_cache::MAGAZINE_CAPACITY {
+            ptrs.push(
+                state
+                    .malloc(size, |class_size| {
+                        backend_calls += 1;
+                        next_ptr = next_ptr.wrapping_add(class_size.max(1));
+                        Some(next_ptr)
+                    })
+                    .expect("backend allocation must succeed"),
+            );
+        }
+
+        for &ptr in &ptrs {
+            state.free(ptr, size, |_| {
+                unreachable!(
+                    // ubs:ignore — cache/central-bin path should retain small allocations
+                    "small object should not be released to backend"
+                )
+            });
+        }
+
+        assert_eq!(
+            state.thread_cache_hot_slots[bin.get()],
+            Some(ptrs[crate::malloc::thread_cache::MAGAZINE_CAPACITY - 1])
+        );
+        assert_eq!(
+            state.thread_cache.total_cached(),
+            crate::malloc::thread_cache::MAGAZINE_CAPACITY - 1
+        );
+        assert_eq!(state.central_bin(bin).as_slice(), &ptrs[64..65]);
+
+        for &expected in ptrs[..crate::malloc::thread_cache::MAGAZINE_CAPACITY]
+            .iter()
+            .rev()
+        {
+            let ptr = state
+                .malloc(size, |_| {
+                    unreachable!(
+                        // ubs:ignore — test drains hot slot and existing magazine entries
+                        "thread cache should satisfy the allocation"
+                    )
+                })
+                .expect("thread-cache allocation must succeed");
+            assert_eq!(ptr, expected);
+        }
+
+        let ptr = state
+            .malloc(size, |_| {
+                unreachable!(
+                    // ubs:ignore — central bin spill should satisfy this allocation
+                    "central bin should satisfy the allocation"
+                )
+            })
+            .expect("central-bin allocation must succeed");
+        assert_eq!(ptr, ptrs[crate::malloc::thread_cache::MAGAZINE_CAPACITY]);
+        assert_eq!(
+            backend_calls,
+            crate::malloc::thread_cache::MAGAZINE_CAPACITY + 1
+        );
     }
 
     #[test]
