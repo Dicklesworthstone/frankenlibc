@@ -1478,6 +1478,29 @@ impl<'a> PikeVm<'a> {
             &mut closure,
         );
 
+        // When the NFA has NO position-dependent epsilon assertion (no anchor /
+        // word-boundary anywhere), the closure from pc=0 reaches the SAME Match
+        // set at every start position. Capture it once and replay it below instead
+        // of re-walking the whole closure at each of the n positions — the
+        // closure-heavy `a?…a?b` prescan worst case becomes a flat PC copy.
+        let pos_independent = !self.nfa.iter().any(|i| {
+            matches!(
+                i,
+                NfaInstr::Match(
+                    MatchKind::AnchorStart { .. }
+                        | MatchKind::AnchorEnd { .. }
+                        | MatchKind::WordBoundary { .. }
+                        | MatchKind::WordStart
+                        | MatchKind::WordEnd
+                )
+            )
+        });
+        let start_pcs: Vec<usize> = if pos_independent {
+            current.iter().map(|t| t.pc).collect()
+        } else {
+            Vec::new()
+        };
+
         let mut sp = 0;
         loop {
             *generation += 1;
@@ -1507,17 +1530,32 @@ impl<'a> PikeVm<'a> {
                 return false;
             }
             sp += 1;
-            // Seed a fresh start-thread at the new position into the same set.
-            self.add_thread(
-                &mut next,
-                Thread {
-                    pc: 0,
-                    slots: dummy.clone(),
-                },
-                sp,
-                anchors,
-                &mut closure,
-            );
+            // Seed a fresh start-thread at the new position. For position-
+            // independent patterns, replay the cached start closure (gen-stamped
+            // for dedup against carried threads) instead of re-walking it; the
+            // membership pass ignores thread order, so this is exact.
+            if pos_independent {
+                for &pc in &start_pcs {
+                    if closure.visited[pc] != closure.generation {
+                        closure.visited[pc] = closure.generation;
+                        next.push(Thread {
+                            pc,
+                            slots: dummy.clone(),
+                        });
+                    }
+                }
+            } else {
+                self.add_thread(
+                    &mut next,
+                    Thread {
+                        pc: 0,
+                        slots: dummy.clone(),
+                    },
+                    sp,
+                    anchors,
+                    &mut closure,
+                );
+            }
             core::mem::swap(&mut current, &mut next);
             next.clear();
         }
