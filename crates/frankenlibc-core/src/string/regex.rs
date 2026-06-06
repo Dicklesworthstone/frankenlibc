@@ -1378,8 +1378,21 @@ impl<'a> PikeVm<'a> {
         // prefilter can prune. On a match it early-exits and we fall through to
         // the exact leftmost-longest search below. Sound: any_match reuses
         // add_thread, so it has no false negatives (never skips a real match).
+        // Skip this O(n*m) forward pass whenever a cheaper path will determine the
+        // result: a `literal_prefix` (SIMD memmem/strcasestr jump straight to
+        // occurrences), or a first-byte `prefilter` on a SMALL nfa (the per-start
+        // `run_from` below fails within a few bytes, so no O(n^2) blow-up). Running
+        // the prescan first paid the full per-position thread-seeding cost
+        // (~34 ns/byte → ~140 µs/4 KiB) before ever reaching those fast paths — the
+        // pathological cost on `needle[0-9]+`-style absent searches. It is still
+        // run for no-prefilter patterns and CLOSURE-HEAVY nfas (e.g. `a?…a?b` on
+        // all-'a'), where per-start re-simulation would be O(n^2*m).
         const PRESCAN_MIN_LEN: usize = 256;
-        if input_len > PRESCAN_MIN_LEN
+        const PRESCAN_SMALL_NFA: usize = 64;
+        let cheaper_path = self.literal_prefix.is_some()
+            || (self.prefilter.is_some() && self.nfa.len() < PRESCAN_SMALL_NFA);
+        if !cheaper_path
+            && input_len > PRESCAN_MIN_LEN
             && !self.any_match(notbol, noteol, &mut visited, &mut generation)
         {
             return None;
