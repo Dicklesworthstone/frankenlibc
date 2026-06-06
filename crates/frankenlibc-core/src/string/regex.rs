@@ -1366,7 +1366,7 @@ impl<'a> PikeVm<'a> {
         let input_len = self.input.len();
 
         // Closure-dedup scratch shared across every run_from in this execute:
-        // `visited[pc] == generation` means "already added in the set being built".
+        // `visited[pc] == cur_generation` means "already added in the set being built".
         // `generation` is monotonic (never reset) so a fresh per-build value never
         // collides with a stale stamp — letting us reuse one allocation.
         let mut visited = vec![0u64; self.nfa.len()];
@@ -1418,22 +1418,42 @@ impl<'a> PikeVm<'a> {
             return None;
         }
 
-        // Try each start position (leftmost wins). The prefilter skips starts
-        // whose byte cannot begin a match, avoiding the per-start slot/thread
-        // allocation below — sound because a skipped start could not match.
-        for start in 0..=input_len {
-            if self.prefilter_skips(start) {
-                continue;
+        // Find the leftmost matching START in one merged unanchored sweep
+        // (O(n·m)) instead of probing every start with `run_from` (O(n²·m) when
+        // no prefilter prunes and the match is late — a regex-DoS vector). The
+        // exact captures still come from a single `run_from` at that start, so
+        // the result is identical to the per-start loop below; a debug build
+        // asserts that isomorphism on every input (so the differential fuzz
+        // proves it across 2320 patterns vs glibc).
+        let s_star = self.leftmost_start(notbol, noteol);
+
+        #[cfg(debug_assertions)]
+        {
+            let mut probe = None;
+            for start in 0..=input_len {
+                if self.prefilter_skips(start) {
+                    continue;
+                }
+                let mut slots = vec![-1i32; self.num_slots];
+                slots[0] = start as i32;
+                if self
+                    .run_from(start, &slots, notbol, noteol, &mut visited, &mut generation)
+                    .is_some()
+                {
+                    probe = Some(start);
+                    break;
+                }
             }
-            let mut slots = vec![-1i32; self.num_slots];
-            slots[0] = start as i32; // group 0 start
-            if let Some(matched_slots) =
-                self.run_from(start, &slots, notbol, noteol, &mut visited, &mut generation)
-            {
-                return Some(matched_slots);
-            }
+            debug_assert_eq!(
+                s_star, probe,
+                "leftmost_start disagrees with the per-start run_from probe"
+            );
         }
-        None
+
+        let start = s_star?;
+        let mut slots = vec![-1i32; self.num_slots];
+        slots[0] = start as i32; // group 0 start
+        self.run_from(start, &slots, notbol, noteol, &mut visited, &mut generation)
     }
 
     /// Membership-only single forward pass: does ANY match exist? Seeds a
@@ -1726,6 +1746,173 @@ impl<'a> PikeVm<'a> {
         }
     }
 
+    /// Epsilon-closure for the leftmost-start finder: walk Split/Jump/Save and
+    /// the zero-width assertions from `pc` (carrying `start`), pushing each
+    /// reachable consuming-`Match` / `Accept` PC paired with `start` onto `list`.
+    /// Mirrors `add_thread_inner` exactly — same anchor helpers, same `Save`
+    /// skip, same depth guard — but tracks only the thread's START position
+    /// (captures are irrelevant; they come from `run_from` at the chosen start).
+    /// `visited[pc] == cur_gen` dedups within one position; because entries are
+    /// closed in start-ascending priority order, the first (smallest) start to
+    /// reach a PC wins, so the recorded start is the minimum.
+    #[allow(clippy::too_many_arguments)]
+    fn lm_closure(
+        &self,
+        pc: usize,
+        start: usize,
+        sp: usize,
+        notbol: bool,
+        noteol: bool,
+        list: &mut Vec<(usize, usize)>,
+        visited: &mut [u64],
+        cur_gen: u64,
+        depth: usize,
+    ) {
+        if depth > Self::ADD_THREAD_MAX_DEPTH || pc >= self.nfa.len() {
+            return;
+        }
+        if visited[pc] == cur_gen {
+            return;
+        }
+        visited[pc] = cur_gen;
+        match &self.nfa[pc] {
+            NfaInstr::Split(a, b) => {
+                self.lm_closure(*a, start, sp, notbol, noteol, list, visited, cur_gen, depth + 1);
+                self.lm_closure(*b, start, sp, notbol, noteol, list, visited, cur_gen, depth + 1);
+            }
+            NfaInstr::Jump(t) => {
+                self.lm_closure(*t, start, sp, notbol, noteol, list, visited, cur_gen, depth + 1);
+            }
+            NfaInstr::Save(_) => {
+                self.lm_closure(pc + 1, start, sp, notbol, noteol, list, visited, cur_gen, depth + 1);
+            }
+            NfaInstr::Match(mk) => match mk {
+                MatchKind::AnchorStart { newline } => {
+                    if self.check_anchor_start(sp, notbol, *newline) {
+                        self.lm_closure(
+                            pc + 1,
+                            start,
+                            sp,
+                            notbol,
+                            noteol,
+                            list,
+                            visited,
+                            cur_gen,
+                            depth + 1,
+                        );
+                    }
+                }
+                MatchKind::AnchorEnd { newline } => {
+                    if self.check_anchor_end(sp, noteol, *newline) {
+                        self.lm_closure(
+                            pc + 1,
+                            start,
+                            sp,
+                            notbol,
+                            noteol,
+                            list,
+                            visited,
+                            cur_gen,
+                            depth + 1,
+                        );
+                    }
+                }
+                MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd => {
+                    if self.check_word_assertion(mk, sp) {
+                        self.lm_closure(
+                            pc + 1,
+                            start,
+                            sp,
+                            notbol,
+                            noteol,
+                            list,
+                            visited,
+                            cur_gen,
+                            depth + 1,
+                        );
+                    }
+                }
+                _ => list.push((pc, start)),
+            },
+            NfaInstr::Accept => list.push((pc, start)),
+        }
+    }
+
+    /// Find the leftmost START position at which the pattern matches, in a
+    /// SINGLE unanchored NFA sweep that merges all start positions (deduped),
+    /// instead of the per-start `run_from` probe loop. This is the leftmost
+    /// match-start that `execute`'s `for start in 0..=len` loop would return —
+    /// proven by an isomorphism `debug_assert` there — but in O(n·m) worst case
+    /// rather than O(n²·m): every (pc, position) state is processed once across
+    /// all starts. Threads carry their start; on `Accept` the smallest start
+    /// wins. Pruning threads whose start exceeds the best, and returning as soon
+    /// as no live thread can start earlier, keeps early/short matches O(match).
+    fn leftmost_start(&self, notbol: bool, noteol: bool) -> Option<usize> {
+        let input_len = self.input.len();
+        let mut visited = vec![0u64; self.nfa.len()];
+        let mut cur_gen = 0u64;
+        let mut current: Vec<(usize, usize)> = Vec::new();
+        let mut next: Vec<(usize, usize)> = Vec::new();
+        let mut best: Option<usize> = None;
+
+        cur_gen += 1;
+        self.lm_closure(0, 0, 0, notbol, noteol, &mut current, &mut visited, cur_gen, 0);
+
+        let mut sp = 0;
+        loop {
+            cur_gen += 1;
+            for &(pc, start) in current.iter() {
+                // A thread that starts at or after the best-known start cannot
+                // lower it (and `> best` could never win leftmost), so skip it.
+                if best.is_some_and(|b| start >= b) {
+                    continue;
+                }
+                match &self.nfa[pc] {
+                    NfaInstr::Accept => {
+                        best = Some(best.map_or(start, |b| b.min(start)));
+                    }
+                    NfaInstr::Match(mk)
+                        if sp < input_len && self.matches_byte(mk, self.input[sp]) =>
+                    {
+                        self.lm_closure(
+                            pc + 1,
+                            start,
+                            sp + 1,
+                            notbol,
+                            noteol,
+                            &mut next,
+                            &mut visited,
+                            cur_gen,
+                            0,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if sp >= input_len {
+                return best;
+            }
+            sp += 1;
+            // Seed a fresh start at the new position only if it could still beat
+            // the best-known start (a later start can never be more leftmost).
+            if best.map_or(true, |b| sp < b) {
+                self.lm_closure(0, sp, sp, notbol, noteol, &mut next, &mut visited, cur_gen, 0);
+            }
+            core::mem::swap(&mut current, &mut next);
+            next.clear();
+            // `best` is final once no live thread can start earlier AND no later
+            // seed could either (reseeding stops once `sp >= best`). Until then
+            // the sweep must continue even when `current` is momentarily empty:
+            // a fresh start seeded at a later position may still match (e.g.
+            // `^world` only becomes viable just after the newline).
+            if let Some(b) = best {
+                if sp >= b && !current.iter().any(|&(_, s)| s < b) {
+                    return Some(b);
+                }
+            }
+        }
+    }
+
     fn run_from(
         &self,
         start: usize,
@@ -1843,7 +2030,7 @@ impl<'a> PikeVm<'a> {
         }
 
         // Avoid revisiting the same PC during this closure (thread priority:
-        // first wins for POSIX). `visited[pc] == generation` marks "already added in
+        // first wins for POSIX). `visited[pc] == cur_generation` marks "already added in
         // the set currently being built"; `generation` is monotonic across the whole
         // execute(), so a stale stamp from an earlier set never collides. This
         // is an O(1) replacement for the prior O(set-size) linear scan and also
