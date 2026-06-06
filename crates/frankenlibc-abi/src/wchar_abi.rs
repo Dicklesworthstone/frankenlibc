@@ -2409,7 +2409,7 @@ pub unsafe extern "C" fn wcstod(
     // SAFETY: bounded by measured wide-string length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
     let projected = project_wide_ascii(slice);
-    let (value, consumed) = frankenlibc_core::stdlib::conversion::strtod_impl(&projected);
+    let (value, consumed, _) = frankenlibc_core::stdlib::conversion::strtod_impl(&projected);
 
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by projected input length.

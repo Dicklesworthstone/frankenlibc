@@ -1958,7 +1958,8 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         return 0.0;
     };
     let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
-    let (val, consumed) = frankenlibc_core::stdlib::strtod(slice);
+    let (val, consumed, exact_subnormal) =
+        frankenlibc_core::stdlib::conversion::strtod_impl(slice);
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }
@@ -1967,11 +1968,14 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
     // on underflow set errno=ERANGE and return a value at most as
     // large in magnitude as DBL_MIN. Detect both from the parsed
     // result + the consumed prefix and set errno accordingly.
-    // (CONFORMANCE: stdlib.h numeric diff matrix.)
+    // An EXACTLY-representable subnormal is NOT underflow (glibc raises ERANGE
+    // only for inexact underflow), so the parser's `exact_subnormal` flag
+    // suppresses the false positive. (bd-2g7oyh.187, CONFORMANCE: numeric diff)
     if consumed > 0 {
         let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
         let overflowed = val.is_infinite() && !contains_inf_literal(consumed_bytes);
-        let underflowed = finite_float_underflowed_f64(val, consumed_bytes);
+        let underflowed =
+            !exact_subnormal && finite_float_underflowed_f64(val, consumed_bytes);
         if overflowed || underflowed {
             unsafe { set_abi_errno(libc::ERANGE) };
         }

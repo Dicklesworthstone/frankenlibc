@@ -86,23 +86,21 @@ fn f_fl(c: &CString) -> FOut {
     }
 }
 
-/// A subnormal (tiny, nonzero) f64 result — the ERANGE-underflow boundary where
-/// glibc sets ERANGE only for INEXACT subnormals while FrankenLibC's heuristic
-/// flags all of them (over-sets for the rare EXACT subnormal, e.g. `0x1p-1074`).
-/// Tracked in bd-2g7oyh.187; value+endptr are still compared there, just not
-/// the errno flag.
-fn d_subnormal(o: &DOut) -> bool {
-    !o.is_nan && o.bits & 0x7ff0_0000_0000_0000 == 0 && o.bits & 0x000f_ffff_ffff_ffff != 0
-}
+/// A subnormal (tiny, nonzero) f32 result. strtof still over-sets ERANGE for the
+/// rare EXACT f32 subnormal (e.g. `strtof("0x1p-149")`) — glibc sets ERANGE only
+/// for inexact underflow. The f64 case is fixed (bd-2g7oyh.187); the strtof
+/// (f32) case needs an f32-level exactness flag and remains tracked, so the
+/// probe still compares value+endptr there but not the errno flag.
 fn f_subnormal(o: &FOut) -> bool {
     !o.is_nan && o.bits & 0x7f80_0000 == 0 && o.bits & 0x007f_ffff != 0
 }
 
 /// Equality with NaN normalised (payload/sign unspecified by C).
+/// strtod ERANGE is now asserted at the subnormal boundary too (exact subnormals
+/// no longer over-set it — bd-2g7oyh.187 fixed for f64).
 fn d_eq(a: &DOut, b: &DOut) -> bool {
-    let erange_ok = a.erange == b.erange || d_subnormal(a) || d_subnormal(b);
     a.off == b.off
-        && erange_ok
+        && a.erange == b.erange
         && if a.is_nan || b.is_nan {
             a.is_nan == b.is_nan
         } else {

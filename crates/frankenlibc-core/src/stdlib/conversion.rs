@@ -813,7 +813,11 @@ fn hex_digit_val(c: u8) -> u8 {
 /// Parses a floating-point number from a NUL-terminated byte slice.
 ///
 /// Returns `(value, bytes_consumed)`. On failure, returns `(0.0, 0)`.
-pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
+/// Parse a double, returning `(value, bytes_consumed, exact_subnormal)`. The
+/// third field is `true` only when the result is a nonzero subnormal that is
+/// EXACTLY representable (no rounding) — the ABI uses it to avoid raising the
+/// spurious `ERANGE` glibc does not raise for exact subnormals. (bd-2g7oyh.187)
+pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
     let len = crate::string::strlen(s);
     let slice = &s[..len];
 
@@ -822,7 +826,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
         i += 1;
     }
     if i >= slice.len() {
-        return (0.0, 0);
+        return (0.0, 0, false);
     }
 
     // Try to parse using core::str::parse on the valid ASCII portion.
@@ -845,7 +849,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
             if i + 5 <= slice.len() && slice[i..i + 5].eq_ignore_ascii_case(b"inity") {
                 i += 5;
             }
-            return (special_sign * f64::INFINITY, i);
+            return (special_sign * f64::INFINITY, i, false);
         }
         if word.eq_ignore_ascii_case(b"nan") {
             i += 3;
@@ -874,7 +878,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
             } else {
                 f64::NAN
             };
-            return (nan, i);
+            return (nan, i, false);
         }
     }
 
@@ -941,7 +945,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
             // decimal number. Rewind to just past the leading '0' so the
             // consumed count covers only that '0' (and any sign/whitespace),
             // not the 'x'/'X' or a following '.'.
-            return (0.0, zero_end);
+            return (0.0, zero_end, false);
         }
 
         // Parse binary exponent (p/P followed by optional sign and decimal digits)
@@ -976,20 +980,34 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
 
         // Each hex fractional digit shifts by 4 binary positions, so adjust.
         // result = significand * 2^(bin_exp - 4 * frac_hex_digits)
+        let effective_exp = bin_exp
+            .saturating_sub(frac_hex_digits.saturating_mul(4))
+            .saturating_add(int_overflow_shift);
+        // Lowest set bit position of the true value (mantissa * 2^effective_exp),
+        // captured BEFORE the sticky fold below — used to tell an EXACT subnormal
+        // (all bits at or above 2^-1074) from an inexact one for the ERANGE
+        // underflow decision. (bd-2g7oyh.187)
+        let lowest_bit_pos = if mantissa == 0 {
+            i32::MAX
+        } else {
+            effective_exp.saturating_add(mantissa.trailing_zeros() as i32)
+        };
         // Fold the sticky bit into the mantissa LSB so the `u128 as f64`
         // round-to-nearest-even sees that low bits were truncated.
         if sticky {
             mantissa |= 1;
         }
-        let effective_exp = bin_exp
-            .saturating_sub(frac_hex_digits.saturating_mul(4))
-            .saturating_add(int_overflow_shift);
         // `u128 as f64` is correctly rounded; ldexp by a power of two is exact
         // for normal results (one total rounding).
         let val = libm::ldexp(mantissa as f64, effective_exp);
 
         let val = if negative { -val } else { val };
-        return (val, i);
+        // A nonzero subnormal result with no truncated/below-2^-1074 bits is an
+        // EXACT subnormal: glibc does NOT raise ERANGE for it (only inexact
+        // underflow sets ERANGE).
+        let exact_subnormal =
+            val != 0.0 && val.abs() < f64::MIN_POSITIVE && !sticky && lowest_bit_pos >= -1074;
+        return (val, i, exact_subnormal);
     }
 
     // Decimal float path
@@ -1007,7 +1025,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
         }
     }
     if !has_digits {
-        return (0.0, 0);
+        return (0.0, 0, false);
     }
     // Exponent
     if i < slice.len() && (slice[i] == b'e' || slice[i] == b'E') {
@@ -1028,14 +1046,15 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
 
     let num_str = core::str::from_utf8(&slice[start..i]).unwrap_or("");
     match num_str.parse::<f64>() {
-        Ok(val) => (val, i),
-        Err(_) => (0.0, 0),
+        Ok(val) => (val, i, false),
+        Err(_) => (0.0, 0, false),
     }
 }
 
 /// C `strtod` -- parse double from string, returns (value, bytes_consumed).
 pub fn strtod(s: &[u8]) -> (f64, usize) {
-    strtod_impl(s)
+    let (v, c, _) = strtod_impl(s);
+    (v, c)
 }
 
 fn parse_decimal_f32_prefix(slice: &[u8], consumed: usize) -> Option<f32> {
@@ -1075,7 +1094,7 @@ fn parse_decimal_f32_prefix(slice: &[u8], consumed: usize) -> Option<f32> {
 /// Decimal inputs must round directly to `f32`; parsing through `f64` first can
 /// double-round halfway cases and drift from libc.
 pub fn strtof_impl(s: &[u8]) -> (f32, usize) {
-    let (wide, consumed) = strtod_impl(s);
+    let (wide, consumed, _) = strtod_impl(s);
     if consumed == 0 {
         return (wide as f32, consumed);
     }
