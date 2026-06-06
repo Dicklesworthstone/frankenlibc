@@ -305,11 +305,13 @@ fn pow_medium_log2_exp2_fast_path(base: f64, exponent: f64) -> Option<f64> {
     if (EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&base)
         && (POW_MEDIUM_EXP_MIN..=POW_MEDIUM_EXP_MAX).contains(&exponent)
     {
-        // Stays on libm::log2 (correctly rounded): pow's 4-ULP contract is tighter
-        // than log2's (the exponent amplifies log2's error), and routing through a
-        // dd-lite `log2_kernel` hi/lo measured ~10% SLOWER (the two_prod/two_sum
-        // finalization overhead exceeds the kernel's savings while exp2 stays an
-        // external call). A real pow win needs a fully fused log2+exp2 (bd-e4jb7k).
+        // Stays on libm::log2 (correctly rounded). Routing through the in-tree
+        // dd-lite log2 hi/lo was measured ~10% SLOWER on the real pow benchmark
+        // across two independent sessions: although the kernel is cheaper than
+        // libm::log2 in isolation, inlining its 64-entry table + the (hi,lo)·y
+        // finalization into pow() bloats the hot function (i-cache / register
+        // pressure / reduced inlining) while exp2 stays an external call. A real
+        // pow win needs a fully fused log2+exp2 single routine (bd-e4jb7k).
         Some(libm::exp2(exponent * libm::log2(base)))
     } else {
         None
