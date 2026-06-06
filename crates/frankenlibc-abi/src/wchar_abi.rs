@@ -2044,8 +2044,7 @@ pub unsafe extern "C" fn mbrtowc(
 
     // SAFETY: caller guarantees `s` points to at least `n` bytes.
     let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, n) };
-    let first = bytes[0];
-    if first == 0 {
+    if bytes[0] == 0 {
         if !pwc.is_null() {
             // SAFETY: pwc is caller-provided out pointer.
             unsafe { *pwc = 0 };
@@ -2053,37 +2052,20 @@ pub unsafe extern "C" fn mbrtowc(
         return 0;
     }
 
-    let expected_len = if first < 0x80 {
-        1
-    } else if first & 0xE0 == 0xC0 {
-        2
-    } else if first & 0xF0 == 0xE0 {
-        3
-    } else if first & 0xF8 == 0xF0 {
-        4
-    } else if first & 0xFC == 0xF8 {
-        5
-    } else if first & 0xFE == 0xFC {
-        6
-    } else {
-        // SAFETY: setting thread-local errno through libc ABI helper.
-        unsafe { set_abi_errno(libc::EILSEQ) };
-        return usize::MAX;
-    };
-
-    if n < expected_len {
-        return MB_INCOMPLETE;
-    }
-
-    match wchar_core::mbtowc(&bytes[..expected_len]) {
-        Some((wc, used)) => {
+    // RFC 3629-strict decode. The step decoder distinguishes a truncated-but-
+    // valid prefix (`Incomplete` → (size_t)-2) from a malformed sequence
+    // (`Invalid` → EILSEQ), matching glibc — the old length-only check returned
+    // -2 for already-invalid input where glibc returns EILSEQ.
+    match wchar_core::utf8_decode_step(bytes) {
+        wchar_core::Utf8Step::Char { wc, len } => {
             if !pwc.is_null() {
                 // SAFETY: pwc is caller-provided out pointer.
                 unsafe { *pwc = wc as libc::wchar_t };
             }
-            used
+            len
         }
-        None => {
+        wchar_core::Utf8Step::Incomplete => MB_INCOMPLETE,
+        wchar_core::Utf8Step::Invalid => {
             // SAFETY: setting thread-local errno through libc ABI helper.
             unsafe { set_abi_errno(libc::EILSEQ) };
             usize::MAX
@@ -2763,11 +2745,10 @@ pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
         3
     } else if bytes[0] & 0xF8 == 0xF0 {
         4
-    } else if bytes[0] & 0xFC == 0xF8 {
-        5
-    } else if bytes[0] & 0xFE == 0xFC {
-        6
     } else {
+        // 0xC0/0xC1 and 0xF5..=0xFF would also be caught by the RFC 3629 decode
+        // below, but 5/6-byte lead bytes (0xF8..=0xFD) are never valid UTF-8 —
+        // reject them at the lead instead of reading phantom continuation bytes.
         // SAFETY: thread-local errno update.
         unsafe { set_abi_errno(libc::EILSEQ) };
         return WEOF_VALUE;

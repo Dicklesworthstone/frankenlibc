@@ -76,46 +76,78 @@ pub fn decode_utf8_lossy(bytes: &[u8]) -> (u32, usize) {
     }
 }
 
-/// Decode one UTF-8 character from `src`, returning `(wchar, bytes_consumed)`.
+/// Outcome of decoding one UTF-8 character from a byte prefix.
 ///
-/// Returns `None` on invalid or incomplete sequence, or if `src` is empty.
-pub fn mbtowc(src: &[u8]) -> Option<(u32, usize)> {
-    if src.is_empty() {
-        return None;
-    }
-    let b0 = src[0];
-    if b0 < 0x80 {
-        return Some((b0 as u32, 1));
-    }
-    // glibc's UTF-8 gconv module decodes the historical RFC 2279 form:
-    // sequences of 1-6 bytes encoding code points through U+7FFFFFFF.
-    // Lead bytes 0xFE and 0xFF are always invalid. We match that exactly
-    // (verified against host glibc C.UTF-8/en_US.UTF-8), including the
-    // acceptance of 4-byte sequences above U+10FFFF and 5/6-byte forms.
-    let (expected_len, mut wc) = if b0 & 0xE0 == 0xC0 {
-        (2, (b0 & 0x1F) as u32)
-    } else if b0 & 0xF0 == 0xE0 {
-        (3, (b0 & 0x0F) as u32)
-    } else if b0 & 0xF8 == 0xF0 {
-        (4, (b0 & 0x07) as u32)
-    } else if b0 & 0xFC == 0xF8 {
-        (5, (b0 & 0x03) as u32)
-    } else if b0 & 0xFE == 0xFC {
-        (6, (b0 & 0x01) as u32)
-    } else {
-        return None; // invalid lead byte (continuation, 0xFE, or 0xFF)
+/// Distinguishes a well-formed character, a valid-but-truncated prefix
+/// (caller should supply more bytes), and a malformed sequence — matching the
+/// three glibc `mbrtowc` return sentinels (count / `(size_t)-2` / `(size_t)-1`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Utf8Step {
+    /// A complete character of `wc` consuming `len` bytes.
+    Char { wc: u32, len: usize },
+    /// The available bytes are a valid prefix but the sequence is truncated.
+    Incomplete,
+    /// The available bytes cannot begin (or continue) a valid sequence.
+    Invalid,
+}
+
+/// Decode one UTF-8 character per RFC 3629 + the Unicode "well-formed UTF-8"
+/// byte-sequence table (Table 3-7), matching glibc's UTF-8 converter:
+///
+/// * 1–4 byte sequences only (lead bytes `0xC0`/`0xC1` and `0xF5`–`0xFF` are
+///   never valid);
+/// * the lead-byte-specific range on the *second* byte rejects overlong forms,
+///   UTF-16 surrogates (`U+D800`–`U+DFFF`), and code points above `U+10FFFF`
+///   without a separate post-decode check;
+/// * a byte that is present but out of range is `Invalid` immediately — only a
+///   valid-so-far truncated prefix is `Incomplete` (this is the distinction the
+///   old length-only check got wrong, returning `Incomplete` for already-bad
+///   input where glibc returns `EILSEQ`).
+pub fn utf8_decode_step(bytes: &[u8]) -> Utf8Step {
+    let Some(&b0) = bytes.first() else {
+        return Utf8Step::Incomplete;
     };
-    if src.len() < expected_len {
-        return None; // incomplete sequence
+    if b0 < 0x80 {
+        return Utf8Step::Char {
+            wc: b0 as u32,
+            len: 1,
+        };
     }
-    for &b in src.iter().take(expected_len).skip(1) {
+    // Lead-byte length (matching glibc's UTF-8 converter, empirically verified
+    // by `mbrtowc_differential_probe`): 0xC0/0xC1 and 0xFE/0xFF are rejected at
+    // the lead (always overlong / never valid), but 0xF8..=0xFD ARE accepted as
+    // 5/6-byte lead bytes here — glibc defers their rejection to the completed
+    // sequence, so a lone such byte is `Incomplete`, not `Invalid`.
+    let len = match b0 {
+        0xC2..=0xDF => 2usize,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        0xF8..=0xFB => 5,
+        0xFC..=0xFD => 6,
+        _ => return Utf8Step::Invalid, // continuation byte, 0xC0, 0xC1, 0xFE, 0xFF
+    };
+    // glibc's incremental check is a PLAIN continuation test (0x80..=0xBF) on the
+    // bytes present; the lead-specific overlong/surrogate ranges are enforced
+    // only once the whole sequence is in hand. A present byte that is not a
+    // continuation is `Invalid` immediately; a valid-but-short prefix is
+    // `Incomplete`.
+    let avail = bytes.len().min(len);
+    for &b in &bytes[1..avail] {
         if b & 0xC0 != 0x80 {
-            return None; // invalid continuation byte
+            return Utf8Step::Invalid;
         }
+    }
+    if bytes.len() < len {
+        return Utf8Step::Incomplete;
+    }
+    let mut wc = (b0 as u32) & (0x7F >> len);
+    for &b in &bytes[1..len] {
         wc = (wc << 6) | (b & 0x3F) as u32;
     }
-    // Reject overlong encodings: each length has a minimum code point.
-    let min = match expected_len {
+    // Reject overlong encodings (each length has a minimum code point) and
+    // UTF-16 surrogates, matching glibc. No U+10FFFF / U+7FFFFFFF cap beyond the
+    // lead-byte length, also matching glibc's converter.
+    let min: u32 = match len {
         2 => 0x80,
         3 => 0x800,
         4 => 0x1_0000,
@@ -123,15 +155,21 @@ pub fn mbtowc(src: &[u8]) -> Option<(u32, usize)> {
         6 => 0x400_0000,
         _ => unreachable!(),
     };
-    if wc < min {
-        return None;
+    if wc < min || (0xD800..=0xDFFF).contains(&wc) {
+        return Utf8Step::Invalid;
     }
-    // Reject UTF-16 surrogate code points; glibc rejects them in UTF-8.
-    // No U+10FFFF cap: glibc accepts up to U+7FFFFFFF (the 6-byte max).
-    if (0xD800..=0xDFFF).contains(&wc) {
-        return None;
+    Utf8Step::Char { wc, len }
+}
+
+/// Decode one UTF-8 character from `src`, returning `(wchar, bytes_consumed)`.
+///
+/// Returns `None` on an invalid or incomplete sequence, or if `src` is empty.
+/// RFC 3629-strict (see [`utf8_decode_step`]).
+pub fn mbtowc(src: &[u8]) -> Option<(u32, usize)> {
+    match utf8_decode_step(src) {
+        Utf8Step::Char { wc, len } => Some((wc, len)),
+        Utf8Step::Incomplete | Utf8Step::Invalid => None,
     }
-    Some((wc, expected_len))
 }
 
 /// Encode one wide character to UTF-8, writing into `dest`.
