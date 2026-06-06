@@ -4148,8 +4148,18 @@ pub unsafe extern "C" fn mbsnrtowcs(
                 consumed += r;
                 s = unsafe { s.add(r) };
             }
+            r if r == usize::MAX - 1 => {
+                // MB_INCOMPLETE: the `nms`-byte source window ends in the middle
+                // of a valid multibyte char. glibc is NOT an error here — it
+                // CONSUMES the remaining window bytes (they carry into *ps as a
+                // partial sequence), advances *src to the nms boundary, and
+                // returns the count of fully converted characters. (bd-2g7oyh.186)
+                unsafe { *src = s.add(remaining) };
+                return written;
+            }
             _ => {
-                // encoding error
+                // genuine encoding error (EILSEQ)
+                unsafe { *src = s };
                 return usize::MAX; // (size_t)-1
             }
         }
@@ -4191,27 +4201,28 @@ pub unsafe extern "C" fn wcsnrtombs(
             return written;
         }
 
-        let ret = unsafe {
-            wcrtomb(
-                if dst.is_null() {
-                    buf.as_mut_ptr() as *mut c_char
-                } else if written + 4 <= len {
-                    dst.add(written)
-                } else {
-                    buf.as_mut_ptr() as *mut c_char
-                },
-                wc,
-                ps,
-            )
-        };
-        if ret == usize::MAX {
-            return usize::MAX;
-        }
-        if !dst.is_null() && written + ret > len {
+        // When the destination is already full, stop BEFORE encoding the next
+        // wide char: glibc reports the len-limit (count + *src at this char)
+        // rather than an EILSEQ from a subsequent un-encodable wchar (e.g. a
+        // surrogate) that would never have been written. (bd-2g7oyh.186)
+        if !dst.is_null() && written >= len {
             break;
         }
-        if !dst.is_null() && written + 4 > len {
-            // We wrote to buf, need to copy
+        // Always encode into the scratch buffer first, then copy only what fits.
+        // (The previous `written + 4 <= len` direct-write assumed a 4-byte max
+        // and could overflow `dst` by up to 2 bytes for a 5/6-byte UTF-8 form —
+        // fl's encoder emits up to MB_CUR_MAX==6 bytes. bd-2g7oyh.186)
+        let ret = unsafe { wcrtomb(buf.as_mut_ptr() as *mut c_char, wc, ps) };
+        if ret == usize::MAX {
+            // un-encodable wide char (EILSEQ): leave *src at the offending char.
+            unsafe { *src = s };
+            return usize::MAX;
+        }
+        if !dst.is_null() {
+            if written + ret > len {
+                break; // the whole character does not fit — never split it
+            }
+            // SAFETY: bounds checked above; copying `ret` bytes within `dst[..len]`.
             unsafe {
                 std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, dst.add(written), ret);
             }
