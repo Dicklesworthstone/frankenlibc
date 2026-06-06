@@ -813,10 +813,13 @@ fn hex_digit_val(c: u8) -> u8 {
 /// Parses a floating-point number from a NUL-terminated byte slice.
 ///
 /// Returns `(value, bytes_consumed)`. On failure, returns `(0.0, 0)`.
-/// Parse a double, returning `(value, bytes_consumed, exact_subnormal)`. The
-/// third field is `true` only when the result is a nonzero subnormal that is
-/// EXACTLY representable (no rounding) — the ABI uses it to avoid raising the
-/// spurious `ERANGE` glibc does not raise for exact subnormals. (bd-2g7oyh.187)
+/// Parse a double, returning `(value, bytes_consumed, exact)`. The third field
+/// is `true` when the result is EXACTLY representable (no rounding occurred) —
+/// the ABI combines it with "is subnormal" to avoid raising the spurious
+/// `ERANGE` glibc does not raise for exact subnormals, and `strtof` uses it to
+/// decide f32 exactness. Currently only the hex path computes it precisely; the
+/// decimal path conservatively returns `false` (decimal subnormals are inexact
+/// in practice, and strtof's decimal branch parses f32 directly). (bd-2g7oyh.187)
 pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
     let len = crate::string::strlen(s);
     let slice = &s[..len];
@@ -983,14 +986,17 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
         let effective_exp = bin_exp
             .saturating_sub(frac_hex_digits.saturating_mul(4))
             .saturating_add(int_overflow_shift);
-        // Lowest set bit position of the true value (mantissa * 2^effective_exp),
-        // captured BEFORE the sticky fold below — used to tell an EXACT subnormal
-        // (all bits at or above 2^-1074) from an inexact one for the ERANGE
-        // underflow decision. (bd-2g7oyh.187)
-        let lowest_bit_pos = if mantissa == 0 {
-            i32::MAX
+        // Bit span of the true value (mantissa * 2^effective_exp), captured
+        // BEFORE the sticky fold below. Used to decide whether the result is
+        // EXACTLY representable in f64 — needed both for the ERANGE underflow
+        // decision (glibc raises ERANGE only for INEXACT underflow) and for
+        // strtof's f32 exactness. (bd-2g7oyh.187)
+        let (lowest_bit_pos, span) = if mantissa == 0 {
+            (i32::MAX, 0)
         } else {
-            effective_exp.saturating_add(mantissa.trailing_zeros() as i32)
+            let lo = effective_exp.saturating_add(mantissa.trailing_zeros() as i32);
+            let hi = effective_exp.saturating_add(127 - mantissa.leading_zeros() as i32);
+            (lo, hi - lo)
         };
         // Fold the sticky bit into the mantissa LSB so the `u128 as f64`
         // round-to-nearest-even sees that low bits were truncated.
@@ -1002,12 +1008,12 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
         let val = libm::ldexp(mantissa as f64, effective_exp);
 
         let val = if negative { -val } else { val };
-        // A nonzero subnormal result with no truncated/below-2^-1074 bits is an
-        // EXACT subnormal: glibc does NOT raise ERANGE for it (only inexact
-        // underflow sets ERANGE).
-        let exact_subnormal =
-            val != 0.0 && val.abs() < f64::MIN_POSITIVE && !sticky && lowest_bit_pos >= -1074;
-        return (val, i, exact_subnormal);
+        // EXACTLY representable iff nothing was truncated (no sticky), it fits
+        // the 53-bit significand (span <= 52), no bit fell below the smallest
+        // subnormal (>= 2^-1074), and it did not overflow to infinity.
+        let exact = mantissa == 0
+            || (!sticky && val.is_finite() && lowest_bit_pos >= -1074 && span <= 52);
+        return (val, i, exact);
     }
 
     // Decimal float path
@@ -1093,24 +1099,36 @@ fn parse_decimal_f32_prefix(slice: &[u8], consumed: usize) -> Option<f32> {
 ///
 /// Decimal inputs must round directly to `f32`; parsing through `f64` first can
 /// double-round halfway cases and drift from libc.
-pub fn strtof_impl(s: &[u8]) -> (f32, usize) {
-    let (wide, consumed, _) = strtod_impl(s);
+pub fn strtof_impl(s: &[u8]) -> (f32, usize, bool) {
+    let (wide, consumed, wide_exact) = strtod_impl(s);
     if consumed == 0 {
-        return (wide as f32, consumed);
+        return (wide as f32, consumed, false);
     }
 
     let len = crate::string::strlen(s);
     let slice = &s[..len];
     if let Some(value) = parse_decimal_f32_prefix(slice, consumed) {
-        return (value, consumed);
+        // Decimal subnormals are inexact in practice (a short decimal almost
+        // never equals an exact f32 subnormal), so no exact-subnormal flag.
+        return (value, consumed, false);
     }
 
-    (wide as f32, consumed)
+    // Hex path: `wide as f32`. The f32 result is an EXACT subnormal iff the f64
+    // parse was lossless AND the f64->f32 narrowing was lossless (`value as f64`
+    // — always exact widening — round-trips to `wide`) AND the result is a
+    // nonzero f32 subnormal. (bd-2g7oyh.187)
+    let value = wide as f32;
+    let exact_subnormal = wide_exact
+        && (value as f64 == wide)
+        && value != 0.0
+        && value.abs() < f32::MIN_POSITIVE;
+    (value, consumed, exact_subnormal)
 }
 
 /// C `strtof` -- parse float from string, returns (value, bytes_consumed).
 pub fn strtof(s: &[u8]) -> (f32, usize) {
-    strtof_impl(s)
+    let (v, c, _) = strtof_impl(s);
+    (v, c)
 }
 
 /// C `atof` -- equivalent to `strtod(s, NULL)`.

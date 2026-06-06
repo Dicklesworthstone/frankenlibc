@@ -86,18 +86,9 @@ fn f_fl(c: &CString) -> FOut {
     }
 }
 
-/// A subnormal (tiny, nonzero) f32 result. strtof still over-sets ERANGE for the
-/// rare EXACT f32 subnormal (e.g. `strtof("0x1p-149")`) — glibc sets ERANGE only
-/// for inexact underflow. The f64 case is fixed (bd-2g7oyh.187); the strtof
-/// (f32) case needs an f32-level exactness flag and remains tracked, so the
-/// probe still compares value+endptr there but not the errno flag.
-fn f_subnormal(o: &FOut) -> bool {
-    !o.is_nan && o.bits & 0x7f80_0000 == 0 && o.bits & 0x007f_ffff != 0
-}
-
-/// Equality with NaN normalised (payload/sign unspecified by C).
-/// strtod ERANGE is now asserted at the subnormal boundary too (exact subnormals
-/// no longer over-set it — bd-2g7oyh.187 fixed for f64).
+/// Equality with NaN normalised (payload/sign unspecified by C). ERANGE is now
+/// asserted at the subnormal boundary for BOTH strtod and strtof — exact
+/// subnormals no longer over-set it (bd-2g7oyh.187 fixed for f64 and f32).
 fn d_eq(a: &DOut, b: &DOut) -> bool {
     a.off == b.off
         && a.erange == b.erange
@@ -108,9 +99,8 @@ fn d_eq(a: &DOut, b: &DOut) -> bool {
         }
 }
 fn f_eq(a: &FOut, b: &FOut) -> bool {
-    let erange_ok = a.erange == b.erange || f_subnormal(a) || f_subnormal(b);
     a.off == b.off
-        && erange_ok
+        && a.erange == b.erange
         && if a.is_nan || b.is_nan {
             a.is_nan == b.is_nan
         } else {
@@ -198,6 +188,8 @@ fn strtod_strtof_live_vs_glibc() {
         // hex
         "0x1p0", "0x1.fffffffffffffp0", "0x1.0000001p0", "0x1p-1074", "0x1p1024",
         "0x1.fffffffffffff8p0",
+        // f32 subnormal boundary (exact vs inexact, for strtof)
+        "0x1p-149", "0x3p-149", "0x1p-150", "0x1.8p-149", "0x1p-126", "0x1p-127",
         // long decimals (rounding / round-half-to-even)
         "9007199254740993", "0.1", "0.2", "0.3", "1.005", "2.5e-324",
         "1234567890123456789012345678901234567890",
