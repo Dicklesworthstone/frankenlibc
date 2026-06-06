@@ -309,3 +309,69 @@ fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
     scan("atanh", &|x| m::atanh(x), &|x| unsafe { atanh(x) }, -0.999, 0.999, 1e-5);
     scan("cbrt", &|x| m::cbrt(x), &|x| unsafe { cbrt(x) }, -100.0, 100.0, 1e-3);
 }
+
+/// Regression guard for the f32 libm-passthrough trig / inverse-trig /
+/// inverse-hyperbolic / cbrt / logf family: each stays within 4 ULP of the host
+/// glibc across its range (incl. moderate large-arg range reduction for sinf).
+/// Mirrors the f64 guard; catches any musl-libm-f32 drift past the contract.
+#[test]
+#[allow(unsafe_code)] // host-glibc oracle (-lm linked by std)
+fn f32_trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
+    use frankenlibc_core::math as m;
+    unsafe extern "C" {
+        fn sinf(x: f32) -> f32;
+        fn cosf(x: f32) -> f32;
+        fn tanf(x: f32) -> f32;
+        fn asinf(x: f32) -> f32;
+        fn acosf(x: f32) -> f32;
+        fn atanf(x: f32) -> f32;
+        fn cbrtf(x: f32) -> f32;
+        fn asinhf(x: f32) -> f32;
+        fn acoshf(x: f32) -> f32;
+        fn atanhf(x: f32) -> f32;
+        fn logf(x: f32) -> f32;
+        fn log10f(x: f32) -> f32;
+        fn log1pf(x: f32) -> f32;
+    }
+    fn ulpf(a: f32, b: f32) -> i64 {
+        if a == b || (a.is_nan() && b.is_nan()) {
+            0
+        } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            i64::MAX
+        } else {
+            (a.to_bits() as i64 - b.to_bits() as i64).abs()
+        }
+    }
+    // Iterate the loop variable in f64 (cast to f32 per call) so a small step
+    // near a large x can never stall on f32 rounding granularity.
+    let scan = |name: &str, fl: &dyn Fn(f32) -> f32, gl: &dyn Fn(f32) -> f32, lo: f64, hi: f64, step: f64| {
+        let mut worst = 0i64;
+        let mut wx = 0.0f32;
+        let mut xd = lo;
+        while xd <= hi {
+            let x = xd as f32;
+            let u = ulpf(fl(x), gl(x));
+            if u > worst {
+                worst = u;
+                wx = x;
+            }
+            xd += step;
+        }
+        assert!(worst <= 4, "{name} drifted {worst} ULP vs glibc at x={wx:e}");
+    };
+
+    scan("sinf", &|x| m::sinf(x), &|x| unsafe { sinf(x) }, -12.0, 12.0, 1e-4);
+    scan("sinf_big", &|x| m::sinf(x), &|x| unsafe { sinf(x) }, 1e4, 1e4 + 4e3, 0.05);
+    scan("cosf", &|x| m::cosf(x), &|x| unsafe { cosf(x) }, -12.0, 12.0, 1e-4);
+    scan("tanf", &|x| m::tanf(x), &|x| unsafe { tanf(x) }, -1.5, 1.5, 1e-5);
+    scan("asinf", &|x| m::asinf(x), &|x| unsafe { asinf(x) }, -1.0, 1.0, 1e-5);
+    scan("acosf", &|x| m::acosf(x), &|x| unsafe { acosf(x) }, -1.0, 1.0, 1e-5);
+    scan("atanf", &|x| m::atanf(x), &|x| unsafe { atanf(x) }, -50.0, 50.0, 1e-3);
+    scan("cbrtf", &|x| m::cbrtf(x), &|x| unsafe { cbrtf(x) }, -100.0, 100.0, 1e-3);
+    scan("asinhf", &|x| m::asinhf(x), &|x| unsafe { asinhf(x) }, -50.0, 50.0, 1e-3);
+    scan("acoshf", &|x| m::acoshf(x), &|x| unsafe { acoshf(x) }, 1.0, 50.0, 1e-3);
+    scan("atanhf", &|x| m::atanhf(x), &|x| unsafe { atanhf(x) }, -0.999, 0.999, 1e-5);
+    scan("logf", &|x| m::logf(x), &|x| unsafe { logf(x) }, 1e-6, 1e6, 7.0);
+    scan("log10f", &|x| m::log10f(x), &|x| unsafe { log10f(x) }, 1e-6, 1e6, 7.0);
+    scan("log1pf", &|x| m::log1pf(x), &|x| unsafe { log1pf(x) }, -0.9, 50.0, 1e-4);
+}
