@@ -5295,6 +5295,103 @@ fn itoa_small(mut n: u32, buf: &mut [u8]) -> usize {
     i
 }
 
+/// Pure-userspace `realpath` resolution, used as a fallback when the primary
+/// `open(O_PATH)` + `readlink(/proc/self/fd/N)` path cannot reach `/proc`
+/// (chroot jails, minimal containers, sandboxes) where glibc still succeeds via
+/// its own userspace readlink loop. (bd-2g7oyh.188)
+///
+/// Resolves `input` to an absolute, symlink-free, `.`/`..`-free path, requiring
+/// every component to exist (glibc semantics). Uses `std::fs` readlink /
+/// symlink_metadata / current_dir, all of which are thin syscall wrappers that
+/// never call back into `realpath`, so there is no interposition recursion.
+/// Returns the resolved bytes or a POSIX errno (`ENOENT`, `ELOOP`, `ENOTDIR`).
+pub fn realpath_resolve_userspace(input: &[u8]) -> Result<Vec<u8>, c_int> {
+    use std::collections::VecDeque;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Component, Path, PathBuf};
+
+    if input.is_empty() {
+        return Err(errno::ENOENT);
+    }
+    const MAX_SYMLINKS: u32 = 40;
+    // A trailing slash (other than the lone "/") requires the target to be a
+    // directory — but `Path::components` drops it, so capture it from the bytes.
+    let trailing_slash = input.last() == Some(&b'/') && input != b"/";
+
+    let collect = |p: &Path, q: &mut VecDeque<Vec<u8>>, front: bool| {
+        // Build component list in order, then push to the requested end.
+        let mut comps: Vec<Vec<u8>> = Vec::new();
+        for c in p.components() {
+            match c {
+                Component::Normal(s) => comps.push(s.as_bytes().to_vec()),
+                Component::ParentDir => comps.push(b"..".to_vec()),
+                Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+            }
+        }
+        if front {
+            for c in comps.into_iter().rev() {
+                q.push_front(c);
+            }
+        } else {
+            for c in comps {
+                q.push_back(c);
+            }
+        }
+    };
+
+    let input_path = Path::new(OsStr::from_bytes(input));
+    let mut queue: VecDeque<Vec<u8>> = VecDeque::new();
+    if !input_path.is_absolute() {
+        let cwd = std::env::current_dir().map_err(|e| e.raw_os_error().unwrap_or(errno::ENOENT))?;
+        collect(&cwd, &mut queue, false);
+    }
+    collect(input_path, &mut queue, false);
+
+    let mut result = PathBuf::from("/");
+    let mut symlinks = 0u32;
+    while let Some(comp) = queue.pop_front() {
+        if comp == b".." {
+            result.pop();
+            continue;
+        }
+        let candidate = result.join(OsStr::from_bytes(&comp));
+        let md = std::fs::symlink_metadata(&candidate)
+            .map_err(|e| e.raw_os_error().unwrap_or(errno::ENOENT))?;
+        let ft = md.file_type();
+        if ft.is_symlink() {
+            symlinks += 1;
+            if symlinks > MAX_SYMLINKS {
+                return Err(errno::ELOOP);
+            }
+            let target =
+                std::fs::read_link(&candidate).map_err(|e| e.raw_os_error().unwrap_or(errno::ENOENT))?;
+            if target.is_absolute() {
+                result = PathBuf::from("/");
+            }
+            collect(target.as_path(), &mut queue, true);
+        } else if ft.is_dir() {
+            result.push(OsStr::from_bytes(&comp));
+        } else {
+            // A non-directory is only valid as the final component.
+            if !queue.is_empty() {
+                return Err(errno::ENOTDIR);
+            }
+            result.push(OsStr::from_bytes(&comp));
+        }
+    }
+
+    if trailing_slash {
+        let md = std::fs::symlink_metadata(&result)
+            .map_err(|e| e.raw_os_error().unwrap_or(errno::ENOENT))?;
+        if !md.file_type().is_dir() {
+            return Err(errno::ENOTDIR);
+        }
+    }
+
+    Ok(result.as_os_str().as_bytes().to_vec())
+}
+
 /// If `resolved_path` is null, allocates a buffer via malloc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn realpath(
@@ -5368,22 +5465,27 @@ pub unsafe extern "C" fn realpath(
     };
     let _ = raw_syscall::sys_close(fd);
 
-    let n = match n {
-        Ok(len) => len,
-        Err(err) => {
-            unsafe { set_abi_errno(err) };
-            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
-            return std::ptr::null_mut();
+    // The O_PATH open above already succeeded, so the path EXISTS. If the
+    // /proc/self/fd readlink could not resolve it (error, or empty result),
+    // /proc is unavailable (chroot / minimal container / sandbox) — fall back to
+    // pure-userspace resolution, which is what glibc does unconditionally.
+    // (bd-2g7oyh.188)
+    let resolved: Vec<u8> = match n {
+        Ok(len) if len > 0 => buf[..len as usize].to_vec(),
+        _ => {
+            let path_bytes = unsafe { std::slice::from_raw_parts(path.cast::<u8>(), _path_len) };
+            match realpath_resolve_userspace(path_bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    unsafe { set_abi_errno(e) };
+                    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+                    return std::ptr::null_mut();
+                }
+            }
         }
     };
 
-    if n <= 0 {
-        unsafe { set_abi_errno(errno::ENOENT) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
-        return std::ptr::null_mut();
-    }
-
-    let out = &buf[..n as usize];
+    let out: &[u8] = &resolved;
     if out.contains(&0) {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);

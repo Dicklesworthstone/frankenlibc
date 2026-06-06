@@ -47,6 +47,23 @@ fn run_fl(path: &CString) -> Out {
     let r = unsafe { fl::realpath(path.as_ptr(), buf.as_mut_ptr() as *mut std::ffi::c_char) };
     finish(r.is_null(), &buf)
 }
+
+/// The pure-userspace fallback path (used when /proc is unavailable), exercised
+/// directly so it is verified against glibc even though /proc IS mounted here.
+fn run_fl_fallback(path: &str) -> Out {
+    match fl::realpath_resolve_userspace(path.as_bytes()) {
+        Ok(bytes) => Out {
+            ok: true,
+            resolved: String::from_utf8_lossy(&bytes).into_owned(),
+            err: 0,
+        },
+        Err(e) => Out {
+            ok: false,
+            resolved: String::new(),
+            err: e,
+        },
+    }
+}
 fn finish(is_null: bool, buf: &[u8]) -> Out {
     if is_null {
         Out {
@@ -106,6 +123,7 @@ fn realpath_matches_host_glibc() {
     ];
 
     let mut divergences: Vec<(String, Out, Out)> = Vec::new();
+    let mut fb_divergences: Vec<(String, Out, Out)> = Vec::new();
     for case in &cases {
         let Ok(c) = CString::new(case.as_str()) else {
             continue;
@@ -113,7 +131,12 @@ fn realpath_matches_host_glibc() {
         let h = run_host(&c);
         let f = run_fl(&c);
         if h != f {
-            divergences.push((case.clone(), h, f));
+            divergences.push((case.clone(), h.clone(), f));
+        }
+        // Verify the pure-userspace fallback (bd-2g7oyh.188) against glibc too.
+        let fb = run_fl_fallback(case);
+        if h != fb {
+            fb_divergences.push((case.clone(), h, fb));
         }
     }
 
@@ -121,12 +144,22 @@ fn realpath_matches_host_glibc() {
 
     assert!(
         divergences.is_empty(),
-        "realpath diverged from host glibc on {}/{} cases:\n{:#?}",
+        "realpath (primary) diverged from host glibc on {}/{} cases:\n{:#?}",
         divergences.len(),
         cases.len(),
         divergences
     );
-    eprintln!("realpath: {} cases, 0 divergences vs host glibc", cases.len());
+    assert!(
+        fb_divergences.is_empty(),
+        "realpath (userspace fallback) diverged from host glibc on {}/{} cases:\n{:#?}",
+        fb_divergences.len(),
+        cases.len(),
+        fb_divergences
+    );
+    eprintln!(
+        "realpath: {} cases, 0 divergences vs host glibc (primary + userspace fallback)",
+        cases.len()
+    );
 }
 
 // silence unused import on platforms where PathBuf isn't otherwise referenced
