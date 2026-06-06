@@ -275,35 +275,34 @@ fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
-    let mut simd_blocks = hs.chunks_exact(MEMCHR_FOLD_BYTES);
-    let mut simd_base = 0usize;
+    let mut base = 0usize;
 
-    for block in simd_blocks.by_ref() {
+    while count - base >= MEMCHR_FOLD_BYTES {
+        let block_end = base + MEMCHR_FOLD_BYTES;
+        let block = &hs[base..block_end];
         if has_byte_memchr_folded(block, needle) {
-            for (panel_index, chunk) in block.chunks_exact(SIMD_LANES).enumerate() {
+            let mut panel_base = base;
+            while panel_base < block_end {
+                let chunk = &hs[panel_base..panel_base + SIMD_LANES];
                 if let Some(j) = first_byte_simd_32(chunk, needle) {
-                    return Some(simd_base + panel_index * SIMD_LANES + j);
+                    return Some(panel_base + j);
                 }
+                panel_base += SIMD_LANES;
             }
         }
-        simd_base += MEMCHR_FOLD_BYTES;
+        base = block_end;
     }
 
-    let hs = simd_blocks.remainder();
-    let mut simd_chunks = hs.chunks_exact(SIMD_LANES);
-
-    for chunk in simd_chunks.by_ref() {
+    while count - base >= SIMD_LANES {
+        let chunk = &hs[base..base + SIMD_LANES];
         if let Some(j) = first_byte_simd_32(chunk, needle) {
-            return Some(simd_base + j);
+            return Some(base + j);
         }
-        simd_base += SIMD_LANES;
+        base += SIMD_LANES;
     }
 
-    let hs = simd_chunks.remainder();
-    let mut chunks = hs.chunks_exact(WORD);
-    let mut base = simd_base;
-
-    for chunk in chunks.by_ref() {
+    while count - base >= WORD {
+        let chunk = &hs[base..base + WORD];
         if has_byte_u64(u64_from_chunk(chunk), needle) {
             // The SWAR probe is exact, so this lookup always resolves.
             if let Some(j) = chunk.iter().position(|&b| b == needle) {
@@ -313,8 +312,7 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         base += WORD;
     }
 
-    chunks
-        .remainder()
+    hs[base..]
         .iter()
         .position(|&b| b == needle)
         .map(|j| base + j)
