@@ -244,3 +244,68 @@ fn bessel_glibc_divergence_research() {
     report("yn3", &|x| frankenlibc_core::math::yn(3, x), &|x| unsafe { yn(3, x) });
     report("jn10", &|x| frankenlibc_core::math::jn(10, x), &|x| unsafe { jn(10, x) });
 }
+
+/// Comprehensive regression guard: the libm-passthrough trig / inverse-trig /
+/// inverse-hyperbolic / cbrt functions stay within the 4-ULP-vs-glibc math
+/// contract across their ranges — INCLUDING large-argument range reduction for
+/// sin/cos/tan (1e6..1e18), where musl and glibc reduction could diverge but in
+/// fact agree to ≤1 ULP. Catches any future musl-libm drift. (Bessel is the only
+/// libm-passthrough family that "diverges", and that is a pure near-zero ULP
+/// metric artifact — both agree to 0 ULP where the value is meaningful; see the
+/// bessel_glibc_divergence_research probe.)
+#[test]
+#[allow(unsafe_code)] // host-glibc oracle (-lm linked by std)
+fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
+    use frankenlibc_core::math as m;
+    unsafe extern "C" {
+        fn sin(x: f64) -> f64;
+        fn cos(x: f64) -> f64;
+        fn tan(x: f64) -> f64;
+        fn asin(x: f64) -> f64;
+        fn acos(x: f64) -> f64;
+        fn atan(x: f64) -> f64;
+        fn asinh(x: f64) -> f64;
+        fn acosh(x: f64) -> f64;
+        fn atanh(x: f64) -> f64;
+        fn cbrt(x: f64) -> f64;
+    }
+    fn ulp(a: f64, b: f64) -> i64 {
+        if a == b || (a.is_nan() && b.is_nan()) {
+            0
+        } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            i64::MAX
+        } else {
+            (a.to_bits() as i64 - b.to_bits() as i64).abs()
+        }
+    }
+    let scan = |name: &str, fl: &dyn Fn(f64) -> f64, gl: &dyn Fn(f64) -> f64, lo: f64, hi: f64, step: f64| {
+        let mut worst = 0i64;
+        let mut wx = 0.0f64;
+        let mut x = lo;
+        while x <= hi {
+            let u = ulp(fl(x), gl(x));
+            if u > worst {
+                worst = u;
+                wx = x;
+            }
+            x += step;
+        }
+        assert!(worst <= 4, "{name} drifted {worst} ULP vs glibc at x={wx:e}");
+    };
+
+    scan("sin", &|x| m::sin(x), &|x| unsafe { sin(x) }, -12.0, 12.0, 1e-4);
+    scan("cos", &|x| m::cos(x), &|x| unsafe { cos(x) }, -12.0, 12.0, 1e-4);
+    scan("tan", &|x| m::tan(x), &|x| unsafe { tan(x) }, -1.5, 1.5, 1e-4);
+    // Large-argument range reduction.
+    scan("sin_big", &|x| m::sin(x), &|x| unsafe { sin(x) }, 1e6, 1e6 + 1e3, 1e-2);
+    scan("sin_huge", &|x| m::sin(x), &|x| unsafe { sin(x) }, 1e15, 1e15 + 1e8, 1e4);
+    scan("cos_huge", &|x| m::cos(x), &|x| unsafe { cos(x) }, 1e15, 1e15 + 1e8, 1e4);
+    scan("sin_e18", &|x| m::sin(x), &|x| unsafe { sin(x) }, 1e18, 1e18 + 1e12, 1e8);
+    scan("asin", &|x| m::asin(x), &|x| unsafe { asin(x) }, -1.0, 1.0, 1e-5);
+    scan("acos", &|x| m::acos(x), &|x| unsafe { acos(x) }, -1.0, 1.0, 1e-5);
+    scan("atan", &|x| m::atan(x), &|x| unsafe { atan(x) }, -50.0, 50.0, 1e-3);
+    scan("asinh", &|x| m::asinh(x), &|x| unsafe { asinh(x) }, -50.0, 50.0, 1e-3);
+    scan("acosh", &|x| m::acosh(x), &|x| unsafe { acosh(x) }, 1.0, 50.0, 1e-3);
+    scan("atanh", &|x| m::atanh(x), &|x| unsafe { atanh(x) }, -0.999, 0.999, 1e-5);
+    scan("cbrt", &|x| m::cbrt(x), &|x| unsafe { cbrt(x) }, -100.0, 100.0, 1e-3);
+}
