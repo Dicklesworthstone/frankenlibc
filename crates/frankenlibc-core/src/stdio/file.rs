@@ -617,6 +617,27 @@ impl StdioStream {
         self.ungetc_byte.is_some() as usize + self.buffer.readable()
     }
 
+    /// Rewind a memory-backed stream by `unconsumed` bytes after a bulk scanf
+    /// read over-read the backing.
+    ///
+    /// `read_stream_for_scanf` consumes a whole chunk but `scanf` only parses a
+    /// prefix; the unparsed tail must be made available to the next read on the
+    /// same stream (glibc consumes exactly what it parses). No-op for fd-backed
+    /// streams, whose buffer/offset integration is tracked separately
+    /// (bd-2g7oyh.180).
+    pub fn scanf_rewind_mem(&mut self, unconsumed: usize) {
+        if unconsumed == 0 {
+            return;
+        }
+        if let Some(ref mut backing) = self.mem_backing {
+            // SEEK_CUR by the unconsumed count; mem_read already advanced pos
+            // past it, so this lands exactly on the first unparsed byte.
+            backing.seek(-(unconsumed as i64), 1);
+            self.offset = backing.position() as i64;
+            self.flags.eof = false;
+        }
+    }
+
     /// Append bytes into `out` up to and including the first occurrence of
     /// `delim`, consuming exactly that many bytes from the read buffer /
     /// memory backing — never reading past the delimiter.

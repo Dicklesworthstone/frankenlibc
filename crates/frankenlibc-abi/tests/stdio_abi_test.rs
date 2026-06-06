@@ -2455,6 +2455,30 @@ fn fmemopen_write_creates_stream() {
 }
 
 #[test]
+fn fscanf_leaves_unparsed_input_on_mem_stream() {
+    // bd-2g7oyh.180: fscanf must consume exactly the parsed prefix and leave
+    // the rest of the stream readable, like glibc. The bulk read previously
+    // consumed the whole backing, so a following fgetc wrongly saw EOF.
+    let mut buf = *b"5 abc";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr()) };
+    if stream.is_null() {
+        return; // fmemopen may be unavailable in some preload-less configs
+    }
+    let mut n: c_int = -1;
+    // SAFETY: valid stream + format + matching destination pointer.
+    let rc = unsafe { fscanf(stream, c"%d".as_ptr(), &mut n as *mut c_int) };
+    assert_eq!(rc, 1, "fscanf should match exactly one integer");
+    assert_eq!(n, 5);
+    // The unparsed remainder " abc" must still be readable byte-for-byte.
+    assert_eq!(unsafe { fgetc(stream) }, b' ' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'a' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'b' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'c' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, libc::EOF);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn fmemopen_rejects_tracked_unterminated_mode() {
     let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };

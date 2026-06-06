@@ -4926,6 +4926,21 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> Vec<u8> {
     }
 }
 
+/// Return the `unconsumed` trailing bytes of a bulk scanf read to the stream so
+/// the next read sees them. `read_stream_for_scanf` reads a whole chunk but
+/// `scanf` parses only a prefix; glibc consumes exactly what it parses. This
+/// rewinds memory-backed streams (fmemopen) by the unparsed count. fd-backed
+/// streams need buffer/offset integration and are handled under bd-2g7oyh.180.
+fn pushback_unconsumed_scanf(id: usize, unconsumed: usize) {
+    if unconsumed == 0 {
+        return;
+    }
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = reg.streams.get_mut(&id) {
+        s.scanf_rewind_mem(unconsumed);
+    }
+}
+
 /// POSIX `sscanf` — scan formatted input from string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut args: ...) -> c_int {
@@ -4983,9 +4998,13 @@ pub unsafe extern "C" fn fscanf(
     }
 
     let Some((result, directives)) = scanf_core(&input_buf, format) else {
+        pushback_unconsumed_scanf(id, input_buf.len());
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
+
+    // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
+    pushback_unconsumed_scanf(id, input_buf.len().saturating_sub(result.consumed));
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -5018,9 +5037,13 @@ pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
     }
 
     let Some((result, directives)) = scanf_core(&input_buf, format) else {
+        pushback_unconsumed_scanf(STDIN_SENTINEL, input_buf.len());
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
+
+    // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
+    pushback_unconsumed_scanf(STDIN_SENTINEL, input_buf.len().saturating_sub(result.consumed));
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -5116,9 +5139,13 @@ pub unsafe extern "C" fn vfscanf(
     }
 
     let Some((result, directives)) = scanf_core(&input_buf, format) else {
+        pushback_unconsumed_scanf(id, input_buf.len());
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
+
+    // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
+    pushback_unconsumed_scanf(id, input_buf.len().saturating_sub(result.consumed));
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
