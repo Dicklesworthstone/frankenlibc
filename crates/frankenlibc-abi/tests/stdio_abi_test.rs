@@ -2479,6 +2479,48 @@ fn fscanf_leaves_unparsed_input_on_mem_stream() {
 }
 
 #[test]
+fn fscanf_leaves_unparsed_input_on_file_stream() {
+    // bd-2g7oyh.180: the seekable-fd path must consume only the parsed prefix
+    // and leave the remainder readable. Previously the bulk read swallowed the
+    // whole file, so a following fgetc saw EOF and any second fscanf lost data.
+    let path = temp_path("fscanf_tail");
+    let _ = fs::remove_file(&path);
+    fs::write(&path, b"10 20 30 tail\n").expect("write temp file");
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let (mut a, mut b, mut c): (c_int, c_int, c_int) = (0, 0, 0);
+    // SAFETY: valid stream + format + three matching destination pointers.
+    let rc = unsafe {
+        fscanf(
+            stream,
+            c"%d %d %d".as_ptr(),
+            &mut a as *mut c_int,
+            &mut b as *mut c_int,
+            &mut c as *mut c_int,
+        )
+    };
+    assert_eq!(rc, 3, "fscanf should match three integers");
+    assert_eq!((a, b, c), (10, 20, 30));
+
+    // The remainder " tail\n" must still be readable byte-for-byte.
+    let mut rest = Vec::new();
+    loop {
+        let ch = unsafe { fgetc(stream) };
+        if ch == libc::EOF {
+            break;
+        }
+        rest.push(ch as u8);
+    }
+    assert_eq!(&rest, b" tail\n", "unparsed tail must survive the fscanf");
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn fmemopen_rejects_tracked_unterminated_mode() {
     let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };

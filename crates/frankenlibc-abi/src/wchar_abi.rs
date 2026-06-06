@@ -3137,10 +3137,13 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> 
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
         return 0;
     };
-    let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin_stream_id(), 4096);
+    let sid = super::stdio_abi::stdin_stream_id();
+    let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(sid, 4096);
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, input.len(), 0);
         return libc::EOF;
     };
+    super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, input.len(), result.consumed);
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3163,10 +3166,12 @@ pub unsafe extern "C" fn fwscanf(
         return 0;
     };
     let id = stream as usize;
-    let input = super::stdio_abi::read_stream_for_scanf(id, 4096);
+    let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(id, 4096);
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, input.len(), 0);
         return libc::EOF;
     };
+    super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, input.len(), result.consumed);
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3209,10 +3214,13 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
     let Some(fmt_cstr) = (unsafe { wide_scanf_format_cstr(format) }) else {
         return 0;
     };
-    let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin_stream_id(), 4096);
+    let sid = super::stdio_abi::stdin_stream_id();
+    let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(sid, 4096);
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, input.len(), 0);
         return libc::EOF;
     };
+    super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, input.len(), result.consumed);
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3235,10 +3243,12 @@ pub unsafe extern "C" fn vfwscanf(
         return 0;
     };
     let id = stream as usize;
-    let input = super::stdio_abi::read_stream_for_scanf(id, 4096);
+    let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(id, 4096);
     let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, input.len(), 0);
         return libc::EOF;
     };
+    super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, input.len(), result.consumed);
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;

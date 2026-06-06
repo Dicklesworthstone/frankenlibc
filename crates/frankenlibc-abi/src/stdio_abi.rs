@@ -4900,37 +4900,97 @@ pub(crate) fn scanf_core(
 }
 
 /// Read stream content into a byte buffer for scanf parsing.
-pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> Vec<u8> {
+///
+/// Returns the bytes plus an optional *seek base*: when `Some(base)`, the stream
+/// is a seekable fd whose true logical read position is `base`, and the read was
+/// performed by repositioning the descriptor there (undoing any buffered
+/// prefetch). The caller passes that base to [`scanf_finish_consume`] so it can
+/// `lseek` the descriptor to exactly `base + result.consumed` — leaving the
+/// unparsed remainder available to the next read, as glibc does. When `None`,
+/// the stream is memory-backed or non-seekable and the trailing bytes are
+/// returned via [`scanf_finish_consume`]'s rewind/no-op fallback.
+pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (Vec<u8>, Option<i64>) {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
 
-    // Memory-backed streams: read directly.
+    // Memory-backed streams: read directly (rewind handled by scanf_rewind_mem).
     if s.is_mem_backed() {
-        return s.mem_read(limit);
+        return (s.mem_read(limit), None);
     }
 
-    // FD-backed streams: read from fd.
     let fd = s.fd();
-    let mut buf = vec![0u8; limit.min(8192)];
+    let cap = limit.min(8192);
+
+    // Seekable read streams (regular files): read from the true logical
+    // position so the post-parse lseek can leave the unparsed tail in place.
+    // Gated on no pending writes — otherwise prepare_seek would discard them
+    // (write-mixed streams keep the legacy raw-read path, see bd-2g7oyh.180).
+    if s.pending_flush().is_empty() && raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).is_ok() {
+        let base = s.offset();
+        // Discard any read-ahead buffer + ungetc and align the fd to `base`.
+        let _ = s.prepare_seek();
+        if raw_syscall::sys_lseek(fd, base, libc::SEEK_SET).is_ok() {
+            let mut buf = vec![0u8; cap];
+            let rc = unsafe { sys_read_fd(fd, buf.as_mut_ptr().cast(), buf.len()) };
+            if rc > 0 {
+                buf.truncate(rc as usize);
+                return (buf, Some(base));
+            }
+            if rc == 0 {
+                s.set_eof();
+            }
+            return (Vec::new(), Some(base));
+        }
+        // lseek-back failed unexpectedly; fall through to the raw-read path.
+    }
+
+    // Non-seekable (pipe/socket) or write-mixed: legacy raw read. The unparsed
+    // tail cannot be rewound here (tracked in bd-2g7oyh.180).
+    let mut buf = vec![0u8; cap];
     let rc = unsafe { sys_read_fd(fd, buf.as_mut_ptr().cast(), buf.len()) };
     if rc > 0 {
         buf.truncate(rc as usize);
-        buf
+        (buf, None)
     } else {
         if rc == 0 {
             s.set_eof();
         }
-        Vec::new()
+        (Vec::new(), None)
+    }
+}
+
+/// Finalize a scanf read: leave the unparsed remainder available to the next
+/// read on the same stream (glibc consumes exactly the parsed prefix).
+///
+/// For a seekable fd (`seek_base = Some(base)`) it `lseek`s the descriptor to
+/// `base + consumed`. For memory-backed streams it rewinds the backing by the
+/// unconsumed count. Non-seekable fd streams are a no-op (legacy behavior).
+pub(crate) fn scanf_finish_consume(
+    id: usize,
+    seek_base: Option<i64>,
+    total_read: usize,
+    consumed: usize,
+) {
+    match seek_base {
+        Some(base) => {
+            let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(s) = reg.streams.get_mut(&id) {
+                let target = base.saturating_add(consumed as i64);
+                let fd = s.fd();
+                if raw_syscall::sys_lseek(fd, target, libc::SEEK_SET).is_ok() {
+                    s.set_offset(target);
+                }
+            }
+        }
+        None => pushback_unconsumed_scanf(id, total_read.saturating_sub(consumed)),
     }
 }
 
 /// Return the `unconsumed` trailing bytes of a bulk scanf read to the stream so
-/// the next read sees them. `read_stream_for_scanf` reads a whole chunk but
-/// `scanf` parses only a prefix; glibc consumes exactly what it parses. This
-/// rewinds memory-backed streams (fmemopen) by the unparsed count. fd-backed
-/// streams need buffer/offset integration and are handled under bd-2g7oyh.180.
+/// the next read sees them. Rewinds memory-backed streams (fmemopen) by the
+/// unparsed count; no-op for non-seekable fd streams (bd-2g7oyh.180).
 fn pushback_unconsumed_scanf(id: usize, unconsumed: usize) {
     if unconsumed == 0 {
         return;
@@ -4991,20 +5051,20 @@ pub unsafe extern "C" fn fscanf(
         return -1;
     }
 
-    let input_buf = read_stream_for_scanf(id, 8192);
+    let (input_buf, scanf_seek_base) = read_stream_for_scanf(id, 8192);
     if input_buf.is_empty() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     }
 
     let Some((result, directives)) = scanf_core(&input_buf, format) else {
-        pushback_unconsumed_scanf(id, input_buf.len());
+        scanf_finish_consume(id, scanf_seek_base, input_buf.len(), 0);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
 
     // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
-    pushback_unconsumed_scanf(id, input_buf.len().saturating_sub(result.consumed));
+    scanf_finish_consume(id, scanf_seek_base, input_buf.len(), result.consumed);
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -5030,20 +5090,25 @@ pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
         return -1;
     }
 
-    let input_buf = read_stream_for_scanf(STDIN_SENTINEL, 8192);
+    let (input_buf, scanf_seek_base) = read_stream_for_scanf(STDIN_SENTINEL, 8192);
     if input_buf.is_empty() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     }
 
     let Some((result, directives)) = scanf_core(&input_buf, format) else {
-        pushback_unconsumed_scanf(STDIN_SENTINEL, input_buf.len());
+        scanf_finish_consume(STDIN_SENTINEL, scanf_seek_base, input_buf.len(), 0);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
 
     // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
-    pushback_unconsumed_scanf(STDIN_SENTINEL, input_buf.len().saturating_sub(result.consumed));
+    scanf_finish_consume(
+        STDIN_SENTINEL,
+        scanf_seek_base,
+        input_buf.len(),
+        result.consumed,
+    );
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -5132,20 +5197,20 @@ pub unsafe extern "C" fn vfscanf(
         return -1;
     }
 
-    let input_buf = read_stream_for_scanf(id, 8192);
+    let (input_buf, scanf_seek_base) = read_stream_for_scanf(id, 8192);
     if input_buf.is_empty() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     }
 
     let Some((result, directives)) = scanf_core(&input_buf, format) else {
-        pushback_unconsumed_scanf(id, input_buf.len());
+        scanf_finish_consume(id, scanf_seek_base, input_buf.len(), 0);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
 
     // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
-    pushback_unconsumed_scanf(id, input_buf.len().saturating_sub(result.consumed));
+    scanf_finish_consume(id, scanf_seek_base, input_buf.len(), result.consumed);
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
