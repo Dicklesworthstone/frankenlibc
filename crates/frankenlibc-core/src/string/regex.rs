@@ -1450,7 +1450,12 @@ impl<'a> PikeVm<'a> {
         generation: &mut u64,
     ) -> bool {
         let input_len = self.input.len();
-        let dummy = vec![-1i32; self.num_slots];
+        // Membership-only: captures are never read here, so carry an EMPTY slots
+        // vec. Every `slots.clone()` in the epsilon closure below is then a
+        // zero-allocation clone of an empty Vec, and `Save` is bounds-guarded to a
+        // no-op — turning the prior O(n*m) per-thread heap-clone storm (the
+        // closure-heavy `a?…a?b` worst case) into pure pointer chasing.
+        let dummy: Vec<i32> = Vec::new();
         let mut current: Vec<Thread> = Vec::new();
         let mut next: Vec<Thread> = Vec::new();
         let anchors = VmAnchors { notbol, noteol };
@@ -1667,7 +1672,14 @@ impl<'a> PikeVm<'a> {
             }
             NfaInstr::Save(slot) => {
                 let mut new_slots = t.slots;
-                new_slots[*slot] = sp as i32;
+                // `run_from` always carries full slots (*slot < num_slots); the
+                // membership-only `any_match` carries an EMPTY slots vec (captures
+                // are irrelevant there), so the bounds guard makes Save a no-op and
+                // keeps every clone above allocation-free. Without this, any_match
+                // paid an O(n*m) heap-clone storm on closure-heavy patterns.
+                if *slot < new_slots.len() {
+                    new_slots[*slot] = sp as i32;
+                }
                 let new_t = Thread {
                     pc: t.pc + 1,
                     slots: new_slots,
