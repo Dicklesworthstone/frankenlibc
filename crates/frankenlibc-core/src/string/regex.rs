@@ -1442,7 +1442,172 @@ impl<'a> PikeVm<'a> {
     /// epsilon-closure and anchor handling are byte-identical to the real
     /// search — guaranteeing no false negatives (it never reports "no match"
     /// when one exists). Slots are irrelevant here, so a dummy is carried.
+    /// True when the NFA has no position-dependent zero-width assertion (no
+    /// anchor or word-boundary). For such patterns the epsilon-closure and the
+    /// byte transitions depend only on the input byte, so a deterministic
+    /// closure-set automaton (lazy DFA) over the membership simulation is exact.
+    fn is_pos_independent(&self) -> bool {
+        !self.nfa.iter().any(|i| {
+            matches!(
+                i,
+                NfaInstr::Match(
+                    MatchKind::AnchorStart { .. }
+                        | MatchKind::AnchorEnd { .. }
+                        | MatchKind::WordBoundary { .. }
+                        | MatchKind::WordStart
+                        | MatchKind::WordEnd
+                )
+            )
+        })
+    }
+
+    /// Epsilon-closure frontier of `entries`: the consuming-`Match` and `Accept`
+    /// PCs reachable through Split/Jump/Save, sorted+deduped so the set can key a
+    /// DFA state. Reuses `add_thread` in membership mode (empty slots, so every
+    /// closure clone is allocation-free and `Save` is a no-op).
+    fn dfa_frontier(
+        &self,
+        entries: &[usize],
+        scratch: &mut Vec<Thread>,
+        visited: &mut [u64],
+        generation: &mut u64,
+    ) -> Vec<usize> {
+        *generation += 1;
+        let mut closure = ClosureState {
+            visited,
+            generation: *generation,
+        };
+        let anchors = VmAnchors {
+            notbol: false,
+            noteol: false,
+        };
+        scratch.clear();
+        for &pc in entries {
+            self.add_thread(
+                scratch,
+                Thread {
+                    pc,
+                    slots: Vec::new(),
+                },
+                0,
+                anchors,
+                &mut closure,
+            );
+        }
+        let mut pcs: Vec<usize> = scratch.iter().map(|t| t.pc).collect();
+        pcs.sort_unstable();
+        pcs.dedup();
+        pcs
+    }
+
+    /// Intern a frontier PC-set into a DFA state id, recording whether it
+    /// accepts (contains an `Accept` PC).
+    fn dfa_intern(
+        &self,
+        pcs: Vec<usize>,
+        interner: &mut std::collections::HashMap<Box<[usize]>, u32>,
+        state_pcs: &mut Vec<Box<[usize]>>,
+        state_accepts: &mut Vec<bool>,
+    ) -> u32 {
+        let key: Box<[usize]> = pcs.into_boxed_slice();
+        if let Some(&id) = interner.get(&key) {
+            return id;
+        }
+        let id = state_pcs.len() as u32;
+        let accepts = key
+            .iter()
+            .any(|&pc| matches!(self.nfa[pc], NfaInstr::Accept));
+        state_pcs.push(key.clone());
+        state_accepts.push(accepts);
+        interner.insert(key, id);
+        id
+    }
+
+    /// Lazy-DFA membership scan for position-independent patterns: does the
+    /// pattern match starting at ANY position? Interns epsilon-closure frontier
+    /// sets as DFA states and memoizes `(state, byte) -> state` transitions,
+    /// turning the prescan's per-position O(m) closure re-walk into amortized
+    /// O(1) lookups — O(n) overall once the DFA warms up, vs the NFA
+    /// simulation's O(n*m) on closure-heavy patterns. Every transition re-seeds
+    /// the start PC so the scan stays unanchored (matching `any_match_nfa`'s
+    /// per-position start re-seed). Returns `None` on state-cap overflow
+    /// (pathological state explosion) so the caller falls back to the NFA.
+    fn any_match_dfa(&self, visited: &mut [u64], generation: &mut u64) -> Option<bool> {
+        const MAX_STATES: usize = 4096;
+        let mut scratch: Vec<Thread> = Vec::new();
+        let mut interner: std::collections::HashMap<Box<[usize]>, u32> =
+            std::collections::HashMap::new();
+        let mut state_pcs: Vec<Box<[usize]>> = Vec::new();
+        let mut state_accepts: Vec<bool> = Vec::new();
+        let mut trans: std::collections::HashMap<(u32, u8), u32> =
+            std::collections::HashMap::new();
+
+        let start = self.dfa_frontier(&[0], &mut scratch, visited, generation);
+        let mut state = self.dfa_intern(start, &mut interner, &mut state_pcs, &mut state_accepts);
+
+        let input_len = self.input.len();
+        let mut sp = 0usize;
+        loop {
+            if state_accepts[state as usize] {
+                return Some(true);
+            }
+            if sp >= input_len {
+                return Some(false);
+            }
+            let b = self.input[sp];
+            state = match trans.get(&(state, b)) {
+                Some(&n) => n,
+                None => {
+                    let mut entries: Vec<usize> =
+                        Vec::with_capacity(state_pcs[state as usize].len() + 1);
+                    entries.push(0); // unanchored: re-seed the start PC every step
+                    for &pc in state_pcs[state as usize].iter() {
+                        if let NfaInstr::Match(mk) = &self.nfa[pc] {
+                            if self.matches_byte(mk, b) {
+                                entries.push(pc + 1);
+                            }
+                        }
+                    }
+                    let frontier =
+                        self.dfa_frontier(&entries, &mut scratch, visited, generation);
+                    let nid = self.dfa_intern(
+                        frontier,
+                        &mut interner,
+                        &mut state_pcs,
+                        &mut state_accepts,
+                    );
+                    if state_pcs.len() > MAX_STATES {
+                        return None; // state explosion → fall back to NFA simulation
+                    }
+                    trans.insert((state, b), nid);
+                    nid
+                }
+            };
+            sp += 1;
+        }
+    }
+
+    /// Membership prescan: does the pattern match at ANY position? Dispatches to
+    /// the lazy DFA for position-independent patterns (the closure-heavy case
+    /// the prescan exists for), falling back to the bounded NFA simulation for
+    /// anchored/word-boundary patterns or on DFA state-cap overflow.
     fn any_match(
+        &self,
+        notbol: bool,
+        noteol: bool,
+        visited: &mut [u64],
+        generation: &mut u64,
+    ) -> bool {
+        if self.is_pos_independent() {
+            if let Some(result) = self.any_match_dfa(visited, generation) {
+                return result;
+            }
+            // DFA hit the state cap; fall back to the bounded NFA simulation.
+        }
+        self.any_match_nfa(notbol, noteol, visited, generation)
+    }
+
+    fn any_match_nfa(
         &self,
         notbol: bool,
         noteol: bool,
@@ -1803,8 +1968,15 @@ impl<'a> PikeVm<'a> {
         if sp >= self.input.len() {
             return false;
         }
-        let ch = self.input[sp];
+        self.matches_byte(mk, self.input[sp])
+    }
 
+    /// Whether a consuming `MatchKind` accepts the byte `ch`. This is the
+    /// position-independent core of [`matches`](Self::matches) (which only adds
+    /// the bounds check) — the single source of truth shared with the lazy-DFA
+    /// membership scan in [`any_match_dfa`](Self::any_match_dfa). Zero-width
+    /// assertions never consume a byte and return `false` here.
+    fn matches_byte(&self, mk: &MatchKind, ch: u8) -> bool {
         match mk {
             MatchKind::Literal(lit) => ch == *lit,
             MatchKind::LiteralCi(lo, hi) => ch == *lo || ch == *hi,
