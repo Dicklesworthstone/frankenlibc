@@ -183,3 +183,136 @@ fn strptime_z_differential_battery() {
         diffs.join("\n")
     );
 }
+
+/// Live round-trip differential: for a structured calendar sweep, format each
+/// date with the host glibc `strftime` to obtain a well-formed input string, then
+/// parse it with BOTH frankenlibc `strptime` and host glibc `strptime`, comparing
+/// the match result, bytes consumed, and the six core fields (tm_wday/tm_yday are
+/// excluded — glibc recomputes them as a quirky non-POSIX extension). Covers the
+/// %y century rule, %I+%p 12-hour conversion, %b/%B/%a name matching, and
+/// multi-field composites across ~1968 dates × many formats.
+#[test]
+fn strptime_live_roundtrip_vs_glibc() {
+    unsafe extern "C" {
+        fn setlocale(category: i32, locale: *const c_char) -> *const c_char;
+        fn timegm(tm: *mut libc::tm) -> libc::time_t;
+        fn gmtime_r(t: *const libc::time_t, tm: *mut libc::tm) -> *mut libc::tm;
+        fn strftime(s: *mut c_char, max: usize, fmt: *const c_char, tm: *const libc::tm) -> usize;
+        fn strptime(s: *const c_char, fmt: *const c_char, tm: *mut libc::tm) -> *mut c_char;
+    }
+    unsafe {
+        setlocale(6, b"C\0".as_ptr() as *const c_char);
+    }
+
+    // Symmetric specifiers whose strftime output strptime parses back into the six
+    // compared fields (avoid %j/%V/%G which only touch the excluded yday/wday).
+    let fmts: &[&str] = &[
+        "%Y-%m-%d",
+        "%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%y",
+        "%m/%d/%Y",
+        "%b %d %Y",
+        "%B %d, %Y",
+        "%I:%M:%S %p",
+        "%T",
+        "%F",
+        "%R",
+        "%a %b %e %H:%M:%S %Y",
+        "%Y%m%d",
+        "%y-%m-%d %I:%M %p",
+    ];
+
+    let fields = |t: &libc::tm| {
+        (
+            t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec,
+        )
+    };
+
+    let mut diffs: Vec<String> = Vec::new();
+    let mut checked: u64 = 0;
+    'outer: for year in 1970i32..2038 {
+        for mon in 0i32..12 {
+            for &mday in &[1i32, 9, 15, 28] {
+                for &(h, mi, s) in &[(0i32, 0i32, 0i32), (13, 45, 30), (23, 59, 59), (9, 5, 7)] {
+                    let mut base: libc::tm = unsafe { std::mem::zeroed() };
+                    base.tm_year = year - 1900;
+                    base.tm_mon = mon;
+                    base.tm_mday = mday;
+                    base.tm_hour = h;
+                    base.tm_min = mi;
+                    base.tm_sec = s;
+                    let t = unsafe { timegm(&mut base) };
+                    let mut norm: libc::tm = unsafe { std::mem::zeroed() };
+                    if unsafe { gmtime_r(&t, &mut norm) }.is_null() {
+                        continue;
+                    }
+                    for &fmt in fmts {
+                        let mut cfmt = fmt.as_bytes().to_vec();
+                        cfmt.push(0);
+                        let mut sbuf = [0u8; 128];
+                        let n = unsafe {
+                            strftime(
+                                sbuf.as_mut_ptr() as *mut c_char,
+                                128,
+                                cfmt.as_ptr() as *const c_char,
+                                &norm,
+                            )
+                        };
+                        if n == 0 {
+                            continue;
+                        }
+                        let mut input = sbuf[..n].to_vec();
+                        input.push(0);
+
+                        let mut tf: libc::tm = unsafe { std::mem::zeroed() };
+                        let mut tg: libc::tm = unsafe { std::mem::zeroed() };
+                        let rf = unsafe {
+                            time_abi::strptime(
+                                input.as_ptr() as *const c_char,
+                                cfmt.as_ptr() as *const c_char,
+                                &mut tf,
+                            )
+                        };
+                        let rg = unsafe {
+                            strptime(
+                                input.as_ptr() as *const c_char,
+                                cfmt.as_ptr() as *const c_char,
+                                &mut tg,
+                            )
+                        };
+                        let cf = if rf.is_null() {
+                            -1i64
+                        } else {
+                            (rf as usize - input.as_ptr() as usize) as i64
+                        };
+                        let cg = if rg.is_null() {
+                            -1i64
+                        } else {
+                            (rg as usize - input.as_ptr() as usize) as i64
+                        };
+                        checked += 1;
+                        if cf != cg || fields(&tf) != fields(&tg) {
+                            diffs.push(format!(
+                                "fmt={fmt:?} input={:?} -> fl(consumed={cf}, {:?}) glibc(consumed={cg}, {:?})",
+                                String::from_utf8_lossy(&input[..n]),
+                                fields(&tf),
+                                fields(&tg),
+                            ));
+                            if diffs.len() >= 40 {
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("strptime live roundtrip: {checked} comparisons, {} divergence(s)", diffs.len());
+    assert!(
+        diffs.is_empty(),
+        "strptime live round-trip divergences ({}):\n{}",
+        diffs.len(),
+        diffs.join("\n")
+    );
+}
