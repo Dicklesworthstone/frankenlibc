@@ -337,3 +337,67 @@ fn iconv_wide_differential_fuzz_vs_glibc() {
     );
     eprintln!("iconv wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
 }
+
+/// CJK 2-byte codec differential fuzz: SHIFT_JIS and BIG5 <-> UTF-8 over (a)
+/// random raw bytes (exercises the decode tables + the incomplete-tail EINVAL /
+/// invalid-pair EILSEQ classification + stop position) and (b) valid UTF-8
+/// biased toward CJK / fullwidth ranges (exercises the encode tables, incl.
+/// unrepresentable -> EILSEQ). Now that fl drives these codecs from glibc-derived
+/// tables (bd-2g7oyh.195), the full contract — return value + errno + output
+/// bytes + *inbytesleft — must match host glibc.
+#[test]
+fn iconv_cjk_differential_fuzz_vs_glibc() {
+    let utf8 = CString::new("UTF-8").unwrap();
+    let mut r = Lcg(0xa5f0_0d12_3490_9bce);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared: u64 = 0;
+
+    const CJK: &[&str] = &["SHIFT_JIS", "BIG5"];
+
+    for codec in CJK {
+        let c = CString::new(*codec).unwrap();
+        for _ in 0..6000 {
+            let raw: Vec<u8> = {
+                let len = (r.next() % 6) as usize;
+                (0..len).map(|_| r.byte()).collect()
+            };
+            let valid_utf8: Vec<u8> = {
+                let n = (r.next() % 4) as usize;
+                let mut v = Vec::new();
+                for _ in 0..n {
+                    let cp = match r.next() % 8 {
+                        0 => r.next() as u32 % 0x80,                  // ASCII
+                        1 => 0xFF61 + (r.next() as u32 % 0x3F),       // half-width kana
+                        2 | 3 => 0x3000 + (r.next() as u32 % 0x100),  // CJK symbols/kana
+                        _ => 0x4E00 + (r.next() as u32 % 0x5200),     // CJK unified ideographs
+                    };
+                    push_utf8(&mut v, cp);
+                }
+                v
+            };
+            for src in [&raw, &valid_utf8] {
+                for (to, from, dir) in [
+                    (&c, &utf8, format!("UTF-8->{codec}")),
+                    (&utf8, &c, format!("{codec}->UTF-8")),
+                ] {
+                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, to, from, src) };
+                    let h = unsafe { run(iconv_open, iconv_close, iconv, to, from, src) };
+                    let (Some(f), Some(h)) = (f, h) else { continue };
+                    compared += 1;
+                    if f != h && divs.len() < 40 {
+                        divs.push(format!(
+                            "{dir} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "CJK iconv diverged from host glibc (showing up to 40):\n{}",
+        divs.join("\n")
+    );
+    eprintln!("iconv CJK differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+}

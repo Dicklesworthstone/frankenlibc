@@ -5,6 +5,8 @@
 use crate::errno;
 use std::simd::{Simd, cmp::SimdPartialOrd};
 
+mod cjk_tables;
+
 /// Core iconv error code: output buffer has insufficient capacity.
 pub const ICONV_E2BIG: i32 = errno::E2BIG;
 /// Core iconv error code: invalid multibyte sequence encountered.
@@ -8353,81 +8355,96 @@ fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
-fn decode_shiftjis(input: &[u8]) -> Result<(char, usize), DecodeError> {
-    if input.is_empty() {
+/// Generic 2-byte-DBCS decoder (Shift-JIS, BIG5) driven by glibc-exact tables
+/// (see [`cjk_tables`]). `one_byte[b0] >= 0` is a single-byte char (ASCII / kana);
+/// `is_lead[b0]` marks a double-byte lead whose `(b0<<8)|b1` key is looked up in
+/// the sorted `dbcs` table. A lead with no following byte is `Incomplete`
+/// (EINVAL); an unknown lead or unknown pair is `Invalid` (EILSEQ) — matching
+/// glibc's gconv exactly by construction.
+fn decode_dbcs2(
+    input: &[u8],
+    one_byte: &[i32; 256],
+    is_lead: &[bool; 256],
+    dbcs: &[(u16, u32)],
+) -> Result<(char, usize), DecodeError> {
+    let Some(&b0) = input.first() else {
         return Err(DecodeError::Incomplete);
+    };
+    let ob = one_byte[b0 as usize];
+    if ob >= 0 {
+        return char::from_u32(ob as u32)
+            .map(|c| (c, 1))
+            .ok_or(DecodeError::Invalid);
     }
-    let b0 = input[0];
-    if b0 <= 0x7F {
-        return Ok((char::from(b0), 1));
-    }
-    if (0xA1..=0xDF).contains(&b0) {
-        let cp = 0xFF61 + u32::from(b0 - 0xA1);
-        return Ok((char::from_u32(cp).unwrap_or('\u{FFFD}'), 1));
-    }
-    if (0x81..=0x9F).contains(&b0) || (0xE0..=0xEF).contains(&b0) {
-        if input.len() < 2 {
-            return Err(DecodeError::Incomplete);
-        }
-        let b1 = input[1];
-        if !((0x40..=0x7E).contains(&b1) || (0x80..=0xFC).contains(&b1)) {
-            return Err(DecodeError::Invalid);
-        }
+    if !is_lead[b0 as usize] {
         return Err(DecodeError::Invalid);
     }
-    Err(DecodeError::Invalid)
+    let Some(&b1) = input.get(1) else {
+        return Err(DecodeError::Incomplete);
+    };
+    let key = (u16::from(b0) << 8) | u16::from(b1);
+    match dbcs.binary_search_by_key(&key, |&(k, _)| k) {
+        Ok(i) => char::from_u32(dbcs[i].1)
+            .map(|c| (c, 2))
+            .ok_or(DecodeError::Invalid),
+        Err(_) => Err(DecodeError::Invalid),
+    }
+}
+
+/// Generic 2-byte-DBCS encoder, fully table-driven (no ASCII shortcut — these
+/// codecs are asymmetric in the ASCII range, e.g. SHIFT_JIS maps 0x5C to U+00A5
+/// yen, so U+005C is encoded per glibc's table, not as a bare 0x5C). The sorted
+/// `enc` table holds glibc's canonical encoding for every representable BMP code
+/// point: a packed value `< 0x100` is a single output byte, a larger value is
+/// `(b0<<8)|b1`. An absent code point is `Unrepresentable` (EILSEQ).
+fn encode_dbcs2(ch: char, out: &mut [u8], enc: &[(u32, u32)]) -> Result<usize, EncodeError> {
+    let cp = ch as u32;
+    match enc.binary_search_by_key(&cp, |&(c, _)| c) {
+        Ok(i) => {
+            let packed = enc[i].1;
+            if packed < 0x100 {
+                if out.is_empty() {
+                    return Err(EncodeError::NoSpace);
+                }
+                out[0] = packed as u8;
+                Ok(1)
+            } else {
+                if out.len() < 2 {
+                    return Err(EncodeError::NoSpace);
+                }
+                out[0] = (packed >> 8) as u8;
+                out[1] = (packed & 0xFF) as u8;
+                Ok(2)
+            }
+        }
+        Err(_) => Err(EncodeError::Unrepresentable),
+    }
+}
+
+fn decode_shiftjis(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    decode_dbcs2(
+        input,
+        &cjk_tables::SHIFT_JIS_ONE_BYTE,
+        &cjk_tables::SHIFT_JIS_IS_LEAD,
+        &cjk_tables::SHIFT_JIS_DBCS,
+    )
 }
 
 fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
-    let cp = ch as u32;
-    if cp <= 0x7F {
-        if out.is_empty() {
-            return Err(EncodeError::NoSpace);
-        }
-        out[0] = cp as u8;
-        return Ok(1);
-    }
-    if (0xFF61..=0xFF9F).contains(&cp) {
-        if out.is_empty() {
-            return Err(EncodeError::NoSpace);
-        }
-        out[0] = (cp - 0xFF61 + 0xA1) as u8;
-        return Ok(1);
-    }
-    Err(EncodeError::Unrepresentable)
+    encode_dbcs2(ch, out, &cjk_tables::SHIFT_JIS_ENC)
 }
 
 fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
-    if input.is_empty() {
-        return Err(DecodeError::Incomplete);
-    }
-    let b0 = input[0];
-    if b0 <= 0x7F {
-        return Ok((char::from(b0), 1));
-    }
-    if (0x81..=0xFE).contains(&b0) {
-        if input.len() < 2 {
-            return Err(DecodeError::Incomplete);
-        }
-        let b1 = input[1];
-        if !((0x40..=0x7E).contains(&b1) || (0xA1..=0xFE).contains(&b1)) {
-            return Err(DecodeError::Invalid);
-        }
-        return Err(DecodeError::Invalid);
-    }
-    Err(DecodeError::Invalid)
+    decode_dbcs2(
+        input,
+        &cjk_tables::BIG5_ONE_BYTE,
+        &cjk_tables::BIG5_IS_LEAD,
+        &cjk_tables::BIG5_DBCS,
+    )
 }
 
 fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
-    let cp = ch as u32;
-    if cp <= 0x7F {
-        if out.is_empty() {
-            return Err(EncodeError::NoSpace);
-        }
-        out[0] = cp as u8;
-        return Ok(1);
-    }
-    Err(EncodeError::Unrepresentable)
+    encode_dbcs2(ch, out, &cjk_tables::BIG5_ENC)
 }
 
 /// Probe whether the conversion `from -> to` is an ASCII byte-identity over
