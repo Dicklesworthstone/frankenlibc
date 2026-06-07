@@ -514,6 +514,27 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// Panics if `dest` is too small to hold the source string plus NUL.
 pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
     if src.last().copied() == Some(0) && dest.len() >= src.len() {
+        if src.len() >= STRLEN_NUL_BLOCK {
+            let mut i = 0;
+            while i + STRLEN_NUL_BLOCK <= src.len() {
+                let chunk = &src[i..i + STRLEN_NUL_BLOCK];
+                if block_has_nul_512(chunk) {
+                    break;
+                }
+                dest[i..i + STRLEN_NUL_BLOCK].copy_from_slice(chunk);
+                i += STRLEN_NUL_BLOCK;
+            }
+
+            while i < src.len() {
+                let byte = src[i];
+                dest[i] = byte;
+                i += 1;
+                if byte == 0 {
+                    return i;
+                }
+            }
+        }
+
         let copied = strlen(src) + 1;
         dest[..copied].copy_from_slice(&src[..copied]);
         return copied;
