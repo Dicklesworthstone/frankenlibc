@@ -26,6 +26,10 @@ pub fn memcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 /// Returns the number of bytes actually copied.
 pub fn memmove(dest: &mut [u8], src: &[u8], n: usize) -> usize {
     let count = n.min(dest.len()).min(src.len());
+    if count == PAGE_COPY_BYTES {
+        dest[..PAGE_COPY_BYTES].copy_from_slice(&src[..PAGE_COPY_BYTES]);
+        return PAGE_COPY_BYTES;
+    }
     // In safe Rust with separate slices, copy_from_slice is fine.
     // For true overlapping (same buffer), callers should use slice::copy_within.
     dest[..count].copy_from_slice(&src[..count]);
@@ -166,6 +170,7 @@ fn u64_from_chunk(chunk: &[u8]) -> u64 {
 
 /// SWAR word size (8 bytes), matching the `chunks_exact(8)` scans in this module.
 const WORD: usize = size_of::<u64>();
+const PAGE_COPY_BYTES: usize = 4096;
 const SIMD_LANES: usize = 32;
 const MEMCMP_WIDE_LANES: usize = 64;
 const SIMD_FOLD_PANELS: usize = 4;
