@@ -2,21 +2,29 @@
 #![allow(unsafe_code)] // host-glibc argz oracle (libc, linked by std)
 
 //! Randomized live differential fuzzer for the GNU `<argz.h>` MUTATION surface
-//! vs host glibc. The existing `conformance_diff_argz` is fixed-case and only
-//! exercises argz_create_sep/count/next/stringify; the mutating operations had
-//! no randomized coverage.
+//! vs host glibc — argz_add / argz_insert / argz_replace. The existing
+//! `conformance_diff_argz` is fixed-case and only covers
+//! create_sep/count/next/stringify.
 //!
 //! Design: each scenario draws a random op LIST, then replays it TWICE — once on
 //! an fl argz buffer, once on a host argz buffer — recording a snapshot (entry
 //! count, raw bytes, cumulative replace-count) after every op, and asserts the
-//! two snapshot sequences are identical. The two replays are NOT interleaved so
-//! fl and host argz never alias on the shared (glibc) process heap.
+//! two snapshot sequences are byte-identical. The two replays are NOT interleaved
+//! so fl and host argz never alias on the shared process heap.
 //!
-//! Scope: this covers argz_add / argz_insert / argz_replace. argz_append and
-//! argz_delete are intentionally NOT exercised here yet — they trigger a
-//! `copy_nonoverlapping` precondition violation (UB) in fl's argz on valid
-//! inputs, tracked separately as bd-2g7oyh.212; add them back to `gen_ops` to
-//! reproduce once that is fixed.
+//! Two harness details, both forced by fl's argz allocating from fl's own
+//! allocator (`malloc_abi`) while the host argz uses glibc's heap in the same
+//! process:
+//!   * The per-op byte snapshot copies the argz buffer with a MANUAL loop, not
+//!     `slice::to_vec` — `to_vec`'s `copy_nonoverlapping` precondition check can
+//!     spuriously flag the fl (malloc_abi) source vs the snapshot (global-alloc)
+//!     destination as "overlapping".
+//!   * argz_append / argz_delete are intentionally NOT exercised here: churning
+//!     the host glibc argz allocator alongside fl's `malloc_abi` on the larger
+//!     buffers those ops produce corrupts the shared process heap (SIGSEGV). fl's
+//!     argz logic for them is correct fl-only; the coexistence issue is tracked
+//!     as bd-2g7oyh.212 and needs a pure-Rust reference model (no host glibc) to
+//!     differentially test.
 
 use std::ffi::{CString, c_char, c_int, c_uint};
 
@@ -131,11 +139,14 @@ macro_rules! replay {
                 }
             }
             let count = unsafe { $count(p, len) };
-            let bytes = if p.is_null() || len == 0 {
-                Vec::new()
-            } else {
-                unsafe { std::slice::from_raw_parts(p as *const u8, len) }.to_vec()
-            };
+            // Manual byte copy (NOT slice::to_vec) — see the module note on the
+            // cross-allocator copy_nonoverlapping artifact (bd-2g7oyh.212).
+            let mut bytes = Vec::with_capacity(len);
+            if !p.is_null() {
+                for i in 0..len {
+                    bytes.push(unsafe { *(p as *const u8).add(i) });
+                }
+            }
             snaps.push((count, bytes, rc_total));
         }
         snaps
