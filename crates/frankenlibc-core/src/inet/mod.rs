@@ -398,31 +398,42 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
         (s, "", false)
     };
 
-    // Parse front groups.
+    let mut ipv4_suffix: Option<[u8; 4]> = None;
+
+    // Parse the front segments. A trailing embedded IPv4 (`...:1.2.3.4`) can
+    // appear here only when there is NO "::" — when a "::" is present any IPv4
+    // tail lives in `back`. (Previously the naive hextet loop below tried to
+    // parse the dotted IPv4 segment as a hextet and bailed, wrongly rejecting
+    // valid addresses like `a:b:c:d:e:f:1.2.3.4` — found by the inet fuzzer.)
     let mut front_groups: Vec<u16> = Vec::new();
     if !front_str.is_empty() {
-        for g in front_str.split(':') {
+        let parts: Vec<&str> = front_str.split(':').collect();
+        let hex_parts: &[&str] = if !has_double_colon && front_str.contains('.') {
+            // The last segment must be the IPv4 tail; a lone "1.2.3.4" (no hex
+            // groups, no "::") is not a valid IPv6 textual form.
+            if parts.len() < 2 {
+                return None;
+            }
+            ipv4_suffix = Some(parse_ipv4(parts.last()?.as_bytes())?);
+            &parts[..parts.len() - 1]
+        } else {
+            &parts[..]
+        };
+        for g in hex_parts {
             front_groups.push(parse_ipv6_hextet(g)?);
         }
     }
 
     // Parse back groups -- the last group(s) might be an IPv4 suffix.
     let mut back_groups: Vec<u16> = Vec::new();
-    let mut ipv4_suffix: Option<[u8; 4]> = None;
-
     if !back_str.is_empty() {
         // Check if the back part contains a dot (IPv4 suffix).
         if back_str.contains('.') {
-            // The IPv4 part is everything from the last colon-delimited segment
-            // that contains a dot. We need to find where the IPv4 starts.
             let colon_parts: Vec<&str> = back_str.split(':').collect();
-            // The last colon-part should be the IPv4 address.
-            // Everything before it is hex groups.
+            // The last colon-part is the IPv4 address; everything before it is
+            // hex groups.
             let ipv4_part = colon_parts.last()?;
-            let v4 = parse_ipv4(ipv4_part.as_bytes())?;
-            ipv4_suffix = Some(v4);
-
-            // Parse any hex groups before the IPv4 part.
+            ipv4_suffix = Some(parse_ipv4(ipv4_part.as_bytes())?);
             for g in &colon_parts[..colon_parts.len() - 1] {
                 back_groups.push(parse_ipv6_hextet(g)?);
             }
@@ -433,29 +444,15 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
         }
     }
 
-    // Also check front for IPv4 suffix when there is NO double colon.
-    if !has_double_colon && front_str.contains('.') {
-        // Re-parse: split front_str by ':' and check if the last segment is IPv4.
-        let colon_parts: Vec<&str> = front_str.split(':').collect();
-        if colon_parts.len() < 2 {
-            return None;
-        }
-        let ipv4_part = colon_parts.last()?;
-        if let Some(v4) = parse_ipv4(ipv4_part.as_bytes()) {
-            ipv4_suffix = Some(v4);
-            front_groups.clear();
-            for g in &colon_parts[..colon_parts.len() - 1] {
-                front_groups.push(parse_ipv6_hextet(g)?);
-            }
-        }
-    }
-
     // Count total groups. IPv4 suffix counts as 2.
     let ipv4_group_count: usize = if ipv4_suffix.is_some() { 2 } else { 0 };
     let total_explicit = front_groups.len() + back_groups.len() + ipv4_group_count;
 
     if has_double_colon {
-        if total_explicit > 8 {
+        // "::" must stand for AT LEAST ONE zero group, so the explicit groups
+        // must leave room (>= 8 means the "::" would compress nothing — glibc
+        // rejects `1:2:3:4:5:6:7::8` and friends). Found by the inet fuzzer.
+        if total_explicit >= 8 {
             return None;
         }
     } else if total_explicit != 8 {
