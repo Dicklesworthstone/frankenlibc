@@ -117,7 +117,15 @@ pub const EPOCH_RANGE_LIMIT: i64 = 67_768_036_191_676_800;
 /// overflow `tm_year` (matching glibc's NULL-return contract on
 /// `gmtime`/`localtime` for extreme inputs).
 pub fn epoch_to_broken_down_checked(epoch_secs: i64) -> Option<BrokenDownTime> {
-    if !(-EPOCH_RANGE_LIMIT..=EPOCH_RANGE_LIMIT).contains(&epoch_secs) {
+    // glibc returns NULL exactly when the resulting year does not fit `tm_year`
+    // (a `c_int`). `civil_from_days` is O(1), so we compute the year directly and
+    // check that boundary PRECISELY rather than using the conservative
+    // ±EPOCH_RANGE_LIMIT cutoff, which rejected years (e.g. tm_year ≈ -2147483510)
+    // that glibc still represents. (Found by gmtime_r_wide_range_differential_fuzz.)
+    let days = epoch_secs.div_euclid(86400);
+    let (year, _, _) = civil_from_days(days);
+    let tm_year = year - 1900;
+    if tm_year < i32::MIN as i64 || tm_year > i32::MAX as i64 {
         return None;
     }
     Some(epoch_to_broken_down(epoch_secs))
