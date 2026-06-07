@@ -24226,24 +24226,103 @@ pub unsafe extern "C" fn c8rtomb(s: *mut c_char, c8: u8, _ps: *mut c_void) -> us
     1
 }
 
+// Internal mbstate for `mbrtoc8(.., ps=NULL)` (matches glibc's static state).
+// Layout shared with a caller `mbstate_t`: bytes [0..4] are the OUTPUT queue of
+// not-yet-returned UTF-8 bytes (byte 0 = count 0..=3, then the bytes); bytes
+// [4..8] are the partial-INPUT accumulator for an incomplete multibyte sequence
+// (byte 4 = count, then the bytes). The two are never both non-empty.
+thread_local! {
+    static MBRTOC8_STATE: std::cell::Cell<[u8; 8]> = const { std::cell::Cell::new([0; 8]) };
+}
+
+/// C23 `mbrtoc8` — convert the next multibyte character to UTF-8 char8_t, one
+/// char8_t per call. In a UTF-8 locale the char8_t output of a character is its
+/// (validated) UTF-8 encoding: the first call for a character consumes its input
+/// bytes (return = count) and emits the first output byte, then subsequent calls
+/// emit the remaining bytes as `(size_t)-3` without consuming input. Resumes an
+/// incomplete multibyte sequence from `ps` across calls.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mbrtoc8(
-    pc8: *mut u8,
-    s: *const c_char,
-    n: usize,
-    _ps: *mut c_void,
-) -> usize {
+pub unsafe extern "C" fn mbrtoc8(pc8: *mut u8, s: *const c_char, n: usize, ps: *mut c_void) -> usize {
+    use frankenlibc_core::string::wchar::{Utf8Step, utf8_decode_step};
+    const INCOMPLETE: usize = usize::MAX - 1; // (size_t)-2
+    const PENDING: usize = usize::MAX - 2; // (size_t)-3
+
+    // Load the 8-byte conversion state from `ps` (or the internal thread-local).
+    let mut st: [u8; 8] = if ps.is_null() {
+        MBRTOC8_STATE.with(|c| c.get())
+    } else {
+        // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
+        unsafe { (ps as *const u8).cast::<[u8; 8]>().read_unaligned() }
+    };
+    let store = |st: [u8; 8]| {
+        if ps.is_null() {
+            MBRTOC8_STATE.with(|c| c.set(st));
+        } else {
+            // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
+            unsafe { (ps as *mut u8).cast::<[u8; 8]>().write_unaligned(st) };
+        }
+    };
+
     if s.is_null() {
+        store([0; 8]); // reset
         return 0;
     }
-    if n == 0 {
-        return usize::MAX - 1;
-    } // -2 = incomplete
-    let byte = unsafe { *s } as u8;
-    if !pc8.is_null() {
-        unsafe { *pc8 = byte };
+
+    // 1. Drain a buffered output byte from the current character, if any.
+    let out_count = (st[0] as usize).min(3);
+    if out_count > 0 {
+        if !pc8.is_null() {
+            unsafe { *pc8 = st[1] };
+        }
+        st[1] = st[2];
+        st[2] = st[3];
+        st[3] = 0;
+        st[0] = (out_count - 1) as u8;
+        store(st);
+        return PENDING;
     }
-    if byte == 0 { 0 } else { 1 }
+
+    if n == 0 {
+        return INCOMPLETE;
+    }
+
+    // 2. Decode the next character, prepending any partial-input bytes from `ps`.
+    let icount = (st[4] as usize).min(3);
+    let mut buf = [0u8; 8];
+    buf[..icount].copy_from_slice(&st[5..5 + icount]);
+    let take = n.min(8 - icount);
+    // SAFETY: caller guarantees `s` points to at least `n` (>= take) bytes.
+    let new = unsafe { std::slice::from_raw_parts(s as *const u8, take) };
+    buf[icount..icount + take].copy_from_slice(new);
+    let total = icount + take;
+
+    match utf8_decode_step(&buf[..total]) {
+        Utf8Step::Char { wc, len } => {
+            // Output bytes for this character are buf[0..len] (UTF-8 locale).
+            let mut new_st = [0u8; 8];
+            let rem = &buf[1..len]; // up to 3 trailing output bytes
+            new_st[0] = rem.len() as u8;
+            new_st[1..1 + rem.len()].copy_from_slice(rem);
+            store(new_st);
+            if !pc8.is_null() {
+                unsafe { *pc8 = buf[0] };
+            }
+            if wc == 0 { 0 } else { len - icount }
+        }
+        Utf8Step::Incomplete => {
+            if total <= 3 {
+                st[4] = total as u8;
+                st[5..5 + total].copy_from_slice(&buf[..total]);
+                st[0] = 0; // no output pending
+                store(st);
+            }
+            INCOMPLETE
+        }
+        Utf8Step::Invalid => {
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            usize::MAX
+        }
+    }
 }
 
 // ===========================================================================
