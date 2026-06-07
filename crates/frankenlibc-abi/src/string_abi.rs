@@ -6536,6 +6536,21 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
     };
     let decimal_precision = precision.unwrap_or(6);
 
+    // Non-finite values render as glibc spells them (NOT Rust's "NaN"/"inf"):
+    // lowercase "nan"/"inf" for a/e/f/g, uppercase "NAN"/"INF" for A/E/F/G, with
+    // a leading '-' when the sign bit is set; precision is ignored. Found by
+    // strfromd_differential_fuzz.
+    if matches!(spec, "a" | "A" | "e" | "E" | "f" | "F" | "g" | "G") && !value.is_finite() {
+        let sign = if value.is_sign_negative() { "-" } else { "" };
+        let body = if value.is_nan() { "nan" } else { "inf" };
+        let out = format!("{sign}{body}");
+        return if matches!(spec, "A" | "E" | "F" | "G") {
+            out.to_ascii_uppercase()
+        } else {
+            out
+        };
+    }
+
     match spec {
         // %f / %F — fixed-point with `precision` fractional digits.
         // Rust's `{:.N$}` is bit-compatible with printf %f for f64.
