@@ -7233,11 +7233,34 @@ pub unsafe extern "C" fn argz_replace(
         }
         let entry_bytes =
             unsafe { std::slice::from_raw_parts(az.add(pos).cast::<u8>(), entry_len) };
-        if entry_bytes == find_bytes.as_slice() {
-            replacements = replacements.wrapping_add(1);
-            entries.push(replace_bytes.clone());
-        } else {
+        // glibc argz_replace replaces every SUBSTRING occurrence of `str`
+        // within each entry (not whole-entry matches), counting each one — e.g.
+        // replace("c"->"aac") turns the entry "ac" into "aaac". The old
+        // whole-entry comparison missed all in-entry matches. Found by
+        // argz_mutation_differential_fuzz (bd-2g7oyh.212).
+        if find_bytes.is_empty() {
             entries.push(entry_bytes.to_vec());
+        } else {
+            let mut rebuilt = Vec::with_capacity(entry_bytes.len());
+            let mut matched = false;
+            let mut i = 0usize;
+            while i < entry_bytes.len() {
+                if entry_bytes[i..].starts_with(find_bytes.as_slice()) {
+                    rebuilt.extend_from_slice(&replace_bytes);
+                    i += find_bytes.len();
+                    matched = true;
+                } else {
+                    rebuilt.push(entry_bytes[i]);
+                    i += 1;
+                }
+            }
+            // glibc increments replace_count ONCE per matching entry, even when
+            // the entry contained several occurrences (all of which are
+            // replaced in the bytes).
+            if matched {
+                replacements = replacements.wrapping_add(1);
+            }
+            entries.push(rebuilt);
         }
         pos += entry_bytes.len() + 1;
     }
