@@ -1906,6 +1906,32 @@ pub unsafe extern "C" fn freeaddrinfo(res: *mut libc::addrinfo) {
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 12, false);
 }
 
+/// glibc `NI_NUMERICSCOPE` flag value (absent from some `libc` versions).
+const NI_NUMERICSCOPE: c_int = 64;
+
+/// Render an IPv6 scope id the way glibc `getnameinfo` does. glibc resolves the
+/// scope to an interface NAME (via `if_indextoname`) only for link-local and
+/// multicast-link-local addresses, and only when `NI_NUMERICSCOPE` is not set
+/// and the index maps to an interface; in every other case (including a global
+/// address whose index *does* name an interface) it uses the decimal index.
+fn scope_id_text(scope_id: u32, flags: c_int, addr: &[u8; 16]) -> String {
+    // fe80::/10 link-local, or ff0x::/16 with scope nibble 2 (mc link-local).
+    let link_local = (addr[0] == 0xfe && (addr[1] & 0xc0) == 0x80)
+        || (addr[0] == 0xff && (addr[1] & 0x0f) == 0x02);
+    if link_local && flags & NI_NUMERICSCOPE == 0 {
+        let mut nbuf = [0 as c_char; libc::IF_NAMESIZE];
+        // SAFETY: `nbuf` is IF_NAMESIZE bytes, the documented buffer size for
+        // if_indextoname; it NUL-terminates the name (or returns null).
+        let p = unsafe { crate::inet_abi::if_indextoname(scope_id, nbuf.as_mut_ptr()) };
+        if !p.is_null() {
+            // SAFETY: if_indextoname wrote a NUL-terminated name into nbuf.
+            let name = unsafe { CStr::from_ptr(nbuf.as_ptr()) };
+            return name.to_string_lossy().into_owned();
+        }
+    }
+    scope_id.to_string()
+}
+
 /// POSIX `getnameinfo` (numeric bootstrap implementation).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnameinfo(
@@ -1915,7 +1941,7 @@ pub unsafe extern "C" fn getnameinfo(
     hostlen: libc::socklen_t,
     serv: *mut c_char,
     servlen: libc::socklen_t,
-    _flags: c_int,
+    flags: c_int,
 ) -> c_int {
     let (aligned, recent_page, ordering) = resolver_stage_context(sa as usize, host as usize);
     if sa.is_null() {
@@ -1982,9 +2008,29 @@ pub unsafe extern "C" fn getnameinfo(
             }
             // SAFETY: size checked above.
             let sin6 = unsafe { &*sa.cast::<libc::sockaddr_in6>() };
-            let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+            // Format with fl's own inet_ntop (byte-exact vs glibc). std
+            // Ipv6Addr::Display does NOT emit the dotted-quad form for
+            // IPv4-compatible `::a.b.c.d`, so it diverged from glibc.
+            // Found by getnameinfo_differential_fuzz.
+            let mut host_text =
+                match frankenlibc_core::inet::inet_ntop(libc::AF_INET6, &sin6.sin6_addr.s6_addr) {
+                    Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    None => {
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+                        return libc::EAI_FAIL;
+                    }
+                };
+            // glibc appends the IPv6 scope id for a non-zero sin6_scope_id.
+            if sin6.sin6_scope_id != 0 {
+                host_text.push('%');
+                host_text.push_str(&scope_id_text(
+                    sin6.sin6_scope_id,
+                    flags,
+                    &sin6.sin6_addr.s6_addr,
+                ));
+            }
             let port = u16::from_be(sin6.sin6_port);
-            (ip.to_string(), port.to_string())
+            (host_text, port.to_string())
         }
         _ => {
             record_resolver_stage_outcome(
