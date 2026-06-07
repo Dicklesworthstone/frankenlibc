@@ -1220,6 +1220,16 @@ pub struct IconvDescriptor {
     /// linear scan inside encode_*. `None` when `to` is multibyte. See
     /// [`build_to_reverse`].
     to_reverse: Option<SingleByteReverse>,
+    /// Unmarked `UTF-32` source only: a leading Byte Order Mark has not yet been
+    /// consumed. glibc's BOM-bearing converters strip an initial BOM and switch
+    /// endianness from it (no BOM => the platform-native LE default), so we
+    /// resolve it once at the start of the first input. Explicit-endianness
+    /// codecs (`UTF-32LE`/`BE`) leave this `false`.
+    from_bom_pending: bool,
+    /// Resolved source endianness for the unmarked `UTF-32` decoder once the BOM
+    /// has been inspected: `true` = big-endian (a `00 00 FE FF` BOM was seen),
+    /// `false` = little-endian (an `FF FE 00 00` BOM or no BOM — native default).
+    from_utf32_be: bool,
 }
 
 /// Sorted codepoint -> output-byte reverse map for a single-byte target codec.
@@ -8963,6 +8973,8 @@ pub fn iconv_open_detailed(
             fast_ascii: pair_is_ascii_identity(from, to),
             sb_translation: build_sb_translation(from, to),
             to_reverse: build_to_reverse(to),
+            from_bom_pending: matches!(from, Encoding::Utf32),
+            from_utf32_be: false,
         },
         dispatch,
     ))
@@ -9028,24 +9040,41 @@ pub fn iconv(
         }
     };
 
-    if cd.emit_bom {
-        let bom = match cd.to {
-            Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00][..],
-            _ => &[][..],
-        };
-        if !bom.is_empty() {
-            if outbuf.len() < bom.len() {
-                return Err(IconvError {
-                    code: ICONV_E2BIG,
-                    in_consumed: 0,
-                    out_written: 0,
-                });
+    // NOTE: the destination BOM (unmarked `UTF-32`) is emitted LAZILY, just
+    // before the first successfully-converted character is written (see the loop
+    // below), NOT eagerly here. glibc only emits the BOM alongside real output:
+    // an empty input — or one that errors before producing any character —
+    // yields no BOM at all. Emitting it up-front diverged on those cases.
+
+    // Unmarked `UTF-32` source: consume a leading BOM once and resolve the
+    // decode endianness from it, matching glibc's gconv (an `FF FE 00 00` BOM =>
+    // LE, `00 00 FE FF` => BE, no BOM => the native LE default). Only attempt the
+    // check with a full 4-byte unit available; with fewer bytes the per-unit
+    // decode below returns EINVAL/incomplete and the caller re-presents the tail,
+    // so `from_bom_pending` stays set for the next call.
+    if cd.from_bom_pending && input.len() - in_pos >= 4 {
+        match input[in_pos..in_pos + 4] {
+            [0xFF, 0xFE, 0x00, 0x00] => {
+                cd.from_utf32_be = false;
+                in_pos += 4;
             }
-            outbuf[..bom.len()].copy_from_slice(bom);
-            out_pos = bom.len();
+            [0x00, 0x00, 0xFE, 0xFF] => {
+                cd.from_utf32_be = true;
+                in_pos += 4;
+            }
+            _ => {} // no BOM: keep the native LE default
         }
-        cd.emit_bom = false;
+        cd.from_bom_pending = false;
     }
+
+    // Source encoding to decode each unit under. For the unmarked `UTF-32` codec
+    // this reflects the BOM-resolved endianness (decode_utf32 is LE; Utf32Be is
+    // the big-endian decoder); every other codec decodes under `cd.from` itself.
+    let from_enc = if cd.from == Encoding::Utf32 && cd.from_utf32_be {
+        Encoding::Utf32Be
+    } else {
+        cd.from
+    };
 
     // When both endpoints are ASCII-transparent, any byte < 0x80 converts to
     // itself, so leading ASCII runs can be bulk-copied with a SIMD scan instead
@@ -9090,7 +9119,7 @@ pub fn iconv(
             }
         }
 
-        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+        let (ch, consumed) = match decode_char(from_enc, &input[in_pos..]) {
             Ok(v) => v,
             Err(DecodeError::Incomplete) => {
                 return Err(IconvError {
@@ -9107,6 +9136,28 @@ pub fn iconv(
                 });
             }
         };
+
+        // A character successfully decoded — emit any pending destination BOM
+        // now (lazily), so it precedes the first real output and is omitted
+        // entirely when nothing converts (matching glibc).
+        if cd.emit_bom {
+            let bom: &[u8] = match cd.to {
+                Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00],
+                _ => &[],
+            };
+            if !bom.is_empty() {
+                if outbuf.len() - out_pos < bom.len() {
+                    return Err(IconvError {
+                        code: ICONV_E2BIG,
+                        in_consumed: in_pos,
+                        out_written: out_pos,
+                    });
+                }
+                outbuf[out_pos..out_pos + bom.len()].copy_from_slice(bom);
+                out_pos += bom.len();
+            }
+            cd.emit_bom = false;
+        }
 
         let written = match encode_one(cd, ch, &mut outbuf[out_pos..]) {
             Ok(v) => v,

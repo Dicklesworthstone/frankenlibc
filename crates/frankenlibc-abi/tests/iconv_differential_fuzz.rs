@@ -210,3 +210,116 @@ fn iconv_differential_fuzz_vs_glibc() {
     );
     eprintln!("iconv differential fuzz: {compared} conversions, 0 divergences vs host glibc");
 }
+
+/// The unmarked `UTF-32` codec must consume/honor a leading BOM exactly like
+/// glibc: `FF FE 00 00` => LE, `00 00 FE FF` => BE, no BOM => the native LE
+/// default; the BOM itself is stripped from the output. (The unmarked `UTF-16`
+/// codec is not yet implemented by fl — `iconv_open` returns -1, a separate
+/// gap — so cases where fl can't open are skipped here.)
+#[test]
+fn iconv_unmarked_utf32_bom_vs_glibc() {
+    let utf8 = CString::new("UTF-8").unwrap();
+    let mut divs: Vec<String> = Vec::new();
+    let w = CString::new("UTF-32").unwrap();
+    let cases: &[(&str, &[u8])] = &[
+        ("decode no-BOM", &[0x00, 0x00, 0x00, 0x41]),
+        ("decode LE-BOM", &[0xFF, 0xFE, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00]),
+        ("decode BE-BOM", &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x00, 0x41]),
+        ("decode LE-BOM only", &[0xFF, 0xFE, 0x00, 0x00]),
+        ("decode BE-BOM only", &[0x00, 0x00, 0xFE, 0xFF]),
+        ("decode LE-BOM + astral", &[0xFF, 0xFE, 0x00, 0x00, 0x00, 0xF0, 0x01, 0x00]),
+        ("decode BE-BOM + astral", &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x01, 0xF0, 0x00]),
+    ];
+    for (label, src) in cases {
+        // decode direction: UTF-32 -> UTF-8
+        let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &utf8, &w, src) };
+        let h = unsafe { run(iconv_open, iconv_close, iconv, &utf8, &w, src) };
+        if let (Some(f), Some(h)) = (f, h)
+            && f != h
+        {
+            divs.push(format!("UTF-32->UTF-8 [{label}] src={src:02x?}\n    fl   ={f:02x?}\n    glibc={h:02x?}"));
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "unmarked UTF-32 BOM handling diverged from glibc:\n{}",
+        divs.join("\n")
+    );
+    eprintln!("iconv unmarked UTF-32 BOM: {} cases, 0 divergences vs host glibc", cases.len());
+}
+
+/// Append the UTF-8 encoding of `cp` (assumed a valid scalar value) to `v`.
+fn push_utf8(v: &mut Vec<u8>, cp: u32) {
+    if let Some(c) = char::from_u32(cp) {
+        let mut buf = [0u8; 4];
+        v.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    }
+}
+
+/// Wide-codec differential fuzz: UTF-16LE/BE and UTF-32LE/BE <-> UTF-8 over
+/// (a) random raw bytes (even AND odd lengths — exercises the incomplete-tail
+/// EINVAL boundary and surrogate/range EILSEQ classification + stop position)
+/// and (b) valid UTF-8 built from random scalar values incl. astral planes
+/// (exercises surrogate-pair encoding on the UTF-8->UTF-16 side). The explicit
+/// endianness codecs have no BOM ambiguity, so fl and glibc must agree on the
+/// full contract (return value + errno + output bytes + *inbytesleft).
+#[test]
+fn iconv_wide_differential_fuzz_vs_glibc() {
+    let utf8 = CString::new("UTF-8").unwrap();
+    let mut r = Lcg(0x5151_2727_9393_0f0f);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared: u64 = 0;
+
+    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "UTF-32"];
+
+    for codec in WIDE {
+        let w = CString::new(*codec).unwrap();
+        for _ in 0..2000 {
+            // Two corpora: raw bytes (any length) and valid UTF-8.
+            let raw: Vec<u8> = {
+                let len = (r.next() % 14) as usize;
+                (0..len).map(|_| r.byte()).collect()
+            };
+            let valid_utf8: Vec<u8> = {
+                let n = (r.next() % 4) as usize;
+                let mut v = Vec::new();
+                for _ in 0..n {
+                    // Bias toward BMP, but reach astral + surrogate-gap edges.
+                    let pick = r.next() % 8;
+                    let cp = match pick {
+                        0 => r.next() as u32 % 0x80,            // ASCII
+                        1 | 2 => r.next() as u32 % 0x800,       // 2-byte
+                        3 | 4 => r.next() as u32 % 0x10000,     // 3-byte (may be surrogate -> skipped)
+                        _ => 0x10000 + (r.next() as u32 % 0x100000), // astral (surrogate pair in UTF-16)
+                    };
+                    push_utf8(&mut v, cp);
+                }
+                v
+            };
+
+            for src in [&raw, &valid_utf8] {
+                for (to, from, dir) in [
+                    (&w, &utf8, format!("UTF-8->{codec}")),
+                    (&utf8, &w, format!("{codec}->UTF-8")),
+                ] {
+                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, to, from, src) };
+                    let h = unsafe { run(iconv_open, iconv_close, iconv, to, from, src) };
+                    let (Some(f), Some(h)) = (f, h) else { continue };
+                    compared += 1;
+                    if f != h && divs.len() < 40 {
+                        divs.push(format!(
+                            "{dir} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "wide iconv diverged from host glibc on conversion contract (showing up to 40):\n{}",
+        divs.join("\n")
+    );
+    eprintln!("iconv wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+}
