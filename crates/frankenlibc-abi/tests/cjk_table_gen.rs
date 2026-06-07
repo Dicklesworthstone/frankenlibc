@@ -82,7 +82,7 @@ unsafe fn enc(to: &CString, utf8: &CString, cp: u32) -> Option<Vec<u8>> {
 #[ignore = "offline generator for CJK iconv tables (bd-2g7oyh.195); run with --ignored --nocapture"]
 fn cjk_table_gen() {
     let utf8 = CString::new("UTF-8").unwrap();
-    for codec in ["SHIFT_JIS", "BIG5"] {
+    for codec in ["SHIFT_JIS", "BIG5", "GBK", "EUC-KR"] {
         let from = CString::new(codec).unwrap();
         let ident = codec.to_ascii_uppercase().replace('-', "_");
 

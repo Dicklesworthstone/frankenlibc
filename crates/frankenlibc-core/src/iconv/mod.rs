@@ -202,6 +202,8 @@ enum Encoding {
     EucJp,
     ShiftJis,
     Big5,
+    Gbk,
+    EucKr,
 }
 
 struct CodecSpec {
@@ -216,7 +218,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 130] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 132] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -1100,6 +1102,18 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 130] = [
         canonical: "BIG5",
         normalized: "BIG5",
         aliases: &["CSBIG5", "BIG5TW", "BIGFIVE", "CNBIG5"],
+    },
+    CodecSpec {
+        encoding: Encoding::Gbk,
+        canonical: "GBK",
+        normalized: "GBK",
+        aliases: &["CP936", "MS936", "WINDOWS936"],
+    },
+    CodecSpec {
+        encoding: Encoding::EucKr,
+        canonical: "EUC-KR",
+        normalized: "EUCKR",
+        aliases: &["EUCKR", "CSEUCKR", "KSC5601", "KOREAN"],
     },
 ];
 
@@ -8786,6 +8800,18 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
+        Encoding::Gbk => decode_dbcs2(
+            input,
+            &cjk_tables::GBK_ONE_BYTE,
+            &cjk_tables::GBK_IS_LEAD,
+            &cjk_tables::GBK_DBCS,
+        ),
+        Encoding::EucKr => decode_dbcs2(
+            input,
+            &cjk_tables::EUC_KR_ONE_BYTE,
+            &cjk_tables::EUC_KR_IS_LEAD,
+            &cjk_tables::EUC_KR_DBCS,
+        ),
     }
 }
 
@@ -8997,6 +9023,8 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
+        Encoding::Gbk => encode_dbcs2(ch, out, &cjk_tables::GBK_ENC),
+        Encoding::EucKr => encode_dbcs2(ch, out, &cjk_tables::EUC_KR_ENC),
     }
 }
 
