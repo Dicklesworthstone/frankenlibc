@@ -4502,6 +4502,48 @@ fn c16_surrogate_set(value: u32) {
     }
 }
 
+/// High-bit marker distinguishing "a surrogate is pending" from a zeroed state.
+const C16_PENDING_MARK: u32 = 0x8000_0000;
+
+/// Read the pending UTF-16 surrogate for an `mbrtoc16`/`c16rtomb` stream. glibc
+/// keeps this state in the caller's `mbstate_t` so independent conversion
+/// streams never collide; when `ps` is non-null we do the same, reading the
+/// surrogate (with a high-bit marker) from the first 4 bytes of the state. fl's
+/// `mbrtowc`/`mbrtoc32` ignore `ps`, so this cannot collide with multibyte
+/// decode state. When `ps` is null we fall back to the thread-local, matching
+/// glibc's internal static state for that case.
+#[inline]
+unsafe fn c16_pending_get(ps: *const c_void) -> u32 {
+    if ps.is_null() {
+        return c16_surrogate_get();
+    }
+    // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
+    let raw = unsafe { (ps as *const u32).read_unaligned() };
+    if raw & C16_PENDING_MARK != 0 {
+        raw & 0xFFFF
+    } else {
+        0
+    }
+}
+
+/// Store (or clear, with `value == 0`) the pending UTF-16 surrogate for a
+/// stream — in the caller's `mbstate_t` when `ps` is non-null, else the
+/// thread-local fallback. See [`c16_pending_get`].
+#[inline]
+unsafe fn c16_pending_set(ps: *mut c_void, value: u32) {
+    if ps.is_null() {
+        c16_surrogate_set(value);
+        return;
+    }
+    let raw = if value == 0 {
+        0
+    } else {
+        C16_PENDING_MARK | (value & 0xFFFF)
+    };
+    // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
+    unsafe { (ps as *mut u32).write_unaligned(raw) };
+}
+
 /// `c32rtomb` — convert char32_t to multibyte (UTF-8).
 /// On Linux, char32_t == wchar_t (both are UTF-32), so this delegates to wcrtomb.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4531,11 +4573,11 @@ pub unsafe extern "C" fn mbrtoc32(
 /// Handles UTF-16 surrogate pairs via thread-local state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn c16rtomb(s: *mut c_char, c16: u16, ps: *mut c_void) -> usize {
-    let pending = c16_surrogate_get();
+    let pending = unsafe { c16_pending_get(ps) };
 
     if pending != 0 {
         // We have a high surrogate pending; this should be the low surrogate.
-        c16_surrogate_set(0);
+        unsafe { c16_pending_set(ps, 0) };
         if !(0xDC00..=0xDFFF).contains(&(c16 as u32)) {
             // Invalid: low surrogate expected but not found.
             unsafe { set_abi_errno(libc::EILSEQ) };
@@ -4548,7 +4590,7 @@ pub unsafe extern "C" fn c16rtomb(s: *mut c_char, c16: u16, ps: *mut c_void) -> 
 
     if (0xD800..=0xDBFF).contains(&(c16 as u32)) {
         // High surrogate — store and return 0 (no bytes yet).
-        c16_surrogate_set(c16 as u32);
+        unsafe { c16_pending_set(ps, c16 as u32) };
         return 0;
     }
 
@@ -4571,11 +4613,11 @@ pub unsafe extern "C" fn mbrtoc16(
     n: usize,
     ps: *mut c_void,
 ) -> usize {
-    let pending = c16_surrogate_get();
+    let pending = unsafe { c16_pending_get(ps) };
 
     if pending != 0 {
         // We have a pending low surrogate to deliver.
-        c16_surrogate_set(0);
+        unsafe { c16_pending_set(ps, 0) };
         if !pc16.is_null() {
             unsafe { *pc16 = pending as u16 };
         }
@@ -4600,7 +4642,7 @@ pub unsafe extern "C" fn mbrtoc16(
             unsafe { *pc16 = high as u16 };
         }
         // Store low surrogate for next call.
-        c16_surrogate_set(low);
+        unsafe { c16_pending_set(ps, low) };
         return ret;
     }
 
