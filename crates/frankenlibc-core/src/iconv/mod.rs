@@ -206,6 +206,7 @@ enum Encoding {
     EucKr,
     Cp949,
     Gb2312,
+    Gb18030,
 }
 
 struct CodecSpec {
@@ -220,7 +221,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 134] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 135] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -1129,9 +1130,15 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 134] = [
         normalized: "GB2312",
         aliases: &["EUC-CN", "EUCCN", "CSGB2312", "GB2312-1980", "CSISO58GB231280"],
     },
+    CodecSpec {
+        encoding: Encoding::Gb18030,
+        canonical: "GB18030",
+        normalized: "GB18030",
+        aliases: &["GB18030-2000", "GB18030-2005"],
+    },
 ];
 
-const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
+const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 3] = [
     ExcludedCodecSpec {
         canonical: "ISO-2022-CN-EXT",
         normalized: "ISO2022CNEXT",
@@ -1139,10 +1146,6 @@ const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 4] = [
     ExcludedCodecSpec {
         canonical: "ISO-2022-JP",
         normalized: "ISO2022JP",
-    },
-    ExcludedCodecSpec {
-        canonical: "GB18030",
-        normalized: "GB18030",
     },
     ExcludedCodecSpec {
         canonical: "BIG5-HKSCS",
@@ -1232,8 +1235,8 @@ pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 18] = [
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
-pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 4] =
-    ["ISO-2022-CN-EXT", "ISO-2022-JP", "GB18030", "BIG5-HKSCS"];
+pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 3] =
+    ["ISO-2022-CN-EXT", "ISO-2022-JP", "BIG5-HKSCS"];
 
 /// Opaque conversion descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8665,6 +8668,133 @@ fn encode_one(cd: &IconvDescriptor, ch: char, out: &mut [u8]) -> Result<usize, E
     encode_char(cd.to, ch, out)
 }
 
+/// GB18030 four-byte linear index: `L = (b1-0x81)*12600 + (b2-0x30)*1260 +
+/// (b3-0x81)*10 + (b4-0x30)` (b2/b4 in 0x30-0x39 → 10 values; b1/b3 in
+/// 0x81-0xFE → 126 values). Bytes must be pre-validated to those ranges.
+#[inline]
+fn gb18030_lin4(b1: u8, b2: u8, b3: u8, b4: u8) -> u32 {
+    (u32::from(b1) - 0x81) * 12600
+        + (u32::from(b2) - 0x30) * 1260
+        + (u32::from(b3) - 0x81) * 10
+        + (u32::from(b4) - 0x30)
+}
+
+/// Linear index of the contiguous 4-byte run mapping to the supplementary
+/// planes: `0x90 0x30 0x81 0x30` → U+10000 … → U+10FFFF.
+const GB18030_SUPP_L_LO: u32 = 189_000;
+const GB18030_SUPP_L_HI: u32 = 1_237_575;
+
+/// Emit the GB18030 four bytes for linear index `l` (inverse of [`gb18030_lin4`]).
+#[inline]
+fn gb18030_emit4(l: u32, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.len() < 4 {
+        return Err(EncodeError::NoSpace);
+    }
+    out[0] = (0x81 + l / 12600) as u8;
+    out[1] = (0x30 + (l / 1260) % 10) as u8;
+    out[2] = (0x81 + (l / 10) % 126) as u8;
+    out[3] = (0x30 + l % 10) as u8;
+    Ok(4)
+}
+
+/// GB18030 decoder (1/2/4-byte) matching glibc's gconv. ASCII is 1-byte; a lead
+/// `0x81-0xFE` followed by `0x30-0x39` is a 4-byte sequence (the rest of Unicode
+/// via a linear index — supplementary planes by the [`GB18030_SUPP_L_LO`] formula,
+/// BMP gaps by the `GB18030_DEC4` RLE segments), otherwise a 2-byte GBK-superset
+/// char via `GB18030_DBCS2`. A truncated valid sequence is `Incomplete` (EINVAL);
+/// an out-of-range continuation byte or unmapped index is `Invalid` (EILSEQ).
+fn decode_gb18030(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    let Some(&b0) = input.first() else {
+        return Err(DecodeError::Incomplete);
+    };
+    let ob = cjk_tables::GB18030_ONE_BYTE[b0 as usize];
+    if ob >= 0 {
+        return char::from_u32(ob as u32)
+            .map(|c| (c, 1))
+            .ok_or(DecodeError::Invalid);
+    }
+    if !cjk_tables::GB18030_IS_LEAD[b0 as usize] {
+        return Err(DecodeError::Invalid);
+    }
+    let Some(&b1) = input.get(1) else {
+        return Err(DecodeError::Incomplete);
+    };
+    if (0x30..=0x39).contains(&b1) {
+        // Four-byte sequence. glibc requires all four bytes present before
+        // validating bytes 3-4, so a truncated tail is EINVAL (incomplete) even
+        // if a present byte is already out of range.
+        if input.len() < 4 {
+            return Err(DecodeError::Incomplete);
+        }
+        let b2 = input[2];
+        let b3 = input[3];
+        if !(0x81..=0xFE).contains(&b2) || !(0x30..=0x39).contains(&b3) {
+            return Err(DecodeError::Invalid);
+        }
+        let l = gb18030_lin4(b0, b1, b2, b3);
+        if (GB18030_SUPP_L_LO..=GB18030_SUPP_L_HI).contains(&l) {
+            let cp = 0x10000 + (l - GB18030_SUPP_L_LO);
+            return char::from_u32(cp).map(|c| (c, 4)).ok_or(DecodeError::Invalid);
+        }
+        let segs = &cjk_tables::GB18030_DEC4;
+        let i = segs.partition_point(|&(lstart, _, _)| lstart <= l);
+        if i > 0 {
+            let (lstart, cpstart, len) = segs[i - 1];
+            if l < lstart + len {
+                let cp = cpstart + (l - lstart);
+                return char::from_u32(cp).map(|c| (c, 4)).ok_or(DecodeError::Invalid);
+            }
+        }
+        return Err(DecodeError::Invalid);
+    }
+    let key = (u16::from(b0) << 8) | u16::from(b1);
+    match cjk_tables::GB18030_DBCS2.binary_search_by_key(&key, |&(k, _)| k) {
+        Ok(i) => char::from_u32(cjk_tables::GB18030_DBCS2[i].1)
+            .map(|c| (c, 2))
+            .ok_or(DecodeError::Invalid),
+        Err(_) => Err(DecodeError::Invalid),
+    }
+}
+
+/// GB18030 encoder: ASCII identity; supplementary planes via the linear formula;
+/// BMP via the 2-byte table (`GB18030_ENC2`) then the 4-byte RLE segments
+/// (`GB18030_ENC4`, sorted by code point). GB18030 covers all of Unicode, so the
+/// only `Unrepresentable` cases are surrogates / above U+10FFFF.
+fn encode_gb18030(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    let cp = ch as u32;
+    if cp < 0x80 {
+        if out.is_empty() {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    if cp >= 0x10000 {
+        if cp > 0x10FFFF {
+            return Err(EncodeError::Unrepresentable);
+        }
+        return gb18030_emit4(GB18030_SUPP_L_LO + (cp - 0x10000), out);
+    }
+    if let Ok(i) = cjk_tables::GB18030_ENC2.binary_search_by_key(&cp, |&(c, _)| c) {
+        let key = cjk_tables::GB18030_ENC2[i].1;
+        if out.len() < 2 {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = (key >> 8) as u8;
+        out[1] = (key & 0xFF) as u8;
+        return Ok(2);
+    }
+    let segs = &cjk_tables::GB18030_ENC4;
+    let i = segs.partition_point(|&(cpstart, _, _)| cpstart <= cp);
+    if i > 0 {
+        let (cpstart, lstart, len) = segs[i - 1];
+        if cp < cpstart + len {
+            return gb18030_emit4(lstart + (cp - cpstart), out);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
 fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError> {
     match enc {
         Encoding::Utf8 => decode_utf8(input),
@@ -8838,6 +8968,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
             &cjk_tables::GB2312_IS_LEAD,
             &cjk_tables::GB2312_DBCS,
         ),
+        Encoding::Gb18030 => decode_gb18030(input),
     }
 }
 
@@ -9053,6 +9184,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::EucKr => encode_dbcs2(ch, out, &cjk_tables::EUC_KR_ENC),
         Encoding::Cp949 => encode_dbcs2(ch, out, &cjk_tables::CP949_ENC),
         Encoding::Gb2312 => encode_dbcs2(ch, out, &cjk_tables::GB2312_ENC),
+        Encoding::Gb18030 => encode_gb18030(ch, out),
     }
 }
 
@@ -9597,9 +9729,10 @@ mod tests {
 
     #[test]
     fn iconv_open_detailed_reports_excluded_family_policy() {
-        let err = iconv_open_detailed(b"UTF-8", b"GB18030").expect_err("excluded codec must fail");
+        let err =
+            iconv_open_detailed(b"UTF-8", b"BIG5-HKSCS").expect_err("excluded codec must fail");
         assert_eq!(err.policy, IconvFallbackPolicy::ExcludedCodecFamily);
-        assert_eq!(err.dispatch.from_codec, "GB18030");
+        assert_eq!(err.dispatch.from_codec, "BIG5-HKSCS");
         assert_eq!(
             err.dispatch.from_dispatch_path,
             CodecDispatchPath::ExcludedFamily

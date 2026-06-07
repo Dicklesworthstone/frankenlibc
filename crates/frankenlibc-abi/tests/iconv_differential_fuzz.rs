@@ -352,7 +352,9 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
 
-    const CJK: &[&str] = &["SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312"];
+    const CJK: &[&str] = &[
+        "SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312", "GB18030",
+    ];
 
     for codec in CJK {
         let c = CString::new(*codec).unwrap();
@@ -365,30 +367,45 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
                 let n = (r.next() % 4) as usize;
                 let mut v = Vec::new();
                 for _ in 0..n {
-                    let cp = match r.next() % 8 {
-                        0 => r.next() as u32 % 0x80,                  // ASCII
-                        1 => 0xFF61 + (r.next() as u32 % 0x3F),       // half-width kana
-                        2 | 3 => 0x3000 + (r.next() as u32 % 0x100),  // CJK symbols/kana
-                        _ => 0x4E00 + (r.next() as u32 % 0x5200),     // CJK unified ideographs
+                    // Broadened so GB18030's 4-byte forms are exercised: low BMP
+                    // (Latin/Greek/...), arbitrary BMP, and astral planes all map
+                    // to 4-byte GB18030; surrogates are skipped by push_utf8.
+                    let cp = match r.next() % 12 {
+                        0 | 1 => r.next() as u32 % 0x80,                  // ASCII
+                        2 => 0xFF61 + (r.next() as u32 % 0x3F),           // half-width kana
+                        3 | 4 => 0x3000 + (r.next() as u32 % 0x100),      // CJK symbols/kana
+                        5 | 6 | 7 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs (2-byte)
+                        8 => 0x80 + (r.next() as u32 % 0x3F00),           // low BMP (GB18030 4-byte)
+                        9 | 10 => r.next() as u32 % 0x10000,              // any BMP
+                        _ => 0x10000 + (r.next() as u32 % 0x100000),      // astral (GB18030 4-byte)
                     };
                     push_utf8(&mut v, cp);
                 }
                 v
             };
-            for src in [&raw, &valid_utf8] {
-                for (to, from, dir) in [
-                    (&c, &utf8, format!("UTF-8->{codec}")),
-                    (&utf8, &c, format!("{codec}->UTF-8")),
-                ] {
-                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, to, from, src) };
-                    let h = unsafe { run(iconv_open, iconv_close, iconv, to, from, src) };
-                    let (Some(f), Some(h)) = (f, h) else { continue };
-                    compared += 1;
-                    if f != h && divs.len() < 40 {
-                        divs.push(format!(
-                            "{dir} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
-                        ));
-                    }
+            // Valid codec byte sequence (host-encoded) so the decode direction
+            // sees real multibyte sequences — incl. GB18030 4-byte — not just the
+            // rare valid runs in random bytes.
+            let codec_bytes: Vec<u8> = unsafe {
+                run(iconv_open, iconv_close, iconv, &c, &utf8, &valid_utf8)
+            }
+            .map(|o| o.out)
+            .unwrap_or_default();
+
+            for (src, to, from, dir) in [
+                (&raw, &c, &utf8, format!("UTF-8->{codec}")),
+                (&valid_utf8, &c, &utf8, format!("UTF-8->{codec}")),
+                (&raw, &utf8, &c, format!("{codec}->UTF-8")),
+                (&codec_bytes, &utf8, &c, format!("{codec}->UTF-8")),
+            ] {
+                let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, to, from, src) };
+                let h = unsafe { run(iconv_open, iconv_close, iconv, to, from, src) };
+                let (Some(f), Some(h)) = (f, h) else { continue };
+                compared += 1;
+                if f != h && divs.len() < 40 {
+                    divs.push(format!(
+                        "{dir} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
+                    ));
                 }
             }
         }
