@@ -352,7 +352,7 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
 
-    const CJK: &[&str] = &["SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR"];
+    const CJK: &[&str] = &["SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312"];
 
     for codec in CJK {
         let c = CString::new(*codec).unwrap();

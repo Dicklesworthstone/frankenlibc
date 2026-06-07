@@ -204,6 +204,8 @@ enum Encoding {
     Big5,
     Gbk,
     EucKr,
+    Cp949,
+    Gb2312,
 }
 
 struct CodecSpec {
@@ -218,7 +220,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 132] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 134] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -1114,6 +1116,18 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 132] = [
         canonical: "EUC-KR",
         normalized: "EUCKR",
         aliases: &["EUCKR", "CSEUCKR", "KSC5601", "KOREAN"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp949,
+        canonical: "CP949",
+        normalized: "CP949",
+        aliases: &["UHC", "MSCP949", "WINDOWS949"],
+    },
+    CodecSpec {
+        encoding: Encoding::Gb2312,
+        canonical: "GB2312",
+        normalized: "GB2312",
+        aliases: &["EUC-CN", "EUCCN", "CSGB2312", "GB2312-1980", "CSISO58GB231280"],
     },
 ];
 
@@ -8812,6 +8826,18 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
             &cjk_tables::EUC_KR_IS_LEAD,
             &cjk_tables::EUC_KR_DBCS,
         ),
+        Encoding::Cp949 => decode_dbcs2(
+            input,
+            &cjk_tables::CP949_ONE_BYTE,
+            &cjk_tables::CP949_IS_LEAD,
+            &cjk_tables::CP949_DBCS,
+        ),
+        Encoding::Gb2312 => decode_dbcs2(
+            input,
+            &cjk_tables::GB2312_ONE_BYTE,
+            &cjk_tables::GB2312_IS_LEAD,
+            &cjk_tables::GB2312_DBCS,
+        ),
     }
 }
 
@@ -9025,6 +9051,8 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Big5 => encode_big5(ch, out),
         Encoding::Gbk => encode_dbcs2(ch, out, &cjk_tables::GBK_ENC),
         Encoding::EucKr => encode_dbcs2(ch, out, &cjk_tables::EUC_KR_ENC),
+        Encoding::Cp949 => encode_dbcs2(ch, out, &cjk_tables::CP949_ENC),
+        Encoding::Gb2312 => encode_dbcs2(ch, out, &cjk_tables::GB2312_ENC),
     }
 }
 
