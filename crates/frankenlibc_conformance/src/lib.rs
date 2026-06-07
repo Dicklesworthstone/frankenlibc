@@ -21688,7 +21688,9 @@ fn ether_text_class(label: &str, ptr: *const c_char) -> String {
         return format!("{label}_NULL");
     }
     let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
-    if text == "01:02:03:04:05:06" {
+    // glibc ether_ntoa renders each octet with "%x" (no leading zeros), so the
+    // SAMPLE address {1,2,3,4,5,6} prints as "1:2:3:4:5:6", not "01:02:...".
+    if text == "1:2:3:4:5:6" {
         format!("{label}_CANONICAL_SAMPLE_TEXT")
     } else {
         format!("{label}_OTHER_TEXT")

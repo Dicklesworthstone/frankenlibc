@@ -53,23 +53,27 @@ pub fn parse_ether_addr(bytes: &[u8]) -> Option<EtherAddr> {
     Some(octets)
 }
 
-/// Format an Ethernet address into the canonical 17-byte textual form
-/// (`xx:xx:xx:xx:xx:xx`, lowercase hex, no NUL terminator).
-pub fn format_ether_addr(addr: &EtherAddr) -> [u8; ETHER_ADDR_TEXT_LEN] {
+/// Format an Ethernet address into `out` using glibc's `ether_ntoa` form —
+/// `"%x:%x:%x:%x:%x:%x"`, lowercase hex with NO leading zeros (e.g.
+/// `{0,1,0x0a,0x0b,0x0c,0xff}` -> `"0:1:a:b:c:ff"`). Returns the number of bytes
+/// written (no NUL terminator); `out` must be at least [`ETHER_ADDR_TEXT_LEN`].
+pub fn format_ether_addr(addr: &EtherAddr, out: &mut [u8]) -> usize {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = [0u8; ETHER_ADDR_TEXT_LEN];
     let mut pos = 0usize;
     for (slot, &value) in addr.iter().enumerate() {
-        out[pos] = HEX[(value >> 4) as usize];
-        pos += 1;
-        out[pos] = HEX[(value & 0x0f) as usize];
-        pos += 1;
-        if slot < 5 {
+        if slot > 0 {
             out[pos] = b':';
             pos += 1;
         }
+        // glibc `%x`: emit the high nibble only when the value is >= 0x10.
+        if value >= 0x10 {
+            out[pos] = HEX[(value >> 4) as usize];
+            pos += 1;
+        }
+        out[pos] = HEX[(value & 0x0f) as usize];
+        pos += 1;
     }
-    out
+    pos
 }
 
 /// Parse one /etc/ethers line into an address and a borrowed hostname.
@@ -204,36 +208,34 @@ mod tests {
         assert!(parse_ether_addr(b"").is_none());
     }
 
-    #[test]
-    fn format_canonical() {
-        assert_eq!(
-            &format_ether_addr(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]),
-            b"01:23:45:67:89:ab"
-        );
+    fn fmt(addr: &EtherAddr) -> Vec<u8> {
+        let mut buf = [0u8; ETHER_ADDR_TEXT_LEN];
+        let n = format_ether_addr(addr, &mut buf);
+        buf[..n].to_vec()
     }
 
     #[test]
-    fn format_zero_padded_lowercase() {
-        // Even single-digit-able values get padded to two hex digits.
-        assert_eq!(
-            &format_ether_addr(&[0, 0, 0, 0, 0, 0]),
-            b"00:00:00:00:00:00"
-        );
+    fn format_canonical() {
+        // glibc "%x": leading zeros are dropped (0x01 -> "1").
+        assert_eq!(fmt(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]), b"1:23:45:67:89:ab");
+    }
+
+    #[test]
+    fn format_no_leading_zeros_lowercase() {
+        // glibc ether_ntoa prints "%x" per octet (NO zero padding).
+        assert_eq!(fmt(&[0, 0, 0, 0, 0, 0]), b"0:0:0:0:0:0");
+        assert_eq!(fmt(&[0, 1, 0x0a, 0x0b, 0x0c, 0xff]), b"0:1:a:b:c:ff");
     }
 
     #[test]
     fn format_high_values_lowercase() {
-        assert_eq!(
-            &format_ether_addr(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa]),
-            b"ff:fe:fd:fc:fb:fa"
-        );
+        assert_eq!(fmt(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa]), b"ff:fe:fd:fc:fb:fa");
     }
 
     #[test]
     fn format_round_trip_with_parse() {
         let addr: EtherAddr = [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe];
-        let text = format_ether_addr(&addr);
-        let parsed = parse_ether_addr(&text).expect("round-trips");
+        let parsed = parse_ether_addr(&fmt(&addr)).expect("round-trips");
         assert_eq!(parsed, addr);
     }
 
@@ -246,8 +248,7 @@ mod tests {
             [0x80, 0x40, 0x20, 0x10, 0x08, 0x04],
         ];
         for addr in cases {
-            let text = format_ether_addr(&addr);
-            assert_eq!(parse_ether_addr(&text), Some(addr));
+            assert_eq!(parse_ether_addr(&fmt(&addr)), Some(addr));
         }
     }
 

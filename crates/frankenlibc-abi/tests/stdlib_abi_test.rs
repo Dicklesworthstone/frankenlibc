@@ -2675,7 +2675,8 @@ fn ether_aton_and_ether_ntoa_roundtrip() {
     let rendered = unsafe { std::ffi::CStr::from_ptr(rendered_ptr) }
         .to_string_lossy()
         .into_owned();
-    assert_eq!(rendered, "00:1a:2b:3c:4d:5e");
+    // glibc ether_ntoa uses "%x" per octet — 0x00 renders as "0", not "00".
+    assert_eq!(rendered, "0:1a:2b:3c:4d:5e");
 }
 
 #[test]
@@ -2770,7 +2771,9 @@ fn hstrerror_reports_known_and_unknown_codes() {
     let unknown_text = unsafe { std::ffi::CStr::from_ptr(unknown) }
         .to_string_lossy()
         .into_owned();
-    assert_eq!(unknown_text, "Resolver internal error");
+    // glibc: an out-of-range POSITIVE h_errno is "Unknown resolver error"
+    // ("Resolver internal error" is reserved for NEGATIVE values). (bd-2g7oyh.225)
+    assert_eq!(unknown_text, "Unknown resolver error");
 }
 
 #[test]

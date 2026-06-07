@@ -12500,10 +12500,11 @@ unsafe fn format_ether_addr(addr: *const EtherAddrBytes, buf: *mut c_char) -> *m
         return std::ptr::null_mut();
     }
     let octet = unsafe { (*addr).octet };
-    let text = frankenlibc_core::ether::format_ether_addr(&octet);
+    // SAFETY: ether_ntoa[_r] requires an 18-byte buffer; the formatter writes at
+    // most 17 bytes (glibc "%x" form, no leading zeros) plus the NUL.
     let out = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), 18) };
-    out[..17].copy_from_slice(&text);
-    out[17] = 0;
+    let n = frankenlibc_core::ether::format_ether_addr(&octet, out);
+    out[n] = 0;
     buf
 }
 
