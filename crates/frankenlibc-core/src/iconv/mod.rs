@@ -1286,6 +1286,31 @@ enum DecodeError {
     Invalid,
 }
 
+/// Map a single-byte codepage table entry to a decoded char.
+///
+/// An *undefined* position in a `*_TO_UNICODE` table is marked with one of two
+/// sentinels: `0xFFFF` (the CP* / Mac* / KOI8* tables) or `0xFFFD` (the
+/// ISO-8859 family). Neither U+FFFF (a noncharacter) nor U+FFFD (the
+/// replacement character) is ever a legitimate codepage→Unicode mapping, so
+/// both unambiguously mean "this byte is not assigned." glibc's gconv
+/// converters reject an undefined byte with `EILSEQ` — without
+/// `//TRANSLIT`/`//IGNORE` they never substitute — so an undefined entry is
+/// `DecodeError::Invalid` here, NOT a substituted character.
+///
+/// This centralizes the rule the hand-written single-byte decoders applied
+/// inconsistently: the CP* family guarded `cp == 0xFFFF`, but the ISO-8859
+/// family (and several others) silently substituted U+FFFD and reported
+/// success where glibc returns EILSEQ — found by `iconv_differential_fuzz`.
+#[inline]
+fn map_single_byte(cp: u16) -> Result<(char, usize), DecodeError> {
+    if cp == 0xFFFF || cp == 0xFFFD {
+        return Err(DecodeError::Invalid);
+    }
+    // Defined table entries are always valid scalar values; the `unwrap_or`
+    // never fires (kept as a defensive identity).
+    Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+}
+
 enum EncodeError {
     NoSpace,
     Unrepresentable,
@@ -1356,73 +1381,31 @@ fn parse_encoding(raw: &[u8]) -> Option<Encoding> {
 }
 
 fn decode_utf8(input: &[u8]) -> Result<(char, usize), DecodeError> {
-    if input.is_empty() {
-        return Err(DecodeError::Incomplete);
+    // Delegate to the shared glibc-exact UTF-8 stepper (the same primitive that
+    // fixed mbrtowc — cc7e76c0 — verified by mbrtowc_differential_probe and now
+    // iconv_differential_fuzz). The previous hand-rolled RFC-3629-strict decoder
+    // diverged from glibc's gconv UTF-8 converter on the incomplete-vs-invalid
+    // distinction (EINVAL vs EILSEQ):
+    //   * it checked the byte COUNT before the present continuation bytes, so a
+    //     lead followed by a non-continuation byte (e.g. `E4 DD`) wrongly read
+    //     as Incomplete/EINVAL where glibc returns EILSEQ; and
+    //   * it rejected 0xF5..=0xFD leads at the lead byte, so a valid-so-far but
+    //     truncated 4/5/6-byte tail (e.g. `F7 82 9B`) wrongly read as
+    //     Invalid/EILSEQ where glibc — which counts those as multibyte leads and
+    //     defers the range check — returns EINVAL.
+    // utf8_decode_step encodes glibc's actual rule: validate the present
+    // continuation bytes first (a bad one is Invalid immediately), report a
+    // valid-but-short prefix as Incomplete, and enforce overlong/surrogate only
+    // on the complete sequence. An assembled code point that is not a Unicode
+    // scalar value (a complete 0xF5..=0xFD sequence is above U+10FFFF) is not
+    // representable, so it is EILSEQ here too — matching glibc's gconv.
+    match crate::string::wchar::utf8_decode_step(input) {
+        crate::string::wchar::Utf8Step::Char { wc, len } => char::from_u32(wc)
+            .map(|ch| (ch, len))
+            .ok_or(DecodeError::Invalid),
+        crate::string::wchar::Utf8Step::Incomplete => Err(DecodeError::Incomplete),
+        crate::string::wchar::Utf8Step::Invalid => Err(DecodeError::Invalid),
     }
-
-    let b0 = input[0];
-    if b0 < 0x80 {
-        return Ok((char::from(b0), 1));
-    }
-
-    if (0xC2..=0xDF).contains(&b0) {
-        if input.len() < 2 {
-            return Err(DecodeError::Incomplete);
-        }
-        let b1 = input[1];
-        if (b1 & 0xC0) != 0x80 {
-            return Err(DecodeError::Invalid);
-        }
-        let cp = u32::from(b0 & 0x1F) << 6 | u32::from(b1 & 0x3F);
-        if let Some(ch) = char::from_u32(cp) {
-            return Ok((ch, 2));
-        }
-        return Err(DecodeError::Invalid);
-    }
-
-    if (0xE0..=0xEF).contains(&b0) {
-        if input.len() < 3 {
-            return Err(DecodeError::Incomplete);
-        }
-        let b1 = input[1];
-        let b2 = input[2];
-        if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
-            return Err(DecodeError::Invalid);
-        }
-        if (b0 == 0xE0 && b1 < 0xA0) || (b0 == 0xED && b1 >= 0xA0) {
-            return Err(DecodeError::Invalid);
-        }
-        let cp = u32::from(b0 & 0x0F) << 12 | u32::from(b1 & 0x3F) << 6 | u32::from(b2 & 0x3F);
-        if let Some(ch) = char::from_u32(cp) {
-            return Ok((ch, 3));
-        }
-        return Err(DecodeError::Invalid);
-    }
-
-    if (0xF0..=0xF4).contains(&b0) {
-        if input.len() < 4 {
-            return Err(DecodeError::Incomplete);
-        }
-        let b1 = input[1];
-        let b2 = input[2];
-        let b3 = input[3];
-        if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 {
-            return Err(DecodeError::Invalid);
-        }
-        if (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F) {
-            return Err(DecodeError::Invalid);
-        }
-        let cp = u32::from(b0 & 0x07) << 18
-            | u32::from(b1 & 0x3F) << 12
-            | u32::from(b2 & 0x3F) << 6
-            | u32::from(b3 & 0x3F);
-        if let Some(ch) = char::from_u32(cp) {
-            return Ok((ch, 4));
-        }
-        return Err(DecodeError::Invalid);
-    }
-
-    Err(DecodeError::Invalid)
 }
 
 fn decode_utf16le(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -1553,7 +1536,7 @@ fn decode_koi8r(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = KOI8R_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -1601,12 +1584,12 @@ fn decode_koi8u(input: &[u8]) -> Result<(char, usize), DecodeError> {
     // Check KOI8-U specific mappings first
     for &(byte, unicode) in &KOI8U_DIFFS {
         if b == byte {
-            return Ok((char::from_u32(u32::from(unicode)).unwrap_or('\u{FFFD}'), 1));
+            return map_single_byte(unicode);
         }
     }
     // Otherwise same as KOI8-R
     let cp = KOI8R_TO_UNICODE[(b - 0x80) as usize];
-    Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+    map_single_byte(cp)
 }
 
 fn encode_koi8u(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
@@ -1667,11 +1650,11 @@ fn decode_koi8ru(input: &[u8]) -> Result<(char, usize), DecodeError> {
     }
     for &(byte, unicode) in KOI8RU_DIFFS {
         if b == byte {
-            return Ok((char::from_u32(u32::from(unicode)).unwrap_or('\u{FFFD}'), 1));
+            return map_single_byte(unicode);
         }
     }
     let unicode = KOI8R_TO_UNICODE[(b - 0x80) as usize];
-    Ok((char::from_u32(u32::from(unicode)).unwrap_or('\u{FFFD}'), 1))
+    map_single_byte(unicode)
 }
 
 fn encode_koi8ru(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
@@ -1729,7 +1712,7 @@ fn decode_cp437(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP437_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -1786,7 +1769,7 @@ fn decode_cp1250(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -1840,7 +1823,7 @@ fn decode_cp1251(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -1895,7 +1878,7 @@ fn decode_cp1253(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -1951,7 +1934,7 @@ fn decode_cp1254(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2006,7 +1989,7 @@ fn decode_cp1255(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2057,7 +2040,7 @@ fn decode_cp1256(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP1256_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2112,7 +2095,7 @@ fn decode_cp1257(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2167,7 +2150,7 @@ fn decode_cp1258(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2222,7 +2205,7 @@ fn decode_cp874(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2275,7 +2258,7 @@ fn decode_cp866(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP866_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2327,7 +2310,7 @@ fn decode_cp862(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP862_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2378,7 +2361,7 @@ fn decode_cp863(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP863_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2431,7 +2414,7 @@ fn decode_cp865(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP865_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2487,7 +2470,7 @@ fn decode_cp857(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2542,7 +2525,7 @@ fn decode_cp860(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP860_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2596,7 +2579,7 @@ fn decode_cp861(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP861_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2662,7 +2645,7 @@ fn decode_cp869(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2717,7 +2700,7 @@ fn decode_cp737(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP737_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2781,7 +2764,7 @@ fn decode_cp855(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP855_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2837,7 +2820,7 @@ fn decode_cp864(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2900,7 +2883,7 @@ fn decode_cp775(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP775_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -2967,7 +2950,7 @@ fn decode_viscii(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = VISCII_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3036,7 +3019,7 @@ fn decode_tcvn(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3103,7 +3086,7 @@ fn decode_armscii8(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3155,7 +3138,7 @@ fn decode_geostd8(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = GEOSTD8_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3210,7 +3193,7 @@ fn decode_georgian_ps(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = GEORGIAN_PS_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3262,7 +3245,7 @@ fn decode_georgian_academy(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = GEORGIAN_ACADEMY_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3315,7 +3298,7 @@ fn decode_pt154(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = PT154_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3371,7 +3354,7 @@ fn decode_rk1048(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -3426,7 +3409,7 @@ fn decode_mulelao(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3477,7 +3460,7 @@ fn decode_hproman8(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3532,7 +3515,7 @@ fn decode_nextstep(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3584,7 +3567,7 @@ fn decode_atarist(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ATARIST_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3635,7 +3618,7 @@ fn decode_cp850(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP850_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3690,7 +3673,7 @@ fn decode_cp851(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -3742,7 +3725,7 @@ fn decode_macroman(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACROMAN_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3789,7 +3772,7 @@ fn decode_iso88592(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO88592_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3840,7 +3823,7 @@ fn decode_iso88593(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3887,7 +3870,7 @@ fn decode_iso88594(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO88594_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3936,7 +3919,7 @@ fn decode_iso88595(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO88595_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -3989,7 +3972,7 @@ fn decode_iso88596(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4036,7 +4019,7 @@ fn decode_iso88597(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO88597_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4087,7 +4070,7 @@ fn decode_iso88598(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4129,7 +4112,7 @@ fn decode_cp1252(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     } else {
         Ok((char::from(b), 1))
     }
@@ -4171,7 +4154,7 @@ fn decode_iso88599(input: &[u8]) -> Result<(char, usize), DecodeError> {
     let b = input[0];
     for &(byte, unicode) in &ISO88599_DIFFS {
         if b == byte {
-            return Ok((char::from_u32(u32::from(unicode)).unwrap_or('\u{FFFD}'), 1));
+            return map_single_byte(unicode);
         }
     }
     Ok((char::from(b), 1))
@@ -4220,7 +4203,7 @@ fn decode_iso88599e(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO88599E_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4267,7 +4250,7 @@ fn decode_iso885910(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO885910_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4318,7 +4301,7 @@ fn decode_iso885911(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4365,7 +4348,7 @@ fn decode_iso885913(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO885913_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4412,7 +4395,7 @@ fn decode_iso885914(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO885914_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4455,7 +4438,7 @@ fn decode_iso885915(input: &[u8]) -> Result<(char, usize), DecodeError> {
     // Check for ISO-8859-15 specific mappings
     for &(byte, unicode) in &ISO885915_DIFFS {
         if b == byte {
-            return Ok((char::from_u32(u32::from(unicode)).unwrap_or('\u{FFFD}'), 1));
+            return map_single_byte(unicode);
         }
     }
     // Otherwise same as Latin-1
@@ -4512,7 +4495,7 @@ fn decode_iso885916(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ISO885916_TO_UNICODE[(b - 0xA0) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4574,7 +4557,7 @@ fn decode_riscoslatin1(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -4644,7 +4627,7 @@ fn decode_cp852(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP852_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4711,7 +4694,7 @@ fn decode_maccyrillic(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACCYRILLIC_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4789,7 +4772,7 @@ fn decode_macgreek(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -4866,7 +4849,7 @@ fn decode_macturkish(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACTURKISH_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -4942,7 +4925,7 @@ fn decode_maciceland(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACICELAND_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -5018,7 +5001,7 @@ fn decode_maccentraleurope(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACCENTRALEUROPE_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -5086,7 +5069,7 @@ fn decode_macukraine(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACUKRAINE_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -5138,7 +5121,7 @@ fn decode_cp858(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP858_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -5214,7 +5197,7 @@ fn decode_macromanian(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACROMANIAN_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -5266,7 +5249,7 @@ fn decode_macsami(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACSAMI_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -5342,7 +5325,7 @@ fn decode_maccroatian(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACCROATIAN_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -5404,7 +5387,7 @@ fn decode_cp720(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5466,7 +5449,7 @@ fn decode_machebrew(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5528,7 +5511,7 @@ fn decode_macarabic(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5590,7 +5573,7 @@ fn decode_macthai(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5654,7 +5637,7 @@ fn decode_macfarsi(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5716,7 +5699,7 @@ fn decode_macdevanagari(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5778,7 +5761,7 @@ fn decode_macgurmukhi(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5840,7 +5823,7 @@ fn decode_macgujarati(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5902,7 +5885,7 @@ fn decode_mackannada(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -5964,7 +5947,7 @@ fn decode_mactelugu(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -6026,7 +6009,7 @@ fn decode_macoriya(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -6088,7 +6071,7 @@ fn decode_macbengali(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -6150,7 +6133,7 @@ fn decode_macmalayalam(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -6212,7 +6195,7 @@ fn decode_mactamil(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -6274,7 +6257,7 @@ fn decode_cp1006(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -6330,7 +6313,7 @@ fn decode_cp1008(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -6386,7 +6369,7 @@ fn decode_cp1046(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
@@ -6438,7 +6421,7 @@ fn decode_cp1124(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP1124_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6490,7 +6473,7 @@ fn decode_cp1129(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP1129_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6545,7 +6528,7 @@ fn decode_cp1133(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6597,7 +6580,7 @@ fn decode_cp774(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP774_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6649,7 +6632,7 @@ fn decode_cp773(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP773_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6701,7 +6684,7 @@ fn decode_cp772(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP772_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6753,7 +6736,7 @@ fn decode_cp771(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP771_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6805,7 +6788,7 @@ fn decode_cp770(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP770_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6860,7 +6843,7 @@ fn decode_cp868(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6915,7 +6898,7 @@ fn decode_cp813(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -6970,7 +6953,7 @@ fn decode_cp916(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7025,7 +7008,7 @@ fn decode_cp1161(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7080,7 +7063,7 @@ fn decode_cp1162(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7132,7 +7115,7 @@ fn decode_cp1163(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP1163_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7187,7 +7170,7 @@ fn decode_isiri3342(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7248,7 +7231,7 @@ fn decode_mik(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7309,7 +7292,7 @@ fn decode_koi8t(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7361,7 +7344,7 @@ fn decode_ecma_cyrillic(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = ECMA_CYRILLIC_TO_UNICODE[(b - 0x80) as usize];
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7422,7 +7405,7 @@ fn decode_cp866nav(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7483,7 +7466,7 @@ fn decode_decmcs(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7538,7 +7521,7 @@ fn decode_hproman9(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7599,7 +7582,7 @@ fn decode_hpgreek8(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7660,7 +7643,7 @@ fn decode_hpthai8(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7721,7 +7704,7 @@ fn decode_hpturkish8(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7782,7 +7765,7 @@ fn decode_cp1004(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7843,7 +7826,7 @@ fn decode_ibm1167(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7904,7 +7887,7 @@ fn decode_cwi(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -7965,7 +7948,7 @@ fn decode_strk10482002(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -8026,7 +8009,7 @@ fn decode_csn369103(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -8087,7 +8070,7 @@ fn decode_ibm902(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -8148,7 +8131,7 @@ fn decode_ibm901(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -8209,7 +8192,7 @@ fn decode_cp856(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             return Err(DecodeError::Invalid);
         }
-        Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+        map_single_byte(cp)
     }
 }
 
@@ -8270,7 +8253,7 @@ fn decode_cp1125(input: &[u8]) -> Result<(char, usize), DecodeError> {
         if cp == 0xFFFF {
             Ok(('\u{FFFD}', 1))
         } else {
-            Ok((char::from_u32(u32::from(cp)).unwrap_or('\u{FFFD}'), 1))
+            map_single_byte(cp)
         }
     }
 }
