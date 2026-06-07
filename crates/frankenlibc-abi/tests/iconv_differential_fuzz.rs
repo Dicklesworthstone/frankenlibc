@@ -353,7 +353,7 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
     let mut compared: u64 = 0;
 
     const CJK: &[&str] = &[
-        "SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312", "GB18030",
+        "SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312", "GB18030", "JOHAB",
     ];
 
     for codec in CJK {

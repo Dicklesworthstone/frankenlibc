@@ -207,6 +207,7 @@ enum Encoding {
     Cp949,
     Gb2312,
     Gb18030,
+    Johab,
 }
 
 struct CodecSpec {
@@ -221,7 +222,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 135] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 136] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -1135,6 +1136,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 135] = [
         canonical: "GB18030",
         normalized: "GB18030",
         aliases: &["GB18030-2000", "GB18030-2005"],
+    },
+    CodecSpec {
+        encoding: Encoding::Johab,
+        canonical: "JOHAB",
+        normalized: "JOHAB",
+        aliases: &["CP1361", "MS1361"],
     },
 ];
 
@@ -8969,6 +8976,12 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
             &cjk_tables::GB2312_DBCS,
         ),
         Encoding::Gb18030 => decode_gb18030(input),
+        Encoding::Johab => decode_dbcs2(
+            input,
+            &cjk_tables::JOHAB_ONE_BYTE,
+            &cjk_tables::JOHAB_IS_LEAD,
+            &cjk_tables::JOHAB_DBCS,
+        ),
     }
 }
 
@@ -9185,6 +9198,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp949 => encode_dbcs2(ch, out, &cjk_tables::CP949_ENC),
         Encoding::Gb2312 => encode_dbcs2(ch, out, &cjk_tables::GB2312_ENC),
         Encoding::Gb18030 => encode_gb18030(ch, out),
+        Encoding::Johab => encode_dbcs2(ch, out, &cjk_tables::JOHAB_ENC),
     }
 }
 
