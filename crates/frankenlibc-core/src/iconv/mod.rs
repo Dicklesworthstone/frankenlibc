@@ -8297,62 +8297,102 @@ fn encode_cp1125(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     Err(EncodeError::Unrepresentable)
 }
 
+/// EUC-JP decoder: variable length via glibc-exact tables (see [`cjk_tables`]).
+/// `EUC_JP_ONE_BYTE[b0] >= 0` is a single-byte char; otherwise `EUC_JP_LEAD_LEN`
+/// gives the sequence length (2 for 0x8E half-width kana + 0xA1-0xFE JIS X 0208,
+/// 3 for the 0x8F JIS X 0212 plane), keyed into `EUC_JP_DBCS2` (`(b0<<8)|b1`) or
+/// `EUC_JP_DBCS3` (`(b1<<8)|b2`, since the only 3-byte lead is 0x8F). Short input
+/// under a known lead is `Incomplete` (EINVAL); an unknown lead or pair is
+/// `Invalid` (EILSEQ) — matching glibc's gconv.
+/// EUC-JP decoder matching glibc's gconv exactly, incl. its incomplete-vs-invalid
+/// (EINVAL/EILSEQ) classification on malformed/truncated input — driven by the
+/// glibc-probed `EUC_JP_SS3_ROW_VALID` / `EUC_JP_LEAD2_DEFER` masks:
+///   * `0x00-0x7F` -> 1-byte (via `EUC_JP_ONE_BYTE`);
+///   * `0x8F` (SS3) -> 3-byte JIS X 0212: the row byte is validated first against
+///     `EUC_JP_SS3_ROW_VALID` (out-of-range row => EILSEQ even if truncated),
+///     then the cell byte is required (EINVAL if absent) and the pair looked up
+///     in `EUC_JP_DBCS3`;
+///   * other high bytes: `EUC_JP_LEAD2_DEFER[b0]` distinguishes a byte whose lead
+///     validation glibc defers (a lone such byte is EINVAL, e.g. 0xA0) from one
+///     that is always illegal (immediate EILSEQ, e.g. 0xFF); a present pair is
+///     looked up in `EUC_JP_DBCS2` (miss => EILSEQ).
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
-    if input.is_empty() {
+    let Some(&b0) = input.first() else {
         return Err(DecodeError::Incomplete);
-    }
-    let b0 = input[0];
-    if b0 <= 0x7F {
-        return Ok((char::from(b0), 1));
-    }
-    if b0 == 0x8E {
-        if input.len() < 2 {
-            return Err(DecodeError::Incomplete);
-        }
-        let b1 = input[1];
-        if (0xA1..=0xDF).contains(&b1) {
-            let cp = 0xFF61 + u32::from(b1 - 0xA1);
-            return Ok((char::from_u32(cp).unwrap_or('\u{FFFD}'), 2));
-        }
-        return Err(DecodeError::Invalid);
+    };
+    let ob = cjk_tables::EUC_JP_ONE_BYTE[b0 as usize];
+    if ob >= 0 {
+        return char::from_u32(ob as u32)
+            .map(|c| (c, 1))
+            .ok_or(DecodeError::Invalid);
     }
     if b0 == 0x8F {
-        if input.len() < 3 {
+        let Some(&b1) = input.get(1) else {
             return Err(DecodeError::Incomplete);
-        }
-        return Err(DecodeError::Invalid);
-    }
-    if (0xA1..=0xFE).contains(&b0) {
-        if input.len() < 2 {
-            return Err(DecodeError::Incomplete);
-        }
-        let b1 = input[1];
-        if !(0xA1..=0xFE).contains(&b1) {
+        };
+        if !cjk_tables::EUC_JP_SS3_ROW_VALID[b1 as usize] {
             return Err(DecodeError::Invalid);
         }
+        let Some(&b2) = input.get(2) else {
+            return Err(DecodeError::Incomplete);
+        };
+        let key = (u16::from(b1) << 8) | u16::from(b2);
+        return match cjk_tables::EUC_JP_DBCS3.binary_search_by_key(&key, |&(k, _)| k) {
+            Ok(i) => char::from_u32(cjk_tables::EUC_JP_DBCS3[i].1)
+                .map(|c| (c, 3))
+                .ok_or(DecodeError::Invalid),
+            Err(_) => Err(DecodeError::Invalid),
+        };
+    }
+    if !cjk_tables::EUC_JP_LEAD2_DEFER[b0 as usize] {
         return Err(DecodeError::Invalid);
     }
-    Err(DecodeError::Invalid)
+    let Some(&b1) = input.get(1) else {
+        return Err(DecodeError::Incomplete);
+    };
+    let key = (u16::from(b0) << 8) | u16::from(b1);
+    match cjk_tables::EUC_JP_DBCS2.binary_search_by_key(&key, |&(k, _)| k) {
+        Ok(i) => char::from_u32(cjk_tables::EUC_JP_DBCS2[i].1)
+            .map(|c| (c, 2))
+            .ok_or(DecodeError::Invalid),
+        Err(_) => Err(DecodeError::Invalid),
+    }
 }
 
+/// EUC-JP encoder, fully table-driven over the BMP (`EUC_JP_ENC`): a packed
+/// value `< 0x100` is 1 byte, `< 0x10000` is 2 bytes `(b0<<8)|b1`, otherwise
+/// 3 bytes `(b0<<16)|(b1<<8)|b2` (the 0x8F plane). Absent code points are
+/// `Unrepresentable` (EILSEQ).
 fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     let cp = ch as u32;
-    if cp <= 0x7F {
-        if out.is_empty() {
-            return Err(EncodeError::NoSpace);
+    match cjk_tables::EUC_JP_ENC.binary_search_by_key(&cp, |&(c, _)| c) {
+        Ok(i) => {
+            let packed = cjk_tables::EUC_JP_ENC[i].1;
+            if packed < 0x100 {
+                if out.is_empty() {
+                    return Err(EncodeError::NoSpace);
+                }
+                out[0] = packed as u8;
+                Ok(1)
+            } else if packed < 0x1_0000 {
+                if out.len() < 2 {
+                    return Err(EncodeError::NoSpace);
+                }
+                out[0] = (packed >> 8) as u8;
+                out[1] = (packed & 0xFF) as u8;
+                Ok(2)
+            } else {
+                if out.len() < 3 {
+                    return Err(EncodeError::NoSpace);
+                }
+                out[0] = (packed >> 16) as u8;
+                out[1] = ((packed >> 8) & 0xFF) as u8;
+                out[2] = (packed & 0xFF) as u8;
+                Ok(3)
+            }
         }
-        out[0] = cp as u8;
-        return Ok(1);
+        Err(_) => Err(EncodeError::Unrepresentable),
     }
-    if (0xFF61..=0xFF9F).contains(&cp) {
-        if out.len() < 2 {
-            return Err(EncodeError::NoSpace);
-        }
-        out[0] = 0x8E;
-        out[1] = (cp - 0xFF61 + 0xA1) as u8;
-        return Ok(2);
-    }
-    Err(EncodeError::Unrepresentable)
 }
 
 /// Generic 2-byte-DBCS decoder (Shift-JIS, BIG5) driven by glibc-exact tables
