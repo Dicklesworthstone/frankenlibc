@@ -2711,7 +2711,11 @@ pub unsafe extern "C" fn clearenv() -> c_int {
 const RAND48_STATE_BYTES: usize = core::mem::size_of::<[u16; 3]>();
 const RAND48_PARAM_BYTES: usize = core::mem::size_of::<[u16; 7]>();
 const RANDOM_STATE_MIN_BYTES: usize = 8;
-const RANDOM_STATE_MAX_BYTES: usize = 128;
+// glibc's largest generator (TYPE_4, degree 63) uses a 256-byte state buffer.
+// This bound must cover it so `setstate` recovers the same size — and thus the
+// same generator type — that `initstate` selected; capping lower would make a
+// 256-byte buffer initialize as TYPE_4 but restore as TYPE_3 (size 128).
+const RANDOM_STATE_MAX_BYTES: usize = 256;
 const RANDOM_STATE_REGISTRY_LIMIT: usize = 64;
 
 static RANDOM_STATE_BUFFERS: std::sync::Mutex<Vec<(usize, usize)>> =

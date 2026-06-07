@@ -11,55 +11,142 @@ use std::sync::Mutex;
 #[cfg(test)]
 use std::sync::MutexGuard;
 
-/// Default degree-31 state table size (matching glibc TYPE_3 = 31 words + 3 bookkeeping).
+/// Default degree-31 state (glibc TYPE_3). Kept for the test buffers that size
+/// themselves as `STATE_SIZE * 4` and for the default global generator.
 const DEG_3: usize = 31;
 const SEP_3: usize = 3;
 
-/// Total state buffer size including front pointer word.
+/// Total default (TYPE_3) state buffer size in 32-bit words (test buffers).
+#[cfg(test)]
 const STATE_SIZE: usize = DEG_3 + 1; // 32 words
 
-/// Internal generator state.
+/// Maximum polynomial degree across all glibc generator types (TYPE_4).
+const MAX_DEG: usize = 63;
+
+/// Per-type polynomial degree and separation, indexed by `rand_type` 0..=4.
+/// These are glibc's exact additive-feedback parameters:
+///   TYPE_0  x**0          (a pure linear congruential generator)
+///   TYPE_1  x**7 + x**3 + 1
+///   TYPE_2  x**15 + x + 1
+///   TYPE_3  x**31 + x**3 + 1   (the default)
+///   TYPE_4  x**63 + x + 1
+const DEG: [usize; 5] = [0, 7, 15, 31, 63];
+const SEP: [usize; 5] = [0, 3, 1, 3, 1];
+
+/// glibc state-size breakpoints (in bytes): `initstate(seed, buf, n)` selects
+/// the largest type whose state fits in `n`.
+const BREAK_0: usize = 8; // minimum valid buffer
+const BREAK_1: usize = 32;
+const BREAK_2: usize = 64;
+const BREAK_3: usize = 128;
+const BREAK_4: usize = 256;
+
+/// Map a state-buffer byte length to a glibc generator type, or `None` if the
+/// buffer is too small (`< 8` bytes), exactly mirroring glibc's `__initstate_r`.
+fn rand_type_for_size(n: usize) -> Option<u8> {
+    if n < BREAK_0 {
+        None
+    } else if n < BREAK_1 {
+        Some(0)
+    } else if n < BREAK_2 {
+        Some(1)
+    } else if n < BREAK_3 {
+        Some(2)
+    } else if n < BREAK_4 {
+        Some(3)
+    } else {
+        Some(4)
+    }
+}
+
+/// Internal generator state. Mirrors glibc's `random_data`: a 0-based state
+/// table of `deg` words plus front/rear cursors. For TYPE_0 only `table[0]`
+/// is live (the LCG accumulator).
 struct RandomState {
-    /// The state table; index 0 is unused (glibc compat), indices 1..=DEG_3 hold state.
-    table: [i32; STATE_SIZE],
-    /// Front pointer index (cycles through 1..=DEG_3).
+    /// glibc generator type 0..=4.
+    rand_type: u8,
+    /// Polynomial degree (number of live state words).
+    deg: usize,
+    /// Front/rear cursor separation.
+    sep: usize,
+    /// State words; indices `[0, deg)` are live.
+    table: [i32; MAX_DEG],
+    /// Front cursor (index into `table`).
     fptr: usize,
-    /// Rear pointer index (offset from fptr by SEP_3).
+    /// Rear cursor (index into `table`).
     rptr: usize,
 }
 
 impl RandomState {
+    /// Switch this generator to `rand_type`, setting the matching degree/sep.
+    fn set_type(&mut self, rand_type: u8) {
+        self.rand_type = rand_type;
+        self.deg = DEG[rand_type as usize];
+        self.sep = SEP[rand_type as usize];
+    }
+
+    /// Seed the generator, exactly matching glibc `__srandom_r`.
+    ///
+    /// A zero seed is replaced by 1 (glibc quirk). For TYPE_0 the seed is the
+    /// sole LCG accumulator. For higher types the table is filled by the
+    /// Park-Miller minimal-standard generator via Schrage's overflow-free
+    /// decomposition (this is bit-exact with glibc for *all* seeds, including
+    /// those with the high bit set — a plain `(16807*x) % m` over `i64`/
+    /// `rem_euclid` diverges from glibc on negative intermediate words).
     fn seed(&mut self, seed: u32) {
-        // Initialize state table using glibc's initialization algorithm.
-        let seed_word = if seed == 0 { 1 } else { seed as i32 };
-        self.table[1] = seed_word;
-        let mut prev = i64::from(seed_word);
-        for i in 2..STATE_SIZE {
-            // glibc: state[i] = (16807 * state[i-1]) % 2147483647
-            // Using the same LCG as glibc (Park-Miller minimal standard).
-            prev = (16807 * prev).rem_euclid(2_147_483_647);
-            self.table[i] = prev as i32;
+        let seed = if seed == 0 { 1 } else { seed };
+        self.table[0] = seed as i32;
+        if self.rand_type == 0 {
+            return;
         }
-        self.fptr = SEP_3 + 1;
-        self.rptr = 1;
-        // Run the generator 10*DEG_3 times to "warm up" (matching glibc).
-        for _ in 0..(10 * DEG_3) {
+        let mut word = seed as i32;
+        for i in 1..self.deg {
+            // Schrage: word = 16807 * word (mod 2147483647), kept in i32 range.
+            // hi/lo use C/Rust truncating division, identical for negatives.
+            let hi = word / 127_773;
+            let lo = word % 127_773;
+            // The product stays within i32 for every reachable word, but compute
+            // in i64 to make that explicit and panic-proof under overflow checks.
+            word = (16807_i64 * lo as i64 - 2836_i64 * hi as i64) as i32;
+            if word < 0 {
+                word += 2_147_483_647;
+            }
+            self.table[i] = word;
+        }
+        self.fptr = self.sep;
+        self.rptr = 0;
+        // Warm up 10*deg draws. Because that is a whole number of cursor
+        // cycles (the cursors have period `deg`), they return to (sep, 0).
+        for _ in 0..(10 * self.deg) {
             self.next();
         }
     }
 
     fn next(&mut self) -> i32 {
-        let val = self.table[self.fptr].wrapping_add(self.table[self.rptr]);
-        self.table[self.fptr] = val;
-        let result = (val as u32 >> 1) as i32; // ensure non-negative
-
-        self.fptr += 1;
-        if self.fptr >= STATE_SIZE {
-            self.fptr = 1;
+        if self.rand_type == 0 {
+            // TYPE_0: a single-word linear congruential generator.
+            let val = self.table[0].wrapping_mul(1_103_515_245).wrapping_add(12_345) & 0x7fff_ffff;
+            self.table[0] = val;
+            return val;
         }
-        self.rptr += 1;
-        if self.rptr >= STATE_SIZE {
-            self.rptr = 1;
+        // TYPE_>0: additive feedback. `*fptr += *rptr` (unsigned, wrapping),
+        // stored back; the result drops the low (least random) bit.
+        let val = (self.table[self.fptr] as u32).wrapping_add(self.table[self.rptr] as u32);
+        self.table[self.fptr] = val as i32;
+        let result = ((val >> 1) & 0x7fff_ffff) as i32;
+
+        // glibc cursor advance: bump fptr; on wrap reset it and bump rptr
+        // (which cannot also wrap in that step), else bump rptr with its own
+        // wrap check.
+        self.fptr += 1;
+        if self.fptr >= self.deg {
+            self.fptr = 0;
+            self.rptr += 1;
+        } else {
+            self.rptr += 1;
+            if self.rptr >= self.deg {
+                self.rptr = 0;
+            }
         }
 
         result
@@ -67,13 +154,14 @@ impl RandomState {
 }
 
 static GLOBAL: Mutex<RandomState> = Mutex::new(RandomState {
-    table: {
-        // We can't call seed() in a const context, so initialize to zeros
-        // and rely on first call to srandom() or lazy init.
-        [0i32; STATE_SIZE]
-    },
-    fptr: SEP_3 + 1,
-    rptr: 1,
+    // Default generator is TYPE_3 (degree 31), matching glibc's unseeded
+    // `random()`. The table is zeroed; first use lazily seeds with 1.
+    rand_type: 3,
+    deg: DEG_3,
+    sep: SEP_3,
+    table: [0i32; MAX_DEG],
+    fptr: SEP_3,
+    rptr: 0,
 });
 
 /// Track whether the global state has been initialized.
@@ -126,17 +214,21 @@ pub fn srandom(seed: u32) {
 ///
 /// Returns a token representing the old state (opaque pointer-like value).
 pub fn initstate(seed: u32, state_buf: &mut [u8]) -> usize {
-    // Minimum valid state size is 8 bytes (TYPE_0 in glibc).
-    if state_buf.len() < 8 {
+    // glibc selects the generator type from the buffer size; < 8 bytes is
+    // invalid (EINVAL at the ABI boundary).
+    let Some(rand_type) = rand_type_for_size(state_buf.len()) else {
         return 0;
-    }
+    };
     let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-    // Save a token for the old state (we return table[1] as a simple fingerprint).
-    let old_token = state.table[1] as usize;
+    // Token for the old state (a simple fingerprint of the live accumulator).
+    let old_token = state.table[0] as usize;
+    state.set_type(rand_type);
     state.seed(seed);
     INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
-    // Copy our internal state into the user buffer using safe serialization.
-    let words_to_copy = state_buf.len().min(STATE_SIZE * 4) / 4;
+    // Snapshot the live state words into the caller buffer so a later
+    // setstate() on the same buffer (which re-derives the type from its size)
+    // can restore them.
+    let words_to_copy = (state_buf.len() / 4).min(state.deg.max(1));
     for i in 0..words_to_copy {
         let bytes = state.table[i].to_ne_bytes();
         let off = i * 4;
@@ -151,13 +243,17 @@ pub fn initstate(seed: u32, state_buf: &mut [u8]) -> usize {
 ///
 /// Returns a token representing the old state.
 pub fn setstate(state_buf: &[u8]) -> usize {
-    if state_buf.len() < 8 {
+    // Re-derive the generator type from the buffer size, exactly as the
+    // initstate() that produced it did (the ABI layer hands us a slice whose
+    // length is the remembered statelen).
+    let Some(rand_type) = rand_type_for_size(state_buf.len()) else {
         return 0;
-    }
+    };
     let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-    let old_token = state.table[1] as usize;
-    // Restore internal state from the user buffer using safe deserialization.
-    let words_to_copy = state_buf.len().min(STATE_SIZE * 4) / 4;
+    let old_token = state.table[0] as usize;
+    state.set_type(rand_type);
+    // Restore the live state words from the buffer.
+    let words_to_copy = (state_buf.len() / 4).min(state.deg.max(1));
     for i in 0..words_to_copy {
         let off = i * 4;
         let bytes = [
@@ -168,9 +264,11 @@ pub fn setstate(state_buf: &[u8]) -> usize {
         ];
         state.table[i] = i32::from_ne_bytes(bytes);
     }
-    // Reset pointers.
-    state.fptr = SEP_3 + 1;
-    state.rptr = 1;
+    // Restore the cursors to their post-seed position. The warmup advances the
+    // cursors a whole number of periods, so (sep, 0) is exactly where they sat
+    // when initstate() snapshotted the table.
+    state.fptr = state.sep;
+    state.rptr = 0;
     INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
     old_token
 }
