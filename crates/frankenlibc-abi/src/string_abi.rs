@@ -8228,18 +8228,7 @@ pub unsafe extern "C" fn __strfmon_l(
     format: *const c_char,
     mut args: ...
 ) -> isize {
-    if s.is_null() || format.is_null() || maxsize == 0 {
-        return -1;
-    }
-    let val: f64 = unsafe { args.next_arg() };
-    let formatted = format!("{val:.2}");
-    let bytes = formatted.as_bytes();
-    let copy_len = bytes.len().min(maxsize - 1);
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), s as *mut u8, copy_len);
-        *s.add(copy_len) = 0;
-    }
-    copy_len as isize
+    unsafe { crate::unistd_abi::strfmon_emit(s, maxsize, format, || args.next_arg::<f64>()) }
 }
 
 // ---------------------------------------------------------------------------

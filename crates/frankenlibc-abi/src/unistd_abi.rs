@@ -25021,7 +25021,44 @@ pub unsafe extern "C" fn getservent_r(
 // Misc string/format extras
 // ===========================================================================
 
-/// `strfmon` — format monetary value.
+/// Shared backend for `strfmon`/`strfmon_l`/`__strfmon_l`: format `format`
+/// (pulling one `f64` per conversion from `pull`) into `s`/`maxsize` using the
+/// C/POSIX-locale monetary conventions implemented in
+/// `frankenlibc_core::locale::strfmon`. Returns the byte count written
+/// (excluding the NUL), or `-1` with `errno` set (`EINVAL` on a malformed
+/// format, `E2BIG` if the result does not fit).
+///
+/// # Safety
+///
+/// `s` must be valid for `maxsize` bytes, `format` a valid C string, and `pull`
+/// must read exactly one `f64` variadic argument per call (one per conversion).
+pub(crate) unsafe fn strfmon_emit(
+    s: *mut c_char,
+    maxsize: usize,
+    format: *const c_char,
+    pull: impl FnMut() -> f64,
+) -> isize {
+    if s.is_null() || format.is_null() || maxsize == 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let fmt_bytes = unsafe { std::ffi::CStr::from_ptr(format) }.to_bytes();
+    let Some(out) = frankenlibc_core::locale::strfmon::strfmon_c(fmt_bytes, pull) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if out.len() + 1 > maxsize {
+        unsafe { set_abi_errno(libc::E2BIG) };
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(out.as_ptr(), s as *mut u8, out.len());
+        *s.add(out.len()) = 0;
+    }
+    out.len() as isize
+}
+
+/// `strfmon` — format monetary value (C/POSIX locale).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strfmon(
     s: *mut c_char,
@@ -25029,27 +25066,10 @@ pub unsafe extern "C" fn strfmon(
     format: *const c_char,
     mut args: ...
 ) -> isize {
-    if s.is_null() || format.is_null() || maxsize == 0 {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    // Simple: extract one double, format as currency
-    let val: f64 = unsafe { args.next_arg() };
-    let formatted = format!("{val:.2}");
-    let bytes = formatted.as_bytes();
-    if bytes.len() + 1 > maxsize {
-        unsafe { set_abi_errno(libc::E2BIG) };
-        return -1;
-    }
-    let copy_len = bytes.len();
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), s as *mut u8, copy_len);
-        *s.add(copy_len) = 0;
-    }
-    copy_len as isize
+    unsafe { strfmon_emit(s, maxsize, format, || args.next_arg::<f64>()) }
 }
 
-/// `strfmon_l` — locale-aware monetary formatting (ignores locale).
+/// `strfmon_l` — locale-aware monetary formatting (treated as the C locale).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strfmon_l(
     s: *mut c_char,
@@ -25058,23 +25078,7 @@ pub unsafe extern "C" fn strfmon_l(
     format: *const c_char,
     mut args: ...
 ) -> isize {
-    if s.is_null() || format.is_null() || maxsize == 0 {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let val: f64 = unsafe { args.next_arg() };
-    let formatted = format!("{val:.2}");
-    let bytes = formatted.as_bytes();
-    if bytes.len() + 1 > maxsize {
-        unsafe { set_abi_errno(libc::E2BIG) };
-        return -1;
-    }
-    let copy_len = bytes.len();
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), s as *mut u8, copy_len);
-        *s.add(copy_len) = 0;
-    }
-    copy_len as isize
+    unsafe { strfmon_emit(s, maxsize, format, || args.next_arg::<f64>()) }
 }
 
 // ===========================================================================
