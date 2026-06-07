@@ -1004,12 +1004,17 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
         buf.push(b'-');
     }
     let mut any_digit = false;
+    let mut seen_dot = false;
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
         if c.is_ascii_digit() {
             any_digit = true;
             buf.push(c);
-        } else if c == b'.' {
+        } else if c == b'.' && !seen_dot {
+            // Only the FIRST decimal point is part of the float; a second '.'
+            // ends the token (glibc reads the longest valid prefix, e.g.
+            // "03.1.5" -> 3.1 consuming 4 bytes). Found by sscanf_differential_fuzz.
+            seen_dot = true;
             buf.push(c);
         } else if (c == b'e' || c == b'E') && any_digit {
             buf.push(c);
