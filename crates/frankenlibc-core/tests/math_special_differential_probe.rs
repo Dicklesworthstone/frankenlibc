@@ -236,13 +236,29 @@ fn bessel_glibc_divergence_research() {
         }
         eprintln!("{name:6}: worst {worst} ULP @x={wx:.4}  ({over4} pts >4ULP)");
     };
-    report("j0", &|x| frankenlibc_core::math::j0(x), &|x| unsafe { j0(x) });
-    report("j1", &|x| frankenlibc_core::math::j1(x), &|x| unsafe { j1(x) });
-    report("y0", &|x| frankenlibc_core::math::y0(x), &|x| unsafe { y0(x) });
-    report("y1", &|x| frankenlibc_core::math::y1(x), &|x| unsafe { y1(x) });
-    report("jn3", &|x| frankenlibc_core::math::jn(3, x), &|x| unsafe { jn(3, x) });
-    report("yn3", &|x| frankenlibc_core::math::yn(3, x), &|x| unsafe { yn(3, x) });
-    report("jn10", &|x| frankenlibc_core::math::jn(10, x), &|x| unsafe { jn(10, x) });
+    report("j0", &|x| frankenlibc_core::math::j0(x), &|x| unsafe {
+        j0(x)
+    });
+    report("j1", &|x| frankenlibc_core::math::j1(x), &|x| unsafe {
+        j1(x)
+    });
+    report("y0", &|x| frankenlibc_core::math::y0(x), &|x| unsafe {
+        y0(x)
+    });
+    report("y1", &|x| frankenlibc_core::math::y1(x), &|x| unsafe {
+        y1(x)
+    });
+    report("jn3", &|x| frankenlibc_core::math::jn(3, x), &|x| unsafe {
+        jn(3, x)
+    });
+    report("yn3", &|x| frankenlibc_core::math::yn(3, x), &|x| unsafe {
+        yn(3, x)
+    });
+    report(
+        "jn10",
+        &|x| frankenlibc_core::math::jn(10, x),
+        &|x| unsafe { jn(10, x) },
+    );
 }
 
 /// Comprehensive regression guard: the libm-passthrough trig / inverse-trig /
@@ -278,7 +294,12 @@ fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
             (a.to_bits() as i64 - b.to_bits() as i64).abs()
         }
     }
-    let scan = |name: &str, fl: &dyn Fn(f64) -> f64, gl: &dyn Fn(f64) -> f64, lo: f64, hi: f64, step: f64| {
+    let scan = |name: &str,
+                fl: &dyn Fn(f64) -> f64,
+                gl: &dyn Fn(f64) -> f64,
+                lo: f64,
+                hi: f64,
+                step: f64| {
         let mut worst = 0i64;
         let mut wx = 0.0f64;
         let mut x = lo;
@@ -290,24 +311,125 @@ fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
             }
             x += step;
         }
-        assert!(worst <= 4, "{name} drifted {worst} ULP vs glibc at x={wx:e}");
+        assert!(
+            worst <= 4,
+            "{name} drifted {worst} ULP vs glibc at x={wx:e}"
+        );
     };
 
-    scan("sin", &|x| m::sin(x), &|x| unsafe { sin(x) }, -12.0, 12.0, 1e-4);
-    scan("cos", &|x| m::cos(x), &|x| unsafe { cos(x) }, -12.0, 12.0, 1e-4);
-    scan("tan", &|x| m::tan(x), &|x| unsafe { tan(x) }, -1.5, 1.5, 1e-4);
+    scan(
+        "sin",
+        &|x| m::sin(x),
+        &|x| unsafe { sin(x) },
+        -12.0,
+        12.0,
+        1e-4,
+    );
+    scan(
+        "cos",
+        &|x| m::cos(x),
+        &|x| unsafe { cos(x) },
+        -12.0,
+        12.0,
+        1e-4,
+    );
+    scan(
+        "tan",
+        &|x| m::tan(x),
+        &|x| unsafe { tan(x) },
+        -1.5,
+        1.5,
+        1e-4,
+    );
     // Large-argument range reduction.
-    scan("sin_big", &|x| m::sin(x), &|x| unsafe { sin(x) }, 1e6, 1e6 + 1e3, 1e-2);
-    scan("sin_huge", &|x| m::sin(x), &|x| unsafe { sin(x) }, 1e15, 1e15 + 1e8, 1e4);
-    scan("cos_huge", &|x| m::cos(x), &|x| unsafe { cos(x) }, 1e15, 1e15 + 1e8, 1e4);
-    scan("sin_e18", &|x| m::sin(x), &|x| unsafe { sin(x) }, 1e18, 1e18 + 1e12, 1e8);
-    scan("asin", &|x| m::asin(x), &|x| unsafe { asin(x) }, -1.0, 1.0, 1e-5);
-    scan("acos", &|x| m::acos(x), &|x| unsafe { acos(x) }, -1.0, 1.0, 1e-5);
-    scan("atan", &|x| m::atan(x), &|x| unsafe { atan(x) }, -50.0, 50.0, 1e-3);
-    scan("asinh", &|x| m::asinh(x), &|x| unsafe { asinh(x) }, -50.0, 50.0, 1e-3);
-    scan("acosh", &|x| m::acosh(x), &|x| unsafe { acosh(x) }, 1.0, 50.0, 1e-3);
-    scan("atanh", &|x| m::atanh(x), &|x| unsafe { atanh(x) }, -0.999, 0.999, 1e-5);
-    scan("cbrt", &|x| m::cbrt(x), &|x| unsafe { cbrt(x) }, -100.0, 100.0, 1e-3);
+    scan(
+        "sin_big",
+        &|x| m::sin(x),
+        &|x| unsafe { sin(x) },
+        1e6,
+        1e6 + 1e3,
+        1e-2,
+    );
+    scan(
+        "sin_huge",
+        &|x| m::sin(x),
+        &|x| unsafe { sin(x) },
+        1e15,
+        1e15 + 1e8,
+        1e4,
+    );
+    scan(
+        "cos_huge",
+        &|x| m::cos(x),
+        &|x| unsafe { cos(x) },
+        1e15,
+        1e15 + 1e8,
+        1e4,
+    );
+    scan(
+        "sin_e18",
+        &|x| m::sin(x),
+        &|x| unsafe { sin(x) },
+        1e18,
+        1e18 + 1e12,
+        1e8,
+    );
+    scan(
+        "asin",
+        &|x| m::asin(x),
+        &|x| unsafe { asin(x) },
+        -1.0,
+        1.0,
+        1e-5,
+    );
+    scan(
+        "acos",
+        &|x| m::acos(x),
+        &|x| unsafe { acos(x) },
+        -1.0,
+        1.0,
+        1e-5,
+    );
+    scan(
+        "atan",
+        &|x| m::atan(x),
+        &|x| unsafe { atan(x) },
+        -50.0,
+        50.0,
+        1e-3,
+    );
+    scan(
+        "asinh",
+        &|x| m::asinh(x),
+        &|x| unsafe { asinh(x) },
+        -50.0,
+        50.0,
+        1e-3,
+    );
+    scan(
+        "acosh",
+        &|x| m::acosh(x),
+        &|x| unsafe { acosh(x) },
+        1.0,
+        50.0,
+        1e-3,
+    );
+    scan(
+        "atanh",
+        &|x| m::atanh(x),
+        &|x| unsafe { atanh(x) },
+        -0.999,
+        0.999,
+        1e-5,
+    );
+    scan(
+        "cbrt",
+        &|x| m::cbrt(x),
+        &|x| unsafe { cbrt(x) },
+        -100.0,
+        100.0,
+        1e-3,
+    );
 }
 
 /// Regression guard for the f32 libm-passthrough trig / inverse-trig /
@@ -345,7 +467,12 @@ fn f32_trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
     }
     // Iterate the loop variable in f64 (cast to f32 per call) so a small step
     // near a large x can never stall on f32 rounding granularity.
-    let scan = |name: &str, fl: &dyn Fn(f32) -> f32, gl: &dyn Fn(f32) -> f32, lo: f64, hi: f64, step: f64| {
+    let scan = |name: &str,
+                fl: &dyn Fn(f32) -> f32,
+                gl: &dyn Fn(f32) -> f32,
+                lo: f64,
+                hi: f64,
+                step: f64| {
         let mut worst = 0i64;
         let mut wx = 0.0f32;
         let mut xd = lo;
@@ -358,32 +485,182 @@ fn f32_trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
             }
             xd += step;
         }
-        assert!(worst <= 4, "{name} drifted {worst} ULP vs glibc at x={wx:e}");
+        assert!(
+            worst <= 4,
+            "{name} drifted {worst} ULP vs glibc at x={wx:e}"
+        );
     };
 
-    scan("sinf", &|x| m::sinf(x), &|x| unsafe { sinf(x) }, -12.0, 12.0, 1e-4);
-    scan("sinf_big", &|x| m::sinf(x), &|x| unsafe { sinf(x) }, 1e4, 1e4 + 4e3, 0.05);
-    scan("cosf", &|x| m::cosf(x), &|x| unsafe { cosf(x) }, -12.0, 12.0, 1e-4);
-    scan("tanf", &|x| m::tanf(x), &|x| unsafe { tanf(x) }, -1.5, 1.5, 1e-5);
-    scan("asinf", &|x| m::asinf(x), &|x| unsafe { asinf(x) }, -1.0, 1.0, 1e-5);
-    scan("acosf", &|x| m::acosf(x), &|x| unsafe { acosf(x) }, -1.0, 1.0, 1e-5);
-    scan("atanf", &|x| m::atanf(x), &|x| unsafe { atanf(x) }, -50.0, 50.0, 1e-3);
-    scan("cbrtf", &|x| m::cbrtf(x), &|x| unsafe { cbrtf(x) }, -100.0, 100.0, 1e-3);
-    scan("asinhf", &|x| m::asinhf(x), &|x| unsafe { asinhf(x) }, -50.0, 50.0, 1e-3);
-    scan("acoshf", &|x| m::acoshf(x), &|x| unsafe { acoshf(x) }, 1.0, 50.0, 1e-3);
-    scan("atanhf", &|x| m::atanhf(x), &|x| unsafe { atanhf(x) }, -0.999, 0.999, 1e-5);
-    scan("logf", &|x| m::logf(x), &|x| unsafe { logf(x) }, 1e-6, 1e6, 7.0);
-    scan("log2f", &|x| m::log2f(x), &|x| unsafe { log2f(x) }, 1e-6, 1e6, 7.0);
-    scan("log10f", &|x| m::log10f(x), &|x| unsafe { log10f(x) }, 1e-6, 1e6, 7.0);
-    scan("log1pf", &|x| m::log1pf(x), &|x| unsafe { log1pf(x) }, -0.9, 50.0, 1e-4);
+    scan(
+        "sinf",
+        &|x| m::sinf(x),
+        &|x| unsafe { sinf(x) },
+        -12.0,
+        12.0,
+        1e-4,
+    );
+    scan(
+        "sinf_big",
+        &|x| m::sinf(x),
+        &|x| unsafe { sinf(x) },
+        1e4,
+        1e4 + 4e3,
+        0.05,
+    );
+    scan(
+        "cosf",
+        &|x| m::cosf(x),
+        &|x| unsafe { cosf(x) },
+        -12.0,
+        12.0,
+        1e-4,
+    );
+    scan(
+        "tanf",
+        &|x| m::tanf(x),
+        &|x| unsafe { tanf(x) },
+        -1.5,
+        1.5,
+        1e-5,
+    );
+    scan(
+        "asinf",
+        &|x| m::asinf(x),
+        &|x| unsafe { asinf(x) },
+        -1.0,
+        1.0,
+        1e-5,
+    );
+    scan(
+        "acosf",
+        &|x| m::acosf(x),
+        &|x| unsafe { acosf(x) },
+        -1.0,
+        1.0,
+        1e-5,
+    );
+    scan(
+        "atanf",
+        &|x| m::atanf(x),
+        &|x| unsafe { atanf(x) },
+        -50.0,
+        50.0,
+        1e-3,
+    );
+    scan(
+        "cbrtf",
+        &|x| m::cbrtf(x),
+        &|x| unsafe { cbrtf(x) },
+        -100.0,
+        100.0,
+        1e-3,
+    );
+    scan(
+        "asinhf",
+        &|x| m::asinhf(x),
+        &|x| unsafe { asinhf(x) },
+        -50.0,
+        50.0,
+        1e-3,
+    );
+    scan(
+        "acoshf",
+        &|x| m::acoshf(x),
+        &|x| unsafe { acoshf(x) },
+        1.0,
+        50.0,
+        1e-3,
+    );
+    scan(
+        "atanhf",
+        &|x| m::atanhf(x),
+        &|x| unsafe { atanhf(x) },
+        -0.999,
+        0.999,
+        1e-5,
+    );
+    scan(
+        "logf",
+        &|x| m::logf(x),
+        &|x| unsafe { logf(x) },
+        1e-6,
+        1e6,
+        7.0,
+    );
+    scan(
+        "log2f",
+        &|x| m::log2f(x),
+        &|x| unsafe { log2f(x) },
+        1e-6,
+        1e6,
+        7.0,
+    );
+    scan(
+        "log10f",
+        &|x| m::log10f(x),
+        &|x| unsafe { log10f(x) },
+        1e-6,
+        1e6,
+        7.0,
+    );
+    scan(
+        "log1pf",
+        &|x| m::log1pf(x),
+        &|x| unsafe { log1pf(x) },
+        -0.9,
+        50.0,
+        1e-4,
+    );
     // Dense near-1 sweep: log(x) -> 0 there, so relative accuracy is most
     // delicate (the f64 log2 kernel switches to its atanh branch for |x-1|<0.15).
     // Guards the f64-kernel routing of the f32 log family (logf/log2f/log10f).
-    scan("logf_near1", &|x| m::logf(x), &|x| unsafe { logf(x) }, 0.5, 2.0, 1e-5);
-    scan("log2f_near1", &|x| m::log2f(x), &|x| unsafe { log2f(x) }, 0.5, 2.0, 1e-5);
-    scan("log10f_near1", &|x| m::log10f(x), &|x| unsafe { log10f(x) }, 0.5, 2.0, 1e-5);
+    scan(
+        "logf_near1",
+        &|x| m::logf(x),
+        &|x| unsafe { logf(x) },
+        0.5,
+        2.0,
+        1e-5,
+    );
+    scan(
+        "log2f_near1",
+        &|x| m::log2f(x),
+        &|x| unsafe { log2f(x) },
+        0.5,
+        2.0,
+        1e-5,
+    );
+    scan(
+        "log10f_near1",
+        &|x| m::log10f(x),
+        &|x| unsafe { log10f(x) },
+        0.5,
+        2.0,
+        1e-5,
+    );
     // Sub-1 and large-magnitude spans to exercise the full exponent range.
-    scan("logf_small", &|x| m::logf(x), &|x| unsafe { logf(x) }, 1e-30, 1e-3, 3e-7);
-    scan("log2f_small", &|x| m::log2f(x), &|x| unsafe { log2f(x) }, 1e-30, 1e-3, 3e-7);
-    scan("log10f_small", &|x| m::log10f(x), &|x| unsafe { log10f(x) }, 1e-30, 1e-3, 3e-7);
+    scan(
+        "logf_small",
+        &|x| m::logf(x),
+        &|x| unsafe { logf(x) },
+        1e-30,
+        1e-3,
+        3e-7,
+    );
+    scan(
+        "log2f_small",
+        &|x| m::log2f(x),
+        &|x| unsafe { log2f(x) },
+        1e-30,
+        1e-3,
+        3e-7,
+    );
+    scan(
+        "log10f_small",
+        &|x| m::log10f(x),
+        &|x| unsafe { log10f(x) },
+        1e-30,
+        1e-3,
+        3e-7,
+    );
 }

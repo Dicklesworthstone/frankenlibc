@@ -1011,8 +1011,8 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
         // EXACTLY representable iff nothing was truncated (no sticky), it fits
         // the 53-bit significand (span <= 52), no bit fell below the smallest
         // subnormal (>= 2^-1074), and it did not overflow to infinity.
-        let exact = mantissa == 0
-            || (!sticky && val.is_finite() && lowest_bit_pos >= -1074 && span <= 52);
+        let exact =
+            mantissa == 0 || (!sticky && val.is_finite() && lowest_bit_pos >= -1074 && span <= 52);
         return (val, i, exact);
     }
 
@@ -1118,10 +1118,8 @@ pub fn strtof_impl(s: &[u8]) -> (f32, usize, bool) {
     // — always exact widening — round-trips to `wide`) AND the result is a
     // nonzero f32 subnormal. (bd-2g7oyh.187)
     let value = wide as f32;
-    let exact_subnormal = wide_exact
-        && (value as f64 == wide)
-        && value != 0.0
-        && value.abs() < f32::MIN_POSITIVE;
+    let exact_subnormal =
+        wide_exact && (value as f64 == wide) && value != 0.0 && value.abs() < f32::MIN_POSITIVE;
     (value, consumed, exact_subnormal)
 }
 

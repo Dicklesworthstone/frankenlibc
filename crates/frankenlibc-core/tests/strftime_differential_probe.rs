@@ -211,9 +211,45 @@ fn strftime_live_differential_sweep() {
 
     // Timezone-independent specifiers only (skip %Z/%z/%s which depend on tm_gmtoff).
     let specs: &[&str] = &[
-        "%a", "%A", "%b", "%B", "%c", "%C", "%d", "%D", "%e", "%F", "%G", "%g", "%h", "%H",
-        "%I", "%j", "%k", "%l", "%m", "%M", "%n", "%p", "%P", "%r", "%R", "%S", "%T", "%u",
-        "%U", "%V", "%w", "%W", "%x", "%X", "%y", "%Y", "%%", "%G-W%V-%u", "%Y-%j",
+        "%a",
+        "%A",
+        "%b",
+        "%B",
+        "%c",
+        "%C",
+        "%d",
+        "%D",
+        "%e",
+        "%F",
+        "%G",
+        "%g",
+        "%h",
+        "%H",
+        "%I",
+        "%j",
+        "%k",
+        "%l",
+        "%m",
+        "%M",
+        "%n",
+        "%p",
+        "%P",
+        "%r",
+        "%R",
+        "%S",
+        "%T",
+        "%u",
+        "%U",
+        "%V",
+        "%w",
+        "%W",
+        "%x",
+        "%X",
+        "%y",
+        "%Y",
+        "%%",
+        "%G-W%V-%u",
+        "%Y-%j",
     ];
 
     let new_tm = || CTm {
@@ -286,7 +322,10 @@ fn strftime_live_differential_sweep() {
             }
         }
     }
-    eprintln!("strftime live sweep: {checked} comparisons, {} divergence(s)", diffs.len());
+    eprintln!(
+        "strftime live sweep: {checked} comparisons, {} divergence(s)",
+        diffs.len()
+    );
     assert!(
         diffs.is_empty(),
         "strftime live-differential divergences ({}):\n{}",

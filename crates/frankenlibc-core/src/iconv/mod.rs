@@ -1129,7 +1129,13 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 136] = [
         encoding: Encoding::Gb2312,
         canonical: "GB2312",
         normalized: "GB2312",
-        aliases: &["EUC-CN", "EUCCN", "CSGB2312", "GB2312-1980", "CSISO58GB231280"],
+        aliases: &[
+            "EUC-CN",
+            "EUCCN",
+            "CSGB2312",
+            "GB2312-1980",
+            "CSISO58GB231280",
+        ],
     },
     CodecSpec {
         encoding: Encoding::Gb18030,
@@ -8741,7 +8747,9 @@ fn decode_gb18030(input: &[u8]) -> Result<(char, usize), DecodeError> {
         let l = gb18030_lin4(b0, b1, b2, b3);
         if (GB18030_SUPP_L_LO..=GB18030_SUPP_L_HI).contains(&l) {
             let cp = 0x10000 + (l - GB18030_SUPP_L_LO);
-            return char::from_u32(cp).map(|c| (c, 4)).ok_or(DecodeError::Invalid);
+            return char::from_u32(cp)
+                .map(|c| (c, 4))
+                .ok_or(DecodeError::Invalid);
         }
         let segs = &cjk_tables::GB18030_DEC4;
         let i = segs.partition_point(|&(lstart, _, _)| lstart <= l);
@@ -8749,7 +8757,9 @@ fn decode_gb18030(input: &[u8]) -> Result<(char, usize), DecodeError> {
             let (lstart, cpstart, len) = segs[i - 1];
             if l < lstart + len {
                 let cp = cpstart + (l - lstart);
-                return char::from_u32(cp).map(|c| (c, 4)).ok_or(DecodeError::Invalid);
+                return char::from_u32(cp)
+                    .map(|c| (c, 4))
+                    .ok_or(DecodeError::Invalid);
             }
         }
         return Err(DecodeError::Invalid);

@@ -1559,8 +1559,7 @@ impl<'a> PikeVm<'a> {
             std::collections::HashMap::new();
         let mut state_pcs: Vec<Box<[usize]>> = Vec::new();
         let mut state_accepts: Vec<bool> = Vec::new();
-        let mut trans: std::collections::HashMap<(u32, u8), u32> =
-            std::collections::HashMap::new();
+        let mut trans: std::collections::HashMap<(u32, u8), u32> = std::collections::HashMap::new();
 
         let start = self.dfa_frontier(&[0], &mut scratch, visited, generation);
         let mut state = self.dfa_intern(start, &mut interner, &mut state_pcs, &mut state_accepts);
@@ -1588,8 +1587,7 @@ impl<'a> PikeVm<'a> {
                             }
                         }
                     }
-                    let frontier =
-                        self.dfa_frontier(&entries, &mut scratch, visited, generation);
+                    let frontier = self.dfa_frontier(&entries, &mut scratch, visited, generation);
                     let nid = self.dfa_intern(
                         frontier,
                         &mut interner,
@@ -1777,14 +1775,54 @@ impl<'a> PikeVm<'a> {
         visited[pc] = cur_gen;
         match &self.nfa[pc] {
             NfaInstr::Split(a, b) => {
-                self.lm_closure(*a, start, sp, notbol, noteol, list, visited, cur_gen, depth + 1);
-                self.lm_closure(*b, start, sp, notbol, noteol, list, visited, cur_gen, depth + 1);
+                self.lm_closure(
+                    *a,
+                    start,
+                    sp,
+                    notbol,
+                    noteol,
+                    list,
+                    visited,
+                    cur_gen,
+                    depth + 1,
+                );
+                self.lm_closure(
+                    *b,
+                    start,
+                    sp,
+                    notbol,
+                    noteol,
+                    list,
+                    visited,
+                    cur_gen,
+                    depth + 1,
+                );
             }
             NfaInstr::Jump(t) => {
-                self.lm_closure(*t, start, sp, notbol, noteol, list, visited, cur_gen, depth + 1);
+                self.lm_closure(
+                    *t,
+                    start,
+                    sp,
+                    notbol,
+                    noteol,
+                    list,
+                    visited,
+                    cur_gen,
+                    depth + 1,
+                );
             }
             NfaInstr::Save(_) => {
-                self.lm_closure(pc + 1, start, sp, notbol, noteol, list, visited, cur_gen, depth + 1);
+                self.lm_closure(
+                    pc + 1,
+                    start,
+                    sp,
+                    notbol,
+                    noteol,
+                    list,
+                    visited,
+                    cur_gen,
+                    depth + 1,
+                );
             }
             NfaInstr::Match(mk) => match mk {
                 MatchKind::AnchorStart { newline } => {
@@ -1856,7 +1894,17 @@ impl<'a> PikeVm<'a> {
         let mut best: Option<usize> = None;
 
         cur_gen += 1;
-        self.lm_closure(0, 0, 0, notbol, noteol, &mut current, &mut visited, cur_gen, 0);
+        self.lm_closure(
+            0,
+            0,
+            0,
+            notbol,
+            noteol,
+            &mut current,
+            &mut visited,
+            cur_gen,
+            0,
+        );
 
         let mut sp = 0;
         loop {
@@ -1896,7 +1944,17 @@ impl<'a> PikeVm<'a> {
             // Seed a fresh start at the new position only if it could still beat
             // the best-known start (a later start can never be more leftmost).
             if best.map_or(true, |b| sp < b) {
-                self.lm_closure(0, sp, sp, notbol, noteol, &mut next, &mut visited, cur_gen, 0);
+                self.lm_closure(
+                    0,
+                    sp,
+                    sp,
+                    notbol,
+                    noteol,
+                    &mut next,
+                    &mut visited,
+                    cur_gen,
+                    0,
+                );
             }
             core::mem::swap(&mut current, &mut next);
             next.clear();
