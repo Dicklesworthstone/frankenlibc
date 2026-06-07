@@ -171,6 +171,7 @@ const MEMCMP_WIDE_LANES: usize = 64;
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
 const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
+const MEMCHR_WIDE_LANES: usize = 64;
 const MEMCHR_FOLD_PANELS: usize = 8;
 const MEMCHR_FOLD_BYTES: usize = SIMD_LANES * MEMCHR_FOLD_PANELS;
 
@@ -233,21 +234,18 @@ fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
 fn has_byte_memchr_folded(block: &[u8], byte: u8) -> bool {
     debug_assert_eq!(block.len(), MEMCHR_FOLD_BYTES);
     let needle = Simd::splat(byte);
-    let p0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]).simd_eq(needle);
-    let p1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]).simd_eq(needle);
-    let p2 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]).simd_eq(needle);
+    let p0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..MEMCHR_WIDE_LANES]).simd_eq(needle);
+    let p1 =
+        Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[MEMCHR_WIDE_LANES..MEMCHR_WIDE_LANES * 2])
+            .simd_eq(needle);
+    let p2 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(
+        &block[MEMCHR_WIDE_LANES * 2..MEMCHR_WIDE_LANES * 3],
+    )
+    .simd_eq(needle);
     let p3 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_LANES * 4]).simd_eq(needle);
-    let p4 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 4..SIMD_LANES * 5]).simd_eq(needle);
-    let p5 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 5..SIMD_LANES * 6]).simd_eq(needle);
-    let p6 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 6..SIMD_LANES * 7]).simd_eq(needle);
-    let p7 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 7..MEMCHR_FOLD_BYTES])
-        .simd_eq(needle);
-    (p0 | p1 | p2 | p3 | p4 | p5 | p6 | p7).any()
+        Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[MEMCHR_WIDE_LANES * 3..MEMCHR_FOLD_BYTES])
+            .simd_eq(needle);
+    (p0 | p1 | p2 | p3).any()
 }
 
 #[inline]
