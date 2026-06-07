@@ -222,6 +222,13 @@ pub fn format_asctime(bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
     );
 
     let bytes = s.as_bytes();
+    // glibc's asctime/asctime_r bound the output to the 26-byte contract buffer
+    // and return NULL (EOVERFLOW) rather than TRUNCATE when it would not fit —
+    // e.g. a year outside [-999, 9999] (a 5+ char "%d") makes the string 26 bytes
+    // (27 with NUL). Found by asctime_r_differential_fuzz.
+    if bytes.len() + 1 > 26 {
+        return 0;
+    }
     let copy_len = bytes.len().min(buf.len() - 1);
     buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
     buf[copy_len] = 0;
