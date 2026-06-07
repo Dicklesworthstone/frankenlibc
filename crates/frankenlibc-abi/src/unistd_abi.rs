@@ -12556,16 +12556,20 @@ unsafe fn current_h_errno() -> c_int {
 
 #[inline]
 fn hstrerror_message_ptr(err: c_int) -> *const c_char {
-    // Look up canonical text via core; map back to a NUL-terminated
-    // `c"..."` literal at the FFI boundary so the returned pointer is
-    // valid for the entire program lifetime.
-    let text = frankenlibc_core::resolv::messages::hstrerror_text(err);
-    match text {
-        "Unknown host" => c"Unknown host".as_ptr(),
-        "Host name lookup failure" => c"Host name lookup failure".as_ptr(),
-        "Unknown server error" => c"Unknown server error".as_ptr(),
-        "No address associated with name" => c"No address associated with name".as_ptr(),
-        _ => c"Resolver internal error".as_ptr(),
+    // glibc `hstrerror` maps the h_errno value to a fixed string (NETDB_SUCCESS
+    // through NO_ADDRESS), with a distinct message for 0 and a generic
+    // "Unknown resolver error" for anything out of range — NOT the project's
+    // internal "Resolver internal error", and 0 is not an error. The returned
+    // pointer is a `c"..."` literal valid for the whole program lifetime.
+    // Found by strerror_scan_differential_fuzz.
+    match err {
+        _ if err < 0 => c"Resolver internal error".as_ptr(),
+        0 => c"Resolver Error 0 (no error)".as_ptr(),
+        1 => c"Unknown host".as_ptr(), // HOST_NOT_FOUND
+        2 => c"Host name lookup failure".as_ptr(), // TRY_AGAIN
+        3 => c"Unknown server error".as_ptr(), // NO_RECOVERY
+        4 => c"No address associated with name".as_ptr(), // NO_DATA / NO_ADDRESS
+        _ => c"Unknown resolver error".as_ptr(),
     }
 }
 

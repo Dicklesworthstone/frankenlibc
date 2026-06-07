@@ -4096,11 +4096,20 @@ thread_local! {
 }
 
 pub(crate) fn rendered_strerror_message(errnum: c_int) -> (String, bool) {
-    let msg = frankenlibc_core::errno::strerror_message(errnum);
-    if msg == "Unknown error" {
+    // Use `strerrordesc_np`'s description table, which is complete and glibc-exact
+    // across the full Linux errno range (the previous core table was missing the
+    // high errnos 102..=133 — ENETRESET, EHOSTUNREACH, ESTALE, EDQUOT, EOWNERDEAD,
+    // ERFKILL, EHWPOISON, etc. — and rendered them as "Unknown error N"). Found by
+    // strerror_scan_differential_fuzz.
+    let desc = strerrordesc_np(errnum);
+    if desc.is_null() {
         (format!("Unknown error {errnum}"), true)
     } else {
-        (msg.to_owned(), false)
+        // SAFETY: strerrordesc_np returns a static NUL-terminated string or null.
+        let msg = unsafe { std::ffi::CStr::from_ptr(desc) }
+            .to_string_lossy()
+            .into_owned();
+        (msg, false)
     }
 }
 
