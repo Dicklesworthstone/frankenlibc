@@ -45,6 +45,8 @@ fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
 /// halved reduction count, so four is the sweet spot.)
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
+const STRCHR_FOLD_PANELS: usize = 4;
+const STRCHR_FOLD_BYTES: usize = STRLEN_SIMD_LANES * STRCHR_FOLD_PANELS;
 const STRCMP_EXACT_256_LEN: usize = STRLEN_BLOCK + 1;
 
 /// True if any of the 128 bytes in `block` equal `byte` or NUL. OR's the four
@@ -63,6 +65,20 @@ fn has_byte_or_nul_simd_folded(block: &[u8], byte: u8) -> bool {
     let h2 = p2.simd_eq(n) | p2.simd_eq(z);
     let h3 = p3.simd_eq(n) | p3.simd_eq(z);
     (h0 | h1 | h2 | h3).any()
+}
+
+#[inline(always)]
+fn has_byte_or_nul_simd_folded_256(block: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(block.len(), STRCHR_FOLD_BYTES);
+    let n = Simd::<u8, STRLEN_SIMD_LANES>::splat(byte);
+    let z = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
+    let mut acc = Mask::<i8, STRLEN_SIMD_LANES>::splat(false);
+    for k in 0..STRCHR_FOLD_PANELS {
+        let lo = k * STRLEN_SIMD_LANES;
+        let panel = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&block[lo..lo + STRLEN_SIMD_LANES]);
+        acc |= panel.simd_eq(n) | panel.simd_eq(z);
+    }
+    acc.any()
 }
 
 #[inline(always)]
@@ -635,19 +651,19 @@ pub fn strchrnul(s: &[u8], c: u8) -> usize {
 fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
     let mut i = 0;
 
-    // Tier 1: 128-byte folded blocks — one `.any()` reduction per 4 panels.
+    // Tier 1: 256-byte folded blocks — one `.any()` reduction per 4 wide panels.
     // On a hit, resolve the first matching byte within the block scalar-side
-    // (rare path), so the steady-state scan pays a single reduction per 128B.
-    while i + SIMD_FOLD_BYTES <= s.len() {
-        if has_byte_or_nul_simd_folded(&s[i..i + SIMD_FOLD_BYTES], needle) {
-            for k in 0..SIMD_FOLD_BYTES {
+    // (rare path), so the steady-state scan pays a single reduction per 256B.
+    while i + STRCHR_FOLD_BYTES <= s.len() {
+        if has_byte_or_nul_simd_folded_256(&s[i..i + STRCHR_FOLD_BYTES], needle) {
+            for k in 0..STRCHR_FOLD_BYTES {
                 let byte = s[i + k];
                 if byte == needle || byte == 0 {
                     return i + k;
                 }
             }
         }
-        i += SIMD_FOLD_BYTES;
+        i += STRCHR_FOLD_BYTES;
     }
 
     // Tier 2: remaining whole 32-byte panels.
@@ -1947,6 +1963,75 @@ mod tests {
         s[39] = b'Z';
         assert_eq!(strchr(&s, b'Z'), None);
         assert_eq!(strchrnul(&s, b'Z'), 35);
+    }
+
+    #[test]
+    fn test_strchr_wide_fold_resolves_needle_before_later_nul() {
+        let mut s = vec![b'A'; 320];
+        s[190] = b'Z';
+        s[260] = 0;
+        assert_eq!(strchr(&s, b'Z'), Some(190));
+        assert_eq!(strchrnul(&s, b'Z'), 190);
+    }
+
+    #[test]
+    fn test_strchr_wide_fold_stops_at_nul_before_later_needle() {
+        let mut s = vec![b'A'; 320];
+        s[190] = 0;
+        s[220] = b'Z';
+        assert_eq!(strchr(&s, b'Z'), None);
+        assert_eq!(strchrnul(&s, b'Z'), 190);
+    }
+
+    #[test]
+    fn test_strchr_golden_transcript_sha256() {
+        fn record(transcript: &mut Vec<u8>, s: &[u8], needle: u8) {
+            transcript.extend_from_slice(&s.len().to_le_bytes());
+            transcript.extend_from_slice(s);
+            transcript.push(needle);
+            match strchr(s, needle) {
+                Some(index) => {
+                    transcript.push(1);
+                    transcript.extend_from_slice(&index.to_le_bytes());
+                }
+                None => {
+                    transcript.push(0);
+                    transcript.extend_from_slice(&usize::MAX.to_le_bytes());
+                }
+            }
+            transcript.extend_from_slice(&strchrnul(s, needle).to_le_bytes());
+        }
+
+        let mut transcript = Vec::new();
+        for (s, needle) in [
+            (b"hello\0".as_slice(), b'l'),
+            (b"hello\0".as_slice(), b'z'),
+            (b"hello\0".as_slice(), 0),
+            (b"hi\0hidden".as_slice(), b'd'),
+            (b"unterminated".as_slice(), 0),
+        ] {
+            record(&mut transcript, s, needle);
+        }
+
+        for (len, needle_pos, nul_pos) in [
+            (257usize, Some(255usize), 256usize),
+            (320, Some(190), 260),
+            (320, Some(220), 190),
+            (4097, None, 4096),
+        ] {
+            let mut s = vec![b'A'; len];
+            if let Some(pos) = needle_pos {
+                s[pos] = b'Z';
+            }
+            s[nul_pos] = 0;
+            record(&mut transcript, &s, b'Z');
+        }
+
+        let digest = Sha256::digest(&transcript);
+        assert_eq!(
+            hex_lower(&digest),
+            "3656ba0841f975b7aa6d31cf8a01cac9b90635e6eecf66431ce80893bd859f18"
+        );
     }
 
     #[test]
