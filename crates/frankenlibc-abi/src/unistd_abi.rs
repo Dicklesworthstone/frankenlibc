@@ -24217,13 +24217,106 @@ pub unsafe extern "C" fn timelocal(tm: *mut c_void) -> i64 {
 // C23 char8_t (UTF-8)
 // ===========================================================================
 
+// Internal mbstate for `c8rtomb(.., ps=NULL)`: bytes [0..4] accumulate the
+// partial UTF-8 sequence (byte 0 = count 0..=3, then the code units) until a
+// complete character is assembled.
+thread_local! {
+    static C8RTOMB_STATE: std::cell::Cell<[u8; 8]> = const { std::cell::Cell::new([0; 8]) };
+}
+
+/// C23 `c8rtomb` — convert a sequence of UTF-8 char8_t code units to a multibyte
+/// character. Code units are accumulated in `ps`; when one completes a valid
+/// UTF-8 sequence the whole multibyte character is written to `s` and its byte
+/// count returned. A code unit toward-but-not-completing a sequence returns 0; a
+/// code unit that cannot extend a valid sequence sets EILSEQ and returns -1.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn c8rtomb(s: *mut c_char, c8: u8, _ps: *mut c_void) -> usize {
+pub unsafe extern "C" fn c8rtomb(s: *mut c_char, c8: u8, ps: *mut c_void) -> usize {
+    let mut st: [u8; 8] = if ps.is_null() {
+        C8RTOMB_STATE.with(|c| c.get())
+    } else {
+        // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
+        unsafe { (ps as *const u8).cast::<[u8; 8]>().read_unaligned() }
+    };
+    let store = |st: [u8; 8]| {
+        if ps.is_null() {
+            C8RTOMB_STATE.with(|c| c.set(st));
+        } else {
+            // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
+            unsafe { (ps as *mut u8).cast::<[u8; 8]>().write_unaligned(st) };
+        }
+    };
+
+    // s == NULL is equivalent to c8rtomb(buf, u8'\0', ps): reset state, "write" a
+    // single NUL byte to an internal buffer, and return 1.
     if s.is_null() {
-        return 1; // stateless encoding
+        store([0; 8]);
+        return 1;
     }
-    unsafe { *s = c8 as c_char };
-    1
+
+    // Append the new code unit to any partial sequence held in ps[0..4].
+    let count = (st[0] as usize).min(3);
+    let mut buf = [0u8; 4];
+    buf[..count].copy_from_slice(&st[1..1 + count]);
+    buf[count] = c8;
+    let total = count + 1;
+
+    // c8rtomb is RFC-3629 STRICT (unlike the shared *decode* path, which defers
+    // overlong/surrogate/range rejection). Validate incrementally per the
+    // Unicode "well-formed UTF-8" table (3-7): the valid range of the SECOND byte
+    // depends on the lead, so overlong (0xE0/0xF0), surrogate (0xED) and
+    // > U+10FFFF (0xF4) sequences are rejected as soon as the offending byte
+    // arrives. Found by c8rtomb_differential_fuzz.
+    let b0 = buf[0];
+    let len = match b0 {
+        0x00..=0x7F => 1usize,
+        0xC2..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF4 => 4,
+        // 0x80..=0xC1 and 0xF5..=0xFF are never valid UTF-8 lead bytes.
+        _ => {
+            store([0; 8]);
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+    };
+    // The SECOND byte's valid range depends on the lead (early overlong /
+    // surrogate / range rejection); the third and fourth bytes are generic
+    // continuations (0x80..=0xBF).
+    if total > 1 {
+        let b1 = buf[1];
+        let ok = match b0 {
+            0xE0 => (0xA0..=0xBF).contains(&b1),
+            0xED => (0x80..=0x9F).contains(&b1),
+            0xF0 => (0x90..=0xBF).contains(&b1),
+            0xF4 => (0x80..=0x8F).contains(&b1),
+            _ => (0x80..=0xBF).contains(&b1),
+        };
+        if !ok {
+            store([0; 8]);
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+    }
+    if buf
+        .get(2..total)
+        .is_some_and(|rest| rest.iter().any(|&b| b & 0xC0 != 0x80))
+    {
+        store([0; 8]);
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return usize::MAX;
+    }
+    if total < len {
+        // Valid prefix, not yet complete: stash it and report 0.
+        st[0] = total as u8;
+        st[1..1 + total].copy_from_slice(&buf[..total]);
+        store(st);
+        return 0;
+    }
+    // Complete character (total == len): write its multibyte (UTF-8) bytes.
+    // SAFETY: caller provides a buffer of at least MB_CUR_MAX (>= len) bytes.
+    unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr(), s as *mut u8, len) };
+    store([0; 8]);
+    len
 }
 
 // Internal mbstate for `mbrtoc8(.., ps=NULL)` (matches glibc's static state).
