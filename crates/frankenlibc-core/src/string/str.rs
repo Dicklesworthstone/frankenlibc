@@ -127,91 +127,6 @@ fn block_has_nul_512(chunk: &[u8]) -> bool {
 }
 
 #[inline(always)]
-fn copy_nul_panel_scalar(dest: &mut [u8], src: &[u8], offset: usize) -> usize {
-    for j in 0..STRLEN_SIMD_LANES {
-        let index = offset + j;
-        let byte = src[index];
-        dest[index] = byte;
-        if byte == 0 {
-            return index + 1;
-        }
-    }
-    unreachable!("panel is known to contain NUL")
-}
-
-#[inline(always)]
-fn copy_until_nul_512(dest: &mut [u8], src: &[u8]) -> Option<usize> {
-    debug_assert_eq!(dest.len(), STRLEN_NUL_BLOCK);
-    debug_assert_eq!(src.len(), STRLEN_NUL_BLOCK);
-    let z = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
-    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[0..STRLEN_SIMD_LANES]);
-    let v1 =
-        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
-    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
-    );
-    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4],
-    );
-    let v4 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5],
-    );
-    let v5 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6],
-    );
-    let v6 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7],
-    );
-    let v7 =
-        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
-    let folded = v0
-        .simd_min(v1)
-        .simd_min(v2.simd_min(v3))
-        .simd_min(v4.simd_min(v5).simd_min(v6.simd_min(v7)));
-    if !folded.simd_eq(z).any() {
-        v0.copy_to_slice(&mut dest[0..STRLEN_SIMD_LANES]);
-        v1.copy_to_slice(&mut dest[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
-        v2.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3]);
-        v3.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4]);
-        v4.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5]);
-        v5.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6]);
-        v6.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7]);
-        v7.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
-        return None;
-    }
-
-    if v0.simd_eq(z).any() {
-        return Some(copy_nul_panel_scalar(dest, src, 0));
-    }
-    v0.copy_to_slice(&mut dest[0..STRLEN_SIMD_LANES]);
-    if v1.simd_eq(z).any() {
-        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES));
-    }
-    v1.copy_to_slice(&mut dest[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
-    if v2.simd_eq(z).any() {
-        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 2));
-    }
-    v2.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3]);
-    if v3.simd_eq(z).any() {
-        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 3));
-    }
-    v3.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4]);
-    if v4.simd_eq(z).any() {
-        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 4));
-    }
-    v4.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5]);
-    if v5.simd_eq(z).any() {
-        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 5));
-    }
-    v5.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6]);
-    if v6.simd_eq(z).any() {
-        return Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 6));
-    }
-    v6.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7]);
-    Some(copy_nul_panel_scalar(dest, src, STRLEN_SIMD_LANES * 7))
-}
-
-#[inline(always)]
 fn has_non_byte_simd_64(chunk: &[u8], byte: u8) -> bool {
     debug_assert_eq!(chunk.len(), STRLEN_SIMD_LANES);
     !Simd::<u8, STRLEN_SIMD_LANES>::from_slice(chunk)
@@ -583,26 +498,9 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// Panics if `dest` is too small to hold the source string plus NUL.
 pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
     if src.last().copied() == Some(0) && dest.len() >= src.len() {
-        let mut i = 0;
-        while i + STRLEN_NUL_BLOCK <= src.len() {
-            if let Some(copied) = copy_until_nul_512(
-                &mut dest[i..i + STRLEN_NUL_BLOCK],
-                &src[i..i + STRLEN_NUL_BLOCK],
-            ) {
-                return i + copied;
-            }
-            i += STRLEN_NUL_BLOCK;
-        }
-
-        while i < src.len() {
-            let byte = src[i];
-            dest[i] = byte;
-            i += 1;
-            if byte == 0 {
-                return i;
-            }
-        }
-        unreachable!("src.last() is NUL")
+        let copied = strlen(src) + 1;
+        dest[..copied].copy_from_slice(&src[..copied]);
+        return copied;
     }
 
     let src_len = strlen(src);
@@ -1904,6 +1802,33 @@ mod tests {
         assert_eq!(copied, 3);
         assert_eq!(&dst[..3], b"hi\0");
         assert_eq!(dst[3], 0xAA);
+    }
+
+    #[test]
+    fn test_strcpy_golden_transcript_sha256() {
+        let mut transcript = Vec::new();
+
+        for src in [b"hello\0".as_slice(), b"hi\0trailing\0".as_slice(), &[0]] {
+            let mut dst = [0xA5; 32];
+            let copied = strcpy(&mut dst, src);
+            transcript.extend_from_slice(&copied.to_le_bytes());
+            transcript.extend_from_slice(&dst);
+        }
+
+        for nul_pos in [0usize, 63, 64, 511, 512, 1024] {
+            let mut src = vec![b'Q'; nul_pos + 1];
+            src[nul_pos] = 0;
+            let mut dst = vec![0xCC; src.len() + 7];
+            let copied = strcpy(&mut dst, &src);
+            transcript.extend_from_slice(&copied.to_le_bytes());
+            transcript.extend_from_slice(&dst);
+        }
+
+        let digest = Sha256::digest(&transcript);
+        assert_eq!(
+            hex_lower(&digest),
+            "fe05ef410f204902cd5f53586645647b8ce5db87e49b840752b24d2b11995401"
+        );
     }
 
     #[test]
