@@ -649,157 +649,26 @@ pub fn towlower(wc: u32) -> u32 {
     }
 }
 
-/// Compute display width of a wide character (simplified, glibc-aligned).
+/// Compute the display width of a wide character, matching glibc `wcwidth(3)`
+/// in a UTF-8 locale: `0` for NUL and zero-width chars (combining marks, format
+/// controls, BOM, variation selectors), `-1` for control chars / unassigned /
+/// noncharacters, `2` for wide East Asian + emoji, `1` otherwise.
 ///
-/// Mirrors glibc's `wcwidth(3)` in a UTF-8 locale on the main Unicode ranges:
-///   - 0 for NUL and zero-width chars (combining marks, format controls, BOM, VS)
-///   - -1 for control chars (Cc), line/paragraph separators (Zl/Zp), tag chars
-///   - 2 for CJK / fullwidth / wide East Asian ranges
-///   - 1 for everything else
-///
-/// This is a hand-coded approximation and not driven by Unicode general-category
-/// tables, but it matches glibc on the cases tested in conformance harnesses.
+/// Driven by [`super::wcwidth_table::WIDTH_TRANSITIONS`], a run-length-encoded
+/// table generated offline from the host glibc over every scalar value, so the
+/// result is glibc-exact across the whole code space (replacing the former
+/// hand-coded range list which diverged on ~66k codepoints — bd-2g7oyh.194).
+/// The lookup is a branchless binary search; values above `U+10FFFF` (e.g. a
+/// negative `wchar_t` widened to `u32`) are not scalar values, so `-1`.
 pub fn wcwidth(wc: u32) -> i32 {
-    if wc == 0 {
-        return 0;
-    }
-    let Some(c) = char::from_u32(wc) else {
-        return -1;
-    };
-    if c.is_control() {
+    if wc > 0x10FFFF {
         return -1;
     }
-
-    // Zero-width: combining marks, zero-width format chars, BOM, variation selectors.
-    if (0x0300..=0x036F).contains(&wc)        // Combining Diacritical Marks (Mn)
-        || (0x0483..=0x0489).contains(&wc)    // Cyrillic combining (Mn/Me)
-        || (0x0591..=0x05BD).contains(&wc)    // Hebrew combining marks (Mn)
-        || (0x05BF..=0x05BF).contains(&wc)
-        || (0x05C1..=0x05C2).contains(&wc)
-        || (0x05C4..=0x05C5).contains(&wc)
-        || wc == 0x05C7
-        || (0x0610..=0x061A).contains(&wc)    // Arabic combining (Mn)
-        || (0x064B..=0x065F).contains(&wc)
-        || wc == 0x0670
-        || (0x06D6..=0x06DC).contains(&wc)
-        || (0x06DF..=0x06E4).contains(&wc)
-        || (0x06E7..=0x06E8).contains(&wc)
-        || (0x06EA..=0x06ED).contains(&wc)
-        || (0x0900..=0x0902).contains(&wc)  // Devanagari signs (Mn)
-        || wc == 0x093C                     // Devanagari sign nukta (Mn)
-        || (0x0941..=0x0948).contains(&wc)  // Devanagari vowel signs (Mn)
-        || wc == 0x094D                     // Devanagari sign virama (Mn)
-        || wc == 0x0981                     // Bengali sign candrabindu (Mn)
-        || wc == 0x09BC                     // Bengali sign nukta (Mn)
-        || (0x09C1..=0x09C4).contains(&wc)  // Bengali vowel signs (Mn)
-        || wc == 0x09CD                     // Bengali sign virama (Mn)
-        || (0x09E2..=0x09E3).contains(&wc)  // Bengali vocalic marks (Mn)
-        || wc == 0x09FE                     // Bengali sandhi mark (Mn)
-        || (0x0A01..=0x0A02).contains(&wc)  // Gurmukhi signs (Mn)
-        || wc == 0x0A3C                     // Gurmukhi sign nukta (Mn)
-        || (0x0A41..=0x0A42).contains(&wc)  // Gurmukhi vowel signs (Mn)
-        || (0x0A47..=0x0A48).contains(&wc)
-        || (0x0A4B..=0x0A4D).contains(&wc)
-        || wc == 0x0A51
-        || (0x0A70..=0x0A71).contains(&wc)
-        || wc == 0x0A75
-        || wc == 0x0B01                     // Odia sign candrabindu (Mn)
-        || wc == 0x0B3C                     // Odia sign nukta (Mn)
-        || wc == 0x0B3F                     // Odia vowel sign i (Mn)
-        || (0x0B41..=0x0B44).contains(&wc)
-        || wc == 0x0B4D
-        || (0x0B55..=0x0B56).contains(&wc)
-        || (0x0B62..=0x0B63).contains(&wc)
-        || wc == 0x0B82                     // Tamil sign anusvara (Mn)
-        || wc == 0x0BC0
-        || wc == 0x0BCD
-        || wc == 0x0C00                     // Telugu sign combining candrabindu (Mn)
-        || wc == 0x0C04
-        || wc == 0x0C3C
-        || (0x0C3E..=0x0C40).contains(&wc)
-        || (0x0C46..=0x0C48).contains(&wc)
-        || (0x0C4A..=0x0C4D).contains(&wc)
-        || (0x0C55..=0x0C56).contains(&wc)
-        || (0x0C62..=0x0C63).contains(&wc)
-        || wc == 0x0C81                     // Kannada sign candrabindu (Mn)
-        || wc == 0x0CBC
-        || wc == 0x0CBF
-        || wc == 0x0CC6
-        || wc == 0x0CCC
-        || wc == 0x0CCD
-        || (0x0CE2..=0x0CE3).contains(&wc)
-        || (0x0D00..=0x0D01).contains(&wc)  // Malayalam signs (Mn)
-        || (0x0D3B..=0x0D3C).contains(&wc)
-        || (0x0D41..=0x0D44).contains(&wc)
-        || wc == 0x0D4D
-        || (0x0D62..=0x0D63).contains(&wc)
-        || wc == 0x0D81                     // Sinhala sign candrabindu (Mn)
-        || wc == 0x0DCA
-        || (0x0DD2..=0x0DD4).contains(&wc)
-        || wc == 0x0DD6
-        || wc == 0x0E31                     // Thai character mai han-akat (Mn)
-        || (0x0E34..=0x0E3A).contains(&wc)  // Thai vowel signs / phinthu (Mn)
-        || (0x0E47..=0x0E4E).contains(&wc)  // Thai tone/sign marks (Mn)
-        || (0x0F18..=0x0F19).contains(&wc)  // Tibetan astrological signs (Mn)
-        || wc == 0x0F35
-        || wc == 0x0F37
-        || wc == 0x0F39
-        || (0x0F71..=0x0F84).contains(&wc)
-        || (0x0F86..=0x0F87).contains(&wc)
-        || (0x0F8D..=0x0FBC).contains(&wc)
-        || wc == 0x0FC6
-        || (0x1AB0..=0x1AFF).contains(&wc)  // Combining Diacritical Marks Extended (Mn)
-        || (0x1DC0..=0x1DFF).contains(&wc)  // Combining Diacritical Marks Supplement (Mn)
-        || (0x200B..=0x200F).contains(&wc)    // ZWSP/ZWNJ/ZWJ/LRM/RLM (Cf, width 0)
-        || (0x20D0..=0x20FF).contains(&wc)  // Combining Diacritical Marks for Symbols (Mn)
-        || (0x202A..=0x202E).contains(&wc)    // bidi controls (Cf, width 0)
-        || (0x2060..=0x2064).contains(&wc)    // word joiner / invisible separators (Cf)
-        || (0x206A..=0x206F).contains(&wc)    // deprecated formatting (Cf)
-        || (0x3099..=0x309A).contains(&wc)  // Hiragana/Katakana voiced sound marks (Mn)
-        || wc == 0xFEFF                         // ZWNBSP / BOM
-        || (0xFE00..=0xFE0F).contains(&wc)    // Variation Selectors (Mn)
-        || (0xFE20..=0xFE2F).contains(&wc)    // Combining Half Marks (Mn)
-        || (0xE0100..=0xE01EF).contains(&wc)
-    {
-        return 0;
-    }
-
-    // Non-printable: line/paragraph separators (Zl, Zp), language tags.
-    if wc == 0x2028                            // LINE SEPARATOR (Zl)
-        || wc == 0x2029                         // PARAGRAPH SEPARATOR (Zp)
-        || (0xE0000..=0xE007F).contains(&wc)
-    {
-        return -1;
-    }
-
-    // CJK Unified Ideographs, Emoji, and common fullwidth ranges.
-    if (0x1100..=0x115F).contains(&wc)    // Hangul Jamo
-        || (0x2E80..=0x303E).contains(&wc)  // CJK Radicals
-        || (0x3041..=0x33BF).contains(&wc)  // Hiragana, Katakana, CJK compatibility
-        || (0x3400..=0x4DBF).contains(&wc)  // CJK Extension A
-        || (0x4E00..=0x9FFF).contains(&wc)  // CJK Unified Ideographs
-        || (0xF900..=0xFAFF).contains(&wc)  // CJK Compatibility Ideographs
-        || (0xFE30..=0xFE6F).contains(&wc)  // CJK Compatibility Forms
-        || (0xFF01..=0xFF60).contains(&wc)  // Fullwidth forms
-        || (0xFFE0..=0xFFE6).contains(&wc)  // Fullwidth signs
-        || (0x1F300..=0x1F9FF).contains(&wc) // Emoji (Miscellaneous Symbols/Pictographs/Emoticons)
-        || (0x1FA00..=0x1FAFF).contains(&wc) // Emoji Symbols and Pictographs Extended-A
-        || (0x20000..=0x2FFFD).contains(&wc) // CJK Extension B+
-        || (0x30000..=0x3FFFD).contains(&wc)
-    // CJK Extension G+
-    {
-        return 2;
-    }
-
-    // Non-characters: glibc returns -1 for these.
-    // U+FDD0..U+FDEF and U+xxFFFE..U+xxFFFF for each plane.
-    if (0xFDD0..=0xFDEF).contains(&wc) || (wc & 0xFFFE) == 0xFFFE
-    // catches FFFE and FFFF in every plane
-    {
-        return -1;
-    }
-
-    1
+    let table = &super::wcwidth_table::WIDTH_TRANSITIONS;
+    // Last transition whose start <= wc; the table always begins at (0, _), so
+    // `partition_point` returns at least 1 for any in-range `wc`.
+    let idx = table.partition_point(|&(start, _)| start <= wc);
+    table[idx - 1].1 as i32
 }
 
 #[cfg(test)]
