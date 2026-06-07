@@ -99,6 +99,32 @@ fn classify_bracket(pat: &[u8], pi: usize, noescape: bool) -> BracketShape {
         if bc == b']' && content_count > 0 {
             return BracketShape::Terminated;
         }
+        // A POSIX sub-expression `[:class:]` / `[.coll.]` / `[=equiv=]`: its
+        // inner `]` (part of the `kind]` terminator) is NOT the bracket's
+        // closer, so skip the whole sub-expression — exactly as the matcher's
+        // `parse_bracket_subexpr` does, and as glibc does. Without this the
+        // class's `]` was mistaken for the bracket close, so an outer bracket
+        // that actually runs off the end (e.g. `[![:upper:]\]…`) was wrongly
+        // treated as Terminated. Found by fnmatch_differential_fuzz.
+        if bc == b'[' && matches!(pat.get(scan + 1), Some(b':' | b'.' | b'=')) {
+            let kind = pat[scan + 1];
+            let mut k = scan + 2;
+            let closed = loop {
+                match pat.get(k) {
+                    None => break false,
+                    Some(&b) if b == kind && pat.get(k + 1) == Some(&b']') => break true,
+                    _ => k += 1,
+                }
+            };
+            if !closed {
+                // Unterminated sub-expression ⇒ the outer bracket cannot close.
+                return BracketShape::LiteralFallback;
+            }
+            content_count += 1;
+            last_was_dash = false;
+            scan = k + 2; // past the `kind]` terminator
+            continue;
+        }
         // An escaped byte (`\X`) is one literal content element; the
         // bracket parser consumes it as such, so the classifier must
         // too. Without this an escaped trailing `-` (`[a\-`) is misread
@@ -114,19 +140,6 @@ fn classify_bracket(pat: &[u8], pi: usize, noescape: bool) -> BracketShape {
         last_was_dash = bc == b'-';
         content_count += 1;
         scan += 1;
-    }
-}
-
-/// ASCII case-swap (`A`↔`a`); other bytes are returned unchanged. Used so
-/// [`posix_class_match`] can honor [`FnmatchFlags::CASEFOLD`] for the
-/// `[:upper:]` / `[:lower:]` classes.
-fn swap_ascii_case(c: u8) -> u8 {
-    if c.is_ascii_uppercase() {
-        c.to_ascii_lowercase()
-    } else if c.is_ascii_lowercase() {
-        c.to_ascii_uppercase()
-    } else {
-        c
     }
 }
 
@@ -186,8 +199,11 @@ fn parse_bracket_subexpr(
         // Character class. An unrecognized class name is a well-formed
         // sub-expression that matches nothing.
         b':' => match posix_class_match(content, c) {
-            Some(true) => true,
-            Some(false) => casefold && posix_class_match(content, swap_ascii_case(c)) == Some(true),
+            // glibc tests a named character class against the ORIGINAL byte
+            // even under FNM_CASEFOLD: it folds literals and ranges, but never
+            // `[:class:]` (e.g. `[[:upper:]]` never matches 'a' under CASEFOLD).
+            // Found by fnmatch_differential_fuzz.
+            Some(matched) => matched,
             None => false,
         },
         // Collating element / equivalence class. The C locale has only
@@ -1026,9 +1042,13 @@ mod tests {
     #[test]
     fn posix_class_casefold() {
         let f = FnmatchFlags::CASEFOLD;
-        // [:upper:] / [:lower:] fold under FNM_CASEFOLD.
-        assert!(m("[[:upper:]]", "a", f));
-        assert!(m("[[:lower:]]", "A", f));
+        // glibc does NOT case-fold named classes under FNM_CASEFOLD — the class
+        // is tested against the original byte (folding applies only to literals
+        // and ranges). Verified against host glibc by fnmatch_differential_fuzz.
+        assert!(!m("[[:upper:]]", "a", f));
+        assert!(m("[[:upper:]]", "A", f));
+        assert!(!m("[[:lower:]]", "A", f));
+        assert!(m("[[:lower:]]", "a", f));
         assert!(m("[[:digit:]]", "5", f));
         assert!(!m("[[:digit:]]", "x", f));
     }
