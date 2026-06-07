@@ -198,14 +198,12 @@ fn parse_bracket_subexpr(
     let member = match kind {
         // Character class. An unrecognized class name is a well-formed
         // sub-expression that matches nothing.
-        b':' => match posix_class_match(content, c) {
-            // glibc tests a named character class against the ORIGINAL byte
-            // even under FNM_CASEFOLD: it folds literals and ranges, but never
-            // `[:class:]` (e.g. `[[:upper:]]` never matches 'a' under CASEFOLD).
-            // Found by fnmatch_differential_fuzz.
-            Some(matched) => matched,
-            None => false,
-        },
+        // glibc tests a named character class against the ORIGINAL byte even
+        // under FNM_CASEFOLD: it folds literals and ranges, but never
+        // `[:class:]` (e.g. `[[:upper:]]` never matches 'a' under CASEFOLD).
+        // An unrecognized class name (`None`) matches nothing. Found by
+        // fnmatch_differential_fuzz.
+        b':' => posix_class_match(content, c).unwrap_or_default(),
         // Collating element / equivalence class. The C locale has only
         // single-byte elements; anything else matches nothing.
         b'.' | b'=' => {
