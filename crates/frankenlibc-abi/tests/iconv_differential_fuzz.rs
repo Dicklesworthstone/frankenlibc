@@ -211,41 +211,55 @@ fn iconv_differential_fuzz_vs_glibc() {
     eprintln!("iconv differential fuzz: {compared} conversions, 0 divergences vs host glibc");
 }
 
-/// The unmarked `UTF-32` codec must consume/honor a leading BOM exactly like
-/// glibc: `FF FE 00 00` => LE, `00 00 FE FF` => BE, no BOM => the native LE
-/// default; the BOM itself is stripped from the output. (The unmarked `UTF-16`
-/// codec is not yet implemented by fl — `iconv_open` returns -1, a separate
-/// gap — so cases where fl can't open are skipped here.)
+/// The unmarked `UTF-16`/`UTF-32` codecs must consume/honor a leading BOM
+/// exactly like glibc: an LE BOM => LE, a BE BOM => BE, no BOM => the native LE
+/// default; the BOM itself is stripped from the decoded output, and on encode it
+/// is emitted (LE) only alongside real output.
 #[test]
-fn iconv_unmarked_utf32_bom_vs_glibc() {
+fn iconv_unmarked_bom_vs_glibc() {
     let utf8 = CString::new("UTF-8").unwrap();
     let mut divs: Vec<String> = Vec::new();
-    let w = CString::new("UTF-32").unwrap();
-    let cases: &[(&str, &[u8])] = &[
-        ("decode no-BOM", &[0x00, 0x00, 0x00, 0x41]),
-        ("decode LE-BOM", &[0xFF, 0xFE, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00]),
-        ("decode BE-BOM", &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x00, 0x41]),
-        ("decode LE-BOM only", &[0xFF, 0xFE, 0x00, 0x00]),
-        ("decode BE-BOM only", &[0x00, 0x00, 0xFE, 0xFF]),
-        ("decode LE-BOM + astral", &[0xFF, 0xFE, 0x00, 0x00, 0x00, 0xF0, 0x01, 0x00]),
-        ("decode BE-BOM + astral", &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x01, 0xF0, 0x00]),
+    let mut checked = 0u32;
+
+    // (codec, decode cases). Astral char U+1F600 exercises surrogate pairs (16)
+    // / a >BMP scalar (32).
+    let utf32: &[(&str, &[u8])] = &[
+        ("no-BOM", &[0x00, 0x00, 0x00, 0x41]),
+        ("LE-BOM", &[0xFF, 0xFE, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00]),
+        ("BE-BOM", &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x00, 0x41]),
+        ("LE-BOM only", &[0xFF, 0xFE, 0x00, 0x00]),
+        ("BE-BOM only", &[0x00, 0x00, 0xFE, 0xFF]),
+        ("LE-BOM + astral", &[0xFF, 0xFE, 0x00, 0x00, 0x00, 0xF6, 0x01, 0x00]),
+        ("BE-BOM + astral", &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x01, 0xF6, 0x00]),
     ];
-    for (label, src) in cases {
-        // decode direction: UTF-32 -> UTF-8
-        let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &utf8, &w, src) };
-        let h = unsafe { run(iconv_open, iconv_close, iconv, &utf8, &w, src) };
-        if let (Some(f), Some(h)) = (f, h)
-            && f != h
-        {
-            divs.push(format!("UTF-32->UTF-8 [{label}] src={src:02x?}\n    fl   ={f:02x?}\n    glibc={h:02x?}"));
+    let utf16: &[(&str, &[u8])] = &[
+        ("no-BOM", &[0x00, 0x41]),
+        ("LE-BOM", &[0xFF, 0xFE, 0x41, 0x00]),
+        ("BE-BOM", &[0xFE, 0xFF, 0x00, 0x41]),
+        ("LE-BOM only", &[0xFF, 0xFE]),
+        ("BE-BOM only", &[0xFE, 0xFF]),
+        ("LE-BOM + astral", &[0xFF, 0xFE, 0x3D, 0xD8, 0x00, 0xDE]),
+        ("BE-BOM + astral", &[0xFE, 0xFF, 0xD8, 0x3D, 0xDE, 0x00]),
+    ];
+
+    for (codec, cases) in [("UTF-32", utf32), ("UTF-16", utf16)] {
+        let w = CString::new(codec).unwrap();
+        for (label, src) in cases {
+            let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &utf8, &w, src) };
+            let h = unsafe { run(iconv_open, iconv_close, iconv, &utf8, &w, src) };
+            let (Some(f), Some(h)) = (f, h) else { continue };
+            checked += 1;
+            if f != h {
+                divs.push(format!("{codec}->UTF-8 [{label}] src={src:02x?}\n    fl   ={f:02x?}\n    glibc={h:02x?}"));
+            }
         }
     }
     assert!(
         divs.is_empty(),
-        "unmarked UTF-32 BOM handling diverged from glibc:\n{}",
+        "unmarked UTF-16/UTF-32 BOM handling diverged from glibc:\n{}",
         divs.join("\n")
     );
-    eprintln!("iconv unmarked UTF-32 BOM: {} cases, 0 divergences vs host glibc", cases.len());
+    eprintln!("iconv unmarked BOM: {checked} cases, 0 divergences vs host glibc");
 }
 
 /// Append the UTF-8 encoding of `cp` (assumed a valid scalar value) to `v`.
@@ -270,7 +284,7 @@ fn iconv_wide_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
 
-    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "UTF-32"];
+    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "UTF-32", "UTF-16"];
 
     for codec in WIDE {
         let w = CString::new(*codec).unwrap();

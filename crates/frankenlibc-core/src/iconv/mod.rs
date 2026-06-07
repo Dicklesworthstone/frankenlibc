@@ -73,6 +73,9 @@ enum Encoding {
     Latin1,
     Utf16Le,
     Utf16Be,
+    /// Unmarked `UTF-16`: BOM-based endianness (decode strips/honors a leading
+    /// BOM, defaulting to native LE; encode emits an LE BOM), mirroring `Utf32`.
+    Utf16,
     Utf32,
     Utf32Be,
     Utf32Le,
@@ -211,7 +214,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 129] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 130] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -258,6 +261,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 129] = [
         canonical: "UTF-16BE",
         normalized: "UTF16BE",
         aliases: &["UTF16BE"],
+    },
+    CodecSpec {
+        encoding: Encoding::Utf16,
+        canonical: "UTF-16",
+        normalized: "UTF16",
+        aliases: &["UTF16"],
     },
     CodecSpec {
         encoding: Encoding::Utf32,
@@ -1220,16 +1229,16 @@ pub struct IconvDescriptor {
     /// linear scan inside encode_*. `None` when `to` is multibyte. See
     /// [`build_to_reverse`].
     to_reverse: Option<SingleByteReverse>,
-    /// Unmarked `UTF-32` source only: a leading Byte Order Mark has not yet been
-    /// consumed. glibc's BOM-bearing converters strip an initial BOM and switch
-    /// endianness from it (no BOM => the platform-native LE default), so we
+    /// Unmarked `UTF-16`/`UTF-32` source only: a leading Byte Order Mark has not
+    /// yet been consumed. glibc's BOM-bearing converters strip an initial BOM and
+    /// switch endianness from it (no BOM => the platform-native LE default), so we
     /// resolve it once at the start of the first input. Explicit-endianness
-    /// codecs (`UTF-32LE`/`BE`) leave this `false`.
+    /// codecs (`UTF-16LE`/`BE`, `UTF-32LE`/`BE`) leave this `false`.
     from_bom_pending: bool,
-    /// Resolved source endianness for the unmarked `UTF-32` decoder once the BOM
-    /// has been inspected: `true` = big-endian (a `00 00 FE FF` BOM was seen),
-    /// `false` = little-endian (an `FF FE 00 00` BOM or no BOM — native default).
-    from_utf32_be: bool,
+    /// Resolved source endianness for the unmarked `UTF-16`/`UTF-32` decoder once
+    /// the BOM has been inspected: `true` = big-endian (a `FE FF` / `00 00 FE FF`
+    /// BOM was seen), `false` = little-endian (an LE BOM or no BOM — native).
+    from_unmarked_be: bool,
 }
 
 /// Sorted codepoint -> output-byte reverse map for a single-byte target codec.
@@ -8592,6 +8601,10 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         }
         Encoding::Utf16Le => decode_utf16le(input),
         Encoding::Utf16Be => decode_utf16be(input),
+        // Unmarked UTF-16 decodes LE by default; the BOM-resolved endianness is
+        // applied by the convert loop (which dispatches to Utf16Be when a BE BOM
+        // was seen), exactly like the unmarked Utf32 path.
+        Encoding::Utf16 => decode_utf16le(input),
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Utf32Be => decode_utf32be(input),
         Encoding::Utf32Le => decode_utf32le(input),
@@ -8752,7 +8765,9 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
             out[0] = cp as u8;
             Ok(1)
         }
-        Encoding::Utf16Le => {
+        // Unmarked `Utf16` encodes LE units (its LE BOM is emitted separately by
+        // the convert loop), so it shares the explicit-LE encoder here.
+        Encoding::Utf16Le | Encoding::Utf16 => {
             let mut units = [0u16; 2];
             let encoded_units = ch.encode_utf16(&mut units);
             let needed = encoded_units.len() * 2;
@@ -8968,13 +8983,13 @@ pub fn iconv_open_detailed(
         IconvDescriptor {
             from,
             to,
-            emit_bom: matches!(to, Encoding::Utf32),
+            emit_bom: matches!(to, Encoding::Utf32 | Encoding::Utf16),
             dispatch,
             fast_ascii: pair_is_ascii_identity(from, to),
             sb_translation: build_sb_translation(from, to),
             to_reverse: build_to_reverse(to),
-            from_bom_pending: matches!(from, Encoding::Utf32),
-            from_utf32_be: false,
+            from_bom_pending: matches!(from, Encoding::Utf32 | Encoding::Utf16),
+            from_unmarked_be: false,
         },
         dispatch,
     ))
@@ -9010,7 +9025,7 @@ pub fn iconv(
         None => {
             if cd.emit_bom && !outbuf.is_empty() {
                 let bom = match cd.to {
-                    Encoding::Utf16Le => &[0xFF, 0xFE][..],
+                    Encoding::Utf16 => &[0xFF, 0xFE][..],
                     Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00][..],
                     _ => &[][..],
                 };
@@ -9046,34 +9061,56 @@ pub fn iconv(
     // an empty input — or one that errors before producing any character —
     // yields no BOM at all. Emitting it up-front diverged on those cases.
 
-    // Unmarked `UTF-32` source: consume a leading BOM once and resolve the
-    // decode endianness from it, matching glibc's gconv (an `FF FE 00 00` BOM =>
-    // LE, `00 00 FE FF` => BE, no BOM => the native LE default). Only attempt the
-    // check with a full 4-byte unit available; with fewer bytes the per-unit
-    // decode below returns EINVAL/incomplete and the caller re-presents the tail,
-    // so `from_bom_pending` stays set for the next call.
-    if cd.from_bom_pending && input.len() - in_pos >= 4 {
-        match input[in_pos..in_pos + 4] {
-            [0xFF, 0xFE, 0x00, 0x00] => {
-                cd.from_utf32_be = false;
-                in_pos += 4;
+    // Unmarked `UTF-16`/`UTF-32` source: consume a leading BOM once and resolve
+    // the decode endianness from it, matching glibc's gconv (LE BOM => LE, BE BOM
+    // => BE, no BOM => the native LE default). The BOM width equals the unit
+    // width — 2 bytes for UTF-16 (`FF FE`/`FE FF`), 4 for UTF-32
+    // (`FF FE 00 00`/`00 00 FE FF`); the UTF-32 BOM shares a prefix with the
+    // UTF-16 one, so the check branches on `cd.from`. Only attempt it with a full
+    // unit available; with fewer bytes the per-unit decode below returns
+    // EINVAL/incomplete and the caller re-presents the tail, so `from_bom_pending`
+    // stays set for the next call.
+    if cd.from_bom_pending {
+        match cd.from {
+            Encoding::Utf32 if input.len() - in_pos >= 4 => {
+                match input[in_pos..in_pos + 4] {
+                    [0xFF, 0xFE, 0x00, 0x00] => {
+                        cd.from_unmarked_be = false;
+                        in_pos += 4;
+                    }
+                    [0x00, 0x00, 0xFE, 0xFF] => {
+                        cd.from_unmarked_be = true;
+                        in_pos += 4;
+                    }
+                    _ => {} // no BOM: keep the native LE default
+                }
+                cd.from_bom_pending = false;
             }
-            [0x00, 0x00, 0xFE, 0xFF] => {
-                cd.from_utf32_be = true;
-                in_pos += 4;
+            Encoding::Utf16 if input.len() - in_pos >= 2 => {
+                match input[in_pos..in_pos + 2] {
+                    [0xFF, 0xFE] => {
+                        cd.from_unmarked_be = false;
+                        in_pos += 2;
+                    }
+                    [0xFE, 0xFF] => {
+                        cd.from_unmarked_be = true;
+                        in_pos += 2;
+                    }
+                    _ => {} // no BOM: keep the native LE default
+                }
+                cd.from_bom_pending = false;
             }
-            _ => {} // no BOM: keep the native LE default
+            _ => {}
         }
-        cd.from_bom_pending = false;
     }
 
-    // Source encoding to decode each unit under. For the unmarked `UTF-32` codec
-    // this reflects the BOM-resolved endianness (decode_utf32 is LE; Utf32Be is
-    // the big-endian decoder); every other codec decodes under `cd.from` itself.
-    let from_enc = if cd.from == Encoding::Utf32 && cd.from_utf32_be {
-        Encoding::Utf32Be
-    } else {
-        cd.from
+    // Source encoding to decode each unit under. For the unmarked UTF-16/UTF-32
+    // codecs this reflects the BOM-resolved endianness (the *Le decoders are LE;
+    // *Be are big-endian); every other codec decodes under `cd.from` itself.
+    let from_enc = match cd.from {
+        Encoding::Utf32 if cd.from_unmarked_be => Encoding::Utf32Be,
+        Encoding::Utf16 if cd.from_unmarked_be => Encoding::Utf16Be,
+        other => other,
     };
 
     // When both endpoints are ASCII-transparent, any byte < 0x80 converts to
@@ -9143,6 +9180,7 @@ pub fn iconv(
         if cd.emit_bom {
             let bom: &[u8] = match cd.to {
                 Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00],
+                Encoding::Utf16 => &[0xFF, 0xFE],
                 _ => &[],
             };
             if !bom.is_empty() {
