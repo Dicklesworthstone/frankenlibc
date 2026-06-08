@@ -1030,19 +1030,22 @@ fn match_name_table(
     None
 }
 
-/// Weekday (0 = Sunday) of January 1 of `year`, via Howard Hinnant's
-/// days-from-civil algorithm. Used to derive a calendar date from a week-of-year
-/// (%U/%W) plus a weekday, matching glibc's strptime (bd-2g7oyh.260).
-fn jan1_weekday(year: i64) -> i64 {
-    // days_from_civil(year, 1, 1): days since 1970-01-01.
-    let y = year - 1; // month <= 2
+/// Days since 1970-01-01 for the Gregorian date `(year, month, day)`, via Howard
+/// Hinnant's algorithm. Used by the strptime week-of-year derivations
+/// (bd-2g7oyh.260). `month` is 1-12, `day` is 1-31.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = year - if month <= 2 { 1 } else { 0 };
     let era = (if y >= 0 { y } else { y - 399 }) / 400;
     let yoe = y - era * 400; // [0, 399]
-    let doy = (153 * 10 + 2) / 5; // month 1 -> (153*(1+9)+2)/5 = 306; d-1 = 0
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146097 + doe - 719468;
-    // 1970-01-01 is Thursday (wday 4); rem_euclid handles negative `days`.
-    (days + 4).rem_euclid(7)
+    era * 146097 + doe - 719468
+}
+
+/// Weekday (0 = Sunday) of January 1 of `year`.
+fn jan1_weekday(year: i64) -> i64 {
+    // 1970-01-01 is Thursday (wday 4); rem_euclid handles negative days.
+    (days_from_civil(year, 1, 1) + 4).rem_euclid(7)
 }
 
 /// POSIX `strptime` — parse date/time string into broken-down time.
@@ -1493,7 +1496,8 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'V' => {
-                    // ISO week number (01-53).
+                    // ISO 8601 week number (01-53). Parsed and validated but, like
+                    // glibc, not used to derive the calendar date (bd-2g7oyh.260).
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if !(1..=53).contains(&val) {
                             return std::ptr::null_mut();
@@ -1504,7 +1508,7 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'G' => {
-                    // ISO week-based year (4 digits).
+                    // ISO 8601 week-based year (4 digits); consumed, not stored.
                     if let Some((_, new_si)) = parse_digits(input, si, 4) {
                         si = new_si;
                     } else {
@@ -1512,7 +1516,7 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'g' => {
-                    // ISO week-based year (2 digits).
+                    // ISO 8601 week-based year (2 digits); consumed, not stored.
                     if let Some((_, new_si)) = parse_digits(input, si, 2) {
                         si = new_si;
                     } else {
@@ -1708,6 +1712,12 @@ pub unsafe extern "C" fn strptime(
             (*tm).tm_mday = (rem + 1) as i32;
         }
     }
+
+    // Note: glibc's strptime parses the ISO 8601 week date (%V/%G/%g) but does
+    // NOT derive tm_mon/tm_mday from it (unlike %U/%W) — it leaves the date
+    // fields untouched. fl matches that: %V/%G/%g are validated and consumed but
+    // do not populate the broken-down date (verified by strptime_edge_differential
+    // _fuzz; bd-2g7oyh.260).
 
     unsafe { input_ptr.add(si) as *mut std::ffi::c_char }
 }

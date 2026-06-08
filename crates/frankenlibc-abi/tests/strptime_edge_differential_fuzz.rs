@@ -133,7 +133,7 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
     let day_idx = r.below(7) as usize;
     let day_name = recase(r, DAYS[day_idx]);
 
-    let (fmt, input): (String, String) = match r.below(16) {
+    let (fmt, input): (String, String) = match r.below(18) {
         0 => (
             "%Y-%m-%d".into(),
             format!("{}-{}-{}", num(r, year), num(r, mon1), num(r, mday)),
@@ -208,12 +208,30 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
                 format!("{}{}{:02}{}{}", num(r, year), ws(r), week, ws(r), wday),
             )
         }
-        _ => {
+        15 => {
             // %W Monday-week + weekday -> glibc derives the date.
             let week = 5 + r.below(41);
             let wday = r.below(7);
             (
                 "%Y %W %w".into(),
+                format!("{}{}{:02}{}{}", num(r, year), ws(r), week, ws(r), wday),
+            )
+        }
+        16 => {
+            // ISO 8601 week date: %G ISO-year, %V ISO-week, %u ISO-weekday 1-7.
+            let week = 1 + r.below(52);
+            let wday = 1 + r.below(7);
+            (
+                "%G %V %u".into(),
+                format!("{}{}{:02}{}{}", num(r, year), ws(r), week, ws(r), wday),
+            )
+        }
+        _ => {
+            // ISO week date with %w (0-6, Sunday=0) weekday form.
+            let week = 1 + r.below(52);
+            let wday = r.below(7);
+            (
+                "%G %V %w".into(),
                 format!("{}{}{:02}{}{}", num(r, year), ws(r), week, ws(r), wday),
             )
         }
