@@ -45,12 +45,12 @@ impl Lcg {
 
 // Every glibc strftime conversion specifier (sans %% which we add as a literal).
 const SPECS: &[u8] = b"aAbBcCdDeFgGhHIjklmMnpPrRsStTuUVwWxXyYzZ";
-// Specifiers excluded from flag/width testing: composites (outer width not yet
-// propagated to sub-fields); %z/%Z (glibc formats as a quirky NUMBER while fl is
-// UTC-simplified to a fixed "+0000"/"GMT" string); and %s for negative epochs,
-// where glibc zero-pads malformed-ly ("0-1022113080", pad before the sign) — fl
-// keeps the saner sign-first form that matches glibc's own %Y. All out of scope.
-const NO_FLAGS: &[u8] = b"crDFRTxXzZs";
+// Specifiers excluded from flag/width testing: %z/%Z (glibc formats as a quirky
+// NUMBER while fl is UTC-simplified to a fixed "+0000"/"GMT" string); and %s for
+// negative epochs, where glibc zero-pads malformed-ly ("0-1022113080", pad before
+// the sign) — fl keeps the saner sign-first form that matches glibc's own %Y.
+// (Composites %c %r %D %F %R %T %x %X now propagate outer width/flags — bd-asiidm.)
+const NO_FLAGS: &[u8] = b"zZs";
 const FLAGS: &[u8] = b"-_0^#";
 
 fn gen_format(r: &mut Lcg) -> Vec<u8> {

@@ -426,19 +426,6 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         }};
     }
 
-    // Convenience: zero-padded decimal (default)
-    macro_rules! push_dec {
-        ($val:expr, $width:expr) => {{
-            push_dec_pad!($val, $width, Pad::Zero);
-        }};
-    }
-
-    // Convenience: space-padded decimal
-    macro_rules! push_dec_space {
-        ($val:expr, $width:expr) => {{
-            push_dec_pad!($val, $width, Pad::Space);
-        }};
-    }
 
     while i < fmt.len() {
         if fmt[i] != b'%' {
@@ -601,6 +588,41 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }};
         }
 
+        // Emit a COMPOSITE specifier (%c %r %D %F %R %T %x %X) by recursively
+        // rendering its C-locale expansion, then applying the OUTER field width
+        // and case flags to the whole result (glibc: width right-justifies and
+        // pads with spaces, or zeros with the `0` flag; `^` upper-cases the whole
+        // expansion; `#` is a no-op on composites). The sub-format has no flags,
+        // so its bytes are identical to the previous inline rendering when no
+        // outer flag/width is present.
+        macro_rules! push_composite {
+            ($sub:expr) => {{
+                let mut scratch = [0u8; 256];
+                let n = format_strftime($sub, bd, &mut scratch);
+                let src: &[u8] = &scratch[..n];
+                let needs_case = case_flag == CaseFlag::Upper; // `#` no-ops here
+                let fits = width_override.map_or(true, |w| src.len() >= w);
+                if !needs_case && fits {
+                    push_str!(src);
+                } else {
+                    let mut tmp: Vec<u8> = src.to_vec();
+                    if needs_case {
+                        tmp.make_ascii_uppercase();
+                    }
+                    if let Some(w) = width_override {
+                        if tmp.len() < w {
+                            let padc =
+                                if matches!(pad_override, Some(Pad::Zero)) { b'0' } else { b' ' };
+                            for _ in 0..(w - tmp.len()) {
+                                push!(padc);
+                            }
+                        }
+                    }
+                    push_str!(&tmp);
+                }
+            }};
+        }
+
         match fmt[i] {
             b'a' => {
                 let wday = bd.tm_wday.rem_euclid(7) as usize;
@@ -619,25 +641,8 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_str_field!(MON_FULL_NAMES[mon].as_bytes(), true, true);
             }
             b'c' => {
-                // Preferred date/time: glibc/POSIX C-locale format is
-                // `"%a %b %e %H:%M:%S %Y"` — note the bare `%Y` (no width
-                // padding), so single-digit years print as "1970" / "50"
-                // / "200" without leading zeros.
-                let wday = bd.tm_wday.rem_euclid(7) as usize;
-                let mon = bd.tm_mon.rem_euclid(12) as usize;
-                push_str!(WDAY_NAMES[wday]);
-                push!(b' ');
-                push_str!(MON_NAMES[mon]);
-                push!(b' ');
-                push_dec_space!(bd.tm_mday, 2);
-                push!(b' ');
-                push_dec!(bd.tm_hour, 2);
-                push!(b':');
-                push_dec!(bd.tm_min, 2);
-                push!(b':');
-                push_dec!(bd.tm_sec, 2);
-                push!(b' ');
-                push_dec!(bd.tm_year as i64 + 1900, 0);
+                // Preferred date/time, C locale: "%a %b %e %H:%M:%S %Y".
+                push_composite!(b"%a %b %e %H:%M:%S %Y");
             }
             b'C' => {
                 // %C is the bare-decimal century (year / 100). glibc uses
@@ -653,23 +658,13 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_mod!(bd.tm_mday, 2, Pad::Zero);
             }
             b'D' => {
-                // %m/%d/%y
-                push_dec!(bd.tm_mon as i64 + 1, 2);
-                push!(b'/');
-                push_dec!(bd.tm_mday, 2);
-                push!(b'/');
-                push_dec!((bd.tm_year as i64 + 1900).rem_euclid(100), 2);
+                push_composite!(b"%m/%d/%y");
             }
             b'e' => {
                 push_dec_mod!(bd.tm_mday, 2, Pad::Space);
             }
             b'F' => {
-                // %Y-%m-%d — %Y is bare-decimal (no width padding).
-                push_dec!(bd.tm_year as i64 + 1900, 0);
-                push!(b'-');
-                push_dec!(bd.tm_mon as i64 + 1, 2);
-                push!(b'-');
-                push_dec!(bd.tm_mday, 2);
+                push_composite!(b"%Y-%m-%d");
             }
             b'G' => {
                 let (iso_y, _) = iso_week(bd);
@@ -714,25 +709,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_str_field!(s, false, false);
             }
             b'r' => {
-                // %I:%M:%S %p
-                let h = bd.tm_hour % 12;
-                push_dec!(if h == 0 { 12 } else { h }, 2);
-                push!(b':');
-                push_dec!(bd.tm_min, 2);
-                push!(b':');
-                push_dec!(bd.tm_sec, 2);
-                push!(b' ');
-                if bd.tm_hour < 12 {
-                    push_str!(b"AM");
-                } else {
-                    push_str!(b"PM");
-                }
+                push_composite!(b"%I:%M:%S %p");
             }
             b'R' => {
-                // %H:%M
-                push_dec!(bd.tm_hour, 2);
-                push!(b':');
-                push_dec!(bd.tm_min, 2);
+                push_composite!(b"%H:%M");
             }
             b's' => {
                 // Seconds since epoch
@@ -746,12 +726,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_str_field!(b"\t", true, false);
             }
             b'T' => {
-                // %H:%M:%S
-                push_dec!(bd.tm_hour, 2);
-                push!(b':');
-                push_dec!(bd.tm_min, 2);
-                push!(b':');
-                push_dec!(bd.tm_sec, 2);
+                push_composite!(b"%H:%M:%S");
             }
             b'u' => {
                 // ISO weekday: Monday=1 .. Sunday=7
@@ -785,20 +760,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_mod!(wnum, 2, Pad::Zero);
             }
             b'x' => {
-                // Preferred date: %m/%d/%y
-                push_dec!(bd.tm_mon as i64 + 1, 2);
-                push!(b'/');
-                push_dec!(bd.tm_mday, 2);
-                push!(b'/');
-                push_dec!((bd.tm_year as i64 + 1900).rem_euclid(100), 2);
+                push_composite!(b"%m/%d/%y");
             }
             b'X' => {
-                // Preferred time: %H:%M:%S
-                push_dec!(bd.tm_hour, 2);
-                push!(b':');
-                push_dec!(bd.tm_min, 2);
-                push!(b':');
-                push_dec!(bd.tm_sec, 2);
+                push_composite!(b"%H:%M:%S");
             }
             b'y' => {
                 push_dec_mod!((bd.tm_year as i64 + 1900).rem_euclid(100), 2, Pad::Zero);
