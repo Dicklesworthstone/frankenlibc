@@ -742,9 +742,16 @@ impl<'a> Parser<'a> {
                 _ => Ok(atom),
             }
         } else {
-            // BRE: * is a quantifier (only after an atom), \{m,n\} for braces
+            // BRE: * is a quantifier (only after a quantifiable atom), \{m,n\}
+            // for braces. POSIX: a `*` immediately following a leading anchor
+            // (`^` at RE/subexpr/alternative start, or the GNU `\<`/`\>`/`\b`/`\B`
+            // zero-width assertions) is a LITERAL `*`, not a quantifier — those
+            // assertions are not quantifiable. glibc-confirmed: BRE `^*0` is
+            // `^` + literal `*` + `0` (no-match on "0"), while `^**0` is
+            // `^` + literal `*` repeated. The `^` is only parsed as an anchor
+            // when leading, so guarding on Anchor here is exactly the POSIX rule.
             match self.peek() {
-                Some(b'*') => {
+                Some(b'*') if !matches!(atom, Ast::Anchor(_)) => {
                     self.advance();
                     Ok(Ast::Repeat {
                         inner: Box::new(atom),
