@@ -5008,8 +5008,15 @@ fn scanf_core_impl(
         return None;
     }
     let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
-    let directives = parse_scanf_format(fmt_bytes);
+    let mut directives = parse_scanf_format(fmt_bytes);
     let result = if wide_input {
+        // Mark every conversion as reading from a wide stream so leading-
+        // whitespace skipping and `%s` token boundaries are Unicode-aware.
+        for dir in &mut directives {
+            if let ScanDirective::Spec(spec) = dir {
+                spec.wide_input = true;
+            }
+        }
         frankenlibc_core::stdio::scanf::scan_input_wide(input, &directives)
     } else {
         scan_input(input, &directives)

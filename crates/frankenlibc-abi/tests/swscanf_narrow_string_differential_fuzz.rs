@@ -45,31 +45,27 @@ fn wfmt(s: &str) -> Vec<Wc> {
     v
 }
 
-/// A non-whitespace code point of UTF-8 byte width 1, 2, or 3 (never surrogate).
-///
-/// NOTE: Unicode whitespace (U+2003, U+205F, U+3000, …) is deliberately excluded.
-/// In a wide scanf stream glibc bounds `%s` tokens (and skips leading whitespace
-/// for every conversion) with `iswspace`, which recognises those code points;
-/// fl's byte-oriented scan core only knows ASCII whitespace, so wide-scanf
-/// Unicode-whitespace tokenisation is a SEPARATE, broader gap tracked in
-/// bd-xu09cn. This fuzzer pins the width / multibyte-boundary / terminator
-/// semantics (bd-f85vxa).
+/// A code point of UTF-8 byte width 1, 2, or 3 (never a surrogate). Unicode
+/// whitespace IS allowed: in a wide scanf stream glibc bounds `%s` tokens and
+/// skips leading whitespace with `iswspace` (U+2003, U+205F, U+3000, …), and fl
+/// now matches that (bd-xu09cn), so an interior/leading wide-space must terminate
+/// or be skipped identically on both sides.
 fn gen_cp(r: &mut Lcg) -> char {
     loop {
-        let v = match r.below(3) {
-            0 => 0x41 + r.below(0x39) as u32, // A..z-ish (no whitespace)
+        let v = match r.below(4) {
+            0 => 0x41 + r.below(0x39) as u32, // A..z-ish
             1 => 0x80 + r.below(0x780) as u32,
-            _ => {
+            2 => {
                 let c = 0x800 + r.below(0xF800) as u32;
                 if (0xD800..=0xDFFF).contains(&c) { 0x4E00 } else { c }
             }
+            // Bias toward Unicode whitespace so token boundaries get exercised.
+            _ => *[0x2003u32, 0x205F, 0x3000, 0x00A0, 0x2009, 0x1680, 0x202F, 0x0085]
+                .get(r.below(8))
+                .unwrap_or(&0x2003),
         };
         if let Some(c) = char::from_u32(v) {
-            // `char::is_whitespace` is a superset of glibc's `iswspace`, so
-            // filtering it keeps the input free of any whitespace ambiguity.
-            if !c.is_whitespace() {
-                return c;
-            }
+            return c;
         }
     }
 }

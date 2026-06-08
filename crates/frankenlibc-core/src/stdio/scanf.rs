@@ -210,6 +210,12 @@ pub struct ScanSpec {
     pub length: LengthMod,
     pub conversion: u8,
     pub scanset: Option<ScanSet>,
+    /// True when this directive is scanned from a WIDE input stream (swscanf /
+    /// fwscanf), whose bytes are the UTF-8 encoding of wide characters. In that
+    /// mode leading-whitespace skipping and `%s` token boundaries recognise
+    /// Unicode whitespace (`iswspace`), not just ASCII. Set by the wide scanf
+    /// entry points after parsing; defaults to false for narrow `sscanf`.
+    pub wide_input: bool,
     route: ScanfRoute,
 }
 
@@ -338,6 +344,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 length: LengthMod::None,
                 conversion: 0,
                 scanset: None,
+                wide_input: false,
                 route: ScanfRoute::invalid(),
             };
 
@@ -529,10 +536,8 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
     for dir in directives {
         match dir {
             ScanDirective::Whitespace => {
-                // Skip whitespace in input.
-                while pos < input.len() && is_c_space(input[pos]) {
-                    pos += 1;
-                }
+                // Skip whitespace in input (Unicode-aware for a wide stream).
+                pos = skip_ws(input, pos, wide_input);
             }
             ScanDirective::Literal(expected) => {
                 if pos >= input.len() {
@@ -559,7 +564,7 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                     None => {
                         // Matching failure or input exhaustion.
                         let exhausted_before_conversion = if spec.skips_leading_whitespace() {
-                            skip_ws(input, pos) >= input.len()
+                            skip_ws(input, pos, spec.wide_input) >= input.len()
                         } else {
                             pos >= input.len()
                         };
@@ -596,10 +601,48 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
     }
 }
 
-/// Skip leading whitespace. Returns new position.
-fn skip_ws(input: &[u8], mut pos: usize) -> usize {
-    while pos < input.len() && is_c_space(input[pos]) {
-        pos += 1;
+/// Byte length of a whitespace run starting at `pos`, or 0 if `pos` is not
+/// whitespace. For a narrow stream this is `1` iff the byte is ASCII whitespace.
+/// For a WIDE stream the input bytes are the UTF-8 encoding of wide characters,
+/// so the whole UTF-8 sequence is decoded and tested with `iswspace`, matching
+/// glibc's wide scanf (which recognises U+2003, U+205F, U+3000, … as space).
+#[inline]
+fn ws_seq_len(input: &[u8], pos: usize, wide: bool) -> usize {
+    if pos >= input.len() {
+        return 0;
+    }
+    if !wide {
+        return if is_c_space(input[pos]) { 1 } else { 0 };
+    }
+    let len = utf8_seq_len(input[pos]);
+    if pos + len > input.len() {
+        // Truncated trailing sequence: fall back to the ASCII test.
+        return if is_c_space(input[pos]) { 1 } else { 0 };
+    }
+    match core::str::from_utf8(&input[pos..pos + len]) {
+        Ok(s) => match s.chars().next() {
+            Some(c) if crate::string::wchar::iswspace(c as u32) => len,
+            _ => 0,
+        },
+        Err(_) => {
+            if is_c_space(input[pos]) {
+                1
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// Skip leading whitespace. Returns new position. When `wide`, Unicode
+/// whitespace (whole UTF-8 sequences) is skipped, not just ASCII.
+fn skip_ws(input: &[u8], mut pos: usize, wide: bool) -> usize {
+    loop {
+        let n = ws_seq_len(input, pos, wide);
+        if n == 0 {
+            break;
+        }
+        pos += n;
     }
     pos
 }
@@ -611,7 +654,7 @@ fn effective_width(spec: &ScanSpec, default: usize) -> usize {
 
 fn apply_leading_whitespace_policy(input: &[u8], pos: usize, spec: &ScanSpec) -> usize {
     if spec.skips_leading_whitespace() {
-        skip_ws(input, pos)
+        skip_ws(input, pos, spec.wide_input)
     } else {
         pos
     }
@@ -1303,7 +1346,13 @@ fn scan_string(
     let mut chars_read = 0usize;
     let mut buf = Vec::new();
 
-    while i < input.len() && chars_read < max_chars && !is_c_space(input[i]) {
+    while i < input.len() && chars_read < max_chars {
+        // The token ends at whitespace. For a wide stream that means Unicode
+        // whitespace (a whole UTF-8 sequence), not only ASCII — `wide_input` is
+        // the STREAM flag (distinct from `wide`, which also covers narrow `%ls`).
+        if ws_seq_len(input, i, wide_input) != 0 {
+            break;
+        }
         if wide {
             let next = (i + utf8_seq_len(input[i])).min(input.len());
             buf.extend_from_slice(&input[i..next]);
