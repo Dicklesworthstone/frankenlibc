@@ -1397,6 +1397,32 @@ pub unsafe extern "C" fn strptime(
                         return std::ptr::null_mut();
                     }
                 }
+                b'c' | b'x' | b'X' | b'r' => {
+                    // Locale date/time composites (C/POSIX locale expansions):
+                    //   %c -> %a %b %e %H:%M:%S %Y   %x -> %m/%d/%y
+                    //   %X -> %H:%M:%S               %r -> %I:%M:%S %p
+                    let sub: &core::ffi::CStr = match spec {
+                        b'c' => c"%a %b %e %H:%M:%S %Y",
+                        b'x' => c"%m/%d/%y",
+                        b'X' => c"%H:%M:%S",
+                        _ => c"%I:%M:%S %p",
+                    };
+                    let result = unsafe {
+                        strptime(input_ptr.add(si) as *const std::ffi::c_char, sub.as_ptr(), tm)
+                    };
+                    if result.is_null() {
+                        return std::ptr::null_mut();
+                    }
+                    let consumed =
+                        unsafe { result.offset_from(input_ptr.add(si) as *const std::ffi::c_char) };
+                    if consumed < 0 {
+                        return std::ptr::null_mut();
+                    }
+                    si = si.saturating_add(consumed as usize);
+                    if si > input.len() {
+                        return std::ptr::null_mut();
+                    }
+                }
                 b's' => {
                     // Seconds since epoch (GNU extension, also in POSIX 2024).
                     // Parse digits and convert to broken-down time.

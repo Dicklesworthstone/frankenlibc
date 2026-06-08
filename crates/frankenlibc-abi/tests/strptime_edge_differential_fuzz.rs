@@ -133,7 +133,7 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
     let day_idx = r.below(7) as usize;
     let day_name = recase(r, DAYS[day_idx]);
 
-    let (fmt, input): (String, String) = match r.below(18) {
+    let (fmt, input): (String, String) = match r.below(22) {
         0 => (
             "%Y-%m-%d".into(),
             format!("{}-{}-{}", num(r, year), num(r, mon1), num(r, mday)),
@@ -226,7 +226,7 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
                 format!("{}{}{:02}{}{}", num(r, year), ws(r), week, ws(r), wday),
             )
         }
-        _ => {
+        17 => {
             // ISO week date with %w (0-6, Sunday=0) weekday form.
             let week = 1 + r.below(52);
             let wday = r.below(7);
@@ -235,6 +235,44 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
                 format!("{}{}{:02}{}{}", num(r, year), ws(r), week, ws(r), wday),
             )
         }
+        18 => {
+            // %c locale date/time: C-locale expansion "%a %b %e %H:%M:%S %Y".
+            (
+                "%c".into(),
+                format!(
+                    "{} {} {} {}:{}:{} {}",
+                    day_name,
+                    mon_name,
+                    num(r, mday),
+                    num(r, hour),
+                    num(r, min),
+                    num(r, sec),
+                    num(r, year)
+                ),
+            )
+        }
+        19 => (
+            // %x locale date: C-locale expansion "%m/%d/%y".
+            "%x".into(),
+            format!("{}/{}/{}", num(r, mon1), num(r, mday), num(r, yy)),
+        ),
+        20 => (
+            // %X locale time: C-locale expansion "%H:%M:%S".
+            "%X".into(),
+            format!("{}:{}:{}", num(r, hour), num(r, min), num(r, sec)),
+        ),
+        _ => (
+            // %r 12-hour clock with AM/PM: C-locale expansion "%I:%M:%S %p".
+            "%r".into(),
+            format!(
+                "{}:{}:{}{}{}",
+                num(r, if hour % 12 == 0 { 12 } else { hour % 12 }),
+                num(r, min),
+                num(r, sec),
+                ws(r),
+                if r.below(2) == 0 { "AM" } else { "pm" }
+            ),
+        ),
     };
 
     // Occasionally truncate the input to probe partial-match / end-pointer
