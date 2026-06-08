@@ -130,6 +130,31 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
 }
 
+/// Take at most `limit` WIDE CHARACTERS (Unicode scalar values) from the leading
+/// VALID-UTF-8 prefix of `bytes`, returning `(utf8_of_those_chars, char_count)`.
+/// Used by WIDE printf `%s`, where the `char*` multibyte content converts to wide
+/// characters and precision/width count wide characters, not bytes (C99). Decoding
+/// stops at the first invalid byte (glibc would error the conversion there).
+fn utf8_take_chars(bytes: &[u8], limit: Option<usize>) -> (Vec<u8>, usize) {
+    let valid = match core::str::from_utf8(bytes) {
+        Ok(s) => s,
+        // The prefix up to `valid_up_to()` is guaranteed valid UTF-8.
+        Err(e) => core::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or(""),
+    };
+    match limit {
+        None => (valid.as_bytes().to_vec(), valid.chars().count()),
+        Some(p) => {
+            let cut = valid
+                .char_indices()
+                .nth(p)
+                .map(|(i, _)| i)
+                .unwrap_or(valid.len());
+            let taken = &valid.as_bytes()[..cut];
+            (taken.to_vec(), valid[..cut].chars().count())
+        }
+    }
+}
+
 /// Largest length `<= limit` that lands on a UTF-8 character boundary. Used to
 /// apply `%ls` precision as a BYTE cap on the multibyte output without ever
 /// splitting (writing a partial) multibyte character, per C99 §7.19.6.1.
@@ -3443,6 +3468,27 @@ unsafe fn render_printf_impl(
                                 }
                                 format_str(&utf8, &width_spec, &mut buf);
                             }
+                        } else if wide_output {
+                            // Wide printf narrow `%s`: the `char*` multibyte content
+                            // is converted to wide characters, and precision/width
+                            // count WIDE CHARACTERS, not bytes (C99). Take the first
+                            // `precision` wide chars (never splitting a multibyte
+                            // char) and inflate the byte width by the multibyte
+                            // overhead so `format_str`'s byte padding lands on
+                            // wide-column boundaries after the caller decodes back.
+                            let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
+                            let limit = match resolved_spec.precision {
+                                Precision::Fixed(n) => Some(n),
+                                _ => None,
+                            };
+                            let (utf8, wide_count) = utf8_take_chars(s_bytes, limit);
+                            let mut width_spec = resolved_spec;
+                            width_spec.precision = Precision::None;
+                            if let Width::Fixed(w) = width_spec.width {
+                                let extra = utf8.len().saturating_sub(wide_count);
+                                width_spec.width = Width::Fixed(w + extra);
+                            }
+                            format_str(&utf8, &width_spec, &mut buf);
                         } else {
                             let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
                             format_str(s_bytes, &resolved_spec, &mut buf);
