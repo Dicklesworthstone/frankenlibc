@@ -44,9 +44,19 @@ const CLASSES: &[&str] = &[
     "[:alpha:]", "[:digit:]", "[:alnum:]", "[:space:]", "[:upper:]", "[:lower:]", "[:punct:]",
 ];
 
+/// Bytes that may appear as a single bracket member / range endpoint. `-` is
+/// intentionally excluded from the standalone-member pool: a literal `-`
+/// adjacent to a collating symbol (`[.x.]`) forms a range with a collating-
+/// symbol endpoint (`X-[.c.]`), a distinct glibc feature fl does not yet support
+/// (tracked separately) — explicit ranges below already exercise `X-Y`.
+const MEMBER: &[u8] = b"abAB129.^!/";
+
 /// Build a random glob pattern from glob-significant bytes, occasionally
 /// emitting a whole bracket expression or POSIX class so those paths are hit
-/// far more often than random bytes alone would manage.
+/// far more often than random bytes alone would manage. The bracket generator
+/// covers the quirky corners glibc cares about: ranges (`a-z`), collating
+/// symbols (`[.a.]`) and equivalence classes (`[=a=]`), a leading literal `]`
+/// member (`[]a]`), and backslash escapes inside the class.
 fn gen_pattern(r: &mut Lcg) -> Vec<u8> {
     const ATOM: &[u8] = b"ab.*?/-^!\\AB12";
     let len = r.below(11);
@@ -55,17 +65,48 @@ fn gen_pattern(r: &mut Lcg) -> Vec<u8> {
     while i < len {
         match r.below(10) {
             0 | 1 => {
-                // A bracket expression: '[', optional '!', some members, ']'.
+                // A bracket expression: '[', optional '!'/'^', members, ']'.
                 p.push(b'[');
-                if r.below(2) == 0 {
-                    p.push(b'!');
+                match r.below(3) {
+                    0 => p.push(b'!'),
+                    1 => p.push(b'^'),
+                    _ => {}
                 }
-                let members = 1 + r.below(3);
+                // POSIX: a ']' immediately after '[' or '[!'/'[^' is a literal
+                // member, not the terminator.
+                if r.below(4) == 0 {
+                    p.push(b']');
+                }
+                let members = 1 + r.below(4);
                 for _ in 0..members {
-                    if r.below(4) == 0 {
-                        p.extend_from_slice(CLASSES[r.below(CLASSES.len())].as_bytes());
-                    } else {
-                        p.push(ATOM[r.below(ATOM.len())]);
+                    match r.below(6) {
+                        0 => p.extend_from_slice(CLASSES[r.below(CLASSES.len())].as_bytes()),
+                        // Collating symbol [.x.] / equivalence class [=x=].
+                        1 => {
+                            let k = if r.below(2) == 0 { b'.' } else { b'=' };
+                            p.push(b'[');
+                            p.push(k);
+                            p.push(MEMBER[r.below(MEMBER.len())]);
+                            p.push(k);
+                            p.push(b']');
+                        }
+                        // A well-formed range `X-Y`.
+                        2 => {
+                            p.push(MEMBER[r.below(MEMBER.len())]);
+                            p.push(b'-');
+                            p.push(MEMBER[r.below(MEMBER.len())]);
+                        }
+                        // A backslash escape inside the class. The escaped byte
+                        // is drawn from a dash-free pool: under NOESCAPE the `\`
+                        // is literal, so a following `-` next to a collating
+                        // symbol would form a collating-endpoint range (the
+                        // separately-tracked feature excluded above).
+                        3 => {
+                            const ESC: &[u8] = b"*?]ab19.\\";
+                            p.push(b'\\');
+                            p.push(ESC[r.below(ESC.len())]);
+                        }
+                        _ => p.push(MEMBER[r.below(MEMBER.len())]),
                     }
                 }
                 p.push(b']');

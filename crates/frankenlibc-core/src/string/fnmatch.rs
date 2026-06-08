@@ -182,7 +182,6 @@ fn parse_bracket_subexpr(
     open: usize,
     kind: u8,
     c: u8,
-    casefold: bool,
 ) -> Option<(usize, bool)> {
     let content_start = open + 2;
     let mut j = content_start;
@@ -205,15 +204,12 @@ fn parse_bracket_subexpr(
         // fnmatch_differential_fuzz.
         b':' => posix_class_match(content, c).unwrap_or_default(),
         // Collating element / equivalence class. The C locale has only
-        // single-byte elements; anything else matches nothing.
-        b'.' | b'=' => {
-            content.len() == 1
-                && if casefold {
-                    content[0].eq_ignore_ascii_case(&c)
-                } else {
-                    content[0] == c
-                }
-        }
+        // single-byte elements; anything else matches nothing. glibc tests the
+        // element against the ORIGINAL byte even under FNM_CASEFOLD — it folds
+        // literals and ranges but NEVER a `[.x.]` / `[=x=]` (nor `[:class:]`),
+        // so `[[.b.]]` / `[[=b=]]` match only 'b', never 'B'. Found by
+        // fnmatch_differential_fuzz.
+        b'.' | b'=' => content.len() == 1 && content[0] == c,
         _ => return None,
     };
     Some((next_pi, member))
@@ -260,7 +256,7 @@ fn bracket_match_one(
         if bc == b'['
             && let Some(&kind) = pat.get(pi + 1)
             && matches!(kind, b':' | b'.' | b'=')
-            && let Some((next_pi, member)) = parse_bracket_subexpr(pat, pi, kind, c, casefold)
+            && let Some((next_pi, member)) = parse_bracket_subexpr(pat, pi, kind, c)
         {
             if member {
                 matched = true;
@@ -294,15 +290,20 @@ fn bracket_match_one(
                 }
             }
             pi += 1;
-            let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
             if casefold {
-                for r_ch in low..=high {
-                    if test_ch == r_ch.to_ascii_lowercase() {
-                        matched = true;
-                        break;
-                    }
+                // glibc folds BOTH range endpoints AND the test char to
+                // lowercase and tests a SINGLE folded range — not a per-element
+                // fold of the literal span. So `[B-b]` (B..b) under CASEFOLD
+                // matches only {B,b} (folded range [b,b]), never the literal
+                // interior like 'a'; an inverted folded range (`[Z-a]` → [z,a])
+                // matches nothing. Found by fnmatch_differential_fuzz.
+                let lo = low.to_ascii_lowercase();
+                let hi = high.to_ascii_lowercase();
+                let cl = c.to_ascii_lowercase();
+                if lo <= hi && cl >= lo && cl <= hi {
+                    matched = true;
                 }
-            } else if test_ch >= low && test_ch <= high {
+            } else if c >= low && c <= high {
                 matched = true;
             }
         } else {
@@ -651,7 +652,7 @@ fn fnmatch_inner(
                             && let Some(&kind) = pat.get(pi + 1)
                             && matches!(kind, b':' | b'.' | b'=')
                             && let Some((next_pi, member)) =
-                                parse_bracket_subexpr(pat, pi, kind, c, casefold)
+                                parse_bracket_subexpr(pat, pi, kind, c)
                         {
                             if member {
                                 matched = true;
@@ -687,18 +688,20 @@ fn fnmatch_inner(
                             }
                             pi += 1;
 
-                            let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
                             if casefold {
-                                for r_ch in low..=high {
-                                    if test_ch == r_ch.to_ascii_lowercase() {
-                                        matched = true;
-                                        break;
-                                    }
-                                }
-                            } else {
-                                if test_ch >= low && test_ch <= high {
+                                // glibc folds BOTH endpoints and the test char
+                                // to lowercase and tests a SINGLE folded range
+                                // (not a per-element fold of the literal span):
+                                // `[B-b]` matches only {B,b}, an inverted folded
+                                // range matches nothing. Mirrors bracket_match_one.
+                                let lo = low.to_ascii_lowercase();
+                                let hi = high.to_ascii_lowercase();
+                                let cl = c.to_ascii_lowercase();
+                                if lo <= hi && cl >= lo && cl <= hi {
                                     matched = true;
                                 }
+                            } else if c >= low && c <= high {
+                                matched = true;
                             }
                         } else {
                             let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
@@ -953,9 +956,23 @@ mod tests {
         assert!(m("hello", "HELLO", f));
         assert!(!m("HELLO", "hello", FnmatchFlags::NONE));
         assert!(m("[a-z]", "M", f));
-        // Testing tricky range with casefold
-        assert!(m("[Z-a]", "z", f));
-        assert!(m("[Z-a]", "[", f));
+        // CASEFOLD ranges: glibc folds BOTH endpoints AND the char to lowercase
+        // and tests a SINGLE folded range — not a per-element fold of the
+        // literal span. `[Z-a]` folds to [z,a] which is inverted (empty), so it
+        // matches NOTHING under CASEFOLD even though 'z'/'[' lie in the literal
+        // span (verified against host glibc fnmatch).
+        assert!(!m("[Z-a]", "z", f));
+        assert!(!m("[Z-a]", "[", f));
+        // Without CASEFOLD the literal range [Z-a] (0x5a..0x61) still matches.
+        assert!(m("[Z-a]", "[", FnmatchFlags::NONE));
+        assert!(!m("[Z-a]", "z", FnmatchFlags::NONE));
+        // `[B-b]` folds to [b,b]: matches only {B,b}, not the literal interior.
+        assert!(m("[B-b]", "B", f));
+        assert!(!m("[B-b]", "a", f));
+        // Collating / equivalence elements are NEVER folded (like [:class:]).
+        assert!(!m("[[.b.]]", "B", f));
+        assert!(!m("[[=a=]]", "A", f));
+        assert!(m("[[.b.]]", "b", f));
     }
 
     #[test]
