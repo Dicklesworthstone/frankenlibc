@@ -77,7 +77,7 @@ fn span_range_matches_scalar_reference_and_golden() {
     let lengths = [0usize, 1, 31, 32, 63, 64, 255, 256, 257, 511, 1000, 4096];
 
     let mut hash: u64 = 0xcbf29ce484222325;
-    let mut mix = |x: u64, h: &mut u64| {
+    let mix = |x: u64, h: &mut u64| {
         *h ^= x;
         *h = h.wrapping_mul(0x100000001b3);
     };
