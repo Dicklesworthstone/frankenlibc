@@ -951,8 +951,10 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
             // No hex digits after "0x" — the "0" before "x" is a valid
             // decimal number. Rewind to just past the leading '0' so the
             // consumed count covers only that '0' (and any sign/whitespace),
-            // not the 'x'/'X' or a following '.'.
-            return (0.0, zero_end, false);
+            // not the 'x'/'X' or a following '.'. The parsed value is zero, but
+            // a leading '-' makes it NEGATIVE zero (glibc applies the sign to
+            // the zero result; +0.0 here diverged in the bit pattern).
+            return (if negative { -0.0 } else { 0.0 }, zero_end, false);
         }
 
         // Parse binary exponent (p/P followed by optional sign and decimal digits)
@@ -1966,6 +1968,19 @@ mod tests {
         let (val, consumed) = strtod(b"0x\0");
         assert_eq!(val, 0.0);
         assert_eq!(consumed, 1, "should consume only the '0', not the 'x'");
+    }
+
+    #[test]
+    fn test_strtod_neg_0x_without_hex_digits_is_negative_zero() {
+        // "-0x" with no hex digits parses the decimal '0', and the leading
+        // '-' makes it NEGATIVE zero — glibc applies the sign to the zero
+        // result. A bit-pattern check (not `== 0.0`, which ignores the sign).
+        let (val, consumed) = strtod(b"-0x\0");
+        assert_eq!(consumed, 2, "consume the '-' and '0', not the 'x'");
+        assert_eq!(val.to_bits(), (-0.0f64).to_bits(), "expected negative zero");
+        // A '+' sign yields positive zero.
+        let (valp, _) = strtod(b"+0x\0");
+        assert_eq!(valp.to_bits(), (0.0f64).to_bits(), "expected positive zero");
     }
 
     #[test]
