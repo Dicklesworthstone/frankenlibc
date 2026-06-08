@@ -318,6 +318,24 @@ fn complex_math_characterize_vs_glibc() {
         );
         assert_eq!(s.zero_sign, 0, "{name} signed-zero mismatch: {}", s.worst);
     }
+    // catanh (bd-2g7oyh.245) and catan derived from it: the branch-cut sign flips
+    // are gone, the cancellation-free closed form keeps a few ULP across the
+    // [1,inf)/(-inf,-1] cuts, and the special values match glibc.
+    for name in ["catanh", "catan"] {
+        let s = stats.iter().find(|s| s.name == name).unwrap();
+        assert!(
+            s.max_ulp <= 16,
+            "{name} regressed: max_ulp={} (>16): {}",
+            s.max_ulp,
+            s.worst
+        );
+        assert_eq!(
+            s.cat_mismatch, 0,
+            "{name} inf/nan category mismatch: {}",
+            s.worst
+        );
+        assert_eq!(s.zero_sign, 0, "{name} signed-zero mismatch: {}", s.worst);
+    }
 }
 
 /// Deterministic C99 Annex G special-value contract for csqrt, checked
@@ -358,6 +376,56 @@ fn csqrt_annex_g_special_values_vs_glibc() {
     assert!(
         mism.is_empty(),
         "csqrt Annex G special-value mismatches:\n{}",
+        mism.join("\n")
+    );
+}
+
+/// Deterministic C99 Annex G special-value contract for catanh (bd-2g7oyh.245),
+/// bit-exact vs host glibc. Covers signed zero, the +-1 poles, the branch cuts,
+/// and the inf/nan combinations.
+#[test]
+fn catanh_special_values_vs_glibc() {
+    let vals = [
+        0.0f64,
+        -0.0,
+        0.5,
+        -0.5,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ];
+    let mut mism = Vec::new();
+    for &re in &vals {
+        for &im in &vals {
+            let z = C { re, im };
+            let a = unsafe { fl::catanh(z) };
+            let b = unsafe { catanh(z) };
+            // Special outputs (0 / inf / nan) must be bit-exact (Annex G); finite
+            // transcendental components may differ by a few ULP.
+            let cmp = |af: f64, bf: f64| -> bool {
+                if bf.is_nan() {
+                    af.is_nan()
+                } else if bf == 0.0 || bf.is_infinite() {
+                    af.to_bits() == bf.to_bits()
+                } else {
+                    ulp(af, bf) <= 4
+                }
+            };
+            if !(cmp(a.re, b.re) && cmp(a.im, b.im)) && mism.len() < 40 {
+                mism.push(format!(
+                    "catanh({re:e}{im:+e}i) fl=({:e},{:e}) glibc=({:e},{:e})",
+                    a.re, a.im, b.re, b.im
+                ));
+            }
+        }
+    }
+    assert!(
+        mism.is_empty(),
+        "catanh Annex G special-value mismatches:\n{}",
         mism.join("\n")
     );
 }

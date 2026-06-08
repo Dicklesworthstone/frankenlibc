@@ -1732,6 +1732,9 @@ fn c_mul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
 }
 
+// Only used by the trig self-consistency tests now that catan/catanh use the
+// closed-form c_atanh.
+#[cfg(test)]
 #[inline]
 fn c_div(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     let denom = b.0 * b.0 + b.1 * b.1;
@@ -1978,6 +1981,76 @@ fn c_tanh(rx: f64, ix: f64) -> (f64, f64) {
     let coshrx = math::cosh(rx);
     let den = sinhrx * sinhrx + cosix * cosix;
     (sinhrx * coshrx / den, sinix * cosix / den)
+}
+
+/// glibc-faithful complex `catanh` (and, via `catan(z) = -i*atanh(iz)`, the base
+/// for the inverse-tangent variant). The naive `0.5*clog((1+z)/(1-z))` mishandles
+/// the branch cuts (sign of the real/imag part along `(-inf,-1]` and `[1,inf)`)
+/// and leaves rounding noise where the result is exactly real or imaginary. This
+/// uses the cancellation-free closed form
+///   Re = 0.25 * log1p(4x / ((1-x)^2 + y^2))
+///   Im = 0.5  * atan2(2y, (1-x)(1+x) - y^2)
+/// whose `log1p`/`atan2` carry the correct branch-cut signs, plus the large-|z|
+/// limit `atanh(z) ~ 1/z + i*sign(y)*pi/2` and the C99 Annex G special values.
+#[inline]
+fn c_atanh(x: f64, y: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    use std::f64::consts::FRAC_PI_2;
+
+    if x.is_nan() || y.is_nan() || x.is_infinite() || y.is_infinite() {
+        if y.is_infinite() {
+            // atanh(x +- i*inf) = copysign(0, x) +- i*pi/2 (any x incl nan/inf).
+            return (f64::copysign(0.0, x), f64::copysign(FRAC_PI_2, y));
+        }
+        if x.is_infinite() {
+            // atanh(+-inf + iy) = copysign(0, x) + i*(NaN or copysign(pi/2, y)).
+            let im = if y.is_nan() {
+                f64::NAN
+            } else {
+                f64::copysign(FRAC_PI_2, y)
+            };
+            return (f64::copysign(0.0, x), im);
+        }
+        // Exactly one of x, y is NaN (no infinities).
+        if x.is_nan() {
+            return (f64::NAN, f64::NAN);
+        }
+        // y is NaN, x finite: atanh(+-0 + iNaN) = +-0 + iNaN, else NaN + iNaN.
+        return (if x == 0.0 { x } else { f64::NAN }, f64::NAN);
+    }
+    if x == 0.0 && y == 0.0 {
+        // atanh(+-0 +- i0) = z.
+        return (x, y);
+    }
+    // Large |z|: atanh(z) -> 1/z, so Re -> x/(x^2+y^2) (formed without overflow)
+    // and Im -> sign(y)*pi/2.
+    const LARGE: f64 = 9.486_832_980_505_138e153; // ~ sqrt(DBL_MAX) / 2
+    if math::fabs(x) >= LARGE || math::fabs(y) >= LARGE {
+        let (ax, ay) = (math::fabs(x), math::fabs(y));
+        let re = if ax >= ay {
+            let r = ay / ax;
+            (1.0 / ax) / (1.0 + r * r)
+        } else {
+            let r = ax / ay;
+            (r / ay) / (1.0 + r * r)
+        };
+        return (f64::copysign(re, x), f64::copysign(FRAC_PI_2, y));
+    }
+    // Re = 0.25*log(((1+x)^2+y^2)/((1-x)^2+y^2)). `log1p(4x/den)` is accurate
+    // everywhere except near the z=-1 branch point, where `4x/den -> -1` (the
+    // numerator `(1+x)^2+y^2` collapses). There — and only there — switch to
+    // `log(num) - log(den)`, whose two magnitudes are well separated (no
+    // cancellation); elsewhere that difference would itself cancel (e.g. large
+    // |y|, where num ~ den), so log1p is kept.
+    let den = (1.0 - x) * (1.0 - x) + y * y;
+    let num = (1.0 + x) * (1.0 + x) + y * y;
+    let re = if num < 0.5 * den {
+        0.25 * (math::log(num) - math::log(den))
+    } else {
+        0.25 * math::log1p(4.0 * x / den)
+    };
+    let im = 0.5 * math::atan2(2.0 * y, (1.0 - x) * (1.0 + x) - y * y);
+    (re, im)
 }
 
 /// glibc-faithful complex `csinh` (and, via `csin(z) = -i*csinh(iz)`, the base
@@ -2537,18 +2610,10 @@ pub unsafe extern "C" fn cacosl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn catan(z: CDoubleComplex) -> CDoubleComplex {
-    // atan(z) = (i/2) * log((1-iz)/(1+iz))
-    // where iz = (-im, re)
-    let iz = (-z.im, z.re);
-    let num = (1.0 - iz.0, -iz.1); // 1 - iz
-    let den = (1.0 + iz.0, iz.1); // 1 + iz
-    let ratio = c_div(num, den);
-    let lg = c_log(ratio.0, ratio.1);
-    // (i/2) * lg = (-lg.1/2, lg.0/2)
-    CDoubleComplex {
-        re: -lg.1 / 2.0,
-        im: lg.0 / 2.0,
-    }
+    // atan(z) = -i*atanh(iz); iz = (-im, re), atanh gives (p, q) and
+    // -i*(p + qi) = (q, -p). Inherits c_atanh's branch cuts and special values.
+    let (p, q) = c_atanh(-z.im, z.re);
+    CDoubleComplex { re: q, im: -p }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2637,15 +2702,8 @@ pub unsafe extern "C" fn cacoshl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn catanh(z: CDoubleComplex) -> CDoubleComplex {
-    // atanh(z) = (1/2) * log((1+z)/(1-z))
-    let num = (1.0 + z.re, z.im);
-    let den = (1.0 - z.re, -z.im);
-    let ratio = c_div(num, den);
-    let lg = c_log(ratio.0, ratio.1);
-    CDoubleComplex {
-        re: lg.0 / 2.0,
-        im: lg.1 / 2.0,
-    }
+    let (re, im) = c_atanh(z.re, z.im);
+    CDoubleComplex { re, im }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
