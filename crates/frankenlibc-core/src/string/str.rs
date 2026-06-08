@@ -519,19 +519,25 @@ pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
             while i + STRLEN_NUL_BLOCK <= src.len() {
                 let chunk = &src[i..i + STRLEN_NUL_BLOCK];
                 if block_has_nul_512(chunk) {
-                    break;
+                    while i < src.len() {
+                        if src[i] == 0 {
+                            let copied = i + 1;
+                            dest[..copied].copy_from_slice(&src[..copied]);
+                            return copied;
+                        }
+                        i += 1;
+                    }
                 }
-                dest[i..i + STRLEN_NUL_BLOCK].copy_from_slice(chunk);
                 i += STRLEN_NUL_BLOCK;
             }
 
             while i < src.len() {
-                let byte = src[i];
-                dest[i] = byte;
-                i += 1;
-                if byte == 0 {
-                    return i;
+                if src[i] == 0 {
+                    let copied = i + 1;
+                    dest[..copied].copy_from_slice(&src[..copied]);
+                    return copied;
                 }
+                i += 1;
             }
         }
 
