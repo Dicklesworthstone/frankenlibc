@@ -1030,6 +1030,21 @@ fn match_name_table(
     None
 }
 
+/// Weekday (0 = Sunday) of January 1 of `year`, via Howard Hinnant's
+/// days-from-civil algorithm. Used to derive a calendar date from a week-of-year
+/// (%U/%W) plus a weekday, matching glibc's strptime (bd-2g7oyh.260).
+fn jan1_weekday(year: i64) -> i64 {
+    // days_from_civil(year, 1, 1): days since 1970-01-01.
+    let y = year - 1; // month <= 2
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let doy = (153 * 10 + 2) / 5; // month 1 -> (153*(1+9)+2)/5 = 306; d-1 = 0
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    // 1970-01-01 is Thursday (wday 4); rem_euclid handles negative `days`.
+    (days + 4).rem_euclid(7)
+}
+
 /// POSIX `strptime` — parse date/time string into broken-down time.
 ///
 /// Supports format specifiers: `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`,
@@ -1073,6 +1088,11 @@ pub unsafe extern "C" fn strptime(
     let mut have_mon = false;
     let mut have_mday = false;
     let mut have_year = false;
+    // Week-of-year derivation state (bd-2g7oyh.260): glibc computes tm_mon/tm_mday
+    // from a %U (Sunday-week) or %W (Monday-week) number plus a weekday and year.
+    let mut have_wday = false;
+    let mut week_u: Option<i32> = None;
+    let mut week_w: Option<i32> = None;
 
     while fi < fmt.len() {
         let fc = fmt[fi];
@@ -1268,6 +1288,7 @@ pub unsafe extern "C" fn strptime(
                         match_name_table(input, si, &FULL_DAYS, &ABBR_DAYS)
                     {
                         unsafe { (*tm).tm_wday = idx as i32 };
+                        have_wday = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1447,13 +1468,13 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'U' => {
-                    // Week number (Sunday-starting weeks, 00-53).
-                    // glibc parses this but uses it in combination with weekday.
+                    // Week number (Sunday-starting weeks, 00-53). Combined with a
+                    // weekday and year, glibc derives the calendar date.
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if val > 53 {
                             return std::ptr::null_mut();
                         }
-                        // Store in tm for potential later use (not standard field)
+                        week_u = Some(val);
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1465,6 +1486,7 @@ pub unsafe extern "C" fn strptime(
                         if val > 53 {
                             return std::ptr::null_mut();
                         }
+                        week_w = Some(val);
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1504,6 +1526,7 @@ pub unsafe extern "C" fn strptime(
                             return std::ptr::null_mut();
                         }
                         unsafe { (*tm).tm_wday = val };
+                        have_wday = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1516,6 +1539,7 @@ pub unsafe extern "C" fn strptime(
                             return std::ptr::null_mut();
                         }
                         unsafe { (*tm).tm_wday = if val == 7 { 0 } else { val } };
+                        have_wday = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1641,6 +1665,47 @@ pub unsafe extern "C" fn strptime(
         unsafe {
             (*tm).tm_mon = mon as i32;
             (*tm).tm_mday = rem + 1;
+        }
+    }
+
+    // Post-processing: derive the calendar date from a week-of-year (%U Sunday or
+    // %W Monday) plus a weekday and year, mirroring glibc. Only when no %j and no
+    // explicit month/day were given. The day-of-year is computed relative to the
+    // first Sunday (%U) or Monday (%W) of the year, then normalised into mon/mday.
+    if !have_yday
+        && have_year
+        && have_wday
+        && !have_mon
+        && !have_mday
+        && (week_u.is_some() || week_w.is_some())
+    {
+        let year = (unsafe { (*tm).tm_year } + 1900) as i64;
+        let jan1 = jan1_weekday(year);
+        let save_wday = unsafe { (*tm).tm_wday } as i64;
+        let (week, marker_offset, wday_offset) = if let Some(u) = week_u {
+            // %U: weeks start Sunday; weekday offset is tm_wday itself (Sun = 0).
+            (u as i64, (7 - jan1).rem_euclid(7), save_wday)
+        } else {
+            // %W: weeks start Monday; weekday offset is Mon = 0 .. Sun = 6.
+            (week_w.unwrap() as i64, (8 - jan1).rem_euclid(7), (save_wday + 6).rem_euclid(7))
+        };
+        // 1-based day of year (with tm_mon = 0).
+        let mday_raw = 1 + marker_offset + (week - 1) * 7 + wday_offset;
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let mdays: [i64; 12] = if leap {
+            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        } else {
+            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        };
+        let mut rem = mday_raw - 1; // 0-based day of year
+        let mut mon = 0usize;
+        while mon < 11 && rem >= mdays[mon] {
+            rem -= mdays[mon];
+            mon += 1;
+        }
+        unsafe {
+            (*tm).tm_mon = mon as i32;
+            (*tm).tm_mday = (rem + 1) as i32;
         }
     }
 
