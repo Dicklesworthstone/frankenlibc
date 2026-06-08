@@ -133,7 +133,7 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
     let day_idx = r.below(7) as usize;
     let day_name = recase(r, DAYS[day_idx]);
 
-    let (fmt, input): (String, String) = match r.below(10) {
+    let (fmt, input): (String, String) = match r.below(14) {
         0 => (
             "%Y-%m-%d".into(),
             format!("{}-{}-{}", num(r, year), num(r, mon1), num(r, mday)),
@@ -167,10 +167,37 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
             let jday = r.below(366) + 1; // %j valid [1,366]
             ("%Y %j".into(), format!("{}{}{}", num(r, year), ws(r), num(r, jday)))
         }
-        _ => (
+        9 => (
             "%A, %d %B %Y".into(),
             format!("{}, {} {} {}", day_name, num(r, mday), mon_name, num(r, year)),
         ),
+        10 => (
+            // century + 2-digit year
+            "%C%y".into(),
+            format!("{:02}{:02}", year / 100, year % 100),
+        ),
+        11 => {
+            // %w numeric weekday 0-6 with an explicit date (no week-date
+            // derivation, so glibc keeps the explicit month/day).
+            let wday = r.below(7);
+            (
+                "%Y-%m-%d %w".into(),
+                format!("{}-{}-{}{}{}", num(r, year), num(r, mon1), num(r, mday), ws(r), wday),
+            )
+        }
+        12 => (
+            // fixed-width, no separators: %H/%M/%S each read up to 2 digits
+            "%H%M%S".into(),
+            format!("{:02}{:02}{:02}", hour, min, sec),
+        ),
+        _ => {
+            // %u ISO weekday 1-7 with an explicit date.
+            let wday = 1 + r.below(7);
+            (
+                "%Y-%m-%d %u".into(),
+                format!("{}-{}-{}{}{}", num(r, year), num(r, mon1), num(r, mday), ws(r), wday),
+            )
+        }
     };
 
     // Occasionally truncate the input to probe partial-match / end-pointer

@@ -1106,6 +1106,8 @@ pub unsafe extern "C" fn strptime(
                     | b'V'
                     | b'G'
                     | b'g'
+                    | b'w'
+                    | b'u'
                     | b'z'
             ) {
                 si = skip_ws(input, si);
@@ -1490,6 +1492,30 @@ pub unsafe extern "C" fn strptime(
                 b'g' => {
                     // ISO week-based year (2 digits).
                     if let Some((_, new_si)) = parse_digits(input, si, 2) {
+                        si = new_si;
+                    } else {
+                        return std::ptr::null_mut();
+                    }
+                }
+                b'w' => {
+                    // Weekday as a decimal number, 0-6 (Sunday = 0).
+                    if let Some((val, new_si)) = parse_digits(input, si, 1) {
+                        if !(0..=6).contains(&val) {
+                            return std::ptr::null_mut();
+                        }
+                        unsafe { (*tm).tm_wday = val };
+                        si = new_si;
+                    } else {
+                        return std::ptr::null_mut();
+                    }
+                }
+                b'u' => {
+                    // ISO weekday, 1-7 (Monday = 1, Sunday = 7 -> tm_wday 0).
+                    if let Some((val, new_si)) = parse_digits(input, si, 1) {
+                        if !(1..=7).contains(&val) {
+                            return std::ptr::null_mut();
+                        }
+                        unsafe { (*tm).tm_wday = if val == 7 { 0 } else { val } };
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
