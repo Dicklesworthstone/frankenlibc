@@ -82,13 +82,22 @@ fn fl_run(input: &[u8], fmt: &[u8]) -> Option<(usize, [c_int; 6])> {
     fb.push(0);
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let r = unsafe {
-        time_abi::strptime(ib.as_ptr() as *const c_char, fb.as_ptr() as *const c_char, &mut tm)
+        time_abi::strptime(
+            ib.as_ptr() as *const c_char,
+            fb.as_ptr() as *const c_char,
+            &mut tm,
+        )
     };
     if r.is_null() {
         return None;
     }
     let consumed = (r as usize) - (ib.as_ptr() as usize);
-    Some((consumed, [tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec]))
+    Some((
+        consumed,
+        [
+            tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+        ],
+    ))
 }
 
 fn host_run(input: &[u8], fmt: &[u8]) -> Option<(usize, [c_int; 6])> {
@@ -97,12 +106,23 @@ fn host_run(input: &[u8], fmt: &[u8]) -> Option<(usize, [c_int; 6])> {
     let mut fb = fmt.to_vec();
     fb.push(0);
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let r = unsafe { strptime(ib.as_ptr() as *const c_char, fb.as_ptr() as *const c_char, &mut tm) };
+    let r = unsafe {
+        strptime(
+            ib.as_ptr() as *const c_char,
+            fb.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
     if r.is_null() {
         return None;
     }
     let consumed = (r as usize) - (ib.as_ptr() as usize);
-    Some((consumed, [tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec]))
+    Some((
+        consumed,
+        [
+            tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+        ],
+    ))
 }
 
 fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
