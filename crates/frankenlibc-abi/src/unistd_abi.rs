@@ -2817,18 +2817,64 @@ unsafe fn parse_getopt_long(
         b'?' as c_int
     };
 
-    let mut idx = 0usize;
-    loop {
-        let opt_ptr = unsafe { longopts.add(idx) };
-        let long_name = unsafe { (*opt_ptr).name };
-        if long_name.is_null() {
-            break;
+    // Resolve the long option: an EXACT name match wins; otherwise GNU
+    // unambiguous-prefix abbreviation applies (`--ver` -> `--verbose`). Multiple
+    // prefix matches are ambiguous UNLESS every candidate shares the same
+    // (flag, val) — glibc then treats them as the same option (the first).
+    let mut matched_idx: Option<usize> = None;
+    if !name.is_empty() {
+        let mut exact: Option<usize> = None;
+        let mut prefix_hits: Vec<usize> = Vec::new();
+        let mut scan = 0usize;
+        loop {
+            let opt_ptr = unsafe { longopts.add(scan) };
+            let long_name = unsafe { (*opt_ptr).name };
+            if long_name.is_null() {
+                break;
+            }
+            let Some(candidate) = (unsafe { read_c_string_bytes(long_name) }) else {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                return Some(-1);
+            };
+            if candidate.as_slice() == name {
+                exact = Some(scan);
+                break;
+            }
+            if candidate.len() > name.len() && candidate.starts_with(name) {
+                prefix_hits.push(scan);
+            }
+            scan += 1;
         }
-        let Some(candidate) = (unsafe { read_c_string_bytes(long_name) }) else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            return Some(-1);
-        };
-        if candidate.as_slice() == name {
+        if let Some(e) = exact {
+            matched_idx = Some(e);
+        } else if prefix_hits.len() == 1 {
+            matched_idx = Some(prefix_hits[0]);
+        } else if prefix_hits.len() > 1 {
+            // glibc treats multiple prefix matches as the SAME option (not
+            // ambiguous) only when every candidate shares has_arg, flag, AND val.
+            let first = unsafe { *longopts.add(prefix_hits[0]) };
+            let all_same = prefix_hits.iter().all(|&i| {
+                let o = unsafe { *longopts.add(i) };
+                o.has_arg == first.has_arg && o.flag == first.flag && o.val == first.val
+            });
+            if all_same {
+                matched_idx = Some(prefix_hits[0]);
+            } else {
+                // Ambiguous abbreviation -> '?'.
+                unsafe {
+                    libc_optarg = std::ptr::null_mut();
+                    libc_optopt = 0;
+                    libc_optind += 1;
+                    GETOPT_NEXTCHAR = None;
+                }
+                return Some(b'?' as c_int);
+            }
+        }
+    }
+
+    if let Some(idx) = matched_idx {
+        let opt_ptr = unsafe { longopts.add(idx) };
+        {
             if !longindex.is_null() {
                 unsafe {
                     *longindex = idx as c_int;
@@ -2892,7 +2938,6 @@ unsafe fn parse_getopt_long(
             }
             return Some(unsafe { (*opt_ptr).val });
         }
-        idx += 1;
     }
 
     if prefix_len == 1 {
