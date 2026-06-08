@@ -1865,6 +1865,52 @@ fn c_sqrt(re: f64, im: f64) -> (f64, f64) {
     (r, f64::copysign(s, im))
 }
 
+/// glibc-faithful complex `ctanh` (used directly and, via the `-i*tanh(iz)`
+/// identity, by `ctan`). The naive `csinh/ccosh` then `c_div` forms `inf/inf`
+/// for large real parts and yields NaN; this uses the cancellation- and
+/// overflow-stable identity
+///   tanh(x+iy) = (sinh x cosh x + i sin y cos y) / (sinh^2 x + cos^2 y)
+/// whose denominator scales with the numerator, plus the C99 Annex G special
+/// values.
+#[inline]
+fn c_tanh(rx: f64, ix: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    if !rx.is_finite() || !ix.is_finite() {
+        if rx.is_infinite() {
+            // tanh(+-inf + iy): real -> +-1; imag -> +-0 (sign from sin*cos of a
+            // finite y with |y|>1, else from y itself).
+            let re = f64::copysign(1.0, rx);
+            let im = if ix.is_finite() && math::fabs(ix) > 1.0 {
+                f64::copysign(0.0, math::sin(ix) * math::cos(ix))
+            } else {
+                f64::copysign(0.0, ix)
+            };
+            return (re, im);
+        }
+        // rx is NaN here (not infinite). tanh(NaN + i0) = NaN + i0; otherwise
+        // (rx==0 ? 0 : NaN) + iNaN.
+        if ix == 0.0 {
+            return (rx, ix);
+        }
+        let re = if rx == 0.0 { rx } else { f64::NAN };
+        return (re, f64::NAN);
+    }
+    // Finite operands. For |x| past the overflow threshold sinh/cosh would
+    // overflow, but tanh has already saturated: real = +-1, imag -> +-0.
+    const T: f64 = 354.0; // floor((DBL_MAX_EXP-1)*ln2/2)
+    let sinix = math::sin(ix);
+    let cosix = math::cos(ix);
+    if math::fabs(rx) > T {
+        let re = f64::copysign(1.0, rx);
+        let im = 4.0 * sinix * cosix * math::exp(-2.0 * math::fabs(rx));
+        return (re, im);
+    }
+    let sinhrx = math::sinh(rx);
+    let coshrx = math::cosh(rx);
+    let den = sinhrx * sinhrx + cosix * cosix;
+    (sinhrx * coshrx / den, sinix * cosix / den)
+}
+
 // --- creal / cimag / conj / carg / cabs ---
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2149,11 +2195,11 @@ pub unsafe extern "C" fn ccosl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctan(z: CDoubleComplex) -> CDoubleComplex {
-    // tan(z) = sin(z) / cos(z)
-    let s = unsafe { csin(z) };
-    let c = unsafe { ccos(z) };
-    let (re, im) = c_div((s.re, s.im), (c.re, c.im));
-    CDoubleComplex { re, im }
+    // tan(z) = -i * tanh(iz); with iz = (-im, re), tanh gives (p, q) and
+    // -i*(p + qi) = (q, -p). This inherits ctanh's overflow-stable formula and
+    // Annex G special-value handling along the imaginary axis.
+    let (p, q) = c_tanh(-z.im, z.re);
+    CDoubleComplex { re: q, im: -p }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2238,10 +2284,7 @@ pub unsafe extern "C" fn ccoshl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanh(z: CDoubleComplex) -> CDoubleComplex {
-    // tanh(z) = sinh(z) / cosh(z)
-    let s = unsafe { csinh(z) };
-    let c = unsafe { ccosh(z) };
-    let (re, im) = c_div((s.re, s.im), (c.re, c.im));
+    let (re, im) = c_tanh(z.re, z.im);
     CDoubleComplex { re, im }
 }
 
