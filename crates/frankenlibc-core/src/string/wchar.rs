@@ -504,7 +504,11 @@ pub fn iswspace(wc: u32) -> bool {
         0x09..=0x0D            // TAB, LF, VT, FF, CR
             | 0x20             // SPACE
             | 0x1680           // OGHAM SPACE MARK
-            | 0x2000..=0x200A  // EN QUAD .. HAIR SPACE
+            | 0x2000..=0x2006  // EN QUAD .. SIX-PER-EM SPACE
+            // U+2007 FIGURE SPACE is excluded: glibc's iswspace does not treat
+            // it as whitespace (it is a fixed-width digit space), so the range
+            // is split around it (bd-2g7oyh.254).
+            | 0x2008..=0x200A  // PUNCTUATION SPACE .. HAIR SPACE
             | 0x2028..=0x2029  // LINE SEPARATOR / PARAGRAPH SEPARATOR
             | 0x205F           // MEDIUM MATHEMATICAL SPACE
             | 0x3000           // IDEOGRAPHIC SPACE
