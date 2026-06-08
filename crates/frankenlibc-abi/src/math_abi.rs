@@ -1813,18 +1813,56 @@ fn c_log(re: f64, im: f64) -> (f64, f64) {
 #[inline]
 fn c_sqrt(re: f64, im: f64) -> (f64, f64) {
     use frankenlibc_core::math;
-    if re == 0.0 && im == 0.0 {
-        return (0.0, 0.0);
+    // glibc-faithful csqrt (C99 Annex G): exact special values first, then the
+    // cancellation-avoiding general formula. The imaginary sign is carried by
+    // `copysign(.., im)` so the negative-real-axis branch cut respects signed
+    // zero (a bare `im >= 0.0` would mis-route `im == -0.0` to the +root).
+    if re.is_nan() || im.is_nan() || re.is_infinite() || im.is_infinite() {
+        // csqrt(x +- i*inf) = +inf +- i*inf for ANY x (including NaN).
+        if im.is_infinite() {
+            return (f64::INFINITY, im);
+        }
+        if re.is_infinite() {
+            if re < 0.0 {
+                // csqrt(-inf + i*y) = (+0, copysign(inf, y)) for finite y, and
+                // csqrt(-inf + i*NaN) = NaN +- i*inf (Annex G: imag is +-inf).
+                let r = if im.is_nan() { f64::NAN } else { 0.0 };
+                return (r, f64::copysign(f64::INFINITY, im));
+            }
+            // csqrt(+inf + i*y) = (+inf, copysign(0, y)); +inf + i*NaN => +inf + i*NaN.
+            let i = if im.is_nan() {
+                f64::NAN
+            } else {
+                f64::copysign(0.0, im)
+            };
+            return (re, i);
+        }
+        // Exactly one operand is NaN (neither infinite).
+        return (f64::NAN, f64::NAN);
     }
-    let r = math::hypot(re, im);
-    let t = math::sqrt((r + math::fabs(re)) / 2.0);
-    if re >= 0.0 {
-        (t, im / (2.0 * t))
-    } else if im >= 0.0 {
-        (math::fabs(im) / (2.0 * t), t)
+    // Finite operands.
+    if im == 0.0 {
+        if re < 0.0 {
+            return (0.0, f64::copysign(math::sqrt(-re), im));
+        }
+        // `fabs` forces +0 for a -0 real input (sqrt(-0.0) would keep the sign).
+        return (math::fabs(math::sqrt(re)), f64::copysign(0.0, im));
+    }
+    if re == 0.0 {
+        let r = math::sqrt(0.5 * math::fabs(im));
+        return (r, f64::copysign(r, im));
+    }
+    // Both parts nonzero and finite. Use the identity 2*Re*Im = Im(z) to avoid
+    // cancellation in `d -+ re`.
+    let d = math::hypot(re, im);
+    let (r, s) = if re > 0.0 {
+        let rr = math::sqrt(0.5 * (d + re));
+        (rr, 0.5 * (im / rr))
     } else {
-        (math::fabs(im) / (2.0 * t), -t)
-    }
+        let ss = math::sqrt(0.5 * (d - re));
+        (math::fabs(0.5 * (im / ss)), ss)
+    };
+    (r, f64::copysign(s, im))
 }
 
 // --- creal / cimag / conj / carg / cabs ---
