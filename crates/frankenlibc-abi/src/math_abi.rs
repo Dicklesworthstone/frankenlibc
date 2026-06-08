@@ -1745,11 +1745,55 @@ fn c_div(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     }
 }
 
+/// glibc-faithful complex `cexp`. The naive `e^x*cos y + i e^x*sin y` gives
+/// `inf*0 = NaN` whenever `e^x` overflows while a trig factor is exactly zero
+/// (notably `y == 0`); this adds the C99 Annex G special values.
 #[inline]
 fn c_exp(re: f64, im: f64) -> (f64, f64) {
     use frankenlibc_core::math;
-    let r = math::exp(re);
-    (r * math::cos(im), r * math::sin(im))
+    if re.is_finite() {
+        if im.is_finite() {
+            if im == 0.0 {
+                // cexp(x + i*0) = e^x + i*0 (imag keeps the sign of iy; e^x > 0,
+                // sin(±0) = ±0, so the product would be inf*0 = NaN for large x).
+                return (math::exp(re), im);
+            }
+            let r = math::exp(re);
+            return (r * math::cos(im), r * math::sin(im));
+        }
+        // im is inf or NaN, re finite: cexp(x + i*(inf|NaN)) = NaN + i*NaN.
+        return (f64::NAN, f64::NAN);
+    }
+    if re.is_infinite() {
+        if re < 0.0 {
+            // e^-inf = +0; 0 * (cos y + i sin y).
+            if im == 0.0 {
+                return (0.0, im);
+            }
+            if im.is_finite() {
+                return (
+                    f64::copysign(0.0, math::cos(im)),
+                    f64::copysign(0.0, math::sin(im)),
+                );
+            }
+            // cexp(-inf + i*(inf|NaN)) = +0 +- i*0 (imag keeps the sign of iy).
+            return (0.0, f64::copysign(0.0, im));
+        }
+        // e^+inf = +inf.
+        if im == 0.0 {
+            return (re, im);
+        }
+        if im.is_finite() {
+            return (
+                f64::copysign(f64::INFINITY, math::cos(im)),
+                f64::copysign(f64::INFINITY, math::sin(im)),
+            );
+        }
+        // cexp(+inf + i*(inf|NaN)) = +inf + i*NaN.
+        return (f64::INFINITY, f64::NAN);
+    }
+    // re is NaN.
+    (f64::NAN, if im == 0.0 { im } else { f64::NAN })
 }
 
 /// Knuth's error-free transform: returns `(s, e)` with `s = fl(a + b)` and

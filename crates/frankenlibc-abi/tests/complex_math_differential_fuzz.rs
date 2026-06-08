@@ -297,12 +297,13 @@ fn complex_math_characterize_vs_glibc() {
             s.worst
         );
     }
-    // csinh/ccosh (bd-2g7oyh.241): the inf*0 -> NaN special-value failures are
-    // gone (8800+ each -> a small residual) and signed zeros are exact. The
-    // residual category mismatches are the narrow |Re z| ~ 710 overflow band
-    // where sinh/cosh overflow to inf but glibc's scaled exp keeps a finite
-    // value (a separate, exotic-input gap left for follow-up).
-    for name in ["csinh", "ccosh"] {
+    // csinh/ccosh (bd-2g7oyh.241) and cexp (bd-2g7oyh.242): the inf*0 -> NaN
+    // special-value failures are gone (4000-8800 each -> a small residual) and
+    // signed zeros are exact. The residual category mismatches are the narrow
+    // |Re z| ~ 710 overflow band where the exponential overflows to inf but
+    // glibc's scaled exp keeps a finite value (a separate, exotic-input gap left
+    // for follow-up).
+    for name in ["csinh", "ccosh", "cexp"] {
         let s = stats.iter().find(|s| s.name == name).unwrap();
         assert!(
             s.max_ulp <= 16,
@@ -362,10 +363,10 @@ fn csqrt_annex_g_special_values_vs_glibc() {
     );
 }
 
-/// Deterministic special-value grid for csinh/ccosh (bd-2g7oyh.241), bit-exact
-/// vs host glibc. Covers signed zero, large finite (overflowing) reals, and the
-/// inf/nan combinations where the naive `sinh*cos + i cosh*sin` formula yields
-/// `inf*0 = NaN`.
+/// Deterministic special-value grid for csinh/ccosh (bd-2g7oyh.241) and cexp
+/// (bd-2g7oyh.242), bit-exact vs host glibc. Covers signed zero, large finite
+/// (overflowing) reals, and the inf/nan combinations where the naive
+/// `e^x*cos + i e^x*sin` / `sinh*cos + i cosh*sin` formulas yield `inf*0 = NaN`.
 #[test]
 fn csinh_ccosh_special_values_vs_glibc() {
     let vals = [
@@ -383,6 +384,7 @@ fn csinh_ccosh_special_values_vs_glibc() {
     let cases: &[GridCase] = &[
         ("csinh", |z| unsafe { fl::csinh(z) }, csinh),
         ("ccosh", |z| unsafe { fl::ccosh(z) }, ccosh),
+        ("cexp", |z| unsafe { fl::cexp(z) }, cexp),
     ];
     let mut mism = Vec::new();
     for (name, flf, host) in cases {
