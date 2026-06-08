@@ -49,24 +49,6 @@ const STRCHR_FOLD_PANELS: usize = 4;
 const STRCHR_FOLD_BYTES: usize = STRLEN_SIMD_LANES * STRCHR_FOLD_PANELS;
 const STRCMP_EXACT_256_LEN: usize = STRLEN_BLOCK + 1;
 
-/// True if any of the 128 bytes in `block` equal `byte` or NUL. OR's the four
-/// 32-byte panels' hit masks and reduces once.
-#[inline(always)]
-fn has_byte_or_nul_simd_folded(block: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
-    let n = Simd::<u8, SIMD_LANES>::splat(byte);
-    let z = Simd::<u8, SIMD_LANES>::splat(0);
-    let p0 = Simd::<u8, SIMD_LANES>::from_slice(&block[0..SIMD_LANES]);
-    let p1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..2 * SIMD_LANES]);
-    let p2 = Simd::<u8, SIMD_LANES>::from_slice(&block[2 * SIMD_LANES..3 * SIMD_LANES]);
-    let p3 = Simd::<u8, SIMD_LANES>::from_slice(&block[3 * SIMD_LANES..4 * SIMD_LANES]);
-    let h0 = p0.simd_eq(n) | p0.simd_eq(z);
-    let h1 = p1.simd_eq(n) | p1.simd_eq(z);
-    let h2 = p2.simd_eq(n) | p2.simd_eq(z);
-    let h3 = p3.simd_eq(n) | p3.simd_eq(z);
-    (h0 | h1 | h2 | h3).any()
-}
-
 #[inline(always)]
 fn has_byte_or_nul_simd_folded_256(block: &[u8], byte: u8) -> bool {
     debug_assert_eq!(block.len(), STRCHR_FOLD_BYTES);
@@ -1083,15 +1065,15 @@ pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
 
     // Single forward pass tracking the last match — exactly what glibc does,
     // versus the old strlen()+reverse-scan that walked the buffer TWICE. A
-    // 128B folded SIMD probe skips blocks containing neither `c` nor NUL with
+    // 256B folded SIMD probe skips blocks containing neither `c` nor NUL with
     // one reduction; only a block that has a hit is resolved scalar-side,
     // updating the last-seen `c` until the terminating NUL ends the string.
     let mut last = None;
     let mut i = 0;
 
-    while i + SIMD_FOLD_BYTES <= s.len() {
-        if has_byte_or_nul_simd_folded(&s[i..i + SIMD_FOLD_BYTES], c) {
-            for k in 0..SIMD_FOLD_BYTES {
+    while i + STRCHR_FOLD_BYTES <= s.len() {
+        if has_byte_or_nul_simd_folded_256(&s[i..i + STRCHR_FOLD_BYTES], c) {
+            for k in 0..STRCHR_FOLD_BYTES {
                 let byte = s[i + k];
                 if byte == 0 {
                     return last;
@@ -1101,7 +1083,7 @@ pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
                 }
             }
         }
-        i += SIMD_FOLD_BYTES;
+        i += STRCHR_FOLD_BYTES;
     }
 
     while i < s.len() {
@@ -2169,6 +2151,62 @@ mod tests {
     #[test]
     fn test_strrchr_nul_without_terminator_returns_len() {
         assert_eq!(strrchr(b"unterminated", 0), Some(12));
+    }
+
+    #[test]
+    fn test_strrchr_golden_transcript_sha256() {
+        fn record(transcript: &mut Vec<u8>, s: &[u8], needle: u8) {
+            transcript.extend_from_slice(&s.len().to_le_bytes());
+            transcript.extend_from_slice(s);
+            transcript.push(needle);
+            match strrchr(s, needle) {
+                Some(index) => {
+                    transcript.push(1);
+                    transcript.extend_from_slice(&index.to_le_bytes());
+                }
+                None => {
+                    transcript.push(0);
+                    transcript.extend_from_slice(&usize::MAX.to_le_bytes());
+                }
+            }
+        }
+
+        fn case(len: usize, positions: &[usize], nul_pos: usize) -> Vec<u8> {
+            let mut s = vec![b'A'; len];
+            for &pos in positions {
+                s[pos] = b'Z';
+            }
+            s[nul_pos] = 0;
+            s
+        }
+
+        let mut transcript = Vec::new();
+        for (s, needle) in [
+            (b"hello\0".as_slice(), b'l'),
+            (b"hello\0".as_slice(), b'z'),
+            (b"hello\0".as_slice(), 0),
+            (b"abca\0a".as_slice(), b'a'),
+            (b"unterminated".as_slice(), 0),
+        ] {
+            record(&mut transcript, s, needle);
+        }
+
+        for (len, positions, nul_pos) in [
+            (257usize, [255usize].as_slice(), 256usize),
+            (320, [190, 220].as_slice(), 260),
+            (320, [17, 95].as_slice(), 190),
+            (320, [220].as_slice(), 190),
+            (513, [31, 128, 511].as_slice(), 512),
+            (4097, [].as_slice(), 4096),
+        ] {
+            record(&mut transcript, &case(len, positions, nul_pos), b'Z');
+        }
+
+        let digest = Sha256::digest(&transcript);
+        assert_eq!(
+            hex_lower(&digest),
+            "a2d88c8fc144d9705080a44619c97736b57b2199a5425ea5b9367fe16c606afb"
+        );
     }
 
     #[test]
