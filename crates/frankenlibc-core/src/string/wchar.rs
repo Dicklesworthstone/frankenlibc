@@ -466,73 +466,79 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
     Some(di)
 }
 
+// Wide character classification (`<wctype.h>` `isw*` predicates).
+//
+// All twelve predicates are driven by [`super::wctype_table::ctype_mask`], a
+// run-length-encoded class-bit table generated offline from the host glibc
+// `isw*` over every scalar value in a UTF-8 locale (bd-2g7oyh.254). This makes
+// the whole wide-ctype surface glibc-exact: the former hand-coded ranges and
+// Rust `char` Unicode classifiers diverged from glibc's UTF-8 ctype tables on
+// hundreds of thousands of code points (`iswprint` over-accepted unassigned
+// scalars; `iswalpha`/`iswalnum` mis-categorised Arabic-Indic digits; titlecase
+// letters were mishandled by `iswlower`/`iswupper`). The lookup is a branchless
+// binary search — the runtime stays 100% safe Rust.
+use super::wctype_table::{
+    self, ALNUM, ALPHA, BLANK, CNTRL, DIGIT, GRAPH, LOWER, PRINT, PUNCT, SPACE, UPPER, XDIGIT,
+};
+
 /// Wide character classification: is `wc` an alphanumeric character?
 pub fn iswalnum(wc: u32) -> bool {
-    char::from_u32(wc).is_some_and(|c| c.is_alphanumeric())
+    wctype_table::ctype_mask(wc) & ALNUM != 0
 }
 
 /// Wide character classification: is `wc` an alphabetic character?
 pub fn iswalpha(wc: u32) -> bool {
-    char::from_u32(wc).is_some_and(|c| c.is_alphabetic())
+    wctype_table::ctype_mask(wc) & ALPHA != 0
+}
+
+/// Wide character classification: is `wc` a blank (horizontal whitespace)?
+pub fn iswblank(wc: u32) -> bool {
+    wctype_table::ctype_mask(wc) & BLANK != 0
+}
+
+/// Wide character classification: is `wc` a control character?
+pub fn iswcntrl(wc: u32) -> bool {
+    wctype_table::ctype_mask(wc) & CNTRL != 0
 }
 
 /// Wide character classification: is `wc` a digit?
 pub fn iswdigit(wc: u32) -> bool {
-    // POSIX iswdigit is only '0'-'9'
-    (0x30..=0x39).contains(&wc)
+    wctype_table::ctype_mask(wc) & DIGIT != 0
+}
+
+/// Wide character classification: is `wc` a graphic (printable non-space)?
+pub fn iswgraph(wc: u32) -> bool {
+    wctype_table::ctype_mask(wc) & GRAPH != 0
 }
 
 /// Wide character classification: is `wc` a lowercase letter?
 pub fn iswlower(wc: u32) -> bool {
-    char::from_u32(wc).is_some_and(|c| c.is_lowercase())
+    wctype_table::ctype_mask(wc) & LOWER != 0
 }
 
 /// Wide character classification: is `wc` an uppercase letter?
 pub fn iswupper(wc: u32) -> bool {
-    char::from_u32(wc).is_some_and(|c| c.is_uppercase())
+    wctype_table::ctype_mask(wc) & UPPER != 0
 }
 
 /// Wide character classification: is `wc` a whitespace character?
-///
-/// Mirrors glibc's `iswspace` in a UTF-8 locale: matches the POSIX whitespace
-/// set rather than the broader Unicode `White_Space` property. This excludes
-/// NEL (U+0085), NBSP (U+00A0), and NNBSP (U+202F), which Rust's
-/// `char::is_whitespace` would otherwise report as whitespace.
 pub fn iswspace(wc: u32) -> bool {
-    matches!(
-        wc,
-        0x09..=0x0D            // TAB, LF, VT, FF, CR
-            | 0x20             // SPACE
-            | 0x1680           // OGHAM SPACE MARK
-            | 0x2000..=0x2006  // EN QUAD .. SIX-PER-EM SPACE
-            // U+2007 FIGURE SPACE is excluded: glibc's iswspace does not treat
-            // it as whitespace (it is a fixed-width digit space), so the range
-            // is split around it (bd-2g7oyh.254).
-            | 0x2008..=0x200A  // PUNCTUATION SPACE .. HAIR SPACE
-            | 0x2028..=0x2029  // LINE SEPARATOR / PARAGRAPH SEPARATOR
-            | 0x205F           // MEDIUM MATHEMATICAL SPACE
-            | 0x3000           // IDEOGRAPHIC SPACE
-    )
+    wctype_table::ctype_mask(wc) & SPACE != 0
 }
 
 /// Wide character classification: is `wc` a printable character?
-///
-/// Mirrors glibc's `iswprint` in a UTF-8 locale. Excludes:
-/// - Cc category (the ASCII range Rust's `char::is_control` already catches)
-/// - Zl/Zp line/paragraph separators (U+2028, U+2029)
-/// - The LANGUAGE TAG codepoint itself (U+E0000); the rest of the tag block
-///   (U+E0001..U+E007F) is treated as printable by glibc.
 pub fn iswprint(wc: u32) -> bool {
-    let Some(c) = char::from_u32(wc) else {
-        return false;
-    };
-    if c.is_control() {
-        return false;
-    }
-    if wc == 0x2028 || wc == 0x2029 || wc == 0xE0000 {
-        return false;
-    }
-    true
+    wctype_table::ctype_mask(wc) & PRINT != 0
+}
+
+/// Wide character classification: is `wc` a punctuation character?
+pub fn iswpunct(wc: u32) -> bool {
+    wctype_table::ctype_mask(wc) & PUNCT != 0
+}
+
+/// Wide character classification: is `wc` a hexadecimal digit?
+pub fn iswxdigit(wc: u32) -> bool {
+    wctype_table::ctype_mask(wc) & XDIGIT != 0
 }
 
 /// Greek "with ypogegrammeni" code points whose SIMPLE uppercase glibc applies

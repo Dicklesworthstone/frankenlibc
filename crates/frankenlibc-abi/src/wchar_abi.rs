@@ -3288,84 +3288,43 @@ pub unsafe extern "C" fn vfwscanf(
 // ---------------------------------------------------------------------------
 
 /// POSIX `iswblank` — test for blank wide character.
+///
+/// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswblank(wc: u32) -> c_int {
-    // glibc UTF-8 extends iswblank beyond the POSIX C-locale set ({TAB, SP})
-    // to "horizontal whitespace" — but excludes NBSP (U+00A0) and NNBSP
-    // (U+202F), the line/paragraph separators, and NEL (U+0085).
-    if matches!(
-        wc,
-        0x09                     // TAB
-            | 0x20               // SPACE
-            | 0x1680             // OGHAM SPACE MARK
-            | 0x2000
-            ..=0x200A    // EN QUAD .. HAIR SPACE
-            | 0x205F             // MEDIUM MATHEMATICAL SPACE
-            | 0x3000 // IDEOGRAPHIC SPACE
-    ) {
-        1
-    } else {
-        0
-    }
+    wchar_core::iswblank(wc) as c_int
 }
 
 /// POSIX `iswcntrl` — test for control wide character.
 ///
-/// Matches glibc UTF-8 semantics: traditional ASCII Cc range (0x00..0x1F,
-/// 0x7F..0x9F) plus the Unicode line/paragraph separators (U+2028, U+2029),
-/// which glibc classifies as control even though Unicode places them in
-/// Zl/Zp categories.
+/// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswcntrl(wc: u32) -> c_int {
-    if wc < 0x20 || (0x7f..=0x9f).contains(&wc) || wc == 0x2028 || wc == 0x2029 {
-        1
-    } else {
-        0
-    }
+    wchar_core::iswcntrl(wc) as c_int
 }
 
 /// POSIX `iswgraph` — test for graphic wide character.
 ///
-/// glibc UTF-8 excludes whitespace from iswgraph even though most spaces
-/// are technically printable: IDEOGRAPHIC SPACE, OGHAM SPACE, EM QUAD, and
-/// the rest of the U+2000..U+200A block all return 0 from iswgraph despite
-/// returning 1 from iswprint. We mirror that by anding `!iswspace`.
+/// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswgraph(wc: u32) -> c_int {
-    if wchar_core::iswprint(wc) && !wchar_core::iswspace(wc) && wc != 0x20 {
-        1
-    } else {
-        0
-    }
+    wchar_core::iswgraph(wc) as c_int
 }
 
 /// POSIX `iswpunct` — test for punctuation wide character.
 ///
-/// glibc's UTF-8 iswpunct excludes whitespace characters (Zs/Zl/Zp like
-/// IDEOGRAPHIC SPACE, OGHAM SPACE, EM QUAD, etc.) even though they're
-/// printable and non-alphanumeric. The naive `iswprint && !iswalnum`
-/// formula misclassifies them; we additionally check `!iswspace`.
+/// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswpunct(wc: u32) -> c_int {
-    if wchar_core::iswprint(wc)
-        && !wchar_core::iswalnum(wc)
-        && !wchar_core::iswspace(wc)
-        && wc != 0x20
-    {
-        1
-    } else {
-        0
-    }
+    wchar_core::iswpunct(wc) as c_int
 }
 
 /// POSIX `iswxdigit` — test for hexadecimal digit wide character.
+///
+/// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswxdigit(wc: u32) -> c_int {
-    if (0x30..=0x39).contains(&wc) || (0x41..=0x46).contains(&wc) || (0x61..=0x66).contains(&wc) {
-        1
-    } else {
-        0
-    }
+    wchar_core::iswxdigit(wc) as c_int
 }
 
 // ---------------------------------------------------------------------------
