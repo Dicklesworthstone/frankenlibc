@@ -1752,10 +1752,62 @@ fn c_exp(re: f64, im: f64) -> (f64, f64) {
     (r * math::cos(im), r * math::sin(im))
 }
 
+/// Knuth's error-free transform: returns `(s, e)` with `s = fl(a + b)` and
+/// `a + b = s + e` exactly (no overflow). Used to accumulate `re^2 + im^2 - 1`
+/// without losing the small residual to cancellation.
+#[inline]
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let s = a + b;
+    let bp = s - a;
+    let ap = s - bp;
+    let e = (a - ap) + (b - bp);
+    (s, e)
+}
+
 #[inline]
 fn c_log(re: f64, im: f64) -> (f64, f64) {
     use frankenlibc_core::math;
-    (math::log(math::hypot(re, im)), math::atan2(im, re))
+    let im_out = math::atan2(im, re);
+    // Real part = 0.5*ln(re^2 + im^2). `ln(hypot(re,im))` loses almost all
+    // precision when |z| ~ 1 (the log is near zero, so forming hypot then
+    // taking its log cancels catastrophically). Mirror glibc's log1p-based
+    // clog: take the larger magnitude `ax`, and when it is near 1 evaluate
+    //   0.5 * log1p((ax-1)*(ax+1) + ay^2)
+    // which builds re^2 + im^2 - 1 with no subtractive cancellation; otherwise
+    //   ln(ax) + 0.5 * log1p((ay/ax)^2)
+    // where ln(ax) is safely bounded away from zero. Infinities keep the old
+    // hypot semantics (|z| = inf -> real part +inf).
+    let mut ax = math::fabs(re);
+    let mut ay = math::fabs(im);
+    if ax < ay {
+        core::mem::swap(&mut ax, &mut ay);
+    }
+    let re_out = if re.is_infinite() || im.is_infinite() {
+        f64::INFINITY
+    } else if ax == 0.0 {
+        f64::NEG_INFINITY
+    } else if (0.5..=2.0).contains(&ax) {
+        // |z| may be ~1, where ln collapses to near zero. Form re^2 + im^2 - 1
+        // to near-correct rounding so the residual survives even when the two
+        // squares nearly cancel against 1 (z near the unit circle at ~45deg,
+        // where ax^2 and ay^2 cancel and ax^2 - 1 is no longer exact). Each
+        // `mul_add` recovers the exact rounding error of a square, and the
+        // dominant terms {ax^2, ay^2, -1} are accumulated with error-free
+        // Knuth 2Sum so only log1p's own rounding remains.
+        let rr = ax * ax;
+        let rr_err = ax.mul_add(ax, -rr);
+        let ii = ay * ay;
+        let ii_err = ay.mul_add(ay, -ii);
+        // 2Sum(rr, -1), then 2Sum(., ii); fold residuals into the low word.
+        let (p, e1) = two_sum(rr, -1.0);
+        let (d_hi, e2) = two_sum(p, ii);
+        let d = d_hi + (e1 + e2 + rr_err + ii_err);
+        0.5 * math::log1p(d)
+    } else {
+        let t = ay / ax;
+        math::log(ax) + 0.5 * math::log1p(t * t)
+    };
+    (re_out, im_out)
 }
 
 #[inline]
