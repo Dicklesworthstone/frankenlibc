@@ -67,8 +67,12 @@ fn has_magic(pat: &[u8], noescape: bool) -> bool {
     let mut i = 0;
     while i < pat.len() {
         if pat[i] == b'\\' && !noescape {
-            i += 2;
-            continue;
+            // glibc's `__glob_pattern_type` flags a backslash escape as a
+            // metacharacter: an escaped pattern is NOT magic-free, so it routes
+            // through the directory walk (which unescapes via fnmatch) instead of
+            // the literal stat/NOMAGIC shortcut. Treating "a\b" as magic-free
+            // would stat the literal bytes "a\b" rather than match "ab".
+            return true;
         }
         if is_glob_meta(pat[i]) {
             return true;
@@ -313,7 +317,11 @@ fn glob_expand_dyn(
             None => return Err(GLOB_NOSPACE),
         };
         if expansions.len() > 1 || expansions[0].as_slice() != pat {
-            let inner_flags = flags & !(GLOB_BRACE | GLOB_NOCHECK | GLOB_APPEND);
+            // Inner globs must NOT carry GLOB_NOCHECK or GLOB_NOMAGIC: a
+            // magic-free expansion that does not match should drop out, not
+            // return itself. The no-match fallback below re-applies those flags
+            // to the ORIGINAL (unexpanded) pattern, exactly as glibc does.
+            let inner_flags = flags & !(GLOB_BRACE | GLOB_NOCHECK | GLOB_NOMAGIC | GLOB_APPEND);
             let mut combined: Vec<Vec<u8>> = Vec::new();
             for sub in &expansions {
                 match glob_expand_dyn(sub, inner_flags, errfunc) {
@@ -323,7 +331,12 @@ fn glob_expand_dyn(
                 }
             }
             if combined.is_empty() {
-                if flags & GLOB_NOCHECK != 0 {
+                // GLOB_NOCHECK always, or GLOB_NOMAGIC when the original pattern
+                // is magic-free (`{}` braces are not magic to glibc), returns the
+                // original unexpanded pattern as the sole match.
+                if flags & GLOB_NOCHECK != 0
+                    || (flags & GLOB_NOMAGIC != 0 && !has_magic(pat, noescape))
+                {
                     return Ok(GlobResult {
                         paths: vec![pat.to_vec()],
                     });
@@ -445,16 +458,12 @@ fn glob_recursive(
         }
     };
 
-    // Rust's `read_dir` never yields "." or "..", but glibc's `readdir` does,
-    // and a component pattern that explicitly begins with '.' (e.g. ".*", ".",
-    // "..") matches them. Re-introduce the two synthetic entries so glob results
-    // match glibc exactly; `fnmatch_component` below still filters them, so they
-    // only appear when the pattern actually matches.
-    let mut names: Vec<Vec<u8>> = Vec::new();
-    if component_pat.first() == Some(&b'.') {
-        names.push(b".".to_vec());
-        names.push(b"..".to_vec());
-    }
+    // Rust's `read_dir` never yields "." or "..", but glibc's `readdir` always
+    // does, so re-introduce them unconditionally. The hidden-file skip and
+    // `fnmatch_component` below decide whether they actually match — only when
+    // the component begins with '.' or GLOB_PERIOD is set — so a pattern like
+    // `*` / `?` / `[!a-c]` matches them under GLOB_PERIOD, exactly like glibc.
+    let mut names: Vec<Vec<u8>> = vec![b".".to_vec(), b"..".to_vec()];
     for entry in entries.flatten() {
         names.push(entry.file_name().as_bytes().to_vec());
     }
@@ -500,12 +509,19 @@ fn glob_recursive(
                 full_path.push(b'/');
             }
             results.push(full_path);
-        } else if resolves_to_dir {
+        } else if resolves_to_dir
+            && !((name_bytes == b"." || name_bytes == b"..")
+                && component_pat.first() != Some(&b'.'))
+        {
             // More pattern components remain — recurse with the matched
-            // directory absorbed into resolved_prefix (treated as literal),
-            // and `rest` as the new pattern to split. This prevents
-            // metacharacters in the resolved name (`*`, `?`, `[` are all
-            // legal POSIX filename bytes) from being re-interpreted as
+            // directory absorbed into resolved_prefix (treated as literal).
+            // glibc descends into "." / ".." for an intermediate component ONLY
+            // when the component pattern explicitly begins with '.' (e.g.
+            // `.[!a-c]/x` -> `../x`); a wildcard like `*`/`?` matches them as a
+            // FINAL component but never DESCENDS, so `*/x` yields no "./x".
+            // `rest` becomes the new pattern to split. Absorbing the resolved
+            // name as a literal prevents metacharacters in it (`*`, `?`, `[` are
+            // all legal POSIX filename bytes) from being re-interpreted as
             // pattern syntax on subsequent recursions.
             full_path.push(b'/');
             glob_recursive(&full_path, rest, flags, results, errfunc)?;
@@ -565,8 +581,14 @@ mod tests {
         assert!(has_magic(b"*.txt", false));
         assert!(has_magic(b"file?.log", false));
         assert!(has_magic(b"[abc]", false));
-        assert!(!has_magic(b"\\*escaped", false));
+        // A backslash escape (with escaping enabled) counts as a metacharacter,
+        // matching glibc's `__glob_pattern_type` — escaped patterns route through
+        // the directory walk, not the literal stat/NOMAGIC shortcut.
+        assert!(has_magic(b"\\*escaped", false));
+        // With GLOB_NOESCAPE the backslash is a literal, but the `*` is magic.
         assert!(has_magic(b"\\*", true));
+        // A bare literal stays magic-free.
+        assert!(!has_magic(b"plain\\", true)); // noescape: trailing '\' is literal
     }
 
     #[test]
