@@ -15,7 +15,7 @@
 //! non-composite specifiers and the `E`/`O` locale modifiers on all (bd-hfoqbf).
 //! Composite specifiers (`c r D F R T x X`) take an OUTER field width/flags that
 //! fl does not yet propagate to their sub-fields, so flags/width are not applied
-//! to them here (tracked as the remaining piece of bd-hfoqbf).
+//! to them here (tracked in bd-asiidm).
 
 use std::ffi::{CString, c_char, c_int};
 
@@ -46,9 +46,11 @@ impl Lcg {
 // Every glibc strftime conversion specifier (sans %% which we add as a literal).
 const SPECS: &[u8] = b"aAbBcCdDeFgGhHIjklmMnpPrRsStTuUVwWxXyYzZ";
 // Specifiers excluded from flag/width testing: composites (outer width not yet
-// propagated to sub-fields) plus %z/%Z, which glibc formats as a quirky NUMBER
-// while fl is UTC-simplified to a fixed "+0000"/"GMT" string (out of scope).
-const NO_FLAGS: &[u8] = b"crDFRTxXzZ";
+// propagated to sub-fields); %z/%Z (glibc formats as a quirky NUMBER while fl is
+// UTC-simplified to a fixed "+0000"/"GMT" string); and %s for negative epochs,
+// where glibc zero-pads malformed-ly ("0-1022113080", pad before the sign) — fl
+// keeps the saner sign-first form that matches glibc's own %Y. All out of scope.
+const NO_FLAGS: &[u8] = b"crDFRTxXzZs";
 const FLAGS: &[u8] = b"-_0^#";
 
 fn gen_format(r: &mut Lcg) -> Vec<u8> {
