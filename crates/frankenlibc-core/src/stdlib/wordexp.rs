@@ -141,6 +141,46 @@ fn expand_vars_dyn(
     Ok(result)
 }
 
+/// Remove the smallest (largest, if `largest`) suffix (or prefix, if `!suffix`)
+/// of `value` that matches the glob pattern `pat` — shell `${VAR%pat}`/`%%pat`
+/// (suffix) and `${VAR#pat}`/`##pat` (prefix). The candidate suffix/prefix is
+/// matched against `pat` with `fnmatch` (anchored, whole-slice). Byte-oriented to
+/// match glibc; a removed boundary inside a multi-byte UTF-8 sequence (which the
+/// shell would not produce) is rendered lossily.
+fn remove_affix(value: &str, pat: &str, suffix: bool, largest: bool) -> String {
+    use crate::string::fnmatch::{FnmatchFlags, fnmatch_match};
+    let vb = value.as_bytes();
+    let hit = |slice: &[u8]| fnmatch_match(pat.as_bytes(), slice, FnmatchFlags::NONE);
+
+    if suffix {
+        // Suffix is `value[start..]`; the shortest suffix is the largest `start`.
+        // `%%` wants the longest match (smallest `start` first); `%` the shortest.
+        let order: Box<dyn Iterator<Item = usize>> = if largest {
+            Box::new(0..=vb.len())
+        } else {
+            Box::new((0..=vb.len()).rev())
+        };
+        for start in order {
+            if hit(&vb[start..]) {
+                return String::from_utf8_lossy(&vb[..start]).into_owned();
+            }
+        }
+    } else {
+        // Prefix is `value[..end]`; the shortest prefix is the smallest `end`.
+        let order: Box<dyn Iterator<Item = usize>> = if largest {
+            Box::new((0..=vb.len()).rev())
+        } else {
+            Box::new(0..=vb.len())
+        };
+        for end in order {
+            if hit(&vb[..end]) {
+                return String::from_utf8_lossy(&vb[end..]).into_owned();
+            }
+        }
+    }
+    value.to_string()
+}
+
 /// Evaluate the body of a `${...}` parameter expansion (the text between `${`
 /// and `}`), supporting the common POSIX forms beyond a plain name:
 ///   `${#NAME}`       — character length of NAME's value (0 if unset)
@@ -186,6 +226,20 @@ pub fn expand_braced_param(
         return plain(lookup_env(content), content);
     }
 
+    // Suffix removal `${NAME%pat}`/`${NAME%%pat}` and prefix removal
+    // `${NAME#pat}`/`${NAME##pat}` (a leading `#` would be the length form, which
+    // is handled above, so any `#` reaching here is the prefix-removal operator).
+    // `pat` is a glob pattern and is itself expanded first.
+    let op_bytes = op.as_bytes();
+    if matches!(op_bytes[0], b'%' | b'#') {
+        let kind = op_bytes[0];
+        let largest = op_bytes.get(1) == Some(&kind);
+        let pat_raw = if largest { &op[2..] } else { &op[1..] };
+        let pat = expand_vars_dyn(pat_raw, undef_is_error, lookup_env)?;
+        let value = raw.unwrap_or_default();
+        return Ok(remove_affix(&value, &pat, kind == b'%', largest));
+    }
+
     let (colon, rest) = match op.strip_prefix(':') {
         Some(r) => (true, r),
         None => (false, op),
@@ -200,8 +254,10 @@ pub fn expand_braced_param(
     };
 
     match opc {
-        // Use a default when the variable is unset (or empty, with `:`).
-        Some(b'-') => {
+        // Default when unset (or empty, with `:`). `=` also assigns the default,
+        // but wordexp runs in a subshell so that assignment is not visible to the
+        // caller — the observable result is identical to `-`.
+        Some(b'-') | Some(b'=') => {
             if test {
                 expand_vars_dyn(word, undef_is_error, lookup_env)
             } else {
@@ -216,7 +272,7 @@ pub fn expand_braced_param(
                 expand_vars_dyn(word, undef_is_error, lookup_env)
             }
         }
-        // `= ? % #` not yet handled — fall back to a plain lookup.
+        // `?` (error if unset/empty) not yet handled — fall back to a plain lookup.
         _ => plain(lookup_env(content), content),
     }
 }

@@ -114,7 +114,7 @@ fn run_host(words: &[u8]) -> Result {
 }
 
 fn gen_word(r: &mut Lcg) -> Vec<u8> {
-    match r.below(20) {
+    match r.below(32) {
         0 => b"abc".to_vec(),
         1 => b"$FOO".to_vec(),
         2 => b"${MULTI}".to_vec(),
@@ -135,9 +135,24 @@ fn gen_word(r: &mut Lcg) -> Vec<u8> {
         16 => b"${UNDEFINED:+set}".to_vec(),
         17 => b"${EMPTY+set}".to_vec(),
         18 => b"${#FOO}".to_vec(),
-        // a default WORD that itself references a variable
-        19 if r.below(2) == 0 => b"${UNDEFINED:-$FOO}".to_vec(),
         19 => b"${#MULTI}".to_vec(),
+        // assign-default := = (observable == default; subshell assignment unseen)
+        20 => b"${UNDEFINED:=def}".to_vec(),
+        21 => b"${EMPTY=def}".to_vec(),
+        22 => b"${FOO:=x}".to_vec(),
+        // suffix removal % %%
+        23 => b"${DOTTED%.c}".to_vec(),
+        24 => b"${DOTTED%.*}".to_vec(),
+        25 => b"${DOTTED%%.*}".to_vec(),
+        26 => b"${DOTTED%x}".to_vec(),
+        // prefix removal # ##
+        27 => b"${PATHV#*/}".to_vec(),
+        28 => b"${PATHV##*/}".to_vec(),
+        29 => b"${PATHV#/usr}".to_vec(),
+        30 => b"${DOTTED#a.}".to_vec(),
+        // a default WORD that itself references a variable
+        31 if r.below(2) == 0 => b"${UNDEFINED:-$FOO}".to_vec(),
+        31 => b"${DOTTED%?}".to_vec(),
         _ => {
             // short random literal of safe chars
             let n = 1 + r.below(4);
@@ -157,6 +172,8 @@ fn wordexp_differential_fuzz_vs_glibc() {
     set("EMPTY", "");
     set("MULTI", "x y z");
     set("HOME", "/home/fltest");
+    set("DOTTED", "a.b.c");
+    set("PATHV", "/usr/local/bin");
 
     let mut r = Lcg(0x77a1_3c9e_0bd4_2201);
     let mut divs: Vec<String> = Vec::new();
