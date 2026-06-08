@@ -638,14 +638,15 @@ pub fn strncat(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 /// or `None` if not found before the NUL terminator. If `c` is `0`, returns
 /// the index of the NUL terminator.
 pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
-    let index = find_byte_or_nul(s, c);
     if c == 0 {
-        return Some(index);
+        return Some(strlen(s));
     }
-    if index < s.len() && s[index] == c {
-        Some(index)
-    } else {
+
+    let needle = super::mem::memchr(s, c, s.len())?;
+    if super::mem::memchr(&s[..needle], 0, needle).is_some() {
         None
+    } else {
+        Some(needle)
     }
 }
 
