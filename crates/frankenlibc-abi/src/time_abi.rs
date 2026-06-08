@@ -979,7 +979,56 @@ static ABBR_MONTHS: [&[u8]; 12] = [
     b"jan", b"feb", b"mar", b"apr", b"may", b"jun", b"jul", b"aug", b"sep", b"oct", b"nov", b"dec",
 ];
 
+static FULL_MONTHS: [&[u8]; 12] = [
+    b"january",
+    b"february",
+    b"march",
+    b"april",
+    b"may",
+    b"june",
+    b"july",
+    b"august",
+    b"september",
+    b"october",
+    b"november",
+    b"december",
+];
+
 static ABBR_DAYS: [&[u8]; 7] = [b"sun", b"mon", b"tue", b"wed", b"thu", b"fri", b"sat"];
+
+static FULL_DAYS: [&[u8]; 7] = [
+    b"sunday",
+    b"monday",
+    b"tuesday",
+    b"wednesday",
+    b"thursday",
+    b"friday",
+    b"saturday",
+];
+
+/// Match a month/weekday name like glibc's strptime: try every full name first
+/// (longest, exact match), then every abbreviation. glibc accepts ONLY the full
+/// name or the standard abbreviation — NOT an arbitrary-length prefix — so a
+/// truncated name like "Decemb"/"FRIDA" matches only the 3-letter abbreviation,
+/// consuming 3, not the whole prefix (bd-2g7oyh.257). Returns `(index, new_pos)`.
+fn match_name_table(
+    input: &[u8],
+    pos: usize,
+    full: &[&[u8]],
+    abbr: &[&[u8]],
+) -> Option<(usize, usize)> {
+    for (idx, name) in full.iter().enumerate() {
+        if let Some(np) = match_name(input, pos, name) {
+            return Some((idx, np));
+        }
+    }
+    for (idx, name) in abbr.iter().enumerate() {
+        if let Some(np) = match_name(input, pos, name) {
+            return Some((idx, np));
+        }
+    }
+    None
+}
 
 /// POSIX `strptime` — parse date/time string into broken-down time.
 ///
@@ -1199,40 +1248,26 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'b' | b'B' | b'h' => {
-                    // Abbreviated or full month name
-                    let mut found = false;
-                    for (idx, name) in ABBR_MONTHS.iter().enumerate() {
-                        if let Some(new_si) = match_name(input, si, name) {
-                            unsafe { (*tm).tm_mon = idx as i32 };
-                            have_mon = true;
-                            si = new_si;
-                            // Skip remaining alphabetic chars (for full month names)
-                            while input.get(si).is_some_and(u8::is_ascii_alphabetic) {
-                                si += 1;
-                            }
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
+                    // Full month name or standard 3-letter abbreviation (glibc
+                    // accepts only those two forms, not an arbitrary prefix).
+                    if let Some((idx, new_si)) =
+                        match_name_table(input, si, &FULL_MONTHS, &ABBR_MONTHS)
+                    {
+                        unsafe { (*tm).tm_mon = idx as i32 };
+                        have_mon = true;
+                        si = new_si;
+                    } else {
                         return std::ptr::null_mut();
                     }
                 }
                 b'a' | b'A' => {
-                    // Abbreviated or full weekday name
-                    let mut found = false;
-                    for (idx, name) in ABBR_DAYS.iter().enumerate() {
-                        if let Some(new_si) = match_name(input, si, name) {
-                            unsafe { (*tm).tm_wday = idx as i32 };
-                            si = new_si;
-                            while input.get(si).is_some_and(u8::is_ascii_alphabetic) {
-                                si += 1;
-                            }
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
+                    // Full weekday name or standard 3-letter abbreviation.
+                    if let Some((idx, new_si)) =
+                        match_name_table(input, si, &FULL_DAYS, &ABBR_DAYS)
+                    {
+                        unsafe { (*tm).tm_wday = idx as i32 };
+                        si = new_si;
+                    } else {
                         return std::ptr::null_mut();
                     }
                 }

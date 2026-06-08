@@ -75,16 +75,20 @@ const DAYS: [&str; 7] = [
     "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 ];
 
-/// Randomly recase a name: lower, UPPER, or as-is, optionally as the standard
-/// 3-letter abbreviation, to probe glibc's case-insensitive + abbreviation
-/// matching of %a/%A/%b/%B. (Arbitrary-length prefixes like "Decemb" are a
-/// separate fl-vs-glibc leniency gap tracked in bd-2g7oyh.257 and not generated
-/// here so this fuzzer stays focused on the %j calendar-derivation fix.)
+/// Randomly recase and re-form a name: lower / UPPER / as-is, as the full name,
+/// the standard 3-letter abbreviation, OR an arbitrary-length prefix (e.g.
+/// "Decemb", "FRIDA"). The arbitrary prefixes probe glibc's rule that only the
+/// full name or the exact 3-letter abbreviation matches (bd-2g7oyh.257) — fl
+/// must consume the abbreviation length, not the whole prefix.
 fn recase(r: &mut Lcg, name: &str) -> String {
-    let base: String = if r.below(2) == 0 {
-        name.chars().take(3).collect() // standard abbreviation
-    } else {
-        name.to_string()
+    let base: String = match r.below(3) {
+        0 => name.chars().take(3).collect(), // standard abbreviation
+        1 => {
+            // arbitrary-length prefix (>=1)
+            let n = 1 + r.below(name.len() as u64) as usize;
+            name.chars().take(n).collect()
+        }
+        _ => name.to_string(), // full name
     };
     match r.below(3) {
         0 => base.to_lowercase(),
@@ -169,12 +173,14 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
         ),
     };
 
-    // (Input truncation that produces partial month/weekday names — e.g.
-    // "FRIDA" — is deliberately NOT generated here: it exposes a separate
-    // name-matching-leniency gap, fl accepts arbitrary name prefixes where glibc
-    // only accepts the full name or the exact 3-letter abbreviation, tracked in
-    // bd-2g7oyh.257. This fuzzer stays focused on the %j calendar-derivation fix.)
-    (fmt.into_bytes(), input.into_bytes())
+    // Occasionally truncate the input to probe partial-match / end-pointer
+    // (also produces partial names, exercising the %a/%b abbreviation rule).
+    let mut ib = input.into_bytes();
+    if r.below(6) == 0 && !ib.is_empty() {
+        let keep = r.below(ib.len() as u64) as usize;
+        ib.truncate(keep);
+    }
+    (fmt.into_bytes(), ib)
 }
 
 #[test]
