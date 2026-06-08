@@ -541,122 +541,24 @@ pub fn iswxdigit(wc: u32) -> bool {
     wctype_table::ctype_mask(wc) & XDIGIT != 0
 }
 
-/// Greek "with ypogegrammeni" code points whose SIMPLE uppercase glibc applies
-/// (to the precomposed "with prosgegrammeni" titlecase form), but which Rust's
-/// `char::to_uppercase` expands to a two-character sequence (e.g. U+1F80 →
-/// U+1F08 U+0399). Our multi-char rule would otherwise leave them unchanged, so
-/// this table restores glibc's single-char mapping. Verified by a full-codepoint
-/// differential sweep against host glibc (bd-2g7oyh.150).
-fn simple_upper_override(wc: u32) -> Option<u32> {
-    Some(match wc {
-        0x1F80 => 0x1F88,
-        0x1F81 => 0x1F89,
-        0x1F82 => 0x1F8A,
-        0x1F83 => 0x1F8B,
-        0x1F84 => 0x1F8C,
-        0x1F85 => 0x1F8D,
-        0x1F86 => 0x1F8E,
-        0x1F87 => 0x1F8F,
-        0x1F90 => 0x1F98,
-        0x1F91 => 0x1F99,
-        0x1F92 => 0x1F9A,
-        0x1F93 => 0x1F9B,
-        0x1F94 => 0x1F9C,
-        0x1F95 => 0x1F9D,
-        0x1F96 => 0x1F9E,
-        0x1F97 => 0x1F9F,
-        0x1FA0 => 0x1FA8,
-        0x1FA1 => 0x1FA9,
-        0x1FA2 => 0x1FAA,
-        0x1FA3 => 0x1FAB,
-        0x1FA4 => 0x1FAC,
-        0x1FA5 => 0x1FAD,
-        0x1FA6 => 0x1FAE,
-        0x1FA7 => 0x1FAF,
-        0x1FB3 => 0x1FBC,
-        0x1FC3 => 0x1FCC,
-        0x1FF3 => 0x1FFC,
-        _ => return None,
-    })
-}
-
-/// Code points that Rust's (newer) Unicode tables case-map but the host glibc's
-/// bundled (older) Unicode tables leave UNCHANGED. For byte-for-byte glibc
-/// parity we suppress the mapping. These shrink if glibc's Unicode version is
-/// updated to cover them. Verified by the same differential sweep
-/// (bd-2g7oyh.150): Latin Extended-D additions and the Medefaidrin block.
-fn upper_version_skew_noop(wc: u32) -> bool {
-    matches!(wc, 0xA7CF | 0xA7D3 | 0xA7D5) || (0x16EBB..=0x16ED3).contains(&wc)
-}
-
-/// Lowercase counterpart of [`upper_version_skew_noop`].
-fn lower_version_skew_noop(wc: u32) -> bool {
-    matches!(wc, 0xA7CE | 0xA7D2 | 0xA7D4) || (0x16EA0..=0x16EB8).contains(&wc)
-}
-
-/// Convert wide character to uppercase.
+/// Convert wide character to uppercase, matching glibc's `towupper(3)` in a
+/// UTF-8 locale.
 ///
-/// Mirrors glibc semantics:
-/// - 1:1 mappings: return the uppercase char
-/// - 1:N full-case expansion (ß → SS, ﬀ → FF, ǰ → J̌): glibc's single-char
-///   `towupper` has no simple mapping for these and returns them unchanged.
-/// - a small override table for code points where Rust's full mapping and
-///   glibc's simple mapping disagree (see [`simple_upper_override`] and
-///   [`upper_version_skew_noop`]).
-///
-/// This matches glibc's `towupper(3)` in UTF-8 locales.
+/// Driven by [`super::towcase_table::towupper`], a delta table generated offline
+/// from the host glibc over every scalar value (bd-2g7oyh.254 follow-up). This
+/// is glibc-exact by construction: it captures glibc's single-character mappings
+/// (including the Greek ypogegrammeni titlecase forms) and naturally omits the
+/// 1:N full-case expansions (ß→SS, ǰ→J̌) that glibc leaves unchanged, with no
+/// dependence on Rust's Unicode version. The lookup is a branchless binary
+/// search — the runtime stays 100% safe Rust.
 pub fn towupper(wc: u32) -> u32 {
-    if let Some(u) = simple_upper_override(wc) {
-        return u;
-    }
-    if upper_version_skew_noop(wc) {
-        return wc;
-    }
-    let Some(c) = char::from_u32(wc) else {
-        return wc;
-    };
-    let mut iter = c.to_uppercase();
-    let Some(first) = iter.next() else {
-        return wc;
-    };
-    match iter.next() {
-        None => first as u32, // 1:1 simple mapping
-        // Multi-character full-case expansion (e.g. ß→SS, ǰ→J̌): glibc's
-        // single-character `towupper` has no simple mapping for these and
-        // returns the character UNCHANGED — it never drops combining marks
-        // (an earlier `combining → base letter` heuristic wrongly turned ǰ
-        // into 'J', U+1E96 into 'H', etc.).
-        Some(_) => wc,
-    }
+    super::towcase_table::towupper(wc)
 }
 
-/// Convert wide character to lowercase.
-///
-/// Same multi-char-fold rule as [`towupper`].
+/// Convert wide character to lowercase, matching glibc's `towlower(3)` in a
+/// UTF-8 locale. See [`towupper`].
 pub fn towlower(wc: u32) -> u32 {
-    // U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE has a *simple* lowercase
-    // mapping to 'i' (U+0069) in UnicodeData, but Rust's full mapping expands
-    // it to "i" + U+0307 (combining dot above). glibc's single-char `towlower`
-    // uses the simple mapping, so special-case it to match.
-    if wc == 0x0130 {
-        return 0x0069;
-    }
-    if lower_version_skew_noop(wc) {
-        return wc;
-    }
-    let Some(c) = char::from_u32(wc) else {
-        return wc;
-    };
-    let mut iter = c.to_lowercase();
-    let Some(first) = iter.next() else {
-        return wc;
-    };
-    match iter.next() {
-        None => first as u32,
-        // Multi-character full-case expansion (with no simple mapping): glibc
-        // returns it unchanged.
-        Some(_) => wc,
-    }
+    super::towcase_table::towlower(wc)
 }
 
 /// Compute the display width of a wide character, matching glibc `wcwidth(3)`

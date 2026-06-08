@@ -10,6 +10,7 @@ pub mod str;
 pub mod strtok;
 pub mod timingsafe;
 pub mod wchar;
+pub(crate) mod towcase_table;
 pub(crate) mod wctype_table;
 pub(crate) mod wcwidth_table;
 pub mod wide;
