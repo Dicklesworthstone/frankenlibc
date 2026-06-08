@@ -215,6 +215,130 @@ fn parse_bracket_subexpr(
     Some((next_pi, member))
 }
 
+/// If `pat[pi..]` begins a single-byte collating symbol `[.x.]` (the only kind
+/// the C locale has), return `(x, next_pi)` with `next_pi` just past the closing
+/// `]`. A collating symbol is the ONLY POSIX bracket sub-expression that may
+/// serve as a range endpoint (glibc accepts `[a-[.c.]]` / `[[.a.]-c]` as `a..c`).
+/// Multibyte collating elements, equivalence classes `[=..=]`, and character
+/// classes `[:..:]` are NOT valid range endpoints and return `None` — the caller
+/// then keeps its existing behavior (a `[=..=]`/`[:..:]` member, or for a high
+/// endpoint the glibc-correct "malformed range matches nothing" fallback).
+fn collating_range_endpoint(pat: &[u8], pi: usize) -> Option<(u8, usize)> {
+    if pat.get(pi) != Some(&b'[') || pat.get(pi + 1) != Some(&b'.') {
+        return None;
+    }
+    let start = pi + 2;
+    let mut j = start;
+    loop {
+        match pat.get(j) {
+            None => return None, // unterminated `[.` ⇒ not an endpoint
+            Some(&b'.') if pat.get(j + 1) == Some(&b']') => break,
+            _ => j += 1,
+        }
+    }
+    let content = &pat[start..j];
+    // Single-byte element only; multibyte (e.g. `[.ch.]`) is not a range bound.
+    (content.len() == 1).then(|| (content[0], j + 2))
+}
+
+/// Membership test for a bracket range `low..=high` against text byte `c`. Under
+/// CASEFOLD glibc folds the test char and any PLAIN endpoint to lowercase, but a
+/// collating-symbol endpoint (`low_coll` / `high_coll`) is used literally — so
+/// `[9-[.A.]]` is `tolower(c) ∈ [9, A]` and 'A' (→'a') falls outside. An inverted
+/// folded range matches nothing.
+fn in_bracket_range(
+    c: u8,
+    low: u8,
+    low_coll: bool,
+    high: u8,
+    high_coll: bool,
+    casefold: bool,
+) -> bool {
+    if casefold {
+        let lo = if low_coll { low } else { low.to_ascii_lowercase() };
+        let hi = if high_coll { high } else { high.to_ascii_lowercase() };
+        let cl = c.to_ascii_lowercase();
+        lo <= hi && cl >= lo && cl <= hi
+    } else {
+        c >= low && c <= high
+    }
+}
+
+/// Parse a bracket range endpoint at `pat[pi]`. Returns `(value, next_pi)` where
+/// `next_pi` is the position just past the endpoint and `value` is `Some(byte)`
+/// for a valid endpoint (a plain byte, a bare literal `[`, a `\X` escape, or a
+/// single-byte collating symbol `[.x.]`) or `None` for an INVALID one — an
+/// equivalence class `[=..=]`, character class `[:..:]`, or a multibyte/
+/// unterminated collating element. An invalid endpoint makes the whole bracket
+/// match nothing (glibc), so the caller must record `next_pi` (to keep scanning
+/// to the terminator) yet treat the bracket as malformed. Only reached inside a
+/// `Terminated` bracket, so a dangling escape cannot occur.
+fn parse_range_endpoint(pat: &[u8], pi: usize, noescape: bool) -> (Option<(u8, bool)>, usize) {
+    if pat.get(pi) == Some(&b'[')
+        && let Some(&kind) = pat.get(pi + 1)
+        && matches!(kind, b'.' | b'=' | b':')
+    {
+        // Scan to the `kind]` terminator shared by all three sub-expressions.
+        let start = pi + 2;
+        let mut j = start;
+        let closed = loop {
+            match pat.get(j) {
+                None => break false,
+                Some(&b) if b == kind && pat.get(j + 1) == Some(&b']') => break true,
+                _ => j += 1,
+            }
+        };
+        if !closed {
+            // Unterminated `[`-subexpr inside a Terminated bracket: the `[` is a
+            // literal (non-collating) endpoint byte.
+            return (Some((b'[', false)), pi + 1);
+        }
+        let next = j + 2; // past `kind]`
+        // Only a single-byte collating symbol `[.x.]` is a valid endpoint;
+        // equivalence/character classes and multibyte collating are not.
+        if kind == b'.' && j - start == 1 {
+            return (Some((pat[start], true)), next);
+        }
+        return (None, next);
+    }
+    let mut high = pat.get(pi).copied().unwrap_or(0);
+    let mut q = pi + 1;
+    if high == b'\\' && !noescape && let Some(&b) = pat.get(q) {
+        high = b;
+        q += 1;
+    }
+    (Some((high, false)), q)
+}
+
+/// From a position `pi` partway through a `Terminated` bracket, return the index
+/// just past its closing `]`. Skips POSIX sub-expressions (so their inner `]` is
+/// not the closer) and `\X` escapes. Used after a malformed range aborts the
+/// member scan, to leave `pi` positioned correctly past the bracket.
+fn skip_to_bracket_close(pat: &[u8], mut pi: usize, noescape: bool) -> usize {
+    loop {
+        match pat.get(pi) {
+            None => return pi,
+            Some(&b']') => return pi + 1,
+            Some(&b'[') if matches!(pat.get(pi + 1), Some(b':' | b'.' | b'=')) => {
+                let kind = pat[pi + 1];
+                let mut k = pi + 2;
+                loop {
+                    match pat.get(k) {
+                        None => return k,
+                        Some(&b) if b == kind && pat.get(k + 1) == Some(&b']') => {
+                            pi = k + 2;
+                            break;
+                        }
+                        _ => k += 1,
+                    }
+                }
+            }
+            Some(&b'\\') if !noescape && pat.get(pi + 1).is_some() => pi += 2,
+            _ => pi += 1,
+        }
+    }
+}
+
 /// Iterative single-backtrack matcher for the common case: bracket-free
 /// patterns under flags that impose no positional constraints (no PATHNAME /
 /// PERIOD / CASEFOLD / LEADING_DIR). Handles `*`, `?`, `\X` escapes (unless
@@ -242,6 +366,10 @@ fn bracket_match_one(
         pi += 1;
     }
     let mut matched = false;
+    // A range with an invalid endpoint (`[=..=]`/`[:..:]`/multibyte collating)
+    // aborts the member scan: glibc keeps the match accumulated from EARLIER
+    // members but stops, and a malformed bracket never matches when negated.
+    let mut aborted = false;
     let mut first = true;
     loop {
         let bc = match pat.get(pi) {
@@ -252,6 +380,33 @@ fn bracket_match_one(
             break;
         }
         first = false;
+
+        // A collating symbol `[.x.]` that is the LOW endpoint of a range
+        // `[.x.]-Y` (glibc: `[[.a.]-c]` == `a..c`). Checked before the generic
+        // sub-expression handling, which would otherwise consume `[.x.]` as a
+        // standalone member. Equivalence/character-class sub-expressions are
+        // never range endpoints, so `collating_range_endpoint` returns None for
+        // them and we fall through.
+        if let Some((low, after)) = collating_range_endpoint(pat, pi)
+            && pat.get(after) == Some(&b'-')
+            && !matches!(pat.get(after + 1), None | Some(&b']'))
+        {
+            let (high, npi) = parse_range_endpoint(pat, after + 1, noescape);
+            pi = npi;
+            match high {
+                Some((high, high_coll))
+                    if in_bracket_range(c, low, true, high, high_coll, casefold) =>
+                {
+                    matched = true;
+                }
+                Some(_) => {}
+                None => {
+                    aborted = true;
+                    break;
+                }
+            }
+            continue;
+        }
 
         if bc == b'['
             && let Some(&kind) = pat.get(pi + 1)
@@ -280,31 +435,22 @@ fn bracket_match_one(
         let next = pat.get(pi);
         let nextnext = pat.get(pi + 1);
         if next == Some(&b'-') && nextnext != Some(&b']') && nextnext.is_some() {
-            pi += 1; // skip '-'
-            let mut high = pat.get(pi).copied().unwrap_or(0);
-            if high == b'\\' && !noescape {
-                pi += 1;
-                match pat.get(pi) {
-                    None => break,
-                    Some(&b) => high = b,
-                }
-            }
-            pi += 1;
-            if casefold {
-                // glibc folds BOTH range endpoints AND the test char to
-                // lowercase and tests a SINGLE folded range — not a per-element
-                // fold of the literal span. So `[B-b]` (B..b) under CASEFOLD
-                // matches only {B,b} (folded range [b,b]), never the literal
-                // interior like 'a'; an inverted folded range (`[Z-a]` → [z,a])
-                // matches nothing. Found by fnmatch_differential_fuzz.
-                let lo = low.to_ascii_lowercase();
-                let hi = high.to_ascii_lowercase();
-                let cl = c.to_ascii_lowercase();
-                if lo <= hi && cl >= lo && cl <= hi {
+            // High endpoint: a plain byte, `\X` escape, or collating symbol
+            // `[.y.]` (glibc: `[a-[.c.]]` == `a..c`); an `[=..=]`/`[:..:]` high
+            // endpoint makes the whole bracket malformed.
+            let (high, npi) = parse_range_endpoint(pat, pi + 1, noescape);
+            pi = npi;
+            match high {
+                Some((high, high_coll))
+                    if in_bracket_range(c, low, false, high, high_coll, casefold) =>
+                {
                     matched = true;
                 }
-            } else if c >= low && c <= high {
-                matched = true;
+                Some(_) => {}
+                None => {
+                    aborted = true;
+                    break;
+                }
             }
         } else {
             let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
@@ -317,6 +463,12 @@ fn bracket_match_one(
                 matched = true;
             }
         }
+    }
+    if aborted {
+        // glibc keeps the match found before the bad range, but a malformed
+        // bracket never matches under negation. Skip past the real `]`.
+        let pi = skip_to_bracket_close(pat, pi, noescape);
+        return (!negated && matched, pi);
     }
     pi += 1; // skip ']'
     if negated {
@@ -633,6 +785,10 @@ fn fnmatch_inner(
                     }
 
                     let mut matched = false;
+                    // A range with an invalid endpoint aborts the scan: keep the
+                    // match from earlier members, but never match when negated
+                    // — mirrors bracket_match_one.
+                    let mut aborted = false;
                     let mut first = true;
                     loop {
                         let bc = match pat.get(pi) {
@@ -643,6 +799,31 @@ fn fnmatch_inner(
                             break;
                         }
                         first = false;
+
+                        // Collating symbol `[.x.]` as the LOW endpoint of a
+                        // range `[.x.]-Y` (glibc: `[[.a.]-c]` == `a..c`). Checked
+                        // before the generic sub-expression handling. Mirrors
+                        // bracket_match_one.
+                        if let Some((low, after)) = collating_range_endpoint(pat, pi)
+                            && pat.get(after) == Some(&b'-')
+                            && !matches!(pat.get(after + 1), None | Some(&b']'))
+                        {
+                            let (high, npi) = parse_range_endpoint(pat, after + 1, noescape);
+                            pi = npi;
+                            match high {
+                                Some((high, high_coll))
+                                    if in_bracket_range(c, low, true, high, high_coll, casefold) =>
+                                {
+                                    matched = true;
+                                }
+                                Some(_) => {}
+                                None => {
+                                    aborted = true;
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
 
                         // POSIX bracket sub-expressions: `[:class:]`,
                         // `[.collating.]`, `[=equivalence=]`. A `[` followed
@@ -673,35 +854,26 @@ fn fnmatch_inner(
                             pi += 1;
                         }
 
-                        // Range: low '-' high (where high is not ']' / EOF)
+                        // Range: low '-' high (where high is not ']' / EOF). The
+                        // high endpoint may be a plain byte, a `\X` escape, or a
+                        // collating symbol `[.y.]` (glibc: `[a-[.c.]]` == `a..c`);
+                        // an `[=..=]`/`[:..:]` high endpoint voids the bracket.
                         let next = pat.get(pi);
                         let nextnext = pat.get(pi + 1);
                         if next == Some(&b'-') && nextnext != Some(&b']') && nextnext.is_some() {
-                            pi += 1; // skip '-'
-                            let mut high = pat.get(pi).copied().unwrap_or(0);
-                            if high == b'\\' && !noescape {
-                                pi += 1;
-                                high = match pat.get(pi) {
-                                    None => return false,
-                                    Some(&b) => b,
-                                };
-                            }
-                            pi += 1;
-
-                            if casefold {
-                                // glibc folds BOTH endpoints and the test char
-                                // to lowercase and tests a SINGLE folded range
-                                // (not a per-element fold of the literal span):
-                                // `[B-b]` matches only {B,b}, an inverted folded
-                                // range matches nothing. Mirrors bracket_match_one.
-                                let lo = low.to_ascii_lowercase();
-                                let hi = high.to_ascii_lowercase();
-                                let cl = c.to_ascii_lowercase();
-                                if lo <= hi && cl >= lo && cl <= hi {
+                            let (high, npi) = parse_range_endpoint(pat, pi + 1, noescape);
+                            pi = npi;
+                            match high {
+                                Some((high, high_coll))
+                                    if in_bracket_range(c, low, false, high, high_coll, casefold) =>
+                                {
                                     matched = true;
                                 }
-                            } else if c >= low && c <= high {
-                                matched = true;
+                                Some(_) => {}
+                                None => {
+                                    aborted = true;
+                                    break;
+                                }
                             }
                         } else {
                             let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
@@ -714,6 +886,18 @@ fn fnmatch_inner(
                                 matched = true;
                             }
                         }
+                    }
+
+                    if aborted {
+                        // glibc keeps the match found before the bad range, but a
+                        // malformed bracket never matches under negation.
+                        if negated || !matched {
+                            return false;
+                        }
+                        pi = skip_to_bracket_close(pat, pi, noescape);
+                        si += 1;
+                        at_start = false;
+                        continue;
                     }
                     pi += 1; // skip ']'
 
@@ -776,6 +960,45 @@ mod tests {
 
     fn m(p: &str, t: &str, f: FnmatchFlags) -> bool {
         fnmatch_match(p.as_bytes(), t.as_bytes(), f)
+    }
+
+    // A POSIX collating symbol `[.x.]` may be a range endpoint (glibc parity,
+    // bd-8oyxqg); equivalence classes / character classes / multibyte collating
+    // may not, and such a malformed range aborts the bracket scan.
+    #[test]
+    fn collating_symbol_range_endpoints() {
+        let none = FnmatchFlags::NONE;
+        // Collating symbol as high / low / both endpoints == the plain range.
+        assert!(m("[a-[.c.]]", "b", none));
+        assert!(!m("[a-[.c.]]", "d", none));
+        assert!(m("[[.a.]-c]", "b", none));
+        assert!(m("[[.a.]-[.c.]]", "b", none));
+        // A member after a VALID collating range still counts.
+        assert!(m("[a-[.c.]x]", "x", none));
+        // Negation over a collating range.
+        assert!(m("[^a-[.c.]]", "e", none));
+        assert!(!m("[^a-[.c.]]", "b", none));
+        // A bare `[` (not `[.`/`[=`/`[:`) is a literal range endpoint.
+        assert!(m("[+-[]", "A", none)); // '+'..'[' includes 'A'
+        assert!(!m("[+-[]", "a", none));
+
+        // CASEFOLD: a collating endpoint is NOT folded, but plain ones are; the
+        // char is folded. `[9-[.A.]]` is tolower(c) in [9, A] (A unfolded), so
+        // 'A' (→'a') is OUTSIDE while ':' / '@' are inside.
+        let cf = FnmatchFlags::CASEFOLD;
+        assert!(!m("[9-[.A.]]", "A", cf));
+        assert!(m("[9-[.A.]]", ":", cf));
+        assert!(m("[[.a.]-C]", "B", cf)); // [a, c]; tolower(B)='b' in range
+        assert!(!m("[a-[.C.]]", "b", cf)); // [a, C] inverted → matches nothing
+
+        // Malformed range (equivalence/class/multibyte high endpoint) aborts the
+        // scan: keeps a match from EARLIER members, never matches when negated.
+        assert!(!m("[a-[=c=]x]", "x", none)); // void: nothing before the bad range
+        assert!(m("[[:alnum:]b-[=c=]]", "x", none)); // alnum matched before abort
+        assert!(!m("[[:alnum:]b-[=c=]]", "/", none));
+        assert!(!m("[b-[=c=][:alnum:]]", "x", none)); // member AFTER abort ignored
+        assert!(!m("[^[:alnum:]b-[=c=]]", "x", none)); // negated malformed → no match
+        assert!(!m("[a-[.ch.]]", "b", none)); // multibyte collating endpoint
     }
 
     // Memoization correctness + anti-DoS: multi-'*' patterns that would explode

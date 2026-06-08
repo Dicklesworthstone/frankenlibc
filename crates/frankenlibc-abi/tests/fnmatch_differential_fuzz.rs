@@ -44,12 +44,10 @@ const CLASSES: &[&str] = &[
     "[:alpha:]", "[:digit:]", "[:alnum:]", "[:space:]", "[:upper:]", "[:lower:]", "[:punct:]",
 ];
 
-/// Bytes that may appear as a single bracket member / range endpoint. `-` is
-/// intentionally excluded from the standalone-member pool: a literal `-`
-/// adjacent to a collating symbol (`[.x.]`) forms a range with a collating-
-/// symbol endpoint (`X-[.c.]`), a distinct glibc feature fl does not yet support
-/// (tracked separately) — explicit ranges below already exercise `X-Y`.
-const MEMBER: &[u8] = b"abAB129.^!/";
+/// Bytes that may appear as a single bracket member / range endpoint, including
+/// `-` so a literal dash adjacent to a collating symbol (`X-[.c.]`) exercises
+/// collating-symbol range endpoints (bd-8oyxqg).
+const MEMBER: &[u8] = b"abAB129.-^!/";
 
 /// Build a random glob pattern from glob-significant bytes, occasionally
 /// emitting a whole bracket expression or POSIX class so those paths are hit
@@ -77,34 +75,47 @@ fn gen_pattern(r: &mut Lcg) -> Vec<u8> {
                 if r.below(4) == 0 {
                     p.push(b']');
                 }
+                // Emit one collating symbol `[.x.]` or equivalence class `[=x=]`.
+                let coll = |p: &mut Vec<u8>, r: &mut Lcg| {
+                    let k = if r.below(2) == 0 { b'.' } else { b'=' };
+                    p.push(b'[');
+                    p.push(k);
+                    p.push(MEMBER[r.below(MEMBER.len())]);
+                    p.push(k);
+                    p.push(b']');
+                };
                 let members = 1 + r.below(4);
                 for _ in 0..members {
-                    match r.below(6) {
+                    match r.below(8) {
                         0 => p.extend_from_slice(CLASSES[r.below(CLASSES.len())].as_bytes()),
                         // Collating symbol [.x.] / equivalence class [=x=].
-                        1 => {
-                            let k = if r.below(2) == 0 { b'.' } else { b'=' };
-                            p.push(b'[');
-                            p.push(k);
-                            p.push(MEMBER[r.below(MEMBER.len())]);
-                            p.push(k);
-                            p.push(b']');
-                        }
+                        1 => coll(&mut p, r),
                         // A well-formed range `X-Y`.
                         2 => {
                             p.push(MEMBER[r.below(MEMBER.len())]);
                             p.push(b'-');
                             p.push(MEMBER[r.below(MEMBER.len())]);
                         }
-                        // A backslash escape inside the class. The escaped byte
-                        // is drawn from a dash-free pool: under NOESCAPE the `\`
-                        // is literal, so a following `-` next to a collating
-                        // symbol would form a collating-endpoint range (the
-                        // separately-tracked feature excluded above).
+                        // A backslash escape inside the class.
                         3 => {
-                            const ESC: &[u8] = b"*?]ab19.\\";
+                            const ESC: &[u8] = b"*?]ab19.-\\";
                             p.push(b'\\');
                             p.push(ESC[r.below(ESC.len())]);
+                        }
+                        // A range with a collating-symbol/equivalence endpoint:
+                        // `X-[.y.]`, `[.x.]-Y`, or `[.x.]-[.y.]` (bd-8oyxqg).
+                        4 => {
+                            if r.below(2) == 0 {
+                                p.push(MEMBER[r.below(MEMBER.len())]);
+                            } else {
+                                coll(&mut p, r);
+                            }
+                            p.push(b'-');
+                            if r.below(2) == 0 {
+                                p.push(MEMBER[r.below(MEMBER.len())]);
+                            } else {
+                                coll(&mut p, r);
+                            }
                         }
                         _ => p.push(MEMBER[r.below(MEMBER.len())]),
                     }
