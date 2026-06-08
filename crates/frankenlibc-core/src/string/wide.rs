@@ -3,7 +3,7 @@
 //! Corresponds to `<wchar.h>` functions. These operate on `u32` slices
 //! representing `wchar_t` strings (NUL-terminated with `0u32`).
 
-use std::simd::{Select, Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
+use std::simd::{Select, Simd, cmp::SimdOrd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
 
 /// Number of `u32` wide characters processed per NUL-only scan panel.
 const WIDE_NUL_SIMD_LANES: usize = 16;
@@ -265,13 +265,40 @@ fn find_wide_or_nul_long(s: &[u32], needle: u32) -> usize {
 /// then resolves the exact index within the first matching panel left-to-right.
 /// Behaviour is identical to a scalar `position(|&c| c == 0)` scan.
 pub fn wcslen(s: &[u32]) -> usize {
-    let mut chunks = s.chunks_exact(WIDE_NUL_SIMD_LANES);
+    // Fold four 64-lane panels per 256-element block into ONE horizontal
+    // reduction (mirroring the narrow `block_has_nul_256` for strlen). Because
+    // `min(a, b) == 0` iff either lane is `0`, the folded vector has a zero lane
+    // exactly when one of the four panels does, so the steady-state NUL-free scan
+    // pays a single reduction per 256 wide chars instead of one per 16. The
+    // scalar tail resolves the exact index inside a flagged block, so the
+    // returned length is identical to the per-chunk scan (bd-2g7oyh).
+    const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
+    const BLOCK: usize = PANEL * 4; // 256
+    let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
 
+    while base + BLOCK <= s.len() {
+        let block = &s[base..base + BLOCK];
+        let p0 = Simd::<u32, PANEL>::from_slice(&block[0..PANEL]);
+        let p1 = Simd::<u32, PANEL>::from_slice(&block[PANEL..2 * PANEL]);
+        let p2 = Simd::<u32, PANEL>::from_slice(&block[2 * PANEL..3 * PANEL]);
+        let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]);
+        let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
+        if folded.simd_eq(zero).any() {
+            for (j, &ch) in block.iter().enumerate() {
+                if ch == 0 {
+                    return base + j;
+                }
+            }
+        }
+        base += BLOCK;
+    }
+
+    // Tail (< 256 wide chars): 16-lane chunks, then scalar.
+    let mut chunks = s[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
         if lanes.simd_eq(Simd::splat(0)).any() {
-            // The SIMD probe is exact, so this lookup always resolves.
             for (j, &ch) in chunk.iter().enumerate() {
                 if ch == 0 {
                     return base + j;
