@@ -1101,10 +1101,40 @@ pub unsafe extern "C" fn strptime(
         let fc = fmt[fi];
         if fc == b'%' {
             fi += 1;
-            let Some(&spec) = fmt.get(fi) else {
+            // glibc strptime accepts (and ignores) optional GNU flags and a
+            // field width before the conversion — e.g. `%0H`, `%2H`, `%-H` all
+            // parse like `%H`. Consume them. ('0' doubles as flag and digit, so
+            // a single run over `-_` plus digits covers both.)
+            while fi < fmt.len() && matches!(fmt[fi], b'-' | b'_' | b'0'..=b'9') {
+                fi += 1;
+            }
+            let Some(&first) = fmt.get(fi) else {
                 return std::ptr::null_mut(); // trailing %
             };
             fi += 1;
+            // Optional `E`/`O` locale modifier. In the C locale it is a no-op on
+            // the per-specifier subset glibc accepts (probed from host glibc),
+            // and a REJECTED combination (e.g. `%EH`, `%Oa`) is a match failure,
+            // mirroring glibc strptime exactly.
+            let spec = if first == b'E' || first == b'O' {
+                let Some(&base) = fmt.get(fi) else {
+                    return std::ptr::null_mut();
+                };
+                fi += 1;
+                const STRPTIME_E_OK: &[u8] = b"YCxXc";
+                const STRPTIME_O_OK: &[u8] = b"ymdeHIMSUWVwbBh";
+                let table = if first == b'E' {
+                    STRPTIME_E_OK
+                } else {
+                    STRPTIME_O_OK
+                };
+                if !table.contains(&base) {
+                    return std::ptr::null_mut();
+                }
+                base
+            } else {
+                first
+            };
 
             // glibc's strptime skips leading whitespace before numeric field
             // conversions (its `get_number` helper) and before `%z`'s sign, but
