@@ -1745,6 +1745,25 @@ fn c_div(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     }
 }
 
+/// Real threshold past which `exp` overflows; above it the complex exp /
+/// hyperbolic functions scale through `e^x = (e^(x/2))^2` so a finite result
+/// with a small trig factor is not lost to a spurious infinity. glibc's
+/// `s_cexp`/`s_csinh` use the same `(DBL_MAX_EXP - 1) * ln 2 ~ 709` cutoff.
+const CL_OVF_T: f64 = 709.0;
+
+/// `(e^|x|/2 * cos y, e^|x|/2 * sin y)` for `|x|` past the overflow threshold,
+/// where `sinh(|x|) == cosh(|x|) == e^|x|/2` to full f64 precision. The split
+/// `e^|x| = h*h` (`h = e^(|x|/2)`, well in range) keeps the trig-scaled result
+/// finite when it should be; only `e^|x|/2 - t_float` style single-step scaling
+/// would lose precision (see bd-2g7oyh.241). Caller applies the odd-fn sign.
+#[inline]
+fn cl_half_exp_scaled(arx: f64, ix: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    let h = math::exp(arx * 0.5);
+    let hh = h * 0.5;
+    ((math::cos(ix) * hh) * h, (math::sin(ix) * hh) * h)
+}
+
 /// glibc-faithful complex `cexp`. The naive `e^x*cos y + i e^x*sin y` gives
 /// `inf*0 = NaN` whenever `e^x` overflows while a trig factor is exactly zero
 /// (notably `y == 0`); this adds the C99 Annex G special values.
@@ -1757,6 +1776,12 @@ fn c_exp(re: f64, im: f64) -> (f64, f64) {
                 // cexp(x + i*0) = e^x + i*0 (imag keeps the sign of iy; e^x > 0,
                 // sin(±0) = ±0, so the product would be inf*0 = NaN for large x).
                 return (math::exp(re), im);
+            }
+            if re > CL_OVF_T {
+                // e^re overflows; split e^re = h*h (h = e^(re/2)) so a finite
+                // result with a small trig factor survives.
+                let h = math::exp(re * 0.5);
+                return ((math::cos(im) * h) * h, (math::sin(im) * h) * h);
             }
             let r = math::exp(re);
             return (r * math::cos(im), r * math::sin(im));
@@ -1968,6 +1993,13 @@ fn c_sinh(rx: f64, ix: f64) -> (f64, f64) {
                 // csinh(x + i*0) = sinh(x) + i*0 (imag keeps the sign of iy).
                 return (math::sinh(rx), ix);
             }
+            let arx = math::fabs(rx);
+            if arx > CL_OVF_T {
+                // sinh(|x|) == cosh(|x|) == e^|x|/2 here; sinh is odd in x.
+                let (rc, rs) = cl_half_exp_scaled(arx, ix);
+                let re = if rx.is_sign_negative() { -rc } else { rc };
+                return (re, rs);
+            }
             return (math::sinh(rx) * math::cos(ix), math::cosh(rx) * math::sin(ix));
         }
         // ix is inf or NaN, rx finite.
@@ -1983,10 +2015,11 @@ fn c_sinh(rx: f64, ix: f64) -> (f64, f64) {
             return (rx, ix);
         }
         if ix.is_finite() {
-            // csinh(+-inf + iy) = +-inf*cos y + i*+-inf*sin y.
-            let re = f64::copysign(f64::INFINITY, math::cos(ix));
+            // csinh(+-inf + iy): real = sinh(rx)cos y (sign = sign(rx)^sign cos),
+            // imag = cosh(rx)sin y (cosh>0, so sign = sign sin).
+            let re = f64::copysign(f64::INFINITY, math::cos(ix) * f64::copysign(1.0, rx));
             let im = f64::copysign(f64::INFINITY, math::sin(ix));
-            return (f64::copysign(re, rx), im);
+            return (re, im);
         }
         // csinh(+-inf + i*(inf|NaN)) = inf + i*NaN (glibc fixes the sign +inf).
         return (f64::INFINITY, f64::NAN);
@@ -2008,6 +2041,13 @@ fn c_cosh(rx: f64, ix: f64) -> (f64, f64) {
                 // sign(x) ^ sign(iy).
                 let neg = rx.is_sign_negative() ^ ix.is_sign_negative();
                 return (math::cosh(rx), if neg { -0.0 } else { 0.0 });
+            }
+            let arx = math::fabs(rx);
+            if arx > CL_OVF_T {
+                // cosh(|x|) == sinh(|x|) == e^|x|/2 here; sinh (imag) is odd in x.
+                let (rc, rs) = cl_half_exp_scaled(arx, ix);
+                let im = if rx.is_sign_negative() { -rs } else { rs };
+                return (rc, im);
             }
             return (math::cosh(rx) * math::cos(ix), math::sinh(rx) * math::sin(ix));
         }
@@ -2263,11 +2303,11 @@ pub unsafe extern "C" fn cpowl(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csin(z: CDoubleComplex) -> CDoubleComplex {
-    // sin(a+bi) = sin(a)cosh(b) + i*cos(a)sinh(b)
-    CDoubleComplex {
-        re: frankenlibc_core::math::sin(z.re) * frankenlibc_core::math::cosh(z.im),
-        im: frankenlibc_core::math::cos(z.re) * frankenlibc_core::math::sinh(z.im),
-    }
+    // sin(z) = -i*sinh(iz); iz = (-im, re), sinh gives (p, q) and
+    // -i*(p + qi) = (q, -p). Inherits c_sinh's Annex G special values and the
+    // overflow scaling for large |Im z| (= large real arg of sinh).
+    let (p, q) = c_sinh(-z.im, z.re);
+    CDoubleComplex { re: q, im: -p }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2292,11 +2332,10 @@ pub unsafe extern "C" fn csinl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccos(z: CDoubleComplex) -> CDoubleComplex {
-    // cos(a+bi) = cos(a)cosh(b) - i*sin(a)sinh(b)
-    CDoubleComplex {
-        re: frankenlibc_core::math::cos(z.re) * frankenlibc_core::math::cosh(z.im),
-        im: -frankenlibc_core::math::sin(z.re) * frankenlibc_core::math::sinh(z.im),
-    }
+    // cos(z) = cosh(iz); iz = (-im, re). Inherits c_cosh's Annex G special
+    // values and overflow scaling for large |Im z|.
+    let (re, im) = c_cosh(-z.im, z.re);
+    CDoubleComplex { re, im }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

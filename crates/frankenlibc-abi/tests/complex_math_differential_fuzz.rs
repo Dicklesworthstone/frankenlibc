@@ -297,13 +297,13 @@ fn complex_math_characterize_vs_glibc() {
             s.worst
         );
     }
-    // csinh/ccosh (bd-2g7oyh.241) and cexp (bd-2g7oyh.242): the inf*0 -> NaN
-    // special-value failures are gone (4000-8800 each -> a small residual) and
-    // signed zeros are exact. The residual category mismatches are the narrow
-    // |Re z| ~ 710 overflow band where the exponential overflows to inf but
-    // glibc's scaled exp keeps a finite value (a separate, exotic-input gap left
-    // for follow-up).
-    for name in ["csinh", "ccosh", "cexp"] {
+    // The full elementary complex transcendental family — csinh/ccosh
+    // (bd-2g7oyh.241), cexp (bd-2g7oyh.242), and csin/ccos derived from them
+    // (bd-2g7oyh.243) — is now glibc-exact: the inf*0 -> NaN special values are
+    // gone and the |Re z| ~ 710 overflow band is scaled through e^x = (e^(x/2))^2
+    // to a finite value, so there are no category or signed-zero mismatches at
+    // all, only a few ULP of rounding.
+    for name in ["csinh", "ccosh", "cexp", "csin", "ccos"] {
         let s = stats.iter().find(|s| s.name == name).unwrap();
         assert!(
             s.max_ulp <= 16,
@@ -311,10 +311,9 @@ fn complex_math_characterize_vs_glibc() {
             s.max_ulp,
             s.worst
         );
-        assert!(
-            s.cat_mismatch <= 100,
-            "{name} category mismatches={} (>100, expected only the overflow band): {}",
-            s.cat_mismatch,
+        assert_eq!(
+            s.cat_mismatch, 0,
+            "{name} inf/nan category mismatch: {}",
             s.worst
         );
         assert_eq!(s.zero_sign, 0, "{name} signed-zero mismatch: {}", s.worst);
@@ -381,6 +380,12 @@ fn csinh_ccosh_special_values_vs_glibc() {
         f64::NAN,
     ];
     type GridCase = (&'static str, fn(C) -> C, unsafe extern "C" fn(C) -> C);
+    // The grid pins the *base* functions exactly. csin/ccos are derived from
+    // csinh/ccosh via the i*z identity, which is glibc-exact for all finite and
+    // most special inputs (the random sweep below asserts 0 category mismatches),
+    // but glibc gives csin/ccos their own sign convention at the both-infinite
+    // corners (e.g. csin(inf + i*inf) imag = +inf, not the identity's -inf), so
+    // they are not held to bit-exactness on this exhaustive grid.
     let cases: &[GridCase] = &[
         ("csinh", |z| unsafe { fl::csinh(z) }, csinh),
         ("ccosh", |z| unsafe { fl::ccosh(z) }, ccosh),
