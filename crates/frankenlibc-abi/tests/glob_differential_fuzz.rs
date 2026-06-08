@@ -83,6 +83,12 @@ fn gen_pattern(r: &mut Lcg) -> Vec<u8> {
         b"*", b"?", b"a", b"b", b"c", b".", b"txt", b"log", b"[a-c]", b"[!a-c]",
         b"[abF]", b"F", b"o", b"sub", b"Sub2", b"{a,b}", b"{Foo,bar}", b"x y",
         b"star", b"BAR", b"1", b"]", b"[", b"\\*",
+        // Rich GLOB_BRACE expansion: nesting, empty alternatives, no-comma /
+        // empty groups, escaped braces, metacharacter alternatives, and the
+        // non-feature `{a..c}` range (literal in glibc) — brace_expand corners.
+        b"{a,a{b,bc}}", b"{,a}", b"{a,}", b"{}", b"{c}", b"{a..c}", b"\\{a,b\\}",
+        b"{*,?}", b"{sub,Sub2}", b"{ab,abc,a}", b"{{a,b},c}", b"f{o,O}o",
+        b"{a,b}.txt", b"{.cfg,.hidden}", b"a{,b,bc}",
     ];
     let segs = 1 + r.below(4);
     let mut out: Vec<u8> = Vec::new();
@@ -94,6 +100,12 @@ fn gen_pattern(r: &mut Lcg) -> Vec<u8> {
         for _ in 0..toks {
             out.extend_from_slice(TOK[r.below(TOK.len())]);
         }
+    }
+    // Occasionally append a trailing slash: glibc restricts a wildcard final
+    // component to directories (and marks them), but matches a literal final
+    // component to a regular file too (returned without the slash).
+    if r.below(4) == 0 {
+        out.push(b'/');
     }
     out
 }
@@ -134,7 +146,7 @@ fn glob_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared = 0u64;
 
-    for _ in 0..20_000 {
+    for _ in 0..40_000 {
         let mut pat = prefix.clone();
         pat.extend(gen_pattern(&mut r));
         let Ok(cpat) = CString::new(pat.clone()) else {

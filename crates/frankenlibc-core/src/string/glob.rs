@@ -333,12 +333,13 @@ fn glob_expand_dyn(
             if combined.is_empty() {
                 // GLOB_NOCHECK always, or GLOB_NOMAGIC when the original pattern
                 // is magic-free (`{}` braces are not magic to glibc), returns the
-                // original unexpanded pattern as the sole match.
+                // original unexpanded pattern (trailing slash stripped, as glibc)
+                // as the sole match.
                 if flags & GLOB_NOCHECK != 0
                     || (flags & GLOB_NOMAGIC != 0 && !has_magic(pat, noescape))
                 {
                     return Ok(GlobResult {
-                        paths: vec![pat.to_vec()],
+                        paths: vec![strip_trailing_slashes(pat).to_vec()],
                     });
                 }
                 return Err(GLOB_NOMATCH);
@@ -357,12 +358,23 @@ fn glob_expand_dyn(
     };
     let noescape = flags & GLOB_NOESCAPE != 0;
 
+    // glibc strips trailing slash(es) from the pattern up front (remembering one
+    // was present) so every no-match fallback returns the slash-stripped form
+    // (`o/` + NOCHECK -> `o`, `{a,b}/` + NOMAGIC -> `{a,b}`). The root `/` is
+    // preserved.
+    let trailing_slash = pat.len() > 1 && pat.ends_with(b"/");
+    let pat: &[u8] = strip_trailing_slashes(pat);
+
     // If no metacharacters, just check existence.
     if !has_magic(pat, noescape) {
+        // A trailing slash on a literal pattern is an existence check on the
+        // slash-stripped name: glibc matches `BAR/` to the regular file `BAR`
+        // (returned WITHOUT the slash) and `d/` to the directory `d` (WITH the
+        // slash) — append `/` only when the entry is a directory (or GLOB_MARK).
         let path = Path::new(OsStr::from_bytes(pat));
         if path.exists() {
             let mut p = pat.to_vec();
-            if flags & GLOB_MARK != 0 && path.is_dir() && !p.ends_with(b"/") {
+            if (flags & GLOB_MARK != 0 || trailing_slash) && path.is_dir() && !p.ends_with(b"/") {
                 p.push(b'/');
             }
             return Ok(GlobResult { paths: vec![p] });
@@ -379,7 +391,14 @@ fn glob_expand_dyn(
     }
 
     let mut results = Vec::new();
-    glob_recursive(b"", pat, flags, &mut results, errfunc)?;
+    // Re-append a single slash so glob_recursive sees the trailing-slash
+    // directory constraint on the final component; it is stripped from the
+    // NOCHECK fallback below.
+    let mut walk_pat = pat.to_vec();
+    if trailing_slash {
+        walk_pat.push(b'/');
+    }
+    glob_recursive(b"", &walk_pat, flags, &mut results, errfunc)?;
 
     if results.is_empty() {
         if flags & GLOB_NOCHECK != 0 {
@@ -403,6 +422,20 @@ fn glob_expand_dyn(
     Ok(GlobResult { paths: results })
 }
 
+/// Strip trailing `/` bytes from a pattern, preserving the root `/`. glibc
+/// removes a trailing slash up front (remembering it imposed a directory
+/// constraint) so every no-match fallback returns the slash-stripped pattern.
+fn strip_trailing_slashes(pat: &[u8]) -> &[u8] {
+    if pat.len() > 1 && pat.ends_with(b"/") {
+        match pat.iter().rposition(|&b| b != b'/') {
+            Some(i) => &pat[..i + 1],
+            None => &pat[..1], // all slashes -> keep a single leading '/'
+        }
+    } else {
+        pat
+    }
+}
+
 /// Recursively expand a glob pattern with directory traversal.
 ///
 /// `resolved_prefix` is the already-resolved literal directory path produced by
@@ -423,10 +456,21 @@ fn glob_recursive(
     let noescape = flags & GLOB_NOESCAPE != 0;
     let (dir_prefix, tail) = split_pattern(pattern, noescape);
 
-    // Split tail at the next '/' to get the component pattern.
-    let (component_pat, rest) = match tail.iter().position(|&b| b == b'/') {
-        Some(pos) => (&tail[..pos], &tail[pos + 1..]),
-        None => (tail, &[] as &[u8]),
+    // Split tail at the next '/' to get the component pattern. A trailing slash
+    // (nothing but '/' bytes after the component) is not a further component but
+    // a directory constraint on this final match: glibc requires a WILDCARD
+    // final component with a trailing slash to resolve to a directory and marks
+    // it with '/' (so `*/` yields only `d/`, never the regular file `BAR`).
+    let (component_pat, rest, trailing_slash) = match tail.iter().position(|&b| b == b'/') {
+        Some(pos) => {
+            let after = &tail[pos + 1..];
+            if after.iter().all(|&b| b == b'/') {
+                (&tail[..pos], &[] as &[u8], true)
+            } else {
+                (&tail[..pos], after, false)
+            }
+        }
+        None => (tail, &[] as &[u8], false),
     };
 
     // The directory to read is the literal resolved_prefix concatenated with
@@ -501,11 +545,13 @@ fn glob_recursive(
             .unwrap_or(false);
 
         if rest.is_empty() {
-            // No more pattern components — this is a final match.
-            if flags & GLOB_ONLYDIR != 0 && !resolves_to_dir {
+            // No more pattern components — this is a final match. A trailing
+            // slash (like GLOB_ONLYDIR) restricts the match to directories and
+            // (like GLOB_MARK) appends a '/'.
+            if (flags & GLOB_ONLYDIR != 0 || trailing_slash) && !resolves_to_dir {
                 continue;
             }
-            if flags & GLOB_MARK != 0 && resolves_to_dir {
+            if (flags & GLOB_MARK != 0 || trailing_slash) && resolves_to_dir {
                 full_path.push(b'/');
             }
             results.push(full_path);
@@ -810,6 +856,54 @@ mod tests {
         assert_eq!(res.paths.len(), 1);
         // /tmp is a directory, so GLOB_MARK appends /
         assert!(res.paths[0].ends_with(b"/"));
+    }
+
+    // glibc trailing-slash parity: a literal final component with a trailing
+    // slash matches a regular FILE too (returned without the slash) and a
+    // directory (with the slash); a WILDCARD final component with a trailing
+    // slash matches ONLY directories (with the slash). The no-match NOCHECK
+    // fallback returns the pattern with trailing slashes stripped.
+    #[test]
+    fn trailing_slash_matches_files_literally_dirs_only_for_wildcards() {
+        let dir = unique_glob_test_dir("trailing_slash");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("BAR"), b"x").unwrap();
+        std::fs::create_dir_all(dir.join("d")).unwrap();
+        let base = dir.as_os_str().as_bytes().to_vec();
+        let pat = |s: &str| {
+            let mut p = base.clone();
+            p.extend_from_slice(s.as_bytes());
+            p.push(0);
+            p
+        };
+        let names = |r: GlobResult| -> Vec<String> {
+            r.paths
+                .iter()
+                .map(|p| {
+                    let s = String::from_utf8_lossy(p);
+                    let trimmed = s.strip_suffix('/').unwrap_or(&s);
+                    let last = trimmed.rsplit('/').next().unwrap();
+                    if s.ends_with('/') {
+                        format!("{last}/")
+                    } else {
+                        last.to_string()
+                    }
+                })
+                .collect()
+        };
+
+        // Literal file + slash -> the file, WITHOUT a slash.
+        assert_eq!(names(glob_expand(&pat("/BAR/"), 0).unwrap()), vec!["BAR"]);
+        // Literal dir + slash -> the dir, WITH a slash.
+        assert_eq!(names(glob_expand(&pat("/d/"), 0).unwrap()), vec!["d/"]);
+        // Wildcard + slash -> ONLY the directory, marked (the file is excluded).
+        assert_eq!(names(glob_expand(&pat("/*/"), 0).unwrap()), vec!["d/"]);
+        // No-match wildcard + slash + NOCHECK -> pattern with the slash stripped.
+        assert_eq!(names(glob_expand(&pat("/BA?/"), GLOB_NOCHECK).unwrap()), vec!["BA?"]);
+        // No-match literal + slash + NOCHECK -> pattern with the slash stripped.
+        assert_eq!(names(glob_expand(&pat("/zzz/"), GLOB_NOCHECK).unwrap()), vec!["zzz"]);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
