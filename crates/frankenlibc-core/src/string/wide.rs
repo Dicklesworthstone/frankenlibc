@@ -230,30 +230,38 @@ fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
 
 fn find_wide_or_nul_long(s: &[u32], needle: u32) -> usize {
     debug_assert_ne!(needle, 0);
-    if s.len() >= WIDE_FIND_LONG_MIN_LEN {
-        let mut chunks = s.chunks_exact(WIDE_FIND_LONG_SIMD_LANES);
-        let mut base = 0usize;
+    // Fold four 64-lane panels per 256-element block into ONE horizontal
+    // reduction (bd-2g7oyh.262 follow-up). For each lane, `min(x, x ^ needle)` is
+    // `0` iff `x == 0` (NUL: `min(0, needle) == 0`) OR `x == needle`
+    // (`min(needle, 0) == 0`), and strictly positive otherwise — so `simd_min` of
+    // the four panels' `min(x, x ^ needle)` is `0` exactly when one panel holds a
+    // NUL or the needle. One reduction per 256 wide chars instead of one per 64;
+    // the scalar tail resolves the leftmost hit in a flagged block.
+    const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
+    const BLOCK: usize = WIDE_FIND_LONG_MIN_LEN; // PANEL * 4 == 256
+    let target = Simd::<u32, PANEL>::splat(needle);
+    let zero = Simd::<u32, PANEL>::splat(0);
+    let mut base = 0usize;
 
-        for chunk in chunks.by_ref() {
-            if has_wide_or_nul_long_simd(chunk, needle) {
-                for (j, &ch) in chunk.iter().enumerate() {
-                    if ch == needle || ch == 0 {
-                        return base + j;
-                    }
+    while base + BLOCK <= s.len() {
+        let block = &s[base..base + BLOCK];
+        let hit = |k: usize| {
+            let p = Simd::<u32, PANEL>::from_slice(&block[k * PANEL..(k + 1) * PANEL]);
+            p.simd_min(p ^ target)
+        };
+        let folded = hit(0).simd_min(hit(1)).simd_min(hit(2).simd_min(hit(3)));
+        if folded.simd_eq(zero).any() {
+            for (j, &ch) in block.iter().enumerate() {
+                if ch == needle || ch == 0 {
+                    return base + j;
                 }
             }
-            base += WIDE_FIND_LONG_SIMD_LANES;
         }
-
-        let tail = find_wide_or_nul(chunks.remainder(), needle);
-        if tail < chunks.remainder().len() {
-            return base + tail;
-        }
-
-        return s.len();
+        base += BLOCK;
     }
 
-    find_wide_or_nul(s, needle)
+    // Tail (< 256 wide chars): the 32-lane short-path scan over the remainder.
+    base + find_wide_or_nul(&s[base..], needle)
 }
 
 /// Returns the length of a NUL-terminated wide string (not counting the NUL).
@@ -935,16 +943,43 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 /// left-to-right. Behaviour is identical to a scalar
 /// `position(|&x| x == c)` scan over the first `n.min(s.len())` elements.
 pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
+    // Fold four 64-lane panels per 256-element block into ONE horizontal
+    // reduction (bd-2g7oyh.262 follow-up; same lever as wcslen). `x ^ c == 0` iff
+    // `x == c`, so `simd_min` of the per-panel `panel ^ c` is `0` exactly when one
+    // of the four panels contains `c` — one reduction per 256 wide chars instead
+    // of one per 16. The scalar tail resolves the leftmost match in a flagged
+    // block, so the returned index is identical to the per-chunk scan.
+    const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
+    const BLOCK: usize = PANEL * 4; // 256
     let count = n.min(s.len());
     let scan = &s[..count];
-    let mut chunks = scan.chunks_exact(WIDE_MEMCHR_SIMD_LANES);
+    let target = Simd::<u32, PANEL>::splat(c);
+    let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
-    let target = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::splat(c);
 
+    while base + BLOCK <= count {
+        let block = &scan[base..base + BLOCK];
+        let p0 = Simd::<u32, PANEL>::from_slice(&block[0..PANEL]) ^ target;
+        let p1 = Simd::<u32, PANEL>::from_slice(&block[PANEL..2 * PANEL]) ^ target;
+        let p2 = Simd::<u32, PANEL>::from_slice(&block[2 * PANEL..3 * PANEL]) ^ target;
+        let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]) ^ target;
+        let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
+        if folded.simd_eq(zero).any() {
+            for (j, &x) in block.iter().enumerate() {
+                if x == c {
+                    return Some(base + j);
+                }
+            }
+        }
+        base += BLOCK;
+    }
+
+    // Tail (< 256 wide chars): 16-lane chunks, then scalar.
+    let t16 = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::splat(c);
+    let mut chunks = scan[base..].chunks_exact(WIDE_MEMCHR_SIMD_LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(chunk);
-        if lanes.simd_eq(target).any() {
-            // The SIMD probe is exact, so this lookup always resolves.
+        if lanes.simd_eq(t16).any() {
             for (j, &x) in chunk.iter().enumerate() {
                 if x == c {
                     return Some(base + j);
