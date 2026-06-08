@@ -1064,6 +1064,10 @@ pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
         return Some(strlen(s));
     }
 
+    // Absent needles need only the pure byte scan; found cases still use the
+    // existing C-string resolver below to preserve last-before-NUL semantics.
+    super::mem::memchr(s, c, s.len())?;
+
     // Single forward pass tracking the last match — exactly what glibc does,
     // versus the old strlen()+reverse-scan that walked the buffer TWICE. A
     // 256B folded SIMD probe skips blocks containing neither `c` nor NUL with
