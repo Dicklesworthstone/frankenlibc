@@ -1017,6 +1017,13 @@ pub unsafe extern "C" fn strptime(
     let mut fi = 0usize; // position in format
     let mut century: Option<i32> = None;
     let mut is_pm: Option<bool> = None;
+    // glibc derives the calendar date (tm_mon/tm_mday) from a parsed day-of-year
+    // (%j) at end-of-parse when no explicit month/day was given. Track which were
+    // seen so we can mirror that (bd-2g7oyh.257).
+    let mut have_yday = false;
+    let mut have_mon = false;
+    let mut have_mday = false;
+    let mut have_year = false;
 
     while fi < fmt.len() {
         let fc = fmt[fi];
@@ -1060,6 +1067,7 @@ pub unsafe extern "C" fn strptime(
                     // 4-digit year
                     if let Some((val, new_si)) = parse_digits(input, si, 4) {
                         unsafe { (*tm).tm_year = val - 1900 };
+                        have_year = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1069,6 +1077,7 @@ pub unsafe extern "C" fn strptime(
                     // Century (first 2 digits of year)
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         century = Some(val);
+                        have_year = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1078,6 +1087,7 @@ pub unsafe extern "C" fn strptime(
                     // 2-digit year within century
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         unsafe { (*tm).tm_year = val + if val < 69 { 100 } else { 0 } };
+                        have_year = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1090,6 +1100,7 @@ pub unsafe extern "C" fn strptime(
                             return std::ptr::null_mut();
                         }
                         unsafe { (*tm).tm_mon = val - 1 };
+                        have_mon = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1104,6 +1115,7 @@ pub unsafe extern "C" fn strptime(
                             return std::ptr::null_mut();
                         }
                         unsafe { (*tm).tm_mday = val };
+                        have_mday = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1180,6 +1192,7 @@ pub unsafe extern "C" fn strptime(
                             return std::ptr::null_mut();
                         }
                         unsafe { (*tm).tm_yday = val - 1 };
+                        have_yday = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1191,6 +1204,7 @@ pub unsafe extern "C" fn strptime(
                     for (idx, name) in ABBR_MONTHS.iter().enumerate() {
                         if let Some(new_si) = match_name(input, si, name) {
                             unsafe { (*tm).tm_mon = idx as i32 };
+                            have_mon = true;
                             si = new_si;
                             // Skip remaining alphabetic chars (for full month names)
                             while input.get(si).is_some_and(u8::is_ascii_alphabetic) {
@@ -1541,6 +1555,31 @@ pub unsafe extern "C" fn strptime(
         let h = unsafe { (*tm).tm_hour };
         if h < 12 {
             unsafe { (*tm).tm_hour = h + 12 };
+        }
+    }
+
+    // Post-processing: derive the calendar date from a parsed day-of-year (%j),
+    // mirroring glibc. When %j was given but no explicit month/day was, glibc
+    // computes tm_mon/tm_mday from tm_yday and the (leap-aware) year — e.g.
+    // strptime("2008 182", "%Y %j") yields June 30. fl previously left
+    // tm_mon/tm_mday at 0 (bd-2g7oyh.257).
+    if have_yday && have_year && !have_mon && !have_mday {
+        let year = unsafe { (*tm).tm_year } + 1900;
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let mdays: [i32; 12] = if leap {
+            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        } else {
+            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        };
+        let mut rem = unsafe { (*tm).tm_yday };
+        let mut mon = 0usize;
+        while mon < 11 && rem >= mdays[mon] {
+            rem -= mdays[mon];
+            mon += 1;
+        }
+        unsafe {
+            (*tm).tm_mon = mon as i32;
+            (*tm).tm_mday = rem + 1;
         }
     }
 
