@@ -533,6 +533,7 @@ enum MatchKind {
         ranges: Vec<(u8, u8)>,
         negated: bool,
         icase: bool,
+        newline: bool,
     },
     AnchorStart {
         newline: bool,
@@ -1210,6 +1211,7 @@ impl Compiler {
                     ranges: ranges.clone(),
                     negated: *negated,
                     icase: self.compile_icase,
+                    newline: self.compile_newline,
                 }));
             }
             Ast::Anchor(AnchorKind::Start) => {
@@ -2230,6 +2232,7 @@ impl<'a> PikeVm<'a> {
                 ranges,
                 negated,
                 icase,
+                newline,
             } => {
                 let mut found = false;
                 for &(lo, hi) in ranges.iter() {
@@ -2249,7 +2252,15 @@ impl<'a> PikeVm<'a> {
                         break;
                     }
                 }
-                if *negated { !found } else { found }
+                if *negated {
+                    // REG_NEWLINE: a nonmatching list never matches '\n' (POSIX).
+                    if *newline && ch == b'\n' {
+                        return false;
+                    }
+                    !found
+                } else {
+                    found
+                }
             }
             // Zero-width assertions are handled in add_thread, not here.
             MatchKind::AnchorStart { .. }
@@ -2585,7 +2596,17 @@ impl<'a> BacktrackVm<'a> {
                 break;
             }
         }
-        if negated { !found } else { found }
+        if negated {
+            // Under REG_NEWLINE a NONMATCHING list ("[^…]") never matches '\n',
+            // even when '\n' is not listed (POSIX): "a <newline> shall not be
+            // matched by ... any form of a nonmatching list".
+            if self.newline && ch == b'\n' {
+                return false;
+            }
+            !found
+        } else {
+            found
+        }
     }
 
     fn slices_equal(&self, left: &[u8], right: &[u8]) -> bool {
