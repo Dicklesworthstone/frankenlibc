@@ -96,9 +96,9 @@ Same-worker before/after on `vmi1293453`:
 
 | row | baseline FL p50 | baseline FL mean | post FL p50 | post FL mean | result |
 |---|---:|---:|---:|---:|---|
-| `malloc_free_64` | 6.447 ns | 10.839 ns | 5.893 ns | 8.172 ns | p50 +8.6%, mean +24.6% |
-| `malloc_free_256` | 6.081 ns | 8.412 ns | 6.075 ns | 7.908 ns | guard neutral/improved |
-| `malloc_free_large` | 8.405 ns | 10.173 ns | 8.253 ns | 9.844 ns | guard improved |
+| `malloc_free_64` | 6.447 ns | 10.839 ns | 6.003 ns | 8.279 ns | p50 +6.9%, mean +23.6% |
+| `malloc_free_256` | 6.081 ns | 8.412 ns | 6.025 ns | 8.705 ns | p50 neutral/improved; mean noise +3.5% |
+| `malloc_free_large` | 8.405 ns | 10.173 ns | 8.000 ns | 9.195 ns | guard improved |
 
 Keep score: `(Impact 4 * Confidence 4) / Effort 1 = 16.0`.
 
@@ -111,9 +111,16 @@ Final crate-scoped gates:
   `hot_cycle_lifecycle_record_sha256_is_stable`,
   `hot_cycle_static_lifecycle_details_are_borrowed`, and
   `hot_slot_lifecycle_record_sha256_is_stable`.
-- RCH `vmi1149989` `cargo check -p frankenlibc-core --all-targets` passed.
+- RCH `vmi1156319` `cargo check -p frankenlibc-core --all-targets` passed.
 - RCH `vmi1167313` `cargo clippy -p frankenlibc-core --all-targets -- -D warnings`
   failed on pre-existing unrelated lints outside this allocator lever:
   `math/exp.rs` excessive precision constants, `stdio/file.rs`
   `unnecessary_unwrap`, and `string/regex.rs` collapsible-if /
   unnecessary-map-or diagnostics.
+- RCH `vmi1156319` clippy with the above known unrelated lint families
+  explicitly allowed also passed, so the allocator change has no remaining
+  clippy diagnostics.
+- `cargo fmt -p frankenlibc-core --check` still fails on pre-existing
+  formatting drift in `src/ether/mod.rs` and
+  `tests/glob_differential_probe.rs`; touched-file `rustfmt` passed for
+  `src/malloc/allocator.rs`.
