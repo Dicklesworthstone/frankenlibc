@@ -114,7 +114,7 @@ fn run_host(words: &[u8]) -> Result {
 }
 
 fn gen_word(r: &mut Lcg) -> Vec<u8> {
-    match r.below(11) {
+    match r.below(20) {
         0 => b"abc".to_vec(),
         1 => b"$FOO".to_vec(),
         2 => b"${MULTI}".to_vec(),
@@ -125,6 +125,19 @@ fn gen_word(r: &mut Lcg) -> Vec<u8> {
         7 => b"pre$FOO.post".to_vec(),
         8 => b"a\\$FOO".to_vec(), // escaped $: literal
         9 => b"~".to_vec(),       // tilde -> HOME
+        // POSIX parameter expansion: default / alternative / length forms.
+        10 => b"${UNDEFINED:-fb}".to_vec(),
+        11 => b"${FOO:-fb}".to_vec(),
+        12 => b"${EMPTY:-fb}".to_vec(),
+        13 => b"${UNDEFINED-fb}".to_vec(),
+        14 => b"${EMPTY-fb}".to_vec(),
+        15 => b"${FOO:+set}".to_vec(),
+        16 => b"${UNDEFINED:+set}".to_vec(),
+        17 => b"${EMPTY+set}".to_vec(),
+        18 => b"${#FOO}".to_vec(),
+        // a default WORD that itself references a variable
+        19 if r.below(2) == 0 => b"${UNDEFINED:-$FOO}".to_vec(),
+        19 => b"${#MULTI}".to_vec(),
         _ => {
             // short random literal of safe chars
             let n = 1 + r.below(4);

@@ -6562,26 +6562,48 @@ fn expand_vars_with_split_mask_dyn(
                 push_masked_char(&mut result, &mut split_mask, '$', false);
                 continue;
             }
-            let (var_name, end) = if bytes[i] == b'{' {
+            if bytes[i] == b'{' {
+                // `${...}` — full parameter expansion (default/alt/length forms),
+                // shared with the core expander.
                 i += 1;
                 let start = i;
                 while i < bytes.len() && bytes[i] != b'}' {
                     i += 1;
                 }
-                let name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
+                let content = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
                 if i < bytes.len() {
                     i += 1;
                 }
-                (name, i)
-            } else {
-                let start = i;
-                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
+                if content.is_empty() {
+                    push_masked_char(&mut result, &mut split_mask, '$', false);
+                    continue;
                 }
-                let name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
-                (name, i)
-            };
-            i = end;
+                let lookup = |name: &str| std::env::var(name).ok();
+                match frankenlibc_core::stdlib::wordexp::expand_braced_param(
+                    content,
+                    undef_is_error,
+                    &lookup,
+                ) {
+                    Ok(value) => {
+                        for ch in value.chars() {
+                            push_masked_char(
+                                &mut result,
+                                &mut split_mask,
+                                ch,
+                                split_unquoted_expansions,
+                            );
+                        }
+                    }
+                    Err(_) => return Err(WRDE_BADVAL),
+                }
+                continue;
+            }
+            // Bare `$VAR`.
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let var_name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
             if var_name.is_empty() {
                 push_masked_char(&mut result, &mut split_mask, '$', false);
                 continue;

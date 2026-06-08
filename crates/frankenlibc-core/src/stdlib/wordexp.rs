@@ -79,26 +79,30 @@ fn expand_vars_dyn(
                 result.push('$');
                 continue;
             }
-            let (var_name, end) = if bytes[i] == b'{' {
+            if bytes[i] == b'{' {
+                // `${...}` — full parameter expansion (default/alt/length forms).
                 i += 1;
                 let start = i;
                 while i < bytes.len() && bytes[i] != b'}' {
                     i += 1;
                 }
-                let name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
+                let content = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
                 if i < bytes.len() {
                     i += 1; // skip }
                 }
-                (name, i)
-            } else {
-                let start = i;
-                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
+                if content.is_empty() {
+                    result.push('$');
+                    continue;
                 }
-                let name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
-                (name, i)
-            };
-            i = end;
+                result.push_str(&expand_braced_param(content, undef_is_error, lookup_env)?);
+                continue;
+            }
+            // Bare `$VAR`.
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let var_name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
             if var_name.is_empty() {
                 result.push('$');
                 continue;
@@ -135,6 +139,86 @@ fn expand_vars_dyn(
         i += 1;
     }
     Ok(result)
+}
+
+/// Evaluate the body of a `${...}` parameter expansion (the text between `${`
+/// and `}`), supporting the common POSIX forms beyond a plain name:
+///   `${#NAME}`       — character length of NAME's value (0 if unset)
+///   `${NAME:-WORD}`  — WORD if NAME is unset or empty, else NAME's value
+///   `${NAME-WORD}`   — WORD if NAME is unset, else NAME's value
+///   `${NAME:+WORD}`  — WORD if NAME is set and non-empty, else empty
+///   `${NAME+WORD}`   — WORD if NAME is set, else empty
+/// WORD is itself expanded (it may reference other variables, escapes, quotes).
+/// Operators not handled here (`= ? % #` after the name) fall back to a plain
+/// lookup of the whole body, preserving the previous behaviour.
+pub fn expand_braced_param(
+    content: &str,
+    undef_is_error: bool,
+    lookup_env: &dyn Fn(&str) -> Option<String>,
+) -> Result<String, ExpandError> {
+    let is_name = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+
+    // `${#NAME}` — string length.
+    if let Some(name) = content.strip_prefix('#')
+        && is_name(name)
+    {
+        let len = lookup_env(name).map(|v| v.chars().count()).unwrap_or(0);
+        return Ok(len.to_string());
+    }
+
+    let name_len = content
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(content.len());
+    let name = &content[..name_len];
+    let op = &content[name_len..];
+    let raw = lookup_env(name);
+
+    let plain = |raw: Option<String>, key: &str| -> Result<String, ExpandError> {
+        match raw {
+            Some(v) => Ok(v),
+            None if undef_is_error => Err(ExpandError::UndefinedVariable(key.to_string())),
+            None => Ok(String::new()),
+        }
+    };
+
+    if op.is_empty() || name.is_empty() {
+        // Plain `${NAME}`, or a body we don't special-case: look up verbatim.
+        return plain(lookup_env(content), content);
+    }
+
+    let (colon, rest) = match op.strip_prefix(':') {
+        Some(r) => (true, r),
+        None => (false, op),
+    };
+    let opc = rest.as_bytes().first().copied();
+    let word = if rest.is_empty() { "" } else { &rest[1..] };
+    let unset = raw.is_none();
+    let test = if colon {
+        unset || raw.as_deref() == Some("")
+    } else {
+        unset
+    };
+
+    match opc {
+        // Use a default when the variable is unset (or empty, with `:`).
+        Some(b'-') => {
+            if test {
+                expand_vars_dyn(word, undef_is_error, lookup_env)
+            } else {
+                Ok(raw.unwrap_or_default())
+            }
+        }
+        // Use an alternative only when the variable IS set (and non-empty, `:`).
+        Some(b'+') => {
+            if test {
+                Ok(String::new())
+            } else {
+                expand_vars_dyn(word, undef_is_error, lookup_env)
+            }
+        }
+        // `= ? % #` not yet handled — fall back to a plain lookup.
+        _ => plain(lookup_env(content), content),
+    }
 }
 
 #[cfg(test)]
