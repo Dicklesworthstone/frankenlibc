@@ -130,10 +130,25 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
 }
 
+/// Largest length `<= limit` that lands on a UTF-8 character boundary. Used to
+/// apply `%ls` precision as a BYTE cap on the multibyte output without ever
+/// splitting (writing a partial) multibyte character, per C99 §7.19.6.1.
+fn utf8_byte_limit(bytes: &[u8], limit: usize) -> usize {
+    if limit >= bytes.len() {
+        return bytes.len();
+    }
+    let mut cut = limit;
+    // A UTF-8 continuation byte is `0b10xxxxxx`; back up off any partial char.
+    while cut > 0 && (bytes[cut] & 0b1100_0000) == 0b1000_0000 {
+        cut -= 1;
+    }
+    cut
+}
+
 /// Read a NUL-terminated wide string (`wchar_t*`, `u32` on Linux x86_64) and
 /// encode it as UTF-8 (the C.UTF-8 multibyte form), taking at most `limit` WIDE
-/// characters when provided. Used to render `%ls` — whose precision counts wide
-/// characters, not bytes, so truncation must happen before UTF-8 encoding.
+/// characters when provided (callers that need byte-precision pass `None` and
+/// truncate the result with [`utf8_byte_limit`]).
 /// Returns `(utf8_bytes, wide_char_count)`.
 unsafe fn wide_cstr_to_utf8(ptr: *const u32, limit: Option<usize>) -> (Vec<u8>, usize) {
     let mut out = Vec::new();
@@ -3194,7 +3209,27 @@ fn printf_result_to_c_int(total_len: usize) -> c_int {
 /// We interpret each value according to the format spec's conversion and length modifier.
 ///
 /// Returns the formatted byte vector.
+///
+/// Narrow entry point: `%ls` precision/width are BYTE counts (C99 §7.19.6.1).
 pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
+    unsafe { render_printf_impl(fmt, args, max_args, false) }
+}
+
+/// Wide entry point for the `wprintf`/`swprintf` family. The returned bytes are
+/// UTF-8 that the caller decodes back to `wchar_t`; for wide-stream output the
+/// `%ls` precision and field width count WIDE CHARACTERS (C standard wide
+/// printf), not bytes, so the multibyte truncation/padding is computed in
+/// wide-character units here.
+pub(crate) unsafe fn render_wprintf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
+    unsafe { render_printf_impl(fmt, args, max_args, true) }
+}
+
+unsafe fn render_printf_impl(
+    fmt: &[u8],
+    args: *const u64,
+    max_args: usize,
+    wide_output: bool,
+) -> Vec<u8> {
     let segments = parse_format_string(fmt);
     let mut buf = Vec::with_capacity(256);
     let uses_positional = core_positional_printf_arg_plan(&segments).is_some();
@@ -3375,26 +3410,39 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                         } else if matches!(resolved_spec.length, LengthMod::L) {
                             // `%ls`: the argument is a `wchar_t*`, NOT a `char*`.
                             // Reading it narrow yields garbage (a 4-byte wchar is
-                            // seen as one byte + a NUL). Read it as a wide string,
-                            // honour the wide-character precision, UTF-8 encode,
-                            // then apply width with precision already consumed.
-                            let limit = match resolved_spec.precision {
-                                Precision::Fixed(n) => Some(n),
-                                _ => None,
-                            };
-                            let (utf8, wide_count) =
-                                unsafe { wide_cstr_to_utf8(ptr as *const u32, limit) };
+                            // seen as one byte + a NUL).
                             let mut width_spec = resolved_spec;
                             width_spec.precision = Precision::None;
-                            // Field width counts wide characters, but `format_str`
-                            // pads to a BYTE width — inflate it by the extra bytes
-                            // the multibyte encoding added so the padding lands on
-                            // wide-character boundaries.
-                            if let Width::Fixed(w) = width_spec.width {
-                                let extra = utf8.len().saturating_sub(wide_count);
-                                width_spec.width = Width::Fixed(w + extra);
+                            if wide_output {
+                                // Wide printf (wprintf/swprintf): precision and
+                                // field width count WIDE CHARACTERS. Truncate by
+                                // wide-char count before encoding, then inflate the
+                                // byte width by the multibyte overhead so the byte
+                                // padding `format_str` applies lands on wide-column
+                                // boundaries after the caller decodes back to wide.
+                                let limit = match resolved_spec.precision {
+                                    Precision::Fixed(n) => Some(n),
+                                    _ => None,
+                                };
+                                let (utf8, wide_count) =
+                                    unsafe { wide_cstr_to_utf8(ptr as *const u32, limit) };
+                                if let Width::Fixed(w) = width_spec.width {
+                                    let extra = utf8.len().saturating_sub(wide_count);
+                                    width_spec.width = Width::Fixed(w + extra);
+                                }
+                                format_str(&utf8, &width_spec, &mut buf);
+                            } else {
+                                // Narrow printf: precision and field width are BYTE
+                                // counts on the multibyte output (C99 §7.19.6.1).
+                                // Convert the whole string, cap bytes without
+                                // splitting a multibyte char, pad by bytes.
+                                let (mut utf8, _) =
+                                    unsafe { wide_cstr_to_utf8(ptr as *const u32, None) };
+                                if let Precision::Fixed(p) = resolved_spec.precision {
+                                    utf8.truncate(utf8_byte_limit(&utf8, p));
+                                }
+                                format_str(&utf8, &width_spec, &mut buf);
                             }
-                            format_str(&utf8, &width_spec, &mut buf);
                         } else {
                             let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
                             format_str(s_bytes, &resolved_spec, &mut buf);
@@ -3412,12 +3460,14 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             let mut b = [0u8; 4];
                             utf8.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
                         }
-                        // Field width counts wide characters (one here); inflate
-                        // the byte width by the multibyte overhead so padding lands
-                        // on the character boundary. Precision is ignored for %c.
+                        // Precision is ignored for %c. Narrow printf: width is a
+                        // BYTE field — the multibyte char's byte length counts
+                        // toward it (no inflation). Wide printf: width counts WIDE
+                        // characters (one here), so inflate the byte width by the
+                        // multibyte overhead to keep padding on the wide boundary.
                         let mut width_spec = resolved_spec;
                         width_spec.precision = Precision::None;
-                        if let Width::Fixed(w) = width_spec.width {
+                        if wide_output && let Width::Fixed(w) = width_spec.width {
                             let extra = utf8.len().saturating_sub(1);
                             width_spec.width = Width::Fixed(w + extra);
                         }

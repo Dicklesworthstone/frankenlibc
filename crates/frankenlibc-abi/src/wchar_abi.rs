@@ -2962,7 +2962,7 @@ pub unsafe extern "C" fn swprintf(
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
 
     // swprintf: if the output (including NUL) would exceed n, return -1.
     let wide_count = narrow_to_wide_count(&rendered);
@@ -2991,7 +2991,7 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
     let total_len = rendered.len();
 
     if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
@@ -3018,7 +3018,7 @@ pub unsafe extern "C" fn fwprintf(
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
     let total_len = rendered.len();
 
     // Write each byte through the stdio layer to use stream buffering.
@@ -3048,7 +3048,7 @@ pub unsafe extern "C" fn vswprintf(
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
     let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
 
     let wide_count = narrow_to_wide_count(&rendered);
     if wide_count >= n {
@@ -3078,7 +3078,7 @@ pub unsafe extern "C" fn vwprintf(
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
     let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
     let total_len = rendered.len();
 
     if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
@@ -3105,7 +3105,7 @@ pub unsafe extern "C" fn vfwprintf(
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
     let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
     let total_len = rendered.len();
 
     for &byte in &rendered {
