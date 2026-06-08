@@ -321,7 +321,10 @@ fn complex_math_characterize_vs_glibc() {
     // catanh (bd-2g7oyh.245) and catan derived from it: the branch-cut sign flips
     // are gone, the cancellation-free closed form keeps a few ULP across the
     // [1,inf)/(-inf,-1] cuts, and the special values match glibc.
-    for name in ["catanh", "catan"] {
+    // catanh/catan (bd-2g7oyh.245) and the asin family casin/cacos/casinh/cacosh
+    // (bd-2g7oyh.247, via the Hull-Fairgrieve-Tang arcsine/arccosine): the
+    // branch-cut sign flips are gone and the closed forms stay within a few ULP.
+    for name in ["catanh", "catan", "casin", "cacos", "casinh", "cacosh"] {
         let s = stats.iter().find(|s| s.name == name).unwrap();
         assert!(
             s.max_ulp <= 16,
@@ -426,6 +429,61 @@ fn catanh_special_values_vs_glibc() {
     assert!(
         mism.is_empty(),
         "catanh Annex G special-value mismatches:\n{}",
+        mism.join("\n")
+    );
+}
+
+/// Deterministic special-value grid for the asin family casinh/cacosh
+/// (bd-2g7oyh.247) vs host glibc: special outputs (0/inf/nan) bit-exact (Annex
+/// G), finite transcendental components within a few ULP.
+#[test]
+fn casinh_cacosh_special_values_vs_glibc() {
+    let vals = [
+        0.0f64,
+        -0.0,
+        0.5,
+        -0.5,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ];
+    type GridCase = (&'static str, fn(C) -> C, unsafe extern "C" fn(C) -> C);
+    let cases: &[GridCase] = &[
+        ("casinh", |z| unsafe { fl::casinh(z) }, casinh),
+        ("cacosh", |z| unsafe { fl::cacosh(z) }, cacosh),
+    ];
+    let mut mism = Vec::new();
+    for (name, flf, host) in cases {
+        for &re in &vals {
+            for &im in &vals {
+                let z = C { re, im };
+                let a = flf(z);
+                let b = unsafe { host(z) };
+                let cmp = |af: f64, bf: f64| -> bool {
+                    if bf.is_nan() {
+                        af.is_nan()
+                    } else if bf == 0.0 || bf.is_infinite() {
+                        af.to_bits() == bf.to_bits()
+                    } else {
+                        ulp(af, bf) <= 4
+                    }
+                };
+                if !(cmp(a.re, b.re) && cmp(a.im, b.im)) && mism.len() < 40 {
+                    mism.push(format!(
+                        "{name}({re:e}{im:+e}i) fl=({:e},{:e}) glibc=({:e},{:e})",
+                        a.re, a.im, b.re, b.im
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        mism.is_empty(),
+        "casinh/cacosh special-value mismatches:\n{}",
         mism.join("\n")
     );
 }

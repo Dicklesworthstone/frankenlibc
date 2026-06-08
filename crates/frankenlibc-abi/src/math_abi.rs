@@ -2053,6 +2053,149 @@ fn c_atanh(x: f64, y: f64) -> (f64, f64) {
     (re, im)
 }
 
+/// Hull-Fairgrieve-Tang principal-branch complex arcsine for `x, y >= 0` finite.
+/// Returns `(Re, Im)` of `asin(x + iy)` with both >= 0; callers apply the
+/// odd-function signs (`Re` odd in x, `Im` odd in y). This is the algorithm glibc
+/// and Boost use to keep a few ULP across the `[1,inf)` / `(-inf,-1]` cuts where
+/// the naive `-i*clog(iz + csqrt(1-z^2))` flips signs and loses precision.
+#[inline]
+fn hft_asin(x: f64, y: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    const A_CROSSOVER: f64 = 1.5;
+    const B_CROSSOVER: f64 = 0.6417;
+    let xp1 = x + 1.0;
+    let xm1 = x - 1.0;
+    let r = math::hypot(xp1, y); // |z + 1|
+    let s = math::hypot(xm1, y); // |z - 1|
+    let a = 0.5 * (r + s); // >= 1
+    let b = x / a; // = sin(Re), |b| <= 1
+
+    let re = if b <= B_CROSSOVER {
+        math::asin(b)
+    } else {
+        let apx = a + x;
+        if x <= 1.0 {
+            math::atan(x / math::sqrt(0.5 * apx * (y * y / (r + xp1) + (s - xm1))))
+        } else {
+            math::atan(x / (y * math::sqrt(0.5 * (apx / (r + xp1) + apx / (s + xm1)))))
+        }
+    };
+
+    let im = if a <= A_CROSSOVER {
+        // Im = log1p(am1 + sqrt(am1*(a+1))) with am1 = a - 1 formed accurately.
+        let am1 = if x < 1.0 {
+            0.5 * (y * y / (r + xp1) + y * y / (s + (1.0 - x)))
+        } else {
+            0.5 * (y * y / (r + xp1) + (s + xm1))
+        };
+        math::log1p(am1 + math::sqrt(am1 * (a + 1.0)))
+    } else {
+        // = log(a + sqrt(a^2 - 1)); acosh avoids overflow of a^2 for large |z|.
+        math::acosh(a)
+    };
+
+    (re, im)
+}
+
+/// glibc-faithful complex `casinh` (and the base for `casin`, `cacos`, `cacosh`
+/// via the standard identities). Finite values use the HFT arcsine; the inf/nan
+/// corners are the C99 Annex G special values.
+#[inline]
+fn c_asinh(x: f64, y: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+
+    if !x.is_finite() || !y.is_finite() {
+        if x.is_nan() {
+            if y == 0.0 {
+                return (f64::NAN, y); // asinh(NaN + i0) = NaN + i0
+            }
+            if y.is_infinite() {
+                return (f64::copysign(f64::INFINITY, x), f64::NAN); // (+-inf, NaN)
+            }
+            return (f64::NAN, f64::NAN);
+        }
+        if x.is_infinite() {
+            if y.is_nan() {
+                return (x, f64::NAN); // asinh(+-inf + iNaN) = +-inf + iNaN
+            }
+            if y.is_infinite() {
+                return (x, f64::copysign(FRAC_PI_4, y)); // (+-inf, +-pi/4)
+            }
+            return (x, f64::copysign(0.0, y)); // asinh(+-inf + iy) = +-inf + i0
+        }
+        // x finite, y is inf or NaN.
+        if y.is_infinite() {
+            return (f64::copysign(f64::INFINITY, x), f64::copysign(FRAC_PI_2, y));
+        }
+        // y is NaN, x finite: host glibc returns (NaN, NaN) for all x (incl +-0).
+        return (f64::NAN, f64::NAN);
+    }
+    // Finite. asinh(z) = -i*asin(iz); with the HFT arcsine of (|y|, |x|) this is
+    // (copysign(Im, x), copysign(Re, y)).
+    let (hr, hi) = hft_asin(math::fabs(y), math::fabs(x));
+    (f64::copysign(hi, x), f64::copysign(hr, y))
+}
+
+/// Hull-Fairgrieve-Tang principal-branch complex arccosine for `x, y >= 0`
+/// finite. Returns `(Re in [0, pi/2], Im >= 0)`. Same intermediates as
+/// `hft_asin`, but the real part is `acos(b)` / `atan(D/x)` — computed directly
+/// so `cacos` near `z = 1` keeps its tiny real part instead of losing it to the
+/// `pi/2 - asin` cancellation.
+#[inline]
+fn hft_acos(x: f64, y: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    const A_CROSSOVER: f64 = 1.5;
+    const B_CROSSOVER: f64 = 0.6417;
+    let xp1 = x + 1.0;
+    let xm1 = x - 1.0;
+    let r = math::hypot(xp1, y);
+    let s = math::hypot(xm1, y);
+    let a = 0.5 * (r + s);
+    let b = x / a;
+
+    let re = if b <= B_CROSSOVER {
+        math::acos(b)
+    } else {
+        let apx = a + x;
+        if x <= 1.0 {
+            math::atan(math::sqrt(0.5 * apx * (y * y / (r + xp1) + (s - xm1))) / x)
+        } else {
+            math::atan(y * math::sqrt(0.5 * (apx / (r + xp1) + apx / (s + xm1))) / x)
+        }
+    };
+
+    let im = if a <= A_CROSSOVER {
+        let am1 = if x < 1.0 {
+            0.5 * (y * y / (r + xp1) + y * y / (s + (1.0 - x)))
+        } else {
+            0.5 * (y * y / (r + xp1) + (s + xm1))
+        };
+        math::log1p(am1 + math::sqrt(am1 * (a + 1.0)))
+    } else {
+        math::acosh(a)
+    };
+
+    (re, im)
+}
+
+/// glibc-faithful complex `cacos` (and the base for `cacosh`). Finite values use
+/// the HFT arccosine; non-finite inputs have no cancellation, so they fall back
+/// to `pi/2 - casin`. `Re in [0, pi]` (reflected for negative real part), and
+/// `Im` has the opposite sign to `y`.
+#[inline]
+fn c_acos(x: f64, y: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    use std::f64::consts::{FRAC_PI_2, PI};
+    if !x.is_finite() || !y.is_finite() {
+        let (p, q) = c_asinh(-y, x); // casin(z) = (q, -p)
+        return (FRAC_PI_2 - q, p);
+    }
+    let (hr, hi) = hft_acos(math::fabs(x), math::fabs(y));
+    let re = if x.is_sign_negative() { PI - hr } else { hr };
+    (re, f64::copysign(hi, -y))
+}
+
 /// glibc-faithful complex `csinh` (and, via `csin(z) = -i*csinh(iz)`, the base
 /// for the trig variant). The naive `sinh(x)cos(y) + i cosh(x)sin(y)` yields
 /// `inf*0 = NaN` whenever a hyperbolic factor overflows while a trig factor is
@@ -2544,18 +2687,10 @@ pub unsafe extern "C" fn ctanhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn casin(z: CDoubleComplex) -> CDoubleComplex {
-    // asin(z) = -i * log(iz + sqrt(1 - z^2))
-    let z2 = c_mul((z.re, z.im), (z.re, z.im));
-    let one_minus_z2 = (1.0 - z2.0, -z2.1);
-    let sq = c_sqrt(one_minus_z2.0, one_minus_z2.1);
-    let iz = (-z.im, z.re); // i*z
-    let arg = (iz.0 + sq.0, iz.1 + sq.1);
-    let lg = c_log(arg.0, arg.1);
-    // -i * lg = (lg.1, -lg.0)
-    CDoubleComplex {
-        re: lg.1,
-        im: -lg.0,
-    }
+    // asin(z) = -i*asinh(iz); iz = (-im, re), asinh gives (p, q) and
+    // -i*(p + qi) = (q, -p). Inherits c_asinh's branch cuts and special values.
+    let (p, q) = c_asinh(-z.im, z.re);
+    CDoubleComplex { re: q, im: -p }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2580,12 +2715,8 @@ pub unsafe extern "C" fn casinl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cacos(z: CDoubleComplex) -> CDoubleComplex {
-    // acos(z) = pi/2 - asin(z)
-    let as_ = unsafe { casin(z) };
-    CDoubleComplex {
-        re: std::f64::consts::FRAC_PI_2 - as_.re,
-        im: -as_.im,
-    }
+    let (re, im) = c_acos(z.re, z.im);
+    CDoubleComplex { re, im }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2640,12 +2771,7 @@ pub unsafe extern "C" fn catanl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinh(z: CDoubleComplex) -> CDoubleComplex {
-    // asinh(z) = log(z + sqrt(z^2 + 1))
-    let z2 = c_mul((z.re, z.im), (z.re, z.im));
-    let z2p1 = (z2.0 + 1.0, z2.1);
-    let sq = c_sqrt(z2p1.0, z2p1.1);
-    let arg = (z.re + sq.0, z.im + sq.1);
-    let (re, im) = c_log(arg.0, arg.1);
+    let (re, im) = c_asinh(z.re, z.im);
     CDoubleComplex { re, im }
 }
 
@@ -2671,13 +2797,22 @@ pub unsafe extern "C" fn casinhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cacosh(z: CDoubleComplex) -> CDoubleComplex {
-    // acosh(z) = log(z + sqrt(z^2 - 1))
-    let z2 = c_mul((z.re, z.im), (z.re, z.im));
-    let z2m1 = (z2.0 - 1.0, z2.1);
-    let sq = c_sqrt(z2m1.0, z2m1.1);
-    let arg = (z.re + sq.0, z.im + sq.1);
-    let (re, im) = c_log(arg.0, arg.1);
-    CDoubleComplex { re, im }
+    // acosh(z) = +-i*acos(z), with the sign chosen so Re(acosh) >= 0. With
+    // acos(z) = (rc, ic): if Im(acos) is negative take i*acos = (-ic, rc), else
+    // -i*acos = (ic, -rc); either way Re = |ic| >= 0. Use the sign bit (not
+    // `ic <= 0`) so the +-0 imaginary axis routes to the correct branch.
+    let c = unsafe { cacos(z) };
+    if c.im.is_sign_negative() || c.im.is_nan() {
+        CDoubleComplex {
+            re: -c.im,
+            im: c.re,
+        }
+    } else {
+        CDoubleComplex {
+            re: c.im,
+            im: -c.re,
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
