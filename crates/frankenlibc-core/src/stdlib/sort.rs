@@ -4,6 +4,8 @@
 /// the pattern-defeating quicksort (pdqsort) reference threshold.
 const MAX_INSERTION: usize = 20;
 const INSERTION_STACK_SCRATCH: usize = 64;
+const I32_FAST_LANE_MIN: usize = 64;
+const I32_FAST_LANE_MAX: usize = 2048;
 
 /// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
 /// Orson Peters 2014) ported to operate on raw byte chunks through a
@@ -39,6 +41,12 @@ where
         return;
     }
 
+    if width == 4 && (I32_FAST_LANE_MIN..=I32_FAST_LANE_MAX).contains(&num) {
+        if try_qsort_i32_natural_fast_lane(base, num, &compare) {
+            return;
+        }
+    }
+
     // Number of imbalanced partitions tolerated before falling back to
     // heapsort. floor(log2(num)) + 1 keeps the bad-case bound at O(n·log n).
     let limit = usize::BITS - num.leading_zeros();
@@ -49,6 +57,49 @@ where
 #[inline]
 fn elem(buf: &[u8], width: usize, i: usize) -> &[u8] {
     &buf[i * width..(i + 1) * width]
+}
+
+fn try_qsort_i32_natural_fast_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let active_len = num * 4;
+    let active = &mut base[..active_len];
+    let mut original = Vec::with_capacity(num);
+    let mut values = Vec::with_capacity(num);
+    for chunk in active.chunks_exact(4) {
+        let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        original.push(bytes);
+        values.push(i32::from_ne_bytes(bytes));
+    }
+
+    values.sort_unstable();
+    for (chunk, value) in active.chunks_exact_mut(4).zip(&values) {
+        chunk.copy_from_slice(&value.to_ne_bytes());
+    }
+
+    if qsort_i32_candidate_is_ordered(active, compare) {
+        return true;
+    }
+
+    for (chunk, bytes) in active.chunks_exact_mut(4).zip(original) {
+        chunk.copy_from_slice(&bytes);
+    }
+    false
+}
+
+fn qsort_i32_candidate_is_ordered<F>(active: &[u8], compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let mut prev = &active[..4];
+    for current in active[4..].chunks_exact(4) {
+        if compare(prev, current) > 0 {
+            return false;
+        }
+        prev = current;
+    }
+    true
 }
 
 /// pdqsort core. Operates on the element-index range `[lo, hi)` of `buf`.
@@ -656,6 +707,7 @@ fn compare_translated(a: &[u8], b: &[u8], table: Option<&[u8; 256]>) -> core::cm
 #[cfg(test)]
 mod sort_variant_tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     fn cmp_u32_le(a: &[u8], b: &[u8]) -> i32 {
         let av = u32::from_le_bytes(a[..4].try_into().unwrap());
@@ -669,6 +721,27 @@ mod sort_variant_tests {
             out.extend_from_slice(&v.to_le_bytes());
         }
         out
+    }
+
+    fn cmp_i32_ne(a: &[u8], b: &[u8]) -> i32 {
+        let av = i32::from_ne_bytes(a[..4].try_into().unwrap());
+        let bv = i32::from_ne_bytes(b[..4].try_into().unwrap());
+        av.cmp(&bv) as i32
+    }
+
+    fn flatten_i32_ne(values: &[i32]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(values.len() * 4);
+        for &v in values {
+            out.extend_from_slice(&v.to_ne_bytes());
+        }
+        out
+    }
+
+    fn unflatten_i32_ne(bytes: &[u8]) -> Vec<i32> {
+        bytes
+            .chunks_exact(4)
+            .map(|c| i32::from_ne_bytes(c.try_into().unwrap()))
+            .collect()
     }
 
     fn unflatten_u32(bytes: &[u8]) -> Vec<u32> {
@@ -1055,6 +1128,63 @@ mod sort_variant_tests {
     // Pinned from a run that also passed the isomorphism check above (so the
     // bytes are known-correct, not merely self-consistent).
     const GOLDEN_QSORT_CORPUS_FNV1A: u64 = 0x9a03_8cb3_bfb2_d40e;
+
+    fn i32_fast_lane_corpus() -> Vec<Vec<i32>> {
+        let sizes = [1usize, 2, 7, 20, 21, 50, 97, 128, 257];
+        let mut corpus = Vec::new();
+        for &n in &sizes {
+            corpus.push((0..n as i32).map(|v| v - 64).collect());
+            corpus.push((0..n as i32).rev().map(|v| v - 64).collect());
+            corpus.push(vec![0; n]);
+            corpus.push((0..n as i32).rev().map(|v| (v * 17) % 97 - 48).collect());
+            let mut s = 0x9e37_79b9_7f4a_7c15u64 ^ (n as u64);
+            corpus.push((0..n).map(|_| (lcg(&mut s) % 2001) as i32 - 1000).collect());
+        }
+        corpus
+    }
+
+    #[test]
+    fn qsort_i32_fast_lane_preserves_sorted_sha256() {
+        let mut hash = Sha256::new();
+        for input in i32_fast_lane_corpus() {
+            let mut reference = input.clone();
+            reference.sort_unstable();
+
+            let mut buf = flatten_i32_ne(&input);
+            qsort(&mut buf, 4, cmp_i32_ne);
+            let got = unflatten_i32_ne(&buf);
+
+            assert_eq!(got, reference, "i32 qsort diverged on n={}", input.len());
+            hash.update(&buf);
+        }
+
+        #[cfg(target_endian = "little")]
+        let expected = [
+            0xde, 0xea, 0x99, 0x6e, 0x63, 0x1c, 0xd5, 0x92, 0xe8, 0xbc, 0x3d, 0x2b, 0x05, 0xf8,
+            0xc6, 0x8d, 0x6c, 0x08, 0xae, 0x89, 0x42, 0x52, 0x50, 0x79, 0xbe, 0xba, 0x77, 0x3c,
+            0x0d, 0x24, 0x1a, 0x75,
+        ];
+        #[cfg(target_endian = "big")]
+        let expected = [
+            0xe5, 0x91, 0xad, 0x2b, 0xcd, 0x8c, 0x5a, 0x7f, 0x6b, 0xfb, 0x20, 0xdb, 0x38, 0x69,
+            0x7d, 0x93, 0xef, 0x8a, 0x55, 0x57, 0x7b, 0xc0, 0xe0, 0x7c, 0x57, 0x39, 0x20, 0xd7,
+            0x55, 0x77, 0xa5, 0xd7,
+        ];
+        let digest: [u8; 32] = hash.finalize().into();
+        assert_eq!(digest, expected);
+    }
+
+    #[test]
+    fn qsort_i32_fast_lane_restores_and_falls_back_for_non_i32_order() {
+        let input: Vec<i32> = (0..128).map(|v| v - 64).collect();
+        let mut expected = input.clone();
+        expected.sort_unstable_by(|a, b| b.cmp(a));
+
+        let mut buf = flatten_i32_ne(&input);
+        qsort(&mut buf, 4, |a, b| -cmp_i32_ne(a, b));
+
+        assert_eq!(unflatten_i32_ne(&buf), expected);
+    }
 
     #[test]
     fn qsort_handles_wide_elements_isomorphically() {
