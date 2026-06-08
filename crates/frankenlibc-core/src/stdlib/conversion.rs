@@ -545,11 +545,15 @@ pub fn strtoumax(s: &[u8], base: i32) -> (u64, usize) {
 // Wide-character (`wchar_t` / `u32`) integer conversion
 // ---------------------------------------------------------------------------
 
-/// True if `wc` is any Unicode whitespace code point (matches glibc
-/// `iswspace`).
+/// True if `wc` is C-locale whitespace, the leading-space set
+/// `wcstol`/`wcstoul`/`wcstod` skip. glibc's `iswspace` in the C locale (which
+/// these conversions run under) recognizes ONLY the ASCII set
+/// (space + `\t\n\v\f\r`); non-ASCII Unicode spaces (U+00A0, U+2003, U+3000, …)
+/// are NOT skipped, so `char::is_whitespace()` (Unicode-aware) would over-skip
+/// and diverge from glibc.
 #[inline]
 pub fn wide_is_space(wc: u32) -> bool {
-    char::from_u32(wc).is_some_and(|c| c.is_whitespace())
+    matches!(wc, 0x20 | 0x09..=0x0D)
 }
 
 /// Numeric value of an ASCII digit (`'0'-'9'`) or an ASCII letter
@@ -576,7 +580,7 @@ fn wide_is_ascii_hexdigit(wc: u32) -> bool {
 /// `&[u8]`.
 ///
 /// Returns `(value, consumed_wchars, status)`. Semantics:
-///   - Leading whitespace skipped via [`wide_is_space`] (Unicode-aware).
+///   - Leading whitespace skipped via [`wide_is_space`] (ASCII / C-locale).
 ///   - Optional `+` / `-` sign consumed.
 ///   - `base == 0` auto-detects: `0x`/`0X` prefix → 16, leading `0` → 8,
 ///     otherwise 10.
@@ -2063,11 +2067,14 @@ mod tests {
     }
 
     #[test]
-    fn wide_is_space_recognizes_unicode_whitespace() {
-        // U+00A0 NO-BREAK SPACE, U+2000 EN QUAD, U+3000 IDEOGRAPHIC SPACE
-        assert!(wide_is_space(0x00A0));
-        assert!(wide_is_space(0x2000));
-        assert!(wide_is_space(0x3000));
+    fn wide_is_space_rejects_unicode_whitespace() {
+        // C-locale iswspace recognizes ONLY ASCII whitespace, so non-ASCII
+        // Unicode spaces are NOT leading whitespace for wcstol/wcstoul/wcstod
+        // (matching glibc — see bd-2g7oyh.253).
+        assert!(!wide_is_space(0x00A0)); // NO-BREAK SPACE
+        assert!(!wide_is_space(0x2000)); // EN QUAD
+        assert!(!wide_is_space(0x2003)); // EM SPACE
+        assert!(!wide_is_space(0x3000)); // IDEOGRAPHIC SPACE
     }
 
     #[test]
@@ -2155,8 +2162,15 @@ mod tests {
     }
 
     #[test]
-    fn wcstol_skips_unicode_whitespace() {
+    fn wcstol_does_not_skip_unicode_whitespace() {
+        // glibc C-locale iswspace is ASCII-only, so a leading non-ASCII space is
+        // a non-digit at position 0: no conversion (bd-2g7oyh.253).
         let s = ws("\u{00A0}\u{2000}42");
+        let (val, consumed, _) = wcstol_impl(&s, 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+        // ASCII leading whitespace is still skipped.
+        let s = ws(" \t42");
         let (val, _, _) = wcstol_impl(&s, 10);
         assert_eq!(val, 42);
     }
