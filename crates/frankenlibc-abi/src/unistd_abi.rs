@@ -6811,6 +6811,12 @@ pub unsafe extern "C" fn wordexp(
 
     for &b in input_bytes {
         if escaped {
+            // Preserve the backslash through tokenisation: it is only consumed
+            // here for word-splitting/quote decisions, but the expansion phase
+            // still needs it so an escaped `\$`/`` \` `` stays literal rather than
+            // triggering parameter/command expansion (bd-2g7oyh: glibc keeps the
+            // escape; fl previously dropped `\` and then expanded the bare `$`).
+            current_word.push('\\');
             current_word.push(b as char);
             escaped = false;
             continue;
