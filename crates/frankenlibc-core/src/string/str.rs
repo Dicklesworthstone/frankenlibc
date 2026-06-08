@@ -125,6 +125,49 @@ fn block_has_nul_512(chunk: &[u8]) -> bool {
 }
 
 #[inline(always)]
+fn copy_nul_free_block_512(dest: &mut [u8], src: &[u8]) -> bool {
+    debug_assert_eq!(dest.len(), STRLEN_NUL_BLOCK);
+    debug_assert_eq!(src.len(), STRLEN_NUL_BLOCK);
+    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[0..STRLEN_SIMD_LANES]);
+    let v1 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
+    );
+    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4],
+    );
+    let v4 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5],
+    );
+    let v5 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6],
+    );
+    let v6 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &src[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7],
+    );
+    let v7 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
+    let folded = v0
+        .simd_min(v1)
+        .simd_min(v2.simd_min(v3))
+        .simd_min(v4.simd_min(v5).simd_min(v6.simd_min(v7)));
+    if folded.simd_eq(Simd::splat(0)).any() {
+        return true;
+    }
+
+    v0.copy_to_slice(&mut dest[0..STRLEN_SIMD_LANES]);
+    v1.copy_to_slice(&mut dest[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    v2.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3]);
+    v3.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4]);
+    v4.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5]);
+    v5.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6]);
+    v6.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7]);
+    v7.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
+    false
+}
+
+#[inline(always)]
 fn has_non_byte_simd_64(chunk: &[u8], byte: u8) -> bool {
     debug_assert_eq!(chunk.len(), STRLEN_SIMD_LANES);
     !Simd::<u8, STRLEN_SIMD_LANES>::from_slice(chunk)
@@ -499,12 +542,15 @@ pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
         if src.len() >= STRLEN_NUL_BLOCK {
             let mut i = 0;
             while i + STRLEN_NUL_BLOCK <= src.len() {
-                let chunk = &src[i..i + STRLEN_NUL_BLOCK];
-                if block_has_nul_512(chunk) {
+                let block_start = i;
+                if copy_nul_free_block_512(
+                    &mut dest[i..i + STRLEN_NUL_BLOCK],
+                    &src[i..i + STRLEN_NUL_BLOCK],
+                ) {
                     while i < src.len() {
                         if src[i] == 0 {
                             let copied = i + 1;
-                            dest[..copied].copy_from_slice(&src[..copied]);
+                            dest[block_start..copied].copy_from_slice(&src[block_start..copied]);
                             return copied;
                         }
                         i += 1;
@@ -514,9 +560,10 @@ pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
             }
 
             while i < src.len() {
-                if src[i] == 0 {
+                let byte = src[i];
+                dest[i] = byte;
+                if byte == 0 {
                     let copied = i + 1;
-                    dest[..copied].copy_from_slice(&src[..copied]);
                     return copied;
                 }
                 i += 1;
@@ -1894,6 +1941,20 @@ mod tests {
         assert_eq!(copied, 3);
         assert_eq!(&dst[..3], b"hi\0");
         assert_eq!(dst[3], 0xAA);
+    }
+
+    #[test]
+    fn test_strcpy_fused_path_preserves_tail_after_early_nul() {
+        let mut src = vec![b'a'; STRLEN_NUL_BLOCK * 2 + 1];
+        src[STRLEN_NUL_BLOCK + 17] = 0;
+        *src.last_mut().unwrap() = 0;
+        let mut dst = vec![0xA5; src.len()];
+
+        let copied = strcpy(&mut dst, &src);
+
+        assert_eq!(copied, STRLEN_NUL_BLOCK + 18);
+        assert_eq!(&dst[..copied], &src[..copied]);
+        assert_eq!(dst[copied], 0xA5);
     }
 
     #[test]
