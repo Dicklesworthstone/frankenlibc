@@ -11,9 +11,11 @@
 //! so `tm_wday`/`tm_yday`/`tm_gmtoff`/`tm_zone` agree with the date) over a wide
 //! date range, comparing the rendered bytes and return value exactly.
 //!
-//! Scope: BARE specifiers only. The GNU field-width / `- _ 0 ^ #` flags and the
-//! `E`/`O` locale modifiers are a separate, multi-faceted gap (fl emits literal
-//! `%OW`, ignores width on string specifiers, etc.) tracked in bd-hfoqbf.
+//! Scope: every specifier bare, PLUS the GNU `- _ 0 ^ #` flags + field width on
+//! non-composite specifiers and the `E`/`O` locale modifiers on all (bd-hfoqbf).
+//! Composite specifiers (`c r D F R T x X`) take an OUTER field width/flags that
+//! fl does not yet propagate to their sub-fields, so flags/width are not applied
+//! to them here (tracked as the remaining piece of bd-hfoqbf).
 
 use std::ffi::{CString, c_char, c_int};
 
@@ -43,14 +45,37 @@ impl Lcg {
 
 // Every glibc strftime conversion specifier (sans %% which we add as a literal).
 const SPECS: &[u8] = b"aAbBcCdDeFgGhHIjklmMnpPrRsStTuUVwWxXyYzZ";
+// Specifiers excluded from flag/width testing: composites (outer width not yet
+// propagated to sub-fields) plus %z/%Z, which glibc formats as a quirky NUMBER
+// while fl is UTC-simplified to a fixed "+0000"/"GMT" string (out of scope).
+const NO_FLAGS: &[u8] = b"crDFRTxXzZ";
+const FLAGS: &[u8] = b"-_0^#";
 
 fn gen_format(r: &mut Lcg) -> Vec<u8> {
     let mut f = Vec::new();
     if r.below(3) == 0 {
         f.extend_from_slice(b"[");
     }
+    let spec = SPECS[r.below(SPECS.len())];
     f.push(b'%');
-    f.push(SPECS[r.below(SPECS.len())]);
+    let mut had_flag_or_width = false;
+    if !NO_FLAGS.contains(&spec) {
+        if r.below(2) == 0 {
+            f.push(FLAGS[r.below(FLAGS.len())]);
+            had_flag_or_width = true;
+        }
+        if r.below(2) == 0 {
+            f.extend_from_slice(r.below(13).to_string().as_bytes()); // width 0..12
+            had_flag_or_width = true;
+        }
+    }
+    // E/O modifier only WITHOUT flags/width: glibc's reject path for an E/O
+    // combination that also carries flags/width is a separate quirk (it re-emits
+    // a stray pad char), out of scope here.
+    if !had_flag_or_width && r.below(3) == 0 {
+        f.push(if r.below(2) == 0 { b'E' } else { b'O' });
+    }
+    f.push(spec);
     if r.below(3) == 0 {
         f.extend_from_slice(b"]");
     }

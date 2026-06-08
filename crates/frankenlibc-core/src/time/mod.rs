@@ -359,6 +359,20 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         None,
     }
 
+    // GNU case-transform flags: `^` upper-cases, `#` toggles to the opposite of
+    // the field's conventional case (names -> upper, AM/PM & zone -> lower).
+    #[derive(Clone, Copy, PartialEq)]
+    enum CaseFlag {
+        None,
+        Upper,
+        Swap,
+    }
+
+    // glibc accepts the `E`/`O` locale modifier only on a per-specifier subset
+    // (probed from host glibc); elsewhere the whole directive renders literally.
+    const E_MODIFIABLE: &[u8] = b"cCnpPrRstTuxXyYzZ";
+    const O_MODIFIABLE: &[u8] = b"bBCdegGhHIjklmMnpPrRsStTuUVwWyzZ";
+
     // Helper: write decimal with specified padding style and width
     macro_rules! push_dec_pad {
         ($val:expr, $width:expr, $pad:expr) => {{
@@ -444,6 +458,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         // Track start position so we can output the literal if incomplete.
         let spec_start = i - 1; // points to the '%'
         let mut pad_override: Option<Pad> = None;
+        let mut case_flag = CaseFlag::None;
         loop {
             if i >= fmt.len() {
                 break;
@@ -459,6 +474,14 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 }
                 b'0' => {
                     pad_override = Some(Pad::Zero);
+                    i += 1;
+                }
+                b'^' => {
+                    case_flag = CaseFlag::Upper;
+                    i += 1;
+                }
+                b'#' => {
+                    case_flag = CaseFlag::Swap;
                     i += 1;
                 }
                 _ => break,
@@ -487,6 +510,29 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             break;
         }
 
+        // Optional `E`/`O` locale modifier. In the C locale it is a no-op on the
+        // specifiers glibc accepts it on; for the rest glibc renders the entire
+        // directive (flags/width/modifier/spec) literally, so mirror that.
+        if i < fmt.len() && (fmt[i] == b'E' || fmt[i] == b'O') {
+            let modifier = fmt[i];
+            i += 1;
+            if i >= fmt.len() {
+                for &b in &fmt[spec_start..] {
+                    push!(b);
+                }
+                break;
+            }
+            let table = if modifier == b'E' { E_MODIFIABLE } else { O_MODIFIABLE };
+            if !table.contains(&fmt[i]) {
+                // Rejected combination: emit the literal `%…<mod><spec>`.
+                for &b in &fmt[spec_start..=i] {
+                    push!(b);
+                }
+                i += 1;
+                continue;
+            }
+        }
+
         // Macro to apply the override or use default padding
         macro_rules! push_dec_mod {
             ($val:expr, $width:expr, $default:expr) => {{
@@ -502,22 +548,59 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }};
         }
 
+        // Emit a string specifier with the GNU case transform + field width.
+        // `hash_upper` selects `#`'s direction: names upper-case, AM/PM & zone
+        // lower-case. Width right-justifies, padding with spaces (or zeros only
+        // when the explicit `0` flag is present); no padding once wide enough.
+        macro_rules! push_str_field {
+            ($bytes:expr, $hash_upper:expr) => {{
+                let src: &[u8] = $bytes;
+                let fits = width_override.map_or(true, |w| src.len() >= w);
+                if case_flag == CaseFlag::None && fits {
+                    push_str!(src);
+                } else {
+                    let mut tmp: Vec<u8> = src.to_vec();
+                    match case_flag {
+                        CaseFlag::Upper => tmp.make_ascii_uppercase(),
+                        CaseFlag::Swap => {
+                            if $hash_upper {
+                                tmp.make_ascii_uppercase();
+                            } else {
+                                tmp.make_ascii_lowercase();
+                            }
+                        }
+                        CaseFlag::None => {}
+                    }
+                    if let Some(w) = width_override {
+                        if tmp.len() < w {
+                            let padc =
+                                if matches!(pad_override, Some(Pad::Zero)) { b'0' } else { b' ' };
+                            for _ in 0..(w - tmp.len()) {
+                                push!(padc);
+                            }
+                        }
+                    }
+                    push_str!(&tmp);
+                }
+            }};
+        }
+
         match fmt[i] {
             b'a' => {
                 let wday = bd.tm_wday.rem_euclid(7) as usize;
-                push_str!(WDAY_NAMES[wday]);
+                push_str_field!(WDAY_NAMES[wday], true);
             }
             b'A' => {
                 let wday = bd.tm_wday.rem_euclid(7) as usize;
-                push_str!(WDAY_FULL_NAMES[wday].as_bytes());
+                push_str_field!(WDAY_FULL_NAMES[wday].as_bytes(), true);
             }
             b'b' | b'h' => {
                 let mon = bd.tm_mon.rem_euclid(12) as usize;
-                push_str!(MON_NAMES[mon]);
+                push_str_field!(MON_NAMES[mon], true);
             }
             b'B' => {
                 let mon = bd.tm_mon.rem_euclid(12) as usize;
-                push_str!(MON_FULL_NAMES[mon].as_bytes());
+                push_str_field!(MON_FULL_NAMES[mon].as_bytes(), true);
             }
             b'c' => {
                 // Preferred date/time: glibc/POSIX C-locale format is
@@ -548,7 +631,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 // -101 → -2; this keeps %C consistent with %y (which uses a
                 // positive 0–99 modulus) so %C%y reconstructs negative years.
                 let century = (bd.tm_year as i64 + 1900).div_euclid(100);
-                push_dec!(century, 0);
+                push_dec_mod!(century, 0, Pad::Zero);
             }
             b'd' => {
                 push_dec_mod!(bd.tm_mday, 2, Pad::Zero);
@@ -574,11 +657,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             b'G' => {
                 let (iso_y, _) = iso_week(bd);
-                push_dec!(iso_y, 0);
+                push_dec_mod!(iso_y, 0, Pad::Zero);
             }
             b'g' => {
                 let (iso_y, _) = iso_week(bd);
-                push_dec!(iso_y.rem_euclid(100), 2);
+                push_dec_mod!(iso_y.rem_euclid(100), 2, Pad::Zero);
             }
             b'H' => {
                 push_dec_mod!(bd.tm_hour, 2, Pad::Zero);
@@ -604,21 +687,15 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_mod!(bd.tm_min, 2, Pad::Zero);
             }
             b'n' => {
-                push!(b'\n');
+                push_str_field!(b"\n", false);
             }
             b'p' => {
-                if bd.tm_hour < 12 {
-                    push_str!(b"AM");
-                } else {
-                    push_str!(b"PM");
-                }
+                let s: &[u8] = if bd.tm_hour < 12 { b"AM" } else { b"PM" };
+                push_str_field!(s, false);
             }
             b'P' => {
-                if bd.tm_hour < 12 {
-                    push_str!(b"am");
-                } else {
-                    push_str!(b"pm");
-                }
+                let s: &[u8] = if bd.tm_hour < 12 { b"am" } else { b"pm" };
+                push_str_field!(s, false);
             }
             b'r' => {
                 // %I:%M:%S %p
@@ -644,13 +721,13 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             b's' => {
                 // Seconds since epoch
                 let epoch = broken_down_to_epoch(bd);
-                push_dec!(epoch, 1);
+                push_dec_mod!(epoch, 1, Pad::Zero);
             }
             b'S' => {
                 push_dec_mod!(bd.tm_sec, 2, Pad::Zero);
             }
             b't' => {
-                push!(b'\t');
+                push_str_field!(b"\t", false);
             }
             b'T' => {
                 // %H:%M:%S
@@ -663,7 +740,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             b'u' => {
                 // ISO weekday: Monday=1 .. Sunday=7
                 let u = if bd.tm_wday == 0 { 7 } else { bd.tm_wday };
-                push_dec!(u, 1);
+                push_dec_mod!(u, 1, Pad::Zero);
             }
             b'U' => {
                 // Sunday-based week number. Widen to i64 to absorb
@@ -677,7 +754,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_mod!(w, 2, Pad::Zero);
             }
             b'w' => {
-                push_dec!(bd.tm_wday, 1);
+                push_dec_mod!(bd.tm_wday, 1, Pad::Zero);
             }
             b'W' => {
                 // Monday-based week number. Widen to i64 to absorb
@@ -717,13 +794,13 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             b'z' => {
                 // UTC offset: +0000 (we only support UTC for now)
-                push_str!(b"+0000");
+                push_str_field!(b"+0000", false);
             }
             b'Z' => {
                 // Timezone name. glibc's gmtime() sets tm_zone = "GMT", and
                 // strftime("%Z") of a gmtime-derived broken-down time prints
                 // "GMT" — not "UTC". Match that for ABI compatibility.
-                push_str!(b"GMT");
+                push_str_field!(b"GMT", false);
             }
             b'%' => {
                 push!(b'%');
