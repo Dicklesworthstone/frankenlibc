@@ -877,12 +877,74 @@ fn contiguous_set_range(set: &[u8], table: &[bool; 256]) -> Option<(u8, u8)> {
 
 #[inline(always)]
 fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) -> usize {
+    // Members are exactly the contiguous byte range `[lo, hi]` — the caller
+    // (`contiguous_set_range`) proved `table[lo..=hi]` are all real members — so
+    // membership is the branchless unsigned-subtract range test
+    // `(b - lo) <= (hi - lo)`. We fold four 64-lane panels per 256-byte block
+    // into ONE horizontal reduction (mirroring `block_has_nul_256` for strlen)
+    // instead of reducing every 32-byte chunk; the per-block reduction was the
+    // throughput bottleneck on long spans (bd-2g7oyh strspn 1.74x→~parity).
+    //
+    // The exact stop index inside a flagged block is always resolved by the
+    // scalar `table` scan over the REAL set, so the folded SIMD only ever
+    // fast-forwards blocks it has proven contain no stop — the returned length
+    // is identical to the scalar reference. The accept/reject set comes from a C
+    // string, so it never contains NUL and `lo >= 1`; thus NUL has
+    // `(0 - lo) wrapping = 256 - lo > hi - lo`, i.e. it is a non-member that the
+    // strspn `max > range` test catches, and the strcspn path checks NUL
+    // explicitly.
+    // Native 32-byte (AVX2-width) panels: 64-lane ops lower to 2× ymm with extra
+    // unsigned-compare fixups and measured slower here. Eight panels per 256-byte
+    // block share ONE horizontal reduction.
+    const PANEL: usize = SIMD_LANES; // 32
+    const PANELS: usize = 8;
+    const BLOCK: usize = PANEL * PANELS; // 256
+    let range = hi - lo; // hi >= lo by construction
+    let lo_v = Simd::<u8, PANEL>::splat(lo);
+    let range_v = Simd::<u8, PANEL>::splat(range);
+    let zero_v = Simd::<u8, PANEL>::splat(0);
+    let mut base = 0usize;
+
+    while base + BLOCK <= s.len() {
+        let block = &s[base..base + BLOCK];
+        let stop = if stop_in_set {
+            // strcspn: stop on a member (`t <= range`) OR a NUL. `min` of the
+            // shifted lanes is `<= range` iff some lane is a member; `min` of the
+            // raw lanes is `0` iff some lane is NUL.
+            let mut t = Simd::<u8, PANEL>::splat(u8::MAX);
+            let mut raw = Simd::<u8, PANEL>::splat(u8::MAX);
+            for k in 0..PANELS {
+                let p = Simd::<u8, PANEL>::from_slice(&block[k * PANEL..(k + 1) * PANEL]);
+                t = t.simd_min(p - lo_v);
+                raw = raw.simd_min(p);
+            }
+            t.simd_le(range_v).any() || raw.simd_eq(zero_v).any()
+        } else {
+            // strspn: stop on a non-member (`t > range`); NUL is included since
+            // `lo >= 1`. `max` of the shifted lanes is `> range` iff some lane is
+            // a non-member.
+            let mut t = Simd::<u8, PANEL>::splat(0);
+            for k in 0..PANELS {
+                let p = Simd::<u8, PANEL>::from_slice(&block[k * PANEL..(k + 1) * PANEL]);
+                t = t.simd_max(p - lo_v);
+            }
+            t.simd_gt(range_v).any()
+        };
+        if stop {
+            for (j, &byte) in block.iter().enumerate() {
+                if byte == 0 || (table[byte as usize] == stop_in_set) {
+                    return base + j;
+                }
+            }
+        }
+        base += BLOCK;
+    }
+
+    // Tail (< 256 bytes): 32-lane chunks, then scalar — same membership logic.
     let lower = Simd::<u8, SIMD_LANES>::splat(lo);
     let upper = Simd::<u8, SIMD_LANES>::splat(hi);
     let zero = Simd::<u8, SIMD_LANES>::splat(0);
-    let mut chunks = s.chunks_exact(SIMD_LANES);
-    let mut base = 0usize;
-
+    let mut chunks = s[base..].chunks_exact(SIMD_LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let member = lanes.simd_ge(lower) & lanes.simd_le(upper);
