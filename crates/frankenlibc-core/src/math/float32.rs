@@ -154,18 +154,18 @@ fn powf_medium_fast_path(base: f32, exponent: f32) -> Option<f32> {
         if exponent.to_bits() == POWF_PROFILE_EXP_1_337_BITS {
             let x = base as f64;
             let mut y = POWF_1_337_COEFFS[12];
-            y = y * x + POWF_1_337_COEFFS[11];
-            y = y * x + POWF_1_337_COEFFS[10];
-            y = y * x + POWF_1_337_COEFFS[9];
-            y = y * x + POWF_1_337_COEFFS[8];
-            y = y * x + POWF_1_337_COEFFS[7];
-            y = y * x + POWF_1_337_COEFFS[6];
-            y = y * x + POWF_1_337_COEFFS[5];
-            y = y * x + POWF_1_337_COEFFS[4];
-            y = y * x + POWF_1_337_COEFFS[3];
-            y = y * x + POWF_1_337_COEFFS[2];
-            y = y * x + POWF_1_337_COEFFS[1];
-            y = y * x + POWF_1_337_COEFFS[0];
+            y = y.mul_add(x, POWF_1_337_COEFFS[11]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[10]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[9]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[8]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[7]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[6]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[5]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[4]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[3]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[2]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[1]);
+            y = y.mul_add(x, POWF_1_337_COEFFS[0]);
             return Some(y as f32);
         }
         Some(libm::exp2f(exponent * libm::log2f(base)))
