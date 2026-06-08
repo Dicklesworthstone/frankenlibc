@@ -4985,13 +4985,35 @@ pub(crate) fn scanf_core(
     input: &[u8],
     format: *const c_char,
 ) -> Option<(ScanResult, Vec<ScanDirective>)> {
+    scanf_core_impl(input, format, false)
+}
+
+/// WIDE-stream variant for the `swscanf`/`fwscanf` family: `input` is the wide
+/// input re-encoded as UTF-8, and narrow `%s`/`%c`/`%[` field widths count WIDE
+/// characters (not bytes), matching the C wide-scanf semantics.
+pub(crate) fn scanf_core_wide(
+    input: &[u8],
+    format: *const c_char,
+) -> Option<(ScanResult, Vec<ScanDirective>)> {
+    scanf_core_impl(input, format, true)
+}
+
+fn scanf_core_impl(
+    input: &[u8],
+    format: *const c_char,
+    wide_input: bool,
+) -> Option<(ScanResult, Vec<ScanDirective>)> {
     let (fmt_len, fmt_terminated) = unsafe { scan_c_str_len(format, None) };
     if !fmt_terminated {
         return None;
     }
     let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
     let directives = parse_scanf_format(fmt_bytes);
-    let result = scan_input(input, &directives);
+    let result = if wide_input {
+        frankenlibc_core::stdio::scanf::scan_input_wide(input, &directives)
+    } else {
+        scan_input(input, &directives)
+    };
     Some((result, directives))
 }
 

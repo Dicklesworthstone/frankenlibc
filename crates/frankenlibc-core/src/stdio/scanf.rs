@@ -257,8 +257,13 @@ impl ScanSpec {
         true
     }
 
-    fn scan_at(&self, input: &[u8], pos: usize) -> Option<(Option<ScanValue>, usize)> {
-        self.scan_operation_kind()?.scan(input, pos, self)
+    fn scan_at(
+        &self,
+        input: &[u8],
+        pos: usize,
+        wide_input: bool,
+    ) -> Option<(Option<ScanValue>, usize)> {
+        self.scan_operation_kind()?.scan(input, pos, self, wide_input)
     }
 }
 
@@ -275,12 +280,18 @@ impl IntScanKind {
 }
 
 impl ScanOperationKind {
-    fn scan(self, input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
+    fn scan(
+        self,
+        input: &[u8],
+        pos: usize,
+        spec: &ScanSpec,
+        wide_input: bool,
+    ) -> Option<(Option<ScanValue>, usize)> {
         match self {
             ScanOperationKind::Int(kind) => kind.scan(input, pos, spec),
             ScanOperationKind::Float => scan_float(input, pos, spec),
-            ScanOperationKind::Character => scan_char(input, pos, spec),
-            ScanOperationKind::String => scan_string(input, pos, spec),
+            ScanOperationKind::Character => scan_char(input, pos, spec, wide_input),
+            ScanOperationKind::String => scan_string(input, pos, spec, wide_input),
             ScanOperationKind::Scanset => scan_scanset(input, pos, spec),
             ScanOperationKind::CharsConsumed => Some((Some(ScanValue::CharsConsumed(pos)), pos)),
             ScanOperationKind::Pointer => scan_pointer(input, pos, spec),
@@ -495,7 +506,21 @@ pub struct ScanResult {
 }
 
 /// Scan input according to parsed directives.
+/// Run the parsed directives against a NARROW (byte) input stream (sscanf et al.):
+/// `%s`/`%c`/`%[` field widths count bytes.
 pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
+    scan_input_impl(input, directives, false)
+}
+
+/// Run the parsed directives against a WIDE input stream (swscanf et al.), passed
+/// in here as its UTF-8 multibyte encoding. `%s`/`%c` field widths count WIDE
+/// characters (whole UTF-8 sequences), matching the C wide-scanf semantics, even
+/// without an `l` length modifier.
+pub fn scan_input_wide(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
+    scan_input_impl(input, directives, true)
+}
+
+fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool) -> ScanResult {
     let mut pos = 0;
     let mut values = Vec::new();
     let mut count: i32 = 0;
@@ -529,7 +554,7 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
                 pos += 1;
             }
             ScanDirective::Spec(spec) => {
-                let result = spec.scan_at(input, pos);
+                let result = spec.scan_at(input, pos, wide_input);
                 match result {
                     None => {
                         // Matching failure or input exhaustion.
@@ -1214,23 +1239,34 @@ fn utf8_seq_len(b: u8) -> usize {
 }
 
 /// Scan character(s) (%c). No whitespace skip. Width = number of chars.
-fn scan_char(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
+fn scan_char(
+    input: &[u8],
+    pos: usize,
+    spec: &ScanSpec,
+    wide_input: bool,
+) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     let n = spec.width.unwrap_or(1);
-    if matches!(spec.length, LengthMod::L) {
-        // `%lc`: the width counts WIDE characters, so read `n` complete UTF-8
-        // sequences from the multibyte input (the caller decodes them back to
-        // wchar_t). Reading `n` raw bytes would split a multibyte character.
+    // `%lc` ALWAYS counts wide characters; for a WIDE scanf stream (swscanf) the
+    // input is multibyte-encoded wide text, so even a narrow `%c` width counts
+    // WIDE characters — read `n` complete UTF-8 sequences either way so a width
+    // never splits a multibyte character.
+    if wide_input || matches!(spec.length, LengthMod::L) {
+        // Read UP TO `n` complete UTF-8 sequences. Like glibc, a `%Nc` whose
+        // width exceeds the available input reads what IS there and still
+        // succeeds; only a total absence of input is a matching failure.
         let mut end = pos;
-        for _ in 0..n {
-            if end >= input.len() {
-                return None;
-            }
+        let mut read = 0usize;
+        while read < n && end < input.len() {
             let next = end.checked_add(utf8_seq_len(input[end]))?;
             if next > input.len() {
-                return None;
+                break; // incomplete trailing sequence — stop here
             }
             end = next;
+            read += 1;
+        }
+        if read == 0 {
+            return None;
         }
         return Some((Some(ScanValue::Char(input[pos..end].to_vec())), end));
     }
@@ -1246,7 +1282,12 @@ fn scan_char(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanVa
 }
 
 /// Scan a string (%s). Skips whitespace, then reads non-whitespace.
-fn scan_string(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
+fn scan_string(
+    input: &[u8],
+    pos: usize,
+    spec: &ScanSpec,
+    wide_input: bool,
+) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
         return None;
@@ -1254,8 +1295,10 @@ fn scan_string(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Scan
 
     let max_chars = effective_width(spec, usize::MAX);
     // `%ls` width counts WIDE characters; consume whole UTF-8 sequences so a
-    // bounded `%Nls` never splits a multibyte character. `%s` counts bytes.
-    let wide = matches!(spec.length, LengthMod::L);
+    // bounded `%Nls` never splits a multibyte character. A narrow `%s` counts
+    // bytes for a narrow stream (sscanf) but WIDE characters for a wide stream
+    // (swscanf), whose input is multibyte-encoded wide text.
+    let wide = wide_input || matches!(spec.length, LengthMod::L);
     let mut i = pos;
     let mut chars_read = 0usize;
     let mut buf = Vec::new();
