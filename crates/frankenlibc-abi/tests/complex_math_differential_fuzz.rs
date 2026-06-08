@@ -297,6 +297,27 @@ fn complex_math_characterize_vs_glibc() {
             s.worst
         );
     }
+    // csinh/ccosh (bd-2g7oyh.241): the inf*0 -> NaN special-value failures are
+    // gone (8800+ each -> a small residual) and signed zeros are exact. The
+    // residual category mismatches are the narrow |Re z| ~ 710 overflow band
+    // where sinh/cosh overflow to inf but glibc's scaled exp keeps a finite
+    // value (a separate, exotic-input gap left for follow-up).
+    for name in ["csinh", "ccosh"] {
+        let s = stats.iter().find(|s| s.name == name).unwrap();
+        assert!(
+            s.max_ulp <= 16,
+            "{name} regressed: max_ulp={} (>16): {}",
+            s.max_ulp,
+            s.worst
+        );
+        assert!(
+            s.cat_mismatch <= 100,
+            "{name} category mismatches={} (>100, expected only the overflow band): {}",
+            s.cat_mismatch,
+            s.worst
+        );
+        assert_eq!(s.zero_sign, 0, "{name} signed-zero mismatch: {}", s.worst);
+    }
 }
 
 /// Deterministic C99 Annex G special-value contract for csqrt, checked
@@ -337,6 +358,53 @@ fn csqrt_annex_g_special_values_vs_glibc() {
     assert!(
         mism.is_empty(),
         "csqrt Annex G special-value mismatches:\n{}",
+        mism.join("\n")
+    );
+}
+
+/// Deterministic special-value grid for csinh/ccosh (bd-2g7oyh.241), bit-exact
+/// vs host glibc. Covers signed zero, large finite (overflowing) reals, and the
+/// inf/nan combinations where the naive `sinh*cos + i cosh*sin` formula yields
+/// `inf*0 = NaN`.
+#[test]
+fn csinh_ccosh_special_values_vs_glibc() {
+    let vals = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        1.0e6,
+        -1.0e6,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ];
+    type GridCase = (&'static str, fn(C) -> C, unsafe extern "C" fn(C) -> C);
+    let cases: &[GridCase] = &[
+        ("csinh", |z| unsafe { fl::csinh(z) }, csinh),
+        ("ccosh", |z| unsafe { fl::ccosh(z) }, ccosh),
+    ];
+    let mut mism = Vec::new();
+    for (name, flf, host) in cases {
+        for &re in &vals {
+            for &im in &vals {
+                let z = C { re, im };
+                let a = flf(z);
+                let b = unsafe { host(z) };
+                let re_ok = a.re.to_bits() == b.re.to_bits() || (a.re.is_nan() && b.re.is_nan());
+                let im_ok = a.im.to_bits() == b.im.to_bits() || (a.im.is_nan() && b.im.is_nan());
+                if !(re_ok && im_ok) && mism.len() < 40 {
+                    mism.push(format!(
+                        "{name}({re:e}{im:+e}i) fl=({:e},{:e}) glibc=({:e},{:e})",
+                        a.re, a.im, b.re, b.im
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        mism.is_empty(),
+        "csinh/ccosh special-value mismatches:\n{}",
         mism.join("\n")
     );
 }

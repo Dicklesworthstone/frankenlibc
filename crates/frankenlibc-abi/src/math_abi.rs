@@ -1911,6 +1911,88 @@ fn c_tanh(rx: f64, ix: f64) -> (f64, f64) {
     (sinhrx * coshrx / den, sinix * cosix / den)
 }
 
+/// glibc-faithful complex `csinh` (and, via `csin(z) = -i*csinh(iz)`, the base
+/// for the trig variant). The naive `sinh(x)cos(y) + i cosh(x)sin(y)` yields
+/// `inf*0 = NaN` whenever a hyperbolic factor overflows while a trig factor is
+/// exactly zero (notably `y == 0`); this adds the C99 Annex G special values.
+#[inline]
+fn c_sinh(rx: f64, ix: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    if rx.is_finite() {
+        if ix.is_finite() {
+            if ix == 0.0 {
+                // csinh(x + i*0) = sinh(x) + i*0 (imag keeps the sign of iy).
+                return (math::sinh(rx), ix);
+            }
+            return (math::sinh(rx) * math::cos(ix), math::cosh(rx) * math::sin(ix));
+        }
+        // ix is inf or NaN, rx finite.
+        if rx == 0.0 {
+            // csinh(+-0 + i*(inf|NaN)) = +-0 + i*NaN.
+            return (rx, f64::NAN);
+        }
+        return (f64::NAN, f64::NAN);
+    }
+    if rx.is_infinite() {
+        if ix == 0.0 {
+            // csinh(+-inf + i*0) = +-inf + i*0.
+            return (rx, ix);
+        }
+        if ix.is_finite() {
+            // csinh(+-inf + iy) = +-inf*cos y + i*+-inf*sin y.
+            let re = f64::copysign(f64::INFINITY, math::cos(ix));
+            let im = f64::copysign(f64::INFINITY, math::sin(ix));
+            return (f64::copysign(re, rx), im);
+        }
+        // csinh(+-inf + i*(inf|NaN)) = inf + i*NaN (glibc fixes the sign +inf).
+        return (f64::INFINITY, f64::NAN);
+    }
+    // rx is NaN.
+    (f64::NAN, if ix == 0.0 { ix } else { f64::NAN })
+}
+
+/// glibc-faithful complex `ccosh` (base for `ccos(z) = ccosh(iz)`). Same
+/// `inf*0 = NaN` hazard as `csinh`; cosh is even in x and sinh is odd, so the
+/// imaginary zero at `y == 0` carries `sign(x) ^ sign(iy)`.
+#[inline]
+fn c_cosh(rx: f64, ix: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    if rx.is_finite() {
+        if ix.is_finite() {
+            if ix == 0.0 {
+                // ccosh(x + i*0) = cosh(x) + i*(sinh(x)*0); zero sign is
+                // sign(x) ^ sign(iy).
+                let neg = rx.is_sign_negative() ^ ix.is_sign_negative();
+                return (math::cosh(rx), if neg { -0.0 } else { 0.0 });
+            }
+            return (math::cosh(rx) * math::cos(ix), math::sinh(rx) * math::sin(ix));
+        }
+        // ix is inf or NaN, rx finite.
+        if rx == 0.0 {
+            // ccosh(+-0 + i*(inf|NaN)) = NaN + i*0 (glibc fixes the sign +0).
+            return (f64::NAN, 0.0);
+        }
+        return (f64::NAN, f64::NAN);
+    }
+    if rx.is_infinite() {
+        if ix == 0.0 {
+            // ccosh(+-inf + i*0) = +inf + i*0 with sign(x) ^ sign(iy).
+            let neg = rx.is_sign_negative() ^ ix.is_sign_negative();
+            return (f64::INFINITY, if neg { -0.0 } else { 0.0 });
+        }
+        if ix.is_finite() {
+            // ccosh(+-inf + iy) = +inf*cos y + i*+-inf*sin y.
+            let re = f64::copysign(f64::INFINITY, math::cos(ix));
+            let im = f64::copysign(f64::INFINITY, math::sin(ix) * f64::copysign(1.0, rx));
+            return (re, im);
+        }
+        // ccosh(+-inf + i*(inf|NaN)) = +inf + i*NaN.
+        return (f64::INFINITY, f64::NAN);
+    }
+    // rx is NaN.
+    (f64::NAN, if ix == 0.0 { f64::copysign(0.0, ix) } else { f64::NAN })
+}
+
 // --- creal / cimag / conj / carg / cabs ---
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2226,11 +2308,8 @@ pub unsafe extern "C" fn ctanl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinh(z: CDoubleComplex) -> CDoubleComplex {
-    // sinh(a+bi) = sinh(a)cos(b) + i*cosh(a)sin(b)
-    CDoubleComplex {
-        re: frankenlibc_core::math::sinh(z.re) * frankenlibc_core::math::cos(z.im),
-        im: frankenlibc_core::math::cosh(z.re) * frankenlibc_core::math::sin(z.im),
-    }
+    let (re, im) = c_sinh(z.re, z.im);
+    CDoubleComplex { re, im }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2255,11 +2334,8 @@ pub unsafe extern "C" fn csinhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccosh(z: CDoubleComplex) -> CDoubleComplex {
-    // cosh(a+bi) = cosh(a)cos(b) + i*sinh(a)sin(b)
-    CDoubleComplex {
-        re: frankenlibc_core::math::cosh(z.re) * frankenlibc_core::math::cos(z.im),
-        im: frankenlibc_core::math::sinh(z.re) * frankenlibc_core::math::sin(z.im),
-    }
+    let (re, im) = c_cosh(z.re, z.im);
+    CDoubleComplex { re, im }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
