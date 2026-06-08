@@ -420,6 +420,13 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                             for ch in lo..=hi {
                                 chars[ch as usize] = true;
                             }
+                        } else {
+                            // Reversed range (lo > hi): glibc does not form an
+                            // empty range — it takes the three characters as
+                            // literal set members (`lo`, `-`, `hi`).
+                            chars[lo as usize] = true;
+                            chars[b'-' as usize] = true;
+                            chars[hi as usize] = true;
                         }
                         i += 3;
                     } else {
