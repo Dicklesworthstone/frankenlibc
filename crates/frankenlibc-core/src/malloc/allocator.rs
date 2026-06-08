@@ -459,9 +459,7 @@ impl MallocState {
         }
 
         // Try thread cache first
-        if size != HOT_CERT_64_REQUEST_SIZE
-            && let Some(ptr) = self.thread_cache_hot_slots[bin_usize].take()
-        {
+        if let Some(ptr) = self.thread_cache_hot_slots[bin_usize].take() {
             self.thread_cache_hits += 1;
             self.track_allocation(size);
             self.record_lifecycle(
@@ -649,11 +647,7 @@ impl MallocState {
             }
         }
 
-        let cached = if size == HOT_CERT_64_REQUEST_SIZE {
-            self.thread_cache.dealloc_index(bin, ptr)
-        } else {
-            self.cache_small_object(bin, ptr)
-        };
+        let cached = self.cache_small_object(bin, ptr);
 
         if cached {
             self.record_lifecycle(
@@ -1012,6 +1006,9 @@ mod tests {
             })
             .unwrap();
         state.free(ptr, size, |_| {});
+        let bin = size_class::small_bin_index(size).expect("64B allocation has a small bin");
+        assert_eq!(state.thread_cache_hot_slots[bin.get()], Some(ptr));
+        assert_eq!(state.thread_cache.total_cached(), 0);
         let _ = state.drain_lifecycle_logs();
 
         let reused_ptr = state
