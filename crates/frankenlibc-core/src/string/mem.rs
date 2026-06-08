@@ -59,6 +59,10 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let a = &a[..count];
     let b = &b[..count];
 
+    if count == MEMCMP_EXACT_16_BYTES {
+        return memcmp_exact_16_mask(a, b);
+    }
+
     if count == MEMCMP_EXACT_256_BYTES && !ne_simd_folded_256(a, b) {
         return core::cmp::Ordering::Equal;
     }
@@ -99,6 +103,29 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     }
 
     compare_bytes(&a[i..], &b[i..])
+}
+
+/// Resolve an exact 16-byte comparison with one SIMD inequality control mask.
+/// The low set bit is the first differing byte, so signed `memcmp` ordering is
+/// identical to a byte-at-a-time scan.
+#[inline(always)]
+fn memcmp_exact_16_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
+    debug_assert_eq!(a.len(), MEMCMP_EXACT_16_BYTES);
+    debug_assert_eq!(b.len(), MEMCMP_EXACT_16_BYTES);
+
+    let diff_mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(a)
+        .simd_ne(Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(b))
+        .to_bitmask();
+    if diff_mask == 0 {
+        return core::cmp::Ordering::Equal;
+    }
+
+    let first = diff_mask.trailing_zeros() as usize;
+    if a[first] < b[first] {
+        core::cmp::Ordering::Less
+    } else {
+        core::cmp::Ordering::Greater
+    }
 }
 
 /// True iff the two 32-byte panels are byte-for-byte equal. Safe portable SIMD
@@ -167,6 +194,7 @@ fn u64_from_chunk(chunk: &[u8]) -> u64 {
 /// SWAR word size (8 bytes), matching the `chunks_exact(8)` scans in this module.
 const WORD: usize = size_of::<u64>();
 const SIMD_LANES: usize = 32;
+const MEMCMP_EXACT_16_BYTES: usize = 16;
 const MEMCMP_WIDE_LANES: usize = 64;
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
@@ -867,7 +895,7 @@ mod tests {
 
     #[test]
     fn small_memcmp_matches_scalar() {
-        // The branchless 1..=16 byte fast path must match a byte-wise scalar
+        // The exact-16 SIMD mask path and smaller scalar path must match a byte-wise
         // reference (== std slice Ordering) for every length and a difference at
         // every position. Deterministic xorshift fuzz with small alphabets to
         // make differences and equal prefixes both frequent.
@@ -895,6 +923,28 @@ mod tests {
                 memcmp(&a, &b, n),
                 a[..n].cmp(&b[..n]),
                 "memcmp mismatch a={a:?} b={b:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn memcmp_exact_16_mask_resolves_first_difference() {
+        let base = *b"abcdefghijklmnop";
+        assert_eq!(memcmp(&base, &base, 16), core::cmp::Ordering::Equal);
+
+        for pos in 0..16 {
+            let mut left = base;
+            let mut right = base;
+            left[pos] = b'Z';
+            right[pos] = b'a';
+            if pos > 0 {
+                left[pos - 1] = b'0';
+                right[pos - 1] = b'0';
+            }
+            assert_eq!(
+                memcmp(&left, &right, 16),
+                left.as_slice().cmp(right.as_slice()),
+                "first difference at {pos}"
             );
         }
     }
@@ -1277,6 +1327,73 @@ mod tests {
         assert_eq!(
             digest, "04930b6afad5d9eb3047ad0fd21c4db13061e93ee506bcf740787790f8ae3500",
             "memchr golden output corpus changed"
+        );
+    }
+
+    #[test]
+    fn memcmp_golden_output_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut cases: Vec<(Vec<u8>, Vec<u8>, usize)> = vec![
+            (Vec::new(), Vec::new(), 0),
+            (b"a".to_vec(), b"b".to_vec(), 0),
+            (b"abc".to_vec(), b"abc".to_vec(), 3),
+            (b"abc".to_vec(), b"abd".to_vec(), 3),
+            (b"abd".to_vec(), b"abc".to_vec(), 3),
+            (b"abc".to_vec(), b"abx".to_vec(), 2),
+            (vec![0x5a; 16], vec![0x5a; 16], 16),
+            (vec![0x5a; 17], vec![0x5a; 17], 16),
+            (vec![0x5a; 31], vec![0x5a; 31], 31),
+            (vec![0x5a; 32], vec![0x5a; 32], 32),
+            (vec![0x5a; 256], vec![0x5a; 256], 256),
+        ];
+
+        for len in 1usize..=16 {
+            let a: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(17)).collect();
+            cases.push((a.clone(), a.clone(), len));
+            for pos in 0..len {
+                let mut b = a.clone();
+                b[pos] = b[pos].wrapping_add(1);
+                cases.push((a.clone(), b.clone(), len));
+                cases.push((b, a.clone(), len));
+            }
+        }
+
+        for n in [0usize, 1, 7, 8, 15, 16, 17, 31, 32, 127, 128, 255, 256] {
+            let a = vec![0x33; 256];
+            let mut b = a.clone();
+            if n > 0 {
+                let pos = (n - 1).min(255);
+                b[pos] = 0x44;
+            }
+            cases.push((a.clone(), b.clone(), n));
+            cases.push((b, a, n));
+        }
+
+        let mut hasher = Sha256::new();
+        for (a, b, n) in cases {
+            let count = n.min(a.len()).min(b.len());
+            let expected = a[..count].cmp(&b[..count]);
+            let got = memcmp(&a, &b, n);
+            assert_eq!(got, expected);
+
+            hasher.update((a.len() as u64).to_le_bytes());
+            hasher.update((b.len() as u64).to_le_bytes());
+            hasher.update((n as u64).to_le_bytes());
+            hasher.update([match got {
+                core::cmp::Ordering::Less => 0,
+                core::cmp::Ordering::Equal => 1,
+                core::cmp::Ordering::Greater => 2,
+            }]);
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "458c0ae019afaffccbfc5a6aacfeb4713dab611eac4b6257398016a7eae45ef9",
+            "memcmp golden output corpus changed"
         );
     }
 
