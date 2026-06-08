@@ -38,7 +38,10 @@ pub use math::{
     DivResult, LdivResult, LldivResult, abs, div, ffs, ffsl, ffsll, labs, ldiv, llabs, lldiv,
 };
 pub use random::{RAND_MAX, rand, rand_r, srand};
-pub use random_sv::{initstate, random as sv_random, setstate, srandom};
+pub use random_sv::{
+    RandomRState, initstate, random as sv_random, random_r_flush, random_r_initstate,
+    random_r_setstate, random_r_srandom, random_r_step, random_r_type_for_len, setstate, srandom,
+};
 pub use random48::{
     drand48, erand48, jrand48, lcong48, lrand48, mrand48, nrand48, seed48, srand48,
 };

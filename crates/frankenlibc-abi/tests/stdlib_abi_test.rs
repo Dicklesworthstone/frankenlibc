@@ -4076,13 +4076,24 @@ fn setstate_accepts_untracked_minimum_state_without_overread() {
 
 #[test]
 fn random_r_accepts_valid_tracked_state_and_result() {
-    let buf = unsafe { malloc_tracked_bytes(std::mem::size_of::<u32>()) };
+    // glibc contract: the caller owns a `struct random_data` (48 bytes on LP64)
+    // plus a separate state buffer, and must `initstate_r` before drawing.
+    let buf = unsafe { malloc_tracked_bytes(48) };
+    let statebuf = unsafe { malloc_tracked_bytes(128) };
     let result = unsafe { malloc_tracked_bytes(std::mem::size_of::<i32>()) }.cast::<i32>();
     unsafe {
-        assert_eq!(srandom_r(123, buf.cast()), 0);
+        assert_eq!(initstate_r(123, statebuf.cast(), 128, buf.cast()), 0);
         assert_eq!(random_r(buf.cast(), result), 0);
         assert!(*result >= 0);
+        let first = *result;
+
+        // srandom_r reseeds the bound generator; the same seed replays exactly.
+        assert_eq!(srandom_r(123, buf.cast()), 0);
+        assert_eq!(random_r(buf.cast(), result), 0);
+        assert_eq!(*result, first, "srandom_r(123) must replay the seed sequence");
+
         frankenlibc_abi::malloc_abi::free(result.cast());
+        frankenlibc_abi::malloc_abi::free(statebuf.cast());
         frankenlibc_abi::malloc_abi::free(buf.cast());
     }
 }

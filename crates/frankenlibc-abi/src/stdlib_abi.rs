@@ -4739,11 +4739,35 @@ pub unsafe extern "C" fn lcong48_r(param: *mut u16, data: *mut c_void) -> c_int 
 // Reentrant System V random (_r variants)
 // ===========================================================================
 
-const RANDOM_R_BUF_BYTES: usize = core::mem::size_of::<u32>();
+// glibc's `struct random_data` is 48 bytes on LP64; the caller allocates it and
+// we keep our own bookkeeping (a pointer to the bound statebuf plus the cursor /
+// type record) inside that opaque blob.
+const RANDOM_R_DATA_BYTES: usize = 48;
 const RANDOM_R_RESULT_BYTES: usize = core::mem::size_of::<i32>();
+/// Largest reentrant working set: TYPE_4 needs 1 encoding word + 63 state words.
+const RANDOM_R_MAX_WORDS: usize = 64;
+/// Marks a `random_data` blob as initialized by frankenlibc.
+const FL_RANDOM_MAGIC: u32 = 0x6672_6c52; // "frlR"
+
+/// frankenlibc's private view of the caller's opaque `random_data` (<= 48 bytes).
+/// The live generator state lives in the caller's `statebuf` (glibc-compatible
+/// word layout: `word[0]` = type/rear encoding, `word[1..=deg]` = state); this
+/// record just locates it and carries the cursor.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FlRandomData {
+    statebuf: *mut i32,
+    rand_type: u32,
+    deg: u32,
+    sep: u32,
+    fptr: u32,
+    rptr: u32,
+    magic: u32,
+    _reserved: [u32; 3],
+}
 
 fn random_r_buf_fits(buf: *const c_void) -> bool {
-    tracked_region_fits(buf, RANDOM_R_BUF_BYTES)
+    tracked_region_fits(buf, RANDOM_R_DATA_BYTES)
 }
 
 fn random_r_result_fits(result: *const i32) -> bool {
@@ -4754,7 +4778,51 @@ fn random_statebuf_too_short_if_tracked(statebuf: *const c_char) -> bool {
     known_remaining(statebuf as usize).is_some_and(|remaining| remaining < RANDOM_STATE_MIN_BYTES)
 }
 
-/// `random_r` — thread-safe random using caller-supplied state.
+#[inline]
+unsafe fn read_state_words(statebuf: *const i32, n: usize, out: &mut [i32]) {
+    for (i, slot) in out.iter_mut().enumerate().take(n) {
+        *slot = unsafe { ptr::read_unaligned(statebuf.add(i)) };
+    }
+}
+
+#[inline]
+unsafe fn write_state_words(statebuf: *mut i32, words: &[i32]) {
+    for (i, &w) in words.iter().enumerate() {
+        unsafe { ptr::write_unaligned(statebuf.add(i), w) };
+    }
+}
+
+fn rd_to_state(rd: &FlRandomData) -> frankenlibc_core::stdlib::RandomRState {
+    frankenlibc_core::stdlib::RandomRState {
+        rand_type: rd.rand_type as u8,
+        deg: rd.deg,
+        sep: rd.sep,
+        fptr: rd.fptr,
+        rptr: rd.rptr,
+    }
+}
+
+fn state_into_rd(rd: &mut FlRandomData, st: &frankenlibc_core::stdlib::RandomRState) {
+    rd.rand_type = st.rand_type as u32;
+    rd.deg = st.deg;
+    rd.sep = st.sep;
+    rd.fptr = st.fptr;
+    rd.rptr = st.rptr;
+}
+
+/// Flush a previously-initialized generator's live cursor back into the encoding
+/// word of the statebuf it is bound to — glibc's "save old state" step performed
+/// before `initstate_r`/`setstate_r` rebind the `random_data` to a new buffer.
+unsafe fn flush_old_generator(rd: &FlRandomData) {
+    if rd.magic == FL_RANDOM_MAGIC && !rd.statebuf.is_null() {
+        let st = rd_to_state(rd);
+        let mut w0 = [0i32; 1];
+        frankenlibc_core::stdlib::random_r_flush(&mut w0, &st);
+        unsafe { write_state_words(rd.statebuf, &w0) };
+    }
+}
+
+/// `random_r` — reentrant `random()` over caller-supplied state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn random_r(buf: *mut c_void, result: *mut i32) -> c_int {
     if buf.is_null()
@@ -4764,27 +4832,46 @@ pub unsafe extern "C" fn random_r(buf: *mut c_void, result: *mut i32) -> c_int {
     {
         return libc::EINVAL;
     }
-    // Simple LCG using the random_data struct
-    let state = buf as *mut u32;
-    let val = unsafe { ptr::read_unaligned(state.cast_const()) };
-    let next = val.wrapping_mul(1103515245).wrapping_add(12345);
+    let mut rd = unsafe { ptr::read_unaligned(buf as *const FlRandomData) };
+    if rd.magic != FL_RANDOM_MAGIC || rd.statebuf.is_null() {
+        return libc::EINVAL;
+    }
+    let n = (rd.deg as usize + 1).min(RANDOM_R_MAX_WORDS);
+    let mut words = [0i32; RANDOM_R_MAX_WORDS];
+    unsafe { read_state_words(rd.statebuf, n, &mut words) };
+    let mut st = rd_to_state(&rd);
+    let val = frankenlibc_core::stdlib::random_r_step(&mut words[..n], &mut st);
+    unsafe { write_state_words(rd.statebuf, &words[..n]) };
+    state_into_rd(&mut rd, &st);
     unsafe {
-        ptr::write_unaligned(state, next);
-        ptr::write_unaligned(result, (next >> 1) as i32);
+        ptr::write_unaligned(buf as *mut FlRandomData, rd);
+        ptr::write_unaligned(result, val);
     }
     0
 }
 
+/// `srandom_r` — reseed a reentrant generator (type unchanged).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn srandom_r(seed: c_uint, buf: *mut c_void) -> c_int {
     if buf.is_null() || !random_r_buf_fits(buf.cast_const()) {
         return libc::EINVAL;
     }
-    let state = buf as *mut u32;
-    unsafe { ptr::write_unaligned(state, seed) };
+    let mut rd = unsafe { ptr::read_unaligned(buf as *const FlRandomData) };
+    if rd.magic != FL_RANDOM_MAGIC || rd.statebuf.is_null() {
+        return libc::EINVAL;
+    }
+    let n = (rd.deg as usize + 1).min(RANDOM_R_MAX_WORDS);
+    let mut words = [0i32; RANDOM_R_MAX_WORDS];
+    unsafe { read_state_words(rd.statebuf, n, &mut words) };
+    let mut st = rd_to_state(&rd);
+    frankenlibc_core::stdlib::random_r_srandom(seed, &mut words[..n], &mut st);
+    unsafe { write_state_words(rd.statebuf, &words[..n]) };
+    state_into_rd(&mut rd, &st);
+    unsafe { ptr::write_unaligned(buf as *mut FlRandomData, rd) };
     0
 }
 
+/// `initstate_r` — bind `statebuf` to `buf` and seed the type chosen by `statelen`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn initstate_r(
     seed: c_uint,
@@ -4800,11 +4887,34 @@ pub unsafe extern "C" fn initstate_r(
     {
         return libc::EINVAL;
     }
-    let state = buf as *mut u32;
-    unsafe { ptr::write_unaligned(state, seed) };
+    // Save the previously-bound generator's live cursor, like glibc.
+    let existing = unsafe { ptr::read_unaligned(buf as *const FlRandomData) };
+    unsafe { flush_old_generator(&existing) };
+
+    let nwords = (statelen / 4).min(RANDOM_R_MAX_WORDS);
+    let mut words = [0i32; RANDOM_R_MAX_WORDS];
+    let Some(st) = frankenlibc_core::stdlib::random_r_initstate(seed, &mut words[..nwords]) else {
+        return libc::EINVAL;
+    };
+    let used = (st.deg as usize + 1).min(nwords);
+    let sb = statebuf as *mut i32;
+    unsafe { write_state_words(sb, &words[..used]) };
+    let mut rd = FlRandomData {
+        statebuf: sb,
+        rand_type: 0,
+        deg: 0,
+        sep: 0,
+        fptr: 0,
+        rptr: 0,
+        magic: FL_RANDOM_MAGIC,
+        _reserved: [0; 3],
+    };
+    state_into_rd(&mut rd, &st);
+    unsafe { ptr::write_unaligned(buf as *mut FlRandomData, rd) };
     0
 }
 
+/// `setstate_r` — rebind `buf` to `statebuf`, recovering type/cursor from it.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setstate_r(statebuf: *mut c_char, buf: *mut c_void) -> c_int {
     if statebuf.is_null()
@@ -4814,6 +4924,20 @@ pub unsafe extern "C" fn setstate_r(statebuf: *mut c_char, buf: *mut c_void) -> 
     {
         return libc::EINVAL;
     }
+    let mut rd = unsafe { ptr::read_unaligned(buf as *const FlRandomData) };
+    // Save the old generator's live cursor FIRST (glibc order); when rebinding
+    // to the same statebuf this preserves the live position before we read it.
+    unsafe { flush_old_generator(&rd) };
+
+    let sb = statebuf as *mut i32;
+    let encoding = unsafe { ptr::read_unaligned(sb) };
+    let Some(st) = frankenlibc_core::stdlib::random_r_setstate(&[encoding]) else {
+        return libc::EINVAL;
+    };
+    rd.statebuf = sb;
+    rd.magic = FL_RANDOM_MAGIC;
+    state_into_rd(&mut rd, &st);
+    unsafe { ptr::write_unaligned(buf as *mut FlRandomData, rd) };
     0
 }
 

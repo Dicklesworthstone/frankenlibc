@@ -32,9 +32,9 @@
       "crates/frankenlibc-abi/src/stdlib_abi.rs:2983",
       "crates/frankenlibc-abi/src/stdlib_abi.rs:3003",
       "crates/frankenlibc-abi/src/stdlib_abi.rs:3022",
-      "crates/frankenlibc-core/src/stdlib/random_sv.rs:245",
-      "crates/frankenlibc-core/src/stdlib/random_sv.rs:249",
-      "crates/frankenlibc-core/src/stdlib/random_sv.rs:256",
+      "crates/frankenlibc-core/src/stdlib/random_sv.rs:279",
+      "crates/frankenlibc-core/src/stdlib/random_sv.rs:283",
+      "crates/frankenlibc-core/src/stdlib/random_sv.rs:290",
       "crates/frankenlibc-abi/tests/stdlib_abi_test.rs:3996",
       "crates/frankenlibc-abi/tests/stdlib_abi_test.rs:4009",
       "crates/frankenlibc-abi/tests/conformance_diff_stdlib_random.rs:591"

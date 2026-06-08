@@ -94,63 +94,97 @@ impl RandomState {
     /// those with the high bit set — a plain `(16807*x) % m` over `i64`/
     /// `rem_euclid` diverges from glibc on negative intermediate words).
     fn seed(&mut self, seed: u32) {
-        let seed = if seed == 0 { 1 } else { seed };
-        self.table[0] = seed as i32;
-        if self.rand_type == 0 {
-            return;
-        }
-        let mut word = seed as i32;
-        for i in 1..self.deg {
-            // Schrage: word = 16807 * word (mod 2147483647), kept in i32 range.
-            // hi/lo use C/Rust truncating division, identical for negatives.
-            let hi = word / 127_773;
-            let lo = word % 127_773;
-            // The product stays within i32 for every reachable word, but compute
-            // in i64 to make that explicit and panic-proof under overflow checks.
-            word = (16807_i64 * lo as i64 - 2836_i64 * hi as i64) as i32;
-            if word < 0 {
-                word += 2_147_483_647;
-            }
-            self.table[i] = word;
-        }
-        self.fptr = self.sep;
-        self.rptr = 0;
-        // Warm up 10*deg draws. Because that is a whole number of cursor
-        // cycles (the cursors have period `deg`), they return to (sep, 0).
-        for _ in 0..(10 * self.deg) {
-            self.next();
-        }
+        let (fptr, rptr) = seed_table(self.rand_type, self.deg, seed, &mut self.table);
+        self.fptr = fptr;
+        self.rptr = rptr;
     }
 
     fn next(&mut self) -> i32 {
-        if self.rand_type == 0 {
-            // TYPE_0: a single-word linear congruential generator.
-            let val = self.table[0].wrapping_mul(1_103_515_245).wrapping_add(12_345) & 0x7fff_ffff;
-            self.table[0] = val;
-            return val;
-        }
-        // TYPE_>0: additive feedback. `*fptr += *rptr` (unsigned, wrapping),
-        // stored back; the result drops the low (least random) bit.
-        let val = (self.table[self.fptr] as u32).wrapping_add(self.table[self.rptr] as u32);
-        self.table[self.fptr] = val as i32;
-        let result = ((val >> 1) & 0x7fff_ffff) as i32;
-
-        // glibc cursor advance: bump fptr; on wrap reset it and bump rptr
-        // (which cannot also wrap in that step), else bump rptr with its own
-        // wrap check.
-        self.fptr += 1;
-        if self.fptr >= self.deg {
-            self.fptr = 0;
-            self.rptr += 1;
-        } else {
-            self.rptr += 1;
-            if self.rptr >= self.deg {
-                self.rptr = 0;
-            }
-        }
-
-        result
+        next_draw(
+            self.rand_type,
+            self.deg,
+            &mut self.table,
+            &mut self.fptr,
+            &mut self.rptr,
+        )
     }
+}
+
+/// Seed a `deg`-word state `table` exactly as glibc `__srandom_r`, returning the
+/// post-warmup `(fptr, rptr)` cursor indices. Shared by the process-global
+/// generator and the reentrant `random_r` family.
+///
+/// A zero seed is replaced by 1 (glibc quirk). For TYPE_0 the seed is the sole
+/// LCG accumulator. For higher types the table is filled by the Park-Miller
+/// minimal-standard generator via Schrage's overflow-free decomposition (bit-
+/// exact with glibc for *all* seeds, including high-bit-set ones, where a plain
+/// `(16807*x) % m` / `rem_euclid` diverges on negative intermediate words).
+fn seed_table(rand_type: u8, deg: usize, seed: u32, table: &mut [i32]) -> (usize, usize) {
+    let seed = if seed == 0 { 1 } else { seed };
+    table[0] = seed as i32;
+    if rand_type == 0 {
+        return (0, 0);
+    }
+    let mut word = seed as i32;
+    for slot in table.iter_mut().take(deg).skip(1) {
+        // Schrage: word = 16807 * word (mod 2147483647), kept in i32 range.
+        // hi/lo use C/Rust truncating division, identical for negatives.
+        let hi = word / 127_773;
+        let lo = word % 127_773;
+        // The product stays within i32 for every reachable word, but compute in
+        // i64 to make that explicit and panic-proof under overflow checks.
+        word = (16807_i64 * lo as i64 - 2836_i64 * hi as i64) as i32;
+        if word < 0 {
+            word += 2_147_483_647;
+        }
+        *slot = word;
+    }
+    let mut fptr = SEP[rand_type as usize];
+    let mut rptr = 0usize;
+    // Warm up 10*deg draws. Because that is a whole number of cursor cycles
+    // (the cursors have period `deg`), they return to (sep, 0).
+    for _ in 0..(10 * deg) {
+        next_draw(rand_type, deg, table, &mut fptr, &mut rptr);
+    }
+    (fptr, rptr)
+}
+
+/// One draw from a `deg`-word state `table`, advancing the cursors (and, for
+/// TYPE_0, `table[0]`). Mirrors glibc `__random_r`. Shared by the global and
+/// reentrant generators.
+fn next_draw(
+    rand_type: u8,
+    deg: usize,
+    table: &mut [i32],
+    fptr: &mut usize,
+    rptr: &mut usize,
+) -> i32 {
+    if rand_type == 0 {
+        // TYPE_0: a single-word linear congruential generator.
+        let val = table[0].wrapping_mul(1_103_515_245).wrapping_add(12_345) & 0x7fff_ffff;
+        table[0] = val;
+        return val;
+    }
+    // TYPE_>0: additive feedback. `*fptr += *rptr` (unsigned, wrapping), stored
+    // back; the result drops the low (least random) bit.
+    let val = (table[*fptr] as u32).wrapping_add(table[*rptr] as u32);
+    table[*fptr] = val as i32;
+    let result = ((val >> 1) & 0x7fff_ffff) as i32;
+
+    // glibc cursor advance: bump fptr; on wrap reset it and bump rptr (which
+    // cannot also wrap in that step), else bump rptr with its own wrap check.
+    *fptr += 1;
+    if *fptr >= deg {
+        *fptr = 0;
+        *rptr += 1;
+    } else {
+        *rptr += 1;
+        if *rptr >= deg {
+            *rptr = 0;
+        }
+    }
+
+    result
 }
 
 static GLOBAL: Mutex<RandomState> = Mutex::new(RandomState {
@@ -271,6 +305,128 @@ pub fn setstate(state_buf: &[u8]) -> usize {
     state.rptr = 0;
     INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
     old_token
+}
+
+// ===========================================================================
+// Reentrant `random_r` family (POSIX `random_r`/`srandom_r`/`initstate_r`/
+// `setstate_r`).
+//
+// glibc keeps the live state in the caller's `statebuf` (a 32-bit-word array)
+// and a small cursor/type record in the caller's `struct random_data`. The
+// statebuf word layout matches glibc exactly so `setstate_r` round-trips:
+//   word[0]            = encoding `MAX_TYPES * rear + type` (TYPE_0 => 0)
+//   word[1 ..= deg]    = the `deg` live state words
+// `rear` is the rear-cursor offset; the front cursor is `rear + sep (mod deg)`.
+//
+// These pure functions operate on the caller's word slice plus a `RandomRState`
+// cursor record. The ABI layer owns the raw pointers and stores `RandomRState`
+// (plus a pointer back to `statebuf`) inside the opaque `random_data` blob.
+// ===========================================================================
+
+/// Number of generator types; the multiplier in the statebuf[0] encoding.
+const MAX_TYPES: i32 = 5;
+
+/// Cursor + type record for a reentrant generator, stored by the ABI inside the
+/// caller's opaque `random_data`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RandomRState {
+    pub rand_type: u8,
+    pub deg: u32,
+    pub sep: u32,
+    pub fptr: u32,
+    pub rptr: u32,
+}
+
+/// glibc generator type for a `statelen`-byte buffer, or `None` if too small.
+pub fn random_r_type_for_len(statelen: usize) -> Option<u8> {
+    rand_type_for_size(statelen)
+}
+
+/// Encode the current cursor/type into `words[0]`, exactly as glibc flushes a
+/// generator's info before switching away from its statebuf.
+fn encode_info(words: &mut [i32], st: &RandomRState) {
+    words[0] = if st.rand_type == 0 {
+        0
+    } else {
+        MAX_TYPES * st.rptr as i32 + st.rand_type as i32
+    };
+}
+
+/// `initstate_r`: select the type from `words.len()` (= statelen/4), seed the
+/// `deg` state words, write the encoding into `words[0]`, and return the cursor.
+/// Returns `None` (EINVAL) if the buffer is too small.
+pub fn random_r_initstate(seed: u32, words: &mut [i32]) -> Option<RandomRState> {
+    let rand_type = rand_type_for_size(words.len().saturating_mul(4))?;
+    let deg = DEG[rand_type as usize];
+    let sep = SEP[rand_type as usize];
+    // State table lives in words[1..=deg]; word[0] holds the encoding.
+    let (fptr, rptr) = seed_table(rand_type, deg, seed, &mut words[1..]);
+    let st = RandomRState {
+        rand_type,
+        deg: deg as u32,
+        sep: sep as u32,
+        fptr: fptr as u32,
+        rptr: rptr as u32,
+    };
+    encode_info(words, &st);
+    Some(st)
+}
+
+/// `srandom_r`: re-seed the existing generator (type unchanged) and update the
+/// cursor in place. `words` is the same statebuf bound at initstate time.
+pub fn random_r_srandom(seed: u32, words: &mut [i32], st: &mut RandomRState) {
+    let (fptr, rptr) = seed_table(st.rand_type, st.deg as usize, seed, &mut words[1..]);
+    st.fptr = fptr as u32;
+    st.rptr = rptr as u32;
+}
+
+/// One reentrant draw: advance the generator in `words[1..]` and the cursor.
+pub fn random_r_step(words: &mut [i32], st: &mut RandomRState) -> i32 {
+    let mut fptr = st.fptr as usize;
+    let mut rptr = st.rptr as usize;
+    let val = next_draw(
+        st.rand_type,
+        st.deg as usize,
+        &mut words[1..],
+        &mut fptr,
+        &mut rptr,
+    );
+    st.fptr = fptr as u32;
+    st.rptr = rptr as u32;
+    val
+}
+
+/// `setstate_r`: recover the type and rear cursor from `words[0]`, returning a
+/// fresh cursor. Returns `None` (EINVAL) if the encoded type is invalid.
+pub fn random_r_setstate(words: &[i32]) -> Option<RandomRState> {
+    let encoded = words[0];
+    let rand_type = encoded.rem_euclid(MAX_TYPES) as u8;
+    let rear = encoded.div_euclid(MAX_TYPES);
+    if rand_type > 4 || rear < 0 {
+        return None;
+    }
+    let deg = DEG[rand_type as usize];
+    let sep = SEP[rand_type as usize];
+    let (fptr, rptr) = if rand_type == 0 {
+        (0, 0)
+    } else {
+        let rptr = rear as usize % deg;
+        ((rptr + sep) % deg, rptr)
+    };
+    Some(RandomRState {
+        rand_type,
+        deg: deg as u32,
+        sep: sep as u32,
+        fptr: fptr as u32,
+        rptr: rptr as u32,
+    })
+}
+
+/// Flush a generator's live cursor back into its statebuf encoding word. The ABI
+/// calls this on the *old* statebuf before `initstate_r`/`setstate_r` rebind the
+/// `random_data` to a new buffer, matching glibc's save-old-state behavior.
+pub fn random_r_flush(words: &mut [i32], st: &RandomRState) {
+    encode_info(words, st);
 }
 
 #[cfg(test)]
