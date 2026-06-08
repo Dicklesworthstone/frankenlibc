@@ -981,8 +981,32 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             return Some((Some(ScanValue::Float(val)), i));
         }
         if remaining.len() >= 3 && remaining[..3].eq_ignore_ascii_case(b"nan") {
-            i += 3;
-            return Some((Some(ScanValue::Float(f64::NAN)), i));
+            // glibc's strtod accepts an optional `(n-char-sequence)` payload
+            // after "nan", where the sequence is `[0-9A-Za-z_]*` and the
+            // closing ')' is MANDATORY: if it is absent, the whole token
+            // (sign and all) is rewound and the conversion fails to match.
+            // The sign bit is applied to the NaN ("-nan" keeps its sign); the
+            // payload value itself is an impl detail we do not replicate.
+            let budget = max_chars - chars_read; // chars allowed from `remaining`
+            let mut j = 3usize;
+            if remaining.len() > j && j < budget && remaining[j] == b'(' {
+                let mut k = j + 1;
+                while k < remaining.len()
+                    && k < budget
+                    && (remaining[k].is_ascii_alphanumeric() || remaining[k] == b'_')
+                {
+                    k += 1;
+                }
+                if k < remaining.len() && k < budget && remaining[k] == b')' {
+                    j = k + 1; // consume through the ')'
+                } else {
+                    // Malformed payload (no closing paren / cut off by width):
+                    // glibc rewinds the entire token → matching failure.
+                    return None;
+                }
+            }
+            let val = f64::NAN.copysign(if negative { -1.0 } else { 1.0 });
+            return Some((Some(ScanValue::Float(val)), i + j));
         }
     }
 
