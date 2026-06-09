@@ -3402,7 +3402,16 @@ unsafe fn render_printf_impl(
                     if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                         let ptr = raw as usize as *const u8;
                         if ptr.is_null() {
-                            format_str(b"(null)", &resolved_spec, &mut buf);
+                            // glibc substitutes "(null)" for a NULL `%s`/`%ls`
+                            // arg, but ONLY when the precision is unspecified or
+                            // at least 6 (the length of "(null)"); a smaller
+                            // precision yields the empty string rather than a
+                            // truncated "(nu". (fl previously truncated it.)
+                            let null_str: &[u8] = match resolved_spec.precision {
+                                Precision::Fixed(p) if p < b"(null)".len() => b"",
+                                _ => b"(null)",
+                            };
+                            format_str(null_str, &resolved_spec, &mut buf);
                         } else if matches!(resolved_spec.length, LengthMod::L) {
                             // `%ls`: the argument is a `wchar_t*`, NOT a `char*`.
                             // Reading it narrow yields garbage (a 4-byte wchar is
