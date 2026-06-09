@@ -6924,7 +6924,10 @@ pub unsafe extern "C" fn fmemopen(
     size: usize,
     mode: *const c_char,
 ) -> *mut c_void {
-    if size == 0 || mode.is_null() {
+    // glibc accepts size 0 (since 2.22): a valid, empty stream whose reads hit
+    // EOF immediately. The buffer handling below already produces an empty Vec
+    // and zero content length for size 0, so only a null mode is rejected.
+    if mode.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     }
