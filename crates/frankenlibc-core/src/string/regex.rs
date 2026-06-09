@@ -28,6 +28,10 @@ pub const REG_NOSUB: i32 = 8;
 // eflags for regexec
 pub const REG_NOTBOL: i32 = 1;
 pub const REG_NOTEOL: i32 = 2;
+/// BSD/GNU extension: the match region is `string[pmatch[0].rm_so..rm_eo]`
+/// (embedded NULs allowed, no NUL terminator required). Handled in the ABI
+/// `regexec` wrapper, not the core engine.
+pub const REG_STARTEND: i32 = 4;
 
 // Error codes
 pub const REG_NOMATCH: i32 = 1;
@@ -590,6 +594,13 @@ impl CompiledRegex {
 
     pub fn nosub(&self) -> bool {
         self.nosub
+    }
+
+    /// Whether the pattern was compiled with REG_NEWLINE (`^`/`$` match at
+    /// line boundaries). Used by the REG_STARTEND wrapper to decide whether a
+    /// `\n` just before the match region makes its first position a BOL.
+    pub fn newline_mode(&self) -> bool {
+        self.newline
     }
 
     pub fn complexity_certificate(&self) -> RegexComplexityCertificate {
@@ -2234,7 +2245,9 @@ impl<'a> PikeVm<'a> {
         match mk {
             MatchKind::Literal(lit) => ch == *lit,
             MatchKind::LiteralCi(lo, hi) => ch == *lo || ch == *hi,
-            MatchKind::AnyChar { newline } => !(*newline && ch == b'\n'),
+            // glibc: `.` never matches NUL (only reachable via the binary-safe
+            // byte path; the C-string path has already truncated at NUL).
+            MatchKind::AnyChar { newline } => ch != 0 && !(*newline && ch == b'\n'),
             MatchKind::CharClass {
                 ranges,
                 negated,
@@ -2404,7 +2417,14 @@ impl<'a> BacktrackVm<'a> {
                 }
             }
             Ast::AnyChar => {
-                if pos < self.input.len() && !(self.newline && self.input[pos] == b'\n') {
+                // glibc: `.` matches any byte EXCEPT '\n' (under REG_NEWLINE) and
+                // EXCEPT the NUL byte. NUL only reaches the matcher via the
+                // binary-safe byte path (REG_STARTEND / GNU APIs); the C-string
+                // path truncates at the first NUL, so this is a no-op there.
+                if pos < self.input.len()
+                    && self.input[pos] != 0
+                    && !(self.newline && self.input[pos] == b'\n')
+                {
                     vec![BacktrackState {
                         pos: pos + 1,
                         slots,

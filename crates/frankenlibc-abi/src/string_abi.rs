@@ -5355,6 +5355,64 @@ pub unsafe extern "C" fn regexec(
     let Some(compiled) = (unsafe { regex_compiled_from_buffer(preg) }) else {
         return regex::REG_BADPAT;
     };
+
+    // REG_STARTEND (BSD/GNU): the buffer is `string[rm_so..rm_eo]` — embedded
+    // NULs allowed, no NUL terminator. The matched string logically ends at
+    // rm_eo (`$` anchors there) and `^` still anchors at the true buffer start,
+    // so a non-zero rm_so forces REG_NOTBOL; returned offsets are relative to
+    // `string`, so rm_so is added back. (rm_so/rm_eo are read regardless of
+    // nmatch, per the contract.)
+    if eflags & regex::REG_STARTEND != 0 && !pmatch.is_null() {
+        let first = unsafe { &*(pmatch as *const regex::RegMatch) };
+        let (so, eo) = (first.rm_so, first.rm_eo);
+        if so < 0 || eo < so {
+            return regex::REG_NOMATCH;
+        }
+        let (so, eo) = (so as usize, eo as usize);
+        // SAFETY: the caller guarantees `string[..eo]` is readable under the
+        // REG_STARTEND contract (no NUL scan).
+        let region = unsafe { core::slice::from_raw_parts(string as *const u8, eo) };
+        let sub = &region[so..eo];
+
+        let mut sub_eflags = eflags & !regex::REG_STARTEND;
+        if so > 0 {
+            // The slice's first position is `string + rm_so`. `^` matches there
+            // only if it is a line start: under REG_NEWLINE with a `\n` just
+            // before it (which then matches even if the caller set NOTBOL, since
+            // NOTBOL only suppresses the true buffer-start BOL). Otherwise it is
+            // not a BOL, so force NOTBOL.
+            if compiled.newline_mode() && region.get(so - 1) == Some(&b'\n') {
+                sub_eflags &= !regex::REG_NOTBOL;
+            } else {
+                sub_eflags |= regex::REG_NOTBOL;
+            }
+        }
+
+        let rc = if nmatch == 0 {
+            let mut dummy = [regex::RegMatch::default(); 1];
+            regex::regex_exec_bytes(compiled, sub, &mut dummy, sub_eflags)
+        } else {
+            let pmatch_slice = unsafe {
+                core::slice::from_raw_parts_mut(pmatch as *mut regex::RegMatch, nmatch)
+            };
+            let rc = regex::regex_exec_bytes(compiled, sub, pmatch_slice, sub_eflags);
+            if rc == 0 {
+                // Re-base sub-buffer-relative offsets onto `string`.
+                let off = so as i32;
+                for m in pmatch_slice.iter_mut() {
+                    if m.rm_so >= 0 {
+                        m.rm_so += off;
+                    }
+                    if m.rm_eo >= 0 {
+                        m.rm_eo += off;
+                    }
+                }
+            }
+            rc
+        };
+        return rc;
+    }
+
     let Some(input_bytes) = (unsafe { read_c_string_bytes_with_nul(string) }) else {
         return regex::REG_NOMATCH;
     };
