@@ -2812,10 +2812,17 @@ pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
         3
     } else if bytes[0] & 0xF8 == 0xF0 {
         4
+    } else if bytes[0] & 0xFC == 0xF8 {
+        // 5-byte obsolete RFC 2279 lead (0xF8..=0xFB). `wchar_core::mbtowc`
+        // decodes these for C.UTF-8 parity with glibc (and fl's own mbrtowc, see
+        // bd-kryp2k), so read the continuations and let it validate/decode.
+        5
+    } else if bytes[0] & 0xFE == 0xFC {
+        // 6-byte obsolete RFC 2279 lead (0xFC..=0xFD).
+        6
     } else {
-        // 0xC0/0xC1 and 0xF5..=0xFF would also be caught by the RFC 3629 decode
-        // below, but 5/6-byte lead bytes (0xF8..=0xFD) are never valid UTF-8 —
-        // reject them at the lead instead of reading phantom continuation bytes.
+        // 0xC0/0xC1 (overlong 2-byte), 0xFE/0xFF, and continuation bytes are
+        // never valid leads; reject at the lead.
         // SAFETY: thread-local errno update.
         unsafe { set_abi_errno(libc::EILSEQ) };
         return WEOF_VALUE;
@@ -2905,10 +2912,12 @@ pub unsafe extern "C" fn fgetws(
 
     let cap = n as usize;
     let mut written = 0usize;
+    let mut hit_eof = false;
     while written + 1 < cap {
         // SAFETY: delegated to this ABI implementation with validated stream.
         let wc = unsafe { fgetwc(stream) };
         if wc == WEOF_VALUE {
+            hit_eof = true;
             break;
         }
 
@@ -2920,11 +2929,14 @@ pub unsafe extern "C" fn fgetws(
         }
     }
 
-    if written == 0 {
+    // C99: return NULL only when EOF/error is encountered before ANY wide char
+    // is read. A degenerate `n == 1` (cap-1 == 0, the loop never runs) is NOT an
+    // EOF — glibc writes the terminating L'\0' and returns `ws` (an empty string).
+    if written == 0 && hit_eof {
         return std::ptr::null_mut();
     }
 
-    // SAFETY: bounded by `cap`.
+    // SAFETY: bounded by `cap` (cap >= 1, so index 0 is in range).
     unsafe { *ws.add(written) = 0 };
     ws
 }
