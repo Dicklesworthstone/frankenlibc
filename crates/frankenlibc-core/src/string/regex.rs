@@ -121,6 +121,12 @@ enum AnchorKind {
     WordStart,
     /// GNU `\>` — match at the end of a word.
     WordEnd,
+    /// GNU `` \` `` — match at the start of the buffer (always position 0,
+    /// regardless of REG_NOTBOL or REG_NEWLINE; unlike `^`).
+    BufferStart,
+    /// GNU `\'` — match at the end of the buffer (always the final position,
+    /// regardless of REG_NOTEOL or REG_NEWLINE; unlike `$`).
+    BufferEnd,
 }
 
 /// A byte is a "word" character for `\b`/`\<`/`\>`/`\w`: `[A-Za-z0-9_]`.
@@ -575,6 +581,10 @@ enum MatchKind {
     WordStart,
     /// GNU `\>` — end-of-word assertion (zero-width).
     WordEnd,
+    /// GNU `` \` `` — start-of-buffer assertion (position 0, zero-width).
+    BufferStart,
+    /// GNU `\'` — end-of-buffer assertion (final position, zero-width).
+    BufferEnd,
 }
 
 // ---------------------------------------------------------------------------
@@ -1051,6 +1061,15 @@ impl<'a> Parser<'a> {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::WordEnd))
                     }
+                    // GNU buffer anchors: `` \` `` start-of-buffer, `\'` end.
+                    Some(b'`') => {
+                        self.advance();
+                        Ok(Ast::Anchor(AnchorKind::BufferStart))
+                    }
+                    Some(b'\'') => {
+                        self.advance();
+                        Ok(Ast::Anchor(AnchorKind::BufferEnd))
+                    }
                     // GNU character-class escapes (C locale): `\w` == [[:alnum:]_],
                     // `\s` == [[:space:]], and their negations `\W`/`\S`.
                     Some(b'w') => {
@@ -1332,6 +1351,12 @@ impl Compiler {
             Ast::Anchor(AnchorKind::WordEnd) => {
                 self.emit(NfaInstr::Match(MatchKind::WordEnd));
             }
+            Ast::Anchor(AnchorKind::BufferStart) => {
+                self.emit(NfaInstr::Match(MatchKind::BufferStart));
+            }
+            Ast::Anchor(AnchorKind::BufferEnd) => {
+                self.emit(NfaInstr::Match(MatchKind::BufferEnd));
+            }
             Ast::Concat(items) => {
                 for item in items {
                     self.compile(item);
@@ -1610,6 +1635,8 @@ impl<'a> PikeVm<'a> {
                         | MatchKind::WordBoundary { .. }
                         | MatchKind::WordStart
                         | MatchKind::WordEnd
+                        | MatchKind::BufferStart
+                        | MatchKind::BufferEnd
                 )
             )
         })
@@ -1809,6 +1836,8 @@ impl<'a> PikeVm<'a> {
                         | MatchKind::WordBoundary { .. }
                         | MatchKind::WordStart
                         | MatchKind::WordEnd
+                        | MatchKind::BufferStart
+                        | MatchKind::BufferEnd
                 )
             )
         });
@@ -1992,7 +2021,7 @@ impl<'a> PikeVm<'a> {
                         );
                     }
                 }
-                MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd => {
+                MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd | MatchKind::BufferStart | MatchKind::BufferEnd => {
                     if self.check_word_assertion(mk, sp) {
                         self.lm_closure(
                             pc + 1,
@@ -2313,7 +2342,7 @@ impl<'a> PikeVm<'a> {
                             self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
                         }
                     }
-                    MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd => {
+                    MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd | MatchKind::BufferStart | MatchKind::BufferEnd => {
                         if self.check_word_assertion(mk, sp) {
                             let new_t = Thread {
                                 pc: t.pc + 1,
@@ -2363,6 +2392,10 @@ impl<'a> PikeVm<'a> {
             MatchKind::WordBoundary { negate } => (left != right) != *negate,
             MatchKind::WordStart => !left && right,
             MatchKind::WordEnd => left && !right,
+            // GNU buffer anchors: always the buffer edges (REG_NOTBOL/NOTEOL and
+            // REG_NEWLINE do not affect them, unlike `^`/`$`).
+            MatchKind::BufferStart => sp == 0,
+            MatchKind::BufferEnd => sp == self.input.len(),
             _ => false,
         }
     }
@@ -2425,7 +2458,9 @@ impl<'a> PikeVm<'a> {
             | MatchKind::AnchorEnd { .. }
             | MatchKind::WordBoundary { .. }
             | MatchKind::WordStart
-            | MatchKind::WordEnd => false,
+            | MatchKind::WordEnd
+            | MatchKind::BufferStart
+            | MatchKind::BufferEnd => false,
         }
     }
 }
@@ -2598,7 +2633,9 @@ impl<'a> BacktrackVm<'a> {
             Ast::Anchor(
                 kind @ (AnchorKind::WordBoundary { .. }
                 | AnchorKind::WordStart
-                | AnchorKind::WordEnd),
+                | AnchorKind::WordEnd
+                | AnchorKind::BufferStart
+                | AnchorKind::BufferEnd),
             ) => {
                 if self.check_word_assertion(*kind, pos) {
                     vec![BacktrackState { pos, slots }]
@@ -2812,6 +2849,8 @@ impl<'a> BacktrackVm<'a> {
             AnchorKind::WordBoundary { negate } => (left != right) != negate,
             AnchorKind::WordStart => !left && right,
             AnchorKind::WordEnd => left && !right,
+            AnchorKind::BufferStart => pos == 0,
+            AnchorKind::BufferEnd => pos == self.input.len(),
             _ => false,
         }
     }
