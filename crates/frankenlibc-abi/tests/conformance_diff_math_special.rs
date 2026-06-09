@@ -101,6 +101,29 @@ fn diff_erf_within_4_ulps() {
 }
 
 #[test]
+fn diff_erf_profile_band_within_4_ulps() {
+    let mut divs = Vec::new();
+    for k in 0..64 {
+        let x = 0.5 + (k as f64) * 0.03125;
+        let fl_y = unsafe { fl::erf(x) };
+        let lc_y = unsafe { erf(x) };
+        if !within_ulps(fl_y, lc_y, 4) {
+            divs.push(format!("erf({x}): fl={fl_y} lc={lc_y}"));
+        }
+        let fl_y = unsafe { fl::erf(-x) };
+        let lc_y = unsafe { erf(-x) };
+        if !within_ulps(fl_y, lc_y, 4) {
+            divs.push(format!("erf(-{x}): fl={fl_y} lc={lc_y}"));
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "profile-band erf divergences:\n{}",
+        divs.join("\n")
+    );
+}
+
+#[test]
 fn diff_bessel_j_within_4_ulps() {
     let inputs: &[f64] = &[0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 100.0, 0.001];
     let mut divs = Vec::new();

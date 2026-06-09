@@ -2,7 +2,77 @@
 
 #[inline]
 pub fn erf(x: f64) -> f64 {
-    libm::erf(x)
+    if x.is_finite() && x.abs() < 2.5 {
+        if x < 0.0 {
+            -erf_profile_band(-x)
+        } else {
+            erf_profile_band(x)
+        }
+    } else {
+        libm::erf(x)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// erf: Cephes/Moshier rational pieces for the profiled [0.5,2.5) band.
+//
+// The libc baseline exercises `erf(x)` over `x in [0.5,2.5)`. `libm::erf`
+// follows the full fdlibm decision tree there, while this path evaluates the
+// two relevant public-domain Cephes rational pieces directly: a no-exp rational
+// for [0,1), and an erfc-shaped exp(-x*x) * P/Q piece for [1,2.5). Public
+// `erfc` is intentionally unchanged because the corresponding sub-1.0
+// complement branch exceeded the 4-ULP glibc contract in dense replay.
+#[allow(clippy::excessive_precision)]
+const ERF_T: [f64; 5] = [
+    9.604_973_739_870_516_387_49e0,
+    9.002_601_972_038_426_892_17e1,
+    2.232_005_345_946_843_192_26e3,
+    7.003_325_141_128_050_754_73e3,
+    5.559_230_130_103_949_627_68e4,
+];
+
+#[allow(clippy::excessive_precision)]
+const ERF_U: [f64; 5] = [
+    3.356_171_416_475_030_996_47e1,
+    5.213_579_497_801_526_797_95e2,
+    4.594_323_829_709_801_279_87e3,
+    2.262_900_006_138_909_342_46e4,
+    4.926_739_426_086_359_210_86e4,
+];
+
+#[allow(clippy::excessive_precision)]
+const ERFC_P: [f64; 9] = [
+    2.461_969_814_735_305_125_24e-10,
+    5.641_895_648_310_688_219_77e-1,
+    7.463_210_564_422_699_126_87e0,
+    4.863_719_709_856_813_666_14e1,
+    1.965_208_329_560_770_982_42e2,
+    5.264_451_949_954_773_586_31e2,
+    9.345_285_271_719_576_075_40e2,
+    1.027_551_886_895_157_102_72e3,
+    5.575_353_353_693_993_275_26e2,
+];
+
+#[allow(clippy::excessive_precision)]
+const ERFC_Q: [f64; 8] = [
+    1.322_819_511_547_449_925_08e1,
+    8.670_721_408_859_897_423_29e1,
+    3.549_377_788_878_198_910_62e2,
+    9.757_085_017_432_054_897_53e2,
+    1.823_909_166_879_097_362_89e3,
+    2.246_337_608_187_109_817_92e3,
+    1.656_663_091_941_613_501_82e3,
+    5.575_353_408_177_276_755_46e2,
+];
+
+#[inline]
+fn erf_profile_band(x: f64) -> f64 {
+    if x < 1.0 {
+        let z = x * x;
+        x * polevl(z, &ERF_T) / p1evl(z, &ERF_U)
+    } else {
+        1.0 - (-x * x).exp() * polevl(x, &ERFC_P) / p1evl(x, &ERFC_Q)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +118,16 @@ const TGAMMA_Q: [f64; 8] = [
 fn polevl(x: f64, c: &[f64]) -> f64 {
     // Horner: c[0]·xⁿ + … + c[n], leading coefficient first.
     let mut r = c[0];
+    for &ci in &c[1..] {
+        r = r.mul_add(x, ci);
+    }
+    r
+}
+
+#[inline]
+fn p1evl(x: f64, c: &[f64]) -> f64 {
+    // Horner with an implicit leading 1: xⁿ + c[0]·xⁿ⁻¹ + … + c[n].
+    let mut r = x + c[0];
     for &ci in &c[1..] {
         r = r.mul_add(x, ci);
     }
