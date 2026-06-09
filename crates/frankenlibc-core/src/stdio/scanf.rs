@@ -216,6 +216,11 @@ pub struct ScanSpec {
     /// Unicode whitespace (`iswspace`), not just ASCII. Set by the wide scanf
     /// entry points after parsing; defaults to false for narrow `sscanf`.
     pub wide_input: bool,
+    /// True when the GNU `m` assignment-allocation modifier was given (`%ms`,
+    /// `%m[`, `%mc`): the destination argument is a `char **` and the matched
+    /// text is stored into a freshly allocated buffer. Only meaningful for the
+    /// string conversions; the ABI layer performs the allocation.
+    pub alloc: bool,
     route: ScanfRoute,
 }
 
@@ -345,6 +350,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 conversion: 0,
                 scanset: None,
                 wide_input: false,
+                alloc: false,
                 route: ScanfRoute::invalid(),
             };
 
@@ -366,6 +372,14 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
             }
             if has_width {
                 spec.width = Some(w);
+            }
+
+            // GNU `m` assignment-allocation modifier (`%ms`, `%m[`, `%mc`,
+            // optionally combined with `l`). It precedes the length modifier;
+            // the destination is a `char **` filled with a malloc'd buffer.
+            if i < fmt.len() && fmt[i] == b'm' {
+                spec.alloc = true;
+                i += 1;
             }
 
             // Length modifier.
@@ -1327,11 +1341,14 @@ fn scan_char(
         }
         return Some((Some(ScanValue::Char(input[pos..end].to_vec())), end));
     }
-    // Guard against pathological widths that overflow pos + n. Under
-    // debug_assertions `usize` add panics; in release it wraps and
-    // would skip the bounds check below, reading past input. (bd-35vob)
-    let end = pos.checked_add(n)?;
-    if end > input.len() {
+    // Read UP TO `n` bytes. Like glibc (and the wide path above), a `%Nc` whose
+    // width exceeds the available input reads what IS there and still succeeds;
+    // only a total absence of input is a matching failure. fl previously
+    // required the full `n` bytes and wrongly failed (e.g. `%5c` on "ab").
+    // `checked_add` guards a pathological width from overflowing `pos + n`
+    // (bd-35vob).
+    let end = core::cmp::min(pos.checked_add(n)?, input.len());
+    if end == pos {
         return None;
     }
     let chars = input[pos..end].to_vec();

@@ -4918,13 +4918,37 @@ macro_rules! scanf_write_one {
                 }
             },
             ScanValue::Char(bytes) => {
-                let ptr = $args.next_arg::<*mut u8>();
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+                if $spec.alloc {
+                    // GNU `%mc`: allocate exactly `bytes.len()` bytes (no NUL,
+                    // like glibc) and store the pointer in the caller's char**.
+                    let pp = $args.next_arg::<*mut *mut c_char>();
+                    let n = bytes.len().max(1);
+                    let buf = malloc(n).cast::<u8>();
+                    if !buf.is_null() {
+                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+                    }
+                    *pp = buf.cast::<c_char>();
+                } else {
+                    let ptr = $args.next_arg::<*mut u8>();
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+                }
             }
             ScanValue::String(bytes) => {
-                let ptr = $args.next_arg::<*mut c_char>();
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
-                *ptr.add(bytes.len()) = 0; // NUL-terminate
+                if $spec.alloc {
+                    // GNU `%ms` / `%m[`: allocate matched length + NUL and store
+                    // the pointer in the caller's char**.
+                    let pp = $args.next_arg::<*mut *mut c_char>();
+                    let buf = malloc(bytes.len() + 1).cast::<u8>();
+                    if !buf.is_null() {
+                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+                        *buf.add(bytes.len()) = 0;
+                    }
+                    *pp = buf.cast::<c_char>();
+                } else {
+                    let ptr = $args.next_arg::<*mut c_char>();
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
+                    *ptr.add(bytes.len()) = 0; // NUL-terminate
+                }
             }
             ScanValue::CharsConsumed(n) => match $spec.length {
                 LengthMod::Hh => {
