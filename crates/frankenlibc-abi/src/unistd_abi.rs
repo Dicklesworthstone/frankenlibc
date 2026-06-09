@@ -2546,7 +2546,7 @@ unsafe extern "C" {
 use frankenlibc_core::getopt as getopt_core;
 use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, StepOutcome};
 
-/// Persistent scanner state across `parse_getopt_short` calls.
+/// Persistent scanner state across [`getopt_internal`] calls.
 ///
 /// Only `nextchar` carries cross-call meaning here; `optind`, `optopt`,
 /// and `optarg` are mirrored to/from the public `libc_optind` /
@@ -2554,6 +2554,14 @@ use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, StepOutcom
 /// callers (including code linked against system libc symbols) see
 /// the canonical POSIX state.
 static mut GETOPT_NEXTCHAR: Option<ArgRef> = None;
+
+/// glibc's `__getopt_data` permutation markers. `[first_nonopt, last_nonopt)`
+/// is the run of skipped non-option (operand) argv elements that the PERMUTE
+/// engine has accumulated but not yet moved to the tail; the exchange step
+/// rotates the intervening options in front of them. They are reset whenever
+/// the caller reinitializes the scan with `optind <= 0`.
+static mut GETOPT_FIRST_NONOPT: usize = 1;
+static mut GETOPT_LAST_NONOPT: usize = 1;
 
 /// Reconstruct a C-style argv into owned byte vectors.
 ///
@@ -2579,21 +2587,41 @@ fn getopt_is_option_like(elem: &[u8]) -> bool {
     elem.len() >= 2 && elem[0] == b'-'
 }
 
-/// Whether the bundled short-option element `elem` consumes the *following*
-/// argv element as a separate argument: true iff walking the bundle reaches
-/// a `Required`-argument option with no attached text after it. Used by the
-/// permutation step so an option and its separate argument move together.
-fn getopt_block_takes_next_arg(elem: &[u8], optspec: &[u8]) -> bool {
-    let mut i = 1;
-    while i < elem.len() {
-        match getopt_core::getopt_arg_mode(optspec, elem[i]) {
-            None => return false,
-            Some(getopt_core::GetoptArgMode::None) => i += 1,
-            Some(getopt_core::GetoptArgMode::Required) => return i + 1 >= elem.len(),
-            Some(getopt_core::GetoptArgMode::Optional) => return false,
-        }
+/// The ordering policy glibc derives from the optstring's leading mode flag
+/// (and `POSIXLY_CORRECT`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GetoptOrdering {
+    /// `+` prefix / `POSIXLY_CORRECT`: stop at the first operand.
+    RequireOrder,
+    /// Default: permute argv so options are reported before operands.
+    Permute,
+    /// `-` prefix: report operands inline as `'\1'` arguments, in order.
+    ReturnInOrder,
+}
+
+/// glibc-faithful argv exchange: swap the accumulated run of non-options
+/// `[first_nonopt, last_nonopt)` with the run of options `[last_nonopt, optind)`
+/// so the options end up first. Both the caller's raw pointer array and our
+/// reconstructed byte vectors are rotated in lockstep so later index lookups
+/// (and the mirrored `optarg`) stay consistent.
+unsafe fn getopt_exchange(
+    argv_mut: *mut *mut c_char,
+    argv_bytes: &mut [Vec<u8>],
+    first_nonopt: usize,
+    last_nonopt: usize,
+    optind: usize,
+) {
+    if first_nonopt >= last_nonopt || last_nonopt >= optind {
+        return;
     }
-    false
+    let nonopt = last_nonopt - first_nonopt;
+    argv_bytes[first_nonopt..optind].rotate_left(nonopt);
+    // SAFETY: `[first_nonopt, optind)` ⊆ `[0, argc)`, and `argv` holds `argc`
+    // valid pointer slots, so the constructed mutable slice is in bounds.
+    unsafe {
+        std::slice::from_raw_parts_mut(argv_mut.add(first_nonopt), optind - first_nonopt)
+            .rotate_left(nonopt);
+    }
 }
 
 fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<GetoptDiagnostic>) {
@@ -2623,20 +2651,44 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
     let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
 }
 
-unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> c_int {
+/// Unified getopt engine shared by `getopt`, `getopt_long`, and
+/// `getopt_long_only`. It mirrors glibc's `_getopt_internal_r`: a single
+/// per-call ADVANCE step (with the PERMUTE exchange model) walks to the next
+/// option-bearing argv element, then control dispatches to the long-option
+/// matcher (when `longopts` is non-null and the element is a long option) or
+/// the short-option scanner [`getopt_core::step_short`].
+///
+/// `longopts == NULL` selects pure POSIX `getopt`. `long_only` enables
+/// `getopt_long_only`'s single-dash long matching.
+unsafe fn getopt_internal(
+    argc: c_int,
+    argv: *const *mut c_char,
+    optspec: &[u8],
+    longopts: *const libc::option,
+    longindex: *mut c_int,
+    long_only: bool,
+) -> c_int {
     if argc <= 0 || argv.is_null() {
         return -1;
     }
-    // Leading optstring mode flags: `+` forces POSIX strict ordering (stop at
-    // the first operand) and `-` selects RETURN_IN_ORDER; either is followed
-    // by an optional `:`. `POSIXLY_CORRECT` in the environment also forces
-    // strict ordering. The flag byte is stripped so it is never treated as a
-    // selectable option; a leading `:` stays for the colon/arg-mode helpers.
+    let argc_us = argc as usize;
+
+    // Leading optstring mode flags: `+` forces strict ordering (stop at the
+    // first operand), `-` selects RETURN_IN_ORDER; either may be followed by a
+    // `:`. `POSIXLY_CORRECT` also forces strict ordering. The flag byte is
+    // stripped so it is never a selectable option; a leading `:` stays for the
+    // colon/arg-mode helpers.
     let mode = optspec.first().copied();
     let mode_prefix = matches!(mode, Some(b'+' | b'-')) as usize;
-    let return_in_order = mode == Some(b'-');
-    let strict =
-        mode == Some(b'+') || (mode != Some(b'-') && std::env::var_os("POSIXLY_CORRECT").is_some());
+    let ordering = if mode == Some(b'-') {
+        GetoptOrdering::ReturnInOrder
+    } else if mode == Some(b'+')
+        || (mode != Some(b'-') && std::env::var_os("POSIXLY_CORRECT").is_some())
+    {
+        GetoptOrdering::RequireOrder
+    } else {
+        GetoptOrdering::Permute
+    };
     let effective = &optspec[mode_prefix..];
 
     let mut argv_bytes = match unsafe { argv_byte_slices(argc, argv) } {
@@ -2646,84 +2698,152 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
             return -1;
         }
     };
-    let argc_us = argc as usize;
-    let raw_optind = unsafe { libc_optind };
-    let optind = if raw_optind <= 0 {
-        1
-    } else {
-        raw_optind as usize
-    };
-    let mid_bundle = raw_optind > 0 && unsafe { GETOPT_NEXTCHAR }.is_some();
+    let argv_mut = argv as *mut *mut c_char;
+    let has_long = !longopts.is_null();
 
-    if return_in_order && !mid_bundle && optind >= 1 && optind < argc_us {
-        let current = &argv_bytes[optind];
-        if current == b"--" {
+    // --- Load / (re)initialize the persistent scan state ---
+    let raw_optind = unsafe { libc_optind };
+    let mut optind;
+    let mut first_nonopt;
+    let mut last_nonopt;
+    let mut nextchar;
+    if raw_optind <= 0 {
+        optind = 1;
+        first_nonopt = 1;
+        last_nonopt = 1;
+        nextchar = None;
+    } else {
+        optind = raw_optind as usize;
+        first_nonopt = unsafe { GETOPT_FIRST_NONOPT };
+        last_nonopt = unsafe { GETOPT_LAST_NONOPT };
+        nextchar = unsafe { GETOPT_NEXTCHAR };
+    }
+
+    // A `nextchar` is only meaningful if it still references the current argv
+    // element at a positive, in-bounds offset that looks like `-...`.
+    let mid_bundle = nextchar.is_some_and(|nc| {
+        nc.argv_idx == optind
+            && nc.byte_offset > 0
+            && argv_bytes
+                .get(nc.argv_idx)
+                .is_some_and(|cur| cur.first() == Some(&b'-') && nc.byte_offset < cur.len())
+    });
+    if !mid_bundle {
+        nextchar = None;
+    }
+
+    if !mid_bundle {
+        // === ADVANCE to the next option element (glibc PERMUTE engine) ===
+        if last_nonopt > optind {
+            last_nonopt = optind;
+        }
+        if first_nonopt > optind {
+            first_nonopt = optind;
+        }
+
+        if ordering == GetoptOrdering::Permute {
+            // If we just finished some options after some operands, move the
+            // options ahead of the operand block.
+            if first_nonopt != last_nonopt && last_nonopt != optind {
+                unsafe {
+                    getopt_exchange(argv_mut, &mut argv_bytes, first_nonopt, last_nonopt, optind);
+                }
+                first_nonopt += optind - last_nonopt;
+            } else if last_nonopt != optind {
+                first_nonopt = optind;
+            }
+            // Skip the run of operands, extending the recorded non-option range.
+            while optind < argc_us && !getopt_is_option_like(&argv_bytes[optind]) {
+                optind += 1;
+            }
+            last_nonopt = optind;
+        }
+
+        // Explicit end-of-options "--".
+        if optind != argc_us && argv_bytes[optind] == b"--" {
+            optind += 1;
+            if first_nonopt != last_nonopt && last_nonopt != optind {
+                unsafe {
+                    getopt_exchange(argv_mut, &mut argv_bytes, first_nonopt, last_nonopt, optind);
+                }
+                first_nonopt += optind - last_nonopt;
+            } else if first_nonopt == last_nonopt {
+                first_nonopt = optind;
+            }
+            last_nonopt = argc_us;
+            optind = argc_us;
+        }
+
+        // No more arguments: back up over the permuted operands.
+        if optind == argc_us {
+            if first_nonopt != last_nonopt {
+                optind = first_nonopt;
+            }
             unsafe {
-                libc_optind = (optind + 1) as c_int;
-                libc_optopt = 0;
-                libc_optarg = std::ptr::null_mut();
+                libc_optind = optind as c_int;
                 GETOPT_NEXTCHAR = None;
+                GETOPT_FIRST_NONOPT = first_nonopt;
+                GETOPT_LAST_NONOPT = last_nonopt;
             }
             return -1;
         }
-        if !getopt_is_option_like(current) {
+
+        // A non-option that PERMUTE/REQUIRE_ORDER did not skip.
+        if !getopt_is_option_like(&argv_bytes[optind]) {
+            if ordering == GetoptOrdering::RequireOrder {
+                unsafe {
+                    libc_optind = optind as c_int;
+                    GETOPT_NEXTCHAR = None;
+                    GETOPT_FIRST_NONOPT = first_nonopt;
+                    GETOPT_LAST_NONOPT = last_nonopt;
+                }
+                return -1;
+            }
+            // RETURN_IN_ORDER: hand the operand back as a `'\1'` argument.
+            let operand = unsafe { *argv.add(optind) };
+            optind += 1;
             unsafe {
-                libc_optind = (optind + 1) as c_int;
+                libc_optarg = operand;
                 libc_optopt = 0;
-                libc_optarg = *argv.add(optind);
+                libc_optind = optind as c_int;
                 GETOPT_NEXTCHAR = None;
+                GETOPT_FIRST_NONOPT = first_nonopt;
+                GETOPT_LAST_NONOPT = last_nonopt;
             }
             return 1;
         }
+        // `optind` now points at an option element. `nextchar` stays None: the
+        // long matcher reads the element directly and `step_short` re-derives
+        // the bundle start at byte 1.
     }
 
-    // Argument permutation (glibc default mode): when the element at `optind`
-    // is an operand, rotate the next option element — together with its
-    // separate argument, if any — in front of the run of operands, so options
-    // are reported in order and operands accumulate at the tail of argv.
-    if !strict
-        && !return_in_order
+    // Persist advance results before dispatch; the long matcher and step_short
+    // read `libc_optind` and advance it themselves.
+    unsafe {
+        libc_optind = optind as c_int;
+        GETOPT_FIRST_NONOPT = first_nonopt;
+        GETOPT_LAST_NONOPT = last_nonopt;
+        GETOPT_NEXTCHAR = nextchar;
+    }
+
+    // === Dispatch: long option first (when applicable), else short scan ===
+    if has_long
         && !mid_bundle
-        && optind >= 1
-        && optind < argc_us
-        && !getopt_is_option_like(&argv_bytes[optind])
+        && let Some(code) = unsafe {
+            getopt_try_long(argc, argv, &argv_bytes, effective, longopts, longindex, long_only)
+        }
     {
-        let mut k = optind + 1;
-        while k < argc_us && !getopt_is_option_like(&argv_bytes[k]) {
-            k += 1;
-        }
-        if k < argc_us {
-            let blk = if k + 1 < argc_us && getopt_block_takes_next_arg(&argv_bytes[k], effective) {
-                2
-            } else {
-                1
-            };
-            let end = k + blk;
-            argv_bytes[optind..end].rotate_right(blk);
-            // Mirror the rotation onto the caller's real argv pointer array
-            // so subsequent getopt() calls and the caller observe the
-            // permutation — exactly what glibc's getopt does.
-            let argv_mut = argv as *mut *mut c_char;
-            // SAFETY: argv has `argc` valid elements; `optind..end` is within
-            // `[0, argc)`, so the constructed slice stays in bounds.
-            unsafe {
-                std::slice::from_raw_parts_mut(argv_mut.add(optind), end - optind)
-                    .rotate_right(blk);
-            }
-        }
+        return code;
     }
 
     let argv_slices: Vec<&[u8]> = argv_bytes.iter().map(Vec::as_slice).collect();
-
     let mut state = GetoptState {
         optind: unsafe { libc_optind.max(0) as usize },
         nextchar: unsafe { GETOPT_NEXTCHAR },
         optopt: unsafe { libc_optopt as u8 },
         optarg: None,
     };
-
     let outcome = getopt_core::step_short(&argv_slices, effective, &mut state);
-
     unsafe {
         libc_optind = state.optind as c_int;
         libc_optopt = state.optopt as c_int;
@@ -2743,7 +2863,6 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
             None => std::ptr::null_mut(),
         };
     }
-
     match outcome {
         StepOutcome::Done => -1,
         StepOutcome::Found { code, diagnostic } => {
@@ -2757,48 +2876,36 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
     }
 }
 
-unsafe fn parse_getopt_long(
+/// Match the option element at `libc_optind` (already positioned by
+/// [`getopt_internal`]'s advance step) as a long option. Returns `Some(code)`
+/// when handled as a long option (a match, or a long-specific error such as an
+/// ambiguous abbreviation, an unknown `--name`, or `--flag=value` on a
+/// no-argument option), advancing `libc_optind` past what it consumed. Returns
+/// `None` when the element is a plain short option (or a `getopt_long_only`
+/// single dash that matched no long name) so the caller falls back to the
+/// short-option scanner.
+unsafe fn getopt_try_long(
     argc: c_int,
     argv: *const *mut c_char,
+    argv_bytes: &[Vec<u8>],
     optspec: &[u8],
     longopts: *const libc::option,
     longindex: *mut c_int,
     long_only: bool,
 ) -> Option<c_int> {
-    if argc <= 0 || argv.is_null() || longopts.is_null() {
+    let cur_idx = unsafe { libc_optind } as usize;
+    if cur_idx >= argc as usize {
         return None;
     }
-    if unsafe { libc_optind <= 0 } {
-        unsafe {
-            libc_optind = 1;
-            GETOPT_NEXTCHAR = None;
-        }
-    }
-    if unsafe { libc_optind >= argc } {
-        unsafe {
-            GETOPT_NEXTCHAR = None;
-        }
-        return Some(-1);
-    }
-
-    let current = unsafe { *argv.add(libc_optind as usize) };
+    let current = unsafe { *argv.add(cur_idx) };
     if current.is_null() {
-        return Some(-1);
+        return None;
     }
-    let Some(current_bytes) = (unsafe { read_c_string_bytes(current) }) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return Some(-1);
-    };
+    let current_bytes = &argv_bytes[cur_idx];
     let prefix_len = if current_bytes.starts_with(b"--") {
-        if current_bytes.len() == 2 {
-            unsafe {
-                libc_optind += 1;
-                GETOPT_NEXTCHAR = None;
-            }
-            return Some(-1);
-        }
+        // A bare "--" is consumed by the advance step, so len() > 2 here.
         2
-    } else if long_only && current_bytes.starts_with(b"-") && current_bytes.len() > 1 {
+    } else if long_only && current_bytes.first() == Some(&b'-') && current_bytes.len() > 1 {
         1
     } else {
         return None;
@@ -2983,7 +3090,8 @@ pub unsafe extern "C" fn getopt(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc = unsafe { parse_getopt_short(argc, argv, &optspec) };
+    let rc =
+        unsafe { getopt_internal(argc, argv, &optspec, std::ptr::null(), std::ptr::null_mut(), false) };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -3048,10 +3156,7 @@ pub unsafe extern "C" fn getopt_long(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, false) } {
-        Some(value) => value,
-        None => unsafe { parse_getopt_short(argc, argv, &optspec) },
-    };
+    let rc = unsafe { getopt_internal(argc, argv, &optspec, longopts, longindex, false) };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -3096,10 +3201,7 @@ pub unsafe extern "C" fn getopt_long_only(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, true) } {
-        Some(value) => value,
-        None => unsafe { parse_getopt_short(argc, argv, &optspec) },
-    };
+    let rc = unsafe { getopt_internal(argc, argv, &optspec, longopts, longindex, true) };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,

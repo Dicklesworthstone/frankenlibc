@@ -13,8 +13,15 @@
 //! loop. `opterr` is forced to 0 so the (stderr) error text is out of scope.
 
 use std::ffi::{CStr, CString, c_char, c_int};
+use std::sync::Mutex;
 
 use frankenlibc_abi::unistd_abi as fl;
+
+/// `optind`/`optarg`/`optopt` are process-global symbols shared by fl and host
+/// glibc. The two tests in this file would otherwise race when cargo runs them
+/// on parallel threads, corrupting each other's scan state. Serialize every
+/// `run()` so each full parse loop observes a clean, exclusive global state.
+static GETOPT_GLOBALS: Mutex<()> = Mutex::new(());
 
 unsafe extern "C" {
     fn getopt_long(
@@ -119,7 +126,7 @@ fn gen_argv(r: &mut Lcg) -> Vec<String> {
     let mut v = vec!["prog".to_string()];
     let n = r.below(7);
     for _ in 0..n {
-        let tok = match r.below(12) {
+        let tok = match r.below(13) {
             0 => "-a".to_string(),
             1 => "-f".to_string(),
             2 => "-fval".to_string(),
@@ -130,10 +137,11 @@ fn gen_argv(r: &mut Lcg) -> Vec<String> {
             7 => "--fi".to_string(),  // abbreviation -> file
             8 => "--".to_string(),
             9 => "operand".to_string(),
-            // NOTE: a bare "-" argv token is intentionally excluded — fl
-            // mishandles it (treats it as an option / consumes it as a required
-            // argument) instead of a non-option operand; tracked separately.
-            10 => "--xyz".to_string(), // unknown long option
+            // A bare "-" is a non-option operand (never an option/argument):
+            // glibc permutes/leaves it. Now exercised after the exchange-model
+            // rewrite (bd-1fw2a7).
+            10 => "-".to_string(),
+            11 => "--xyz".to_string(), // unknown long option
             _ => "-z".to_string(),     // unknown short option
         };
         v.push(tok);
@@ -148,6 +156,7 @@ fn run(
     optstr: &CStr,
     longopts: &[libc::option],
 ) -> Vec<Step> {
+    let _guard = GETOPT_GLOBALS.lock().unwrap_or_else(|e| e.into_inner());
     let cs: Vec<CString> = args.iter().map(|s| CString::new(s.as_str()).unwrap()).collect();
     let mut argv: Vec<*mut c_char> = cs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
     argv.push(std::ptr::null_mut());
@@ -266,7 +275,6 @@ fn getopt_long_abbreviation_matches_glibc() {
 }
 
 #[test]
-#[ignore = "documents broader getopt gaps (bare-`-` operand, permutation intermediate optind) — bd-1fw2a7; abbreviation alone is covered by getopt_long_abbreviation_matches_glibc"]
 fn getopt_long_differential_fuzz_vs_glibc() {
     let mut r = Lcg(0x9e37_79b9_0907_d1ee);
     let mut divs: Vec<String> = Vec::new();
