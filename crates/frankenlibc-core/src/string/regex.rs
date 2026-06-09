@@ -47,6 +47,10 @@ pub const REG_BADBR: i32 = 10;
 pub const REG_ERANGE: i32 = 11;
 pub const REG_ESPACE: i32 = 12;
 pub const REG_BADRPT: i32 = 13;
+// GNU extensions to the POSIX error codes (used only by `regerror` messages).
+pub const REG_EEND: i32 = 14;
+pub const REG_ESIZE: i32 = 15;
+pub const REG_ERPAREN: i32 = 16;
 
 /// POSIX `RE_DUP_MAX`: the largest permitted interval (`{n,m}`) bound.
 /// A bound exceeding this is rejected with `REG_BADBR` per POSIX.2.
@@ -3125,17 +3129,22 @@ pub fn regex_error(errcode: i32) -> &'static str {
         0 => "Success",
         REG_NOMATCH => "No match",
         REG_BADPAT => "Invalid regular expression",
-        REG_ECOLLATE => "Invalid collating element",
+        // Messages are glibc's exact `__re_error_msgid` strings so `regerror`
+        // output is byte-identical (verified by conformance_diff_regerror).
+        REG_ECOLLATE => "Invalid collation character",
         REG_ECTYPE => "Invalid character class name",
         REG_EESCAPE => "Trailing backslash",
         REG_ESUBREG => "Invalid back reference",
-        REG_EBRACK => "Unmatched [",
-        REG_EPAREN => "Unmatched (",
-        REG_EBRACE => "Unmatched {",
+        REG_EBRACK => "Unmatched [, [^, [:, [., or [=",
+        REG_EPAREN => "Unmatched ( or \\(",
+        REG_EBRACE => "Unmatched \\{",
         REG_BADBR => "Invalid content of \\{\\}",
         REG_ERANGE => "Invalid range end",
         REG_ESPACE => "Memory exhausted",
         REG_BADRPT => "Invalid preceding regular expression",
+        REG_EEND => "Premature end of regular expression",
+        REG_ESIZE => "Regular expression too big",
+        REG_ERPAREN => "Unmatched ) or \\)",
         _ => "Unknown error",
     }
 }
@@ -3488,9 +3497,14 @@ mod tests {
 
     #[test]
     fn error_codes() {
+        // Messages mirror glibc's __re_error_msgid byte-for-byte
+        // (conformance_diff_regerror gates this vs the live host).
         assert_eq!(regex_error(REG_NOMATCH), "No match");
         assert_eq!(regex_error(REG_BADPAT), "Invalid regular expression");
-        assert_eq!(regex_error(REG_EBRACK), "Unmatched [");
+        assert_eq!(regex_error(REG_EBRACK), "Unmatched [, [^, [:, [., or [=");
+        assert_eq!(regex_error(REG_ECOLLATE), "Invalid collation character");
+        assert_eq!(regex_error(REG_EEND), "Premature end of regular expression");
+        assert_eq!(regex_error(REG_ERPAREN), "Unmatched ) or \\)");
     }
 
     #[test]
