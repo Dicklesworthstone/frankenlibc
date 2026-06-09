@@ -230,7 +230,12 @@ pub fn gcvt(value: f64, ndigit: i32, buf: &mut [u8]) -> usize {
 /// Pure formatting helper — no buffer concerns. Exposed for unit tests.
 fn render_gcvt(value: f64, ndigit: usize) -> String {
     if value.is_nan() {
-        return String::from("nan");
+        // glibc's `%g` preserves the NaN sign bit: gcvt(-nan) -> "-nan".
+        return if value.is_sign_negative() {
+            String::from("-nan")
+        } else {
+            String::from("nan")
+        };
     }
     if value.is_infinite() {
         return if value < 0.0 {
