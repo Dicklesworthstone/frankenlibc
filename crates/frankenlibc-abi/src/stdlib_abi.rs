@@ -5437,7 +5437,7 @@ pub fn realpath_resolve_userspace(input: &[u8]) -> Result<Vec<u8>, c_int> {
     use std::collections::VecDeque;
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
-    use std::path::{Component, Path, PathBuf};
+    use std::path::PathBuf;
 
     if input.is_empty() {
         return Err(errno::ENOENT);
@@ -5447,16 +5447,16 @@ pub fn realpath_resolve_userspace(input: &[u8]) -> Result<Vec<u8>, c_int> {
     // directory — but `Path::components` drops it, so capture it from the bytes.
     let trailing_slash = input.last() == Some(&b'/') && input != b"/";
 
-    let collect = |p: &Path, q: &mut VecDeque<Vec<u8>>, front: bool| {
-        // Build component list in order, then push to the requested end.
-        let mut comps: Vec<Vec<u8>> = Vec::new();
-        for c in p.components() {
-            match c {
-                Component::Normal(s) => comps.push(s.as_bytes().to_vec()),
-                Component::ParentDir => comps.push(b"..".to_vec()),
-                Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
-            }
-        }
+    // Split raw path bytes on '/', preserving `.` and `..` as real components.
+    // `Path::components()` normalizes `.` away (except a leading one), which
+    // would lose the directory requirement of a trailing/middle `.` — glibc
+    // rejects `file/.` with ENOTDIR. Found by realpath_differential_fuzz.
+    let collect = |bytes: &[u8], q: &mut VecDeque<Vec<u8>>, front: bool| {
+        let comps: Vec<Vec<u8>> = bytes
+            .split(|&b| b == b'/')
+            .filter(|seg| !seg.is_empty())
+            .map(|seg| seg.to_vec())
+            .collect();
         if front {
             for c in comps.into_iter().rev() {
                 q.push_front(c);
@@ -5468,19 +5468,25 @@ pub fn realpath_resolve_userspace(input: &[u8]) -> Result<Vec<u8>, c_int> {
         }
     };
 
-    let input_path = Path::new(OsStr::from_bytes(input));
     let mut queue: VecDeque<Vec<u8>> = VecDeque::new();
-    if !input_path.is_absolute() {
+    if input.first() != Some(&b'/') {
         let cwd = std::env::current_dir().map_err(|e| e.raw_os_error().unwrap_or(errno::ENOENT))?;
-        collect(&cwd, &mut queue, false);
+        collect(cwd.as_os_str().as_bytes(), &mut queue, false);
     }
-    collect(input_path, &mut queue, false);
+    collect(input, &mut queue, false);
 
     let mut result = PathBuf::from("/");
     let mut symlinks = 0u32;
     while let Some(comp) = queue.pop_front() {
         if comp == b".." {
             result.pop();
+            continue;
+        }
+        if comp == b"." {
+            // No-op for the path. `result` only ever holds directories here (a
+            // file is pushed last, only when the queue is empty), and a `.`
+            // following a file already triggered the ENOTDIR check below before
+            // the file was pushed — so this is reached only with a directory.
             continue;
         }
         let candidate = result.join(OsStr::from_bytes(&comp));
@@ -5494,10 +5500,11 @@ pub fn realpath_resolve_userspace(input: &[u8]) -> Result<Vec<u8>, c_int> {
             }
             let target =
                 std::fs::read_link(&candidate).map_err(|e| e.raw_os_error().unwrap_or(errno::ENOENT))?;
-            if target.is_absolute() {
+            let target_bytes = target.as_os_str().as_bytes();
+            if target_bytes.first() == Some(&b'/') {
                 result = PathBuf::from("/");
             }
-            collect(target.as_path(), &mut queue, true);
+            collect(target_bytes, &mut queue, true);
         } else if ft.is_dir() {
             result.push(OsStr::from_bytes(&comp));
         } else {
