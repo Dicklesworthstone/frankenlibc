@@ -282,6 +282,21 @@ fn fold_equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
 }
 
 #[inline(always)]
+fn fold_equal_and_no_nul_simd_folded(left: &[u8], right: &[u8]) -> bool {
+    debug_assert_eq!(left.len(), SIMD_FOLD_BYTES);
+    debug_assert_eq!(right.len(), SIMD_FOLD_BYTES);
+    let z = Simd::<u8, SIMD_LANES>::splat(0);
+    let mut acc = Mask::<i8, SIMD_LANES>::splat(false);
+    for k in 0..SIMD_FOLD_PANELS {
+        let lo = k * SIMD_LANES;
+        let l = Simd::<u8, SIMD_LANES>::from_slice(&left[lo..lo + SIMD_LANES]);
+        let r = Simd::<u8, SIMD_LANES>::from_slice(&right[lo..lo + SIMD_LANES]);
+        acc |= fold_ascii_upper_simd_32(l).simd_ne(fold_ascii_upper_simd_32(r)) | l.simd_eq(z);
+    }
+    !acc.any()
+}
+
+#[inline(always)]
 fn byte_is_any4(byte: u8, b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
     byte == b0 || byte == b1 || byte == b2 || byte == b3
 }
@@ -1217,6 +1232,16 @@ pub fn strcasecmp(s1: &[u8], s2: &[u8]) -> i32 {
     // (post-fold) or holds a NUL drops to the scalar tail for exact resolution.
     let bounded = s1.len().min(s2.len());
     let mut i = 0;
+    while i + SIMD_FOLD_BYTES <= bounded {
+        if !fold_equal_and_no_nul_simd_folded(
+            &s1[i..i + SIMD_FOLD_BYTES],
+            &s2[i..i + SIMD_FOLD_BYTES],
+        ) {
+            break;
+        }
+        i += SIMD_FOLD_BYTES;
+    }
+
     while i + SIMD_LANES <= bounded {
         if !fold_equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
             break;
@@ -1249,6 +1274,16 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     // out-of-range (logical NUL) bytes, identical to the scalar scan.
     let bounded = n.min(s1.len()).min(s2.len());
     let mut i = 0;
+    while i + SIMD_FOLD_BYTES <= bounded {
+        if !fold_equal_and_no_nul_simd_folded(
+            &s1[i..i + SIMD_FOLD_BYTES],
+            &s2[i..i + SIMD_FOLD_BYTES],
+        ) {
+            break;
+        }
+        i += SIMD_FOLD_BYTES;
+    }
+
     while i + SIMD_LANES <= bounded {
         if !fold_equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
             break;
