@@ -23,6 +23,11 @@ pub enum ExpandError {
     /// A `$VAR` reference resolved to no value, and the caller asked
     /// to treat that as an error (the POSIX `WRDE_UNDEF` flag).
     UndefinedVariable(String),
+    /// A `${...}` body used an operator POSIX `wordexp` does not support
+    /// (a bash extension such as `${var:off:len}`, `${var/p/r}`, `${var^^}`,
+    /// `${var@U}`, `${var[i]}`, or a bare/invalid `${var:}`). glibc reports
+    /// `WRDE_SYNTAX` for these.
+    Syntax,
 }
 
 /// Expand a single shell-style word into a `String`.
@@ -272,8 +277,22 @@ pub fn expand_braced_param(
                 expand_vars_dyn(word, undef_is_error, lookup_env)
             }
         }
-        // `?` (error if unset/empty) not yet handled — fall back to a plain lookup.
-        _ => plain(lookup_env(content), content),
+        // `${var:?word}` / `${var?word}`: when the variable is set (non-empty for
+        // the `:` form) the value is used; otherwise glibc's wordexp expands to
+        // empty (it does not abort here). The `word` message is ignored.
+        Some(b'?') => {
+            if test {
+                Ok(String::new())
+            } else {
+                Ok(raw.unwrap_or_default())
+            }
+        }
+        // Any other operator after a real name is a bash extension POSIX/glibc
+        // wordexp rejects — substring `${var:off}` / `${var:off:len}`, pattern
+        // substitution `${var/p/r}`, case `${var^^}` / `${var,,}`, transform
+        // `${var@U}`, subscript `${var[i]}`, or a bare/dangling `${var:}`.
+        // glibc returns WRDE_SYNTAX.
+        _ => Err(ExpandError::Syntax),
     }
 }
 

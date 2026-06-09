@@ -6663,6 +6663,7 @@ fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
     })
     .map_err(|e| match e {
         frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => WRDE_BADVAL,
+        frankenlibc_core::stdlib::wordexp::ExpandError::Syntax => WRDE_SYNTAX,
     })
 }
 
@@ -6740,6 +6741,9 @@ fn expand_vars_with_split_mask_dyn(
                                 split_unquoted_expansions,
                             );
                         }
+                    }
+                    Err(frankenlibc_core::stdlib::wordexp::ExpandError::Syntax) => {
+                        return Err(WRDE_SYNTAX);
                     }
                     Err(_) => return Err(WRDE_BADVAL),
                 }
