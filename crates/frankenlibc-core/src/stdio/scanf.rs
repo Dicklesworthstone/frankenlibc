@@ -1063,11 +1063,14 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             // after "nan", where the sequence is `[0-9A-Za-z_]*` and the
             // closing ')' is MANDATORY: if it is absent, the whole token
             // (sign and all) is rewound and the conversion fails to match.
-            // The sign bit is applied to the NaN ("-nan" keeps its sign); the
-            // payload value itself is an impl detail we do not replicate.
+            // The sign bit is applied to the NaN ("-nan" keeps its sign) and the
+            // `(n-char-sequence)` payload is encoded into the significand exactly
+            // as glibc's strtod does (parsed as strtoull base 0).
             let budget = max_chars - chars_read; // chars allowed from `remaining`
             let mut j = 3usize;
+            let mut payload = 0u64;
             if remaining.len() > j && j < budget && remaining[j] == b'(' {
+                let seq_start = j + 1;
                 let mut k = j + 1;
                 while k < remaining.len()
                     && k < budget
@@ -1076,6 +1079,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     k += 1;
                 }
                 if k < remaining.len() && k < budget && remaining[k] == b')' {
+                    payload = crate::stdlib::conversion::parse_nan_payload(&remaining[seq_start..k]);
                     j = k + 1; // consume through the ')'
                 } else {
                     // Malformed payload (no closing paren / cut off by width):
@@ -1083,7 +1087,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     return None;
                 }
             }
-            let val = f64::NAN.copysign(if negative { -1.0 } else { 1.0 });
+            let val = crate::stdlib::conversion::nan_f64(payload, negative);
             return Some((Some(ScanValue::Float(val)), i + j));
         }
     }

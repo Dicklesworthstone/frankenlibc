@@ -860,32 +860,28 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
         }
         if word.eq_ignore_ascii_case(b"nan") {
             i += 3;
-            // glibc accepts an optional `(n-char-sequence)` payload after NaN.
-            // The payload may contain alphanumerics and underscores; we ignore
-            // the actual value (no NaN payload encoding) but must consume it.
+            // glibc accepts an optional `(n-char-sequence)` payload after NaN
+            // (alphanumerics + underscores, closing ')' required): it is parsed
+            // as strtoull(seq, base 0) and OR'd into the significand.
+            let mut payload = 0u64;
             if i < slice.len() && slice[i] == b'(' {
                 let paren_start = i;
+                let seq_start = i + 1;
                 i += 1;
                 while i < slice.len() && (slice[i].is_ascii_alphanumeric() || slice[i] == b'_') {
                     i += 1;
                 }
                 if i < slice.len() && slice[i] == b')' {
+                    payload = parse_nan_payload(&slice[seq_start..i]);
                     i += 1; // consume closing paren
                 } else {
                     // No closing paren — rewind to before the '('
                     i = paren_start;
                 }
             }
-            // Preserve sign bit: -NaN and +NaN are distinct per IEEE 754.
-            // Cannot use `special_sign * NAN` — IEEE 754 §6.3 says the sign
-            // of a NaN result from arithmetic is undefined.  Use direct bit
-            // manipulation to set the sign bit reliably.
-            let nan = if special_sign < 0.0 {
-                f64::from_bits(f64::NAN.to_bits() | (1u64 << 63))
-            } else {
-                f64::NAN
-            };
-            return (nan, i, false);
+            // -NaN and +NaN are distinct per IEEE 754; the payload sets the
+            // significand exactly as glibc does.
+            return (nan_f64(payload, special_sign < 0.0), i, false);
         }
     }
 
@@ -1105,6 +1101,65 @@ fn parse_decimal_f32_prefix(slice: &[u8], consumed: usize) -> Option<f32> {
 ///
 /// Decimal inputs must round directly to `f32`; parsing through `f64` first can
 /// double-round halfway cases and drift from libc.
+/// Parse a NaN `(n-char-sequence)` payload exactly as glibc's `__strtoX_nan`
+/// does: `strtoull(seq, base 0)` (a `0x` prefix selects hex, a leading `0`
+/// selects octal, otherwise decimal), saturating to `u64::MAX` on overflow and
+/// stopping at the first character not valid for the base. The result is later
+/// masked into the significand (52 bits for `double`, 23 for `float`).
+pub fn parse_nan_payload(seq: &[u8]) -> u64 {
+    let (radix, mut i): (u64, usize) = if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x'
+    {
+        (16, 2)
+    } else if !seq.is_empty() && seq[0] == b'0' {
+        (8, 1)
+    } else {
+        (10, 0)
+    };
+    let mut acc: u64 = 0;
+    let mut overflow = false;
+    while i < seq.len() {
+        let d = match seq[i] {
+            b'0'..=b'9' => (seq[i] - b'0') as u64,
+            b'a'..=b'f' => (seq[i] - b'a' + 10) as u64,
+            b'A'..=b'F' => (seq[i] - b'A' + 10) as u64,
+            _ => break,
+        };
+        if d >= radix {
+            break;
+        }
+        match acc.checked_mul(radix).and_then(|v| v.checked_add(d)) {
+            Some(v) => acc = v,
+            None => overflow = true,
+        }
+        i += 1;
+    }
+    if overflow { u64::MAX } else { acc }
+}
+
+/// Build an `f64` quiet NaN carrying `payload` (masked to the 52-bit
+/// significand, quiet bit forced) and the given sign — matching glibc strtod.
+pub fn nan_f64(payload: u64, negative: bool) -> f64 {
+    let bits = 0x7ff8_0000_0000_0000u64
+        | (payload & 0x000f_ffff_ffff_ffff)
+        | ((negative as u64) << 63);
+    f64::from_bits(bits)
+}
+
+/// Narrow an `f64` to `f32`, preserving a NaN's sign and low-23-bit payload the
+/// way glibc's strtof does. A plain `as f32` cast does NOT preserve the payload
+/// (LLVM `fptrunc` keeps the high mantissa bits; glibc uses the low ones), so a
+/// NaN must be reconstructed from its bit pattern.
+pub fn narrow_f64_to_f32(v: f64) -> f32 {
+    if v.is_nan() {
+        let b = v.to_bits();
+        let sign = ((b >> 63) as u32) << 31;
+        let payload = (b & 0x7f_ffff) as u32; // low 23 bits == the float payload
+        f32::from_bits(0x7fc0_0000 | sign | payload)
+    } else {
+        v as f32
+    }
+}
+
 pub fn strtof_impl(s: &[u8]) -> (f32, usize, bool) {
     let (wide, consumed, wide_exact) = strtod_impl(s);
     if consumed == 0 {
@@ -1119,11 +1174,12 @@ pub fn strtof_impl(s: &[u8]) -> (f32, usize, bool) {
         return (value, consumed, false);
     }
 
-    // Hex path: `wide as f32`. The f32 result is an EXACT subnormal iff the f64
-    // parse was lossless AND the f64->f32 narrowing was lossless (`value as f64`
-    // — always exact widening — round-trips to `wide`) AND the result is a
-    // nonzero f32 subnormal. (bd-2g7oyh.187)
-    let value = wide as f32;
+    // Hex/special path: narrow preserving a NaN payload (plain `as f32` drops
+    // it). The f32 result is an EXACT subnormal iff the f64 parse was lossless
+    // AND the f64->f32 narrowing was lossless (`value as f64` — always exact
+    // widening — round-trips to `wide`) AND the result is a nonzero f32
+    // subnormal. (bd-2g7oyh.187)
+    let value = narrow_f64_to_f32(wide);
     let exact_subnormal =
         wide_exact && (value as f64 == wide) && value != 0.0 && value.abs() < f32::MIN_POSITIVE;
     (value, consumed, exact_subnormal)

@@ -4942,7 +4942,8 @@ macro_rules! scanf_write_one {
                 }
                 _ => {
                     let ptr = $args.next_arg::<*mut f32>();
-                    *ptr = *v as f32;
+                    // Preserve a NaN payload across the f64->f32 narrowing.
+                    *ptr = frankenlibc_core::stdlib::conversion::narrow_f64_to_f32(*v);
                 }
             },
             ScanValue::Char(bytes) => {
@@ -5471,7 +5472,10 @@ pub(crate) unsafe fn vscanf_write_one(
         ScanValue::Float(v) => match spec.length {
             LengthMod::BigL => unsafe { write_long_double_from_f64(dest, *v) },
             LengthMod::L => unsafe { *(dest as *mut f64) = *v },
-            _ => unsafe { *(dest as *mut f32) = *v as f32 },
+            _ => unsafe {
+                // Preserve a NaN payload across the f64->f32 narrowing.
+                *(dest as *mut f32) = frankenlibc_core::stdlib::conversion::narrow_f64_to_f32(*v)
+            },
         },
         ScanValue::Char(bytes) => unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest as *mut u8, bytes.len());
