@@ -24274,9 +24274,8 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
     let Some(input_bytes) = (unsafe { read_c_string_bytes(string) }) else {
         return 8;
     };
-    if input_bytes.is_empty() {
-        return 8;
-    }
+    // An empty (but non-NULL) input matches no template — glibc reports 7
+    // ("no matching line"), not 8 ("invalid spec"); let it fall through.
     let mut input = Vec::with_capacity(input_bytes.len() + 1);
     input.extend_from_slice(&input_bytes);
     input.push(0);
@@ -24317,7 +24316,9 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         Err(_) => return 5, // read error
     };
 
-    // Try each line as a strptime template
+    // Try each line as a strptime template. glibc seeds the broken-down time
+    // with sentinels so it can tell which fields the template actually set,
+    // then fills the rest from the current local time (getdate_apply_defaults).
     for line in content.split(|&b| b == b'\n') {
         // Skip empty lines
         if line.is_empty() || line.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
@@ -24333,8 +24334,8 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         template.extend_from_slice(&line[..end]);
         template.push(0);
 
-        // Initialize result to a clean state
-        unsafe { std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>()) };
+        // Sentinel-init so unset fields are detectable after strptime.
+        unsafe { getdate_sentinel_init(result) };
 
         let remainder = unsafe {
             crate::time_abi::strptime(
@@ -24350,12 +24351,153 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
                 let offset = rest_addr - input_base;
                 let rest = &input[offset..input_bytes.len()];
                 if rest.iter().all(|&b| b == b' ' || b == b'\t') {
-                    return 0; // success
+                    // Matched. Fill unspecified fields from the current local
+                    // time per POSIX/glibc rules; returns 8 on an impossible
+                    // calendar date (e.g. February 30).
+                    return unsafe { getdate_apply_defaults(result) };
                 }
             }
         }
     }
     7 // no matching template
+}
+
+/// glibc-style sentinel pattern for `getdate`/`getdate_r`: every field that a
+/// `strptime` template might fill is set to an out-of-range marker so the
+/// default-fill pass can tell "set by the template" from "left untouched".
+unsafe fn getdate_sentinel_init(result: *mut libc::tm) {
+    unsafe {
+        std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>());
+        (*result).tm_sec = -1;
+        (*result).tm_min = -1;
+        (*result).tm_hour = -1;
+        (*result).tm_mday = 0; // valid mday is 1..=31
+        (*result).tm_mon = -1;
+        (*result).tm_year = i32::MIN;
+        (*result).tm_wday = -1;
+        (*result).tm_yday = -1;
+        (*result).tm_isdst = -1;
+    }
+}
+
+/// Days in `month` (0..=11) of calendar `year` (full year, e.g. 2024).
+fn getdate_days_in_month(month: i32, year: i32) -> i32 {
+    const DAYS: [i32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if month == 1 {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        if leap { 29 } else { 28 }
+    } else if (0..=11).contains(&month) {
+        DAYS[month as usize]
+    } else {
+        31
+    }
+}
+
+/// Fill the fields a matched template left unset from the current local time,
+/// mirroring glibc `getdate`. Returns 0 on success or 8 for an impossible date.
+///
+/// Rules (validated against live glibc, NOW = Tue 2026-06-09):
+///   * time: if no h/m/s field was given, default to the current h/m/s; if any
+///     was given, unspecified lower fields default to 0 ("10:30" -> sec 0).
+///   * year: defaults to the current year (no month/day rollover — "January 05"
+///     stays in the current year even though it is past).
+///   * weekday-only: the next occurrence of that weekday (today if it matches).
+///   * time-only (nothing about the date): today, advanced to tomorrow if the
+///     given time has already passed today.
+///   * an explicit but impossible calendar date (February 30) -> 8.
+///
+/// Note: `tm_isdst` and any DST-driven adjustment come from glibc's *local*
+/// mktime; frankenlibc's mktime is UTC-only (documented TZ scope), so this
+/// matches glibc exactly under TZ=UTC. See bd-2g7oyh.288.
+unsafe fn getdate_apply_defaults(result: *mut libc::tm) -> c_int {
+    // Current local time.
+    let now_secs = unsafe { crate::time_abi::time(std::ptr::null_mut()) };
+    let mut now: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { crate::time_abi::localtime_r(&now_secs, &mut now) };
+
+    let (p_sec, p_min, p_hour, p_mday, p_mon, p_year, p_wday) = unsafe {
+        (
+            (*result).tm_sec,
+            (*result).tm_min,
+            (*result).tm_hour,
+            (*result).tm_mday,
+            (*result).tm_mon,
+            (*result).tm_year,
+            (*result).tm_wday,
+        )
+    };
+    let sec_set = p_sec != -1;
+    let min_set = p_min != -1;
+    let hour_set = p_hour != -1;
+    let mday_set = p_mday != 0;
+    let mon_set = p_mon != -1;
+    let year_set = p_year != i32::MIN;
+    let wday_set = p_wday != -1;
+
+    // Time fields.
+    let any_time = sec_set || min_set || hour_set;
+    let (hour, min, sec) = if any_time {
+        (
+            if hour_set { p_hour } else { 0 },
+            if min_set { p_min } else { 0 },
+            if sec_set { p_sec } else { 0 },
+        )
+    } else {
+        (now.tm_hour, now.tm_min, now.tm_sec)
+    };
+
+    // Date fields.
+    let date_given = mon_set || mday_set;
+    let mut year = if year_set { p_year } else { now.tm_year };
+    let mut mon = if mon_set { p_mon } else { now.tm_mon };
+    let mut mday = if mday_set { p_mday } else { now.tm_mday };
+
+    // Validate an explicitly given calendar date before any normalization
+    // (glibc reports error 8 for February 30 et al., rather than rolling over).
+    if mday_set {
+        if !(0..=11).contains(&mon) {
+            return 8;
+        }
+        let dim = getdate_days_in_month(mon, year.saturating_add(1900));
+        if p_mday < 1 || p_mday > dim {
+            return 8;
+        }
+    }
+
+    let pure_time_only = !date_given && !wday_set && !year_set;
+    if wday_set && !date_given {
+        // Weekday-only: next occurrence (today if today's weekday matches).
+        year = now.tm_year;
+        mon = now.tm_mon;
+        let delta = (((p_wday - now.tm_wday) % 7) + 7) % 7;
+        mday = now.tm_mday + delta;
+    } else if !date_given {
+        // Nothing explicit about the date (time-only, or year-only): start
+        // from today's month/day.
+        mon = now.tm_mon;
+        mday = now.tm_mday;
+    }
+
+    unsafe {
+        (*result).tm_sec = sec;
+        (*result).tm_min = min;
+        (*result).tm_hour = hour;
+        (*result).tm_mday = mday;
+        (*result).tm_mon = mon;
+        (*result).tm_year = year;
+        (*result).tm_isdst = -1;
+        (*result).tm_wday = 0;
+        (*result).tm_yday = 0;
+
+        // Time-only with the time already past today -> roll to tomorrow.
+        if pure_time_only && any_time && (hour, min, sec) < (now.tm_hour, now.tm_min, now.tm_sec) {
+            (*result).tm_mday += 1;
+        }
+
+        // Normalize: recompute tm_wday/tm_yday and carry any day/month overflow.
+        crate::time_abi::mktime(result);
+    }
+    0
 }
 
 /// `getdate` — convert a date string to struct tm using DATEMSK templates.
