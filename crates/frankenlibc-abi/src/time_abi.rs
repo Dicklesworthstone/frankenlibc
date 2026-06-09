@@ -1048,6 +1048,37 @@ fn jan1_weekday(year: i64) -> i64 {
     (days_from_civil(year, 1, 1) + 4).rem_euclid(7)
 }
 
+/// Day of the week (Sunday = 0) for a broken-down date, using glibc's exact
+/// `day_of_the_week` arithmetic so strptime's end-of-parse fill is bit-identical
+/// to glibc. `mon` is taken raw (assumed 0..=11 here; the only call site guards
+/// on a determinate date that always has an in-range month).
+fn strptime_day_of_week(tm_year: i64, tm_mon: i64, tm_mday: i64) -> i64 {
+    // Cumulative days before each month, ignoring leap years (matches glibc's
+    // `__mon_yday[0]`); the `corr_year` term below absorbs the leap correction.
+    const MON_YDAY0: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    let corr_year = 1900 + tm_year - i64::from(tm_mon < 2);
+    let q = corr_year.div_euclid(4);
+    let wday = -473 + 365 * (tm_year - 70) + q - q.div_euclid(25) + q.div_euclid(25).div_euclid(4)
+        + MON_YDAY0[tm_mon.clamp(0, 11) as usize]
+        + tm_mday
+        - 1;
+    wday.rem_euclid(7)
+}
+
+/// Day of the year (0-based) for a broken-down date, matching glibc's
+/// `day_of_the_year`: cumulative days before the month (leap-aware) plus
+/// `tm_mday - 1`. Accepts an out-of-range `tm_mday` (e.g. a `%W`-derived Dec 37
+/// or a `%Y-%m` mday 0) without normalising, exactly as glibc does.
+fn strptime_day_of_year(tm_year: i64, tm_mon: i64, tm_mday: i64) -> i64 {
+    let year = 1900 + tm_year;
+    let leap = usize::from((year % 4 == 0 && year % 100 != 0) || year % 400 == 0);
+    const T: [[i64; 12]; 2] = [
+        [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334],
+        [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335],
+    ];
+    T[leap][tm_mon.clamp(0, 11) as usize] + (tm_mday - 1)
+}
+
 /// POSIX `strptime` — parse date/time string into broken-down time.
 ///
 /// Supports format specifiers: `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`,
@@ -1096,6 +1127,9 @@ pub unsafe extern "C" fn strptime(
     let mut have_wday = false;
     let mut week_u: Option<i32> = None;
     let mut week_w: Option<i32> = None;
+    // True once a calendar date is determinate (explicit %m/%d, or derived from
+    // %j / %U+%w / %W+%w); gates the glibc end-of-parse tm_wday/tm_yday fill.
+    let mut date_determinate = false;
 
     while fi < fmt.len() {
         let fc = fmt[fi];
@@ -1726,6 +1760,7 @@ pub unsafe extern "C" fn strptime(
             (*tm).tm_mon = mon as i32;
             (*tm).tm_mday = rem + 1;
         }
+        date_determinate = true;
     }
 
     // Post-processing: derive the calendar date from a week-of-year (%U Sunday or
@@ -1766,6 +1801,25 @@ pub unsafe extern "C" fn strptime(
         unsafe {
             (*tm).tm_mon = mon as i32;
             (*tm).tm_mday = (rem + 1) as i32;
+        }
+        date_determinate = true;
+    }
+
+    // End-of-parse: glibc sets `want_xday` — and so recomputes the day-of-week
+    // and day-of-year from the broken-down date — whenever a YEAR (%Y/%y/%C),
+    // MONTH (%m/%b/%B/%h), DAY (%d/%e) or DAY-OF-YEAR (%j) field was parsed (or a
+    // date was derived above). A weekday alone (%a/%A/%w/%u), an ISO field alone
+    // (%V/%G/%g) or time-only does NOT trigger it. An explicitly parsed weekday
+    // or %j is kept as given, not recomputed. (Was a gap: fl set neither field.)
+    if have_year || have_mon || have_mday || have_yday || date_determinate {
+        let (y, mon, mday) = unsafe {
+            ((*tm).tm_year as i64, (*tm).tm_mon as i64, (*tm).tm_mday as i64)
+        };
+        if !have_wday {
+            unsafe { (*tm).tm_wday = strptime_day_of_week(y, mon, mday) as i32 };
+        }
+        if !have_yday {
+            unsafe { (*tm).tm_yday = strptime_day_of_year(y, mon, mday) as i32 };
         }
     }
 
