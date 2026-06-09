@@ -51,6 +51,10 @@ pub struct BrokenDownTime {
     pub tm_yday: i32,
     /// Daylight saving time flag.
     pub tm_isdst: i32,
+    /// Seconds east of UTC (glibc `tm_gmtoff`). Used by `strftime` `%z`; fl's
+    /// own gmtime/localtime always produce 0 (UTC), but a caller (or `strptime
+    /// %z`) may set it and `%z` must honour it, exactly like glibc.
+    pub tm_gmtoff: i64,
 }
 
 /// Returns `true` if `year` is a leap year (Gregorian).
@@ -160,6 +164,7 @@ pub fn epoch_to_broken_down(epoch_secs: i64) -> BrokenDownTime {
         tm_wday,
         tm_yday,
         tm_isdst: 0,
+        tm_gmtoff: 0, // gmtime/localtime are UTC in fl
     }
 }
 
@@ -774,8 +779,23 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_mod!(bd.tm_year as i64 + 1900, 0, Pad::Zero);
             }
             b'z' => {
-                // UTC offset: +0000 (we only support UTC for now)
-                push_str_field!(b"+0000", true, false);
+                // UTC offset from tm_gmtoff, formatted ±HHMM like glibc (which
+                // reads the field regardless of how it was set — localtime,
+                // strptime %z, or by hand). fl's own gmtime/localtime produce 0,
+                // so the common case still renders "+0000".
+                let off = bd.tm_gmtoff;
+                let (sign, abs) = if off < 0 {
+                    (b'-', (-off) as u64)
+                } else {
+                    (b'+', off as u64)
+                };
+                let hh = abs / 3600;
+                let mm = (abs % 3600) / 60;
+                push!(sign);
+                push!(b'0' + ((hh / 10) % 10) as u8);
+                push!(b'0' + (hh % 10) as u8);
+                push!(b'0' + ((mm / 10) % 10) as u8);
+                push!(b'0' + (mm % 10) as u8);
             }
             b'Z' => {
                 // Timezone name. glibc's gmtime() sets tm_zone = "GMT", and
@@ -968,6 +988,7 @@ mod tests {
             tm_wday: 0,
             tm_yday: 0,
             tm_isdst: 0,
+            tm_gmtoff: 0,
         };
         let epoch = broken_down_to_epoch(&bd);
         let normalized = epoch_to_broken_down(epoch);
@@ -988,6 +1009,7 @@ mod tests {
             tm_wday: 0,
             tm_yday: 0,
             tm_isdst: 0,
+            tm_gmtoff: 0,
         };
         let epoch = broken_down_to_epoch(&bd);
         let normalized = epoch_to_broken_down(epoch);
@@ -1309,6 +1331,7 @@ mod tests {
             tm_wday: i32::MAX,
             tm_yday: i32::MIN,
             tm_isdst: 0,
+            tm_gmtoff: 0,
         };
         let mut buf = [0u8; 256];
         // Each of the previously-overflowing specifiers must complete
@@ -1334,6 +1357,7 @@ mod tests {
             tm_wday: i32::MAX,
             tm_yday: i32::MAX,
             tm_isdst: 0,
+            tm_gmtoff: 0,
         };
         let _ = format_strftime(b"%m", &bd_max, &mut buf);
         let _ = format_strftime(b"%j", &bd_max, &mut buf);
@@ -1369,6 +1393,7 @@ mod tests {
             tm_wday: 0,
             tm_yday: 0,
             tm_isdst: -1,
+            tm_gmtoff: 0,
         };
         // broken_down_to_epoch normalizes and epoch_to_broken_down gives us back
         let epoch = broken_down_to_epoch(&bd);
@@ -1391,6 +1416,7 @@ mod tests {
             tm_wday: 5,
             tm_yday: 142,
             tm_isdst: 0,
+            tm_gmtoff: 0,
         };
         // "%Y-%m-%d" = "2026-05-23" = 10 chars + NUL = 11 bytes
         let mut buf = [0u8; 11];

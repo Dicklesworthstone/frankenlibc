@@ -380,6 +380,7 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
             tm_wday: (*tm).tm_wday,
             tm_yday: (*tm).tm_yday,
             tm_isdst: (*tm).tm_isdst,
+            tm_gmtoff: (*tm).tm_gmtoff as i64,
         }
     }
 }
