@@ -148,6 +148,52 @@ fn fnmatch_component(pat: &[u8], name: &[u8], noescape: bool) -> bool {
 
 /// Expand a glob pattern and return matching paths.
 ///
+/// Directory/stat operations the glob walker needs. The default [`StdGlobFs`]
+/// uses `std::fs`; the ABI layer supplies a `GLOB_ALTDIRFUNC`-backed
+/// implementation that routes through the caller-provided
+/// `gl_opendir`/`gl_readdir`/`gl_closedir`/`gl_stat` function pointers.
+pub trait GlobFs {
+    /// List the entry names in `dir_path`, EXCLUDING `.` and `..` (the engine
+    /// re-introduces those itself). An empty `dir_path` means the current
+    /// directory. `Err(errno)` reports a directory open/read failure — the
+    /// walker treats `ENOTDIR` as "not a directory, skip" and routes other
+    /// errnos through the error handler / `GLOB_ERR`.
+    fn read_dir(&self, dir_path: &[u8]) -> Result<Vec<Vec<u8>>, i32>;
+
+    /// Stat `path` FOLLOWING symlinks: `None` = does not exist / stat error,
+    /// `Some(true)` = directory, `Some(false)` = non-directory. (Mirrors the
+    /// engine's `std::fs::metadata().is_dir()` symlink-following semantics.)
+    fn stat_is_dir(&self, path: &[u8]) -> Option<bool>;
+}
+
+/// Default `std::fs`-backed [`GlobFs`] — the filesystem the engine uses unless
+/// the caller requests `GLOB_ALTDIRFUNC`.
+pub struct StdGlobFs;
+
+impl GlobFs for StdGlobFs {
+    fn read_dir(&self, dir_path: &[u8]) -> Result<Vec<Vec<u8>>, i32> {
+        let path = if dir_path.is_empty() {
+            Path::new(".")
+        } else {
+            Path::new(OsStr::from_bytes(dir_path))
+        };
+        match std::fs::read_dir(path) {
+            // Rust's read_dir never yields "." / ".." — matching the contract.
+            Ok(entries) => Ok(entries
+                .flatten()
+                .map(|e| e.file_name().as_bytes().to_vec())
+                .collect()),
+            Err(error) => Err(error.raw_os_error().unwrap_or(crate::errno::EIO)),
+        }
+    }
+
+    fn stat_is_dir(&self, path: &[u8]) -> Option<bool> {
+        std::fs::metadata(Path::new(OsStr::from_bytes(path)))
+            .map(|m| m.is_dir())
+            .ok()
+    }
+}
+
 pub fn glob_expand(pattern: &[u8], flags: i32) -> Result<GlobResult, i32> {
     glob_expand_with_error_handler(pattern, flags, |_, _| false)
 }
@@ -280,7 +326,18 @@ pub fn glob_expand_with_error_handler<F>(
 where
     F: FnMut(&[u8], i32) -> bool,
 {
-    glob_expand_dyn(pattern, flags, &mut errfunc)
+    glob_expand_dyn(pattern, flags, &mut errfunc, &StdGlobFs)
+}
+
+/// Like [`glob_expand_with_error_handler`] but routes every directory/stat
+/// operation through a caller-supplied [`GlobFs`] (the `GLOB_ALTDIRFUNC` path).
+pub fn glob_expand_with_fs(
+    pattern: &[u8],
+    flags: i32,
+    errfunc: &mut dyn FnMut(&[u8], i32) -> bool,
+    fs: &dyn GlobFs,
+) -> Result<GlobResult, i32> {
+    glob_expand_dyn(pattern, flags, errfunc, fs)
 }
 
 // Non-generic core taking the error handler via dynamic dispatch so the
@@ -290,6 +347,7 @@ fn glob_expand_dyn(
     pattern: &[u8],
     flags: i32,
     errfunc: &mut dyn FnMut(&[u8], i32) -> bool,
+    fs: &dyn GlobFs,
 ) -> Result<GlobResult, i32> {
     // Find the pattern up to first null byte.
     let pat_len = pattern
@@ -324,7 +382,7 @@ fn glob_expand_dyn(
             let inner_flags = flags & !(GLOB_BRACE | GLOB_NOCHECK | GLOB_NOMAGIC | GLOB_APPEND);
             let mut combined: Vec<Vec<u8>> = Vec::new();
             for sub in &expansions {
-                match glob_expand_dyn(sub, inner_flags, errfunc) {
+                match glob_expand_dyn(sub, inner_flags, errfunc, fs) {
                     Ok(res) => combined.extend(res.paths),
                     Err(GLOB_NOMATCH) => {}
                     Err(e) => return Err(e),
@@ -384,10 +442,9 @@ fn glob_expand_dyn(
         // slash-stripped name: glibc matches `BAR/` to the regular file `BAR`
         // (returned WITHOUT the slash) and `d/` to the directory `d` (WITH the
         // slash) — append `/` only when the entry is a directory (or GLOB_MARK).
-        let path = Path::new(OsStr::from_bytes(pat));
-        if path.exists() {
+        if let Some(is_dir) = fs.stat_is_dir(pat) {
             let mut p = pat.to_vec();
-            if (flags & GLOB_MARK != 0 || trailing_slash) && path.is_dir() && !p.ends_with(b"/") {
+            if (flags & GLOB_MARK != 0 || trailing_slash) && is_dir && !p.ends_with(b"/") {
                 p.push(b'/');
             }
             return Ok(GlobResult { paths: vec![p] });
@@ -411,7 +468,7 @@ fn glob_expand_dyn(
     if trailing_slash {
         walk_pat.push(b'/');
     }
-    glob_recursive(b"", &walk_pat, flags, &mut results, errfunc)?;
+    glob_recursive(b"", &walk_pat, flags, &mut results, errfunc, fs)?;
 
     if results.is_empty() {
         if flags & GLOB_NOCHECK != 0 {
@@ -465,6 +522,7 @@ fn glob_recursive(
     flags: i32,
     results: &mut Vec<Vec<u8>>,
     errfunc: &mut dyn FnMut(&[u8], i32) -> bool,
+    fs: &dyn GlobFs,
 ) -> Result<(), i32> {
     let noescape = flags & GLOB_NOESCAPE != 0;
     let (dir_prefix, tail) = split_pattern(pattern, noescape);
@@ -492,17 +550,10 @@ fn glob_recursive(
     full_dir.extend_from_slice(resolved_prefix);
     full_dir.extend_from_slice(dir_prefix);
 
-    let dir_path = if full_dir.is_empty() {
-        Path::new(".")
-    } else {
-        Path::new(OsStr::from_bytes(&full_dir))
-    };
-
-    // Read directory entries.
-    let entries = match std::fs::read_dir(dir_path) {
+    // Read directory entries through the configured filesystem backend.
+    let dir_entries = match fs.read_dir(&full_dir) {
         Ok(e) => e,
-        Err(error) => {
-            let errno = error.raw_os_error().unwrap_or(crate::errno::EIO);
+        Err(errno) => {
             if errno == crate::errno::ENOTDIR {
                 return Ok(());
             }
@@ -515,15 +566,14 @@ fn glob_recursive(
         }
     };
 
-    // Rust's `read_dir` never yields "." or "..", but glibc's `readdir` always
-    // does, so re-introduce them unconditionally. The hidden-file skip and
-    // `fnmatch_component` below decide whether they actually match — only when
-    // the component begins with '.' or GLOB_PERIOD is set — so a pattern like
-    // `*` / `?` / `[!a-c]` matches them under GLOB_PERIOD, exactly like glibc.
+    // The backend yields entries WITHOUT "." / "..", but glibc's `readdir`
+    // always includes them, so re-introduce them unconditionally. The
+    // hidden-file skip and `fnmatch_component` below decide whether they
+    // actually match — only when the component begins with '.' or GLOB_PERIOD
+    // is set — so a pattern like `*` / `?` / `[!a-c]` matches them under
+    // GLOB_PERIOD, exactly like glibc.
     let mut names: Vec<Vec<u8>> = vec![b".".to_vec(), b"..".to_vec()];
-    for entry in entries.flatten() {
-        names.push(entry.file_name().as_bytes().to_vec());
-    }
+    names.extend(dir_entries);
 
     for name_bytes in &names {
         let name_bytes = name_bytes.as_slice();
@@ -553,9 +603,7 @@ fn glob_recursive(
         // gets a trailing '/' under GLOB_MARK, and is accepted under
         // GLOB_ONLYDIR. Use a symlink-following stat to match. A broken
         // symlink errors out and is treated as a non-directory.
-        let resolves_to_dir = std::fs::metadata(Path::new(OsStr::from_bytes(&full_path)))
-            .map(|m| m.is_dir())
-            .unwrap_or(false);
+        let resolves_to_dir = fs.stat_is_dir(&full_path).unwrap_or(false);
 
         if rest.is_empty() {
             // No more pattern components — this is a final match. A trailing
@@ -583,7 +631,7 @@ fn glob_recursive(
             // all legal POSIX filename bytes) from being re-interpreted as
             // pattern syntax on subsequent recursions.
             full_path.push(b'/');
-            glob_recursive(&full_path, rest, flags, results, errfunc)?;
+            glob_recursive(&full_path, rest, flags, results, errfunc, fs)?;
         }
     }
 

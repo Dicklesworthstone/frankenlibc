@@ -5509,11 +5509,97 @@ pub unsafe extern "C" fn fnmatch(
 ///
 /// We define a minimal `#[repr(C)]` struct for the first three fields
 /// instead of using raw byte offsets.
+/// View over the caller's `glob_t`. Includes the GNU `GLOB_ALTDIRFUNC` function
+/// pointers (only read when that flag is set); the layout matches glibc's
+/// `<glob.h>` on x86_64 (`gl_flags` at offset 24, the five callbacks at 32..72).
 #[repr(C)]
 struct GlobT {
     gl_pathc: usize,
     gl_pathv: *mut *mut c_char,
     gl_offs: usize,
+    gl_flags: c_int,
+    gl_closedir: Option<unsafe extern "C" fn(*mut c_void)>,
+    gl_readdir: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
+    gl_opendir: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
+    gl_lstat: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
+    gl_stat: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
+}
+
+const GLOB_ALTDIRFUNC: c_int = 0x200;
+
+/// A [`GlobFs`](frankenlibc_core::string::glob::GlobFs) backed by a caller's
+/// `GLOB_ALTDIRFUNC` callbacks (`gl_opendir`/`gl_readdir`/`gl_closedir`/`gl_stat`).
+struct AltDirGlobFs {
+    opendir: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
+    readdir: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
+    closedir: Option<unsafe extern "C" fn(*mut c_void)>,
+    stat: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
+}
+
+impl frankenlibc_core::string::glob::GlobFs for AltDirGlobFs {
+    fn read_dir(&self, dir_path: &[u8]) -> Result<Vec<Vec<u8>>, c_int> {
+        let bytes = if dir_path.is_empty() { b".".to_vec() } else { dir_path.to_vec() };
+        let Ok(cpath) = std::ffi::CString::new(bytes) else {
+            return Err(frankenlibc_core::errno::ENOENT);
+        };
+        let (Some(opendir), Some(readdir)) = (self.opendir, self.readdir) else {
+            return Err(frankenlibc_core::errno::ENOSYS);
+        };
+        // SAFETY: caller-supplied GLOB_ALTDIRFUNC callbacks; `cpath` is a valid
+        // NUL-terminated C string and outlives the call.
+        let dir = unsafe { opendir(cpath.as_ptr()) };
+        if dir.is_null() {
+            let e = unsafe { *libc::__errno_location() };
+            return Err(if e != 0 { e } else { frankenlibc_core::errno::ENOENT });
+        }
+        let mut names = Vec::new();
+        loop {
+            // SAFETY: `dir` is a live handle from the caller's gl_opendir.
+            let ent = unsafe { readdir(dir) };
+            if ent.is_null() {
+                break;
+            }
+            let d = ent as *const libc::dirent;
+            // SAFETY: gl_readdir returns a `struct dirent *`; read its
+            // NUL-terminated `d_name` (bounded by NAME_MAX + 1).
+            let name_ptr = unsafe { (*d).d_name.as_ptr() };
+            let mut name = Vec::new();
+            let mut i = 0isize;
+            loop {
+                let c = unsafe { *name_ptr.offset(i) } as u8;
+                if c == 0 || i > 4096 {
+                    break;
+                }
+                name.push(c);
+                i += 1;
+            }
+            // The engine re-introduces "." / ".." itself; exclude them here so
+            // the GlobFs contract matches StdGlobFs (Rust read_dir omits them).
+            if name != b"." && name != b".." {
+                names.push(name);
+            }
+        }
+        if let Some(closedir) = self.closedir {
+            // SAFETY: `dir` is the live handle; closed exactly once.
+            unsafe { closedir(dir) };
+        }
+        Ok(names)
+    }
+
+    fn stat_is_dir(&self, path: &[u8]) -> Option<bool> {
+        let Ok(cpath) = std::ffi::CString::new(path.to_vec()) else {
+            return None;
+        };
+        let stat_fn = self.stat?;
+        // SAFETY: zero-initialized `libc::stat` is a valid output buffer; the
+        // callback fills it. `cpath` outlives the call.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let r = unsafe { stat_fn(cpath.as_ptr(), &mut st as *mut libc::stat as *mut c_void) };
+        if r != 0 {
+            return None;
+        }
+        Some(st.st_mode & libc::S_IFMT == libc::S_IFDIR)
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5556,22 +5642,36 @@ pub unsafe extern "C" fn glob(
         (Vec::new(), 0)
     };
 
-    // Run the glob engine.
-    let result = match errfunc {
-        Some(callback) => {
-            glob_core::glob_expand_with_error_handler(&pat_bytes, flags, |path, errno| {
-                match CString::new(path) {
-                    Ok(epath) => {
-                        // SAFETY: `epath` is a null-terminated CString that stays
-                        // alive for the whole errfunc call, and POSIX callbacks
-                        // receive the errno value by copy.
-                        unsafe { callback(epath.as_ptr(), errno as c_int) != 0 }
-                    }
-                    Err(_) => true,
-                }
-            })
+    // Error handler shared by both filesystem backends: marshal the path to a
+    // CString and call the caller's errfunc (a NULL errfunc never aborts).
+    let mut errfn = |path: &[u8], errno: i32| -> bool {
+        match errfunc {
+            Some(callback) => match CString::new(path) {
+                // SAFETY: `epath` is a null-terminated CString alive for the call.
+                Ok(epath) => unsafe { callback(epath.as_ptr(), errno as c_int) != 0 },
+                Err(_) => true,
+            },
+            None => false,
         }
-        None => glob_core::glob_expand(&pat_bytes, flags),
+    };
+
+    // GLOB_ALTDIRFUNC routes every directory/stat operation through the caller's
+    // gl_opendir/gl_readdir/gl_closedir/gl_stat callbacks; otherwise use std::fs.
+    let result = if flags & GLOB_ALTDIRFUNC != 0 {
+        let alt = AltDirGlobFs {
+            opendir: unsafe { (*gt).gl_opendir },
+            readdir: unsafe { (*gt).gl_readdir },
+            closedir: unsafe { (*gt).gl_closedir },
+            stat: unsafe { (*gt).gl_stat },
+        };
+        glob_core::glob_expand_with_fs(&pat_bytes, flags, &mut errfn, &alt)
+    } else {
+        glob_core::glob_expand_with_fs(
+            &pat_bytes,
+            flags,
+            &mut errfn,
+            &glob_core::StdGlobFs,
+        )
     };
 
     match result {
