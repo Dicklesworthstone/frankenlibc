@@ -629,26 +629,25 @@ fn expand_tilde(pat: &[u8]) -> TildeExpansion {
 
     if spec_end == 1 {
         // `~` or `~/...` — use $HOME.
-        if let Ok(home) = std::env::var("HOME") {
-            if !home.is_empty() {
-                let mut result = home.into_bytes();
-                result.extend_from_slice(rest);
-                return TildeExpansion::Expanded(result);
-            }
+        if let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            let mut result = home.into_bytes();
+            result.extend_from_slice(rest);
+            return TildeExpansion::Expanded(result);
         }
         return TildeExpansion::Unresolved;
     }
 
     // `~user` / `~user/...` — look up the user's home directory in /etc/passwd.
     let user = &pat[1..spec_end];
-    if let Ok(content) = std::fs::read("/etc/passwd") {
-        if let Some(pw) = crate::pwd::lookup_by_name(&content, user) {
-            if !pw.pw_dir.is_empty() {
-                let mut result = pw.pw_dir.clone();
-                result.extend_from_slice(rest);
-                return TildeExpansion::Expanded(result);
-            }
-        }
+    if let Ok(content) = std::fs::read("/etc/passwd")
+        && let Some(pw) = crate::pwd::lookup_by_name(&content, user)
+        && !pw.pw_dir.is_empty()
+    {
+        let mut result = pw.pw_dir.clone();
+        result.extend_from_slice(rest);
+        return TildeExpansion::Expanded(result);
     }
     TildeExpansion::Unresolved
 }
