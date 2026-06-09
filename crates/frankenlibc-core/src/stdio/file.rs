@@ -9,6 +9,8 @@
 //! The ABI layer wraps these in a registry and hands out opaque
 //! pointers to C callers. No raw FILE* from glibc is used internally.
 
+use std::collections::VecDeque;
+
 use super::buffer::{BUFSIZ, BufMode, StreamBuffer, WriteResult};
 
 // ---------------------------------------------------------------------------
@@ -361,6 +363,8 @@ pub struct StdioStream {
     offset: i64,
     /// One-byte pushback for ungetc (layered on top of buffer).
     ungetc_byte: Option<u8>,
+    /// Multi-byte pushback for ABI helpers that must return over-read bytes.
+    read_pushback: VecDeque<u8>,
     /// Optional memory backing for fmemopen/open_memstream.
     mem_backing: Option<MemBacking>,
 }
@@ -394,6 +398,7 @@ impl StdioStream {
             flags: StreamFlags::default(),
             offset: 0,
             ungetc_byte: None,
+            read_pushback: VecDeque::new(),
             mem_backing: None,
         }
     }
@@ -407,6 +412,7 @@ impl StdioStream {
             flags: StreamFlags::default(),
             offset: 0,
             ungetc_byte: None,
+            read_pushback: VecDeque::new(),
             mem_backing: None,
         }
     }
@@ -427,6 +433,7 @@ impl StdioStream {
             flags: StreamFlags::default(),
             offset: pos as i64,
             ungetc_byte: None,
+            read_pushback: VecDeque::new(),
             mem_backing: Some(MemBacking::Fixed {
                 data,
                 pos,
@@ -447,6 +454,7 @@ impl StdioStream {
             flags: StreamFlags::default(),
             offset: 0,
             ungetc_byte: None,
+            read_pushback: VecDeque::new(),
             mem_backing: Some(MemBacking::Dynamic {
                 data: Vec::new(),
                 pos: 0,
@@ -464,6 +472,7 @@ impl StdioStream {
             flags: StreamFlags::default(),
             offset: 0,
             ungetc_byte: None,
+            read_pushback: VecDeque::new(),
             mem_backing: Some(MemBacking::Dynamic {
                 data: Vec::new(),
                 pos: 0,
@@ -605,6 +614,18 @@ impl StdioStream {
             }
         }
 
+        while remaining > 0 {
+            let Some(b) = self.read_pushback.pop_front() else {
+                break;
+            };
+            result.push(b);
+            remaining -= 1;
+        }
+        if remaining == 0 {
+            self.advance_offset(result.len());
+            return result;
+        }
+
         // Then read from buffer.
         let data = self.buffer.read(remaining);
         result.extend_from_slice(data);
@@ -614,7 +635,22 @@ impl StdioStream {
 
     /// Number of bytes available for reading without I/O.
     pub fn readable_buffered(&self) -> usize {
-        self.ungetc_byte.is_some() as usize + self.buffer.readable()
+        self.ungetc_byte.is_some() as usize + self.read_pushback.len() + self.buffer.readable()
+    }
+
+    /// Stage externally-fetched bytes so subsequent reads see them first.
+    ///
+    /// Used by scanf-family entrypoints after they bulk-read from a
+    /// non-seekable fd and parse only a prefix. Unlike `ungetc`, this does not
+    /// alter the logical offset; callers set the post-parse offset explicitly.
+    pub fn pushback_read_bytes(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        for &byte in bytes.iter().rev() {
+            self.read_pushback.push_front(byte);
+        }
+        self.flags.eof = false;
     }
 
     /// Rewind a memory-backed stream by `unconsumed` bytes after a bulk scanf
@@ -668,8 +704,15 @@ impl StdioStream {
             }
         }
 
-        if self.mem_backing.is_some() {
-            let backing = self.mem_backing.as_mut().expect("mem_backing present");
+        while let Some(b) = self.read_pushback.pop_front() {
+            out.push(b);
+            self.advance_offset(1);
+            if b == delim {
+                return ReadUntil::Found;
+            }
+        }
+
+        if let Some(backing) = self.mem_backing.as_mut() {
             let rem = backing.peek();
             if rem.is_empty() {
                 return ReadUntil::Eof;
@@ -752,10 +795,24 @@ impl StdioStream {
             }
         }
 
+        while written < dst.len() {
+            let Some(b) = self.read_pushback.pop_front() else {
+                break;
+            };
+            dst[written] = b;
+            written += 1;
+            self.advance_offset(1);
+            if b == delim {
+                return (written, ReadUntil::Found);
+            }
+        }
+        if written == dst.len() {
+            return (written, ReadUntil::NeedRefill);
+        }
+
         let limit = dst.len() - written;
 
-        if self.mem_backing.is_some() {
-            let backing = self.mem_backing.as_mut().expect("mem_backing present");
+        if let Some(backing) = self.mem_backing.as_mut() {
             let rem = backing.peek();
             let rem_len = rem.len();
             if rem_len == 0 {
@@ -846,6 +903,7 @@ impl StdioStream {
     pub fn prepare_seek(&mut self) -> Vec<u8> {
         let pending = self.buffer.pending_write_data().to_vec();
         self.ungetc_byte = None;
+        self.read_pushback.clear();
         self.buffer.reset();
         self.flags.eof = false;
         self.buffer.mark_flushed();
@@ -947,6 +1005,7 @@ impl StdioStream {
     /// Returns the new position on success, or -1 on failure.
     pub fn mem_seek(&mut self, offset: i64, whence: i32) -> i64 {
         self.ungetc_byte = None;
+        self.read_pushback.clear();
         self.flags.eof = false;
         if let Some(ref mut backing) = self.mem_backing {
             if let Some(new_pos) = backing.seek(offset, whence) {
@@ -1050,6 +1109,25 @@ mod tests {
         assert!(s.ungetc(b'h'));
         let data = s.buffered_read(5);
         assert_eq!(&data, b"hello");
+    }
+
+    #[test]
+    fn test_stream_pushback_read_bytes_preserves_order_and_offset() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        s.fill_read_buffer(b"tail");
+        let prefix = s.buffered_read(2);
+        assert_eq!(&prefix, b"ta");
+        assert_eq!(s.offset(), 2);
+
+        s.pushback_read_bytes(b"abc");
+        s.set_offset(1);
+        let data = s.buffered_read(5);
+        assert_eq!(&data, b"abcil");
+        assert_eq!(s.offset(), 6);
     }
 
     #[test]

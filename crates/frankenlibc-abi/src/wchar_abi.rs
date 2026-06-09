@@ -3149,7 +3149,8 @@ pub unsafe extern "C" fn swscanf(
         return 0;
     };
     let input = unsafe { wide_input_to_narrow(s) };
-    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr()) else {
+    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+    else {
         return libc::EOF;
     };
 
@@ -3171,11 +3172,12 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> 
     };
     let sid = super::stdio_abi::stdin_stream_id();
     let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(sid, 4096);
-    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr()) else {
-        super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, input.len(), 0);
+    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+    else {
+        super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, &input, 0);
         return libc::EOF;
     };
-    super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, input.len(), result.consumed);
+    super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, &input, result.consumed);
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3199,11 +3201,12 @@ pub unsafe extern "C" fn fwscanf(
     };
     let id = stream as usize;
     let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(id, 4096);
-    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr()) else {
-        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, input.len(), 0);
+    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+    else {
+        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, 0);
         return libc::EOF;
     };
-    super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, input.len(), result.consumed);
+    super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, result.consumed);
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3226,7 +3229,8 @@ pub unsafe extern "C" fn vswscanf(
         return 0;
     };
     let input = unsafe { wide_input_to_narrow(s) };
-    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr()) else {
+    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+    else {
         return libc::EOF;
     };
 
@@ -3248,11 +3252,12 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
     };
     let sid = super::stdio_abi::stdin_stream_id();
     let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(sid, 4096);
-    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr()) else {
-        super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, input.len(), 0);
+    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+    else {
+        super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, &input, 0);
         return libc::EOF;
     };
-    super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, input.len(), result.consumed);
+    super::stdio_abi::scanf_finish_consume(sid, scanf_seek_base, &input, result.consumed);
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3276,11 +3281,12 @@ pub unsafe extern "C" fn vfwscanf(
     };
     let id = stream as usize;
     let (input, scanf_seek_base) = super::stdio_abi::read_stream_for_scanf(id, 4096);
-    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr()) else {
-        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, input.len(), 0);
+    let Some((result, directives)) = super::stdio_abi::scanf_core_wide(&input, fmt_cstr.as_ptr())
+    else {
+        super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, 0);
         return libc::EOF;
     };
-    super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, input.len(), result.consumed);
+    super::stdio_abi::scanf_finish_consume(id, scanf_seek_base, &input, result.consumed);
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;

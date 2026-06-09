@@ -2521,6 +2521,44 @@ fn fscanf_leaves_unparsed_input_on_file_stream() {
 }
 
 #[test]
+fn fscanf_leaves_unparsed_input_on_pipe_stream() {
+    // bd-2g7oyh.180: non-seekable fds cannot be repaired with lseek after the
+    // scanf bulk read. The unread suffix must be staged in the stream buffer.
+    let mut pipe_fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+
+    let payload = b"5 abc";
+    let written = unsafe { libc::write(pipe_fds[1], payload.as_ptr().cast(), payload.len()) };
+    assert_eq!(written, payload.len() as isize);
+    assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0);
+
+    let stream = unsafe { fdopen(pipe_fds[0], c"r".as_ptr()) };
+    if stream.is_null() {
+        unsafe {
+            libc::close(pipe_fds[0]);
+        }
+        panic!("fdopen should wrap the pipe read end");
+    }
+
+    let mut n: c_int = -1;
+    let rc = unsafe { fscanf(stream, c"%d".as_ptr(), &mut n as *mut c_int) };
+    assert_eq!(rc, 1, "fscanf should match exactly one integer");
+    assert_eq!(n, 5);
+
+    let mut rest = Vec::new();
+    loop {
+        let ch = unsafe { fgetc(stream) };
+        if ch == libc::EOF {
+            break;
+        }
+        rest.push(ch as u8);
+    }
+    assert_eq!(&rest, b" abc", "pipe tail must survive the fscanf");
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn fmemopen_rejects_tracked_unterminated_mode() {
     let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
