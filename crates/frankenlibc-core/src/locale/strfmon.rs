@@ -158,13 +158,19 @@ fn read_uint(format: &[u8], i: &mut usize) -> Option<usize> {
 
 /// Render the signed monetary value (without field-width padding).
 fn render_value(value: f64, prec: usize, spec: &Spec) -> Vec<u8> {
-    // Magnitude with `prec` fractional digits (round-half-to-even, as glibc).
-    let mag = format_fixed(value.abs(), prec);
+    // glibc classifies negativity by `value < 0.0` (a STRICT compare), so a
+    // negative zero is treated as positive for the parenthesis/sign-placement
+    // decision — yet its `-` still appears, because glibc renders the value's
+    // own sign in the digit string. Mirror that: format the magnitude for a
+    // strict negative, but the value itself otherwise, so `-0.0` keeps its sign
+    // (`format!` renders -0.0 as "-0.00"). With `value.is_sign_negative()` +
+    // `value.abs()`, fl wrongly parenthesised `-0.0` and mis-placed its sign.
+    let negative = value < 0.0;
+    let mag = format_fixed(if negative { value.abs() } else { value }, prec);
     let (int_part, frac_part) = match mag.iter().position(|&b| b == b'.') {
         Some(dot) => (&mag[..dot], &mag[dot..]),
         None => (&mag[..], &b""[..]),
     };
-    let negative = value.is_sign_negative();
 
     // Fill-pad the integer part to the left precision.
     let mut intbuf: Vec<u8> = Vec::new();
