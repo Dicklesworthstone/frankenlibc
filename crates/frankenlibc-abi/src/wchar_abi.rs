@@ -2998,10 +2998,12 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
-    let total_len = rendered.len();
+    // C: wprintf returns the number of WIDE CHARACTERS transmitted, not the byte
+    // length of the (UTF-8) rendering — they differ for any multibyte output.
+    let wide_count = narrow_to_wide_count(&rendered);
 
     if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
-        total_len as c_int
+        wide_count as c_int
     } else {
         -1
     }
@@ -3025,7 +3027,8 @@ pub unsafe extern "C" fn fwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
-    let total_len = rendered.len();
+    // fwprintf returns the number of WIDE CHARACTERS written, not bytes.
+    let wide_count = narrow_to_wide_count(&rendered);
 
     // Write each byte through the stdio layer to use stream buffering.
     for &byte in &rendered {
@@ -3033,7 +3036,7 @@ pub unsafe extern "C" fn fwprintf(
             return -1;
         }
     }
-    total_len as c_int
+    wide_count as c_int
 }
 
 /// Native `vswprintf`: format into wide buffer from va_list.
@@ -3085,10 +3088,11 @@ pub unsafe extern "C" fn vwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
-    let total_len = rendered.len();
+    // vwprintf returns the number of WIDE CHARACTERS written, not bytes.
+    let wide_count = narrow_to_wide_count(&rendered);
 
     if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
-        total_len as c_int
+        wide_count as c_int
     } else {
         -1
     }
@@ -3112,14 +3116,15 @@ pub unsafe extern "C" fn vfwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
-    let total_len = rendered.len();
+    // vfwprintf returns the number of WIDE CHARACTERS written, not bytes.
+    let wide_count = narrow_to_wide_count(&rendered);
 
     for &byte in &rendered {
         if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
             return -1;
         }
     }
-    total_len as c_int
+    wide_count as c_int
 }
 
 // ===========================================================================
