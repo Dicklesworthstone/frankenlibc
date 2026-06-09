@@ -88,6 +88,15 @@ pub(crate) unsafe fn sync_open_wmemstream_to_caller(id: usize, stream: &StdioStr
             return;
         };
         let wchars = decode_wmemstream_bytes(data);
+        // POSIX: *sizeloc is the SMALLER of the content length and the current
+        // file position (both in wide characters). After a backward seek the
+        // reported size shrinks even though the tail wchars (and the NUL
+        // terminator at the max extent) remain in the buffer. The position is
+        // tracked in underlying (UTF-8) bytes, so convert the prefix to a wide
+        // count. (Forward-only writes leave position == content length, a no-op.)
+        let pos_bytes = (stream.offset().max(0) as usize).min(data.len());
+        let pos_wchars = decode_wmemstream_bytes(&data[..pos_bytes]).len();
+        let reported = wchars.len().min(pos_wchars);
         let alloc_size = (wchars.len() + 1) * size_of::<u32>();
         let buf = unsafe { crate::malloc_abi::raw_alloc(alloc_size) } as *mut u32;
         if buf.is_null() {
@@ -100,7 +109,7 @@ pub(crate) unsafe fn sync_open_wmemstream_to_caller(id: usize, stream: &StdioStr
         let previous = unsafe { *info.buf_loc };
         unsafe {
             *info.buf_loc = buf;
-            *info.size_loc = wchars.len();
+            *info.size_loc = reported;
         }
         if !previous.is_null() {
             unsafe { crate::malloc_abi::raw_free(previous.cast::<c_void>()) };
