@@ -67,6 +67,16 @@ pub(crate) fn parse_eight_digits(word: u64) -> u32 {
 /// but is not hex). Verified exhaustively by `swar_parse_eight_hex_matches_scalar`.
 #[inline]
 pub(crate) fn parse_eight_hex(word: u64) -> Option<u32> {
+    // Reject any byte below '0' (0x30) up front: the `| 0x20` lowercasing below
+    // folds control bytes 0x10..=0x19 onto '0'..='9' (e.g. 0x17|0x20 == '7'),
+    // after which the re-encode check — which compares against the *already
+    // folded* `lw`, not the original byte — would wrongly accept them and the
+    // SWAR fast path would over-consume past a non-hex byte that the scalar loop
+    // correctly stops at. Every valid hex char is >= 0x30, so this is exact.
+    // (Classic "bytes-less-than-n" SWAR; valid for n <= 128.)
+    if word.wrapping_sub(0x3030_3030_3030_3030) & !word & 0x8080_8080_8080_8080 != 0 {
+        return None;
+    }
     let lw = word | 0x2020_2020_2020_2020; // lowercase letters; digits unchanged
     let is_letter = (lw >> 6) & 0x0101_0101_0101_0101; // bit6 set on 'a'..='z'
     let nibbles = (lw & 0x0F0F_0F0F_0F0F_0F0F).wrapping_add(is_letter.wrapping_mul(9));
@@ -116,6 +126,15 @@ pub fn atoll(s: &[u8]) -> i64 {
 pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
     let mut i = 0;
     let len = s.len();
+
+    // glibc validates the base before inspecting the string: an invalid base
+    // (not 0 and outside 2..=36) yields EINVAL with nothing consumed and the
+    // caller's endptr left untouched — even for empty / sign-only input. This
+    // MUST precede the whitespace/sign scan so those early-success returns do
+    // not mask the invalid base.
+    if base != 0 && !(2..=36).contains(&base) {
+        return (0, 0, ConversionStatus::InvalidBase);
+    }
 
     while i < len && is_c_space(s[i]) {
         i += 1;
@@ -300,6 +319,15 @@ pub fn strtoimax(s: &[u8], base: i32) -> (i64, usize) {
 pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
     let mut i = 0;
     let len = s.len();
+
+    // glibc validates the base before inspecting the string: an invalid base
+    // (not 0 and outside 2..=36) yields EINVAL with nothing consumed and the
+    // caller's endptr left untouched — even for empty / sign-only input. This
+    // MUST precede the whitespace/sign scan so those early-success returns do
+    // not mask the invalid base.
+    if base != 0 && !(2..=36).contains(&base) {
+        return (0, 0, ConversionStatus::InvalidBase);
+    }
 
     while i < len && is_c_space(s[i]) {
         i += 1;
@@ -1279,9 +1307,17 @@ mod tests {
             let word = u64::from_le_bytes(s.as_bytes().try_into().unwrap());
             assert_eq!(parse_eight_hex(word), Some(n), "hex parse {s}");
         }
-        // Reject a non-hex byte at every lane (incl. the 0x3a..0x60 gap chars).
+        // Reject EVERY non-hex byte (0..=255) at every lane — truly exhaustive.
+        // (Previously this only spot-checked a handful of gap chars and MISSED
+        // the control bytes 0x10..=0x19, which `| 0x20` folds onto '0'..='9' —
+        // a real over-consumption bug surfaced by strtol_family_differential_fuzz.)
+        let is_hex =
+            |b: u8| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || (b'A'..=b'F').contains(&b);
         for p in 0..8usize {
-            for &bad in &[b'/', b':', b'@', b'g', b'G', b' ', b'\0', 0x80, b'`'] {
+            for bad in 0u8..=255 {
+                if is_hex(bad) {
+                    continue;
+                }
                 let mut chars = [b'a'; 8];
                 chars[p] = bad;
                 assert_eq!(
