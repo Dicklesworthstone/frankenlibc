@@ -141,7 +141,7 @@ fn run(
 }
 
 #[test]
-#[ignore = "documents known pre-existing gap bd-1djvkw: empty/nullable-group submatch offsets vs glibc"]
+#[ignore = "bd-1djvkw PARTIAL: single-level empty/nullable-group submatch now matches glibc (RepeatExitGuard); deeply-NESTED loop-in-loop empty iterations (e.g. (.(b*)*)*) still diverge — un-ignore when the nested case lands"]
 fn regex_empty_iter_capture_differential_fuzz_vs_glibc() {
     let mut r = Lcg(0xc2b2_ae3d_27d4_eb4f);
     let mut divs: Vec<String> = Vec::new();

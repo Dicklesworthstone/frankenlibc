@@ -528,6 +528,19 @@ enum NfaInstr {
     Split(usize, usize), // prefer first, then second
     Jump(usize),
     Save(usize), // save position into slot index
+    /// Epsilon guard on the post-body EXIT edge of an unbounded repeat. The
+    /// just-completed iteration may flow to the loop exit (recording its
+    /// submatch) only if it consumed input (`sp > slots[iter_start]`) OR the
+    /// whole repeat has consumed nothing so far (`sp == slots[group_start]`).
+    /// This reproduces glibc's POSIX rule: a `*`/`+` takes at most one empty
+    /// iteration, and only when no non-empty iteration preceded — so a trailing
+    /// empty iteration never overwrites a real capture (e.g. `(b*)+` on "bb"
+    /// keeps g1=[2,4]), while a genuinely-empty group still records its
+    /// participating span (e.g. `.()*a` on "ba" gives g1=[1,1]). bd-1djvkw.
+    RepeatExitGuard {
+        group_start: usize,
+        iter_start: usize,
+    },
     Accept,
 }
 
@@ -569,6 +582,10 @@ pub struct CompiledRegex {
     nfa: Vec<NfaInstr>,
     backtrack_ast: Option<Ast>,
     num_groups: usize,
+    /// Total VM slot count: the `(num_groups+1)*2` capture slots plus any hidden
+    /// repeat-progress slots allocated by the compiler. Threads allocate this
+    /// many slots so `RepeatExitGuard` indices stay in bounds.
+    total_slots: usize,
     nosub: bool,
     icase: bool,
     newline: bool,
@@ -590,7 +607,7 @@ pub struct CompiledRegex {
 
 impl CompiledRegex {
     fn num_slots(&self) -> usize {
-        (self.num_groups + 1) * 2
+        self.total_slots
     }
 
     pub fn num_regs(&self) -> usize {
@@ -1198,15 +1215,27 @@ struct Compiler {
     nfa: Vec<NfaInstr>,
     compile_icase: bool,
     compile_newline: bool,
+    /// Next free slot index for hidden (non-capture) repeat-progress slots.
+    /// Capture slots are `0..(num_groups+1)*2`; hidden slots are allocated
+    /// above them, two per unbounded repeat (group-start and iteration-start).
+    next_hidden_slot: usize,
 }
 
 impl Compiler {
-    fn new(icase: bool, newline: bool) -> Self {
+    fn new(icase: bool, newline: bool, num_groups: usize) -> Self {
         Self {
             nfa: Vec::new(),
             compile_icase: icase,
             compile_newline: newline,
+            next_hidden_slot: (num_groups + 1) * 2,
         }
+    }
+
+    /// Reserve one hidden progress slot.
+    fn alloc_hidden_slot(&mut self) -> usize {
+        let s = self.next_hidden_slot;
+        self.next_hidden_slot += 1;
+        s
     }
 
     fn emit(&mut self, instr: NfaInstr) -> usize {
@@ -1282,6 +1311,19 @@ impl Compiler {
                 self.nfa[jmp_idx] = NfaInstr::Jump(end);
             }
             Ast::Repeat { inner, min, max } => {
+                // Hidden slot recording the input position where the WHOLE repeat
+                // began (before the required min copies), so the unbounded loop's
+                // empty-iteration guard can tell "the whole group consumed
+                // nothing" from "only a trailing iteration is empty". Allocated
+                // for unbounded repeats only (the only case the guard applies to).
+                let group_start_slot = if max.is_none() {
+                    let s = self.alloc_hidden_slot();
+                    self.emit(NfaInstr::Save(s));
+                    Some(s)
+                } else {
+                    None
+                };
+
                 // Emit min required copies
                 for _ in 0..*min {
                     self.compile(inner);
@@ -1289,13 +1331,33 @@ impl Compiler {
 
                 match max {
                     None => {
-                        // Unbounded: emit split-body-jump loop
-                        let split_idx = self.emit(NfaInstr::Split(0, 0));
+                        // Unbounded greedy loop. Structure:
+                        //   split: Split(body, exit)        ; prefer another iteration
+                        //   body:  Save(iter_start); <inner>
+                        //   post:  Split(split, guard)       ; prefer to loop again
+                        //   guard: RepeatExitGuard(gs, is); Jump(exit)
+                        //   exit:
+                        // The guard lets an iteration flow to `exit` (recording
+                        // its submatch) only if it consumed input or the whole
+                        // repeat is still empty — reproducing glibc's at-most-one
+                        // leading empty iteration (bd-1djvkw).
+                        let group_start = group_start_slot.expect("unbounded repeat has gs slot");
+                        let iter_start = self.alloc_hidden_slot();
+                        let split_idx = self.emit(NfaInstr::Split(0, 0)); // patched below
+                        self.emit(NfaInstr::Save(iter_start));
                         self.compile(inner);
-                        self.emit(NfaInstr::Jump(split_idx));
+                        let post_idx = self.emit(NfaInstr::Split(0, 0)); // patched below
+                        let guard_idx = self.emit(NfaInstr::RepeatExitGuard {
+                            group_start,
+                            iter_start,
+                        });
+                        let jump_idx = self.emit(NfaInstr::Jump(0)); // patched below
                         let end = self.nfa.len();
-                        // POSIX: greedy = prefer match (first branch)
+                        // greedy: split prefers body (split_idx+1), else exit.
                         self.nfa[split_idx] = NfaInstr::Split(split_idx + 1, end);
+                        // post: prefer looping (back to split), else the guard.
+                        self.nfa[post_idx] = NfaInstr::Split(split_idx, guard_idx);
+                        self.nfa[jump_idx] = NfaInstr::Jump(end);
                     }
                     Some(max_val) => {
                         // Bounded: emit optional copies for (max - min)
@@ -1838,7 +1900,10 @@ impl<'a> PikeVm<'a> {
                     depth + 1,
                 );
             }
-            NfaInstr::Save(_) => {
+            NfaInstr::Save(_) | NfaInstr::RepeatExitGuard { .. } => {
+                // Membership/leftmost-start: no captures, so the empty-iteration
+                // guard never prunes (it only affects submatch recording); follow
+                // the exit edge unconditionally to keep whole-match semantics.
                 self.lm_closure(
                     pc + 1,
                     start,
@@ -2160,6 +2225,27 @@ impl<'a> PikeVm<'a> {
                     slots: new_slots,
                 };
                 self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
+            }
+            NfaInstr::RepeatExitGuard {
+                group_start,
+                iter_start,
+            } => {
+                // Allow this iteration to reach the loop exit only if it consumed
+                // input, or the whole repeat is still empty. Membership-mode
+                // threads carry empty `slots` (captures irrelevant): proceed
+                // unconditionally there so whole-match semantics are untouched.
+                let proceed = if *iter_start < t.slots.len() && *group_start < t.slots.len() {
+                    sp as i32 > t.slots[*iter_start] || sp as i32 == t.slots[*group_start]
+                } else {
+                    true
+                };
+                if proceed {
+                    let new_t = Thread {
+                        pc: t.pc + 1,
+                        slots: t.slots,
+                    };
+                    self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
+                }
             }
             NfaInstr::Match(mk) => {
                 // For anchors, check inline so we don't waste a simulation step
@@ -2794,14 +2880,16 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
     let nosub = cflags & REG_NOSUB != 0;
     let has_backref = ast_contains_backref(&ast);
 
+    let mut total_slots = (num_groups + 1) * 2;
     let (nfa, estimated_states) = if has_backref {
         (Vec::new(), estimate_nfa_states(&ast))
     } else {
-        let mut compiler = Compiler::new(icase, newline);
+        let mut compiler = Compiler::new(icase, newline, num_groups);
         // Wrap entire pattern in group 0
         compiler.emit(NfaInstr::Save(0));
         compiler.compile(&ast);
         compiler.emit(NfaInstr::Save(1));
+        total_slots = compiler.next_hidden_slot;
         let nfa = compiler.finish();
         let estimated_states = nfa.len();
         (nfa, estimated_states)
@@ -2854,6 +2942,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         nfa,
         backtrack_ast,
         num_groups,
+        total_slots,
         nosub,
         icase,
         newline,
@@ -2875,10 +2964,13 @@ pub fn regex_exec(
         None => REG_NOMATCH,
         Some(slots) => {
             if !compiled.nosub && !matches.is_empty() {
+                // Only the capture slots are caller-visible; hidden repeat-progress
+                // slots live above them and must never leak into `pmatch`.
+                let cap = (compiled.num_groups + 1) * 2;
                 for (i, m) in matches.iter_mut().enumerate() {
                     let so_idx = i * 2;
                     let eo_idx = i * 2 + 1;
-                    if so_idx < slots.len() && eo_idx < slots.len() {
+                    if eo_idx < cap {
                         m.rm_so = slots[so_idx];
                         m.rm_eo = slots[eo_idx];
                     } else {
@@ -2905,10 +2997,13 @@ pub fn regex_exec_bytes(
         None => REG_NOMATCH,
         Some(slots) => {
             if !compiled.nosub && !matches.is_empty() {
+                // Only the capture slots are caller-visible; hidden repeat-progress
+                // slots live above them and must never leak into `pmatch`.
+                let cap = (compiled.num_groups + 1) * 2;
                 for (i, m) in matches.iter_mut().enumerate() {
                     let so_idx = i * 2;
                     let eo_idx = i * 2 + 1;
-                    if so_idx < slots.len() && eo_idx < slots.len() {
+                    if eo_idx < cap {
                         m.rm_so = slots[so_idx];
                         m.rm_eo = slots[eo_idx];
                     } else {
@@ -3028,6 +3123,38 @@ mod tests {
         let result = regex_exec(&compiled, input.as_bytes(), &mut matches, 0);
         let subs: Vec<(i32, i32)> = matches.iter().map(|m| (m.rm_so, m.rm_eo)).collect();
         (result == 0, subs)
+    }
+
+    /// Empty/nullable quantified-group submatch offsets must record the
+    /// PARTICIPATING empty span [p,p] like glibc, not drop to [-1,-1], while a
+    /// trailing empty iteration must NOT overwrite a non-empty capture (the
+    /// `..(b*)+` case that regressed a prior naive fix). bd-1djvkw. Expected
+    /// offsets captured from host glibc.
+    #[test]
+    fn empty_iter_submatch_offsets_match_glibc() {
+        // (pattern, input, [(group, so, eo) ...]) — REG_EXTENDED.
+        let cases: &[(&str, &str, &[(usize, i32, i32)])] = &[
+            (".()*a", "ba", &[(0, 0, 2), (1, 1, 1)]),
+            ("(a?)*", ".baaa", &[(0, 0, 0), (1, 0, 0)]),
+            ("(a*)*b?", "b", &[(0, 0, 1), (1, 0, 0)]),
+            ("((a?b?))*", "", &[(0, 0, 0), (1, 0, 0), (2, 0, 0)]),
+            ("a(a*)*", ".ab", &[(0, 1, 2), (1, 2, 2)]),
+            ("((a*)*a)", "abaaa", &[(0, 0, 1), (1, 0, 1), (2, 0, 0)]),
+            // Trailing empty iteration must keep the non-empty capture [2,4].
+            ("..(b*)+", "aabba", &[(0, 0, 4), (1, 2, 4)]),
+        ];
+        for &(pat, inp, expect) in cases {
+            let (matched, subs) = compile_and_submatch(pat, inp, REG_EXTENDED);
+            assert!(matched, "pattern {pat:?} on {inp:?} should match");
+            for &(g, so, eo) in expect {
+                assert_eq!(
+                    subs[g],
+                    (so, eo),
+                    "pattern {pat:?} on {inp:?}: group {g} = {:?}, want ({so},{eo})",
+                    subs[g]
+                );
+            }
+        }
     }
 
     #[test]
