@@ -3323,24 +3323,14 @@ unsafe fn render_printf_impl(
                 if resolved_spec.is_literal_percent() {
                     buf.push(b'%');
                 } else if resolved_spec.is_errno_message() {
+                    // %m == strerror(errno). Use the shared renderer directly:
+                    // it yields glibc's "Unknown error <N>" for unknown codes
+                    // (the previous strerror_r path returned EINVAL for those
+                    // and fell back to a numberless, width/precision-ignoring
+                    // "Unknown error").
                     let e = unsafe { *crate::errno_abi::__errno_location() };
-                    let mut err_buf = [0u8; 256];
-                    let rc = unsafe {
-                        crate::string_abi::strerror_r(
-                            e,
-                            err_buf.as_mut_ptr() as *mut c_char,
-                            err_buf.len(),
-                        )
-                    };
-                    if rc == 0 {
-                        let msg_len = err_buf
-                            .iter()
-                            .position(|&byte| byte == 0)
-                            .unwrap_or(err_buf.len());
-                        format_str(&err_buf[..msg_len], &resolved_spec, &mut buf);
-                    } else {
-                        buf.extend_from_slice(b"Unknown error");
-                    }
+                    let (msg, _) = crate::string_abi::rendered_strerror_message(e);
+                    format_str(msg.as_bytes(), &resolved_spec, &mut buf);
                 } else if resolved_spec.stores_count() {
                     // %n: store count of bytes written so far.
                     // Respects length modifier: %hhn→i8, %hn→i16,
