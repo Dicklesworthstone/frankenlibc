@@ -531,24 +531,33 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
     let mut pos = 0;
     let mut values = Vec::new();
     let mut count: i32 = 0;
-    let mut input_failure = true; // true until first successful read
 
+    // `input_failure` records WHY the scan stopped: it is true only when a
+    // directive ran out of input (premature EOF), distinguishing it from a
+    // matching failure (a char was present but did not match) or normal
+    // completion. The caller maps `input_failure && count == 0` to EOF (-1) and
+    // everything else to the assignment count. A format that completes — or that
+    // contains no value conversions at all (whitespace/literals only) — must
+    // therefore NOT report input failure.
     for dir in directives {
         match dir {
             ScanDirective::Whitespace => {
                 // Skip whitespace in input (Unicode-aware for a wide stream).
+                // Matches zero or more, so it never causes an input failure.
                 pos = skip_ws(input, pos, wide_input);
             }
             ScanDirective::Literal(expected) => {
                 if pos >= input.len() {
+                    // Ran out of input while a literal still needed a char: EOF.
                     return ScanResult {
                         values,
                         count,
                         consumed: pos,
-                        input_failure,
+                        input_failure: true,
                     };
                 }
                 if input[pos] != *expected {
+                    // Char present but mismatched: matching failure, not EOF.
                     return ScanResult {
                         values,
                         count,
@@ -572,11 +581,10 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                             values,
                             count,
                             consumed: pos,
-                            input_failure: exhausted_before_conversion && count == 0,
+                            input_failure: exhausted_before_conversion,
                         };
                     }
                     Some((val, new_pos)) => {
-                        input_failure = false;
                         pos = new_pos;
                         if !spec.suppress
                             && let Some(v) = val
@@ -593,11 +601,13 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
         }
     }
 
+    // All directives consumed without an EOF-induced stop: never an input
+    // failure (a conversion-less format returns 0, not EOF).
     ScanResult {
         values,
         count,
         consumed: pos,
-        input_failure,
+        input_failure: false,
     }
 }
 
