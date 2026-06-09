@@ -742,86 +742,83 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_quantified(&mut self) -> Result<Ast, i32> {
-        let atom = self.parse_atom()?;
-
-        // Check for quantifiers
-        if self.extended {
-            match self.peek() {
-                Some(b'*') => {
-                    self.advance();
-                    Ok(Ast::Repeat {
-                        inner: Box::new(atom),
-                        min: 0,
-                        max: None,
-                    })
+        let mut node = self.parse_atom()?;
+        // Quantifiers STACK (glibc/GNU): a quantifier following another wraps the
+        // already-quantified node. ERE lets `* + ? {m,n}` all stack freely (e.g.
+        // `a*+` = `(a*)+`, `a{2}{3}` = `(a{2}){3}`). BRE lets the GNU `\+`/`\?`
+        // stack onto any prior quantifier (`a*\+`, `a\{2\}\+`), but a `*` or
+        // `\{` AFTER a quantifier is REG_BADRPT. Loop to consume the run.
+        let mut quantified = false;
+        loop {
+            if self.extended {
+                match self.peek() {
+                    Some(b'*') => {
+                        self.advance();
+                        node = Ast::Repeat { inner: Box::new(node), min: 0, max: None };
+                    }
+                    Some(b'+') => {
+                        self.advance();
+                        node = Ast::Repeat { inner: Box::new(node), min: 1, max: None };
+                    }
+                    Some(b'?') => {
+                        self.advance();
+                        node = Ast::Repeat { inner: Box::new(node), min: 0, max: Some(1) };
+                    }
+                    Some(b'{') => {
+                        node = self.parse_brace_quantifier(node)?;
+                    }
+                    _ => return Ok(node),
                 }
-                Some(b'+') => {
-                    self.advance();
-                    Ok(Ast::Repeat {
-                        inner: Box::new(atom),
-                        min: 1,
-                        max: None,
-                    })
-                }
-                Some(b'?') => {
-                    self.advance();
-                    Ok(Ast::Repeat {
-                        inner: Box::new(atom),
-                        min: 0,
-                        max: Some(1),
-                    })
-                }
-                Some(b'{') => self.parse_brace_quantifier(atom),
-                _ => Ok(atom),
-            }
-        } else {
-            // BRE: * is a quantifier (only after a quantifiable atom), \{m,n\}
-            // for braces. POSIX: a `*` immediately following a leading anchor
-            // (`^` at RE/subexpr/alternative start, or the GNU `\<`/`\>`/`\b`/`\B`
-            // zero-width assertions) is a LITERAL `*`, not a quantifier — those
-            // assertions are not quantifiable. glibc-confirmed: BRE `^*0` is
-            // `^` + literal `*` + `0` (no-match on "0"), while `^**0` is
-            // `^` + literal `*` repeated. The `^` is only parsed as an anchor
-            // when leading, so guarding on Anchor here is exactly the POSIX rule.
-            match self.peek() {
-                Some(b'*') if !matches!(atom, Ast::Anchor(_)) => {
-                    self.advance();
-                    Ok(Ast::Repeat {
-                        inner: Box::new(atom),
-                        min: 0,
-                        max: None,
-                    })
-                }
-                _ => {
-                    // BRE GNU quantifier extensions are spelled with a backslash:
-                    // `\{m,n\}`, `\+` (one-or-more), `\?` (zero-or-one). Plain `+`
-                    // and `?` are literals in BRE.
-                    if self.pos + 1 < self.pat.len() && self.pat[self.pos] == b'\\' {
-                        match self.pat[self.pos + 1] {
-                            b'{' => {
-                                self.pos += 2; // skip \{
-                                self.parse_bre_brace_quantifier(atom)
-                            }
-                            b'+' => {
-                                self.pos += 2; // skip \+
-                                Ok(Ast::Repeat {
-                                    inner: Box::new(atom),
-                                    min: 1,
-                                    max: None,
-                                })
-                            }
-                            b'?' => {
-                                self.pos += 2; // skip \?
-                                Ok(Ast::Repeat {
-                                    inner: Box::new(atom),
-                                    min: 0,
-                                    max: Some(1),
-                                })
-                            }
-                            _ => Ok(atom),
+                quantified = true;
+            } else {
+                // BRE: * is a quantifier only after a quantifiable atom. POSIX: a
+                // `*` immediately following a leading anchor (`^` at RE/subexpr/
+                // alternative start, or the GNU `\<`/`\>`/`\b`/`\B` assertions) is
+                // a LITERAL `*` — those assertions are not quantifiable (glibc:
+                // `^*0` is `^` + literal `*` + `0`; `^**0` is `^` + literal `*`
+                // repeated). So only treat `*` as a quantifier on a non-anchor.
+                match self.peek() {
+                    Some(b'*') => {
+                        if quantified {
+                            // glibc: a `*` after another quantifier is REG_BADRPT.
+                            return Err(REG_BADRPT);
                         }
-                    } else {
-                        Ok(atom)
+                        if matches!(node, Ast::Anchor(_)) {
+                            return Ok(node);
+                        }
+                        self.advance();
+                        node = Ast::Repeat { inner: Box::new(node), min: 0, max: None };
+                        quantified = true;
+                    }
+                    _ => {
+                        // BRE GNU quantifier extensions: `\{m,n\}`, `\+`, `\?`.
+                        // Plain `+`/`?` are literals in BRE.
+                        if self.pos + 1 < self.pat.len() && self.pat[self.pos] == b'\\' {
+                            match self.pat[self.pos + 1] {
+                                b'{' => {
+                                    if quantified {
+                                        // glibc: `\{` after a quantifier is BADRPT.
+                                        return Err(REG_BADRPT);
+                                    }
+                                    self.pos += 2; // skip \{
+                                    node = self.parse_bre_brace_quantifier(node)?;
+                                    quantified = true;
+                                }
+                                b'+' => {
+                                    self.pos += 2; // skip \+
+                                    node = Ast::Repeat { inner: Box::new(node), min: 1, max: None };
+                                    quantified = true;
+                                }
+                                b'?' => {
+                                    self.pos += 2; // skip \?
+                                    node = Ast::Repeat { inner: Box::new(node), min: 0, max: Some(1) };
+                                    quantified = true;
+                                }
+                                _ => return Ok(node),
+                            }
+                        } else {
+                            return Ok(node);
+                        }
                     }
                 }
             }
