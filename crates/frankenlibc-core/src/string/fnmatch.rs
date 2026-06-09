@@ -33,6 +33,10 @@ impl FnmatchFlags {
     pub const LEADING_DIR: FnmatchFlags = FnmatchFlags { bits: 1 << 3 };
     /// GNU: case-insensitive ASCII matching.
     pub const CASEFOLD: FnmatchFlags = FnmatchFlags { bits: 1 << 4 };
+    /// GNU: enable `ksh`-style extended matching — the extglob operators
+    /// `?(list)` `*(list)` `+(list)` `@(list)` `!(list)` where `list` is a
+    /// `|`-separated set of sub-patterns.
+    pub const EXTMATCH: FnmatchFlags = FnmatchFlags { bits: 1 << 5 };
 
     pub const fn from_bits(b: u32) -> Self {
         FnmatchFlags { bits: b }
@@ -611,7 +615,306 @@ pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
     // flags in O(n*m) time / O(1) space — no recursion, no memo, no exponential
     // blow-up — and is faster than glibc. The recursive `fnmatch_inner` below is
     // retained only as the differential-test oracle (`#[cfg(test)]`).
+    //
+    // FNM_EXTMATCH (extglob) is opt-in and needs genuine recursion/backtracking
+    // that the iterative matcher cannot express, so when it is requested AND the
+    // pattern actually contains an extglob group we route to the dedicated
+    // recursive `ext_match_at`. Every other call — the overwhelmingly common
+    // case — keeps the fast path untouched.
+    if flags.contains(FnmatchFlags::EXTMATCH)
+        && pattern_has_extglob(pattern, flags.contains(FnmatchFlags::NOESCAPE))
+    {
+        return ext_match_at(pattern, 0, text, 0, flags);
+    }
     fnmatch_simple(pattern, text, flags)
+}
+
+/// Quick scan: does `pat` contain an extglob group `X(` for `X` in `?*+@!`?
+/// (Used only to decide whether the recursive matcher is needed.)
+fn pattern_has_extglob(pat: &[u8], noescape: bool) -> bool {
+    let mut i = 0;
+    while i < pat.len() {
+        match pat[i] {
+            b'\\' if !noescape => i += 2,
+            b'?' | b'*' | b'+' | b'@' | b'!' if pat.get(i + 1) == Some(&b'(') => return true,
+            _ => i += 1,
+        }
+    }
+    false
+}
+
+/// Parse an extglob group whose operator char is at `pat[pi]` and `pat[pi+1] ==
+/// '('`. Returns `(op, alternatives, next_pi)` where each alternative is a
+/// `(start, end)` byte range into `pat` (the `|`-separated sub-patterns) and
+/// `next_pi` is the index just past the closing `)`. Returns `None` if the group
+/// is unterminated — the caller then treats the operator char as a literal,
+/// matching glibc, which falls back to ordinary matching on a malformed group.
+fn parse_extglob_group(
+    pat: &[u8],
+    pi: usize,
+    noescape: bool,
+) -> Option<(u8, Vec<(usize, usize)>, usize)> {
+    let op = pat[pi];
+    let mut j = pi + 2; // past `X(`
+    let mut depth = 1usize;
+    let mut alt_start = j;
+    let mut alts: Vec<(usize, usize)> = Vec::new();
+    while j < pat.len() {
+        match pat[j] {
+            b'\\' if !noescape => {
+                j += 2;
+            }
+            b'[' => {
+                // Skip a bracket expression so a `)` / `|` inside `[...]` stays
+                // literal. Honour the leading `!`/`^` and a literal first `]`.
+                let mut k = j + 1;
+                if matches!(pat.get(k), Some(b'!' | b'^')) {
+                    k += 1;
+                }
+                if pat.get(k) == Some(&b']') {
+                    k += 1;
+                }
+                j = skip_to_bracket_close(pat, k, noescape);
+            }
+            b'?' | b'*' | b'+' | b'@' | b'!' if pat.get(j + 1) == Some(&b'(') => {
+                depth += 1;
+                j += 2;
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    alts.push((alt_start, j));
+                    return Some((op, alts, j + 1));
+                }
+                j += 1;
+            }
+            b'|' if depth == 1 => {
+                alts.push((alt_start, j));
+                alt_start = j + 1;
+                j += 1;
+            }
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// Recursive FNM_EXTMATCH matcher: does `pat[pi..]` match `text[si..]` fully?
+/// Handles the ordinary tokens (`?`, `*`, `[...]`, `\X`, literals) by recursion
+/// and the five extglob operators by backtracking over every split of the text.
+fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFlags) -> bool {
+    let pathname = flags.contains(FnmatchFlags::PATHNAME);
+    let period = flags.contains(FnmatchFlags::PERIOD);
+    let noescape = flags.contains(FnmatchFlags::NOESCAPE);
+    let casefold = flags.contains(FnmatchFlags::CASEFOLD);
+    let leading_dir = flags.contains(FnmatchFlags::LEADING_DIR);
+    let eq = |a: u8, b: u8| {
+        if casefold {
+            a.eq_ignore_ascii_case(&b)
+        } else {
+            a == b
+        }
+    };
+    let lp_blocked = |si: usize| -> bool {
+        period
+            && text.get(si) == Some(&b'.')
+            && (si == 0 || (pathname && si >= 1 && text.get(si - 1) == Some(&b'/')))
+    };
+
+    // Pattern exhausted.
+    if pi >= pat.len() {
+        if si >= text.len() {
+            return true;
+        }
+        if leading_dir && text.get(si) == Some(&b'/') {
+            return true;
+        }
+        return false;
+    }
+    let pc = pat[pi];
+
+    // Extglob group?
+    if matches!(pc, b'?' | b'*' | b'+' | b'@' | b'!') && pat.get(pi + 1) == Some(&b'(') {
+        if let Some((op, alts, next_pi)) = parse_extglob_group(pat, pi, noescape) {
+            return ext_group_at(op, &alts, pat, next_pi, text, si, flags);
+        }
+        // Unterminated: fall through and treat `pc` as an ordinary token.
+    }
+
+    match pc {
+        b'?' => {
+            let Some(&c) = text.get(si) else {
+                return false;
+            };
+            if (pathname && c == b'/') || lp_blocked(si) {
+                return false;
+            }
+            ext_match_at(pat, pi + 1, text, si + 1, flags)
+        }
+        b'*' => {
+            // Collapse a run of plain `*`s, but STOP at a `*` that opens an
+            // extglob group (`*(`) — that one is an operator, not a wildcard.
+            let mut p = pi;
+            while pat.get(p) == Some(&b'*') && pat.get(p + 1) != Some(&b'(') {
+                p += 1;
+            }
+            if lp_blocked(si) {
+                return false;
+            }
+            let mut j = si;
+            loop {
+                if ext_match_at(pat, p, text, j, flags) {
+                    return true;
+                }
+                let Some(&c) = text.get(j) else {
+                    return false;
+                };
+                if pathname && c == b'/' {
+                    return false;
+                }
+                j += 1;
+            }
+        }
+        b'[' => match classify_bracket(pat, pi, noescape) {
+            BracketShape::Invalid => false,
+            BracketShape::LiteralFallback => {
+                let Some(&c) = text.get(si) else {
+                    return false;
+                };
+                if (pathname && c == b'/') || lp_blocked(si) {
+                    return false;
+                }
+                if eq(c, b'[') {
+                    ext_match_at(pat, pi + 1, text, si + 1, flags)
+                } else {
+                    false
+                }
+            }
+            BracketShape::Terminated => {
+                let Some(&c) = text.get(si) else {
+                    return false;
+                };
+                if (pathname && c == b'/') || lp_blocked(si) {
+                    return false;
+                }
+                let (m, next_pi) = bracket_match_one(pat, pi, c, noescape, casefold);
+                if m {
+                    ext_match_at(pat, next_pi, text, si + 1, flags)
+                } else {
+                    false
+                }
+            }
+        },
+        b'\\' if !noescape => {
+            // `\X` matches literal X; a trailing `\` matches nothing.
+            let Some(&esc) = pat.get(pi + 1) else {
+                return false;
+            };
+            let Some(&c) = text.get(si) else {
+                return false;
+            };
+            if eq(c, esc) {
+                ext_match_at(pat, pi + 2, text, si + 1, flags)
+            } else {
+                false
+            }
+        }
+        lit => {
+            let Some(&c) = text.get(si) else {
+                return false;
+            };
+            if eq(c, lit) {
+                ext_match_at(pat, pi + 1, text, si + 1, flags)
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Match an extglob group `op(alts)` followed by `pat[rest_pi..]` against
+/// `text[si..]`. Backtracks over every text split consistent with the operator.
+fn ext_group_at(
+    op: u8,
+    alts: &[(usize, usize)],
+    pat: &[u8],
+    rest_pi: usize,
+    text: &[u8],
+    si: usize,
+    flags: FnmatchFlags,
+) -> bool {
+    // The trailing pattern matched against the remaining text from `s`.
+    let rest = |s: usize| ext_match_at(pat, rest_pi, text, s, flags);
+    // Does some alternative match the slice text[si..e] exactly?
+    let alt_hits = |s: usize, e: usize| -> bool {
+        alts.iter().any(|&(as_, ae)| sub_full_match(&pat[as_..ae], text, s, e, flags))
+    };
+
+    match op {
+        // Exactly one occurrence (possibly empty, via an empty alternative).
+        b'@' => (si..=text.len()).any(|e| alt_hits(si, e) && rest(e)),
+        // Zero or one occurrence.
+        b'?' => {
+            if rest(si) {
+                return true;
+            }
+            (si..=text.len()).any(|e| alt_hits(si, e) && rest(e))
+        }
+        // Zero or more / one or more occurrences (each consumes ≥1 byte to make
+        // progress; an empty alternative therefore counts as "zero").
+        b'*' => ext_star_at(alts, pat, rest_pi, text, si, flags, false),
+        b'+' => ext_star_at(alts, pat, rest_pi, text, si, flags, true),
+        // Anything the list does NOT match, at any split where the rest matches.
+        b'!' => (si..=text.len()).any(|e| rest(e) && !alt_hits(si, e)),
+        _ => false,
+    }
+}
+
+/// Greedy backtracking helper for `*(list)` / `+(list)`. Matches a run of list
+/// occurrences (each ≥1 byte) starting at `si`, then the rest of the pattern.
+/// `require_one` distinguishes `+` (≥1) from `*` (≥0).
+fn ext_star_at(
+    alts: &[(usize, usize)],
+    pat: &[u8],
+    rest_pi: usize,
+    text: &[u8],
+    si: usize,
+    flags: FnmatchFlags,
+    require_one: bool,
+) -> bool {
+    if !require_one && ext_match_at(pat, rest_pi, text, si, flags) {
+        return true;
+    }
+    // `+(list)` with an empty-matching alternative counts that as the single
+    // required occurrence (consuming nothing), then matches the rest. (`*` needs
+    // no special case — an empty occurrence is identical to zero occurrences,
+    // already handled above.)
+    if require_one {
+        let empty_alt = alts
+            .iter()
+            .any(|&(as_, ae)| sub_full_match(&pat[as_..ae], text, si, si, flags));
+        if empty_alt && ext_match_at(pat, rest_pi, text, si, flags) {
+            return true;
+        }
+    }
+    for e in (si + 1)..=text.len() {
+        let hit = alts
+            .iter()
+            .any(|&(as_, ae)| sub_full_match(&pat[as_..ae], text, si, e, flags));
+        if hit && ext_star_at(alts, pat, rest_pi, text, e, flags, false) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Does pattern `sub` fully match the text slice `text[s..e]`? Used for an
+/// extglob alternative. LEADING_DIR is cleared (an alternative must match
+/// exactly, never just a directory prefix).
+fn sub_full_match(sub: &[u8], text: &[u8], s: usize, e: usize, flags: FnmatchFlags) -> bool {
+    let sub_flags =
+        FnmatchFlags::from_bits(flags.bits() & !FnmatchFlags::LEADING_DIR.bits());
+    ext_match_at(sub, 0, &text[s..e], 0, sub_flags)
 }
 
 #[cfg(test)]
