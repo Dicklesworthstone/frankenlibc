@@ -1281,14 +1281,14 @@ fn scan_hex_float(
         }
     }
 
-    // Convert to f64:
-    // value = significand * 2^(bin_exp - 4*frac_digits)
-    // Each hex fractional digit shifts the binary point 4 bits.
-    let total_exp = bin_exp - (frac_digits * 4);
-    let mut val = significand as f64;
-    if total_exp != 0 {
-        val *= 2_f64.powi(total_exp);
-    }
+    // Convert to f64: value = significand * 2^(bin_exp - 4*frac_digits). Each
+    // hex fractional digit shifts the binary point 4 bits. Scale with
+    // `libm::ldexp` (== scalbn) rather than `* 2_f64.powi(n)`: for a large
+    // negative exponent `powi` evaluates 1/2^|n|, and 2^1074 overflows to inf,
+    // so the smallest subnormal `0x1p-1074` (5e-324) wrongly underflowed to 0.
+    // ldexp handles the full subnormal/overflow range correctly.
+    let total_exp = bin_exp.saturating_sub(frac_digits.saturating_mul(4));
+    let mut val = libm::ldexp(significand as f64, total_exp);
     if negative {
         val = -val;
     }
