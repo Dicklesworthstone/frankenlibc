@@ -1119,52 +1119,96 @@ impl<'a> Parser<'a> {
                     self.advance();
                     break;
                 }
-                Some(b'[') => {
-                    // Check for POSIX character class [:alpha:]
-                    if self.pos + 1 < self.pat.len() && self.pat[self.pos + 1] == b':' {
-                        self.advance(); // [
-                        self.advance(); // :
-                        let class_ranges = self.parse_posix_class()?;
-                        ranges.extend_from_slice(&class_ranges);
-                        continue;
-                    }
-                    let ch = self.advance().unwrap();
-                    // Check for range
+                // POSIX character class `[:alpha:]`. Like an equivalence class it
+                // may not be a range endpoint — a following `-` (not closing the
+                // bracket) is REG_ERANGE, matching glibc.
+                Some(b'[') if self.pat.get(self.pos + 1) == Some(&b':') => {
+                    self.advance(); // [
+                    self.advance(); // :
+                    let class_ranges = self.parse_posix_class()?;
+                    ranges.extend_from_slice(&class_ranges);
                     if self.peek() == Some(b'-')
-                        && self.pos + 1 < self.pat.len()
-                        && self.pat[self.pos + 1] != b']'
+                        && self.pat.get(self.pos + 1).is_some_and(|&b| b != b']')
                     {
-                        self.advance(); // skip -
-                        let end = self.advance().ok_or(REG_EBRACK)?;
-                        if end < ch {
-                            return Err(REG_ERANGE);
-                        }
-                        ranges.push((ch, end));
-                    } else {
-                        ranges.push((ch, ch));
+                        return Err(REG_ERANGE);
                     }
                 }
-                Some(_) => {
-                    let ch = self.advance().unwrap();
-                    // Check for range
+                // Equivalence class `[=c=]`. In the C locale the class of a
+                // character is just that character. It may NOT be a range
+                // endpoint — a following `-` (not closing the bracket) is
+                // REG_ERANGE, matching glibc.
+                Some(b'[') if self.pat.get(self.pos + 1) == Some(&b'=') => {
+                    self.advance(); // [
+                    self.advance(); // =
+                    let ch = self.read_coll_element(b'=')?;
                     if self.peek() == Some(b'-')
-                        && self.pos + 1 < self.pat.len()
-                        && self.pat[self.pos + 1] != b']'
+                        && self.pat.get(self.pos + 1).is_some_and(|&b| b != b']')
+                    {
+                        return Err(REG_ERANGE);
+                    }
+                    ranges.push((ch, ch));
+                }
+                // A literal byte or a collating symbol `[.c.]`; either may be a
+                // range endpoint (`[[.a.]-z]` == `[a-z]`).
+                _ => {
+                    let start = self.read_bracket_element()?;
+                    if self.peek() == Some(b'-')
+                        && self.pat.get(self.pos + 1).is_some_and(|&b| b != b']')
                     {
                         self.advance(); // skip -
-                        let end = self.advance().ok_or(REG_EBRACK)?;
-                        if end < ch {
+                        let end = self.read_bracket_element()?;
+                        if end < start {
                             return Err(REG_ERANGE);
                         }
-                        ranges.push((ch, end));
+                        ranges.push((start, end));
                     } else {
-                        ranges.push((ch, ch));
+                        ranges.push((start, start));
                     }
                 }
             }
         }
 
         Ok(Ast::CharClass { ranges, negated })
+    }
+
+    /// Read one range-eligible bracket element: a collating symbol `[.c.]`
+    /// (yielding its single collating character) or a plain literal byte.
+    fn read_bracket_element(&mut self) -> Result<u8, i32> {
+        if self.peek() == Some(b'[') && self.pat.get(self.pos + 1) == Some(&b'.') {
+            self.advance(); // [
+            self.advance(); // .
+            self.read_coll_element(b'.')
+        } else {
+            self.advance().ok_or(REG_EBRACK)
+        }
+    }
+
+    /// Read the body of an equivalence class (`marker == b'='`) or collating
+    /// symbol (`marker == b'.'`) up to the closing `marker` + `]`, having
+    /// already consumed the opening `[` and `marker`. In the C locale a valid
+    /// element is exactly one character; an unterminated body is REG_EBRACK and
+    /// an empty or multi-character (named) body is REG_ECOLLATE — matching glibc.
+    fn read_coll_element(&mut self, marker: u8) -> Result<u8, i32> {
+        let mut buf: Vec<u8> = Vec::new();
+        loop {
+            match self.peek() {
+                None => return Err(REG_EBRACK),
+                Some(b) if b == marker && self.pat.get(self.pos + 1) == Some(&b']') => {
+                    self.advance(); // marker
+                    self.advance(); // ]
+                    break;
+                }
+                Some(b) => {
+                    buf.push(b);
+                    self.advance();
+                }
+            }
+        }
+        if buf.len() == 1 {
+            Ok(buf[0])
+        } else {
+            Err(REG_ECOLLATE)
+        }
     }
 
     fn parse_posix_class(&mut self) -> Result<Vec<(u8, u8)>, i32> {
