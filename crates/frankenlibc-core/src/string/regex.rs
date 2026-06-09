@@ -102,12 +102,17 @@ enum Ast {
 
 #[derive(Debug, Clone, Copy)]
 enum AnchorKind {
-    Start,
-    End,
+    /// `^`. `line` is set for a NON-leading `^` in an ERE (one not at the start
+    /// of the pattern / a group / an alternative): glibc makes such a `^` match
+    /// after a mid-string `\n` even WITHOUT REG_NEWLINE. A leading `^` (and every
+    /// BRE `^`) has `line == false` and uses the compiled REG_NEWLINE flag.
+    Start { line: bool },
+    /// `$`. `line` is set for a NON-terminal `$` in an ERE (one not at the end of
+    /// the pattern / a group / an alternative): glibc makes such a `$` match
+    /// before a mid-string `\n` even WITHOUT REG_NEWLINE.
+    End { line: bool },
     /// GNU `\b` (word boundary) / `\B` (non-boundary) zero-width assertions.
-    WordBoundary {
-        negate: bool,
-    },
+    WordBoundary { negate: bool },
     /// GNU `\<` — match at the start of a word.
     WordStart,
     /// GNU `\>` — match at the end of a word.
@@ -931,14 +936,16 @@ impl<'a> Parser<'a> {
             None => Err(REG_BADPAT),
             Some(b'^') => {
                 // ERE: `^` is always an anchor. BRE: only at the start of the
-                // RE or right after `\(` / `\|`; elsewhere it is a literal.
+                // RE or right after `\(` / `\|`; elsewhere it is a literal. The
+                // newline-aware `line` flag is filled in by `mark_line_anchors`
+                // after the whole AST is built (it needs prefix-nullability).
                 let anchored = self.extended
                     || self.pos == 0
                     || self.pat[..self.pos].ends_with(b"\\(")
                     || self.pat[..self.pos].ends_with(b"\\|");
                 self.advance();
                 if anchored {
-                    Ok(Ast::Anchor(AnchorKind::Start))
+                    Ok(Ast::Anchor(AnchorKind::Start { line: false }))
                 } else {
                     Ok(Ast::Literal(b'^'))
                 }
@@ -953,7 +960,7 @@ impl<'a> Parser<'a> {
                     || rest.starts_with(b"\\|");
                 self.advance();
                 if anchored {
-                    Ok(Ast::Anchor(AnchorKind::End))
+                    Ok(Ast::Anchor(AnchorKind::End { line: false }))
                 } else {
                     Ok(Ast::Literal(b'$'))
                 }
@@ -1232,14 +1239,14 @@ impl Compiler {
                     newline: self.compile_newline,
                 }));
             }
-            Ast::Anchor(AnchorKind::Start) => {
+            Ast::Anchor(AnchorKind::Start { line }) => {
                 self.emit(NfaInstr::Match(MatchKind::AnchorStart {
-                    newline: self.compile_newline,
+                    newline: *line || self.compile_newline,
                 }));
             }
-            Ast::Anchor(AnchorKind::End) => {
+            Ast::Anchor(AnchorKind::End { line }) => {
                 self.emit(NfaInstr::Match(MatchKind::AnchorEnd {
-                    newline: self.compile_newline,
+                    newline: *line || self.compile_newline,
                 }));
             }
             Ast::Anchor(AnchorKind::WordBoundary { negate }) => {
@@ -2443,15 +2450,15 @@ impl<'a> BacktrackVm<'a> {
                     Vec::new()
                 }
             }
-            Ast::Anchor(AnchorKind::Start) => {
-                if self.check_anchor_start(pos) {
+            Ast::Anchor(AnchorKind::Start { line }) => {
+                if self.check_anchor_start(pos, *line) {
                     vec![BacktrackState { pos, slots }]
                 } else {
                     Vec::new()
                 }
             }
-            Ast::Anchor(AnchorKind::End) => {
-                if self.check_anchor_end(pos) {
+            Ast::Anchor(AnchorKind::End { line }) => {
+                if self.check_anchor_end(pos, *line) {
                     vec![BacktrackState { pos, slots }]
                 } else {
                     Vec::new()
@@ -2649,20 +2656,20 @@ impl<'a> BacktrackVm<'a> {
         })
     }
 
-    fn check_anchor_start(&self, pos: usize) -> bool {
+    fn check_anchor_start(&self, pos: usize, line: bool) -> bool {
         let notbol = self.eflags & REG_NOTBOL != 0;
         if pos == 0 {
             return !notbol;
         }
-        self.newline && self.input[pos - 1] == b'\n'
+        (line || self.newline) && self.input[pos - 1] == b'\n'
     }
 
-    fn check_anchor_end(&self, pos: usize) -> bool {
+    fn check_anchor_end(&self, pos: usize, line: bool) -> bool {
         let noteol = self.eflags & REG_NOTEOL != 0;
         if pos == self.input.len() {
             return !noteol;
         }
-        self.newline && pos < self.input.len() && self.input[pos] == b'\n'
+        (line || self.newline) && pos < self.input.len() && self.input[pos] == b'\n'
     }
 
     /// GNU word assertion (`\b`/`\B`/`\<`/`\>`) at `pos`; text edges count as
@@ -2689,7 +2696,73 @@ impl<'a> BacktrackVm<'a> {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Compile a regex pattern. Returns a boxed CompiledRegex on success.
+fn ast_nullable(ast: &Ast) -> bool {
+    analyze_ast(ast).nullable
+}
+
+/// Set the `line` flag on every `^`/`$` anchor that is NOT at a buffer-boundary
+/// position. `bol` is true while a nullable prefix can still place the cursor at
+/// match offset 0 (so a `^` here is the buffer-start anchor); `eol` is true while
+/// a nullable suffix can still place the cursor at the buffer end (so a `$` here
+/// is the buffer-end anchor). A non-leading `^` (and a non-leading, non-terminal
+/// `$`) becomes newline-aware — matching glibc, which treats such anchors as
+/// line anchors even without REG_NEWLINE. Returns whether `ast` is nullable.
+fn mark_line_anchors(ast: &mut Ast, bol: bool, eol: bool) -> bool {
+    match ast {
+        Ast::Anchor(AnchorKind::Start { line }) => {
+            *line = !bol;
+            true
+        }
+        Ast::Anchor(AnchorKind::End { line }) => {
+            *line = !eol;
+            true
+        }
+        Ast::Anchor(_) => true,
+        Ast::Literal(_) | Ast::AnyChar | Ast::CharClass { .. } | Ast::BackRef(_) => false,
+        Ast::Group { inner, .. } => mark_line_anchors(inner, bol, eol),
+        Ast::Alternate(l, r) => {
+            // Both branches start from the same surrounding context.
+            let a = mark_line_anchors(l, bol, eol);
+            let b = mark_line_anchors(r, bol, eol);
+            a || b
+        }
+        Ast::Repeat { inner, min, .. } => {
+            // The body may sit at offset 0 (zero prior iterations) and at the end
+            // (zero following iterations), so it inherits both contexts.
+            let inner_nullable = mark_line_anchors(inner, bol, eol);
+            *min == 0 || inner_nullable
+        }
+        Ast::Concat(items) => {
+            // SOUND subset: mark a `^`/`$` newline-aware only when the prefix
+            // (for `^`) / suffix (for `$`) is NON-nullable — i.e. it DEFINITELY
+            // consumes, so the anchor cannot sit at a buffer boundary. When the
+            // neighbor is nullable (`c?^`, `$a*`) glibc's behavior is ambiguous
+            // (and `nmatch`-dependent once a capture group is involved), so those
+            // keep the plain buffer-anchor semantics — never a regression vs the
+            // prior uniform handling. bol propagates left-to-right, eol
+            // right-to-left, both gated on nullability.
+            let n = items.len();
+            let mut bol_at = vec![false; n];
+            let mut cur = bol;
+            for i in 0..n {
+                bol_at[i] = cur;
+                cur = cur && ast_nullable(&items[i]);
+            }
+            let mut eol_at = vec![false; n];
+            let mut cur = eol;
+            for i in (0..n).rev() {
+                eol_at[i] = cur;
+                cur = cur && ast_nullable(&items[i]);
+            }
+            for (i, item) in items.iter_mut().enumerate() {
+                mark_line_anchors(item, bol_at[i], eol_at[i]);
+            }
+            // Return value is unused by callers; report concat nullability.
+            items.iter().all(ast_nullable)
+        }
+    }
+}
+
 pub fn regex_compile(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRegex>, i32> {
     // Find null-terminated length
     let pat_len = pattern
@@ -2705,8 +2778,16 @@ pub fn regex_compile(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRegex>, 
 pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRegex>, i32> {
     let pat = pattern;
     let mut parser = Parser::new(pat, cflags);
-    let ast = parser.parse()?;
+    let mut ast = parser.parse()?;
     let num_groups = parser.group_count;
+
+    // glibc mid-pattern line-anchor quirk: a `^`/`$` that is NOT at a buffer
+    // boundary position matches at `\n` line boundaries even WITHOUT REG_NEWLINE.
+    // Fill in the per-anchor `line` flag from prefix/suffix nullability (a `^`
+    // is "leading" iff a nullable prefix can place it at offset 0; a `$` is
+    // "terminal" iff a nullable suffix can place it at the buffer end). BRE only
+    // keeps anchors at terminal/leading positions, so they stay `line == false`.
+    mark_line_anchors(&mut ast, true, true);
 
     let icase = cflags & REG_ICASE != 0;
     let newline = cflags & REG_NEWLINE != 0;
