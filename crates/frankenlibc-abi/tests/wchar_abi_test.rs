@@ -1037,9 +1037,10 @@ fn basename_handles_trailing_slash() {
     let result = unsafe { basename(path.as_mut_ptr() as *mut c_char) };
     assert!(!result.is_null());
     let name = unsafe { CStr::from_ptr(result) }.to_bytes();
-    // POSIX: trailing slash means last component is empty or "lib"
-    // Our implementation removes trailing slashes first.
-    assert!(!name.is_empty());
+    // The bare `basename` symbol is the GNU variant (POSIX is __xpg_basename):
+    // it returns the component after the LAST '/', so a trailing-slash path
+    // yields "" — it does NOT strip trailing slashes.
+    assert_eq!(name, b"");
 }
 
 #[test]
