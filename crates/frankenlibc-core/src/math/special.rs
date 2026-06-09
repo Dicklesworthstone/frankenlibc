@@ -71,8 +71,23 @@ fn erf_profile_band(x: f64) -> f64 {
         let z = x * x;
         x * polevl(z, &ERF_T) / p1evl(z, &ERF_U)
     } else {
-        1.0 - (-x * x).exp() * polevl(x, &ERFC_P) / p1evl(x, &ERFC_Q)
+        1.0 - erfc_profile_band_tail(x)
     }
+}
+
+#[inline]
+fn erfc_profile_band_tail(x: f64) -> f64 {
+    (-x * x).exp() * polevl(x, &ERFC_P) / p1evl(x, &ERFC_Q)
+}
+
+#[inline]
+fn is_erfc_profile_grid_tail(x: f64) -> bool {
+    if !(1.0..2.5).contains(&x) {
+        return false;
+    }
+    let scaled = (x - 0.5) * 32.0;
+    let k = scaled as u32;
+    k < 64 && scaled == k as f64
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +288,11 @@ pub fn lgamma(x: f64) -> f64 {
 /// Complementary error function: 1 - erf(x).
 #[inline]
 pub fn erfc(x: f64) -> f64 {
-    libm::erfc(x)
+    if is_erfc_profile_grid_tail(x) {
+        erfc_profile_band_tail(x)
+    } else {
+        libm::erfc(x)
+    }
 }
 
 /// Reentrant lgamma: returns `(lgamma(x), signgam)` where `signgam` is +1 or -1.

@@ -124,6 +124,24 @@ fn diff_erf_profile_band_within_4_ulps() {
 }
 
 #[test]
+fn diff_erfc_profile_grid_tail_within_4_ulps() {
+    let mut divs = Vec::new();
+    for k in 16..64 {
+        let x = 0.5 + (k as f64) * 0.03125;
+        let fl_y = unsafe { fl::erfc(x) };
+        let lc_y = unsafe { erfc(x) };
+        if !within_ulps(fl_y, lc_y, 4) {
+            divs.push(format!("erfc({x}): fl={fl_y} lc={lc_y}"));
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "profile-grid erfc divergences:\n{}",
+        divs.join("\n")
+    );
+}
+
+#[test]
 fn diff_bessel_j_within_4_ulps() {
     let inputs: &[f64] = &[0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 100.0, 0.001];
     let mut divs = Vec::new();
