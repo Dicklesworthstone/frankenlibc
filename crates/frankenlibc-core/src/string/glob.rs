@@ -348,11 +348,24 @@ fn glob_expand_dyn(
         }
     }
 
-    // Handle tilde expansion
+    // Handle tilde expansion (GLOB_TILDE / GLOB_TILDE_CHECK).
     let expanded;
     let pat = if (flags & GLOB_TILDE != 0 || flags & GLOB_TILDE_CHECK != 0) && pat[0] == b'~' {
-        expanded = expand_tilde(pat);
-        &expanded
+        match expand_tilde(pat) {
+            TildeExpansion::Expanded(v) => {
+                expanded = v;
+                &expanded[..]
+            }
+            TildeExpansion::Unresolved => {
+                // glibc: a `~`/`~user` it cannot resolve is left literal under
+                // GLOB_TILDE, but GLOB_TILDE_CHECK turns the failure into an
+                // immediate GLOB_NOMATCH.
+                if flags & GLOB_TILDE_CHECK != 0 {
+                    return Err(GLOB_NOMATCH);
+                }
+                pat
+            }
+        }
     } else {
         pat
     };
@@ -588,27 +601,56 @@ fn failed_directory_path(dir_prefix: &[u8]) -> Vec<u8> {
 }
 
 /// Expand ~ to $HOME.
-fn expand_tilde(pat: &[u8]) -> Vec<u8> {
-    if pat.is_empty() || pat[0] != b'~' {
-        return pat.to_vec();
-    }
+/// Outcome of tilde expansion. `Unresolved` lets the caller honour
+/// GLOB_TILDE_CHECK (→ GLOB_NOMATCH) vs plain GLOB_TILDE (leave literal).
+enum TildeExpansion {
+    /// The leading `~`/`~user` resolved to a concrete home directory.
+    Expanded(Vec<u8>),
+    /// Could not resolve: no `$HOME` for a bare `~`, or `~user` with no such
+    /// user in `/etc/passwd`.
+    Unresolved,
+}
 
-    // Find end of username (next / or end)
-    let end = pat[1..]
+/// Expand a leading `~` / `~user` (the caller guarantees `pat[0] == b'~'`):
+///   - `~` / `~/...`  → `$HOME` + remainder (glibc's `getpwuid(getuid())`
+///     fallback when `$HOME` is unset needs the uid, which the safe-Rust core
+///     cannot obtain, so that rare case stays Unresolved → literal/NOMATCH).
+///   - `~user` / `~user/...` → that user's `pw_dir` from `/etc/passwd`.
+fn expand_tilde(pat: &[u8]) -> TildeExpansion {
+    debug_assert_eq!(pat.first(), Some(&b'~'));
+
+    // The name spec runs from just after `~` up to the first `/` (or end); the
+    // remainder (including that `/`, if any) is appended verbatim.
+    let spec_end = pat[1..]
         .iter()
         .position(|&b| b == b'/')
         .map_or(pat.len(), |p| p + 1);
+    let rest = &pat[spec_end..];
 
-    if end == 1 {
-        // Just ~ or ~/... — use $HOME.
+    if spec_end == 1 {
+        // `~` or `~/...` — use $HOME.
         if let Ok(home) = std::env::var("HOME") {
-            let mut result = home.into_bytes();
-            result.extend_from_slice(&pat[1..]);
-            return result;
+            if !home.is_empty() {
+                let mut result = home.into_bytes();
+                result.extend_from_slice(rest);
+                return TildeExpansion::Expanded(result);
+            }
+        }
+        return TildeExpansion::Unresolved;
+    }
+
+    // `~user` / `~user/...` — look up the user's home directory in /etc/passwd.
+    let user = &pat[1..spec_end];
+    if let Ok(content) = std::fs::read("/etc/passwd") {
+        if let Some(pw) = crate::pwd::lookup_by_name(&content, user) {
+            if !pw.pw_dir.is_empty() {
+                let mut result = pw.pw_dir.clone();
+                result.extend_from_slice(rest);
+                return TildeExpansion::Expanded(result);
+            }
         }
     }
-    // ~user expansion not supported; return as-is.
-    pat.to_vec()
+    TildeExpansion::Unresolved
 }
 
 // ---------------------------------------------------------------------------
@@ -841,10 +883,32 @@ mod tests {
 
     #[test]
     fn test_tilde_expansion() {
-        let expanded = expand_tilde(b"~/test");
         if let Ok(home) = std::env::var("HOME") {
-            let expected = format!("{home}/test");
-            assert_eq!(expanded, expected.as_bytes());
+            if !home.is_empty() {
+                let expected = format!("{home}/test");
+                match expand_tilde(b"~/test") {
+                    TildeExpansion::Expanded(v) => assert_eq!(v, expected.as_bytes()),
+                    TildeExpansion::Unresolved => panic!("~ with HOME set should expand"),
+                }
+            }
+        }
+        // `~user` for a definitely-absent user is unresolved.
+        assert!(matches!(
+            expand_tilde(b"~no_such_user_zzz_qx/x"),
+            TildeExpansion::Unresolved
+        ));
+        // `~root` resolves on a standard system (root always has a passwd entry).
+        if let Ok(content) = std::fs::read("/etc/passwd") {
+            if let Some(pw) = crate::pwd::lookup_by_name(&content, b"root") {
+                if !pw.pw_dir.is_empty() {
+                    let mut expected = pw.pw_dir.clone();
+                    expected.extend_from_slice(b"/x");
+                    match expand_tilde(b"~root/x") {
+                        TildeExpansion::Expanded(v) => assert_eq!(v, expected),
+                        TildeExpansion::Unresolved => panic!("~root should resolve"),
+                    }
+                }
+            }
         }
     }
 
