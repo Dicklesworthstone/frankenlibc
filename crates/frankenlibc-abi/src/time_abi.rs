@@ -1087,7 +1087,8 @@ fn strptime_day_of_year(tm_year: i64, tm_mon: i64, tm_mday: i64) -> i64 {
 /// `%y` (2-digit year), `%I` (12-hour), `%p` (AM/PM), `%e` (day with
 /// leading space), `%D` (`%m/%d/%y`), `%T` (`%H:%M:%S`),
 /// `%R` (`%H:%M`), `%F` (`%Y-%m-%d`), `%s` (seconds since epoch),
-/// `%U`/`%W` (week number), `%V`/`%G`/`%g` (ISO week), `%z` (timezone offset).
+/// `%U`/`%W` (week number), `%V`/`%G`/`%g` (ISO week), `%z` (timezone offset),
+/// `%Z` (timezone name — consumed but not interpreted).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strptime(
     s: *const std::ffi::c_char,
@@ -1700,6 +1701,19 @@ pub unsafe extern "C" fn strptime(
                         }
                         let _ = (sign, hh); // silence unused warnings on non-Linux
                         si = end;
+                    }
+                }
+                b'Z' => {
+                    // Timezone NAME. glibc consumes — but does not interpret — a
+                    // timezone name: skip leading whitespace, then consume a run
+                    // of non-whitespace bytes (letters, digits, '/', '_', …, e.g.
+                    // "UTC", "EST", "America/New_York"). It performs no conversion
+                    // (tm_gmtoff/tm_isdst/tm_zone are left untouched) and never
+                    // fails — even an empty token at end-of-input succeeds. fl
+                    // previously had no %Z case and rejected it outright.
+                    si = skip_ws(input, si);
+                    while input.get(si).is_some_and(|b| !b.is_ascii_whitespace()) {
+                        si += 1;
                     }
                 }
                 _ => {
