@@ -74,8 +74,24 @@ fn encode(cp: u32, out: &mut Vec<u8>) {
         out.push(0xE0 | (cp >> 12) as u8);
         out.push(0x80 | ((cp >> 6) & 0x3F) as u8);
         out.push(0x80 | (cp & 0x3F) as u8);
-    } else {
+    } else if cp < 0x20_0000 {
         out.push(0xF0 | (cp >> 18) as u8);
+        out.push(0x80 | ((cp >> 12) & 0x3F) as u8);
+        out.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+        out.push(0x80 | (cp & 0x3F) as u8);
+    } else if cp < 0x400_0000 {
+        // Obsolete RFC 2279 5-byte form (non-overlong: cp >= 0x20_0000), which
+        // glibc's C.UTF-8 still decodes and fl matches.
+        out.push(0xF8 | (cp >> 24) as u8);
+        out.push(0x80 | ((cp >> 18) & 0x3F) as u8);
+        out.push(0x80 | ((cp >> 12) & 0x3F) as u8);
+        out.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+        out.push(0x80 | (cp & 0x3F) as u8);
+    } else {
+        // Obsolete RFC 2279 6-byte form (non-overlong: cp >= 0x400_0000).
+        out.push(0xFC | (cp >> 30) as u8);
+        out.push(0x80 | ((cp >> 24) & 0x3F) as u8);
+        out.push(0x80 | ((cp >> 18) & 0x3F) as u8);
         out.push(0x80 | ((cp >> 12) & 0x3F) as u8);
         out.push(0x80 | ((cp >> 6) & 0x3F) as u8);
         out.push(0x80 | (cp & 0x3F) as u8);
@@ -87,27 +103,29 @@ fn gen_buf(r: &mut Lcg) -> Vec<u8> {
     let tokens = 1 + r.below(5);
     for _ in 0..tokens {
         match r.below(8) {
-            // Valid-ish code point up to the 4-byte range (incl. surrogate / >max
-            // U+10FFFF, both of which fl and glibc handle identically). 5/6-byte
-            // sequences are EXCLUDED: fl's mbstate_t partial slot holds only 3
-            // bytes, so they cannot be reassembled across incremental calls — a
-            // separate, obscure gap tracked in bd-kryp2k.
+            // Valid-ish code point across every UTF-8 width, including the
+            // obsolete 5/6-byte RFC 2279 forms (cp >= 0x20_0000) that glibc's
+            // C.UTF-8 decodes and fl matches one-shot — now also reassembled
+            // across incremental calls after the mbstate partial-region fix
+            // (bd-kryp2k). Surrogate / >U+10FFFF ranges are handled identically
+            // by fl and glibc.
             0 | 1 | 2 | 3 => {
-                let cp = match r.below(6) {
+                let cp = match r.below(8) {
                     0 => r.below(0x80) as u32,               // ASCII (may include NUL)
                     1 => 0x80 + r.below(0x780) as u32,       // 2-byte
                     2 => 0x800 + r.below(0xF800) as u32,     // 3-byte (incl surrogates)
                     3 => 0x10000 + r.below(0x100000) as u32, // 4-byte (incl >10FFFF)
                     4 => 0xD800 + r.below(0x800) as u32,     // surrogate range
-                    _ => 0x110000 + r.below(0x1000) as u32,  // beyond max (still 4-byte)
+                    5 => 0x110000 + r.below(0x1000) as u32,  // beyond max (still 4-byte)
+                    6 => 0x20_0000 + r.below(0x3E0_0000) as u32, // 5-byte (RFC 2279)
+                    _ => 0x400_0000 + r.below(0x3C00_0000) as u32, // 6-byte (RFC 2279)
                 };
                 encode(cp, &mut buf);
             }
-            // A raw (often invalid) byte: continuation bytes, never-leads, etc.
-            // Remap 5/6-byte leads (0xF8..=0xFD) out of the byte set (see above).
+            // A raw (often invalid) byte: continuation bytes, never-leads, and
+            // bare 5/6-byte leads (0xF8..=0xFD) — all in scope now.
             4 | 5 => {
-                let b = (r.next() & 0xFF) as u8;
-                buf.push(if (0xF8..=0xFD).contains(&b) { b & 0xF3 } else { b });
+                buf.push((r.next() & 0xFF) as u8);
             }
             // A bare lead byte with no continuation (truncation).
             6 => buf.push([0xC3, 0xE2, 0xF0, 0xC0, 0xFF, 0xFE][r.below(6)]),

@@ -2091,9 +2091,12 @@ pub unsafe extern "C" fn mbrtowc(
             if wc == 0 { 0 } else { from_call }
         }
         wchar_core::Utf8Step::Incomplete => {
-            // Still a partial sequence: absorb the new bytes into `ps` (a valid
-            // UTF-8 prefix is at most 3 bytes short of a 4-byte char).
-            if !ps.is_null() && total <= 3 {
+            // Still a partial sequence: absorb the new bytes into `ps`. A valid
+            // UTF-8 prefix is at most 5 bytes short of a 6-byte char (the
+            // obsolete RFC 2279 forms fl decodes for C.UTF-8 parity), and an
+            // `Incomplete` prefix never exceeds 5 bytes, so the partial region
+            // ([0..6]) always has room.
+            if !ps.is_null() && total <= 5 {
                 // SAFETY: ps is a valid mbstate_t per the C contract.
                 unsafe { mbstate_partial_store(ps, &buf[..total]) };
             }
@@ -4519,28 +4522,25 @@ fn c16_surrogate_set(value: u32) {
     }
 }
 
-/// High-bit marker distinguishing "a surrogate is pending" from a zeroed state.
-const C16_PENDING_MARK: u32 = 0x8000_0000;
-
 /// Read the pending UTF-16 surrogate for an `mbrtoc16`/`c16rtomb` stream. glibc
 /// keeps this state in the caller's `mbstate_t` so independent conversion
 /// streams never collide; when `ps` is non-null we do the same, reading the
-/// surrogate (with a high-bit marker) from bytes [4..8] of the state. mbrtowc's
-/// partial-multibyte state lives in bytes [0..4] of the same `mbstate_t`, so the
-/// two never overlap. When `ps` is null we fall back to the thread-local,
-/// matching glibc's internal static state for that case.
+/// surrogate as a `u16` from bytes [6..8] of the state (`0` = none — a pending
+/// surrogate is always 0xD800..=0xDFFF, so it is never zero). mbrtowc's
+/// partial-multibyte state lives in bytes [0..6] of the same `mbstate_t`; the
+/// two never overlap *in practice* because a pending surrogate only exists
+/// AFTER a complete character has decoded (cleared partial), and a UTF-16 stream
+/// only ever decodes <=4-byte UTF-8 (partial <= 3 bytes, never reaching [4..6]).
+/// When `ps` is null we fall back to the thread-local, matching glibc's internal
+/// static state for that case.
 #[inline]
 unsafe fn c16_pending_get(ps: *const c_void) -> u32 {
     if ps.is_null() {
         return c16_surrogate_get();
     }
     // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
-    let raw = unsafe { (ps as *const u8).add(4).cast::<u32>().read_unaligned() };
-    if raw & C16_PENDING_MARK != 0 {
-        raw & 0xFFFF
-    } else {
-        0
-    }
+    let raw = unsafe { (ps as *const u8).add(6).cast::<u16>().read_unaligned() };
+    raw as u32
 }
 
 /// Store (or clear, with `value == 0`) the pending UTF-16 surrogate for a
@@ -4552,44 +4552,42 @@ unsafe fn c16_pending_set(ps: *mut c_void, value: u32) {
         c16_surrogate_set(value);
         return;
     }
-    let raw = if value == 0 {
-        0
-    } else {
-        C16_PENDING_MARK | (value & 0xFFFF)
-    };
     // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
-    unsafe { (ps as *mut u8).add(4).cast::<u32>().write_unaligned(raw) };
+    unsafe { (ps as *mut u8).add(6).cast::<u16>().write_unaligned(value as u16) };
 }
 
-/// Load mbrtowc's partial-multibyte state from bytes [0..4] of `ps`: byte 0 is
-/// the count (0..=3) of pending lead bytes, bytes [1..1+count] are those bytes.
-/// Returns the count (clamped to 3) and copies the bytes into `out`.
+/// Load mbrtowc's partial-multibyte state from bytes [0..6] of `ps`: byte 0 is
+/// the count (0..=5) of pending lead bytes, bytes [1..1+count] are those bytes.
+/// Five bytes of headroom lets an obsolete 6-byte UTF-8 sequence (RFC 2279,
+/// which fl decodes for C.UTF-8 parity with glibc) be reassembled across
+/// incremental calls. Returns the count (clamped to 5) and copies the bytes into
+/// `out`.
 #[inline]
 unsafe fn mbstate_partial_load(ps: *const c_void, out: &mut [u8; 8]) -> usize {
     // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
-    let raw = unsafe { (ps as *const u8).cast::<[u8; 4]>().read_unaligned() };
-    let count = (raw[0] as usize).min(3);
+    let raw = unsafe { (ps as *const u8).cast::<[u8; 6]>().read_unaligned() };
+    let count = (raw[0] as usize).min(5);
     out[..count].copy_from_slice(&raw[1..1 + count]);
     count
 }
 
-/// Store `bytes` (len <= 3) as mbrtowc's pending partial-multibyte state into
-/// bytes [0..4] of `ps`, without touching the surrogate slot in [4..8].
+/// Store `bytes` (len <= 5) as mbrtowc's pending partial-multibyte state into
+/// bytes [0..6] of `ps`, without touching the surrogate slot in [6..8].
 #[inline]
 unsafe fn mbstate_partial_store(ps: *mut c_void, bytes: &[u8]) {
-    let mut raw = [0u8; 4];
+    let mut raw = [0u8; 6];
     raw[0] = bytes.len() as u8;
     raw[1..1 + bytes.len()].copy_from_slice(bytes);
     // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
-    unsafe { (ps as *mut u8).cast::<[u8; 4]>().write_unaligned(raw) };
+    unsafe { (ps as *mut u8).cast::<[u8; 6]>().write_unaligned(raw) };
 }
 
-/// Clear mbrtowc's partial-multibyte state (bytes [0..4] of `ps`), leaving the
-/// surrogate slot in [4..8] untouched.
+/// Clear mbrtowc's partial-multibyte state (bytes [0..6] of `ps`), leaving the
+/// surrogate slot in [6..8] untouched.
 #[inline]
 unsafe fn mbstate_partial_clear(ps: *mut c_void) {
     // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
-    unsafe { (ps as *mut u8).cast::<[u8; 4]>().write_unaligned([0u8; 4]) };
+    unsafe { (ps as *mut u8).cast::<[u8; 6]>().write_unaligned([0u8; 6]) };
 }
 
 /// `c32rtomb` — convert char32_t to multibyte (UTF-8).
