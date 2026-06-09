@@ -624,7 +624,7 @@ pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
     if flags.contains(FnmatchFlags::EXTMATCH)
         && pattern_has_extglob(pattern, flags.contains(FnmatchFlags::NOESCAPE))
     {
-        return ext_match_at(pattern, 0, text, 0, flags);
+        return ext_match_at(pattern, 0, text, 0, flags, false);
     }
     fnmatch_simple(pattern, text, flags)
 }
@@ -702,7 +702,14 @@ fn parse_extglob_group(
 /// Recursive FNM_EXTMATCH matcher: does `pat[pi..]` match `text[si..]` fully?
 /// Handles the ordinary tokens (`?`, `*`, `[...]`, `\X`, literals) by recursion
 /// and the five extglob operators by backtracking over every split of the text.
-fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFlags) -> bool {
+/// `star` is true when a `*` wildcard earlier on this match path has absorbed
+/// variable-width slack. glibc rejects an `@`/`+` extglob group that completes
+/// such a starred match by selecting an EMPTY-WIDTH alternative value at end of
+/// text (e.g. `*@(b|)` on "ba", `*?@(b|)` on "b", `*+()` on "bb"), even though
+/// the same group matches standalone (`@(b|)` on "") — see bd-4aqdre. The flag
+/// is set on entry to a `*` expansion and propagates through subsequent
+/// consuming tokens; sub-pattern interiors (`sub_full_match`) reset it.
+fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFlags, star: bool) -> bool {
     let pathname = flags.contains(FnmatchFlags::PATHNAME);
     let period = flags.contains(FnmatchFlags::PERIOD);
     let noescape = flags.contains(FnmatchFlags::NOESCAPE);
@@ -736,7 +743,7 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
     // Extglob group?
     if matches!(pc, b'?' | b'*' | b'+' | b'@' | b'!') && pat.get(pi + 1) == Some(&b'(') {
         if let Some((op, alts, next_pi)) = parse_extglob_group(pat, pi, noescape) {
-            return ext_group_at(op, &alts, pat, next_pi, text, si, flags);
+            return ext_group_at(op, &alts, pat, next_pi, text, si, flags, star);
         }
         // Unterminated: fall through and treat `pc` as an ordinary token.
     }
@@ -749,7 +756,7 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
             if (pathname && c == b'/') || lp_blocked(si) {
                 return false;
             }
-            ext_match_at(pat, pi + 1, text, si + 1, flags)
+            ext_match_at(pat, pi + 1, text, si + 1, flags, star)
         }
         b'*' => {
             // Collapse a run of plain `*`s, but STOP at a `*` that opens an
@@ -763,7 +770,8 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
             }
             let mut j = si;
             loop {
-                if ext_match_at(pat, p, text, j, flags) {
+                // Mark the slack: everything matched from here is "under a star".
+                if ext_match_at(pat, p, text, j, flags, true) {
                     return true;
                 }
                 let Some(&c) = text.get(j) else {
@@ -785,7 +793,9 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
                     return false;
                 }
                 if eq(c, b'[') {
-                    ext_match_at(pat, pi + 1, text, si + 1, flags)
+                    // A fixed-position literal commits a boundary: it clears the
+                    // star slack (glibc allows `*a@(b|)` to end on an empty alt).
+                    ext_match_at(pat, pi + 1, text, si + 1, flags, false)
                 } else {
                     false
                 }
@@ -799,7 +809,7 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
                 }
                 let (m, next_pi) = bracket_match_one(pat, pi, c, noescape, casefold);
                 if m {
-                    ext_match_at(pat, next_pi, text, si + 1, flags)
+                    ext_match_at(pat, next_pi, text, si + 1, flags, false)
                 } else {
                     false
                 }
@@ -814,7 +824,7 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
                 return false;
             };
             if eq(c, esc) {
-                ext_match_at(pat, pi + 2, text, si + 1, flags)
+                ext_match_at(pat, pi + 2, text, si + 1, flags, false)
             } else {
                 false
             }
@@ -824,7 +834,8 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
                 return false;
             };
             if eq(c, lit) {
-                ext_match_at(pat, pi + 1, text, si + 1, flags)
+                // Fixed literal commits a boundary and clears the star slack.
+                ext_match_at(pat, pi + 1, text, si + 1, flags, false)
             } else {
                 false
             }
@@ -834,6 +845,7 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
 
 /// Match an extglob group `op(alts)` followed by `pat[rest_pi..]` against
 /// `text[si..]`. Backtracks over every text split consistent with the operator.
+#[allow(clippy::too_many_arguments)] // recursive extglob matcher state, not a config bag
 fn ext_group_at(
     op: u8,
     alts: &[(usize, usize)],
@@ -842,17 +854,26 @@ fn ext_group_at(
     text: &[u8],
     si: usize,
     flags: FnmatchFlags,
+    star: bool,
 ) -> bool {
-    // The trailing pattern matched against the remaining text from `s`.
-    let rest = |s: usize| ext_match_at(pat, rest_pi, text, s, flags);
+    // The trailing pattern matched against the remaining text from `s`. Having
+    // matched a group occurrence here commits a boundary, so the star slack is
+    // cleared for the rest — only a `*`/`?` wildcard run reaching an empty-alt
+    // group AT END OF TEXT (handled by `star_empty_block` below) stays quirky.
+    let rest = |s: usize| ext_match_at(pat, rest_pi, text, s, flags, false);
     // Does some alternative match the slice text[si..e] exactly?
     let alt_hits = |s: usize, e: usize| -> bool {
         alts.iter().any(|&(as_, ae)| sub_full_match(&pat[as_..ae], text, s, e, flags))
     };
+    // glibc rejects a `@`/`+` group completing a starred match by an empty-width
+    // alternative at end of text: at `si == text.len()` only an empty alternative
+    // can match (no text remains), so under `star` we forbid that here. `?`/`*`
+    // (zero-occurrence) empties stay allowed; `!` is left to its own semantics.
+    let star_empty_block = star && si == text.len();
 
     match op {
         // Exactly one occurrence (possibly empty, via an empty alternative).
-        b'@' => (si..=text.len()).any(|e| alt_hits(si, e) && rest(e)),
+        b'@' => !star_empty_block && (si..=text.len()).any(|e| alt_hits(si, e) && rest(e)),
         // Zero or one occurrence.
         b'?' => {
             if rest(si) {
@@ -862,8 +883,8 @@ fn ext_group_at(
         }
         // Zero or more / one or more occurrences (each consumes ≥1 byte to make
         // progress; an empty alternative therefore counts as "zero").
-        b'*' => ext_star_at(alts, pat, rest_pi, text, si, flags, false),
-        b'+' => ext_star_at(alts, pat, rest_pi, text, si, flags, true),
+        b'*' => ext_star_at(alts, pat, rest_pi, text, si, flags, false, star),
+        b'+' => ext_star_at(alts, pat, rest_pi, text, si, flags, true, star),
         // Anything the list does NOT match, at any split where the rest matches.
         b'!' => (si..=text.len()).any(|e| rest(e) && !alt_hits(si, e)),
         _ => false,
@@ -873,6 +894,7 @@ fn ext_group_at(
 /// Greedy backtracking helper for `*(list)` / `+(list)`. Matches a run of list
 /// occurrences (each ≥1 byte) starting at `si`, then the rest of the pattern.
 /// `require_one` distinguishes `+` (≥1) from `*` (≥0).
+#[allow(clippy::too_many_arguments)] // recursive extglob matcher state, not a config bag
 fn ext_star_at(
     alts: &[(usize, usize)],
     pat: &[u8],
@@ -881,19 +903,24 @@ fn ext_star_at(
     si: usize,
     flags: FnmatchFlags,
     require_one: bool,
+    star: bool,
 ) -> bool {
-    if !require_one && ext_match_at(pat, rest_pi, text, si, flags) {
+    if !require_one && ext_match_at(pat, rest_pi, text, si, flags, star) {
         return true;
     }
     // `+(list)` with an empty-matching alternative counts that as the single
     // required occurrence (consuming nothing), then matches the rest. (`*` needs
     // no special case — an empty occurrence is identical to zero occurrences,
-    // already handled above.)
-    if require_one {
+    // already handled above.) glibc forbids this empty-value occurrence from
+    // completing a starred match at end of text (e.g. `*+()` on "bb"), so it is
+    // gated on `!(star && si == text.len())` — see bd-4aqdre.
+    if require_one && !(star && si == text.len()) {
         let empty_alt = alts
             .iter()
             .any(|&(as_, ae)| sub_full_match(&pat[as_..ae], text, si, si, flags));
-        if empty_alt && ext_match_at(pat, rest_pi, text, si, flags) {
+        // The empty-value occurrence commits a boundary: clear the star slack
+        // for the rest (so e.g. `*+()?+()` on "bc" matches like glibc).
+        if empty_alt && ext_match_at(pat, rest_pi, text, si, flags, false) {
             return true;
         }
     }
@@ -901,7 +928,9 @@ fn ext_star_at(
         let hit = alts
             .iter()
             .any(|&(as_, ae)| sub_full_match(&pat[as_..ae], text, si, e, flags));
-        if hit && ext_star_at(alts, pat, rest_pi, text, e, flags, false) {
+        // This occurrence consumed `e - si >= 1` bytes, committing a boundary,
+        // so the star slack is cleared for the remaining occurrences and rest.
+        if hit && ext_star_at(alts, pat, rest_pi, text, e, flags, false, false) {
             return true;
         }
     }
@@ -914,7 +943,9 @@ fn ext_star_at(
 fn sub_full_match(sub: &[u8], text: &[u8], s: usize, e: usize, flags: FnmatchFlags) -> bool {
     let sub_flags =
         FnmatchFlags::from_bits(flags.bits() & !FnmatchFlags::LEADING_DIR.bits());
-    ext_match_at(sub, 0, &text[s..e], 0, sub_flags)
+    // The interior of an alternative matches a fixed slice independently; an
+    // outer `*`'s slack does not reach inside it, so reset the star context.
+    ext_match_at(sub, 0, &text[s..e], 0, sub_flags, false)
 }
 
 #[cfg(test)]

@@ -37,14 +37,14 @@ impl Lcg {
     }
 }
 
-// SCOPE NOTE: this generator deliberately stays on the well-defined surface and
-// avoids two glibc-internal quirks (filed separately): (1) the `!(list)`
-// operator, and (2) any group that can match the EMPTY STRING AS A VALUE (an
-// empty alternative, or an alternative that can match empty). glibc rejects such
-// an empty match when it is absorbed by a preceding `*` (e.g. `*@(b|)` on "ba",
-// `*+()` on "bb"), yet accepts the same group standalone — an inconsistency we
-// do not mirror. To guarantee every `@`/`+` group consumes >=1 byte, every
-// alternative starts with a definitely-consuming atom (literal / `?` / `[...]`).
+// SCOPE NOTE: the generator now EXERCISES the formerly-quirky surface — `@`/`+`
+// groups that can match the EMPTY STRING AS A VALUE (an empty alternative such
+// as `@(b|)` / `+()` / `@(|b)`), including when absorbed by a preceding `*`
+// (e.g. `*@(b|)` on "ba", `*+()` on "bb"). glibc rejects that empty-alternative
+// match only when it completes a `*` at end of text while accepting it
+// standalone; fl reproduces this exactly after bd-4aqdre, so this must stay
+// 0-divergence. Still out of the randomized set: `!(list)` (its own follow-up
+// gap) — covered by the fixed battery and the host probes.
 
 /// A definitely-consuming atom (matches exactly one byte): literal, `?`, or a
 /// bracket. Never matches empty, so an alternative beginning with one cannot.
@@ -57,10 +57,14 @@ fn gen_consuming_atom(r: &mut Lcg, out: &mut Vec<u8>) {
     }
 }
 
-/// One alternative: a non-empty sequence of consuming atoms and nested groups —
-/// no bare `*`, so the alternative always consumes >=1 byte and the enclosing
-/// `@`/`+` group can never match empty (sidestepping the `*`+empty-match quirk).
+/// One alternative: a (possibly EMPTY) sequence of consuming atoms and nested
+/// groups. An empty alternative lets the enclosing `@`/`+` group match the
+/// empty string as a value — the `*`+empty-match surface fixed by bd-4aqdre.
 fn gen_alt(r: &mut Lcg, depth: u32, out: &mut Vec<u8>) {
+    // ~1 in 4 alternatives is empty (matches the empty string as a value).
+    if r.below(4) == 0 {
+        return;
+    }
     gen_consuming_atom(r, out);
     let extra = r.below(3);
     for _ in 0..extra {
@@ -72,11 +76,10 @@ fn gen_alt(r: &mut Lcg, depth: u32, out: &mut Vec<u8>) {
     }
 }
 
-/// One extglob group `X(alt|alt|...)`. Operators are restricted to `@`
-/// (exactly-one) and `+` (one-or-more) — the operators that always consume when
-/// their alternatives do. `?`/`*`/`!` (which can match empty and so collide with
-/// glibc's `*`+empty-match quirk) are exercised by the realistic fixed battery
-/// and the host probes instead, and tracked as a follow-up gap.
+/// One extglob group `X(alt|alt|...)`. Operators are `@` (exactly-one) and `+`
+/// (one-or-more); alternatives may be empty, so a group can match the empty
+/// string as a value. `?`/`*`/`!` are exercised by the realistic fixed battery
+/// and host probes instead.
 fn gen_group(r: &mut Lcg, depth: u32, out: &mut Vec<u8>) {
     const OPS: &[u8] = b"@+";
     out.push(OPS[r.below(OPS.len())]);
