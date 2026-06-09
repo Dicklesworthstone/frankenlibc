@@ -6737,15 +6737,22 @@ unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
         && let Some(data) = stream.mem_data()
     {
         let len = data.len();
+        // POSIX: *sizeloc is the SMALLER of the buffer's content length and the
+        // current file position — so seeking backwards and writing shrinks the
+        // reported size even though the tail bytes (and the NUL terminator at the
+        // max extent) survive in the buffer. fl previously reported the full
+        // content length, diverging from glibc after a backward seek.
+        let pos = stream.offset().max(0) as usize;
+        let reported = len.min(pos);
         let previous = unsafe { *info.ptr_loc };
         // Allocate a new buffer via malloc and copy data + NUL terminator.
         let buf = unsafe { malloc(len + 1) };
         if !buf.is_null() {
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cast::<u8>(), len);
-                *buf.cast::<u8>().add(len) = 0; // NUL-terminate
+                *buf.cast::<u8>().add(len) = 0; // NUL-terminate at the max extent
                 *info.ptr_loc = buf.cast::<c_char>();
-                *info.size_loc = len;
+                *info.size_loc = reported;
                 if !previous.is_null() {
                     free(previous.cast::<c_void>());
                 }
