@@ -1627,9 +1627,12 @@ fn wcscoll_and_wcsxfrm_follow_c_locale_contract() {
     ];
     let mut dst = [0_i32; 2];
     let needed = unsafe { wcsxfrm(dst.as_mut_ptr(), src.as_ptr(), dst.len()) };
+    // glibc fills min(n, src_len+1) chars and only NUL-terminates if it fits;
+    // here n(2) <= src_len(3), so both transform chars are written and the
+    // prefix is left UNTERMINATED (no room for a NUL).
     assert_eq!(needed, 3);
     assert_eq!(dst[0] as u8, b'a');
-    assert_eq!(dst[1], 0);
+    assert_eq!(dst[1] as u8, b'b');
 }
 
 #[test]

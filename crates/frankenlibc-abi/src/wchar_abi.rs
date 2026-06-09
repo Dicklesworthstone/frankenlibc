@@ -3502,13 +3502,20 @@ pub unsafe extern "C" fn wcsxfrm(
         return src_len;
     }
 
-    let copy_len = src_len.min(n.saturating_sub(1));
+    // glibc fills up to `n` wide chars of the transform and writes a NUL ONLY
+    // when it fits (`copy_len < n`); for `n <= src_len` the written prefix is
+    // left UNTERMINATED (POSIX: contents are indeterminate once the return value
+    // is >= n, but glibc is deterministic and the narrow strxfrm already matches
+    // this). The previous code reserved n-1 and always terminated, diverging.
+    let copy_len = src_len.min(n);
     // SAFETY: destination and source are caller-provided valid buffers for the requested range.
     unsafe {
         if copy_len > 0 {
             std::ptr::copy_nonoverlapping(src, dest, copy_len);
         }
-        *dest.add(copy_len) = 0;
+        if copy_len < n {
+            *dest.add(copy_len) = 0;
+        }
     }
     src_len
 }
