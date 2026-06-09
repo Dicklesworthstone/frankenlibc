@@ -1521,14 +1521,14 @@ fn wcstol_parses_and_updates_endptr() {
     );
 
     set_errno(0);
-    end = std::ptr::null_mut();
+    // glibc validates the base before any parsing and leaves *endptr UNTOUCHED
+    // on an invalid base (it never writes it) — it does NOT set it to nptr.
+    let sentinel = 0xdead_beef_usize as *mut libc::wchar_t;
+    end = sentinel;
     let invalid_base = unsafe { wcstol(input.as_ptr(), &mut end as *mut *mut libc::wchar_t, 1) };
     assert_eq!(invalid_base, 0);
     assert_eq!(errno_value(), libc::EINVAL);
-    assert_eq!(
-        unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) },
-        0
-    );
+    assert_eq!(end, sentinel, "endptr must be left untouched on invalid base");
 }
 
 #[test]

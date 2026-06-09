@@ -625,6 +625,15 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
     let mut i = 0usize;
     let len = s.len();
 
+    // glibc validates the base before inspecting the string: an invalid base
+    // (not 0 and outside 2..=36) yields EINVAL with nothing consumed and the
+    // caller's endptr left untouched — even for empty / sign-only input. This
+    // MUST precede the whitespace/sign scan so those early-success returns do
+    // not mask the invalid base. (Wide analog of strtol_impl's check.)
+    if base != 0 && !(2..=36).contains(&base) {
+        return (0, 0, ConversionStatus::InvalidBase);
+    }
+
     while i < len && wide_is_space(s[i]) {
         i += 1;
     }
@@ -735,6 +744,15 @@ pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
 pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
     let mut i = 0usize;
     let len = s.len();
+
+    // glibc validates the base before inspecting the string: an invalid base
+    // (not 0 and outside 2..=36) yields EINVAL with nothing consumed and the
+    // caller's endptr left untouched — even for empty / sign-only input. This
+    // MUST precede the whitespace/sign scan so those early-success returns do
+    // not mask the invalid base. (Wide analog of strtol_impl's check.)
+    if base != 0 && !(2..=36).contains(&base) {
+        return (0, 0, ConversionStatus::InvalidBase);
+    }
 
     while i < len && wide_is_space(s[i]) {
         i += 1;

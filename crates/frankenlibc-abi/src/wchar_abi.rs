@@ -2375,7 +2375,9 @@ pub unsafe extern "C" fn wcstol(
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
     let (value, consumed, status) = frankenlibc_core::stdlib::conversion::wcstol_impl(slice, base);
 
-    if !endptr.is_null() {
+    // glibc leaves *endptr untouched on an invalid base (it validates the base
+    // before any parsing); every other status writes the consumed position.
+    if !endptr.is_null() && status != ConversionStatus::InvalidBase {
         // SAFETY: consumed is bounded by scanned string length.
         unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
     }
@@ -2411,7 +2413,9 @@ pub unsafe extern "C" fn wcstoul(
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
     let (value, consumed, status) = frankenlibc_core::stdlib::conversion::wcstoul_impl(slice, base);
 
-    if !endptr.is_null() {
+    // glibc leaves *endptr untouched on an invalid base (it validates the base
+    // before any parsing); every other status writes the consumed position.
+    if !endptr.is_null() && status != ConversionStatus::InvalidBase {
         // SAFETY: consumed is bounded by scanned string length.
         unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
     }
