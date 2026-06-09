@@ -941,11 +941,21 @@ fn ext_star_at(
 /// extglob alternative. LEADING_DIR is cleared (an alternative must match
 /// exactly, never just a directory prefix).
 fn sub_full_match(sub: &[u8], text: &[u8], s: usize, e: usize, flags: FnmatchFlags) -> bool {
-    let sub_flags =
-        FnmatchFlags::from_bits(flags.bits() & !FnmatchFlags::LEADING_DIR.bits());
+    let mut bits = flags.bits() & !FnmatchFlags::LEADING_DIR.bits();
+    // FNM_PERIOD's "a wildcard may not match a leading '.'" rule applies only at
+    // a genuine component-leading position — the start of the text, or (under
+    // PATHNAME) just after a '/'. An extglob-group occurrence that starts
+    // mid-component must NOT re-trigger it: matching the alternative against the
+    // fixed sub-slice `text[s..e]` would otherwise see slice-position 0 as
+    // "leading" and wrongly reject e.g. `+(a|?)` on "bc.." (the '.' at index 2).
+    let pathname = flags.contains(FnmatchFlags::PATHNAME);
+    let at_leading = s == 0 || (pathname && s >= 1 && text.get(s - 1) == Some(&b'/'));
+    if !at_leading {
+        bits &= !FnmatchFlags::PERIOD.bits();
+    }
     // The interior of an alternative matches a fixed slice independently; an
     // outer `*`'s slack does not reach inside it, so reset the star context.
-    ext_match_at(sub, 0, &text[s..e], 0, sub_flags, false)
+    ext_match_at(sub, 0, &text[s..e], 0, FnmatchFlags::from_bits(bits), false)
 }
 
 #[cfg(test)]
