@@ -1,10 +1,12 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)] // host-glibc argz oracle (libc, linked by std)
 
-//! Randomized live differential fuzzer for the GNU `<argz.h>` MUTATION surface
-//! vs host glibc — argz_add / argz_insert / argz_replace. The existing
-//! `conformance_diff_argz` is fixed-case and only covers
-//! create_sep/count/next/stringify.
+//! Randomized differential fuzzers for the GNU `<argz.h>` MUTATION surface.
+//! The live host-glibc oracle covers argz_add / argz_insert / argz_replace.
+//! A separate pure-Rust argz model covers argz_append / argz_delete as well, so
+//! those paths can be tested without mixing host-glibc argz allocation with
+//! FrankenLibC's malloc ABI in one process. The existing `conformance_diff_argz`
+//! is fixed-case and only covers create_sep/count/next/stringify.
 //!
 //! Design: each scenario draws a random op LIST, then replays it TWICE — once on
 //! an fl argz buffer, once on a host argz buffer — recording a snapshot (entry
@@ -19,12 +21,10 @@
 //!     `slice::to_vec` — `to_vec`'s `copy_nonoverlapping` precondition check can
 //!     spuriously flag the fl (malloc_abi) source vs the snapshot (global-alloc)
 //!     destination as "overlapping".
-//!   * argz_append / argz_delete are intentionally NOT exercised here: churning
-//!     the host glibc argz allocator alongside fl's `malloc_abi` on the larger
-//!     buffers those ops produce corrupts the shared process heap (SIGSEGV). fl's
-//!     argz logic for them is correct fl-only; the coexistence issue is tracked
-//!     as bd-2g7oyh.212 and needs a pure-Rust reference model (no host glibc) to
-//!     differentially test.
+//!   * argz_append / argz_delete are intentionally NOT exercised against host
+//!     glibc: churning the host argz allocator alongside fl's `malloc_abi` on
+//!     the larger buffers those ops produce corrupts the shared process heap
+//!     (SIGSEGV). bd-2g7oyh.212 covers them with the pure-Rust model below.
 
 use std::ffi::{CString, c_char, c_int, c_uint};
 
@@ -59,7 +59,11 @@ impl Lcg {
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
-        if n == 0 { 0 } else { (self.next() >> 11) as usize % n }
+        if n == 0 {
+            0
+        } else {
+            (self.next() >> 11) as usize % n
+        }
     }
 }
 
@@ -84,9 +88,11 @@ enum Op {
     Add(Vec<u8>),
     Insert(usize, Vec<u8>),
     Replace(Vec<u8>, Vec<u8>),
+    Append(Vec<Vec<u8>>),
+    Delete(usize),
 }
 
-fn gen_ops(r: &mut Lcg) -> Vec<Op> {
+fn gen_host_ops(r: &mut Lcg) -> Vec<Op> {
     let n = 3 + r.below(12);
     (0..n)
         .map(|_| match r.below(3) {
@@ -97,9 +103,152 @@ fn gen_ops(r: &mut Lcg) -> Vec<Op> {
         .collect()
 }
 
+fn append_payload(r: &mut Lcg) -> Vec<Vec<u8>> {
+    let n = r.below(4);
+    (0..n).map(|_| token(r)).collect()
+}
+
+fn gen_model_ops(r: &mut Lcg) -> Vec<Op> {
+    let n = 3 + r.below(12);
+    (0..n)
+        .map(|_| match r.below(5) {
+            0 => Op::Add(token(r)),
+            1 => Op::Insert(r.below(8), token(r)),
+            2 => Op::Replace(token_nonempty(r), token(r)),
+            3 => Op::Append(append_payload(r)),
+            _ => Op::Delete(r.below(8)),
+        })
+        .collect()
+}
+
 /// One snapshot of an argz buffer after an op: (count, raw bytes, cumulative
 /// replace-count returned so far).
 type Snap = (usize, Vec<u8>, u32);
+
+fn argz_bytes(entries: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for entry in entries {
+        out.extend_from_slice(entry);
+        out.push(0);
+    }
+    out
+}
+
+fn replace_substrings(entry: &[u8], find: &[u8], with: &[u8]) -> (Vec<u8>, bool) {
+    let mut out = Vec::with_capacity(entry.len());
+    let mut matched = false;
+    let mut pos = 0usize;
+    while pos < entry.len() {
+        if entry[pos..].starts_with(find) {
+            out.extend_from_slice(with);
+            pos += find.len();
+            matched = true;
+        } else {
+            out.push(entry[pos]);
+            pos += 1;
+        }
+    }
+    (out, matched)
+}
+
+fn model_replay(ops: &[Op]) -> Vec<Snap> {
+    let mut entries: Vec<Vec<u8>> = Vec::new();
+    let mut rc_total = 0u32;
+    let mut snaps = Vec::with_capacity(ops.len());
+    for op in ops {
+        match op {
+            Op::Add(t) => entries.push(t.clone()),
+            Op::Insert(k, t) => {
+                if *k < entries.len() {
+                    entries.insert(*k, t.clone());
+                } else {
+                    entries.push(t.clone());
+                }
+            }
+            Op::Replace(s, w) => {
+                for entry in &mut entries {
+                    let (rebuilt, matched) = replace_substrings(entry, s, w);
+                    if matched {
+                        rc_total = rc_total.wrapping_add(1);
+                    }
+                    *entry = rebuilt;
+                }
+            }
+            Op::Append(more) => entries.extend(more.iter().cloned()),
+            Op::Delete(k) => {
+                if *k < entries.len() {
+                    entries.remove(*k);
+                }
+            }
+        }
+        snaps.push((entries.len(), argz_bytes(&entries), rc_total));
+    }
+    snaps
+}
+
+fn nth_entry(p: *mut c_char, len: usize, k: usize) -> *mut c_char {
+    let mut e: *mut c_char = std::ptr::null_mut();
+    for _ in 0..=k {
+        e = unsafe { fl::argz_next(p, len, e) };
+        if e.is_null() {
+            return std::ptr::null_mut();
+        }
+    }
+    e
+}
+
+fn snapshot_fl(p: *mut c_char, len: usize, rc_total: u32) -> Snap {
+    let count = unsafe { fl::argz_count(p, len) };
+    let mut bytes = Vec::with_capacity(len);
+    if !p.is_null() {
+        for i in 0..len {
+            bytes.push(unsafe { *(p as *const u8).add(i) });
+        }
+    }
+    (count, bytes, rc_total)
+}
+
+fn fl_model_replay(ops: &[Op]) -> Vec<Snap> {
+    let mut p: *mut c_char = std::ptr::null_mut();
+    let mut len: usize = 0;
+    let mut rc_total = 0u32;
+    let mut snaps = Vec::with_capacity(ops.len());
+    for op in ops {
+        match op {
+            Op::Add(t) => {
+                let c = CString::new(t.clone()).unwrap();
+                unsafe { fl::argz_add(&mut p, &mut len, c.as_ptr()) };
+            }
+            Op::Insert(k, t) => {
+                let c = CString::new(t.clone()).unwrap();
+                let before = nth_entry(p, len, *k);
+                unsafe { fl::argz_insert(&mut p, &mut len, before, c.as_ptr()) };
+            }
+            Op::Replace(s, w) => {
+                let cs = CString::new(s.clone()).unwrap();
+                let cw = CString::new(w.clone()).unwrap();
+                let mut cnt: c_uint = 0;
+                unsafe { fl::argz_replace(&mut p, &mut len, cs.as_ptr(), cw.as_ptr(), &mut cnt) };
+                rc_total = rc_total.wrapping_add(cnt);
+            }
+            Op::Append(more) => {
+                let raw = argz_bytes(more);
+                let ptr = if raw.is_empty() {
+                    std::ptr::null()
+                } else {
+                    raw.as_ptr().cast::<c_char>()
+                };
+                unsafe { fl::argz_append(&mut p, &mut len, ptr, raw.len()) };
+            }
+            Op::Delete(k) => {
+                let entry = nth_entry(p, len, *k);
+                unsafe { fl::argz_delete(&mut p, &mut len, entry) };
+            }
+        }
+        snaps.push(snapshot_fl(p, len, rc_total));
+    }
+    snaps
+}
 
 /// Replay `ops` against one library (selected by the fn idents) and return the
 /// per-op snapshot sequence. Buffers are intentionally leaked (tiny, short test).
@@ -137,6 +286,9 @@ macro_rules! replay {
                     unsafe { $replace(&mut p, &mut len, cs.as_ptr(), cw.as_ptr(), &mut cnt) };
                     rc_total = rc_total.wrapping_add(cnt);
                 }
+                Op::Append(_) | Op::Delete(_) => {
+                    unreachable!("host-glibc replay only receives add/insert/replace ops")
+                }
             }
             let count = unsafe { $count(p, len) };
             // Manual byte copy (NOT slice::to_vec) — see the module note on the
@@ -160,7 +312,7 @@ fn argz_mutation_differential_fuzz_vs_glibc() {
     let mut compared: u64 = 0;
 
     for _ in 0..4000 {
-        let ops = gen_ops(&mut r);
+        let ops = gen_host_ops(&mut r);
         let fl_snaps = replay!(
             ops,
             fl::argz_add,
@@ -169,7 +321,14 @@ fn argz_mutation_differential_fuzz_vs_glibc() {
             fl::argz_count,
             fl::argz_next
         );
-        let host_snaps = replay!(ops, argz_add, argz_insert, argz_replace, argz_count, argz_next);
+        let host_snaps = replay!(
+            ops,
+            argz_add,
+            argz_insert,
+            argz_replace,
+            argz_count,
+            argz_next
+        );
         for (i, (f, h)) in fl_snaps.iter().zip(host_snaps.iter()).enumerate() {
             compared += 1;
             if f != h && divs.len() < 30 {
@@ -189,5 +348,39 @@ fn argz_mutation_differential_fuzz_vs_glibc() {
         divs.len(),
         divs.join("\n")
     );
-    eprintln!("argz mutation differential fuzz: {compared} ops compared, 0 divergences vs host glibc");
+    eprintln!(
+        "argz mutation differential fuzz: {compared} ops compared, 0 divergences vs host glibc"
+    );
+}
+
+#[test]
+fn argz_mutation_model_fuzz_includes_append_delete() {
+    let mut r = Lcg(0x212a_117e_5afe_cafe);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared: u64 = 0;
+
+    for _ in 0..4000 {
+        let ops = gen_model_ops(&mut r);
+        let fl_snaps = fl_model_replay(&ops);
+        let model_snaps = model_replay(&ops);
+        for (i, (f, m)) in fl_snaps.iter().zip(model_snaps.iter()).enumerate() {
+            compared += 1;
+            if f != m && divs.len() < 30 {
+                divs.push(format!(
+                    "ops={:?}\n  step {i} ({:?})\n    fl   = count={} rc={} bytes={:?}\n    model= count={} rc={} bytes={:?}",
+                    ops, ops[i],
+                    f.0, f.2, String::from_utf8_lossy(&f.1),
+                    m.0, m.2, String::from_utf8_lossy(&m.1),
+                ));
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "argz mutations diverged from pure Rust model on {} step(s) (showing up to 30):\n{}",
+        divs.len(),
+        divs.join("\n")
+    );
+    eprintln!("argz mutation model fuzz: {compared} ops compared, 0 divergences");
 }
