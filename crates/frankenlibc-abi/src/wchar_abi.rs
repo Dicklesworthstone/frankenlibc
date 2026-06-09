@@ -2970,13 +2970,13 @@ pub unsafe extern "C" fn swprintf(
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
 
-    // swprintf: if the output (including NUL) would exceed n, return -1.
+    // swprintf: if the output (including NUL) would exceed n, return -1 — but
+    // glibc still writes the TRUNCATED prefix (min(n-1, produced) wide chars)
+    // followed by a NUL, exactly like the success path, rather than emptying the
+    // buffer. narrow_to_wide_buf does precisely that (and no-ops for null/n==0).
     let wide_count = narrow_to_wide_count(&rendered);
     if wide_count >= n {
-        // POSIX: output would exceed buffer — error.
-        if !s.is_null() && n > 0 {
-            unsafe { *s = 0 };
-        }
+        narrow_to_wide_buf(&rendered, s, n);
         return -1;
     }
 
@@ -3056,11 +3056,11 @@ pub unsafe extern "C" fn vswprintf(
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
 
+    // On truncation glibc writes the truncated prefix + NUL (not just an empty
+    // buffer) and returns -1; mirror swprintf.
     let wide_count = narrow_to_wide_count(&rendered);
     if wide_count >= n {
-        if !s.is_null() && n > 0 {
-            unsafe { *s = 0 };
-        }
+        narrow_to_wide_buf(&rendered, s, n);
         return -1;
     }
 
