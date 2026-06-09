@@ -381,7 +381,29 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
             tm_yday: (*tm).tm_yday,
             tm_isdst: (*tm).tm_isdst,
             tm_gmtoff: (*tm).tm_gmtoff as i64,
+            // tm_zone is NOT dereferenced here: read_tm feeds mktime/timegm/
+            // asctime too, and a caller may pass an uninitialised tm_zone to
+            // those. Only `strftime` (whose contract reads tm_zone for %Z)
+            // populates this, via read_tm_zone.
+            zone: [0; 16],
         }
+    }
+}
+
+/// Copy the caller's `tm_zone` C string into a `BrokenDownTime.zone` buffer for
+/// `strftime` `%Z`. Reads at most 15 bytes (NUL-terminated). A NULL pointer
+/// leaves the zone unset (so `%Z` falls back to "UTC").
+unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) {
+    let zp = unsafe { (*tm).tm_zone };
+    if zp.is_null() {
+        return;
+    }
+    for i in 0..bd.zone.len() - 1 {
+        let b = unsafe { *zp.add(i) };
+        if b == 0 {
+            break;
+        }
+        bd.zone[i] = b as u8;
     }
 }
 
@@ -435,6 +457,9 @@ pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *
         return std::ptr::null_mut();
     };
     unsafe { write_tm(result, &bd) };
+    // glibc's gmtime labels the zone "GMT" (write_tm's default "UTC" is the
+    // localtime label). strftime("%Z") then echoes it.
+    unsafe { (*result).tm_zone = c"GMT".as_ptr() };
     result
 }
 
@@ -743,8 +768,10 @@ pub unsafe extern "C" fn strftime(
     }
     let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
 
-    // Read the broken-down time.
-    let bd = unsafe { read_tm(tm) };
+    // Read the broken-down time. strftime additionally reads tm_zone for %Z
+    // (its contract permits dereferencing it, unlike mktime/timegm).
+    let mut bd = unsafe { read_tm(tm) };
+    unsafe { read_tm_zone(tm, &mut bd) };
 
     // Format into the output buffer.
     let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };

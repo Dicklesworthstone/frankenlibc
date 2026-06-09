@@ -55,6 +55,13 @@ pub struct BrokenDownTime {
     /// own gmtime/localtime always produce 0 (UTC), but a caller (or `strptime
     /// %z`) may set it and `%z` must honour it, exactly like glibc.
     pub tm_gmtoff: i64,
+    /// Timezone-name bytes (glibc `tm_zone`), NUL-padded; `zone[0] == 0` means
+    /// "unset". Used by `strftime` `%Z`, which echoes it when present and falls
+    /// back to "UTC" (fl's only timezone) otherwise — matching glibc, whose `%Z`
+    /// reads tm_zone or the process zone. Only the ABI `strftime` populates it
+    /// (from the caller's `tm_zone`); fl's own gmtime/localtime set it on the
+    /// `struct tm` instead. A name longer than 15 bytes is truncated.
+    pub zone: [u8; 16],
 }
 
 /// Returns `true` if `year` is a leap year (Gregorian).
@@ -165,6 +172,7 @@ pub fn epoch_to_broken_down(epoch_secs: i64) -> BrokenDownTime {
         tm_yday,
         tm_isdst: 0,
         tm_gmtoff: 0, // gmtime/localtime are UTC in fl
+        zone: [0; 16],
     }
 }
 
@@ -798,10 +806,14 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push!(b'0' + (mm % 10) as u8);
             }
             b'Z' => {
-                // Timezone name. glibc's gmtime() sets tm_zone = "GMT", and
-                // strftime("%Z") of a gmtime-derived broken-down time prints
-                // "GMT" — not "UTC". Match that for ABI compatibility.
-                push_str_field!(b"GMT", true, false);
+                // Timezone name. glibc echoes tm_zone when present, else the
+                // process zone. fl populates bd.zone from the caller's tm_zone
+                // (gmtime sets "GMT", localtime "UTC"); when unset, fl's only
+                // timezone is UTC, so fall back to "UTC" (matching glibc under
+                // TZ=UTC and fl's own localtime).
+                let end = bd.zone.iter().position(|&b| b == 0).unwrap_or(bd.zone.len());
+                let zone: &[u8] = if end == 0 { b"UTC" } else { &bd.zone[..end] };
+                push_str_field!(zone, true, false);
             }
             b'%' => {
                 push!(b'%');
@@ -989,6 +1001,7 @@ mod tests {
             tm_yday: 0,
             tm_isdst: 0,
             tm_gmtoff: 0,
+            zone: [0; 16],
         };
         let epoch = broken_down_to_epoch(&bd);
         let normalized = epoch_to_broken_down(epoch);
@@ -1010,6 +1023,7 @@ mod tests {
             tm_yday: 0,
             tm_isdst: 0,
             tm_gmtoff: 0,
+            zone: [0; 16],
         };
         let epoch = broken_down_to_epoch(&bd);
         let normalized = epoch_to_broken_down(epoch);
@@ -1143,12 +1157,22 @@ mod tests {
     }
 
     #[test]
-    fn strftime_zone_name_is_gmt() {
-        // glibc's gmtime() sets tm_zone = "GMT"; strftime("%Z") prints "GMT".
-        let bd = epoch_to_broken_down(1_704_067_200);
+    fn strftime_zone_name() {
+        // %Z echoes bd.zone when set; falls back to "UTC" (fl's only timezone)
+        // when unset. The ABI layer fills bd.zone from the caller's tm_zone.
+        let mut bd = epoch_to_broken_down(1_704_067_200);
         let mut buf = [0u8; 64];
         let n = format_strftime(b"%Z", &bd, &mut buf);
-        assert_eq!(&buf[..n], b"GMT");
+        assert_eq!(&buf[..n], b"UTC", "unset zone falls back to UTC");
+
+        bd.zone[..3].copy_from_slice(b"GMT");
+        let n = format_strftime(b"%Z", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"GMT", "set zone is echoed");
+
+        bd.zone = [0; 16];
+        bd.zone[..3].copy_from_slice(b"PST");
+        let n = format_strftime(b"%Z", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"PST");
     }
 
     #[test]
@@ -1332,6 +1356,7 @@ mod tests {
             tm_yday: i32::MIN,
             tm_isdst: 0,
             tm_gmtoff: 0,
+            zone: [0; 16],
         };
         let mut buf = [0u8; 256];
         // Each of the previously-overflowing specifiers must complete
@@ -1358,6 +1383,7 @@ mod tests {
             tm_yday: i32::MAX,
             tm_isdst: 0,
             tm_gmtoff: 0,
+            zone: [0; 16],
         };
         let _ = format_strftime(b"%m", &bd_max, &mut buf);
         let _ = format_strftime(b"%j", &bd_max, &mut buf);
@@ -1394,6 +1420,7 @@ mod tests {
             tm_yday: 0,
             tm_isdst: -1,
             tm_gmtoff: 0,
+            zone: [0; 16],
         };
         // broken_down_to_epoch normalizes and epoch_to_broken_down gives us back
         let epoch = broken_down_to_epoch(&bd);
@@ -1417,6 +1444,7 @@ mod tests {
             tm_yday: 142,
             tm_isdst: 0,
             tm_gmtoff: 0,
+            zone: [0; 16],
         };
         // "%Y-%m-%d" = "2026-05-23" = 10 chars + NUL = 11 bytes
         let mut buf = [0u8; 11];
