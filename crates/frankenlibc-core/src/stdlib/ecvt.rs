@@ -5,6 +5,13 @@
 
 const MAX_LEGACY_CVT_DIGITS: usize = 512;
 
+/// glibc's `gcvt` formats with `%.*g` after clamping the requested significant
+/// digits to `DBL_DECIMAL_DIG` (17) — the most a `double` can carry — so a
+/// caller asking for more never sees meaningless low-order garbage. (`ecvt`/
+/// `fcvt` deliberately keep the wider cap: they emit a raw digit string and
+/// have their own glibc-divergence story, bd-2g7oyh.101.)
+const GCVT_MAX_SIG_DIGITS: usize = 17;
+
 /// Render the digit string glibc emits for a non-finite `ecvt`/`fcvt` input.
 ///
 /// glibc embeds the sign character directly in the returned buffer for NaN
@@ -201,7 +208,15 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
 /// Linux/x86_64) included `gcvt(123.456, 1)` -> `"123.5"` (vs glibc's
 /// `"1e+02"`) and `gcvt(0, 1)` -> `"0.0"` (vs `"0"`).
 pub fn gcvt(value: f64, ndigit: i32, buf: &mut [u8]) -> usize {
-    let ndigit = (ndigit.max(1) as usize).min(MAX_LEGACY_CVT_DIGITS);
+    // glibc renders with `%.*g`: a NEGATIVE precision is taken as "omitted" and
+    // falls back to the default 6 significant digits; 0 is bumped to 1 by `%g`;
+    // anything above DBL_DECIMAL_DIG (17) is clamped (no meaningful extra
+    // precision for a double).
+    let ndigit = if ndigit < 0 {
+        6
+    } else {
+        (ndigit as usize).clamp(1, GCVT_MAX_SIG_DIGITS)
+    };
     let rendered = render_gcvt(value, ndigit);
     let bytes = rendered.as_bytes();
     let copy_len = bytes.len().min(buf.len().saturating_sub(1));
