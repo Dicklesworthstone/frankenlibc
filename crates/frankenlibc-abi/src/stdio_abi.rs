@@ -3099,33 +3099,14 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
         return;
     }
 
-    // Get current errno and map to message.
+    // Get current errno and map to message via the SHARED renderer (the
+    // complete, glibc-exact strerrordesc_np table, including "Unknown error <N>"
+    // for unknown codes). The previous inline table covered only ~22 common
+    // errnos and rendered everything else — EAGAIN, the high/socket errnos, and
+    // truly unknown codes — as a numberless "Unknown error".
     let err = unsafe { *super::errno_abi::__errno_location() };
-    let msg: &[u8] = match err {
-        errno::EPERM => b"Operation not permitted",
-        errno::ENOENT => b"No such file or directory",
-        errno::ESRCH => b"No such process",
-        errno::EINTR => b"Interrupted system call",
-        errno::EIO => b"Input/output error",
-        errno::ENXIO => b"No such device or address",
-        errno::EBADF => b"Bad file descriptor",
-        errno::ENOMEM => b"Cannot allocate memory",
-        errno::EACCES => b"Permission denied",
-        errno::EFAULT => b"Bad address",
-        errno::EEXIST => b"File exists",
-        errno::ENOTDIR => b"Not a directory",
-        errno::EISDIR => b"Is a directory",
-        errno::EINVAL => b"Invalid argument",
-        errno::ENFILE => b"Too many open files in system",
-        errno::EMFILE => b"Too many open files",
-        errno::ENOSPC => b"No space left on device",
-        errno::ESPIPE => b"Illegal seek",
-        errno::EROFS => b"Read-only file system",
-        errno::EPIPE => b"Broken pipe",
-        errno::ERANGE => b"Numerical result out of range",
-        errno::ENOSYS => b"Function not implemented",
-        _ => b"Unknown error",
-    };
+    let (rendered, _) = crate::string_abi::rendered_strerror_message(err);
+    let msg: &[u8] = rendered.as_bytes();
 
     if !s.is_null() {
         let prefix = unsafe { bounded_c_str_bytes(s) }.unwrap_or(&[]);
