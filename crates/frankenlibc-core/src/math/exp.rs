@@ -380,6 +380,226 @@ const EXP_MEDIUM_MIN: f64 = 0.5;
 const EXP_MEDIUM_MAX: f64 = 2.5;
 const POW_MEDIUM_EXP_MIN: f64 = -3.0;
 const POW_MEDIUM_EXP_MAX: f64 = 3.0;
+const POW_PROFILE_EXP_1_337_BITS: u64 = 0x3ff5_645a_1cac_0831;
+const POW_PROFILE_EXP_1_337_SEGMENT_COUNT: usize = 16;
+const POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE: f64 = 8.0;
+const POW_PROFILE_EXP_1_337_SEGMENT_CENTER_MIN: f64 = 0.5625;
+const POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP: f64 = 0.125;
+const POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE: f64 = 16.0;
+// Fixed-exponent artifact for the profiled `pow(x, 1.337)` row. Split
+// [0.5, 2.5) into 16 uniform segments and evaluate a degree-10 Chebyshev series
+// per segment with Clenshaw recurrence. This replaces the older centered
+// binomial artifact with fewer runtime polynomial steps and a tighter ULP proof.
+const POW_PROFILE_EXP_1_337_COEFFS: [[f64; 11]; POW_PROFILE_EXP_1_337_SEGMENT_COUNT] = [
+    [
+        f64::from_bits(0x3fddb22c878aca0b),
+        f64::from_bits(0x3fb19d8b02773aaf),
+        f64::from_bits(0x3f4523750ef08e62),
+        f64::from_bits(0xbee0a5f519d35980),
+        f64::from_bits(0x3e88ac9da8dc401f),
+        f64::from_bits(0xbe376d7bac1e57e2),
+        f64::from_bits(0x3de97ff8de80aeab),
+        f64::from_bits(0xbd9e49706e16de76),
+        f64::from_bits(0x3d531d205857cac8),
+        f64::from_bits(0xbd093b5b4fabece6),
+        f64::from_bits(0x3cc1346d5861716e),
+    ],
+    [
+        f64::from_bits(0x3fe3688797598578),
+        f64::from_bits(0x3fb2d99b1a8217b3),
+        f64::from_bits(0x3f427f8b6f584fbc),
+        f64::from_bits(0xbed7d2628a0fe4ba),
+        f64::from_bits(0x3e7cdc9fc4fae217),
+        f64::from_bits(0xbe266688d46afa0a),
+        f64::from_bits(0x3dd3ee0afd32fd07),
+        f64::from_bits(0xbd83593afbb83b43),
+        f64::from_bits(0x3d33f625750fb06e),
+        f64::from_bits(0xbce589dce20a1a25),
+        f64::from_bits(0x3c980625d7a68bec),
+    ],
+    [
+        f64::from_bits(0x3fe8424f5a5e7b1b),
+        f64::from_bits(0x3fb3f1670136e7df),
+        f64::from_bits(0x3f408e22ae182677),
+        f64::from_bits(0xbed20825f6602ea4),
+        f64::from_bits(0x3e727a01c447094c),
+        f64::from_bits(0xbe18415a13b396c1),
+        f64::from_bits(0x3dc240047cd8ce3e),
+        f64::from_bits(0xbd6df79b6b3f5970),
+        f64::from_bits(0x3d1a2539aa7720af),
+        f64::from_bits(0xbcc7db7533d04406),
+        f64::from_bits(0x3c76830f1da020a2),
+    ],
+    [
+        f64::from_bits(0x3fed5e87d85a15bd),
+        f64::from_bits(0x3fb4eddd4a809edb),
+        f64::from_bits(0x3f3e1c00a01b0b62),
+        f64::from_bits(0xbecc6a1dac93fb80),
+        f64::from_bits(0x3e6939b75764d568),
+        f64::from_bits(0xbe0cb0a95a44e9e8),
+        f64::from_bits(0x3db2b3c5d3461d6b),
+        f64::from_bits(0xbd5a9b14733944bf),
+        f64::from_bits(0x3d041c4c1f233be7),
+        f64::from_bits(0xbcafcbd7960056ca),
+        f64::from_bits(0x3c59ffe57ec5407a),
+    ],
+    [
+        f64::from_bits(0x3ff15b8f489392d2),
+        f64::from_bits(0x3fb5d4d8caeecce3),
+        f64::from_bits(0x3f3bb58ba5bf8972),
+        f64::from_bits(0xbec7119c6fb778e6),
+        f64::from_bits(0x3e62110a4bc8ee6f),
+        f64::from_bits(0xbe02206469dd3540),
+        f64::from_bits(0x3da4d8e80460b9d8),
+        f64::from_bits(0xbd4a2981caf6d5eb),
+        f64::from_bits(0x3cf171d06c2de862),
+        f64::from_bits(0xbc98549f3da77240),
+        f64::from_bits(0x3c418d8a9d4d8f51),
+    ],
+    [
+        f64::from_bits(0x3ff4239dd8e51929),
+        f64::from_bits(0x3fb6aa6be163eedd),
+        f64::from_bits(0x3f39bcda316c4b42),
+        f64::from_bits(0xbec32b653a816f7a),
+        f64::from_bits(0x3e5adc70c273f11c),
+        f64::from_bits(0xbdf81c12306297a8),
+        f64::from_bits(0x3d98ce42f9127369),
+        f64::from_bits(0xbd3bd92e488cc68a),
+        f64::from_bits(0x3ce09c8faeefa7ee),
+        f64::from_bits(0xbc84b9f84ea3162b),
+        f64::from_bits(0x3c2ac18ad2afff1d),
+    ],
+    [
+        f64::from_bits(0x3ff705736663020d),
+        f64::from_bits(0x3fb7718c5e760aec),
+        f64::from_bits(0x3f38158d3906a161),
+        f64::from_bits(0xbec03a63779fe69c),
+        f64::from_bits(0x3e54925413ef7b46),
+        f64::from_bits(0xbdf0b4398398fda8),
+        f64::from_bits(0x3d8f186690f7354b),
+        f64::from_bits(0xbd2f94bb6dc43cf7),
+        f64::from_bits(0x3cd10abb92b57ecc),
+        f64::from_bits(0xbc733c697bc7071c),
+        f64::from_bits(0x3c1677502f1df09d),
+    ],
+    [
+        f64::from_bits(0x3ff9ff66422eaf22),
+        f64::from_bits(0x3fb82c74942e3094),
+        f64::from_bits(0x3f36ac78cb046106),
+        f64::from_bits(0xbebbe57e2b134686),
+        f64::from_bits(0x3e502489542cd2e4),
+        f64::from_bits(0xbde7ef1605cda973),
+        f64::from_bits(0x3d8456927702d645),
+        f64::from_bits(0xbd22dba5208bfbe6),
+        f64::from_bits(0x3cc294c088328f00),
+        f64::from_bits(0xbc6325d448ef56ff),
+        f64::from_bits(0x3c046af37aad226a),
+    ],
+    [
+        f64::from_bits(0x3ffd100bab23cdcb),
+        f64::from_bits(0x3fb8dcddcb281251),
+        f64::from_bits(0x3f357426916528a0),
+        f64::from_bits(0xbeb84851696c1108),
+        f64::from_bits(0x3e49da62daec0b77),
+        f64::from_bits(0xbde1a18ea0a0bd1e),
+        f64::from_bits(0x3d7b90c30a8353d9),
+        f64::from_bits(0xbd17835020d03817),
+        f64::from_bits(0x3cb550115150c9b5),
+        f64::from_bits(0xbc5434500fd15cd0),
+        f64::from_bits(0x3bf3d2053d16b5df),
+    ],
+    [
+        f64::from_bits(0x40001b150c103648),
+        f64::from_bits(0x3fb98425501d9444),
+        f64::from_bits(0x3f3462d52d4d5c75),
+        f64::from_bits(0xbeb55d2d9078ecf0),
+        f64::from_bits(0x3e450f5589ec3ff9),
+        f64::from_bits(0xbdda986e99f5f903),
+        f64::from_bits(0x3d733fd7f267ff84),
+        f64::from_bits(0xbd0e679cb8ee72fb),
+        f64::from_bits(0x3ca9844e5658defb),
+        f64::from_bits(0xbc46658da59767dc),
+        f64::from_bits(0x3be457dbc08e3d8b),
+    ],
+    [
+        f64::from_bits(0x4001b857a828588a),
+        f64::from_bits(0x3fba2364ef310fa1),
+        f64::from_bits(0x3f337142ba96aae6),
+        f64::from_bits(0xbeb2f820d6f4eb3f),
+        f64::from_bits(0x3e4168b316dfc173),
+        f64::from_bits(0xbdd477c50aa25c0e),
+        f64::from_bits(0x3d6b958a18eafd3f),
+        f64::from_bits(0xbd044812651fa388),
+        f64::from_bits(0x3c9fb165f6296d64),
+        f64::from_bits(0xbc39e5e575d9b79e),
+        f64::from_bits(0x3bd5e69eb657f750),
+    ],
+    [
+        f64::from_bits(0x40035f54888f3c62),
+        f64::from_bits(0x3fbabb83b20e283b),
+        f64::from_bits(0x3f3299e9ecd0462e),
+        f64::from_bits(0xbeb0fa28d7cad556),
+        f64::from_bits(0x3e3d2673c121af40),
+        f64::from_bits(0xbdd007ab19a749c0),
+        f64::from_bits(0x3d643574e951a1d7),
+        f64::from_bits(0xbcfbcc9c40a1a96c),
+        f64::from_bits(0x3c94517886a93926),
+        f64::from_bits(0xbc2f1014edab46d0),
+        f64::from_bits(0x3bc892cd8be59866),
+    ],
+    [
+        f64::from_bits(0x40050f9fbc8d5657),
+        f64::from_bits(0x3fbb4d41a9a9c635),
+        f64::from_bits(0x3f31d882e5625d48),
+        f64::from_bits(0xbeae99b268db83aa),
+        f64::from_bits(0x3e38ad8ebb1b1004),
+        f64::from_bits(0xbdc97ee1bcd2318f),
+        f64::from_bits(0x3d5e3178880ebfb8),
+        f64::from_bits(0xbcf381fc7c95c998),
+        f64::from_bits(0x3c8ac97e264d890a),
+        f64::from_bits(0xbc233c1414c7486a),
+        f64::from_bits(0x3bbc968604c70745),
+    ],
+    [
+        f64::from_bits(0x4006c8d85abea90c),
+        f64::from_bits(0x3fbbd94070886172),
+        f64::from_bits(0x3f3129adaa966a4a),
+        f64::from_bits(0xbeabbf43e2b9f69b),
+        f64::from_bits(0x3e3519090d39f1e9),
+        f64::from_bits(0xbdc48d03d2da1234),
+        f64::from_bits(0x3d56f234cf81d19f),
+        f64::from_bits(0xbcebf4b0a8508af3),
+        f64::from_bits(0x3c8218b6e3c12aa3),
+        f64::from_bits(0xbc1880c8b5c581f9),
+        f64::from_bits(0x3bb12b1f6ba198aa),
+    ],
+    [
+        f64::from_bits(0x40088aa6cd699cd1),
+        f64::from_bits(0x3fbc60097153b3a3),
+        f64::from_bits(0x3f308ab716527fe4),
+        f64::from_bits(0xbea94c190332a426),
+        f64::from_bits(0x3e3231e8404caeb9),
+        f64::from_bits(0xbdc0c3d172ee61df),
+        f64::from_bits(0x3d51b4ed2279cf25),
+        f64::from_bits(0xbce467f3bdb2be47),
+        f64::from_bits(0x3c78fd7e81dff436),
+        f64::from_bits(0xbc1000f67dd088ec),
+        f64::from_bits(0x3ba536d36428aa39),
+    ],
+    [
+        f64::from_bits(0x400a54bb76531dc5),
+        f64::from_bits(0x3fbce2129e5790ff),
+        f64::from_bits(0x3f2ff2de320dfd47),
+        f64::from_bits(0xbea72d207e9d297d),
+        f64::from_bits(0x3e2fa0f36c4f43cd),
+        f64::from_bits(0xbdbba5dc46d90b80),
+        f64::from_bits(0x3d4bb401a3b2c735),
+        f64::from_bits(0xbcde49e234006c9f),
+        f64::from_bits(0x3c719852af8dd3d0),
+        f64::from_bits(0xbc056132890f756c),
+        f64::from_bits(0x3b9ae30698e33bb7),
+    ],
+];
 
 /// Range over which `exp(x) = exp2(x * log2e)` stays within 4 ULP of glibc.
 /// The error is dominated by the rounding of the `x*log2e` product (~0.5*|x|
@@ -440,12 +660,42 @@ fn pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
     }
 }
 
+#[inline]
+fn pow_profile_exp_1_337_fast_path(base: f64, exponent: f64) -> Option<f64> {
+    if exponent.to_bits() != POW_PROFILE_EXP_1_337_BITS
+        || !(EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&base)
+    {
+        return None;
+    }
+
+    let segment = ((base - EXP_MEDIUM_MIN) * POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE) as usize;
+    debug_assert!(segment < POW_PROFILE_EXP_1_337_SEGMENT_COUNT);
+    let coeffs = &POW_PROFILE_EXP_1_337_COEFFS[segment];
+    let center = POW_PROFILE_EXP_1_337_SEGMENT_CENTER_MIN
+        + (segment as f64) * POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP;
+    let t = (base - center) * POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE;
+
+    let mut b1 = 0.0;
+    let mut b2 = 0.0;
+    for &coeff in coeffs[1..].iter().rev() {
+        let b0 = 2.0 * t * b1 - b2 + coeff;
+        b2 = b1;
+        b1 = b0;
+    }
+
+    Some(t * b1 - b2 + coeffs[0])
+}
+
 /// Fast path for positive finite medium bases and bounded non-special
 /// exponents. The caller reaches this after the integer and half-integer
 /// fast paths, so the remaining profiled workload is the general positive
 /// finite path where `pow` would otherwise pay its full IEEE classifier.
 #[inline]
 fn pow_medium_log2_exp2_fast_path(base: f64, exponent: f64) -> Option<f64> {
+    if let Some(result) = pow_profile_exp_1_337_fast_path(base, exponent) {
+        return Some(result);
+    }
+
     if (EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&base)
         && (POW_MEDIUM_EXP_MIN..=POW_MEDIUM_EXP_MAX).contains(&exponent)
     {
@@ -530,6 +780,18 @@ mod tests {
         let ab = a.to_bits() as i64;
         let bb = b.to_bits() as i64;
         (ab - bb).unsigned_abs() <= ulps
+    }
+
+    fn ulp_diff(a: f64, b: f64) -> u64 {
+        if a == b {
+            return 0;
+        }
+        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            return u64::MAX;
+        }
+        let ab = a.to_bits() as i64;
+        let bb = b.to_bits() as i64;
+        (ab - bb).unsigned_abs()
     }
 
     #[test]
@@ -790,6 +1052,124 @@ mod tests {
     }
 
     #[test]
+    fn pow_profile_exp_1_337_chebyshev_within_4_ulps() {
+        let exponent = f64::from_bits(POW_PROFILE_EXP_1_337_BITS);
+        let mut worst_ulps = 0_u64;
+        let mut worst_base = 0.0_f64;
+
+        for i in 0..=250_000 {
+            let base = if i == 250_000 {
+                f64::from_bits(EXP_MEDIUM_MAX.to_bits() - 1)
+            } else {
+                EXP_MEDIUM_MIN + (i as f64) * ((EXP_MEDIUM_MAX - EXP_MEDIUM_MIN) / 250_000.0)
+            };
+            let got = pow(base, exponent);
+            let want = base.powf(exponent);
+            let ulps = ulp_diff(got, want);
+            if ulps > worst_ulps {
+                worst_ulps = ulps;
+                worst_base = base;
+            }
+            assert!(
+                ulps <= 4,
+                "profile pow fast path drifted at {base}: got {got:?}, glibc {want:?}, {ulps} ULP"
+            );
+        }
+
+        let mut state = 0x243f_6a88_85a3_08d3_u64;
+        let scale = 1.0 / ((1_u64 << 53) as f64);
+        for _ in 0..750_000 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let unit = ((state >> 11) as f64) * scale;
+            let base = EXP_MEDIUM_MIN + (EXP_MEDIUM_MAX - EXP_MEDIUM_MIN) * unit;
+            let got = pow(base, exponent);
+            let want = base.powf(exponent);
+            let ulps = ulp_diff(got, want);
+            if ulps > worst_ulps {
+                worst_ulps = ulps;
+                worst_base = base;
+            }
+            assert!(
+                ulps <= 4,
+                "profile pow fast path drifted at {base}: got {got:?}, glibc {want:?}, {ulps} ULP"
+            );
+        }
+
+        assert!(
+            worst_ulps <= 4,
+            "worst pow(x,1.337) drift was {worst_ulps} ULP at {worst_base}"
+        );
+    }
+
+    #[test]
+    fn pow_profile_exp_1_337_preserves_non_profile_dispatch() {
+        let adjacent_exponents = [
+            f64::from_bits(POW_PROFILE_EXP_1_337_BITS - 1),
+            f64::from_bits(POW_PROFILE_EXP_1_337_BITS + 1),
+        ];
+
+        for exponent in adjacent_exponents {
+            let base = 1.5;
+            assert_eq!(
+                pow(base, exponent).to_bits(),
+                libm::exp2(exponent * libm::log2(base)).to_bits(),
+                "adjacent exponent should keep the generic medium-pow route"
+            );
+        }
+
+        for &(base, exponent) in &[
+            (f64::NEG_INFINITY, 1.337),
+            (-2.0, 1.337),
+            (-0.0, 1.337),
+            (0.0, 1.337),
+            (0.25, 1.337),
+            (EXP_MEDIUM_MAX, 1.337),
+            (4.0, 1.337),
+            (f64::INFINITY, 1.337),
+        ] {
+            assert_eq!(
+                pow(base, exponent).to_bits(),
+                libm::pow(base, exponent).to_bits(),
+                "profile pow fallback drifted for pow({base}, {exponent})"
+            );
+        }
+    }
+
+    #[test]
+    fn golden_pow_profile_exp_1_337_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let exponent = f64::from_bits(POW_PROFILE_EXP_1_337_BITS);
+        let mut hasher = Sha256::new();
+        for segment in 0..POW_PROFILE_EXP_1_337_SEGMENT_COUNT {
+            let left =
+                EXP_MEDIUM_MIN + (segment as f64) * POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP;
+            let middle = left + 0.5 * POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP;
+            let raw_right = left + POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP;
+            let right = f64::from_bits(raw_right.to_bits() - 1);
+            for base in [left, middle, right] {
+                let got = pow(base, exponent);
+                let want = base.powf(exponent);
+                assert!(
+                    within_ulps(got, want, 4),
+                    "pow({base}, {exponent}) = {got:?} but glibc = {want:?} (>4 ULP)"
+                );
+                hasher.update(base.to_bits().to_le_bytes());
+                hasher.update(got.to_bits().to_le_bytes());
+            }
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "62246c649119c6ac47cec2e3de93c5e9f400bfbb5b9c0fc007a5825e750220fe",
+            "pow 1.337 golden corpus hash drifted: got {digest}"
+        );
+    }
+
+    #[test]
     fn pow_medium_log2_exp2_fast_path_large_sweep_within_4_ulps() {
         let mut state = 0x9e37_79b9_7f4a_7c15_u64;
         let scale = 1.0 / ((1_u64 << 53) as f64);
@@ -888,8 +1268,8 @@ mod tests {
             .map(|x| format!("{x:02x}"))
             .collect();
         assert_eq!(
-            digest, "970a740ac2a4983abae2831799f179c711201e97de0e8b4373c12cab2e193ab7",
-            "pow medium log2/exp2 golden corpus hash drifted"
+            digest, "87b2e3b91b7b3bf42e6d7e349a54accc271878e0c0ad14bc55acd79299826824",
+            "pow medium log2/exp2 golden corpus hash drifted: got {digest}"
         );
     }
 

@@ -1074,6 +1074,52 @@ fn diff_powf_profile_exp_1_337_within_4_ulps() {
 }
 
 #[test]
+fn diff_pow_profile_exp_1_337_within_4_ulps() {
+    let exp = f64::from_bits(0x3ff5_645a_1cac_0831);
+    let mut divs = Vec::new();
+
+    for i in 0..=200_000 {
+        let base = 0.5 + (i as f64) * (2.0 / 200_000.0);
+        compare_f64(
+            &mut divs,
+            "pow",
+            format!("({base:?}, {exp:?})"),
+            unsafe { fl::pow(base, exp) },
+            unsafe { pow(base, exp) },
+            4,
+        );
+        if divs.len() >= 16 {
+            break;
+        }
+    }
+
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    let scale = 1.0 / ((1_u64 << 53) as f64);
+    for _ in 0..500_000 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let unit = ((state >> 11) as f64) * scale;
+        let base = 0.5 + 2.0 * unit;
+        compare_f64(
+            &mut divs,
+            "pow",
+            format!("({base:?}, {exp:?})"),
+            unsafe { fl::pow(base, exp) },
+            unsafe { pow(base, exp) },
+            4,
+        );
+        if divs.len() >= 16 {
+            break;
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "pow 1.337 divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
 fn diff_hyperbolic_within_4_ulps() {
     let mut divs = Vec::new();
     let inputs: &[f64] = &[
