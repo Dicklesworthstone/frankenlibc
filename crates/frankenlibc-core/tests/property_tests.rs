@@ -724,7 +724,7 @@ mod wide_properties {
             let la = ascii_lower(a);
             let lb = ascii_lower(b);
             if la != lb {
-                return if (la as i32) < (lb as i32) { -1 } else { 1 };
+                return la.wrapping_sub(lb) as i32;
             }
             if a == 0 {
                 return 0;
@@ -743,7 +743,7 @@ mod wide_properties {
             let la = ascii_lower(a);
             let lb = ascii_lower(b);
             if la != lb {
-                return if (la as i32) < (lb as i32) { -1 } else { 1 };
+                return la.wrapping_sub(lb) as i32;
             }
             if a == 0 {
                 return 0;

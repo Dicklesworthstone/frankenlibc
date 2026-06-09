@@ -1416,7 +1416,9 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
         let lb = simple_towlower(b);
 
         if la != lb {
-            return if (la as i32) < (lb as i32) { -1 } else { 1 };
+            // glibc returns the folded-codepoint difference (towlower(c1) -
+            // towlower(c2)) via wint_t arithmetic, NOT a bare ±1 sign.
+            return la.wrapping_sub(lb) as i32;
         }
         if a == 0 {
             return 0;
@@ -1472,7 +1474,8 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         let lb = simple_towlower(b);
 
         if la != lb {
-            return if (la as i32) < (lb as i32) { -1 } else { 1 };
+            // glibc returns the folded-codepoint difference, not a ±1 sign.
+            return la.wrapping_sub(lb) as i32;
         }
         if a == 0 {
             return 0;
@@ -2560,7 +2563,7 @@ mod tests {
                 let la = simple_towlower(a);
                 let lb = simple_towlower(b);
                 if la != lb {
-                    return if (la as i32) < (lb as i32) { -1 } else { 1 };
+                    return la.wrapping_sub(lb) as i32;
                 }
                 if a == 0 {
                     return 0;
@@ -2578,7 +2581,7 @@ mod tests {
                 let la = simple_towlower(a);
                 let lb = simple_towlower(b);
                 if la != lb {
-                    return if (la as i32) < (lb as i32) { -1 } else { 1 };
+                    return la.wrapping_sub(lb) as i32;
                 }
                 if a == 0 {
                     return 0;
@@ -2681,8 +2684,10 @@ mod tests {
             .iter()
             .map(|x| format!("{x:02x}"))
             .collect();
+        // Updated when wcscasecmp/wcsncasecmp switched from a ±1 sign to glibc's
+        // folded-codepoint difference (towlower(c1) - towlower(c2)).
         assert_eq!(
-            digest, "e3cef37478ec7090a742821c4489a19cfba9e9d1f23b7237517847ad78b785ac",
+            digest, "f660faba1981f94c3fceb497d594dc1934255719102f356e0763379ce0aba5ac",
             "wide casefold compare golden corpus hash drifted"
         );
     }

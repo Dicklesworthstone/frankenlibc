@@ -3729,12 +3729,10 @@ pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
             let a = abi_towlower(*s1.add(i));
             let b = abi_towlower(*s2.add(i));
             if a != b || *s1.add(i) == 0 {
-                let diff = if (a as i32) < (b as i32) { -1 } else { 1 };
-                break (
-                    if a == b { 0 } else { diff },
-                    adverse_local,
-                    i.saturating_add(1),
-                );
+                // glibc returns the folded-codepoint difference (towlower(c1) -
+                // towlower(c2)) via wint_t arithmetic, NOT a bare ±1 sign; it is
+                // 0 when the folded chars are equal (the NUL-stop case).
+                break (a.wrapping_sub(b) as i32, adverse_local, i.saturating_add(1));
             }
             i += 1;
         }
@@ -3808,12 +3806,10 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
             let a = abi_towlower(*s1.add(i));
             let b = abi_towlower(*s2.add(i));
             if a != b || *s1.add(i) == 0 {
-                let diff = if (a as i32) < (b as i32) { -1 } else { 1 };
-                break (
-                    if a == b { 0 } else { diff },
-                    adverse_local,
-                    i.saturating_add(1),
-                );
+                // glibc returns the folded-codepoint difference (towlower(c1) -
+                // towlower(c2)) via wint_t arithmetic, NOT a bare ±1 sign; it is
+                // 0 when the folded chars are equal (the NUL-stop case).
+                break (a.wrapping_sub(b) as i32, adverse_local, i.saturating_add(1));
             }
             i += 1;
         }
