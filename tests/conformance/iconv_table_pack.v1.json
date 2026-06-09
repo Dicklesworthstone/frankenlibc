@@ -8,12 +8,6 @@
       "reason": "Large mapping table not admitted until deterministic generation+checksum controls land."
     },
     {
-      "canonical": "GB18030",
-      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
-      "normalized": "GB18030",
-      "reason": "Large mapping table not admitted until deterministic generation+checksum controls land."
-    },
-    {
       "canonical": "ISO-2022-CN-EXT",
       "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
       "normalized": "ISO2022CNEXT",
@@ -28,7 +22,7 @@
   ],
   "generator": {
     "path": "scripts/generate_iconv_table_pack.py",
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "included_codec_tables": [
     {
@@ -1002,6 +996,48 @@
         "unit_kind": "variable-width"
       },
       "table_sha256": "e5d33f34a55f0b2c8c8c11a1f841059f383ae00b8f2004dd446a141242f17566"
+    },
+    {
+      "aliases": [
+        "gb18030-2000",
+        "gb18030-2005"
+      ],
+      "canonical": "GB18030",
+      "compatibility_intent": "Supported as an in-tree deterministic GB18030 codec with generated table provenance and checksum coverage.",
+      "normalized": "GB18030",
+      "normalized_aliases": [
+        "GB18030",
+        "GB180302000",
+        "GB180302005"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+4F60"
+            ],
+            "input_hex": "C4E3"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+0080"
+            ],
+            "input_hex": "81308130"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "multibyte",
+        "max_units_per_scalar": 4,
+        "notes": "GB18030 path with ASCII, GBK-compatible two-byte, and four-byte linear-range vectors.",
+        "unit_kind": "variable-width"
+      },
+      "table_sha256": "9ae453fbaa26377e8bd140cc5126ebe24f2be2150d825a2252dfd66c04e58369"
     },
     {
       "aliases": [
@@ -1981,18 +2017,18 @@
   "source_ledger": {
     "bead": "bd-7cba",
     "path": "tests/conformance/iconv_codec_scope_ledger.v1.json",
-    "sha256": "c31b6da2e7a96d11013097cf5dd3818085aa8f0952788b5fc4275093cbf25457"
+    "sha256": "e352ef9fa434b1ef6fad2b031b0125b9a991c633f14eae93d735bdaea60d67e9"
   },
   "support_matrix_mapping": {
-    "hardened_semantics": "Phase-1 iconv breadth with hardened membrane routing; deterministic bounds/error behavior",
+    "hardened_semantics": "Phase-1 iconv breadth including GB18030 with hardened membrane routing; deterministic bounds/error behavior",
     "module": "iconv_abi",
     "status": "Implemented",
-    "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
+    "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, BIG5, and GB18030 codecs with deterministic errno semantics",
     "symbols": [
       "iconv",
       "iconv_close",
       "iconv_open"
     ]
   },
-  "table_pack_sha256": "436e04ddaed691e30e8f41cf346e39a3cebc60e6286d3b8f8c0db39b24de60fc"
+  "table_pack_sha256": "269856e26c01a69b3c7620ee3637aa4d726c43f8304079d7e9092a7a79d28faa"
 }

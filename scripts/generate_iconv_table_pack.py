@@ -15,7 +15,7 @@ from typing import Any
 
 BEAD_ID = "bd-13ya"
 SCHEMA_VERSION = "v1"
-GENERATOR_VERSION = "1.1.0"
+GENERATOR_VERSION = "1.2.0"
 
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parent.parent
@@ -157,6 +157,18 @@ def codec_template(normalized_name: str) -> dict[str, Any]:
                 {"input_hex": "4B", "expected_scalar_sequence": ["U+004B"]},
             ],
             "notes": "WS-6 BIG5 bootstrap coverage: deterministic ASCII-compatible path; HKSCS remains excluded.",
+        },
+        "GB18030": {
+            "family": "multibyte",
+            "unit_kind": "variable-width",
+            "max_units_per_scalar": 4,
+            "endianness": "n/a",
+            "deterministic_vectors": [
+                {"input_hex": "41", "expected_scalar_sequence": ["U+0041"]},
+                {"input_hex": "C4E3", "expected_scalar_sequence": ["U+4F60"]},
+                {"input_hex": "81308130", "expected_scalar_sequence": ["U+0080"]},
+            ],
+            "notes": "GB18030 path with ASCII, GBK-compatible two-byte, and four-byte linear-range vectors.",
         },
     }
     if normalized_name in templates:

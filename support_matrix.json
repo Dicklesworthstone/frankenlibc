@@ -6517,8 +6517,8 @@
       "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
-      "hardened_semantics": "Phase-1 iconv breadth with hardened membrane routing; deterministic bounds/error behavior",
+      "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, BIG5, and GB18030 codecs with deterministic errno semantics",
+      "hardened_semantics": "Phase-1 iconv breadth including GB18030 with hardened membrane routing; deterministic bounds/error behavior",
       "default_stub": false
     },
     {
@@ -6526,8 +6526,8 @@
       "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
-      "hardened_semantics": "Phase-1 iconv breadth with hardened membrane routing; deterministic bounds/error behavior",
+      "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, BIG5, and GB18030 codecs with deterministic errno semantics",
+      "hardened_semantics": "Phase-1 iconv breadth including GB18030 with hardened membrane routing; deterministic bounds/error behavior",
       "default_stub": false
     },
     {
@@ -6535,8 +6535,8 @@
       "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
-      "hardened_semantics": "Phase-1 iconv breadth with hardened membrane routing; deterministic bounds/error behavior",
+      "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, BIG5, and GB18030 codecs with deterministic errno semantics",
+      "hardened_semantics": "Phase-1 iconv breadth including GB18030 with hardened membrane routing; deterministic bounds/error behavior",
       "default_stub": false
     },
     {

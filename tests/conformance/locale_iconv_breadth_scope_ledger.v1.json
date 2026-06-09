@@ -5,7 +5,7 @@
   "owner_bead": "bd-b92jd.5",
   "generated_utc": "2026-05-05T01:00:00Z",
   "source_commit": "2349e608b9a71970c4c79632dfa943d9d282db2c",
-  "purpose": "Table-driven ledger that separates the IMPLEMENTED phase-1 iconv/locale bootstrap surface (already covered by tests/conformance/iconv_codec_scope_ledger.v1.json) from the next-wave PLANNED codec breadth and the explicit UNSUPPORTED codec/locale families. WS-6 Japanese, Big5, and KOI8 bootstrap coverage is admitted only where fixture and table-pack evidence exists; ISO-2022 and large-table families remain explicitly blocked.",
+  "purpose": "Table-driven ledger that separates the IMPLEMENTED phase-1 iconv/locale bootstrap surface (already covered by tests/conformance/iconv_codec_scope_ledger.v1.json) from the next-wave PLANNED codec breadth and the explicit UNSUPPORTED codec/locale families. WS-6 Japanese, Big5, GB18030, and KOI8 bootstrap coverage is admitted only where fixture and table-pack evidence exists; ISO-2022 and remaining extension-table families remain explicitly blocked.",
   "phase": "phase2-breadth-survey",
   "inputs": {
     "iconv_codec_scope_ledger": "tests/conformance/iconv_codec_scope_ledger.v1.json",
@@ -157,6 +157,15 @@
       "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[BIG5];tests/conformance/fixtures/iconv_phase1.json#/cases/strict_big5_ascii_to_utf8",
       "expected_iconv_open_decision": "ok",
       "rationale": "WS-6 BIG5 bootstrap path is admitted for deterministic ASCII-compatible conversion while BIG5-HKSCS remains excluded."
+    },
+    {
+      "row_id": "phase1-gb18030",
+      "canonical": "GB18030",
+      "phase": "phase1",
+      "support_status": "implemented",
+      "fixture_obligation_satisfied_by": "tests/conformance/iconv_codec_scope_ledger.v1.json#included_codecs[GB18030];tests/conformance/iconv_table_pack.v1.json#included_codec_tables[GB18030]",
+      "expected_iconv_open_decision": "ok",
+      "rationale": "GB18030 generated table coverage is admitted with deterministic table-pack and checksum provenance."
     }
   ],
   "planned_breadth_codecs": [
@@ -235,15 +244,6 @@
       "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
     },
     {
-      "row_id": "unsupported-gb18030",
-      "canonical": "GB18030",
-      "phase": "phase1",
-      "support_status": "unsupported",
-      "skip_reason": "Four-byte multibyte table family deferred.",
-      "expected_iconv_open_decision": "einval",
-      "rationale": "Mirrors iconv_codec_scope_ledger.v1.json#excluded_codec_families."
-    },
-    {
       "row_id": "unsupported-big5-hkscs",
       "canonical": "BIG5-HKSCS",
       "phase": "phase1",
@@ -298,7 +298,7 @@
   "minimum_row_counts": {
     "implemented_bootstrap_codecs": 4,
     "planned_breadth_codecs": 6,
-    "unsupported_breadth_codecs": 4,
+    "unsupported_breadth_codecs": 3,
     "locale_breadth_rows": 4
   }
 }

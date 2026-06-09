@@ -93,6 +93,7 @@ fn iconv_table_pack_schema_is_locked() -> TestResult {
         "EUC-JP",
         "SHIFT_JIS",
         "BIG5",
+        "GB18030",
     ];
     for canonical in expected {
         assert!(

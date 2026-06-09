@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-7cba",
-  "description": "Explicit phase-1 iconv codec scope/exclusion ledger with compatibility intent. This keeps user-facing claims bounded to the deterministic in-tree codec engine while stateful and large-table work remains in progress.",
+  "description": "Explicit phase-1 iconv codec scope/exclusion ledger with compatibility intent. This keeps user-facing claims bounded to the deterministic in-tree codec engine while remaining stateful and extension-table work remains in progress.",
   "phase": "phase1",
   "included_codecs": [
     {
@@ -278,6 +278,11 @@
       "canonical": "BIG5",
       "aliases": ["csbig5", "bigfive"],
       "compatibility_intent": "Supported for WS-6 BIG5 bootstrap coverage; BIG5-HKSCS remains explicitly excluded."
+    },
+    {
+      "canonical": "GB18030",
+      "aliases": ["gb18030-2000", "gb18030-2005"],
+      "compatibility_intent": "Supported as an in-tree deterministic GB18030 codec with generated table provenance and checksum coverage."
     }
   ],
   "excluded_codec_families": [
@@ -292,11 +297,6 @@
       "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL."
     },
     {
-      "canonical": "GB18030",
-      "reason": "Large mapping table not admitted until deterministic generation+checksum controls land.",
-      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL."
-    },
-    {
       "canonical": "BIG5-HKSCS",
       "reason": "Large mapping table not admitted until deterministic generation+checksum controls land.",
       "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL."
@@ -306,7 +306,7 @@
     "module": "iconv_abi",
     "symbols": ["iconv", "iconv_close", "iconv_open"],
     "status": "Implemented",
-    "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, and BIG5 bootstrap codecs with deterministic errno semantics",
-    "hardened_semantics": "Phase-1 iconv breadth with hardened membrane routing; deterministic bounds/error behavior"
+    "strict_semantics": "Phase-1 iconv implementation for UTF, single-byte, KOI8, EUC-JP, SHIFT_JIS/CP932, BIG5, and GB18030 codecs with deterministic errno semantics",
+    "hardened_semantics": "Phase-1 iconv breadth including GB18030 with hardened membrane routing; deterministic bounds/error behavior"
   }
 }

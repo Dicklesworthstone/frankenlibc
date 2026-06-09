@@ -606,23 +606,17 @@
       }
     },
     {
-      "fixture_id": "iconv.table_deferred.gb18030.blocked.hardened",
+      "fixture_id": "iconv.table_deferred.big5_hkscs.blocked.hardened",
       "scenario_kind": "unsupported_codec",
-      "from_encoding": "GB18030",
+      "from_encoding": "BIG5-HKSCS",
       "to_encoding": "UTF-8",
       "input_bytes": [
-        129,
-        48,
-        129,
-        48
+        72
       ],
       "chunking": {
         "chunks": [
           [
-            129,
-            48,
-            129,
-            48
+            72
           ]
         ],
         "streaming": false
@@ -638,7 +632,7 @@
         "consumed": 0,
         "produced": 0,
         "status": "blocked_claim",
-        "user_diagnostic": "GB18030 remains excluded until generated table provenance and checksum gates admit it"
+        "user_diagnostic": "BIG5-HKSCS remains excluded until generated extension-table provenance and checksum gates admit it"
       },
       "runtime_mode": "hardened",
       "replacement_level": "L0",
@@ -648,7 +642,7 @@
       "codec_classification": {
         "classification": "excluded_table_deferred",
         "claim_status": "blocked_until_table_generation",
-        "user_diagnostic": "large generated codec tables are visible as deferred, not silently treated as supported"
+        "user_diagnostic": "remaining extension codec tables are visible as deferred, not silently treated as supported"
       },
       "table_provenance": {
         "required": true,

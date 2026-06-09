@@ -117,6 +117,7 @@ fn iconv_scope_ledger_included_set_matches_phase1_contract() {
         "EUC-JP",
         "SHIFT_JIS",
         "BIG5",
+        "GB18030",
     ]
     .into_iter()
     .map(normalize_codec)
