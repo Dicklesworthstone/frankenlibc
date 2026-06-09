@@ -447,7 +447,7 @@ pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
             | PrintfHandler::FloatHex => 0b11111, // all flags valid
             PrintfHandler::Character => 0b00001,       // only - (width padding)
             PrintfHandler::String => 0b00001,          // only -
-            PrintfHandler::Pointer => 0b00001,         // only -
+            PrintfHandler::Pointer => 0b11111,         // glibc renders non-NULL %p like %#x: -, +, space, #, 0
             PrintfHandler::StoreCount => 0b00000,      // no flags valid
             PrintfHandler::LiteralPercent => 0b00000,  // no flags
             PrintfHandler::Invalid => 0,

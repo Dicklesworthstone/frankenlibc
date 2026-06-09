@@ -1355,20 +1355,51 @@ pub fn format_pointer(addr: usize, spec: &FormatSpec, buf: &mut Vec<u8>) {
         return;
     }
 
-    let mut digits = [0u8; 64];
-    let count = render_digits(addr as u64, 16, false, &mut digits);
-    let digit_slice = &digits[64 - count..];
-    let content_len = 2 + count; // "0x" + digits
+    // glibc renders a non-NULL pointer like `%#x` of its value, honouring the
+    // `0` flag, precision and width — but UNLIKE %x it also applies the
+    // `+`/space sign flags (e.g. `%020p` -> "0x000000000000001234",
+    // `%+p` -> "+0x1234"). Build the "0x…" body with the unsigned-hex
+    // formatter (alt form, sign flags cleared, cached Pointer route reset), then
+    // place the sign and field padding around it. (fl previously honoured only
+    // width + left-justify, ignoring the zero and sign flags.)
+    let sign: &[u8] = if spec.flags.force_sign {
+        b"+"
+    } else if spec.flags.space_sign {
+        b" "
+    } else {
+        b""
+    };
+    let mut hexspec = *spec;
+    hexspec.conversion = b'x';
+    hexspec.flags.alt_form = true;
+    hexspec.flags.force_sign = false;
+    hexspec.flags.space_sign = false;
+    hexspec.route = None;
     let width = resolve_width(spec);
-    let pad_total = width.saturating_sub(content_len);
 
-    if !spec.flags.left_justify {
-        pad(buf, b' ', pad_total);
-    }
-    buf.extend_from_slice(b"0x");
-    buf.extend_from_slice(digit_slice);
-    if spec.flags.left_justify {
-        pad(buf, b' ', pad_total);
+    if spec.flags.zero_pad && !spec.flags.left_justify && matches!(spec.precision, Precision::None) {
+        // Zero-pad: the sign sits at the front, then a zero-filled body whose
+        // field width accounts for the sign.
+        hexspec.width = Width::Fixed(width.saturating_sub(sign.len()));
+        buf.extend_from_slice(sign);
+        format_unsigned(addr as u64, &hexspec, buf);
+    } else {
+        // Space-pad / left-justify / precision: render the bare body, then place
+        // the sign and pad with spaces outside it.
+        hexspec.width = Width::None;
+        hexspec.flags.zero_pad = false;
+        let mut body = Vec::new();
+        format_unsigned(addr as u64, &hexspec, &mut body);
+        let pad_total = width.saturating_sub(sign.len() + body.len());
+        if spec.flags.left_justify {
+            buf.extend_from_slice(sign);
+            buf.extend_from_slice(&body);
+            pad(buf, b' ', pad_total);
+        } else {
+            pad(buf, b' ', pad_total);
+            buf.extend_from_slice(sign);
+            buf.extend_from_slice(&body);
+        }
     }
 }
 

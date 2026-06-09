@@ -123,7 +123,7 @@ pub const PRINTF_TABLE: [PrintfRoute; 256] = {
         0b0000_0001,
         ArgCategory::String,
     );
-    table[b'p' as usize] = route(PrintfHandler::Pointer, 0, 0b0000_0001, ArgCategory::Pointer);
+    table[b'p' as usize] = route(PrintfHandler::Pointer, 0, 0b0001_1111, ArgCategory::Pointer);
     table[b'n' as usize] = route(
         PrintfHandler::StoreCount,
         0b0111_1111,
