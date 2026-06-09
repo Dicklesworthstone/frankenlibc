@@ -2864,9 +2864,16 @@ pub unsafe extern "C" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
 
     let mut bytes = [0u8; 6];
     let Some(encoded_len) = wchar_core::wctomb(wc, &mut bytes) else {
-        // SAFETY: thread-local errno update.
-        unsafe { set_abi_errno(libc::EILSEQ) };
-        return WEOF_VALUE;
+        // A wide char the C.UTF-8 encoder cannot represent (a surrogate, or a
+        // value above U+7FFFFFFF). glibc's wide-stdio gconv substitutes the
+        // single byte '?' and reports SUCCESS (returns `wc`, leaves errno) —
+        // NOT C99's EILSEQ/WEOF (which its own `wcrtomb` returns). frankenlibc
+        // is a glibc drop-in, so mirror that observable behaviour.
+        return if unsafe { super::stdio_abi::fputc(b'?' as c_int, stream) } == libc::EOF {
+            WEOF_VALUE
+        } else {
+            wc
+        };
     };
 
     for &byte in &bytes[..encoded_len] {
