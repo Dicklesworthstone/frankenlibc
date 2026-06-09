@@ -20,9 +20,10 @@ unsafe extern "C" {
     //     last '/', returns "" for "/" or trailing-slash inputs.
     //   - `__xpg_basename` (POSIX/XPG): mutating, returns "/" for "/",
     //     "." for "", strips trailing slashes.
-    // FrankenLibC implements POSIX semantics, so compare against the
-    // explicit POSIX symbol.
-    #[link_name = "__xpg_basename"]
+    // The bare `basename` SYMBOL that the dynamic linker resolves is the GNU
+    // one (libgen.h users get __xpg_basename via a compile-time redirect), and
+    // FrankenLibC's exported `basename` matches it. Compare against glibc's GNU
+    // `basename`; the POSIX variant is gated separately as `__xpg_basename`.
     fn basename(path: *mut c_char) -> *mut c_char;
     fn dirname(path: *mut c_char) -> *mut c_char;
 }
@@ -145,7 +146,8 @@ fn basename_null_does_not_crash() {
     } else {
         unsafe { CStr::from_ptr(r_fl).to_string_lossy().into_owned() }
     };
-    assert_eq!(s_fl, ".", "basename(NULL) should return POSIX '.'");
+    // GNU basename has no "." fallback; glibc would fault on NULL, fl returns "".
+    assert_eq!(s_fl, "", "GNU basename(NULL) should return a safe empty string");
 }
 
 #[test]
@@ -156,7 +158,8 @@ fn basename_rejects_tracked_unterminated_path() {
         assert!(!result.is_null());
         let rendered = CStr::from_ptr(result).to_bytes().to_vec();
         frankenlibc_abi::malloc_abi::free(raw.cast());
-        assert_eq!(rendered, b".");
+        // GNU basename: an unterminated buffer cannot be scanned safely → "".
+        assert_eq!(rendered, b"");
     }
 }
 

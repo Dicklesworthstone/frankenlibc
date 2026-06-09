@@ -252,7 +252,16 @@ pub fn dirname_range(path: &[u8]) -> (usize, usize) {
         return (0, 0); // caller should substitute "."
     }
 
-    // Strip trailing slashes from the directory
+    // If everything up to here is a run of leading slashes, the directory IS
+    // the root: glibc preserves a run of EXACTLY two ("//foo" → "//") as the
+    // implementation-defined network root and collapses any other run to "/".
+    if path[..end].iter().all(|&b| b == b'/') {
+        return if end == 2 { (0, 2) } else { (0, 1) };
+    }
+
+    // Strip trailing slashes from the directory (a non-leading separator run,
+    // e.g. "//a//b" → "//a"; the leading "//" of "//a" is kept by the check
+    // above only when the whole dir is slashes, so it survives here too).
     while end > 1 && path[end - 1] == b'/' {
         end -= 1;
     }

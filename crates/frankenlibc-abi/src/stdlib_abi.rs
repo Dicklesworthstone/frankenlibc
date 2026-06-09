@@ -5312,26 +5312,24 @@ pub unsafe extern "C" fn ualarm(usecs: c_uint, interval: c_uint) -> c_uint {
 // basename / dirname — POSIX libgen.h
 // ---------------------------------------------------------------------------
 
-use frankenlibc_core::unistd::{basename_range, dirname_range};
+use frankenlibc_core::unistd::dirname_range;
 
-/// Static "." fallback for basename (must be mutable storage per POSIX).
-static BASENAME_DOT: std::sync::Mutex<[u8; 2]> = std::sync::Mutex::new([b'.', 0]);
-
-/// POSIX `basename` — extract filename component from a path.
-///
-/// Returns a pointer into the caller's buffer after normalizing trailing
-/// slashes in-place. Empty/null inputs return a mutable `"."` fallback.
+/// GNU `basename` — the bare `basename` SYMBOL in glibc is the GNU variant
+/// (declared in `<string.h>` under `_GNU_SOURCE`), NOT the XPG/POSIX one; the
+/// POSIX version is exported separately as `__xpg_basename`. GNU `basename`
+/// returns the component after the LAST `/` — it does NOT strip trailing
+/// slashes and does NOT modify the buffer, so `"a/b/"` and `"/usr/"` yield `""`
+/// while `"abc"` yields `"abc"` and `""` yields `""`. (`__xpg_basename` is the
+/// one that strips trailing slashes and maps `""`→`"."`, `"/"`→`"/"`.)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
-    let return_dot = || {
-        BASENAME_DOT
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_mut_ptr() as *mut std::ffi::c_char
-    };
+    // glibc's GNU basename dereferences immediately; return a stable empty
+    // string rather than faulting if handed NULL or an unterminated buffer.
+    static EMPTY: &[u8] = b"\0";
+    let empty = || EMPTY.as_ptr() as *mut std::ffi::c_char;
 
     if path.is_null() {
-        return return_dot();
+        return empty();
     }
     let (len, terminated) = unsafe {
         scan_c_string(
@@ -5340,20 +5338,15 @@ pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi:
         )
     };
     if !terminated {
-        return return_dot();
-    }
-    if len == 0 {
-        return return_dot();
+        return empty();
     }
     let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
-    let (start, end) = basename_range(slice);
-    if end == start {
-        return return_dot();
-    }
-    unsafe {
-        *path.add(end) = 0;
-        path.add(start)
-    }
+    // Component after the last '/' — a pointer into the (unmodified) buffer.
+    let start = match slice.iter().rposition(|&b| b == b'/') {
+        Some(i) => i + 1,
+        None => 0,
+    };
+    unsafe { path.add(start) }
 }
 
 /// Static "." fallback for dirname (must be mutable storage per POSIX).
