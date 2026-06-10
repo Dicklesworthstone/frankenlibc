@@ -24,6 +24,7 @@ unsafe extern "C" {
     fn y0(x: f64) -> f64;
     fn y1(x: f64) -> f64;
     fn yn(n: std::ffi::c_int, x: f64) -> f64;
+    fn tanhf(x: f32) -> f32;
 }
 
 /// 4-ULP tolerance threshold (per IEEE-754 + glibc libm contract).
@@ -45,6 +46,25 @@ fn within_ulps(a: f64, b: f64, ulps: u64) -> bool {
     let abits = if abits < 0 { i64::MIN - abits } else { abits };
     let bbits = if bbits < 0 { i64::MIN - bbits } else { bbits };
     (abits - bbits).unsigned_abs() <= ulps
+}
+
+fn within_ulps_f32(a: f32, b: f32, ulps: u32) -> bool {
+    if a.is_nan() && b.is_nan() {
+        return true;
+    }
+    if a == b {
+        return true;
+    }
+    if a.is_finite() != b.is_finite() {
+        return false;
+    }
+    if !a.is_finite() {
+        return false;
+    }
+    if a.is_sign_negative() != b.is_sign_negative() {
+        return false;
+    }
+    (a.to_bits() as i64 - b.to_bits() as i64).unsigned_abs() <= ulps as u64
 }
 
 #[test]
@@ -200,6 +220,44 @@ fn diff_bessel_y_within_4_ulps() {
         "Bessel Y divergences:\n{}",
         divs.join("\n")
     );
+}
+
+#[test]
+fn diff_tanhf_profile_band_within_4_ulps() {
+    let inputs: &[f32] = &[
+        -f32::INFINITY,
+        -3.0,
+        -2.5,
+        -0.5,
+        -0.25,
+        -0.0,
+        0.0,
+        0.25,
+        0.5,
+        2.5,
+        3.0,
+        f32::INFINITY,
+        f32::NAN,
+    ];
+    let mut divs = Vec::new();
+    for &x in inputs {
+        let fl_y = unsafe { fl::tanhf(x) };
+        let lc_y = unsafe { tanhf(x) };
+        if !within_ulps_f32(fl_y, lc_y, 4) {
+            divs.push(format!("tanhf({x:?}): fl={fl_y:?} lc={lc_y:?}"));
+        }
+    }
+    for k in 0..=4096 {
+        let x = 0.5 + (k as f32) * ((2.5 - 0.5) / 4096.0);
+        for signed_x in [-x, x] {
+            let fl_y = unsafe { fl::tanhf(signed_x) };
+            let lc_y = unsafe { tanhf(signed_x) };
+            if !within_ulps_f32(fl_y, lc_y, 4) {
+                divs.push(format!("tanhf({signed_x:?}): fl={fl_y:?} lc={lc_y:?}"));
+            }
+        }
+    }
+    assert!(divs.is_empty(), "tanhf divergences:\n{}", divs.join("\n"));
 }
 
 #[test]

@@ -230,14 +230,13 @@ const TANHF_FAST_ABS_MAX: f32 = 2.5;
 #[inline]
 pub fn tanhf(x: f32) -> f32 {
     // tanh(x) = (e^2x - 1)/(e^2x + 1). For |x| >= 0.5 this form has no
-    // cancellation (the result is bounded away from 0), so evaluating it in f64
-    // — with our fast `exp` whose [-5,5] fast path covers 2x here — and rounding
-    // once gives a correctly-rounded f32 far cheaper than libm::tanhf's
-    // dedicated polynomial. The identity is odd, so it serves negative x with no
+    // cancellation (the result is bounded away from 0), so the f32 `expf`
+    // fast path covers 2x directly on this interval and avoids widening through
+    // the f64 exp kernel. The identity is odd, so it serves negative x with no
     // special-casing. Near-0 (cancellation) and large/non-finite x defer to libm.
     if (TANHF_FAST_ABS_MIN..=TANHF_FAST_ABS_MAX).contains(&x.abs()) {
-        let u = crate::math::exp::exp(2.0 * x as f64);
-        return ((u - 1.0) / (u + 1.0)) as f32;
+        let u = expf(2.0 * x);
+        return (u - 1.0) / (u + 1.0);
     }
     libm::tanhf(x)
 }
