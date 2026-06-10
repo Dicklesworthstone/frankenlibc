@@ -136,6 +136,25 @@ pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
         return (0, 0, ConversionStatus::InvalidBase);
     }
 
+    if base == 10
+        && let Some(first) = s.first().copied()
+        && first.is_ascii_digit()
+    {
+        let first_digit = (first - b'0') as i64;
+        if len == 1 || !s[1].is_ascii_digit() {
+            return (first_digit, 1, ConversionStatus::Success);
+        }
+
+        if len == 2 || !s[2].is_ascii_digit() {
+            let second_digit = (s[1] - b'0') as i64;
+            return (
+                first_digit * 10 + second_digit,
+                2,
+                ConversionStatus::Success,
+            );
+        }
+    }
+
     while i < len && is_c_space(s[i]) {
         i += 1;
     }
@@ -1153,14 +1172,14 @@ fn parse_decimal_f32_prefix(slice: &[u8], consumed: usize) -> Option<f32> {
 /// stopping at the first character not valid for the base. The result is later
 /// masked into the significand (52 bits for `double`, 23 for `float`).
 pub fn parse_nan_payload(seq: &[u8]) -> u64 {
-    let (radix, mut i): (u64, usize) = if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x'
-    {
-        (16, 2)
-    } else if !seq.is_empty() && seq[0] == b'0' {
-        (8, 1)
-    } else {
-        (10, 0)
-    };
+    let (radix, mut i): (u64, usize) =
+        if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x' {
+            (16, 2)
+        } else if !seq.is_empty() && seq[0] == b'0' {
+            (8, 1)
+        } else {
+            (10, 0)
+        };
     let mut acc: u64 = 0;
     let mut overflow = false;
     while i < seq.len() {
@@ -1185,9 +1204,8 @@ pub fn parse_nan_payload(seq: &[u8]) -> u64 {
 /// Build an `f64` quiet NaN carrying `payload` (masked to the 52-bit
 /// significand, quiet bit forced) and the given sign — matching glibc strtod.
 pub fn nan_f64(payload: u64, negative: bool) -> f64 {
-    let bits = 0x7ff8_0000_0000_0000u64
-        | (payload & 0x000f_ffff_ffff_ffff)
-        | ((negative as u64) << 63);
+    let bits =
+        0x7ff8_0000_0000_0000u64 | (payload & 0x000f_ffff_ffff_ffff) | ((negative as u64) << 63);
     f64::from_bits(bits)
 }
 
@@ -1699,6 +1717,32 @@ mod tests {
         let (val, len) = strtol(b"123456", 10);
         assert_eq!(val, 123456);
         assert_eq!(len, 6);
+    }
+
+    #[test]
+    fn test_strtol_short_decimal_edges() {
+        let cases: &[(&[u8], i32, i64, usize, ConversionStatus)] = &[
+            (b"4", 10, 4, 1, ConversionStatus::Success),
+            (b"4\0", 10, 4, 1, ConversionStatus::Success),
+            (b"42\0", 10, 42, 2, ConversionStatus::Success),
+            (b"42x7", 10, 42, 2, ConversionStatus::Success),
+            (b"0x10", 10, 0, 1, ConversionStatus::Success),
+            (b"0b10", 10, 0, 1, ConversionStatus::Success),
+            (b"123", 10, 123, 3, ConversionStatus::Success),
+            (b" 42", 10, 42, 3, ConversionStatus::Success),
+            (b"+42", 10, 42, 3, ConversionStatus::Success),
+            (b"-42", 10, -42, 3, ConversionStatus::Success),
+            (b"42", 0, 42, 2, ConversionStatus::Success),
+        ];
+
+        for (input, base, expected_value, expected_len, expected_status) in cases {
+            assert_eq!(
+                strtol_impl(input, *base),
+                (*expected_value, *expected_len, *expected_status),
+                "input={:?} base={base}",
+                String::from_utf8_lossy(input)
+            );
+        }
     }
 
     #[test]
