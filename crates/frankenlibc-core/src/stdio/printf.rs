@@ -454,7 +454,11 @@ impl FormatSpec {
                 let val = match self.length {
                     LengthMod::Hh => (raw as i8) as i64,
                     LengthMod::H => (raw as i16) as i64,
-                    LengthMod::L | LengthMod::Ll | LengthMod::J => raw as i64,
+                    LengthMod::L
+                    | LengthMod::Ll
+                    | LengthMod::J
+                    | LengthMod::Z
+                    | LengthMod::T => raw as i64,
                     _ => (raw as i32) as i64,
                 };
                 format_signed(val, self, buf);
@@ -464,7 +468,11 @@ impl FormatSpec {
                 let val = match self.length {
                     LengthMod::Hh => (raw as u8) as u64,
                     LengthMod::H => (raw as u16) as u64,
-                    LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z => raw,
+                    LengthMod::L
+                    | LengthMod::Ll
+                    | LengthMod::J
+                    | LengthMod::Z
+                    | LengthMod::T => raw,
                     _ => (raw as u32) as u64,
                 };
                 format_unsigned(val, self, buf);
