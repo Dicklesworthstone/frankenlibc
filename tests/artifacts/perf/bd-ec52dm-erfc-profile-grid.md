@@ -106,6 +106,35 @@ FrankenLibC erfc: p50 523.090 ns, p95 696.000 ns, p99 1022.000 ns, mean 535.965 
 host glibc erfc: p50 824.504 ns, p95 971.500 ns, p99 981.000 ns, mean 816.744 ns
 ```
 
+## Confirmation Run
+
+Command:
+
+```text
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=vmi1227854 RCH_WORKERS=vmi1227854 \
+rch exec -- env AGENT_NAME=BoldFalcon FRANKENLIBC_BENCH_PIN=1 CARGO_BUILD_JOBS=2 \
+  cargo bench -j 2 -p frankenlibc-bench --bench glibc_baseline_bench -- \
+  glibc_baseline_math/erfc --noplot --sample-size 60 --warm-up-time 1 --measurement-time 4
+```
+
+Worker: `vmi1227854`
+
+```text
+FrankenLibC erfc: p50 543.044 ns, p95 792.557 ns, p99 1386.758 ns, mean 579.566 ns
+host glibc erfc: p50 914.804 ns, p95 1107.692 ns, p99 1282.612 ns, mean 895.400 ns
+```
+
+Additional proof in the same confirmation pass:
+
+```text
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=vmi1227854 RCH_WORKERS=vmi1227854 \
+rch exec -- env AGENT_NAME=BoldFalcon CARGO_BUILD_JOBS=2 \
+  cargo test -j 2 -p frankenlibc-abi --test conformance_diff_math_special \
+  diff_erfc_profile_grid_tail_within_4_ulps -- --nocapture --test-threads=1
+```
+
+Result: passed on `vmi1227854` (`1 passed; 7 filtered out`).
+
 ## Verdict
 
 KEPT.
