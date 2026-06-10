@@ -383,8 +383,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
 
     // glibc accepts the `E`/`O` locale modifier only on a per-specifier subset
     // (probed from host glibc); elsewhere the whole directive renders literally.
-    const E_MODIFIABLE: &[u8] = b"cCnpPrRstTuxXyYzZ";
-    const O_MODIFIABLE: &[u8] = b"bBCdegGhHIjklmMnpPrRsStTuUVwWyzZ";
+    // The set includes the format-control specifiers `%`, `n`, `t` — glibc
+    // renders `%E%`/`%O%` as a literal `%`, like `%En`/`%Et` give newline/tab.
+    const E_MODIFIABLE: &[u8] = b"%cCnpPrRstTuxXyYzZ";
+    const O_MODIFIABLE: &[u8] = b"%bBCdegGhHIjklmMnpPrRsStTuUVwWyzZ";
 
     // Helper: write decimal with specified padding style and width
     macro_rules! push_dec_pad {
