@@ -6,6 +6,8 @@ const MAX_INSERTION: usize = 20;
 const INSERTION_STACK_SCRATCH: usize = 64;
 const I32_FAST_LANE_MIN: usize = 64;
 const I32_FAST_LANE_MAX: usize = 2048;
+const I64_FAST_LANE_MIN: usize = 64;
+const I64_FAST_LANE_MAX: usize = 2048;
 
 /// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
 /// Orson Peters 2014) ported to operate on raw byte chunks through a
@@ -43,6 +45,12 @@ where
 
     if width == 4 && (I32_FAST_LANE_MIN..=I32_FAST_LANE_MAX).contains(&num) {
         if try_qsort_i32_natural_fast_lane(base, num, &compare) {
+            return;
+        }
+    }
+
+    if width == 8 && (I64_FAST_LANE_MIN..=I64_FAST_LANE_MAX).contains(&num) {
+        if try_qsort_i64_natural_fast_lane(base, num, &compare) {
             return;
         }
     }
@@ -94,6 +102,68 @@ where
 {
     let mut prev = &active[..4];
     for current in active[4..].chunks_exact(4) {
+        if compare(prev, current) > 0 {
+            return false;
+        }
+        prev = current;
+    }
+    true
+}
+
+/// 8-byte analog of [`try_qsort_i32_natural_fast_lane`]. The vast majority of
+/// `qsort` calls with `width == 8` sort native machine words (`int64_t`,
+/// pointers, indices) under a comparator that is equivalent to natural signed
+/// 64-bit order. Sorting the raw `i64` values with the standard-library sort
+/// (no per-comparison FFI callback) and then verifying the result against the
+/// caller's comparator in a single linear pass is dramatically faster than
+/// driving `pdqsort_recurse` through `O(n log n)` indirect comparator calls.
+///
+/// Safety of the optimization rests entirely on the verify step: the natural
+/// `i64` arrangement is committed only if it is genuinely non-decreasing under
+/// the caller's own comparator. For any comparator where that holds, the output
+/// is a valid `qsort` result — and because equal-comparing `i64` keys are also
+/// byte-identical, the emitted bytes are independent of tie order, so the output
+/// is bit-identical to what the generic path would produce. Comparators that do
+/// not match natural order (unsigned, floating-point, struct keys, descending)
+/// fail the verify, the original bytes are restored, and we fall back to the
+/// generic pdqsort with zero behavioral difference.
+fn try_qsort_i64_natural_fast_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let active_len = num * 8;
+    let active = &mut base[..active_len];
+    let mut original = Vec::with_capacity(num);
+    let mut values = Vec::with_capacity(num);
+    for chunk in active.chunks_exact(8) {
+        let bytes = [
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ];
+        original.push(bytes);
+        values.push(i64::from_ne_bytes(bytes));
+    }
+
+    values.sort_unstable();
+    for (chunk, value) in active.chunks_exact_mut(8).zip(&values) {
+        chunk.copy_from_slice(&value.to_ne_bytes());
+    }
+
+    if qsort_i64_candidate_is_ordered(active, compare) {
+        return true;
+    }
+
+    for (chunk, bytes) in active.chunks_exact_mut(8).zip(original) {
+        chunk.copy_from_slice(&bytes);
+    }
+    false
+}
+
+fn qsort_i64_candidate_is_ordered<F>(active: &[u8], compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let mut prev = &active[..8];
+    for current in active[8..].chunks_exact(8) {
         if compare(prev, current) > 0 {
             return false;
         }
