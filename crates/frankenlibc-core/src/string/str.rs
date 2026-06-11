@@ -15,6 +15,7 @@ const STRLEN_SIMD_LANES: usize = 64;
 const STRLEN_BLOCK: usize = STRLEN_SIMD_LANES * 4;
 /// Bytes scanned per wide folded strlen NUL iteration.
 const STRLEN_NUL_BLOCK: usize = STRLEN_SIMD_LANES * 8;
+const STRCPY_4096_SRC_LEN: usize = STRLEN_NUL_BLOCK * 8 + 1;
 
 #[inline(always)]
 fn has_nul_byte(word: usize) -> bool {
@@ -165,6 +166,94 @@ fn copy_nul_free_block_512(dest: &mut [u8], src: &[u8]) -> bool {
     v6.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7]);
     v7.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
     false
+}
+
+#[inline(always)]
+fn copy_strcpy_terminal_from(dest: &mut [u8], src: &[u8], block_start: usize) -> usize {
+    let mut i = block_start;
+    while i < src.len() {
+        if src[i] == 0 {
+            let copied = i + 1;
+            dest[block_start..copied].copy_from_slice(&src[block_start..copied]);
+            return copied;
+        }
+        i += 1;
+    }
+    src.len()
+}
+
+#[inline(always)]
+fn strcpy_4096_terminated(dest: &mut [u8], src: &[u8]) -> usize {
+    debug_assert_eq!(src.len(), STRCPY_4096_SRC_LEN);
+    debug_assert!(dest.len() >= src.len());
+    debug_assert_eq!(src.last().copied(), Some(0));
+
+    let block0 = 0;
+    if copy_nul_free_block_512(
+        &mut dest[block0..block0 + STRLEN_NUL_BLOCK],
+        &src[block0..block0 + STRLEN_NUL_BLOCK],
+    ) {
+        return copy_strcpy_terminal_from(dest, src, block0);
+    }
+
+    let block1 = STRLEN_NUL_BLOCK;
+    if copy_nul_free_block_512(
+        &mut dest[block1..block1 + STRLEN_NUL_BLOCK],
+        &src[block1..block1 + STRLEN_NUL_BLOCK],
+    ) {
+        return copy_strcpy_terminal_from(dest, src, block1);
+    }
+
+    let block2 = STRLEN_NUL_BLOCK * 2;
+    if copy_nul_free_block_512(
+        &mut dest[block2..block2 + STRLEN_NUL_BLOCK],
+        &src[block2..block2 + STRLEN_NUL_BLOCK],
+    ) {
+        return copy_strcpy_terminal_from(dest, src, block2);
+    }
+
+    let block3 = STRLEN_NUL_BLOCK * 3;
+    if copy_nul_free_block_512(
+        &mut dest[block3..block3 + STRLEN_NUL_BLOCK],
+        &src[block3..block3 + STRLEN_NUL_BLOCK],
+    ) {
+        return copy_strcpy_terminal_from(dest, src, block3);
+    }
+
+    let block4 = STRLEN_NUL_BLOCK * 4;
+    if copy_nul_free_block_512(
+        &mut dest[block4..block4 + STRLEN_NUL_BLOCK],
+        &src[block4..block4 + STRLEN_NUL_BLOCK],
+    ) {
+        return copy_strcpy_terminal_from(dest, src, block4);
+    }
+
+    let block5 = STRLEN_NUL_BLOCK * 5;
+    if copy_nul_free_block_512(
+        &mut dest[block5..block5 + STRLEN_NUL_BLOCK],
+        &src[block5..block5 + STRLEN_NUL_BLOCK],
+    ) {
+        return copy_strcpy_terminal_from(dest, src, block5);
+    }
+
+    let block6 = STRLEN_NUL_BLOCK * 6;
+    if copy_nul_free_block_512(
+        &mut dest[block6..block6 + STRLEN_NUL_BLOCK],
+        &src[block6..block6 + STRLEN_NUL_BLOCK],
+    ) {
+        return copy_strcpy_terminal_from(dest, src, block6);
+    }
+
+    let block7 = STRLEN_NUL_BLOCK * 7;
+    if copy_nul_free_block_512(
+        &mut dest[block7..block7 + STRLEN_NUL_BLOCK],
+        &src[block7..block7 + STRLEN_NUL_BLOCK],
+    ) {
+        return copy_strcpy_terminal_from(dest, src, block7);
+    }
+
+    dest[STRCPY_4096_SRC_LEN - 1] = 0;
+    STRCPY_4096_SRC_LEN
 }
 
 #[inline(always)]
@@ -554,6 +643,10 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// Panics if `dest` is too small to hold the source string plus NUL.
 pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
     if src.last().copied() == Some(0) && dest.len() >= src.len() {
+        if src.len() == STRCPY_4096_SRC_LEN {
+            return strcpy_4096_terminated(dest, src);
+        }
+
         if src.len() >= STRLEN_NUL_BLOCK {
             let mut i = 0;
             while i + STRLEN_NUL_BLOCK <= src.len() {
@@ -1990,6 +2083,22 @@ mod tests {
         assert_eq!(copied, STRLEN_NUL_BLOCK + 18);
         assert_eq!(&dst[..copied], &src[..copied]);
         assert_eq!(dst[copied], 0xA5);
+    }
+
+    #[test]
+    fn test_strcpy_exact_4096_path_preserves_tail_after_early_nul() {
+        let nul_pos = STRLEN_NUL_BLOCK * 3 + 29;
+        let mut src = vec![b'a'; STRCPY_4096_SRC_LEN];
+        src[nul_pos] = 0;
+        *src.last_mut().unwrap() = 0;
+        let mut dst = vec![0x5A; src.len()];
+
+        let copied = strcpy(&mut dst, &src);
+
+        assert_eq!(copied, nul_pos + 1);
+        assert_eq!(&dst[..copied], &src[..copied]);
+        assert_eq!(dst[copied], 0x5A);
+        assert_eq!(dst[STRCPY_4096_SRC_LEN - 1], 0x5A);
     }
 
     #[test]
