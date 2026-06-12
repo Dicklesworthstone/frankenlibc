@@ -621,6 +621,23 @@ pub unsafe fn bench_scan_c_string_last_byte(
     unsafe { scan_c_string_last_byte(ptr, target, bound) }
 }
 
+/// Test hook: per-lane SWAR ASCII lowercase, for exhaustive parity vs
+/// `to_ascii_lowercase`. Not part of the public ABI.
+#[doc(hidden)]
+pub fn test_swar_ascii_lower(w: u64) -> u64 {
+    swar_ascii_lower(w)
+}
+
+/// Benchmark/test hook for the fused SWAR [`scan_strcasecmp`] (behind
+/// strcasecmp/strncasecmp). Not part of the public ABI.
+///
+/// # Safety
+/// `s1`/`s2` must be NUL-terminated, or valid for `bound` bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_strcasecmp(s1: *const c_char, s2: *const c_char, bound: usize) -> c_int {
+    unsafe { scan_strcasecmp(s1, s2, bound).0 }
+}
+
 #[inline]
 unsafe fn copy_unaligned_16(dst: *mut u8, src: *const u8) {
     // SAFETY: caller guarantees 16 readable/writable bytes.
@@ -1237,6 +1254,86 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
         let b = unsafe { *p2.add(i) };
         if a != b || a == 0 {
             return (i, false);
+        }
+        i += 1;
+    }
+}
+
+/// Branchless SWAR ASCII lowercase: folds bytes in `'A'..='Z'` to `'a'..='z'`
+/// and leaves every other byte (incl. non-ASCII `>= 0x80`) untouched — exactly C
+/// `tolower` in the POSIX/C locale, applied to all 8 lanes at once.
+///
+/// Per-byte range test `0x41 <= b <= 0x5A`, made borrow-safe by forcing each
+/// byte's high bit (`w | HIGHS`) so a within-byte borrow is absorbed by that
+/// guard bit instead of leaking into the next lane. `ge_a`/`ge_5b` read the
+/// surviving guard bit as `(b & 0x7F) >= 0x41` / `>= 0x5B`; `ascii` excludes
+/// bytes `>= 0x80`. The resulting `0x80` flag is shifted to the `0x20` case bit.
+#[inline(always)]
+fn swar_ascii_lower(w: u64) -> u64 {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    let guarded = w | HIGHS;
+    let ge_a = guarded.wrapping_sub(ONES.wrapping_mul(0x41)) & HIGHS; // (b&0x7F) >= 'A'
+    let ge_5b = guarded.wrapping_sub(ONES.wrapping_mul(0x5B)) & HIGHS; // (b&0x7F) >= '['
+    let ascii = !w & HIGHS; // b < 0x80
+    let is_upper = ge_a & !ge_5b & ascii;
+    w | (is_upper >> 2)
+}
+
+/// Fused single-pass SWAR case-insensitive compare of two C strings within
+/// `bound`. Returns `(result, span)`: `result` is the signed difference of the
+/// lowercased bytes at the first position that differs (0 if equal up to a shared
+/// NUL or to `bound`); `span` is the compared extent (for cost accounting).
+///
+/// Equal-and-NUL-free 8-byte windows (after folding both via [`swar_ascii_lower`])
+/// advance 8; any other window is resolved byte-wise with `to_ascii_lowercase`
+/// (byte-identical to the scalar loop). The same page-cross guard as
+/// [`scan_strcmp`] keeps the dual-pointer wide reads from faulting past a NUL.
+unsafe fn scan_strcasecmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (c_int, usize) {
+    let p1 = s1.cast::<u8>();
+    let p2 = s2.cast::<u8>();
+    let mut i = 0usize;
+    loop {
+        if i + 8 <= bound
+            && wide_read_within_page(p1 as usize + i)
+            && wide_read_within_page(p2 as usize + i)
+        {
+            // SAFETY: both 8-byte reads stay within their mapped pages and bound.
+            let wa = unsafe { core::ptr::read_unaligned(p1.add(i).cast::<u64>()) };
+            let wb = unsafe { core::ptr::read_unaligned(p2.add(i).cast::<u64>()) };
+            if swar_ascii_lower(wa) == swar_ascii_lower(wb) && !swar_word_has_zero(wa) {
+                i += 8;
+                continue;
+            }
+            for j in 0..8 {
+                // SAFETY: i+j < bound; within the just-read in-page window.
+                let a = unsafe { *p1.add(i + j) };
+                let b = unsafe { *p2.add(i + j) };
+                let la = a.to_ascii_lowercase();
+                let lb = b.to_ascii_lowercase();
+                if la != lb {
+                    return ((la as c_int) - (lb as c_int), i + j + 1);
+                }
+                if a == 0 {
+                    return (0, i + j + 1);
+                }
+            }
+            i += 8; // defensive: a flagged window always returns above.
+            continue;
+        }
+        if i >= bound {
+            return (0, bound);
+        }
+        // SAFETY: i < bound.
+        let a = unsafe { *p1.add(i) };
+        let b = unsafe { *p2.add(i) };
+        let la = a.to_ascii_lowercase();
+        let lb = b.to_ascii_lowercase();
+        if la != lb {
+            return ((la as c_int) - (lb as c_int), i + 1);
+        }
+        if a == 0 {
+            return (0, i + 1);
         }
         i += 1;
     }
@@ -3610,14 +3707,22 @@ pub unsafe extern "C" fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_i
 
     // SAFETY: bounded scan within known limits.
     let (result, span) = unsafe {
-        let (s1_len, s1_term) = scan_c_string(s1, lhs_bound);
-        let (s2_len, s2_term) = scan_c_string(s2, rhs_bound);
-        let s1_slice_len = if s1_term { s1_len + 1 } else { s1_len };
-        let s2_slice_len = if s2_term { s2_len + 1 } else { s2_len };
-        let s1_slice = std::slice::from_raw_parts(s1.cast::<u8>(), s1_slice_len);
-        let s2_slice = std::slice::from_raw_parts(s2.cast::<u8>(), s2_slice_len);
-        let r = frankenlibc_core::string::str::strcasecmp(s1_slice, s2_slice);
-        (r, s1_len.max(s2_len))
+        if lhs_bound.is_none() && rhs_bound.is_none() {
+            // Common path: one fused SWAR case-compare with early exit, instead of
+            // two full length scans plus a separate compare pass.
+            scan_strcasecmp(s1, s2, usize::MAX)
+        } else {
+            // Repair path: preserve the exact clamped-slice semantics (out-of-bound
+            // bytes treated as NUL by the core comparator).
+            let (s1_len, s1_term) = scan_c_string(s1, lhs_bound);
+            let (s2_len, s2_term) = scan_c_string(s2, rhs_bound);
+            let s1_slice_len = if s1_term { s1_len + 1 } else { s1_len };
+            let s2_slice_len = if s2_term { s2_len + 1 } else { s2_len };
+            let s1_slice = std::slice::from_raw_parts(s1.cast::<u8>(), s1_slice_len);
+            let s2_slice = std::slice::from_raw_parts(s2.cast::<u8>(), s2_slice_len);
+            let r = frankenlibc_core::string::str::strcasecmp(s1_slice, s2_slice);
+            (r, s1_len.max(s2_len))
+        }
     };
 
     record_string_stage_outcome(
@@ -3700,23 +3805,9 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: us
     let adverse = repair && cmp_limit < n;
 
     // SAFETY: bounded compare within cmp_limit.
-    let result = unsafe {
-        let mut i = 0usize;
-        loop {
-            if i >= cmp_limit {
-                break 0;
-            }
-            let a = (*s1.add(i) as u8).to_ascii_lowercase();
-            let b = (*s2.add(i) as u8).to_ascii_lowercase();
-            if a != b {
-                break (a as c_int) - (b as c_int);
-            }
-            if a == 0 {
-                break 0;
-            }
-            i += 1;
-        }
-    };
+    // Fused SWAR case-compare (shared scan_strcasecmp), byte-identical to the old
+    // scalar tolower loop; bounded by cmp_limit and page-cross guarded.
+    let result = unsafe { scan_strcasecmp(s1, s2, cmp_limit).0 };
 
     if adverse {
         record_truncation(n, cmp_limit);
