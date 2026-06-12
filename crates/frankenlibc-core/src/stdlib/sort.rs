@@ -13,6 +13,10 @@ const I64_FAST_LANE_MAX: usize = 2048;
 /// comparison-lane window: radix's fixed per-pass overhead (256-bucket
 /// histogram + a full ping-pong scatter) only amortizes once N is large.
 const INTEGER_RADIX_LANE_MIN: usize = 2048;
+/// 2-byte integer keys take the radix lane at a far lower threshold: they have
+/// no comparison fast lane and a 2-pass radix has negligible fixed cost, so it
+/// overtakes pdqsort early.
+const NARROW_RADIX_LANE_MIN: usize = 256;
 
 /// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
 /// Orson Peters 2014) ported to operate on raw byte chunks through a
@@ -65,7 +69,19 @@ where
     // loses to glibc's cache-friendly mergesort for big N. An LSD radix sort is
     // a different complexity class entirely — O(n · key_bytes) linear passes
     // with no per-element comparison — so it wins decisively once N is large.
-    if (width == 4 || width == 8) && num > INTEGER_RADIX_LANE_MIN {
+    //
+    // 2-byte keys have NO comparison fast lane, and a 2-pass radix has tiny
+    // fixed cost, so it overtakes pdqsort early and takes the lane at a much
+    // lower threshold than the 4-/8-byte keys. (Width 1 is deliberately NOT
+    // routed here: random bytes have only 256 distinct values, so pdqsort's
+    // equal-element partition already collapses to near-O(n) and beats the
+    // u64-widening radix — measured ~1.8-2.8x vs glibc on bytes already.)
+    let radix_min = if width == 2 {
+        NARROW_RADIX_LANE_MIN
+    } else {
+        INTEGER_RADIX_LANE_MIN
+    };
+    if (width == 2 || width == 4 || width == 8) && num > radix_min {
         if try_qsort_integer_radix_lane(base, num, width, &compare) {
             return;
         }
@@ -188,7 +204,8 @@ where
     true
 }
 
-/// LSD radix lane for large 4-/8-byte integer arrays.
+/// LSD radix lane for large 2-/4-/8-byte integer arrays. Width 2 runs two 8-bit
+/// passes; width 4 four; width 8 eight.
 ///
 /// Reinterprets each element as its native-endian integer, maps it to an
 /// order-preserving unsigned "rank" by flipping the sign bit (so two's
@@ -213,7 +230,7 @@ fn try_qsort_integer_radix_lane<F>(
 where
     F: Fn(&[u8], &[u8]) -> i32,
 {
-    debug_assert!(width == 4 || width == 8);
+    debug_assert!(width == 2 || width == 4 || width == 8);
     let active_len = num * width;
     let active = &mut base[..active_len];
     let sign_mask: u64 = 1u64 << (width as u64 * 8 - 1);
