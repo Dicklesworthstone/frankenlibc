@@ -62,7 +62,7 @@ pub fn expf(x: f32) -> f32 {
 // vs glibc) but not a perf win: our f64 `log2` kernel runs ~374–405 ns, which is
 // itself ≥ glibc's native f32 `log2f` (~335–369 ns), so widening to f64 cannot beat
 // glibc here. Normalised against the in-run host control, the route is a
-// wash-to-slight-regression. Keep the direct `libm::*f` passthroughs.
+// wash-to-slight-regression. Keep the direct f32 computation paths.
 
 #[inline]
 pub fn logf(x: f32) -> f32 {
@@ -71,7 +71,7 @@ pub fn logf(x: f32) -> f32 {
 
 #[inline]
 pub fn log2f(x: f32) -> f32 {
-    libm::log2f(x)
+    x.log2()
 }
 
 #[inline]
@@ -680,6 +680,41 @@ mod tests {
         let ab = a.to_bits() as i32;
         let bb = b.to_bits() as i32;
         (ab - bb).unsigned_abs() <= ulps
+    }
+
+    #[test]
+    fn log2f_intrinsic_matches_prior_libm_path_within_4_ulps() {
+        let mut s = 0x6c8e_9cf5_u32;
+        let mut worst = 0u32;
+        let mut worst_x = 1.0f32;
+        for _ in 0..1_000_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let x = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
+            let got = log2f(x);
+            let want = libm::log2f(x);
+            let ulps = if got == want {
+                0
+            } else {
+                (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs()
+            };
+            if ulps > worst {
+                worst = ulps;
+                worst_x = x;
+            }
+            assert!(
+                within_ulps_f32(got, want, 4),
+                "log2f({x})={got:?} prior_libm={want:?} ({ulps} ULP)"
+            );
+        }
+
+        for &x in &[-0.0f32, 0.0, 1.0, 2.0, f32::INFINITY] {
+            assert_eq!(log2f(x).to_bits(), libm::log2f(x).to_bits(), "log2f({x})");
+        }
+        assert!(log2f(-1.0).is_nan());
+        assert!(log2f(f32::NAN).is_nan());
+        println!("log2f intrinsic worst ULP = {worst} at {worst_x}");
     }
 
     #[test]
