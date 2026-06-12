@@ -357,12 +357,27 @@ pub fn strlen_dispatch_label_for_tests(s_addr: usize, len_hint: usize) -> &'stat
 
 #[inline(never)]
 unsafe fn raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
-    // Byte-by-byte copy using volatile operations to prevent the compiler
-    // from optimizing this into a memcpy call (which would recurse through
-    // our interposed memcpy symbol).  Also avoids dlvsym during init.
-    // SAFETY: caller guarantees dst/src are valid for n bytes.
+    // Wide-word forward copy (memcpy semantics: dst/src disjoint). We must not let
+    // LLVM lower the copy to `@llvm.memcpy`, which in the shipped libc.so resolves
+    // back to our own interposed `memcpy` symbol (self-recursion) and can pull in
+    // dlvsym during init. The explicit u128 unaligned loads/stores in
+    // `copy_unaligned_16/32` are never coalesced into an `@llvm.mem*` intrinsic, so
+    // they stay recursion-safe while copying 16-32 bytes per step instead of one
+    // volatile byte; the sub-16 tail stays volatile-byte. Pure pointer ops with no
+    // SIMD-dispatch global state, so early-startup / reentrant callers are safe too.
+    // This is the shared bulk-copy primitive behind strcpy/strcat/strncat and the
+    // string_abi copy paths, so widening it here speeds all of them at once.
+    // SAFETY: caller guarantees dst/src are valid for n bytes and do not overlap.
     unsafe {
         let mut i = 0usize;
+        while i + 32 <= n {
+            copy_unaligned_32(dst.add(i), src.add(i));
+            i += 32;
+        }
+        if i + 16 <= n {
+            copy_unaligned_16(dst.add(i), src.add(i));
+            i += 16;
+        }
         while i < n {
             std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
             i += 1;
@@ -545,6 +560,16 @@ pub unsafe fn bench_raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
 #[doc(hidden)]
 pub unsafe fn bench_raw_memmove_bytes(dst: *mut u8, src: *const u8, n: usize) {
     unsafe { raw_memmove_bytes(dst, src, n) }
+}
+
+/// Benchmark/test hook for the shared bulk-copy primitive [`raw_memcpy_bytes`]
+/// (behind strcpy/strcat/strncat). Not part of the public ABI.
+///
+/// # Safety
+/// `dst`/`src` must be valid for `n` bytes and must not overlap.
+#[doc(hidden)]
+pub unsafe fn bench_raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe { raw_memcpy_bytes(dst, src, n) }
 }
 
 #[inline]

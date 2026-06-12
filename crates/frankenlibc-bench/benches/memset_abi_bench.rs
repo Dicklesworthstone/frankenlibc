@@ -10,7 +10,9 @@ use std::ffi::c_void;
 use std::hint::black_box;
 use std::time::Instant;
 
-use frankenlibc_abi::string_abi::{bench_raw_memmove_bytes, bench_raw_memset_bytes};
+use frankenlibc_abi::string_abi::{
+    bench_raw_memcpy_bytes, bench_raw_memmove_bytes, bench_raw_memset_bytes,
+};
 
 /// The pre-lever implementation: one volatile store per byte.
 #[inline(never)]
@@ -112,6 +114,37 @@ fn main() {
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: disjoint n-byte buffers.
             unsafe { libc::memmove(dp.cast::<c_void>(), sp.cast::<c_void>(), n) };
+            black_box(dst[0]);
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n, old, new, gl, old / new, gl / new,
+        );
+    }
+
+    println!("\nmemcpy (raw_memcpy_bytes — strcpy/strcat bulk copy):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "bytes", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        let mut src = vec![0u8; n];
+        let mut dst = vec![0u8; n];
+        let sp = src.as_mut_ptr();
+        let dp = dst.as_mut_ptr();
+        let iters = (4_000_000u64 / n as u64).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            unsafe { old_byte_volatile_move(dp, sp, n) };
+            black_box(dst[0]);
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            unsafe { bench_raw_memcpy_bytes(dp, sp, n) };
+            black_box(dst[0]);
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: disjoint n-byte buffers.
+            unsafe { libc::memcpy(dp.cast::<c_void>(), sp.cast::<c_void>(), n) };
             black_box(dst[0]);
         });
         println!(
