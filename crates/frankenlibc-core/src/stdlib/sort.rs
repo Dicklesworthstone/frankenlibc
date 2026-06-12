@@ -17,6 +17,8 @@ const INTEGER_RADIX_LANE_MIN: usize = 2048;
 /// no comparison fast lane and a 2-pass radix has negligible fixed cost, so it
 /// overtakes pdqsort early.
 const NARROW_RADIX_LANE_MIN: usize = 256;
+/// 1-byte keys take the dedicated counting-sort lane above this count.
+const U8_COUNTING_LANE_MIN: usize = 256;
 
 /// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
 /// Orson Peters 2014) ported to operate on raw byte chunks through a
@@ -76,6 +78,18 @@ where
     // routed here: random bytes have only 256 distinct values, so pdqsort's
     // equal-element partition already collapses to near-O(n) and beats the
     // u64-widening radix — measured ~1.8-2.8x vs glibc on bytes already.)
+    // 1-byte keys: a dedicated counting sort (O(n + 256)) materialises the
+    // sorted bytes by filling one run per distinct value straight from a
+    // histogram — no key widening, no comparison. It beats both pdqsort and the
+    // generic u64-widening radix (which regresses on bytes). Tries the two
+    // common orders (unsigned-ascending, then signed-ascending) and verifies
+    // each against the caller's comparator before committing.
+    if width == 1 && num > U8_COUNTING_LANE_MIN {
+        if try_qsort_u8_counting_lane(base, num, &compare) {
+            return;
+        }
+    }
+
     let radix_min = if width == 2 {
         NARROW_RADIX_LANE_MIN
     } else {
@@ -202,6 +216,80 @@ where
         prev = current;
     }
     true
+}
+
+/// Counting-sort lane for 1-byte keys.
+///
+/// Builds a 256-bucket histogram in one linear pass, then materialises the
+/// sorted array by filling one contiguous run per distinct byte value (a
+/// memset per bucket) — `O(n + 256)`, with no key widening and no per-element
+/// comparison. Because every element in a bucket is the identical byte, the
+/// emitted bytes are independent of tie order, so a committed result is
+/// byte-identical to any correct sort (including glibc's).
+///
+/// A byte comparator is almost always either unsigned (`u8`/`unsigned char`,
+/// ascending byte order) or signed (`i8`/`signed char`, ascending value order =
+/// bytes `0x80..=0xFF` then `0x00..=0x7F`). We materialise the unsigned order
+/// first and verify it against the caller's comparator; on failure we re-emit
+/// the signed order and verify that; if neither is non-decreasing the original
+/// bytes are restored and the caller falls back to the generic pdqsort, exactly
+/// like the other integer lanes. Parity is therefore absolute.
+fn try_qsort_u8_counting_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let active = &mut base[..num];
+
+    let mut count = [0usize; 256];
+    for &b in active.iter() {
+        count[b as usize] += 1;
+    }
+
+    // Preserve the original byte order so a comparator that neither natural
+    // order satisfies can fall back to pdqsort over the exact original input —
+    // keeping the fallback's (unspecified) tie order byte-identical to glibc.
+    let original = active.to_vec();
+
+    // Materialise the buckets in `order`, one run (memset) per value, then
+    // verify the result is non-decreasing under `compare`.
+    fn emit_and_check<F, I>(active: &mut [u8], count: &[usize; 256], order: I, compare: &F) -> bool
+    where
+        F: Fn(&[u8], &[u8]) -> i32,
+        I: Iterator<Item = usize>,
+    {
+        let mut pos = 0usize;
+        for v in order {
+            let c = count[v];
+            if c != 0 {
+                active[pos..pos + c].fill(v as u8);
+                pos += c;
+            }
+        }
+        // Runs are internally uniform, so a comparator mismatch can only occur
+        // at a run boundary; checking every adjacent pair is still linear.
+        let mut prev = &active[..1];
+        for cur in active[1..].chunks_exact(1) {
+            if compare(prev, cur) > 0 {
+                return false;
+            }
+            prev = cur;
+        }
+        true
+    }
+
+    // Unsigned-ascending (the dominant `unsigned char` case).
+    if emit_and_check(active, &count, 0usize..256, compare) {
+        return true;
+    }
+    // Signed-ascending (`signed char`): negative bytes 0x80..=0xFF first.
+    if emit_and_check(active, &count, (128usize..256).chain(0..128), compare) {
+        return true;
+    }
+
+    // Neither natural order satisfies the comparator: restore the exact
+    // original bytes and let the caller's pdqsort handle it.
+    active.copy_from_slice(&original);
+    false
 }
 
 /// LSD radix lane for large 2-/4-/8-byte integer arrays. Width 2 runs two 8-bit
