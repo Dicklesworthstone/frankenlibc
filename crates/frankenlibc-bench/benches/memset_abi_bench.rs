@@ -11,8 +11,20 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use frankenlibc_abi::string_abi::{
-    bench_raw_memcpy_bytes, bench_raw_memmove_bytes, bench_raw_memset_bytes,
+    bench_raw_memcpy_bytes, bench_raw_memmove_bytes, bench_raw_memset_bytes, bench_scan_c_string,
 };
+
+/// Pre-lever NUL scan: byte-at-a-time (the old scan_c_string unbounded body).
+#[inline(never)]
+unsafe fn old_byte_scan(p: *const std::os::raw::c_char) -> usize {
+    unsafe {
+        let mut i = 0usize;
+        while *p.add(i) != 0 {
+            i += 1;
+        }
+        i
+    }
+}
 
 /// The pre-lever implementation: one volatile store per byte.
 #[inline(never)]
@@ -146,6 +158,34 @@ fn main() {
             // SAFETY: disjoint n-byte buffers.
             unsafe { libc::memcpy(dp.cast::<c_void>(), sp.cast::<c_void>(), n) };
             black_box(dst[0]);
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n, old, new, gl, old / new, gl / new,
+        );
+    }
+
+    println!("\nscan_c_string (NUL scan — behind strcpy/stpcpy/strncat):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "strlen", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        // NUL-terminated string of length n (no embedded NUL).
+        let mut s = vec![0x61u8; n + 1];
+        s[n] = 0;
+        let p = s.as_ptr().cast::<std::os::raw::c_char>();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_byte_scan(p) });
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { bench_scan_c_string(p, None) });
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: NUL-terminated.
+            black_box(unsafe { libc::strlen(p) });
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",

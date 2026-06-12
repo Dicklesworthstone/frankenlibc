@@ -572,6 +572,17 @@ pub unsafe fn bench_raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
     unsafe { raw_memcpy_bytes(dst, src, n) }
 }
 
+/// Benchmark/test hook for the SWAR [`scan_c_string`] NUL scanner (behind
+/// strcpy/stpcpy/strncat). Not part of the public ABI.
+///
+/// # Safety
+/// `ptr` must be NUL-terminated when `bound` is `None`, else valid for `bound`
+/// bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    unsafe { scan_c_string(ptr, bound) }
+}
+
 #[inline]
 unsafe fn copy_unaligned_16(dst: *mut u8, src: *const u8) {
     // SAFETY: caller guarantees 16 readable/writable bytes.
@@ -887,24 +898,74 @@ fn record_string_stage_outcome(
 /// # Safety
 ///
 /// `ptr` must be valid to read up to the discovered length (and bound when given).
+/// SWAR zero-byte test: true iff any byte of `w` is 0. The classic
+/// `(w - 0x01..) & ~w & 0x80..` haszero trick — a candidate that can false-flag
+/// only when a high bit is set, so the caller resolves the exact index byte-wise.
+#[inline(always)]
+fn swar_word_has_zero(w: u64) -> bool {
+    w.wrapping_sub(0x0101_0101_0101_0101) & !w & 0x8080_8080_8080_8080 != 0
+}
+
+/// Scan a C string for its terminating NUL, word-at-a-time (SWAR) instead of
+/// byte-at-a-time. Returns `(index_of_nul_or_limit, found_nul)`.
+///
+/// Bounded mode reads only within `limit` (8-byte windows then a byte tail), so
+/// it never over-reads. Unbounded mode aligns the pointer to 8 bytes first, then
+/// reads *aligned* u64s: an 8-aligned 8-byte load never straddles a 4096-byte
+/// page boundary, so it cannot fault past the NUL's own (mapped) page — the same
+/// safety argument glibc/musl strlen rely on.
 unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    let p = ptr.cast::<u8>();
     match bound {
         Some(limit) => {
-            for i in 0..limit {
-                // SAFETY: caller provides validity for bounded read.
-                if unsafe { *ptr.add(i) } == 0 {
+            let mut i = 0usize;
+            while i + 8 <= limit {
+                // SAFETY: [i, i+8) ⊆ [0, limit); caller guarantees `limit` readable bytes.
+                let w = unsafe { core::ptr::read_unaligned(p.add(i).cast::<u64>()) };
+                if swar_word_has_zero(w) {
+                    for j in 0..8 {
+                        // SAFETY: i+j < limit.
+                        if unsafe { *p.add(i + j) } == 0 {
+                            return (i + j, true);
+                        }
+                    }
+                }
+                i += 8;
+            }
+            while i < limit {
+                // SAFETY: i < limit.
+                if unsafe { *p.add(i) } == 0 {
                     return (i, true);
                 }
+                i += 1;
             }
             (limit, false)
         }
         None => {
             let mut i = 0usize;
-            // SAFETY: caller guarantees valid NUL-terminated string in unbounded mode.
-            while unsafe { *ptr.add(i) } != 0 {
+            // Byte-scan the misaligned head so every wide load below is 8-aligned.
+            let head = (p as usize).wrapping_neg() & 7;
+            while i < head {
+                // SAFETY: caller guarantees a valid NUL-terminated string.
+                if unsafe { *p.add(i) } == 0 {
+                    return (i, true);
+                }
                 i += 1;
             }
-            (i, true)
+            loop {
+                // SAFETY: p+i is 8-aligned, so this aligned 8-byte read stays inside
+                // the current page; the string is NUL-terminated within a mapped page.
+                let w = unsafe { *p.add(i).cast::<u64>() };
+                if swar_word_has_zero(w) {
+                    for j in 0..8 {
+                        // SAFETY: the window contains a NUL at or before j==7.
+                        if unsafe { *p.add(i + j) } == 0 {
+                            return (i + j, true);
+                        }
+                    }
+                }
+                i += 8;
+            }
         }
     }
 }
@@ -2080,15 +2141,17 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
                 }
             }
         } else {
-            let mut i = 0usize;
-            loop {
-                let ch = *src.add(i);
-                *dst.add(i) = ch;
-                if ch == 0 {
-                    break (i.saturating_add(1), false);
-                }
-                i += 1;
+            // Common (non-repair) path: SWAR-scan the source length, then copy the
+            // payload with the wide block memcpy and append the terminator. This is
+            // two cache-friendly passes (SWAR scan + wide copy) instead of one
+            // byte-at-a-time fused loop, byte-identical to it for any NUL-terminated
+            // source.
+            let (src_len, _) = scan_c_string(src, None);
+            if src_len > 0 {
+                raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
             }
+            *dst.add(src_len) = 0;
+            (src_len.saturating_add(1), false)
         }
     };
 
