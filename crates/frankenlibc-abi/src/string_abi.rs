@@ -607,6 +607,20 @@ pub unsafe fn bench_scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usi
     unsafe { scan_strcmp(s1, s2, bound) }
 }
 
+/// Benchmark/test hook for the SWAR [`scan_c_string_last_byte`] scanner (behind
+/// strrchr). Not part of the public ABI.
+///
+/// # Safety
+/// `ptr` must be NUL-terminated when `bound` is `None`, else valid for `bound` bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_c_string_last_byte(
+    ptr: *const c_char,
+    target: u8,
+    bound: Option<usize>,
+) -> (Option<usize>, usize, bool) {
+    unsafe { scan_c_string_last_byte(ptr, target, bound) }
+}
+
 #[inline]
 unsafe fn copy_unaligned_16(dst: *mut u8, src: *const u8) {
     // SAFETY: caller guarantees 16 readable/writable bytes.
@@ -1052,6 +1066,111 @@ unsafe fn scan_c_string_for_byte(
                         }
                         if b == 0 {
                             return (i + j, false, false);
+                        }
+                    }
+                }
+                i += 8;
+            }
+        }
+    }
+}
+
+/// SWAR scan for the LAST byte equal to `target` at or before the terminating
+/// NUL (or `bound`). Returns `(last_match_index, stop_index, hit_limit)`:
+///   - `last_match_index` = index of the last `target` (None if absent);
+///   - `stop_index` = index of the terminating NUL, or `bound` if the limit was
+///     reached first;
+///   - `hit_limit` = the limit was reached with no NUL.
+///
+/// Each 8-byte window is probed for a NUL and a `target` byte with two exact
+/// haszero tests. A NUL-free window with a target is resolved back-to-front for
+/// the last match; the terminating window is resolved front-to-back (updating the
+/// last match on each `target`, stopping at the NUL) so `target == 0` reports the
+/// NUL itself — matching glibc `strrchr(s, '\0')`. Same alignment/page discipline
+/// as [`scan_c_string`].
+unsafe fn scan_c_string_last_byte(
+    ptr: *const c_char,
+    target: u8,
+    bound: Option<usize>,
+) -> (Option<usize>, usize, bool) {
+    let p = ptr.cast::<u8>();
+    let bcast = (target as u64).wrapping_mul(0x0101_0101_0101_0101);
+    let mut last: Option<usize> = None;
+    match bound {
+        Some(limit) => {
+            let mut i = 0usize;
+            while i + 8 <= limit {
+                // SAFETY: [i, i+8) ⊆ [0, limit).
+                let w = unsafe { core::ptr::read_unaligned(p.add(i).cast::<u64>()) };
+                if swar_word_has_zero(w) {
+                    for j in 0..8 {
+                        // SAFETY: i+j < limit.
+                        let b = unsafe { *p.add(i + j) };
+                        if b == target {
+                            last = Some(i + j);
+                        }
+                        if b == 0 {
+                            return (last, i + j, false);
+                        }
+                    }
+                } else if swar_word_has_zero(w ^ bcast) {
+                    for j in (0..8).rev() {
+                        // SAFETY: i+j < limit.
+                        if unsafe { *p.add(i + j) } == target {
+                            last = Some(i + j);
+                            break;
+                        }
+                    }
+                }
+                i += 8;
+            }
+            while i < limit {
+                // SAFETY: i < limit.
+                let b = unsafe { *p.add(i) };
+                if b == target {
+                    last = Some(i);
+                }
+                if b == 0 {
+                    return (last, i, false);
+                }
+                i += 1;
+            }
+            (last, limit, true)
+        }
+        None => {
+            let mut i = 0usize;
+            let head = (p as usize).wrapping_neg() & 7;
+            while i < head {
+                // SAFETY: caller guarantees a valid NUL-terminated string.
+                let b = unsafe { *p.add(i) };
+                if b == target {
+                    last = Some(i);
+                }
+                if b == 0 {
+                    return (last, i, false);
+                }
+                i += 1;
+            }
+            loop {
+                // SAFETY: p+i is 8-aligned; the aligned read stays inside the page.
+                let w = unsafe { *p.add(i).cast::<u64>() };
+                if swar_word_has_zero(w) {
+                    for j in 0..8 {
+                        // SAFETY: within the just-read window, before/at the NUL.
+                        let b = unsafe { *p.add(i + j) };
+                        if b == target {
+                            last = Some(i + j);
+                        }
+                        if b == 0 {
+                            return (last, i + j, false);
+                        }
+                    }
+                } else if swar_word_has_zero(w ^ bcast) {
+                    for j in (0..8).rev() {
+                        // SAFETY: within the just-read window.
+                        if unsafe { *p.add(i + j) } == target {
+                            last = Some(i + j);
+                            break;
                         }
                     }
                 }
@@ -2949,23 +3068,18 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
         None
     };
     // SAFETY: strict mode preserves raw strrchr behavior; hardened mode bounds scan.
+    // SWAR last-match scan (shared scan_c_string_last_byte), byte-identical to the
+    // old loop including target=='\0' (returns the terminating NUL).
     let (result, adverse, span) = unsafe {
-        let mut result_local: *mut c_char = std::ptr::null_mut();
-        let mut i = 0usize;
-        loop {
-            if let Some(limit) = bound
-                && i >= limit
-            {
-                break (result_local, true, i);
-            }
-            let ch = *s.add(i);
-            if ch == target {
-                result_local = s.add(i) as *mut c_char;
-            }
-            if ch == 0 {
-                break (result_local, false, i.saturating_add(1));
-            }
-            i += 1;
+        let (last_idx, stop_idx, hit_limit) = scan_c_string_last_byte(s, target as u8, bound);
+        let result_local = match last_idx {
+            Some(idx) => s.add(idx) as *mut c_char,
+            None => std::ptr::null_mut(),
+        };
+        if hit_limit {
+            (result_local, true, stop_idx)
+        } else {
+            (result_local, false, stop_idx.saturating_add(1))
         }
     };
     if adverse {
