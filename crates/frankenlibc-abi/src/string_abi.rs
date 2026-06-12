@@ -583,6 +583,20 @@ pub unsafe fn bench_scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (
     unsafe { scan_c_string(ptr, bound) }
 }
 
+/// Benchmark/test hook for the SWAR [`scan_c_string_for_byte`] scanner (behind
+/// strchr). Not part of the public ABI.
+///
+/// # Safety
+/// `ptr` must be NUL-terminated when `bound` is `None`, else valid for `bound` bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_c_string_for_byte(
+    ptr: *const c_char,
+    target: u8,
+    bound: Option<usize>,
+) -> (usize, bool, bool) {
+    unsafe { scan_c_string_for_byte(ptr, target, bound) }
+}
+
 #[inline]
 unsafe fn copy_unaligned_16(dst: *mut u8, src: *const u8) {
     // SAFETY: caller guarantees 16 readable/writable bytes.
@@ -939,6 +953,95 @@ unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, boo
                         // SAFETY: the window contains a NUL at or before j==7.
                         if unsafe { *p.add(i + j) } == 0 {
                             return (i + j, true);
+                        }
+                    }
+                }
+                i += 8;
+            }
+        }
+    }
+}
+
+/// SWAR scan for the first byte equal to `target` OR a terminating NUL, within
+/// `bound`. Returns `(index, found_target, hit_limit)`:
+///   - `found_target == true`  → `index` points at a `target` byte;
+///   - `hit_limit == true` (bounded only) → no target/NUL in `bound`, `index == bound`;
+///   - otherwise → `index` points at the terminating NUL.
+///
+/// Each 8-byte window is tested for a zero byte AND for a `target` byte with two
+/// exact haszero probes (`w` and `w ^ broadcast(target)`); the exact byte is then
+/// resolved in scan order, so target-before-NUL vs NUL-before-target is decided
+/// correctly. `target == 0` resolves to the NUL as a *found* target, matching
+/// glibc `strchr(s, '\0')`. Same alignment/page-safety discipline as
+/// [`scan_c_string`]: unbounded mode aligns to 8 so wide loads never fault past
+/// the NUL's page; bounded mode reads only within `bound`.
+unsafe fn scan_c_string_for_byte(
+    ptr: *const c_char,
+    target: u8,
+    bound: Option<usize>,
+) -> (usize, bool, bool) {
+    let p = ptr.cast::<u8>();
+    let bcast = (target as u64).wrapping_mul(0x0101_0101_0101_0101);
+    match bound {
+        Some(limit) => {
+            let mut i = 0usize;
+            while i + 8 <= limit {
+                // SAFETY: [i, i+8) ⊆ [0, limit); caller guarantees `limit` bytes.
+                let w = unsafe { core::ptr::read_unaligned(p.add(i).cast::<u64>()) };
+                if swar_word_has_zero(w) || swar_word_has_zero(w ^ bcast) {
+                    for j in 0..8 {
+                        // SAFETY: i+j < limit.
+                        let b = unsafe { *p.add(i + j) };
+                        if b == target {
+                            return (i + j, true, false);
+                        }
+                        if b == 0 {
+                            return (i + j, false, false);
+                        }
+                    }
+                }
+                i += 8;
+            }
+            while i < limit {
+                // SAFETY: i < limit.
+                let b = unsafe { *p.add(i) };
+                if b == target {
+                    return (i, true, false);
+                }
+                if b == 0 {
+                    return (i, false, false);
+                }
+                i += 1;
+            }
+            (limit, false, true)
+        }
+        None => {
+            let mut i = 0usize;
+            let head = (p as usize).wrapping_neg() & 7;
+            while i < head {
+                // SAFETY: caller guarantees a valid NUL-terminated string.
+                let b = unsafe { *p.add(i) };
+                if b == target {
+                    return (i, true, false);
+                }
+                if b == 0 {
+                    return (i, false, false);
+                }
+                i += 1;
+            }
+            loop {
+                // SAFETY: p+i is 8-aligned, so this aligned 8-byte read stays inside
+                // the current page; the string is NUL-terminated within a mapped page.
+                let w = unsafe { *p.add(i).cast::<u64>() };
+                if swar_word_has_zero(w) || swar_word_has_zero(w ^ bcast) {
+                    for j in 0..8 {
+                        // SAFETY: the window contains a target or NUL at or before j==7.
+                        let b = unsafe { *p.add(i + j) };
+                        if b == target {
+                            return (i + j, true, false);
+                        }
+                        if b == 0 {
+                            return (i + j, false, false);
                         }
                     }
                 }
@@ -2664,22 +2767,16 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
     };
 
     // SAFETY: strict mode preserves raw strchr behavior; hardened mode bounds scan.
+    // SWAR word-at-a-time scan for `target`-or-NUL (shared scan_c_string_for_byte),
+    // byte-identical to the old byte loop including target=='\0' (returns the NUL).
     let (out, adverse, span) = unsafe {
-        let mut i = 0usize;
-        loop {
-            if let Some(limit) = bound
-                && i >= limit
-            {
-                break (std::ptr::null_mut(), true, i);
-            }
-            let ch = *s.add(i);
-            if ch == target {
-                break (s.add(i) as *mut c_char, false, i.saturating_add(1));
-            }
-            if ch == 0 {
-                break (std::ptr::null_mut(), false, i.saturating_add(1));
-            }
-            i += 1;
+        let (i, found_target, hit_limit) = scan_c_string_for_byte(s, target as u8, bound);
+        if hit_limit {
+            (std::ptr::null_mut(), true, i)
+        } else if found_target {
+            (s.add(i) as *mut c_char, false, i.saturating_add(1))
+        } else {
+            (std::ptr::null_mut(), false, i.saturating_add(1))
         }
     };
 

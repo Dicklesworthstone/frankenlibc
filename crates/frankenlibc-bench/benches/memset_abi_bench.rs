@@ -12,7 +12,23 @@ use std::time::Instant;
 
 use frankenlibc_abi::string_abi::{
     bench_raw_memcpy_bytes, bench_raw_memmove_bytes, bench_raw_memset_bytes, bench_scan_c_string,
+    bench_scan_c_string_for_byte,
 };
+
+/// Pre-lever strchr scan: byte-at-a-time search for target-or-NUL.
+#[inline(never)]
+unsafe fn old_byte_scan_for_byte(p: *const std::os::raw::c_char, target: u8) -> usize {
+    unsafe {
+        let mut i = 0usize;
+        loop {
+            let b = *p.add(i) as u8;
+            if b == target || b == 0 {
+                return i;
+            }
+            i += 1;
+        }
+    }
+}
 
 /// Pre-lever NUL scan: byte-at-a-time (the old scan_c_string unbounded body).
 #[inline(never)]
@@ -186,6 +202,34 @@ fn main() {
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: NUL-terminated.
             black_box(unsafe { libc::strlen(p) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n, old, new, gl, old / new, gl / new,
+        );
+    }
+
+    println!("\nstrchr (target absent → full scan to NUL, behind public strchr):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "len", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        // 'a'*n + NUL; search for an absent byte 'Z' so the scan runs the full length.
+        let mut s = vec![0x61u8; n + 1];
+        s[n] = 0;
+        let p = s.as_ptr().cast::<std::os::raw::c_char>();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_byte_scan_for_byte(p, b'Z') });
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { bench_scan_c_string_for_byte(p, b'Z', None) });
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: NUL-terminated.
+            black_box(unsafe { libc::strchr(p, b'Z' as i32) });
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
