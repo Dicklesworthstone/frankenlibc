@@ -12,8 +12,24 @@ use std::time::Instant;
 
 use frankenlibc_abi::string_abi::{
     bench_raw_memcpy_bytes, bench_raw_memmove_bytes, bench_raw_memset_bytes, bench_scan_c_string,
-    bench_scan_c_string_for_byte,
+    bench_scan_c_string_for_byte, bench_scan_strcmp,
 };
+
+/// Pre-lever strcmp scan: byte-at-a-time compare to first diff/NUL.
+#[inline(never)]
+unsafe fn old_byte_strcmp(p1: *const std::os::raw::c_char, p2: *const std::os::raw::c_char) -> usize {
+    unsafe {
+        let mut i = 0usize;
+        loop {
+            let a = *p1.add(i) as u8;
+            let b = *p2.add(i) as u8;
+            if a != b || a == 0 {
+                return i;
+            }
+            i += 1;
+        }
+    }
+}
 
 /// Pre-lever strchr scan: byte-at-a-time search for target-or-NUL.
 #[inline(never)]
@@ -230,6 +246,35 @@ fn main() {
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: NUL-terminated.
             black_box(unsafe { libc::strchr(p, b'Z' as i32) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n, old, new, gl, old / new, gl / new,
+        );
+    }
+
+    println!("\nstrcmp (equal strings → full scan to NUL, behind public strcmp/strncmp):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "len", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        let mut a = vec![0x61u8; n + 1];
+        a[n] = 0;
+        let b = a.clone();
+        let pa = a.as_ptr().cast::<std::os::raw::c_char>();
+        let pb = b.as_ptr().cast::<std::os::raw::c_char>();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_byte_strcmp(pa, pb) });
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { bench_scan_strcmp(pa, pb, usize::MAX) });
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: both NUL-terminated.
+            black_box(unsafe { libc::strcmp(pa, pb) });
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",

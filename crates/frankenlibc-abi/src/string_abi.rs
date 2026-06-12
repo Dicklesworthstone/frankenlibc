@@ -597,6 +597,16 @@ pub unsafe fn bench_scan_c_string_for_byte(
     unsafe { scan_c_string_for_byte(ptr, target, bound) }
 }
 
+/// Benchmark/test hook for the SWAR [`scan_strcmp`] scanner (behind
+/// strcmp/strncmp). Not part of the public ABI.
+///
+/// # Safety
+/// `s1`/`s2` must be NUL-terminated, or valid for `bound` bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (usize, bool) {
+    unsafe { scan_strcmp(s1, s2, bound) }
+}
+
 #[inline]
 unsafe fn copy_unaligned_16(dst: *mut u8, src: *const u8) {
     // SAFETY: caller guarantees 16 readable/writable bytes.
@@ -1048,6 +1058,68 @@ unsafe fn scan_c_string_for_byte(
                 i += 8;
             }
         }
+    }
+}
+
+/// True iff an 8-byte read starting at `addr` stays within `addr`'s own 4096-byte
+/// page, so it cannot fault into an adjacent (possibly unmapped) page. Gates wide
+/// reads in the dual-pointer strcmp/strncmp scan, where neither pointer can be
+/// pre-aligned.
+#[inline(always)]
+fn wide_read_within_page(addr: usize) -> bool {
+    (addr & 0xFFF) <= 0x1000 - 8
+}
+
+/// SWAR scan for the first index where two C strings differ or `s1` terminates,
+/// within `bound`. Returns `(index, hit_limit)`:
+///   - `hit_limit == true`  → the first `bound` bytes compared equal with no NUL;
+///     `index == bound`.
+///   - otherwise → `index` is the first position with `s1[i] != s2[i]` or
+///     `s1[i] == 0`; the caller reads both bytes there to form the signed diff (a
+///     shared NUL yields 0, a shorter `s1` yields a negative diff, etc.).
+///
+/// A wide 8-byte compare runs only when both reads stay inside their pages (no
+/// fault past a NUL near a page boundary) AND within `bound`; otherwise a single
+/// byte step is taken. A flagged window (words unequal OR containing a NUL) is
+/// resolved byte-wise in scan order, so the exact first diff/NUL is returned —
+/// byte-identical to the scalar loop it replaces.
+unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (usize, bool) {
+    let p1 = s1.cast::<u8>();
+    let p2 = s2.cast::<u8>();
+    let mut i = 0usize;
+    loop {
+        if i + 8 <= bound
+            && wide_read_within_page(p1 as usize + i)
+            && wide_read_within_page(p2 as usize + i)
+        {
+            // SAFETY: both 8-byte reads stay within their mapped pages and bound.
+            let wa = unsafe { core::ptr::read_unaligned(p1.add(i).cast::<u64>()) };
+            let wb = unsafe { core::ptr::read_unaligned(p2.add(i).cast::<u64>()) };
+            if wa == wb && !swar_word_has_zero(wa) {
+                i += 8;
+                continue;
+            }
+            for j in 0..8 {
+                // SAFETY: i+j < bound; within the just-read in-page window.
+                let a = unsafe { *p1.add(i + j) };
+                let b = unsafe { *p2.add(i + j) };
+                if a != b || a == 0 {
+                    return (i + j, false);
+                }
+            }
+            i += 8; // defensive: a flagged window always returns above.
+            continue;
+        }
+        if i >= bound {
+            return (bound, true);
+        }
+        // SAFETY: i < bound.
+        let a = unsafe { *p1.add(i) };
+        let b = unsafe { *p2.add(i) };
+        if a != b || a == 0 {
+            return (i, false);
+        }
+        i += 1;
     }
 }
 
@@ -1985,26 +2057,16 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
     };
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
+    // SWAR word-at-a-time compare (shared scan_strcmp, page-cross guarded),
+    // byte-identical to the old scalar loop. `cmp_bound == None` => no limit.
     let (result, adverse, span) = unsafe {
-        let mut i = 0usize;
-        let mut adverse_local = false;
-        loop {
-            if let Some(limit) = cmp_bound
-                && i >= limit
-            {
-                adverse_local = true;
-                break (0, adverse_local, i);
-            }
+        let (i, hit_limit) = scan_strcmp(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        if hit_limit {
+            (0, true, i)
+        } else {
             let a = *s1.add(i) as u8;
             let b = *s2.add(i) as u8;
-            if a != b || a == 0 {
-                break (
-                    (a as c_int) - (b as c_int),
-                    adverse_local,
-                    i.saturating_add(1),
-                );
-            }
-            i += 1;
+            ((a as c_int) - (b as c_int), false, i.saturating_add(1))
         }
     };
 
@@ -2092,18 +2154,16 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
     let adverse = repair && cmp_limit < n;
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
+    // SWAR word-at-a-time compare via the shared page-guarded scan_strcmp, bounded
+    // by `cmp_limit`; byte-identical to the old scalar loop.
     let (result, span) = unsafe {
-        let mut i = 0usize;
-        loop {
-            if i >= cmp_limit {
-                break (0, i);
-            }
+        let (i, hit_limit) = scan_strcmp(s1, s2, cmp_limit);
+        if hit_limit {
+            (0, i)
+        } else {
             let a = *s1.add(i) as u8;
             let b = *s2.add(i) as u8;
-            if a != b || a == 0 {
-                break ((a as c_int) - (b as c_int), i.saturating_add(1));
-            }
-            i += 1;
+            ((a as c_int) - (b as c_int), i.saturating_add(1))
         }
     };
 
