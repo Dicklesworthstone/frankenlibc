@@ -386,22 +386,47 @@ unsafe fn raw_dispatch_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
 
 #[inline(never)]
 unsafe fn raw_memmove_bytes(dst: *mut u8, src: *const u8, n: usize) {
-    // Byte-by-byte move using volatile operations with overlap awareness.
-    // Cannot use std::ptr::copy (compiles to memmove → our interposed symbol).
+    // Wide-word overlap-aware move. `std::ptr::copy` compiles to `@llvm.memmove`,
+    // which in the shipped libc.so resolves back to our own interposed `memmove`
+    // symbol (self-recursion), so we move explicitly. Instead of one volatile byte
+    // per step we use the same explicit u128 unaligned loads/stores as the memcpy
+    // lane copier (`copy_unaligned_16/32`): LLVM does not coalesce those back into
+    // an `@llvm.mem*` intrinsic, so they stay recursion-safe while moving 16-32
+    // bytes per step (the sub-16 tail stays volatile-byte). These are pure pointer
+    // ops with no SIMD-dispatch global state, so early-startup callers are safe too.
     // SAFETY: caller guarantees dst/src are valid for n bytes (may overlap).
     unsafe {
         let dst_addr = dst as usize;
         let src_addr = src as usize;
         if dst_addr <= src_addr || dst_addr >= src_addr.saturating_add(n) {
-            // Non-overlapping or dst < src: forward copy
+            // Forward copy (low -> high), safe when dst <= src or disjoint.
+            // `copy_unaligned_32` reads each 16-byte half into a register before
+            // storing it, and for dst <= src every store lands at an address <= the
+            // address just read, so no source byte is overwritten before it is read.
             let mut i = 0usize;
+            while i + 32 <= n {
+                copy_unaligned_32(dst.add(i), src.add(i));
+                i += 32;
+            }
+            if i + 16 <= n {
+                copy_unaligned_16(dst.add(i), src.add(i));
+                i += 16;
+            }
             while i < n {
                 std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
                 i += 1;
             }
         } else {
-            // Overlapping with dst > src: backward copy
+            // Backward copy (high -> low) in 16-byte blocks for dst > src overlap.
+            // `copy_unaligned_16` loads the whole block into one register before it
+            // stores, so no unread source byte in the block is clobbered; processing
+            // blocks top-down means any byte a store could overwrite belongs to an
+            // already-copied higher block. The sub-16 low tail finishes byte-wise.
             let mut i = n;
+            while i >= 16 {
+                i -= 16;
+                copy_unaligned_16(dst.add(i), src.add(i));
+            }
             while i > 0 {
                 i -= 1;
                 std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
@@ -510,6 +535,16 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
 #[doc(hidden)]
 pub unsafe fn bench_raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
     unsafe { raw_memset_bytes(dst, value, n) }
+}
+
+/// Benchmark/test hook for the shipped overlap-aware [`raw_memmove_bytes`] move.
+/// Not part of the public ABI.
+///
+/// # Safety
+/// `dst`/`src` must be valid for `n` bytes (may overlap).
+#[doc(hidden)]
+pub unsafe fn bench_raw_memmove_bytes(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe { raw_memmove_bytes(dst, src, n) }
 }
 
 #[inline]
