@@ -8,6 +8,11 @@ const I32_FAST_LANE_MIN: usize = 64;
 const I32_FAST_LANE_MAX: usize = 2048;
 const I64_FAST_LANE_MIN: usize = 64;
 const I64_FAST_LANE_MAX: usize = 2048;
+/// Above this element count, 4-/8-byte integer keys take an LSD radix lane
+/// instead of the comparison-sort fast lane. The crossover sits just past the
+/// comparison-lane window: radix's fixed per-pass overhead (256-bucket
+/// histogram + a full ping-pong scatter) only amortizes once N is large.
+const INTEGER_RADIX_LANE_MIN: usize = 2048;
 
 /// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
 /// Orson Peters 2014) ported to operate on raw byte chunks through a
@@ -51,6 +56,17 @@ where
 
     if width == 8 && (I64_FAST_LANE_MIN..=I64_FAST_LANE_MAX).contains(&num) {
         if try_qsort_i64_natural_fast_lane(base, num, &compare) {
+            return;
+        }
+    }
+
+    // Large integer arrays: above the comparison-sort fast-lane window the
+    // generic pdqsort pays an indirect comparator call per comparison, which
+    // loses to glibc's cache-friendly mergesort for big N. An LSD radix sort is
+    // a different complexity class entirely — O(n · key_bytes) linear passes
+    // with no per-element comparison — so it wins decisively once N is large.
+    if (width == 4 || width == 8) && num > INTEGER_RADIX_LANE_MIN {
+        if try_qsort_integer_radix_lane(base, num, width, &compare) {
             return;
         }
     }
@@ -170,6 +186,109 @@ where
         prev = current;
     }
     true
+}
+
+/// LSD radix lane for large 4-/8-byte integer arrays.
+///
+/// Reinterprets each element as its native-endian integer, maps it to an
+/// order-preserving unsigned "rank" by flipping the sign bit (so two's
+/// complement order coincides with unsigned byte order), and sorts the ranks
+/// with a least-significant-digit radix sort (8-bit digits, `width` linear
+/// passes). The sorted ranks are written back as the original integer bytes.
+///
+/// Parity is preserved by the same verify-then-commit contract as the
+/// comparison fast lanes: the radix arrangement is committed only if it is
+/// genuinely non-decreasing under the caller's own comparator. Natural signed
+/// integer comparators pass and yield output bit-identical to glibc (equal keys
+/// are byte-identical, so tie order is immaterial). Any other comparator
+/// (unsigned, descending, float, struct field, …) fails the single linear
+/// verify pass; the saved original bytes are restored and the caller falls back
+/// to the generic pdqsort with zero behavioral difference.
+fn try_qsort_integer_radix_lane<F>(
+    base: &mut [u8],
+    num: usize,
+    width: usize,
+    compare: &F,
+) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width == 4 || width == 8);
+    let active_len = num * width;
+    let active = &mut base[..active_len];
+    let sign_mask: u64 = 1u64 << (width as u64 * 8 - 1);
+
+    // Extract sign-flipped unsigned rank keys.
+    let mut keys: Vec<u64> = Vec::with_capacity(num);
+    for chunk in active.chunks_exact(width) {
+        let mut raw = [0u8; 8];
+        raw[..width].copy_from_slice(chunk);
+        keys.push(u64::from_ne_bytes(raw) ^ sign_mask);
+    }
+
+    // Preserve the original bytes so a non-natural comparator can fall back.
+    let original = active.to_vec();
+
+    radix_sort_u64_lsd(&mut keys, width);
+
+    // Write sorted keys back as their original integer byte representation.
+    for (chunk, &k) in active.chunks_exact_mut(width).zip(&keys) {
+        let restored = (k ^ sign_mask).to_ne_bytes();
+        chunk.copy_from_slice(&restored[..width]);
+    }
+
+    // Verify the radix arrangement satisfies the caller's comparator.
+    let mut ordered = true;
+    let mut prev = &active[..width];
+    for current in active[width..].chunks_exact(width) {
+        if compare(prev, current) > 0 {
+            ordered = false;
+            break;
+        }
+        prev = current;
+    }
+    if ordered {
+        return true;
+    }
+
+    active.copy_from_slice(&original);
+    false
+}
+
+/// Stable least-significant-digit radix sort over 8-bit digits. Runs `passes`
+/// counting passes (one per significant key byte) using a ping-pong auxiliary
+/// buffer; a pass whose digit is constant across all keys is skipped. On return
+/// `keys` holds the ascending-sorted values.
+fn radix_sort_u64_lsd(keys: &mut Vec<u64>, passes: usize) {
+    let n = keys.len();
+    if n < 2 {
+        return;
+    }
+    let mut aux: Vec<u64> = vec![0u64; n];
+    for p in 0..passes {
+        let shift = (p as u64) * 8;
+        let mut count = [0usize; 256];
+        for &k in keys.iter() {
+            count[((k >> shift) & 0xff) as usize] += 1;
+        }
+        // Skip passes where every key shares the same digit (e.g. unused high
+        // bytes of small-magnitude integers) — the order is already settled.
+        if count.iter().any(|&c| c == n) {
+            continue;
+        }
+        let mut sum = 0usize;
+        for c in count.iter_mut() {
+            let cur = *c;
+            *c = sum;
+            sum += cur;
+        }
+        for &k in keys.iter() {
+            let d = ((k >> shift) & 0xff) as usize;
+            aux[count[d]] = k;
+            count[d] += 1;
+        }
+        core::mem::swap(keys, &mut aux);
+    }
 }
 
 /// pdqsort core. Operates on the element-index range `[lo, hi)` of `buf`.
