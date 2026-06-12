@@ -716,44 +716,22 @@ unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c
 }
 
 #[inline(never)]
-unsafe fn raw_lane_strlen_bytes(s: *const c_char, lane_bytes: usize) -> usize {
-    let step = lane_bytes.max(1);
+unsafe fn raw_lane_strlen_bytes(s: *const c_char, _lane_bytes: usize) -> usize {
+    // SWAR word-at-a-time NUL scan via the shared, exhaustively-gated
+    // `scan_c_string`. The old body chunked by `lane_bytes` but still compared
+    // one byte at a time (data-dependent early return = unvectorizable); the SWAR
+    // scan supersedes it (5-15x), so the dispatch hint is no longer needed.
     // SAFETY: caller guarantees a valid NUL-terminated string.
-    unsafe {
-        let mut len = 0usize;
-        loop {
-            let end = len + step;
-            let mut idx = len;
-            while idx < end {
-                if *s.add(idx) == 0 {
-                    return idx;
-                }
-                idx += 1;
-            }
-            len = end;
-        }
-    }
+    unsafe { scan_c_string(s, None).0 }
 }
 
 #[inline(never)]
-unsafe fn raw_lane_strnlen_bytes(s: *const c_char, max: usize, lane_bytes: usize) -> (usize, bool) {
-    let step = lane_bytes.max(1);
+unsafe fn raw_lane_strnlen_bytes(s: *const c_char, max: usize, _lane_bytes: usize) -> (usize, bool) {
+    // SWAR bounded NUL scan via the shared `scan_c_string`, which has the identical
+    // `(index_of_nul_or_max, found_nul)` contract. Supersedes the old byte-chunked
+    // loop with the proven word-at-a-time scan.
     // SAFETY: caller guarantees `s` readable up to `max`.
-    unsafe {
-        let mut len = 0usize;
-        while len < max {
-            let end = (len + step).min(max);
-            let mut idx = len;
-            while idx < end {
-                if *s.add(idx) == 0 {
-                    return (idx, true);
-                }
-                idx += 1;
-            }
-            len = end;
-        }
-        (max, false)
-    }
+    unsafe { scan_c_string(s, Some(max)) }
 }
 
 fn try_memcpy_htm(dst: *mut u8, src: *const u8, n: usize) -> bool {
@@ -1820,18 +1798,11 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
     }
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
-    let (len, span) = unsafe {
-        let mut i = 0usize;
-        loop {
-            if i >= scan_limit {
-                break (scan_limit, scan_limit);
-            }
-            if *s.add(i) == 0 {
-                break (i, i);
-            }
-            i += 1;
-        }
-    };
+    // SWAR bounded NUL scan (shared scan_c_string): returns the NUL index or
+    // `scan_limit`, identical to the old byte loop. `span` tracked the scanned
+    // extent, which equals `len` in both branches.
+    let len = unsafe { scan_c_string(s, Some(scan_limit)).0 };
+    let span = len;
 
     if adverse {
         record_truncation(n, scan_limit);
