@@ -863,19 +863,43 @@ where
         return;
     }
 
-    // Copy the elements out so Rust's stable timsort can reorder
-    // them by value (instead of permuting an index array, which
-    // becomes hairy for non-trivial widths).
-    let mut elems: Vec<Vec<u8>> = (0..num)
-        .map(|i| base[i * width..(i + 1) * width].to_vec())
-        .collect();
-    elems.sort_by(|a, b| match compare(a, b).cmp(&0) {
-        core::cmp::Ordering::Less => core::cmp::Ordering::Less,
-        core::cmp::Ordering::Equal => core::cmp::Ordering::Equal,
-        core::cmp::Ordering::Greater => core::cmp::Ordering::Greater,
-    });
-    for (i, e) in elems.iter().enumerate() {
-        base[i * width..(i + 1) * width].copy_from_slice(e);
+    // Stable sort via an index permutation, NOT a `Vec<Vec<u8>>`. The previous
+    // implementation heap-allocated one `Vec<u8>` per element (n allocations) —
+    // catastrophic for large n (measured ~200 ms / 3.2x slower than a reference
+    // qsort at n=262144). Instead, stably sort a single index array by the
+    // comparator and gather the result through one scratch buffer: O(n) extra
+    // memory and zero per-element allocations.
+    //
+    // Behavior is byte-identical to the old code: `[_]::sort_by` is stable and
+    // the index array starts in ascending (i.e. original) order, so equal-
+    // comparing elements keep their input order exactly as the old element-copy
+    // stable sort did.
+    if num <= u32::MAX as usize {
+        let mut idx: Vec<u32> = (0..num as u32).collect();
+        idx.sort_by(|&a, &b| {
+            let ea = &base[a as usize * width..a as usize * width + width];
+            let eb = &base[b as usize * width..b as usize * width + width];
+            compare(ea, eb).cmp(&0)
+        });
+        let mut scratch = vec![0u8; num * width];
+        for (dst, &src) in idx.iter().enumerate() {
+            let s = src as usize * width;
+            scratch[dst * width..dst * width + width].copy_from_slice(&base[s..s + width]);
+        }
+        base[..num * width].copy_from_slice(&scratch);
+    } else {
+        let mut idx: Vec<usize> = (0..num).collect();
+        idx.sort_by(|&a, &b| {
+            let ea = &base[a * width..a * width + width];
+            let eb = &base[b * width..b * width + width];
+            compare(ea, eb).cmp(&0)
+        });
+        let mut scratch = vec![0u8; num * width];
+        for (dst, &src) in idx.iter().enumerate() {
+            scratch[dst * width..dst * width + width]
+                .copy_from_slice(&base[src * width..src * width + width]);
+        }
+        base[..num * width].copy_from_slice(&scratch);
     }
 }
 
