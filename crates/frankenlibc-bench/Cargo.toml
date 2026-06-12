@@ -93,6 +93,11 @@ harness = false
 required-features = ["abi-bench"]
 
 [[bench]]
+name = "memset_abi_bench"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
 name = "stdio_glibc_baseline_bench"
 harness = false
 required-features = ["abi-bench"]

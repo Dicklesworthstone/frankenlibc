@@ -449,17 +449,67 @@ unsafe fn raw_strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_c
 
 #[inline(never)]
 unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
-    // Byte-by-byte fill using volatile writes to prevent the compiler
-    // from optimizing this into a memset call (which would recurse through
-    // our interposed memset symbol).
-    // SAFETY: caller guarantees dst is valid for n bytes.
+    // Wide-word volatile fill. The fill MUST NOT lower to an `@llvm.memset`
+    // intrinsic: in the shipped `libc.so` that intrinsic resolves to our own
+    // interposed `memset` symbol, so a plain `for b { *b = value }` / `.fill()`
+    // would self-recurse. Volatile stores are never coalesced by LLVM's loop-
+    // idiom recognizer, so they stay recursion-safe — but a byte-at-a-time
+    // volatile loop emits one store per byte (a 4 KiB fill = 4096 stores). Here
+    // we broadcast the byte into a `u64` and store 8 bytes per volatile op
+    // (32 bytes per unrolled iteration), an 8-32x reduction in store count that
+    // produces byte-for-byte identical memory to the scalar loop.
+    //
+    // `write_volatile::<u64>` requires 8-byte alignment, so the leading bytes up
+    // to the next 8-byte boundary (and the sub-8-byte tail) are filled byte-wise;
+    // every wide store is therefore naturally aligned.
+    // SAFETY: caller guarantees dst is valid for n bytes; the offsets below stay
+    // within `0..n`, and each `*mut u64` store starts on an 8-aligned address.
     unsafe {
+        if n == 0 {
+            return;
+        }
+        let word = (value as u64).wrapping_mul(0x0101_0101_0101_0101);
         let mut i = 0usize;
+
+        // Head: byte-fill until `dst + i` reaches an 8-byte boundary.
+        let head = ((dst as usize).wrapping_neg() & 7).min(n);
+        while i < head {
+            std::ptr::write_volatile(dst.add(i), value);
+            i += 1;
+        }
+
+        // Body: 32-byte unrolled aligned u64 volatile stores, then 8-byte stores.
+        while i + 32 <= n {
+            let p = dst.add(i).cast::<u64>();
+            std::ptr::write_volatile(p, word);
+            std::ptr::write_volatile(p.add(1), word);
+            std::ptr::write_volatile(p.add(2), word);
+            std::ptr::write_volatile(p.add(3), word);
+            i += 32;
+        }
+        while i + 8 <= n {
+            std::ptr::write_volatile(dst.add(i).cast::<u64>(), word);
+            i += 8;
+        }
+
+        // Tail: remaining sub-8-byte bytes.
         while i < n {
             std::ptr::write_volatile(dst.add(i), value);
             i += 1;
         }
     }
+}
+
+/// Benchmark/test hook: exposes [`raw_memset_bytes`] under a stable name so the
+/// `frankenlibc-bench` crate can measure the shipped wide-word fill against the
+/// host `memset` without going through the no-mangle `memset` symbol (which
+/// would collide with libc at link time). Not part of the public ABI.
+///
+/// # Safety
+/// `dst` must be valid for `n` writes.
+#[doc(hidden)]
+pub unsafe fn bench_raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
+    unsafe { raw_memset_bytes(dst, value, n) }
 }
 
 #[inline]
